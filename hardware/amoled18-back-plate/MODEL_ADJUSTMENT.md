@@ -12,7 +12,7 @@ edit code — every number is a labelled field in a form. Back to the [README](R
    (on GitHub: click the file, then the download icon). The `.json` holds the ready-made versions.
 3. Open the `.scad`. Turn on the form: **Window → Customizer** (on some versions untick **View →
    Hide customizer**). Press **F5** to see the part; drag to spin, scroll to zoom.
-4. **Start from a version**: the drop-down at the top of the Customizer has all three. Then
+4. **Start from a version**: the drop-down at the top of the Customizer has all four. Then
    change fields — the groups are numbered, and each field has a plain-English label.
 5. **Read the console** at the bottom (**Window → Console** if hidden) after each **F5**:
    - `All checks passed.` — good to go.
@@ -39,6 +39,7 @@ edit code — every number is a labelled field in a form. Back to the [README](R
 | Holes too tight or loose on your printer | `hole_slop` | 4. Screws |
 | Plug fit, or no plug recesses | `plug_interference`, `plug_recess` | 4c. Hole plugs |
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
+| Stand it up leaning back on a table | `tilt_angle` | 5c. Tilted stand |
 | Export plugs instead of the plate | `part` | 6. Output |
 | See the battery in the preview | `show_battery` | 6. Output |
 
@@ -135,6 +136,28 @@ To export just the plugs, set `part` (group 6) to `plugs`; `both` shows them bes
 `grip_depth` is how far the ribs stand out, 0 to 0.5 mm (0 = smooth walls). `grip_style` also
 offers `honeycomb` (raised hexagons) and `nubs` (raised squares). `grip_size`, `grip_gap` and
 `grip_margin` set the rib height, spacing and how far they stay from the bed and the seam.
+
+## Tilted stand
+
+`tilt_angle` cuts the plate's bottom-back corner flat at that angle, so the unit stands on a
+table leaning back (0 = off). The preset `802525 400mAh flat, tilted stand 20°` is the ready one.
+
+| On a table | The sloped base | Cut open |
+|---|---|---|
+| ![](renders/fig-tilt-stand.png) | ![](renders/tilt-under.png) | ![](renders/version-tilt.png) |
+
+- **It needs a thin, flat-battery plate.** The slope runs from the seam's bottom edge up to the
+  back face, so the deeper the plate the more it cuts away; in the edge and end versions it runs
+  through the battery, and the console says `CELL DOES NOT FIT`. When there's a little
+  conflict, the model moves the cell up the cavity by itself, as far as it can.
+- **What fits:** the 802525 flat tilts to 30°; a thicker 25 × 25 cell, up to
+  12 mm (around half as much again), fits at 20°. The console's `Tilted stand` line shows how far the cell sits from the
+  sloped wall.
+- **Angle:** 15–25° looks like your photo; 20° is the default. Steeper still stands, but the
+  unit gets easier to knock over backwards.
+- **The bottom two screw holes** come out partly on the sloped face, so only the top two openings
+  take plugs. The screws work the same.
+- `tilt_wall` sets the wall thickness along the slope (2 mm).
 
 ## Measuring the stock cover
 

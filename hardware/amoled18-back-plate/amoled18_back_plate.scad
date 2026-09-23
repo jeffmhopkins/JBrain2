@@ -169,6 +169,15 @@ wall_chamfer = 3.0;     // [0:0.5:8]
 tower_flare = 2.0;      // [0:0.5:6]
 
 
+/* [5c. Tilted stand] */
+
+// Lean the unit back at this angle when it stands on a table (0 = off).
+// The plate's bottom-back corner is cut flat at this angle to sit on.
+tilt_angle = 0;         // [0:1:30]
+// Wall thickness along that sloped face
+tilt_wall = 2.0;        // [1:0.1:4]
+
+
 /* [5b. Grip texture on the outside walls] */
 
 // Raised texture so small hands don't drop it. All shapes slope 45 degrees
@@ -257,25 +266,43 @@ body_h      = plate_t + spacer_h;
 total_h     = body_h + lip_h;
 extra_depth = total_h - plate_t - stock_clear;
 
-// Full chamfer where the cell leaves room. Near the cell it may rise only to the
-// tape under it plus whatever keeps 0.5 mm clear of the cell's bottom edge.
-chamfer_x = min(wall_chamfer, tape_t + max(0, (cav_x - fx) / 2 - 0.5));
-chamfer_y = min(wall_chamfer, tape_t + max(0, (cav_y - fy) / 2 - 0.5));
 
 tower_top = total_h - tower_drop;
 bore_top  = tower_top - head_seat;
 
+// Tilted stand: the sloped face runs through the bottom edge of the seam with
+// the front shell (that edge and the face are what the unit stands on), and
+// rises toward the back at tilt_angle. n points from it into the part.
+tilted = tilt_angle > 0;
+tilt_s = [-plate_y / 2, body_h];
+tilt_n = [cos(tilt_angle), sin(tilt_angle)];
+// Lowest point the cell (with its tape) may reach along y, clear of the
+// sloped wall by 0.5 mm; the cell moves up the cavity only as far as needed.
+tilt_y_min = tilted ? tilt_s[0] + (tilt_wall + 0.5 - (plate_t - tilt_s[1]) * tilt_n[1]) / tilt_n[0]
+                    : -cav_y / 2;
+cell_cy = tilted ? max(0, tilt_y_min + fy / 2) : 0;
+y_lo = cell_cy - fy / 2;
+y_hi = cell_cy + fy / 2;
+
+// Full chamfer where the cell leaves room. Near the cell it may rise only to the
+// tape under it plus whatever keeps 0.5 mm clear of the cell's bottom edge.
+chamfer_x = min(wall_chamfer, tape_t + max(0, (cav_x - fx) / 2 - 0.5));
+chamfer_y = min(wall_chamfer, tape_t + max(0, min(cav_y / 2 - abs(cell_cy) - fy / 2, cav_y / 2 - fy / 2) - 0.5));
+
 // Clearances from the cell to each wall pair and to the nearest tower.
 side_gap  = (cav_x - fx) / 2;
-end_gap   = (cav_y - fy) / 2;
-tower_gap = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - tower_r;
+end_gap   = min(cav_y / 2 - y_hi, y_lo + cav_y / 2);
+tilt_gap  = tilted ? (([y_lo, plate_t] - tilt_s) * tilt_n) - tilt_wall : 99;
+tower_gap = min([for (sy = [-1, 1])
+    norm([max(0, screw_dx - fx/2), max(0, abs(sy * screw_dy - cell_cy) - fy/2)])]) - tower_r;
 // Same rule as the wall chamfer: keep 0.5 mm off the cell's bottom edge.
 flare = min(tower_flare, tape_t + max(0, tower_gap - 0.5));
 kx = cav_x/2 - cav_r;
 ky = cav_y/2 - cav_r;
-corner_gap = (fx/2 <= kx || fy/2 <= ky) ? min(side_gap, end_gap)
-           : cav_r - norm([fx/2 - kx, fy/2 - ky]);
-min_gap = min(side_gap, end_gap, tower_gap, corner_gap);
+corner_gap = min([for (yy = [y_lo, y_hi])
+    (fx/2 <= kx || abs(yy) <= ky) ? min(side_gap, end_gap)
+                                  : cav_r - norm([fx/2 - kx, abs(yy) - ky])]);
+min_gap = min(side_gap, end_gap, tower_gap, corner_gap, tilt_gap);
 // Real cells run up to about half a millimetre over their listed size.
 fits  = min_gap >= 0.2;
 tight = min_gap < 0.5;
@@ -287,8 +314,11 @@ echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
          " mm, ", on_end ? "standing on its end" : edge ? "standing on its edge" : "lying flat"));
 echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + wires + air)"));
 echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm"));
-echo(str("Room around cell:   ", side_gap, " mm each side, ", end_gap, " mm each end, ",
+echo(str("Room around cell:   ", side_gap, " mm each side, ", end_gap, " mm at the nearer end, ",
          tower_gap, " mm to the nearest tower"));
+if (tilted)
+    echo(str("Tilted stand:       ", tilt_angle, " degrees; cell moved ", cell_cy,
+             " mm up the cavity, ", tilt_gap, " mm clear of the sloped wall"));
 echo(str("Wall chamfer:       ", chamfer_x, " mm on the long walls, ", chamfer_y, " mm on the end walls; tower flare ", flare, " mm"));
 echo(str("EXTRA DEPTH:        ", extra_depth, " mm over stock"));
 echo(str("Total plate height: ", total_h, " mm"));
@@ -501,13 +531,27 @@ module grip() {
     else if (grip_style != "none") grip_bumps();
 }
 
+// Clips its children to the keep side of the sloped face, pushed in by
+// `inset`; passes them through untouched when there's no tilt.
+module tilt_clip(inset = 0) {
+    L = plate_y + total_h;
+    if (tilted)
+        intersection() {
+            children();
+            translate([0, tilt_s[0], tilt_s[1]]) rotate([tilt_angle, 0, 0])
+                translate([-L, inset, -L]) cube([2 * L, L, 2 * L]);
+        }
+    else
+        children();
+}
+
 module back_plate() {
     difference() {
-        union() {
+        tilt_clip() union() {
             solid_body();
             grip();
         }
-        battery_cavity();
+        tilt_clip(tilt_wall) battery_cavity();
         screw_holes();
     }
 }
@@ -517,7 +561,7 @@ if (show_part && part != "plate") translate([part == "both" ? plate_x/2 + 6 : 0,
 
 if (show_battery && part != "plugs")
     color("green", 0.35)
-        translate([-fx/2, -fy/2, plate_t + tape_t])
+        translate([-fx/2, y_lo, plate_t + tape_t])
             cube([fx, cell_y, cell_h]);
 
 
