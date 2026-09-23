@@ -196,6 +196,8 @@ show_battery = false;
 
 /* [Hidden] */
 eps = 0.01;
+// Figure files that include this one set it false to draw the part themselves.
+show_part = true;
 $fn = smoothness;
 
 
@@ -510,8 +512,8 @@ module back_plate() {
     }
 }
 
-if (part != "plugs") back_plate();
-if (part != "plate") translate([part == "both" ? plate_x/2 + 6 : 0, 0, 0]) plugs();
+if (show_part && part != "plugs") back_plate();
+if (show_part && part != "plate") translate([part == "both" ? plate_x/2 + 6 : 0, 0, 0]) plugs();
 
 if (show_battery && part != "plugs")
     color("green", 0.35)
