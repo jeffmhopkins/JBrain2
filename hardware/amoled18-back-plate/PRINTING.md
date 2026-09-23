@@ -98,13 +98,12 @@ The two-part version ([README](README.md#or-the-desk-stand)). Parts are the same
 | **Box** | `amoled18_stand_box_<battery>.stl`, for your battery |
 | **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short 1.5 mm hex key reaches: the towers are only 3.5 mm deep |
 | **2 × M2 × 6 pan head or wafer head screws** | Head to box, one each end. They cut their own thread in the head. A pan head stands about 1.3 mm proud of the box's end; a wafer (flat) head sits lower |
-| **4 small rubber feet** (optional) | Under the box, so it doesn't slide |
 | No plugs | The head's back is hidden inside the box |
 
 ### Print
 
 Both with the settings in step 2. The head goes back face down, like the plate; the box stands
-on its bottom as the file loads, sloped top up and foot on the bed. Neither needs supports.
+on its bottom as the file loads, sloped top up. Neither needs supports.
 
 ![The head back face down, the box on its bottom](renders/stand-print-bed.png)
 
@@ -146,7 +145,6 @@ the board through the head, so it goes in this order:
 To charge, plug into the USB-C on the top edge; nothing needs taking apart. To take it apart,
 undo the two end screws and lift the head out.
 
-**It will still tip if pushed hard.** The foot makes a normal tap safe (about 7 N at the top of
-the screen to tip the 103035 version, 3.5 N for the tall 104050), but a toddler leaning on it will
-still knock it over. Rubber feet stop it sliding; for more, lengthen `stand_tail`
-([MODEL_ADJUSTMENT.md](MODEL_ADJUSTMENT.md#desk-stand)).
+**It tips backwards if the top of the screen is pushed.** Leaning back at 30° on a small box, a
+firm tap high on the screen can knock it over, and the tall 104050 version most easily. The
+802525 box is the lowest and steadiest.

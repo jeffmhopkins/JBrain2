@@ -1,4 +1,4 @@
-// Desk stand from the side, cut down the middle: the angle, the heights and the foot.
+// Desk stand from the side, cut down the middle: the angle and the heights.
 include <../../amoled18_back_plate.scad>
 use <annot.scad>
 show_part = false;
@@ -16,20 +16,17 @@ xf = -plate_x / 2 * sc - body_h * ss;       // front of the band
 xb = p_out_x * sc;                          // back wall
 // Heights of the box.
 dim([xf - 6, y, 0], [xf - 6, y, band_top_front], "", view = v);
-label([xf - 7, y, band_top_front / 2], str(round(band_top_front), " mm"), v, t, "right");
+label([xf - 7, y, 12], str(round(band_top_front), " mm"), v, t, "right");
 seg([xf - 7, y, band_top_front], w(-plate_x / 2, body_h), r = 0.06);
-dim([xb + stand_tail + 6, y, 0], [xb + stand_tail + 6, y, band_top_back], "", view = v);
-label([xb + stand_tail + 7, y, band_top_back / 2], str(round(band_top_back), " mm"), v, t, "left");
-seg([xb, y, band_top_back], [xb + stand_tail + 7, y, band_top_back], r = 0.06);
-// The foot.
-dim([xb, y, -4], [xb + stand_tail, y, -4], str("stand_tail ", stand_tail), [0, 0, -2.5], v, t);
+dim([xb + 10, y, 0], [xb + 10, y, band_top_back], "", view = v);
+label([xb + 11, y, band_top_back / 2], str(round(band_top_back), " mm"), v, t, "left");
+seg([xb, y, band_top_back], [xb + 11, y, band_top_back], r = 0.06);
 // Floor.
 callout([10, y, box_floor / 2], [8, y, -9], str("box_floor ", box_floor), v, t, "right");
 // Tilt: a horizontal line and the head's back.
-seg(w(-plate_x / 2, 0) + [0, 0, 0], w(-plate_x / 2, 0) + [44, 0, 0], r = 0.06, c = red);
-label(w(-plate_x / 2, 0) + [30, 0, 3.4], str("stand_angle ", stand_angle, "°"), v, t, c = red);
+seg(w(-plate_x / 2, 0) + [0, 0, 0], w(-plate_x / 2, 0) + [34, 0, 0], r = 0.06, c = red);
+label(w(-plate_x / 2, 0) + [-3, 0, 4], str("stand_angle ", stand_angle, "°"), v, t, "right", c = red);
 // Which edge is which.
 callout(w(plate_x / 2, body_h + 5), w(plate_x / 2, body_h + 5) + [8, 0, 10], "USB-C + buttons", v, t, "left");
 label(w(-plate_x / 2, body_h + 11.5) + [-4, 0, 6], "screen faces you ◀", v, t, "right");
-callout([cell_x0 + fx / 2, y, box_floor + 20], [xf - 16, y, 35], "battery, against", v, t, "right");
-label([xf - 17.2, y, 32], "the back wall", v, t, "right");
+callout([cell_x0 + fx / 2, y, box_floor + 4], [xb + 3, y, -7], "battery", v, t, "left");

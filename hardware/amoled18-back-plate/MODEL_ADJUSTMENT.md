@@ -41,7 +41,7 @@ edit code — every number is a labelled field in a form. Back to the [README](R
 | Plug fit, or no plug recesses | `plug_interference`, `plug_recess` | 4c. Hole plugs |
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
 | Export plugs instead of the plate | `part` | 6. Output |
-| Desk stand: tilt, box height, the foot | `desk_stand`, `stand_angle`, `stand_front_min`, `stand_tail`, `box_floor` | 7. Desk stand |
+| Desk stand: tilt, box height | `desk_stand`, `stand_angle`, `stand_front_min`, `box_floor` | 7. Desk stand |
 | Desk stand: how the head fits the box | `pocket_wall`, `pocket_clear`, `stand_ledge` | 7. Desk stand |
 | See the battery in the preview | `show_battery` | 6. Output |
 
@@ -163,13 +163,12 @@ one head fits every box.
 
 ### The box
 
-![The desk stand from the side: its heights, angle and foot](renders/fig-stand-side.png)
+![The desk stand from the side: its heights and angle](renders/fig-stand-side.png)
 
 | Field | What it is | Change it when |
 |---|---|---|
 | `stand_angle` | How far the screen tilts up from flat, 10–45° | Taste. Steeper makes the box taller at the back and easier to tip |
 | `stand_front_min` | The lowest the box's front edge may be | The box is as low as the battery allows, but never lower than this |
-| `stand_tail` | The foot reaching back along the table, sloping up at 45° to the back wall (0 = none) | It tips too easily: longer. The 104050 box uses 25; 0 gives a plain box |
 | `box_floor` | Thickness of the box's floor | Rarely |
 
 The cell always sits against the tall back wall, where there's most height; pack the space in

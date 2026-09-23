@@ -201,9 +201,6 @@ pocket_clear = 0.15;    // [0.05:0.05:0.25]
 stand_ledge = 1.0;      // [0.6:0.1:4]
 // Lowest the box's front edge may be
 stand_front_min = 8.0;  // [4:0.5:30]
-// Foot reaching back from the bottom of the box, so a tap on the screen can't
-// tip it over backwards (0 = a plain box)
-stand_tail = 20;        // [0:1:40]
 // Thickness of the box's floor
 box_floor = 2.0;        // [1.2:0.1:4]
 
@@ -352,8 +349,8 @@ box_back_h  = stand_zh + p_out_x * ss;
 // with the display on (the stock unit is 15 mm thick: 11.5 above the seam).
 band_top_front = box_front_h + body_h * sc;
 band_top_back  = box_back_h + body_h * sc;
-box_depth  = p_out_x * sc + (p_out_x * sc + body_h * ss) + stand_tail;
-unit_depth = p_out_x * sc + (p_out_x * sc + 15 * ss) + stand_tail;
+box_depth  = p_out_x * sc + (p_out_x * sc + body_h * ss);
+unit_depth = p_out_x * sc + (p_out_x * sc + 15 * ss);
 unit_h     = stand_zh + p_out_x * ss + 15 * sc;
 box_side_gap = bhy - fy / 2;
 box_x_room   = cell_x0 + cell_x1;   // cell_x0 + b_ub*sc: room left at the front
@@ -375,8 +372,7 @@ if (desk) {
              " mm, the same for every box; it sinks into the box's top, its rim standing above"));
     if (part != "plate") {
         echo(str("Box:                ", box_depth, " front to back x ", 2 * p_out_y, " wide; ",
-                 band_top_front, " mm tall at the front, ", band_top_back, " at the back",
-                 stand_tail > 0 ? str(" (with a ", stand_tail, " mm foot behind)") : ""));
+                 band_top_front, " mm tall at the front, ", band_top_back, " at the back"));
         echo(str("With the display:   ", unit_depth, " x ", 2 * p_out_y, " x ", unit_h, " mm tall"));
         echo(str("Room around cell:   ", box_side_gap, " mm each side; it stands against the back wall"));
     }
@@ -721,18 +717,6 @@ module lock_holes() {
                 cylinder(d = shaft_d, h = pocket_wall + 2, center = true);
 }
 
-// A foot on the table behind the box, sloping up at 45 degrees to its back wall.
-module box_tail() {
-    hull() {
-        linear_extrude(height = eps) offset(delta = -edge_chamfer)
-            hull() { box_outline(); translate([stand_tail, 0]) box_outline(); }
-        translate([0, 0, edge_chamfer])
-            linear_extrude(height = 2 - edge_chamfer)
-                hull() { box_outline(); translate([stand_tail, 0]) box_outline(); }
-        linear_extrude(height = 2 + stand_tail) box_outline();
-    }
-}
-
 // Below the ledge, with a 45 degree chamfer of cx (front and back walls) or
 // cy (end walls) at the floor.
 module box_cavity_2d(ix, iy) {
@@ -755,7 +739,6 @@ module stand_box() {
                 union() {
                     box_prism();
                     if (grip_depth > 0 && grip_style != "none") box_ribs();
-                    if (stand_tail > 0) box_tail();
                 }
                 below_head();
             }

@@ -87,5 +87,5 @@ Back to the [README](README.md).
 | **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
 | **Box's top band cracks at a lock screw** | Screw overtightened | Snug only; print the box with more walls |
 | **Head won't go in the right way round** | Head turned 180° | The USB-C side goes to the box's tall back |
-| **It tips over when tapped** | Tall box, steep angle | Longer `stand_tail`, a lower `stand_angle`, or a flatter battery; rubber feet stop sliding, not tipping |
+| **It tips over when tapped** | Tall box, steep angle | A lower `stand_angle`, or a flatter battery (the 802525 box is the steadiest) |
 | **Too steep or too flat** | Taste | `stand_angle`, 10–45° |

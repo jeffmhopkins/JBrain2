@@ -107,10 +107,9 @@ cover's shape:
   `extra_clearance`, but never lower at the front than `stand_front_min`.
 - **Stability.** Tilted back, the unit's weight sits near the middle of the box while a tap on
   the screen pushes backwards and down, so a plain box tips at well under 1 N at the screen's top
-  edge — less than a firm tap. The foot (`stand_tail`, 20 mm; 25 on the 104050) moves the back
-  edge it tips about back, and raises that to about 7 N for the 103035, 3.5 N for the 104050 and
-  out of reach for the 802525 (estimates: PETG at 85 % fill, a 40 g display). Its top slopes at
-  45°, so it prints without supports.
+  edge: about 0.6 N for the 103035, 0.7 N for the 802525 and 0.4 N for the 104050, where a firm
+  tap is 0.5–2 N (estimates: PETG at 85 % fill, a 40 g display). Pressing mid-screen is much
+  safer. A lower `stand_angle` or a flatter, lower cell helps.
 - **Printing.** The box's walls are vertical and its top slopes at 30°, so it prints on its
   bottom with no supports; the top band's walls lean at the stand angle, 60° from the bed at 30°,
   the same as the front shell's. The band is 1.1 mm at the ends and about 1.3 mm front and back.
