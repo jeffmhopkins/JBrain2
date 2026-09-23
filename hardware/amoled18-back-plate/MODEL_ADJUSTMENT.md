@@ -2,8 +2,7 @@
 
 > **Status:** Living · **Last verified:** 2026-09-23
 
-How to change the plate: another battery, a better fit to the case, a different grip. You never
-edit code — every number is a labelled field in a form. Back to the [README](README.md).
+How to change the plate: another battery, a better fit to the case, a different grip. You never edit code — every number is a labelled field in a form (the one exception is noted under the desk stand). Back to the [README](README.md).
 
 ## Opening it (first time)
 
@@ -41,7 +40,8 @@ edit code — every number is a labelled field in a form. Back to the [README](R
 | Plug fit, or no plug recesses | `plug_interference`, `plug_recess` | 4c. Hole plugs |
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
 | Export plugs instead of the plate | `part` | 6. Output |
-| Desk stand: tilt, box height, how the head fits the box | `stand_angle`, `stand_front_min`, `pocket_h`, `pocket_clear` | 7. Desk stand |
+| Desk stand: screen angle, box size | `desk_stand`, `stand_angle`, `stand_front_min`, `box_floor` | 7. Desk stand |
+| Desk stand: how the head fits the box | `pocket_wall`, `pocket_clear`, `stand_ledge` | 7. Desk stand |
 | See the battery in the preview | `show_battery` | 6. Output |
 
 The sections below show what each of these is on the part.
@@ -153,33 +153,56 @@ source; measuring them on the original black cover makes a keeper fit first time
 
 ## Desk stand
 
-Pick **Desk stand: box for …** from the preset drop-down, or tick `desk_stand` (group 7) on any
-version. `part` then chooses the piece: `plate` gives the **head**, `box` the **box**, and
-`stand` shows both put together (for looking at, not exporting). The battery fields (group 1)
-work exactly as for the plate: set your cell and orientation, and the box grows to fit it.
-`show_battery` ghosts it in the box.
+Pick **Desk stand: head** or **Desk stand: box for …** from the preset drop-down, or tick
+`desk_stand` (group 7) on any version. `part` then chooses the piece: `plate` gives the **head**,
+`box` the **box**, and `stand` shows both put together (for looking at, not exporting). The
+battery fields (group 1) work exactly as for the plate: set your cell and orientation, and the box
+grows to fit it. `show_battery` ghosts it in the box. The head doesn't depend on the battery, so
+one head fits every box.
 
-![The desk stand cut open](renders/stand-section-103035.png)
+### The box
 
-| Field | What it does |
-|---|---|
-| `stand_angle` | How far the screen tilts up from flat, 10–45° (30 by default) |
-| `stand_front_min` | The lowest the box's front edge may be. The box is as low as the battery allows, but never lower than this |
-| `pocket_h` | How deep the head sits in the box's pocket. It must stay under 3.5 mm, or the pocket hits the front shell |
-| `pocket_clear` | Gap between the head and the pocket, each side. Raise by 0.1 if the head won't go in; lower if it rattles |
-| `pocket_wall` | Thickness of the pocket's wall |
-| `stand_ledge` | Width of the box's wall top the head's back rests on. Wider = firmer, but less room for the battery |
-| `box_floor` | Thickness of the box's floor |
-| `open_top` | Leaves the pocket open along the top edge, clear of the USB-C plug and the buttons |
+![The desk stand from the side: its heights and angle](renders/fig-stand-side.png)
 
-The console reports the box's size, its front and back height, the room each side of the cell,
-and the screws to buy. The cell always sits against the tall back wall, where there's most
-height; pack the space in front of it with foam. A cell stood on its `end` makes the tallest box,
-`flat` the lowest.
+| Field | What it is | Change it when |
+|---|---|---|
+| `stand_angle` | How far the screen leans back from upright, 10–45° | Taste. More lean makes the box longer |
+| `stand_front_min` | The shortest the box's top may be (the short wall under the USB-C edge) | The box is as short as the battery allows, but never shorter than this |
+| `box_floor` | Thickness of the box's floor | Rarely |
+
+The cell always lies on the long flat wall the box rests on, where there's most room; pack the space in
+front of it with foam. A cell stood on its `end` makes the longest box, `flat` the shortest.
 
 | 103035 on edge | 802525 flat | 104050 on end |
 |---|---|---|
 | ![](renders/stand-section-103035.png) | ![](renders/stand-section-802525.png) | ![](renders/stand-section-104050.png) |
 
-Grip ribs (group 5b) go round the box too, below its front edge. The head has none: it's hidden
-in the pocket.
+### How the head fits the box
+
+![Where the head sits in the box, cut through a side wall at a lock screw](renders/fig-stand-joint.png)
+
+| Field | What it is | Change it when |
+|---|---|---|
+| `pocket_wall` | The box's wall round the head at its rim, which the front shell sits on (0.8–1.3). The head is this much (plus `pocket_clear`) smaller than the case each side | Rarely. The default 1.1 is already the most the head's rim allows; go thinner only to give the head more room |
+| `pocket_clear` | Gap between the head and the box, each side (0.05–0.25) | Head won't go in: raise by 0.05. Rattles: lower |
+| `stand_ledge` | Width of the step inside the box the head's back rests on | Wider is firmer but leaves less room for the battery (the 104050 box uses 0.8) |
+
+The head can't shrink past its own rim, so `pocket_wall` + `pocket_clear` together can't go above
+1.35; the console stops with `RIM IS LARGER THAN THE HEAD` if they do. The box's outside is always
+the case outline (`plate_x`, `plate_y`, `plate_r`), so the front shell sits flush whatever these are.
+
+### What the console tells you
+
+The head's size; the box's size as it lies on the table; the whole unit's size with the display
+on; the hex key reach; the room each side of the cell; and the screws to buy. The same `TIGHT` and
+`DOES NOT FIT` warnings as the plate, and it refuses to export a box the cell doesn't fit.
+
+### Measuring for the desk stand
+
+| Measure | Why |
+|---|---|
+| The front shell's outside, if it isn't flush with the box | The box's outside is the case outline: correct `plate_x`, `plate_y`, `plate_r` ([outline](#outline-and-screw-positions)) |
+| Where the board's `BAT` socket is, and which way its mouth faces | The head's slot sits just in front of it, taken from Waveshare's 3D model ([figure](renders/fig-stand-head.png)). If your board differs, the slot's position is in `head_holes()` in the `.scad` — the one place you'd edit code |
+
+Grip ribs (group 5b) go round the box too, clear of its angled end. The head has none: it's hidden
+inside the box.

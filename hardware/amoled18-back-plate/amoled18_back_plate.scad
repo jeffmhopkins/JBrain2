@@ -186,27 +186,24 @@ grip_margin = 1.5;      // [0.5:0.5:5]
 
 /* [7. Desk stand (two parts)] */
 
-// Build the desk stand instead of the back plate: a thin head that screws to
-// the display like the stock cover, and a battery box whose angled top pocket
-// the head drops into, locked by one screw at each end. The unit sits in
-// landscape with the USB-C and buttons along the top edge, tilted up.
+// Build the desk stand instead of the back plate. A head that screws to the
+// display like the stock cover sinks right into the angled end of a battery box,
+// whose outside is flush with the case, and one screw at each side locks it. The
+// box lies on its long flat side; the screen leans back from upright, landscape,
+// with the USB-C and buttons along its top edge.
 desk_stand = false;
-// How far the display tilts up from flat
+// How far the screen leans back from upright
 stand_angle = 30;       // [10:1:45]
-// How deep the head sits into the box's pocket (must stay under the head's top edge)
-pocket_h = 3.0;         // [1.5:0.1:3.3]
-// Gap between the head and its pocket, each side. Raise if the head won't go in
-pocket_clear = 0.2;     // [0:0.05:0.6]
-// Pocket wall thickness around the head
-pocket_wall = 2.0;      // [1.2:0.1:4]
-// Width of the box's wall top the head's back rests on
-stand_ledge = 2.0;      // [1:0.1:5]
-// Lowest the box's front edge may be
+// The box's wall around the head at the top; the front shell sits on it
+pocket_wall = 1.1;      // [0.8:0.1:1.3]
+// Gap between the head and the box, each side. Raise if the head won't go in
+pocket_clear = 0.15;    // [0.05:0.05:0.25]
+// Width of the step inside the box the head's back rests on
+stand_ledge = 1.0;      // [0.6:0.1:4]
+// Shortest the box's top face may be (the face under the USB-C edge)
 stand_front_min = 8.0;  // [4:0.5:30]
 // Thickness of the box's floor
 box_floor = 2.0;        // [1.2:0.1:4]
-// Leave the pocket open along the top edge, clear of the USB-C plug and the buttons
-open_top = true;
 
 
 /* [6. Output] */
@@ -269,6 +266,14 @@ rim_in_x = rim_out_x - 2 * lip_wall;
 rim_in_y = rim_out_y - 2 * lip_wall;
 rim_in_r = max(0.3, rim_out_r - lip_wall);
 
+// In a desk stand the head sits inside the box's top, so it is smaller than the
+// case by the box's wall.
+head_x = desk_stand || part == "box" || part == "stand" ? plate_x - 2 * (pocket_wall + pocket_clear) : plate_x;
+head_y = desk_stand || part == "box" || part == "stand" ? plate_y - 2 * (pocket_wall + pocket_clear) : plate_y;
+// Its corners are tighter than the case's so the wall outside each screw bore stays thick.
+head_r = desk_stand || part == "box" || part == "stand"
+       ? max(1, min(plate_r - pocket_wall - pocket_clear, head_x / 2 - screw_dx)) : plate_r;
+
 // Straight walls whose inside is the rim's inside, so the rim stands on the
 // wall with nothing overhanging.
 cav_x = rim_in_x;
@@ -298,7 +303,8 @@ side_gap  = (cav_x - fx) / 2;
 end_gap   = (cav_y - fy) / 2;
 tower_gap = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - tower_r;
 // Same rule as the wall chamfer: keep 0.5 mm off the cell's bottom edge.
-flare = min(tower_flare, tape_t + max(0, tower_gap - 0.5));
+// A desk head holds no cell, so it is the same whatever the battery.
+flare = desk ? tower_flare : min(tower_flare, tape_t + max(0, tower_gap - 0.5));
 kx = cav_x/2 - cav_r;
 ky = cav_y/2 - cav_r;
 corner_gap = (fx/2 <= kx || fy/2 <= ky) ? min(side_gap, end_gap)
@@ -307,24 +313,27 @@ min_gap = min(side_gap, end_gap, tower_gap, corner_gap);
 // Real cells run up to about half a millimetre over their listed size.
 fits  = min_gap >= 0.2;
 tight = min_gap < 0.5;
-rim_fits      = (rim_out_x <= plate_x - 0.4) && (rim_out_y <= plate_y - 0.4);
-screws_inside = (screw_dx + tower_r < plate_x/2) && (screw_dy + tower_r < plate_y/2);
+rim_fits      = (rim_out_x <= head_x - 0.2) && (rim_out_y <= head_y - 0.2);
+screws_inside = (screw_dx + tower_r < head_x/2) && (screw_dy < head_y/2 - 1);
 
 // ---- desk stand -------------------------------------------------------
-// World frame: the table is z = 0, the viewer looks along +X, Y runs left to
-// right. The head's back face lies on a plane tilted up by stand_angle, and
-// the head's +x edge (USB-C and buttons) is the high, back edge.
+// The box is built in its print frame: standing on its floor at z = 0, its end
+// cut at stand_angle and rising toward +X, where its long flat wall is. In use
+// it lies on that long wall (stand_pose), which turns the cut end to face the
+// viewer with the screen leaning back stand_angle from upright. The head goes
+// in turned 180 degrees (stand_head_pose), so the display's USB-C edge (the
+// head's +x) is at the top.
 sc = cos(stand_angle);
 ss = sin(stand_angle);
 stand_margin = 0.5;     // cell to the box's rounded corners, in the head's plane
-p_out_x = plate_x / 2 + pocket_clear + pocket_wall;
-p_out_y = plate_y / 2 + pocket_clear + pocket_wall;
-p_out_r = plate_r + pocket_clear + pocket_wall;
+p_out_x = plate_x / 2;
+p_out_y = plate_y / 2;
+p_out_r = plate_r;
 // Box opening, as seen in the head's plane: the head's back rests on a ledge
 // stand_ledge wide all round. Seen from above it is squeezed by cos(angle).
-bhx = plate_x / 2 - stand_ledge;
-bhy = plate_y / 2 - stand_ledge;
-bhr = max(0.5, plate_r - stand_ledge);
+bhx = head_x / 2 - stand_ledge;
+bhy = head_y / 2 - stand_ledge;
+bhr = max(0.5, head_r - stand_ledge);
 // How far back the cell can go before its back corners reach the rounded
 // corners, in the plane (u) and from above (X).
 b_dy   = fy / 2 - (bhy - bhr);
@@ -340,30 +349,50 @@ top_needed = box_floor + tape_t + cell_h + foam_t + lead_space + extra_clearance
 stand_zh = max(top_needed - cell_x0 * ss / sc, stand_front_min + p_out_x * ss);
 box_front_h = stand_zh - p_out_x * ss;
 box_back_h  = stand_zh + p_out_x * ss;
+// Overall sizes, including the top band that leans forward with the head, and
+// with the display on (the stock unit is 15 mm thick: 11.5 above the seam).
+band_top_front = box_front_h + body_h * sc;
+band_top_back  = box_back_h + body_h * sc;
+box_depth  = p_out_x * sc + (p_out_x * sc + body_h * ss);
+unit_depth = p_out_x * sc + (p_out_x * sc + 15 * ss);
+unit_h     = stand_zh + p_out_x * ss + 15 * sc;
 box_side_gap = bhy - fy / 2;
 box_x_room   = cell_x0 + cell_x1;   // cell_x0 + b_ub*sc: room left at the front
 desk_fits  = b_dy <= b_room && box_side_gap >= 0.2 && box_x_room >= 0;
 desk_tight = box_side_gap < 0.5;
+// Floor chamfers, kept 0.5 mm off the cell's bottom edge like the plate's.
+// The cell stands against the long flat wall, so the chamfers along it and opposite stay
+// under the tape; the end chamfers can rise into the room beside the cell.
+box_cx = min(wall_chamfer, max(0, tape_t - 0.5));
+box_cy = min(wall_chamfer, max(0, tape_t - 0.5 + max(0, box_side_gap - 0.5)));
 m_head = [[sc, 0, -ss, 0], [0, 1, 0, 0], [ss, 0, sc, stand_zh], [0, 0, 0, 1]];
 
 if (desk) {
     echo("================ DESK STAND ================");
     echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
              " mm, ", on_end ? "standing on its end" : edge ? "standing on its edge" : "lying flat"));
-    echo(str("Tilt:               ", stand_angle, " degrees, USB-C and buttons on the top edge"));
-    echo(str("Box footprint:      ", 2 * p_out_x * sc, " (front to back) x ", 2 * p_out_y, " (left to right) mm"));
-    echo(str("Box height:         ", box_front_h, " mm at the front, ", box_back_h, " at the back"));
-    echo(str("Room around cell:   ", box_side_gap, " mm each side; it stands against the back wall"));
-    echo(str("Head:               ", total_h, " mm thick, sits ", pocket_h, " mm into the box's pocket"));
+    echo(str("Screen:             leans back ", stand_angle, " degrees from upright, USB-C and buttons on its top edge"));
+    echo(str("Head:               ", head_x, " x ", head_y, " x ", total_h,
+             " mm, the same for every box; it sinks into the box's top, its rim standing above"));
+    if (part != "plate") {
+        echo(str("Box:                ", band_top_back, " long x ", 2 * p_out_y, " wide x ", box_depth,
+                 " tall, lying on its long flat side (", band_top_front, " mm along its top)"));
+        echo(str("With the display:   ", unit_h, " long x ", 2 * p_out_y, " wide x ", unit_depth, " mm tall"));
+        echo(str("Room around cell:   ", box_side_gap, " mm each side; it lies on the box's long flat side"));
+    }
     echo(str("SCREWS:             4 x ", screw_size, " x 4 socket head (display to head), 2 x ",
-             screw_size, " x 6 (head to box, one each end)"));
+             screw_size, " x 6 pan or wafer head (head to box, one each side)"));
     echo("-------------------------------------------");
-    if (!desk_fits) echo("*** CELL DOES NOT FIT THE BOX - try another orientation or a smaller cell ***");
+    if (!rim_fits) echo("*** RIM IS LARGER THAN THE HEAD - lower pocket_wall or pocket_clear ***");
+    if (!desk_fits) echo(box_x_room < 0
+        ? "*** CELL DOES NOT FIT THE BOX - lower stand_angle, or use a smaller cell ***"
+        : "*** CELL DOES NOT FIT THE BOX - try another orientation or a smaller cell ***");
     if (desk_fits && desk_tight)
         echo(str("TIGHT: only ", box_side_gap, " mm spare. Measure the real cell before printing."));
-    if (desk_fits) echo("All checks passed.");
+    if (desk_fits && rim_fits) echo("All checks passed.");
     echo("===========================================");
     assert(desk_fits, "CELL DOES NOT FIT THE BOX - try another orientation or a smaller cell");
+    assert(rim_fits, "RIM IS LARGER THAN THE HEAD - lower pocket_wall or pocket_clear");
 } else {
     echo("================ BACK PLATE ================");
     echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
@@ -425,16 +454,17 @@ module chamfered(ix, iy, c) {
 }
 
 module solid_body() {
-    if (edge_chamfer > 0.05)
+    // A desk head's back edge rests on the ledge, so it stays square.
+    if (edge_chamfer > 0.05 && !desk)
         hull() {
             linear_extrude(height = eps)
-                rrect(plate_x - 2*edge_chamfer, plate_y - 2*edge_chamfer,
-                      max(0.1, plate_r - edge_chamfer));
+                rrect(head_x - 2*edge_chamfer, head_y - 2*edge_chamfer,
+                      max(0.1, head_r - edge_chamfer));
             translate([0, 0, edge_chamfer])
-                rbox(plate_x, plate_y, body_h - edge_chamfer, plate_r);
+                rbox(head_x, head_y, body_h - edge_chamfer, head_r);
         }
     else
-        rbox(plate_x, plate_y, body_h, plate_r);
+        rbox(head_x, head_y, body_h, head_r);
 
     if (lip_h > 0.05)
         translate([0, 0, body_h - eps])
@@ -587,25 +617,29 @@ module grip() {
 
 // ---- desk stand: the head -----------------------------------------------
 
-lock_y     = plate_y / 2 + pocket_clear + pocket_wall / 2;
-lock_z     = pocket_h / 2;
+lock_y     = head_y / 2 + pocket_clear + pocket_wall / 2;
+// Low in the band, so the hole's lower edge runs into the solid wall below.
+lock_z     = 1.0;
 lock_pilot = shaft_table[0] * 0.8;
-lock_len   = 6.5;
+// Deep enough for an M2 x 8 as well as the M2 x 6.
+lock_len   = 6.75;
 
 // A solid block inside each end wall for the lock screw to bite into.
 module lock_blocks() {
     for (sy = [-1, 1])
-        translate([-3, sy > 0 ? cav_y / 2 - 5 : -cav_y / 2 - eps, plate_t - eps])
-            cube([6, 5 + eps, body_h - plate_t + eps]);
+        let(l = lock_len + 0.8 - (head_y - cav_y) / 2)
+            translate([-3, sy > 0 ? cav_y / 2 - l : -cav_y / 2 - eps, plate_t - eps])
+                cube([6, l + eps, body_h - plate_t + eps]);
 }
 
 module head_holes() {
     for (sy = [-1, 1])
-        translate([0, sy * (plate_y / 2 + eps), lock_z])
+        translate([0, sy * (head_y / 2 + eps), lock_z])
             rotate([sy * 90, 0, 0]) cylinder(d = lock_pilot, h = lock_len);
-    // The battery's wires come up through the floor beside the board's BAT socket.
-    translate([-10, -3, -eps]) linear_extrude(height = total_h)
-        hull() for (dx = [-1.5, 1.5]) translate([dx, 0]) circle(d = 5);
+    // The battery's plug comes up through the floor just in front of the mouth of
+    // the board's BAT socket, which faces -y (Waveshare's 3D model).
+    translate([-12.15, -8.25, -eps]) linear_extrude(height = total_h)
+        hull() for (dx = [-1.25, 1.25]) translate([dx, 0]) circle(d = 4.5);
 }
 
 module back_plate() {
@@ -627,7 +661,7 @@ module back_plate() {
 
 // ---- desk stand: the box ------------------------------------------------
 
-// Everything the box has, seen from above: the head's outline squeezed by
+// Everything the box has, seen from above: the case outline squeezed by
 // cos(angle) front to back.
 module box_outline(grow = 0) {
     offset(r = grow) scale([sc, 1]) rrect(2 * p_out_x, 2 * p_out_y, p_out_r);
@@ -648,13 +682,14 @@ module box_prism() {
         linear_extrude(height = h) box_outline();
 }
 
-// The same bands as the plate's ribs, stopping below the box's lowest top edge.
+// The same bands as the plate's ribs, the whole length of the box; stand_box()
+// trims them grip_margin short of the angled end.
 module box_ribs() {
     flat  = max(0.4, grip_size - 2 * grip_depth);
     rib_h = 2 * grip_depth + flat;
     pitch = rib_h + grip_gap;
     z0    = grip_margin;
-    z1    = box_front_h - pocket_wall - grip_margin;
+    z1    = box_back_h + body_h;
     n     = floor((z1 - z0 - rib_h) / pitch) + 1;
     z_start = (z0 + z1) / 2 - ((n - 1) * pitch + rib_h) / 2;
     if (n > 0)
@@ -668,21 +703,37 @@ module box_ribs() {
                 }
 }
 
-// Stands on the head's plane and holds the head's edge; open along the top
-// edge so the USB-C plug and the buttons stay clear.
+// The box's top band: stands on the head's plane around the head, as tall as
+// the head's body, its outside the case outline so the front shell sits flush on it.
 module pocket_ring() {
     difference() {
-        translate([0, 0, -eps]) linear_extrude(height = pocket_h + eps)
+        translate([0, 0, -eps]) linear_extrude(height = body_h + eps)
             difference() {
-                rrect(2 * p_out_x, 2 * p_out_y, p_out_r);
-                rrect(plate_x + 2 * pocket_clear, plate_y + 2 * pocket_clear, plate_r + pocket_clear);
+                rrect(plate_x, plate_y, plate_r);
+                rrect(head_x + 2 * pocket_clear, head_y + 2 * pocket_clear, head_r + pocket_clear);
             }
-        if (open_top)
-            translate([plate_x / 2 - 1, -(plate_y / 2 - plate_r), -1])
-                cube([pocket_wall + 5, plate_y - 2 * plate_r, pocket_h + 2]);
+    }
+}
+
+module lock_holes() {
+    multmatrix(m_head)
         for (sy = [-1, 1])
             translate([0, sy * lock_y, lock_z]) rotate([90, 0, 0])
                 cylinder(d = shaft_d, h = pocket_wall + 2, center = true);
+}
+
+// Below the ledge, with a 45 degree chamfer of cx (front and back walls) or
+// cy (end walls) at the floor.
+module box_cavity_2d(ix, iy) {
+    scale([sc, 1]) rrect(ix, iy, max(0.5, bhr - max(2 * bhx - ix, 2 * bhy - iy) / 2));
+}
+
+module box_chamfered(cx, cy) {
+    hull() {
+        translate([0, 0, box_floor])
+            linear_extrude(height = eps) box_cavity_2d(2 * bhx - 2 * cx / sc, 2 * bhy - 2 * cy);
+        translate([0, 0, box_floor + max(cx, cy)])
+            linear_extrude(height = box_back_h) box_cavity_2d(2 * bhx, 2 * bhy);
     }
 }
 
@@ -690,35 +741,48 @@ module stand_box() {
     difference() {
         union() {
             intersection() {
-                union() {
-                    box_prism();
-                    if (grip_depth > 0 && grip_style != "none") box_ribs();
-                }
+                box_prism();
                 below_head();
             }
+            if (grip_depth > 0 && grip_style != "none")
+                intersection() {
+                    box_ribs();
+                    below_head(-grip_margin);
+                }
             multmatrix(m_head) pocket_ring();
         }
+        lock_holes();
         // Open to the head, whose back is the lid.
         intersection() {
-            translate([0, 0, box_floor])
-                linear_extrude(height = box_back_h) scale([sc, 1]) rrect(2 * bhx, 2 * bhy, bhr);
+            box_chamfered(box_cx, 0);
+            box_chamfered(0, box_cy);
             below_head(1);
         }
     }
 }
 
+// In use: the box on its long flat wall (and grip ribs), the cut end facing you.
+module stand_pose() {
+    translate([0, 0, p_out_x * sc + (grip_style != "none" ? grip_depth : 0)])
+        rotate([0, 90, 0]) children();
+}
+
+// The head in the box, turned so the display's USB-C edge ends up on top.
+module stand_head_pose() { multmatrix(m_head) rotate([0, 0, 180]) children(); }
+
 if (show_part) {
-    if (part == "box" || part == "stand") stand_box();
-    if (part == "stand") multmatrix(m_head) back_plate();
+    if (part == "box") stand_box();
+    if (part == "stand") stand_pose() { stand_box(); stand_head_pose() back_plate(); }
     if (part == "plate" || part == "both") back_plate();
     if (part == "plugs" || part == "both")
         translate([part == "both" ? plate_x/2 + 6 : 0, 0, 0]) plugs();
 }
 
-if (show_battery && (part == "box" || part == "stand"))
-    color("green", 0.35)
-        translate([cell_x0, -fy/2, box_floor + tape_t])
-            cube([fx, cell_y, cell_h]);
+if (show_battery && part == "box")
+    color("green", 0.35) translate([cell_x0, -fy/2, box_floor + tape_t]) cube([fx, cell_y, cell_h]);
+else if (show_battery && part == "stand")
+    color("green", 0.35) stand_pose()
+        translate([cell_x0, -fy/2, box_floor + tape_t]) cube([fx, cell_y, cell_h]);
 else if (show_battery && part != "plugs" && !desk)
     color("green", 0.35)
         translate([-fx/2, -fy/2, plate_t + tape_t])

@@ -10,7 +10,7 @@ Everything from buying parts to a finished unit. Back to the [README](README.md)
 |---|---|
 | **Battery** | 3.7 V single-cell LiPo matching your version (103035, 802525 or 104050) with a **1.25 mm two-pin plug** — sold as "MX1.25", "Micro JST 1.25" or "PicoBlade". A 2.0 mm "JST PH" plug won't fit the board: swap the plug or use an adapter. |
 | **4 × M2 × 4 socket head cap screws** | ISO 4762 / DIN 912, the round head with a hex socket. Don't go longer without reading [screw length](DESIGN.md#screws): too long presses on the display. |
-| **1.5 mm hex key or driver** | Must reach down a 4.6 mm hole: about 35 mm for the default, 11 mm for the flat version, 60 mm+ for the tall one. A screwdriver-style hex driver is easiest. |
+| **1.5 mm hex key or driver** | Must reach down a 4.6 mm hole: about 35 mm for the default, 15 mm for the flat version, 60 mm+ for the tall one (the console gives each). A screwdriver-style hex driver is easiest. |
 | **1 mm double-sided VHB tape** | Holds the battery to the floor. |
 | **1.5 mm foam** | Thin craft or gasket foam, on top of the battery and in the gaps. |
 | **2 mm drill bit** | Turned by hand, clears the thin skin at the top of each screw tower. |
@@ -96,36 +96,54 @@ The two-part version ([README](README.md#or-the-desk-stand)). Parts are the same
 |---|---|
 | **Head** | `amoled18_stand_head.stl`: one, whatever the battery |
 | **Box** | `amoled18_stand_box_<battery>.stl`, for your battery |
-| **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short hex key reaches: the towers are only 3.5 mm deep |
-| **2 × M2 × 6 screws** | Head to box, one each end. Socket head or pan head; they cut their own thread in the head |
+| **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short 1.5 mm hex key reaches: the towers are only 3.5 mm deep |
+| **2 × M2 × 6 pan head or wafer head screws** | Head to box, one each side. They cut their own thread in the head. A pan head stands about 1.3 mm proud of the box's side; a wafer (flat) head sits lower |
 | No plugs | The head's back is hidden inside the box |
 
-**Print** both with the settings in step 2. The head goes back face down, like the plate; the box
-stands on its bottom, as the file loads, its sloped top up. Neither needs supports.
+### Print
 
-![The box from above: the ledge the head rests on, the pocket around it, open along the top edge](renders/stand-box-top.png)
+Both with the settings in step 2. The head goes back face down, like the plate; the box stands
+on its bottom as the file loads, sloped top up. Neither needs supports.
 
-![The head from inside: the four screw towers, a solid block at each end for the lock screw, and the slot for the battery's wires](renders/stand-head.png)
+![The head back face down, the box on its bottom](renders/stand-print-bed.png)
 
-**Assemble** — the head screws to the display before it goes into the box, so the battery's
-plug has to go through the head first:
+The box's top band — the wall round the head, which the front shell sits on — is only 1.1 mm
+thick. Check the slicer preview shows it solid (two or three lines), as for the plate's rim.
 
-1. Clear the four towers in the head, as in step 3.
-2. **Battery into the box**: check its polarity (step 5), then tape it to the floor against the
-   tall back wall, wires toward whichever end the plug will reach best from.
-3. **Plug through the head**: feed the battery's plug up through the slot in the head's floor,
-   from the back, and into the board's `BAT` socket. The slot sits right beside the socket.
-4. **Head onto the display**: seat it on the front shell with the head's slot end under the
-   screen's bottom edge — the USB-C and buttons go on the *other* long side, the top. Screw it
-   on with the four M2 × 4 (step 6). Keep the box beside it while you work; the wire is short.
+![The box from above: the thin top wall the front shell sits on, and the ledge inside it the head rests on](renders/stand-box-top.png)
+
+### Assemble
+
+The head screws to the display before it goes into the box, and the battery's plug has to reach
+the board through the head, so it goes in this order:
+
+![The head from inside: the slot the plug comes up through, just in front of the board's BAT socket](renders/fig-stand-head.png)
+
+1. **Clear the towers** in the head, as in step 3.
+2. **Battery into the box**: check its polarity (step 5). With the box standing as it printed,
+   tape the battery to the floor, pushed against the long flat wall — the side the stand will
+   lie on. To find the wire end, stand on the long flat wall's side and look down into the box:
+   the wires go to your right, the same side as the head's slot.
+3. **Plug through the head**: with the head off, feed the battery's plug up through the slot in
+   the head's floor, from the back, then push it into the board's `BAT` socket. The socket's
+   mouth faces the slot, so the plug goes straight in.
+4. **Head onto the display**: seat it on the front shell. It only goes one way that works: the
+   slot sits beside the socket, near the screen's bottom edge, right of centre, and the USB-C
+   and buttons are on the top edge. Screw it on with the four M2 × 4 (step 6). Keep the box
+   beside it while you work; the wire is short.
 5. Lay the foam on the battery, tuck the spare wire into the box, and **lower the head into the
-   pocket** in the box's sloped top, USB-C side at the tall back.
-6. **Lock it**: drive an M2 × 6 through the hole at each end of the box into the head. Snug, not
-   tight — it's cutting its own thread in plastic.
+   box's sloped end**, USB-C side to the box's short wall — away from the long flat wall. It
+   sinks in until its back rests on the ledge inside and the front shell sits on the box's rim.
+6. **Lock it**: drive an M2 × 6 through the hole on each side of the box into the head. Snug,
+   not tight — it's cutting its own thread in plastic.
+7. **Lay it down** on its long flat side, screen facing you: the USB-C and buttons are now along
+   the top.
 
-![The desk stand cut open: the head resting on the box's ledge, the battery (green) against the back wall](renders/stand-section-103035.png)
+![How the head sits in the box, cut through a side wall at a lock screw](renders/fig-stand-joint.png)
 
-![From behind, apart: the head's lock holes and the USB-C on the top edge; the box's pocket is open along the top so the plug and buttons stay clear](renders/stand-back.png)
+![The desk stand as it sits, cut open: the head on the box's ledge, the battery (green) lying on the long flat side](renders/stand-section-103035.png)
+
+![Apart: the display on its head, and the box it sinks into; the USB-C and buttons are on the top edge](renders/stand-back.png)
 
 To charge, plug into the USB-C on the top edge; nothing needs taking apart. To take it apart,
-undo the two end screws and lift the head out.
+undo the two side screws and lift the head out.

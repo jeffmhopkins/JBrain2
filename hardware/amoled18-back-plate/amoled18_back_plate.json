@@ -47,7 +47,8 @@
             "lead_space": "3",
             "lead_end": "0",
             "desk_stand": "true",
-            "part": "box"
+            "part": "box",
+            "stand_ledge": "0.8"
         },
         "Desk stand: box for 802525 flat": {
             "battery_t": "8.6",
