@@ -82,6 +82,19 @@ static volatile bool s_held;
  * A flag set synchronously at the moment the audio starts cannot be missed by a reader that
  * runs later, which is the property the polled version did not have. */
 static volatile bool s_owed;
+/* A RUN: press once, hear everything waiting, oldest first.
+ *
+ * The owner: *"when multiple messages stack up it doesn't have a good way to show them."* One
+ * pop-up per message meant five messages were five pop-ups and five taps — tedious, and
+ * indistinguishable from the repeat bug even when it was working correctly.
+ *
+ * "Press once, hear everything" is how a four-year-old thinks, and the escape is the gesture
+ * this panel already has in two other places: A FINGER CANCELS. Touch during a run and it
+ * stops. Nothing new to teach, and the third use of the same rule.
+ *
+ * WHAT IS PLAYED IS ACKNOWLEDGED AS IT GOES, one message at a time, so stopping halfway leaves
+ * the rest genuinely unheard rather than silently consumed — the pop-up comes back for them. */
+static volatile bool s_run;
 /* The id the box gave it, held so `POST /played` can name it after the speaker finishes, and
    who it came from, which is what the repeat icon's caption says. Both are filled by the
    header handler below. */
@@ -331,6 +344,7 @@ done:
         if (audio_play((const int16_t *)s_in, (size_t)s_in_len)) {
             s_held = false;
             s_owed = true;
+            s_run = true;
             s_state = JPANEL_PLAYING;
             if (s_wait_count > 0) s_wait_count--;
             if (s_wait_count == 0) s_wait_from[0] = '\0';
@@ -392,6 +406,14 @@ static void jpanel_task(void *arg)
             s_owed = false;
             do_played();
             next_poll = 0;
+            /* STRAIGHT ON TO THE NEXT, if the child has not stopped the run. The one just
+               finished is acknowledged first — the order matters, because fetching before
+               acknowledging would hand back the same message again. */
+            if (s_run && s_wait_count > 0) {
+                do_fetch(true);
+            } else {
+                s_run = false;
+            }
         }
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         /* Never while the speaker is running: a poll is a TLS handshake, and the audio task
@@ -456,6 +478,7 @@ bool jpanel_play_next(void)
         if (!audio_play((const int16_t *)s_in, (size_t)s_in_len)) return false;
         s_held = false;
         s_owed = true;
+        s_run = true;
         s_state = JPANEL_PLAYING;
         /* Optimistic, and deliberately so: the count is what draws the pop-up, and leaving it
            up while the message plays would tell a child there is still one waiting. The next
@@ -479,6 +502,19 @@ bool jpanel_replay(void)
 {
     if (s_in == NULL || s_in_len < 2) return false;
     return audio_play((const int16_t *)s_in, (size_t)s_in_len);
+}
+
+/* Stop a run. The message sounding is cut and nothing more is fetched; whatever has not been
+   played is still unplayed on the box, so the pop-up returns for it. */
+void jpanel_stop(void)
+{
+    s_run = false;
+    audio_stop();
+}
+
+bool jpanel_running(void)
+{
+    return s_run;
 }
 
 void jpanel_poll_soon(void)

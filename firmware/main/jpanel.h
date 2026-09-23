@@ -60,6 +60,13 @@ int jpanel_waiting(char *from, size_t cap);
 jpanel_state_t jpanel_state(void);
 void jpanel_clear(void);
 
+/* A RUN IS PLAYING — one tap, every waiting message, oldest first. */
+bool jpanel_running(void);
+
+/* End a run on a finger: cut the message sounding and fetch no more. What was not played is
+   still unplayed on the box, so the pop-up comes back for it. */
+void jpanel_stop(void);
+
 /* Who the message in the buffer came from; "" when nothing has been played. */
 const char *jpanel_last_from(void);
 
