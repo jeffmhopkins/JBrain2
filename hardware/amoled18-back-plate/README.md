@@ -35,14 +35,16 @@ hidden inside. The box lies on its long flat side, and the screen faces you, lan
 back 30° from upright, with the USB-C and buttons along its top edge.
 The head is the same for every box, so changing battery only means printing another box.
 
-| | 103035, 1000 mAh (recommended) | 802525, 400 mAh | 104050, 2400 mAh |
+| | [**103035, 1000 mAh**](renders/stand-section-103035.png) (recommended) | [802525, 400 mAh](renders/stand-section-802525.png) | [104050, 2400 mAh](renders/stand-section-104050.png) |
 |---|---|---|---|
+| | ![](renders/stand-section-103035.png) | ![](renders/stand-section-802525.png) | ![](renders/stand-section-104050.png) |
 | Print | `amoled18_stand_head.stl` + `amoled18_stand_box_103035_edge.stl` | head + `amoled18_stand_box_802525_flat.stl` | head + `amoled18_stand_box_104050_end.stl` |
 | Box | 46 × 45 × 34 mm | 34 × 45 × 34 mm | 70 × 45 × 34 mm |
 | With the display on | 56 × 45 × 40 mm | 44 × 45 × 40 mm | 80 × 45 × 40 mm |
 | Notes | Roomy | Shortest | Tight fit — measure the cell first |
 
-Sizes are front to back × left to right × height, as it sits on the table. How to print and assemble it:
+Each is cut open as it sits on the table, you on the right: battery green, tape red, foam yellow.
+Sizes are front to back × left to right × height. How to print and assemble it:
 [PRINTING.md](PRINTING.md#desk-stand).
 
 ## The guides
