@@ -780,6 +780,28 @@ static uint32_t s_repeat_until;
  * the clock forever and never shrink. */
 #define POPUP_BIG_MS 15000
 static uint32_t s_popup_since;
+
+/* A TOUCH THAT MAKES A SOUND AND STILL PLAYS AT ONCE.
+ *
+ * The owner asked for a sound on these two controls and the first attempt produced none, on an
+ * argument that was simply wrong: the cue was made conditional on nothing already sounding, and
+ * once the prefetch landed the message ALWAYS starts on the same frame — so the condition was
+ * never true. "The message is its own acknowledgement" is not an answer to a four-year-old who
+ * pressed something; the press has to answer.
+ *
+ * The real constraint is that `audio_play` refuses while anything else sounds, so a cue and a
+ * message cannot overlap: an unconditional cue would simply eat the message. So the cue plays
+ * and the audio is DEFERRED by one speaker — `CUE_BLIP` is 55 ms, which is under the 100 ms a
+ * press and its sound can be apart and still feel like one event, and far under the ~2 s this
+ * release removed.
+ *
+ * A DEADLINE, because a deferral that never fires is a button that did nothing. If the speaker
+ * is somehow still busy after this, the action is dropped rather than firing late into silence
+ * a child has stopped associating with their finger. */
+#define PENDING_MS 1500
+typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY } pending_t;
+static pending_t s_pending;
+static uint32_t s_pending_until;
 /* Where the pop-up and the repeat icon were drawn, in the space they were drawn in — which
    is NOT the space `panel_to_frame` hands back; see `tap_to_overlay` immediately below. Both
    are rectangles; -1 in the first slot means not on screen. */
@@ -1757,19 +1779,10 @@ static void face_task(void *arg)
                        `jpanel_play_next` refuses that one — so the child would be pressing a
                        button that had stopped working. */
                     s_popup_box[0] = -1;
-                    const bool went = jpanel_play_next();
-                    if (!went) ESP_LOGW(TAG, "jpanel: busy, not fetching");
-                    /* A SOUND ON THE PRESS, and only when the message did NOT start at once.
-                     *
-                     * The owner asked for a sound on this touch, and the obvious reading —
-                     * always beep — is wrong now that the audio usually starts on the same
-                     * frame: `audio_play` refuses while anything else is sounding, so the
-                     * acknowledgement would be the thing that swallowed the message. The
-                     * message IS the acknowledgement when it plays immediately.
-                     *
-                     * It is exactly the slow path that needed the sound anyway — the tap that
-                     * has to wait for a fetch is the one that felt unanswered. */
-                    if (sound && !audio_playing()) audio_cue(went ? CUE_HEARD : CUE_OOPS);
+                    /* The press sounds FIRST and the message follows it — see `PENDING_MS`. */
+                    if (sound) audio_cue(CUE_HEARD);
+                    s_pending = PEND_PLAY;
+                    s_pending_until = now + PENDING_MS;
                     dirty = true;
                     goto tap_done;
                 }
@@ -1778,7 +1791,13 @@ static void face_task(void *arg)
                     /* Replayed from this panel's own buffer — no box, no network — so it
                        works when the link is down, which is when a child is most likely to be
                        asking what she said. */
-                    if (jpanel_replay()) s_repeat_until = now + REPEAT_MS;
+                    /* Same shape as the pop-up: a sound for the finger, then the audio. This
+                       had NO cue at all, which made the one control a child presses when they
+                       missed something the one that answered with silence. */
+                    if (sound) audio_cue(CUE_HEARD);
+                    s_pending = PEND_REPLAY;
+                    s_pending_until = now + PENDING_MS;
+                    s_repeat_until = now + REPEAT_MS; /* they are still asking; keep it up */
                     dirty = true;
                     goto tap_done;
                 }
@@ -2278,6 +2297,23 @@ static void face_task(void *arg)
             ESP_LOGW(TAG, "talk: no reply");
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
+        }
+        /* THE DEFERRED HALF OF A TOUCH: the cue has finished, so the audio it announced starts
+           now. Checked every frame rather than on a timer, so it fires on the first frame the
+           speaker is free — the 55 ms cue and this are what a child experiences as one press. */
+        if (s_pending != PEND_NONE) {
+            if (!audio_playing()) {
+                if (s_pending == PEND_PLAY) {
+                    if (!jpanel_play_next()) ESP_LOGW(TAG, "jpanel: busy, not fetching");
+                } else if (!jpanel_replay()) {
+                    ESP_LOGW(TAG, "jpanel: nothing to replay");
+                }
+                s_pending = PEND_NONE;
+                dirty = true;
+            } else if (now > s_pending_until) {
+                ESP_LOGW(TAG, "jpanel: speaker never freed — dropping the tap");
+                s_pending = PEND_NONE;
+            }
         }
         /* WHAT THE BOX SAID ABOUT THE MESSAGE, answered in sound because the child who sent
            it is four and the screen is showing a pet. Each outcome gets its OWN cue: "it
