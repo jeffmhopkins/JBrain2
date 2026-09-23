@@ -491,7 +491,29 @@ costs two rewrites.
 - **The movement threshold** for waking. It has to be picked against a panel on a bedside table,
   not reasoned about here; the part is noisy enough at rest that §10.4af spent three releases
   on it.
-- **Retention.** 30 days after playing is a proposal. Unplayed-forever is not.
+- ~~**Retention.**~~ **BUILT.** `jbrain/jpanel/sweep.py`, a lifespan loop beside the
+  guided-intake reaper, every six hours. Played messages go 30 days after they were **played**
+  — not after they were sent, so a year-old message the owner listened to this morning is a
+  message from this morning as far as retention is concerned. Unplayed rows are not swept at
+  any age, which is the half that mattered: a message nobody has heard is a four-year-old's
+  words waiting on a wall, and `played_at IS NULL` is exactly that set. Thirty days is still
+  the proposal rather than a measured number, so it is one named constant.
+
+  **The audio is not the row's to delete.** Rows are deleted and committed first, and only
+  then is each digest offered for collection through `blob_referenced` — a message whose file
+  is also an unheard message's, or the owner's chat attachment of the same clip, keeps its
+  file. Which is how this turned up a live fault: **`app.jpanel_message.blob_sha256` was never
+  registered in `BLOB_REFERENCES`**, though migration 0208 added it and `blob_refs.py` says in
+  its own header that a blob column joins that list in the same PR. Nothing had gone wrong
+  yet, because nothing had deleted a digest these rows share — but a delete anywhere else on
+  the box would have unlinked a child's voice message, with a 200 on the delete and a 500 when
+  she pressed play. Registered now, and the sweep's test fails when the entry is removed.
+
+  That module also claimed an omission of this kind "cannot be tested from the other side,
+  because the omission is an absence". It can, from *this* side: ask the schema which columns
+  look like digests and require each to be registered or explicitly named as something else.
+  `test_sdr_recordings_rls.py` does, so the next table added and forgotten fails CI rather
+  than the owner's disk.
 - **More than two panels.** The refusal rule above is safe but unhelpful; addressing by name
   needs the twins' names in the offline vocabulary, which the owner has deferred.
 - **Panel-to-panel post could never have worked, for two reasons found on the live box**

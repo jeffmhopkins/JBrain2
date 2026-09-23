@@ -17,11 +17,19 @@ attachment's download 500s. The same holds for a portrait, an image, a note atta
 **What happens if you add a blob-holding table and do not add it here.** Nothing, until
 something deletes a blob — and then that feature's files start disappearing under it,
 silently, with a 200 on the delete that caused it and a 500 on the read that finds out.
-There is no test that can catch the omission from the other side, because the omission is
-an absence. So: a migration that adds a column holding a `blobs.put(...)` digest adds a
-row to `BLOB_REFERENCES` in the same PR. `test_blob_refs.py` guards the shape of the list
-and `test_sdr_recordings_rls.py` runs it against the real schema, so a table or column
-named wrongly here fails CI rather than the owner's disk.
+So: a migration that adds a column holding a `blobs.put(...)` digest adds a row to
+`BLOB_REFERENCES` in the same PR.
+
+This paragraph used to end "there is no test that can catch the omission from the other
+side, because the omission is an absence", and that was wrong twice over. It was wrong in
+fact — `app.jpanel_message.blob_sha256` arrived with migration 0208 and sat unregistered,
+so a digest shared with a chat attachment would have unlinked a four-year-old's voice
+message — and it was wrong in principle: an absence is catchable from THIS side, by asking
+the schema which columns look like digests and requiring each to be registered or named as
+something else. `test_sdr_recordings_rls.py` does exactly that now, alongside running every
+clause against the real schema; `test_blob_refs.py` guards the shape of the list. So a
+table added and forgotten, or one renamed out from under this, fails CI rather than the
+owner's disk.
 
 **This is a guard, not a refcount.** The right fix is for the store itself to count
 references, so that no caller can forget; that is a bigger change than a bug fix and is
@@ -105,6 +113,15 @@ BLOB_REFERENCES: tuple[BlobRef, ...] = (
         "a generated image (or the source it was edited from)",
     ),
     BlobRef("app.jlaunch_runs", "artifact_sha256 = :sha", "a jlaunch build artifact"),
+    # MISSED WHEN 0208 ADDED IT, which is precisely the failure this module's header
+    # describes: the migration that adds a blob column must add the row in the same PR, and
+    # this one did not. Nothing had gone wrong yet because nothing had deleted a digest these
+    # rows share — but the path was open. The owner downloads a voice message from the PWA,
+    # attaches it to a chat, deletes the attachment: identical bytes, identical digest, one
+    # file, and a four-year-old's message to her sister stops playing with a 500 that names
+    # nothing. Unplayed messages are kept indefinitely by design; they must also be kept
+    # ACTUALLY, not just as a row pointing at a file something else unlinked.
+    BlobRef("app.jpanel_message", "blob_sha256 = :sha", "a voice message between the twins"),
     BlobRef("app.entities", "image_sha = :sha", "an entity's portrait"),
     BlobRef("app.wiki_articles", "image_sha = :sha", "a wiki article's portrait"),
 )

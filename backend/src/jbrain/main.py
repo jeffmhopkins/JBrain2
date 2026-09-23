@@ -160,6 +160,7 @@ from jbrain.intake.repo import SqlIntakeRepo
 from jbrain.intake.sweep import intake_reaper_loop
 from jbrain.jcode import JcodeClient
 from jbrain.jlaunch import JlaunchClient
+from jbrain.jpanel.sweep import jpanel_retention_loop
 from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
@@ -1384,6 +1385,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         intake_reaper_task = asyncio.create_task(
             intake_reaper_loop(app.state.intake_repo, SYSTEM_CTX)
         )
+        # Voice-post retention: played messages age out after 30 days, unplayed ones never
+        # (JPANEL_PLAN.md §5 — a message nobody has heard is the one thing that must not
+        # evaporate). Needs the blob store as well as the database, because the audio is
+        # content-addressed and only `blob_refs` can say whether the file is still somebody
+        # else's too.
+        jpanel_retention_task = asyncio.create_task(
+            jpanel_retention_loop(maker, app.state.blob_store, SYSTEM_CTX)
+        )
         # JPet drives tick: advances the family wall-pet's needs on a clock, in the web
         # process (pure arithmetic, never the job queue → the pet takes second seat).
         # The broadcaster fans each tick/command state change out to the Wall + phone
@@ -1481,6 +1490,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()
         intake_reaper_task.cancel()
+        jpanel_retention_task.cancel()
         stranded_reaper_task.cancel()
         if vitals_sampler_task is not None:
             vitals_sampler_task.cancel()
