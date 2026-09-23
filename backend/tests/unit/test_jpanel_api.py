@@ -207,3 +207,62 @@ class TestTheOwnerFacingRoutesAreWhereThePwaLooks:
             "the PWA's recording cap no longer matches MAX_MESSAGE_MS, so a long message "
             "would be truncated on arrival with nothing said about it"
         )
+
+
+class TestDadsVoice:
+    """THE PREFIX THAT WAS MISSING, AND WHY NOTHING CAUGHT IT.
+
+    `DAD_VOICE` was "am_michael" and every message the owner sent arrived on the panel in the
+    PET'S voice — the one thing a separate voice exists to prevent, since a message from Dad in
+    the robot's voice teaches a four-year-old that the robot and their father are the same
+    thing.
+
+    `_resolve_kokoro_voice` returns the default for any id that does not start with `kokoro-`,
+    and the default is `CURATED_KOKORO_VOICES[0]`. That fallback is right on its side — a stale
+    id from an old client should render rather than error — and it is precisely why this was
+    invisible: the box logged a successful render, the panel played perfectly good speech, and
+    nothing said the voice had been swapped. The owner heard it.
+
+    So the rule and the roster are read out of the service rather than restated here. The two
+    live in different packages with different test runners and nothing else connects them."""
+
+    def _tts_source(self) -> str:
+        return (
+            Path(__file__).resolve().parents[3] / "deploy" / "tts-stt" / "tts_server.py"
+        ).read_text(encoding="utf-8")
+
+    def test_dads_voice_is_one_the_engine_will_actually_use(self) -> None:
+        src = self._tts_source()
+        prefix_match = re.search(r'KOKORO_ID_PREFIX = "([^"]+)"', src)
+        assert prefix_match is not None, "the voice id prefix moved; re-pin this test"
+        prefix = prefix_match.group(1)
+        assert jpanel.DAD_VOICE.startswith(prefix), (
+            f"{jpanel.DAD_VOICE!r} does not start with {prefix!r}, so _resolve_kokoro_voice "
+            "silently renders it in the DEFAULT voice — which is the pet's"
+        )
+
+        roster = re.search(r"CURATED_KOKORO_VOICES: tuple\[str, \.\.\.\] = \((.*?)\n\)", src, re.S)
+        assert roster is not None, "the curated voice roster moved; re-pin this test"
+        names = re.findall(r'"([a-z]{2}_[a-z]+)"', roster.group(1))
+        assert names, "no voice names parsed out of the roster"
+        assert jpanel.DAD_VOICE[len(prefix) :] in names, (
+            f"{jpanel.DAD_VOICE!r} is not in the engine's curated roster, so it falls back "
+            "to the default voice"
+        )
+
+    def test_dads_voice_is_not_the_one_the_pet_uses(self) -> None:
+        """The whole point. `CURATED_KOKORO_VOICES[0]` is both the pet's voice and the fallback,
+        so landing on it means either a deliberate mistake or the bug above returning."""
+        src = self._tts_source()
+        roster = re.search(r"CURATED_KOKORO_VOICES: tuple\[str, \.\.\.\] = \((.*?)\n\)", src, re.S)
+        assert roster is not None
+        default = re.findall(r'"([a-z]{2}_[a-z]+)"', roster.group(1))[0]
+        assert not jpanel.DAD_VOICE.endswith(default), (
+            f"Dad would speak in {default!r}, which is the pet's own voice"
+        )
+
+    def test_dads_voice_is_male(self) -> None:
+        """`am_`/`bm_` are Kokoro's male American and British prefixes. Not a style preference:
+        the cheapest possible signal to a four-year-old that this is a person and not the toy."""
+        name = jpanel.DAD_VOICE.split("-", 1)[-1]
+        assert name.startswith(("am_", "bm_")), f"{name!r} is not one of Kokoro's male voices"

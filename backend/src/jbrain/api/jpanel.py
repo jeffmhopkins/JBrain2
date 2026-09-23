@@ -58,7 +58,22 @@ MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
 # father arriving in the toy's own voice would teach a four-year-old that the robot and their
 # parent are the same thing. A different voice is the cheapest possible signal that this is a
 # person, and it costs one query parameter.
-DAD_VOICE = "am_michael"
+# DAD'S VOICE, AND THE `kokoro-` PREFIX IS NOT DECORATION.
+#
+# This said "am_michael" and every message from the owner arrived in the PET'S voice, which is
+# the exact thing a separate voice exists to prevent: a message from Dad in the robot's voice
+# teaches a four-year-old that the robot and their father are the same thing.
+#
+# `_resolve_kokoro_voice` in `deploy/tts-stt/tts_server.py` returns the DEFAULT for any id that
+# does not start with `kokoro-`, and the default is `CURATED_KOKORO_VOICES[0]` — af_heart, the
+# pet's own voice. That fallback is deliberate on its side (a stale id from an old client should
+# render rather than error) and it is exactly why this was silent: the box logged a successful
+# render, the panel played perfectly good speech, and nothing anywhere said the voice had been
+# swapped. It took the owner hearing it.
+#
+# Pinned by `test_dads_voice_is_one_the_engine_will_actually_use`, which reads the resolver's own
+# rule and roster out of that file rather than trusting this string.
+DAD_VOICE = "kokoro-am_michael"
 DAD_NAME = "Dad"
 
 

@@ -1703,11 +1703,23 @@ static void face_task(void *arg)
                 if (in_box(s_popup_box, ox, oy)) {
                     s_flinch = 1.0f;
                     /* Cleared the moment it is pressed, not when the audio arrives: a box
-                       that stays up through a two-second fetch invites a second press, and
+                       that stays up through a fetch invites a second press, and
                        `jpanel_play_next` refuses that one — so the child would be pressing a
                        button that had stopped working. */
                     s_popup_box[0] = -1;
-                    if (!jpanel_play_next()) ESP_LOGW(TAG, "jpanel: busy, not fetching");
+                    const bool went = jpanel_play_next();
+                    if (!went) ESP_LOGW(TAG, "jpanel: busy, not fetching");
+                    /* A SOUND ON THE PRESS, and only when the message did NOT start at once.
+                     *
+                     * The owner asked for a sound on this touch, and the obvious reading —
+                     * always beep — is wrong now that the audio usually starts on the same
+                     * frame: `audio_play` refuses while anything else is sounding, so the
+                     * acknowledgement would be the thing that swallowed the message. The
+                     * message IS the acknowledgement when it plays immediately.
+                     *
+                     * It is exactly the slow path that needed the sound anyway — the tap that
+                     * has to wait for a fetch is the one that felt unanswered. */
+                    if (sound && !audio_playing()) audio_cue(went ? CUE_HEARD : CUE_OOPS);
                     dirty = true;
                     goto tap_done;
                 }
