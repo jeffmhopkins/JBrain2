@@ -13,7 +13,7 @@ Everything from buying parts to a finished unit. Back to the [README](README.md)
 | **1.5 mm hex key or driver** | Must reach down a 4.6 mm hole: about 35 mm for the default, 11 mm for the flat version, 60 mm+ for the tall one. A screwdriver-style hex driver is easiest. |
 | **1 mm double-sided VHB tape** | Holds the battery to the floor. |
 | **1.5 mm foam** | Thin craft or gasket foam, on top of the battery and in the gaps. |
-| 2 mm drill bit (optional) | Clears the thin layer at the top of each screw tower. |
+| **2 mm drill bit** | Turned by hand, clears the thin skin at the top of each screw tower. |
 
 ## 2. Print
 
@@ -29,7 +29,7 @@ Everything from buying parts to a finished unit. Back to the [README](README.md)
 | Plugs | As laid out in their file, flat caps down; same material if you want them to match. |
 
 Everything that isn't straight up is sloped at 45° or less, so nothing needs support. The only
-flat overhang is one thin layer closing the top of each screw hole, which bridges cleanly — and
+flat overhang is a thin skin closing the top of each screw hole, which bridges cleanly — and
 which you clear in step 3.
 
 ![Bottom of the wall on the bed](renders/fig-floor-detail.png)
@@ -39,9 +39,9 @@ off, [TROUBLESHOOTING.md](TROUBLESHOOTING.md) says which number to change.
 
 ## 3. Clear the screw towers
 
-Each screw runs up a hollow tower, and its hole is closed at the top by one thin printed layer
-(`bridge_skin`) so the printer can bridge it. Push it through with a 2 mm drill turned by hand,
-or with the screw itself.
+Each screw runs up a hollow tower, and its hole is closed at the top by a thin printed skin
+(`bridge_skin`, two layers) so the printer can bridge it. Drill it through with a 2 mm bit turned by hand; the screw alone may
+struggle.
 
 ![Top of a screw tower: the thin layer to push through, the seat the screw head bears on, and the board's nut above](renders/fig-tower-top.png)
 

@@ -17,8 +17,8 @@ callout([x, 19.0, 35.4], [x, 21.4, 35.9], "brass nut on the board", v, s, "left"
 callout([x, 16.4, 31.6], [x, 13.8, 31.6], "screw head", v, s, "right", c = "DimGray");
 dim([x, 14.2, 32.6], [x, 14.2, 34.6], "", view = v);
 label([x, 13.9, 33.6], "head_seat 2", v, s, "right");
-callout([x, 19.3, 32.7], [x, 21.4, 32.0], "bridge_skin: push through", v, s, "left");
-callout([x, 20.2, 34.6], [x, 21.4, 34.8], "nut pad Ø4.5 (nut_pad_d)", v, s, "left");
-callout([x, 21.2, 34.1], [x, 21.4, 33.4], "0.5 step (nut_pad_h)", v, s, "left");
+callout([x, 19.3, 32.8], [x, 21.4, 31.6], "bridge_skin 0.4: drill through", v, s, "left");
+callout([x, 22.3, 32.6], [x, 23.4, 33.3], "front shell's wall sits here", v, s * 0.85, "left", c = "DimGray");
+callout([x, 20.6, 34.6], [x, 21.4, 34.6], "flat tower top presses the nut", v, s, "left");
 callout([x, 16.9, 29.0], [x, 13.8, 29.0], "bore Ø4.6", v, s, "right");
 label([x, 17.6, 38.3], "tower_drop 0: tower top level with the rim top", v, s, c = "DarkRed");
