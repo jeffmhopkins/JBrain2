@@ -80,9 +80,22 @@ static void trust(esp_http_client_config_t *hc)
 /* CHECKED, BECAUSE snprintf TRUNCATES SILENTLY AND A TRUNCATED CREDENTIAL IS A 401 — the
    same trap `talk.c` documents, and the same answer. Both strings come out of NVS with no
    length bound. */
+/* `/api/jpanel/…`, NOT `/api/endpoint/jpanel/…`, AND THE DIFFERENCE WAS A 404 ON EVERY CALL.
+ *
+ * `JPANEL_PLAN.md` §3b wrote the panel's routes under the device surface, beside
+ * `/endpoint/converse`, and W2 mounted the whole thing — panel routes and owner routes alike —
+ * under one `/jpanel` router instead. The plan was not re-read when the firmware was written,
+ * so this built, linked, passed every test there is, and would have failed silently on a
+ * panel: a 404 is indistinguishable from "nobody sent me anything" through `GET /waiting`, so
+ * the feature would have looked merely quiet.
+ *
+ * Caught by asking the live box rather than by reading either file — `/api/jpanel/waiting`
+ * answered 401 and `/api/endpoint/jpanel/waiting` answered 404. The paths are pinned from the
+ * other end now by `test_the_panel_facing_routes_are_where_the_firmware_looks`, because
+ * nothing on the host can check a URL this file builds. */
 static bool endpoint(char *url, size_t url_cap, char *auth, size_t auth_cap, const char *path)
 {
-    const int un = snprintf(url, url_cap, "%s/endpoint/jpanel%s", s_cfg->api, path);
+    const int un = snprintf(url, url_cap, "%s/jpanel%s", s_cfg->api, path);
     const int an = snprintf(auth, auth_cap, "Bearer %s", s_cfg->token);
     if (un < 0 || un >= (int)url_cap || an < 0 || an >= (int)auth_cap) {
         ESP_LOGE(TAG, "api url or token too long (%d, %d) — not sending", un, an);

@@ -5164,6 +5164,37 @@ arrival cue is the only one in the set that fires with nobody having touched or 
 it goes off in a bedroom, so it announces rather than demands. Both clear the suite's
 "no two cues are the same sound" check on their own.
 
+##### The 404 that would have looked like silence
+
+**Every jpanel call the firmware made was to a route that does not exist**, and it took asking
+the live box to find out. `JPANEL_PLAN.md` §3b put the panel's routes on the device surface at
+`/api/endpoint/jpanel/*`, beside `/endpoint/converse`, and said in as many words that it was
+the source of truth. W2 had mounted one `/jpanel` router carrying the panel's four routes and
+the owner's four together, so the live paths are `/api/jpanel/*`. W3's firmware was written
+from the plan.
+
+It built, linked, passed 4,045,509 host checks and produced a byte-compared image. **Nothing
+could have caught it**: the URL is assembled by `snprintf` inside a file that cannot be built
+on a host, and on a panel the symptom is not an error — `GET /waiting` returning 404 is
+indistinguishable from "nobody sent me anything", so the whole feature would have shipped
+looking merely quiet. A child would have said *"send dad a message"*, watched the blue dot,
+spoken, and been told it was sent.
+
+Found by probing the box directly: `/api/jpanel/waiting` answered **401**,
+`/api/endpoint/jpanel/waiting` answered **404**.
+
+Fixed toward what is deployed rather than the reverse — the backend is live, the PWA already
+calls it, and renaming production routes to match a document costs a redeploy for nothing. Auth
+is per-route (`PanelDep` against `OwnerDep`), so sharing a prefix with the owner's routes is not
+a hole; it does mean the device surface is no longer one prefix, which is worth weighing if a
+wall ever gates by path.
+
+**Pinned from the end that can run.** `test_the_panel_facing_routes_are_where_the_firmware_looks`
+reads the format string out of `firmware/main/jpanel.c` and asserts the four route paths on the
+router, so either side moving fails loudly. Verified by reintroducing the bug and watching it
+fail. The general lesson is the one §10.4 keeps relearning: a coupling that no single package
+can see needs a test that reads both ends.
+
 ##### What is known to be missing
 
 - **A panel cannot learn the other panel's name.** The blue indicator says `TO DAD`, or

@@ -208,7 +208,27 @@ clients of W2 and a route that moves under them costs two rewrites. This section
 source of truth; if an implementation disagrees with it, the implementation is wrong or this
 section gets edited first.
 
-### Panel-facing — `/api/endpoint/jpanel/*`, `Authorization: Bearer <device_key>`
+### Panel-facing — `/api/jpanel/*`, `Authorization: Bearer <device_key>`
+
+> **CORRECTED 2026-09-23, and the correction cost a bug.** This section said
+> `/api/endpoint/jpanel/*` — the device surface, beside `/endpoint/converse` — on the argument
+> that panel routes belong with the other panel routes. **W2 did not build it that way**: it
+> mounted one `/jpanel` router carrying both the panel's four and the owner's four, so the
+> panel's live paths are `/api/jpanel/*`. Nothing noticed, because the section above says this
+> contract is the source of truth and W3's firmware was written from it — so the panel asked
+> for `/api/endpoint/jpanel/waiting`, got a 404, and **a 404 there is indistinguishable from
+> "nobody sent me anything"**. The feature would have shipped looking merely quiet.
+>
+> Corrected to what is deployed rather than the reverse: the backend is live and the PWA
+> already calls it, and moving production routes to match a document buys nothing a rename
+> would not cost twice. Auth is per-route (`PanelDep` vs `OwnerDep`), so sharing a prefix is
+> not a hole — but it does mean the device surface is no longer one prefix, which is the thing
+> to weigh if a future wall ever gates by path.
+>
+> Pinned now from the end that can run: `test_the_panel_facing_routes_are_where_the_firmware_looks`
+> in `backend/tests/unit/test_jpanel_api.py` reads the URL out of `firmware/main/jpanel.c` and
+> fails if either side moves. Nothing on the host can check a URL the firmware builds, which is
+> why this went unseen through a clean build, a green host suite and a byte-compared image.
 
 | route | takes | gives |
 |---|---|---|
