@@ -79,35 +79,47 @@ the hex driver needs a 60 mm shaft.
 
 ## The desk stand
 
-![The desk stand cut open](renders/stand-section-103035.png)
+![The desk stand from the side](renders/fig-stand-side.png)
 
 Two parts, so the box stays a plain box and the part that meets the display stays the stock
 cover's shape:
 
 - **The head** is the plate at stock depth (5.5 mm) with no battery room: same rim, same four
-  towers, so it fits the front shell exactly as the stock cover does. It adds a solid block
-  inside each end for the lock screws and a slot through the floor beside the board's `BAT`
-  socket for the battery's wires. The board's `BAT` socket is on the side away from the USB-C,
-  which fixes which way round the head goes.
+  towers, so it fits the front shell exactly as the stock cover does. It is smaller than the case
+  by the box's top wall, with tighter corners (R5.55) so the wall outside each screw bore stays
+  1 mm thick. It adds a solid block inside each end for the lock screws, and a slot through the
+  floor just in front of the board's `BAT` socket, whose mouth faces the slot (from Waveshare's
+  3D model). The socket is on the side away from the USB-C, which fixes which way round the head
+  goes. Its back edge has no chamfer, so all of it bears on the ledge, and its tower flares don't
+  change with the battery, so one head fits every box.
 - **The box** is a straight-walled prism standing on the table. Its top is cut at `stand_angle`,
   rising to the back, and the head sinks into it: its back rests on a ledge `stand_ledge` wide
   inside, and round it the box's wall carries on up `pocket_wall` thick to the seam, where the
   front shell sits on it. The outside of that top band is the case outline, so box and front
-  shell are flush; the head is the case outline less that wall, and its rim stands above the
-  seam into the front shell as usual. Below the ledge the box is open under the head, so the
-  head's back is its lid, with the plate's 45° chamfer where its walls meet the floor.
+  shell are flush; the head's rim stands above the seam into the front shell as usual. Below the
+  ledge the box is open under the head, so the head's back is its lid. Where its walls meet the
+  floor there's a 45° chamfer, kept under the tape beside the cell as on the plate.
 - **Landscape, USB-C up.** The head's +x edge (USB-C and the two buttons) is the high back edge.
   Nothing of the box stands above the seam, so the USB-C plug and the buttons are clear.
 - **Box height.** The cell stands against the back wall, where the slope gives most height, as far
   back as its corners allow 0.5 mm from the rounded corners. The box is then made just tall
   enough that the head clears the cell's front top edge plus tape, foam, wires and
   `extra_clearance`, but never lower at the front than `stand_front_min`.
+- **Stability.** Tilted back, the unit's weight sits near the middle of the box while a tap on
+  the screen pushes backwards and down, so a plain box tips at well under 1 N at the screen's top
+  edge — less than a firm tap. The foot (`stand_tail`, 20 mm; 25 on the 104050) moves the back
+  edge it tips about back, and raises that to about 7 N for the 103035, 3.5 N for the 104050 and
+  out of reach for the 802525 (estimates: PETG at 85 % fill, a 40 g display). Its top slopes at
+  45°, so it prints without supports.
 - **Printing.** The box's walls are vertical and its top slopes at 30°, so it prints on its
   bottom with no supports; the top band's walls lean at the stand angle, 60° from the bed at 30°,
-  the same as the front shell's.
+  the same as the front shell's. The band is 1.1 mm at the ends and about 1.3 mm front and back.
 - **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
-  3.5 mm deep). The two M2 × 6 lock screws pass through the box's 1.1 mm top wall at each end
-  and cut their own thread about 4.7 mm into the head's end blocks.
+  3.5 mm deep). The two M2 × 6 lock screws pass through the box's top band at each end, 1 mm up
+  from the ledge so the lower half of the hole runs into the solid wall below, and cut their own
+  thread about 4.7 mm into the head's end blocks; the holes are deep enough for an M2 × 8.
+
+![The head from inside, with the BAT socket ghosted](renders/fig-stand-head.png)
 
 ## Where the numbers come from
 

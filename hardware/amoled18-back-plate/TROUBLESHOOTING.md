@@ -69,17 +69,23 @@ Back to the [README](README.md).
 
 ## Desk stand
 
-![The desk stand cut open](renders/stand-section-103035.png)
+![Where the head sits in the box](renders/fig-stand-joint.png)
 
 | Problem | Likely cause | Fix |
 |---|---|---|
 | **Console says `CELL DOES NOT FIT THE BOX`** | Cell too wide for the box, or its corners reach the rounded corners | Another `battery_orientation`; or lower `stand_ledge` a little |
-| **Head won't drop into the box** | Opening printed small | Raise `pocket_clear` by 0.1 and print the box again |
-| **Head rattles in the box** | Opening printed big | Lower `pocket_clear` by 0.1; or rely on the end screws |
-| **Head sits proud, rocking on the battery** | Foam too thick, or the cell is bigger than entered | Thinner foam; measure the cell and enter it, which makes the box taller |
-| **Lock screw won't bite** | Its hole in the head is too big | A longer screw (M2 × 8), or a drop of glue in the hole |
-| **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
-| **Battery plug won't reach the `BAT` socket** | Short wires | Tape the cell to the box's other end, nearer the slot; or extend the wires |
+| **…and suggests a lower `stand_angle`** | A wide cell doesn't fit front to back at a steep angle | Lower `stand_angle` |
+| **Console says `RIM IS LARGER THAN THE HEAD`** | `pocket_wall` + `pocket_clear` too big | Lower one of them |
+| **Head won't drop into the box** | Opening printed small | Raise `pocket_clear` by 0.05 and print the box again |
+| **Head rattles in the box** | Opening printed big | Lower `pocket_clear` by 0.05; the end screws hold it anyway |
 | **Front shell stands proud of the box** | Head not right down on the ledge | Check nothing (foam, wire) is under the head's back; thinner foam |
+| **Front shell overhangs the box, or the box sticks out** | The front shell's wall isn't 1.3 mm | Measure it and set `pocket_wall` to match |
+| **Head sits proud, rocking on the battery** | Foam too thick, or the cell is bigger than entered | Thinner foam; measure the cell and enter it, which makes the box taller |
+| **Plug won't go through the slot** | A bigger plug than the usual MX1.25 | Open the slot with a file; the plug only has to pass once |
+| **Plug won't reach the `BAT` socket** | Short wires | Tape the cell at the box's right-hand end, nearer the socket; or extend the wires |
+| **Lock screw won't bite** | Its hole in the head is too big | An M2 × 8 (the hole is deep enough), or a drop of glue |
+| **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
+| **Box's top band cracks at a lock screw** | Screw overtightened | Snug only; print the box with more walls |
 | **Head won't go in the right way round** | Head turned 180° | The USB-C side goes to the box's tall back |
+| **It tips over when tapped** | Tall box, steep angle | Longer `stand_tail`, a lower `stand_angle`, or a flatter battery; rubber feet stop sliding, not tipping |
 | **Too steep or too flat** | Taste | `stand_angle`, 10–45° |

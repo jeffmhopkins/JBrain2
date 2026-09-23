@@ -23,9 +23,11 @@ module display_unit() {
     color("Black") translate([0, 0, body_h + front_h - 0.1])
         linear_extrude(height = 0.2) rrect(plate_x - 3, plate_y - 3, plate_r - 1.5);
     // USB-C and the two buttons on the top edge
-    color("Silver") translate([plate_x / 2 - 1, -4.5, body_h + 3.5]) cube([1.3, 9, 3.2]);
+    color("Black") translate([plate_x / 2 - 1, 0, body_h + 5.1]) rotate([0, 90, 0])
+        linear_extrude(height = 1.2) hull() for (dy = [-3, 3]) translate([0, dy]) circle(d = 3.2);
     for (sy = [-1, 1])
-        color("Gainsboro") translate([plate_x / 2 - 0.5, sy * 10.5 - 2, body_h + 4]) cube([1, 4, 2]);
+        color("Gainsboro") translate([plate_x / 2 - 0.2, sy * 10.5, body_h + 5.1]) rotate([0, 90, 0])
+            linear_extrude(height = 0.6) hull() for (dy = [-1.5, 1.5]) translate([0, dy]) circle(d = 2);
 }
 
 cut("SteelBlue") stand_box();

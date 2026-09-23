@@ -29,19 +29,20 @@ a choking hazard**.
 ![The desk stand: the unit lies landscape, tilted up 30°, USB-C and buttons along the top](renders/stand.png)
 
 A two-part version for a desk. A thin **head** screws to the display in place of the stock
-cover, then sinks right into the angled top of a plain **battery box** that sits flat on the
-table, held by one screw at each end. The box's top edge is the case outline, so the front shell
-sits flush on it and the head is hidden inside. The unit lies landscape, tilted up 30°, with the USB-C and
-buttons on the top edge. The head is the same for every box, so changing battery only means
-printing another box.
+cover, then sinks right into the angled top of a plain **battery box** that sits on the table,
+held by one screw at each end. The box's top edge is the case outline, so the front shell sits
+flush on it and the head is hidden inside. The unit lies landscape, tilted up 30°, with the
+USB-C and buttons on the top edge; a foot at the back stops a tap on the screen tipping it over.
+The head is the same for every box, so changing battery only means printing another box.
 
 | | 103035, 1000 mAh (recommended) | 802525, 400 mAh | 104050, 2400 mAh |
 |---|---|---|---|
 | Print | `amoled18_stand_head.stl` + `amoled18_stand_box_103035_edge.stl` | head + `amoled18_stand_box_802525_flat.stl` | head + `amoled18_stand_box_104050_end.stl` |
-| Box, front / back height | 24 / 43 mm | 13 / 31 mm | 49 / 68 mm |
-| Notes | Roomy | Lowest | Tight fit — measure the cell first |
+| Box, front / back height | 27 / 46 mm | 16 / 34 mm | 51 / 70 mm |
+| With the display on | 60 × 45 × 56 mm tall | 60 × 45 × 44 mm tall | 65 × 45 × 80 mm tall |
+| Notes | Roomy | Lowest, steadiest | Tight fit — measure the cell first |
 
-Every box is 33 mm front to back and 45 mm wide, the case's own width. How to print and assemble it:
+Sizes are front to back × left to right × height, foot included. How to print and assemble it:
 [PRINTING.md](PRINTING.md#desk-stand).
 
 ## The guides
