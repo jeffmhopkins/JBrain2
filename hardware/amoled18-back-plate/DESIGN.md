@@ -77,17 +77,36 @@ per end, hence "measure first"; set `lip_wall` to 0.6 for 41.1 mm if it's over. 
 listing ships a JST PH 2.0 plug that needs swapping for 1.25 mm. The screws are the same M2 × 4;
 the hex driver needs a 60 mm shaft.
 
-## Tilted stand
+## The desk stand
 
-To lean back on a table, the unit has to rest on something ahead of its balance point, or it
-tips onto its face. `tilt_angle` cuts the plate's bottom-back corner flat, along a plane through
-the bottom edge of the seam with the front shell and rising toward the back at that angle. The
-unit stands on that edge and the sloped face; its weight (display and board in front, battery in
-the plate) falls between them. The slope's wall is `tilt_wall` thick, and the cavity is clipped
-behind it, so the deeper the plate, the more cavity it takes: only the thin flat-battery plates
-keep room for a cell. The cell moves up the cavity by itself when needed, and the fit check
-includes its distance from the sloped wall. The sloped face leans at `tilt_angle` from vertical
-when printed back face down, so it needs no support.
+![The desk stand cut open](renders/stand-section-103035.png)
+
+Two parts, so the box stays a plain box and the part that meets the display stays the stock
+cover's shape:
+
+- **The head** is the plate at stock depth (5.5 mm) with no battery room: same rim, same four
+  towers, so it fits the front shell exactly as the stock cover does. It adds a solid block
+  inside each end for the lock screws and a slot through the floor beside the board's `BAT`
+  socket for the battery's wires. The board's `BAT` socket is on the side away from the USB-C,
+  which fixes which way round the head goes.
+- **The box** is a straight-walled prism standing on the table. Its top is cut at `stand_angle`,
+  rising to the back, and that sloped face is where the head's back rests: on a ledge
+  `stand_ledge` wide all round, inside a pocket `pocket_h` deep. The box is open underneath the
+  head, so the head's back is its lid. Seen from above, the box is the head's outline squeezed
+  front to back by cos(angle), so its walls meet the head's edge exactly all round.
+- **Landscape, USB-C up.** The head's +x edge (USB-C and the two buttons) is the high back edge.
+  The pocket is left open along that edge's straight run so a cable plug and a finger on the
+  buttons stay clear; the ring on the other three sides stops the head sliding forward.
+- **Box height.** The cell stands against the back wall, where the slope gives most height, as far
+  back as its corners allow 0.5 mm from the rounded corners. The box is then made just tall
+  enough that the head clears the cell's front top edge plus tape, foam, wires and
+  `extra_clearance`, but never lower at the front than `stand_front_min`.
+- **Printing.** The box's walls are vertical and its top slopes at 30°, so it prints on its
+  bottom with no supports; the pocket's walls lean at the stand angle, 60° from the bed at 30°.
+  Its walls are about 4 mm thick at the top, so it has no wall chamfer inside.
+- **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
+  3.5 mm deep). The two M2 × 6 lock screws pass through the pocket's 2 mm end walls and 0.2 mm
+  gap and cut their own thread 3.8 mm into the head's end blocks.
 
 ## Where the numbers come from
 
