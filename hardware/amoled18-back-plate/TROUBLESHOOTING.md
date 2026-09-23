@@ -85,6 +85,6 @@ Back to the [README](README.md).
 | **Plug won't reach the `BAT` socket** | Short wires | Extend the wires (the cell has little room to move over) |
 | **Lock screw won't bite** | Its hole in the head is too big | An M2 × 8 (the hole is deep enough), or a drop of glue |
 | **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
-| **Box's top band cracks at a lock screw** | Screw overtightened | Snug only; print the box with more walls |
+| **The band round the box's angled end cracks at a lock screw** | Screw overtightened | Snug only; print the box with more walls |
 | **USB-C and buttons end up at the bottom** | Head in the box the wrong way round | The USB-C side goes to the box's short wall, away from the long flat side it lies on |
 | **Screen leans back too much or too little** | Taste | `stand_angle`, 10–45° |

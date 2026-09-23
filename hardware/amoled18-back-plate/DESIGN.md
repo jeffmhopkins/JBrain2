@@ -44,8 +44,8 @@ the same with four hollow towers:
 - The tower top is flat and full width (Ø7), level with the rim, and presses squarely on the
   nut. If it ever needs to stand clear of parts near a nut (Waveshare's 3D model has small ones
   about 3 mm from some), `nut_pad_h` raises a Ø4.5 pad around the nut instead.
-- A thin skin (`bridge_skin`, 0.4 mm — two layers) closes each bore so the printer can bridge it; it's
-  cleared at assembly.
+- A thin skin (`bridge_skin`, 0.4 mm — two layers) closes each bore so the printer can bridge it;
+  it's cleared at assembly.
 
 ![Top of a screw tower, with the screw, nut and board](renders/fig-tower-top.png)
 
@@ -86,12 +86,12 @@ cover's shape:
 
 - **The head** is the plate at stock depth (5.5 mm) with no battery room: same rim, same four
   towers, so it fits the front shell exactly as the stock cover does. It is smaller than the case
-  by the box's top wall, with tighter corners (R5.55) so the wall outside each screw bore stays
-  1 mm thick. It adds a solid block inside each short end (left and right in use) for the lock screws, and a slot through the
-  floor just in front of the board's `BAT` socket, whose mouth faces the slot (from Waveshare's
-  3D model). The socket is on the side away from the USB-C, which fixes which way round the head
-  goes. Its back edge has no chamfer, so all of it bears on the ledge, and its tower flares don't
-  change with the battery, so one head fits every box.
+  by the box's rim wall, with tighter corners (R5.55) so the wall outside each screw bore stays 1
+  mm thick. It adds a solid block for each lock screw inside its short ends (left and right in
+  use), and a slot through the floor just in front of the board's `BAT` socket, whose mouth faces
+  the slot (from Waveshare's 3D model). The socket is on the side away from the USB-C, which fixes
+  which way round the head goes. Its back edge has no chamfer, so all of it bears on the ledge,
+  and its tower flares don't change with the battery, so one head fits every box.
 - **The box** is a straight-walled prism, printed standing on its floor. Its open end is cut at
   `stand_angle`, and the head sinks into it: its back rests on a ledge `stand_ledge` wide inside,
   and round it the box's wall carries on `pocket_wall` thick to the seam, where the front shell
@@ -105,25 +105,27 @@ cover's shape:
   Nothing of the box stands past the seam, so the USB-C plug and the buttons are clear. Lying on
   a side 45 mm wide and as long as the box, it's low and steady.
 - **Box size.** The cell lies on that long flat wall, as far along it as its corners allow 0.5 mm
-  from the rounded corners. The box is then made just long enough that the head clears the
-  top of the cell (in the print frame) plus tape, foam, wires and `extra_clearance`, but its short wall is never shorter
-  than `stand_front_min`. The box is modelled in its print frame; `part = stand` shows it lying
-  as it's used (`stand_pose()` in the `.scad`).
+  from the rounded corners. The box is then made just long enough that the head clears the top of
+  the cell (in the print frame) plus tape, foam, wires and `extra_clearance`, but its short wall
+  is never shorter than `stand_front_min`. The box is modelled in its print frame; `part = stand`
+  shows it lying as it's used (`stand_pose()` in the `.scad`).
 - **Printing.** Standing on its floor, the box's walls are vertical and its cut end slopes at
   `stand_angle`, so it prints with no supports; the band's walls lean at that angle too, the
   same as the front shell's. The band is 1.1 mm at the sides and about 1.3 mm along the long and
   short walls.
 - **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
-  3.5 mm deep). The two M2 × 6 lock screws pass through the box's band at each side, 1 mm up
-  from the ledge so the hole's lower edge runs into the solid wall below, and cut their own
-  thread about 4.7 mm into the head's end blocks; the holes are deep enough for an M2 × 8.
+  3.5 mm deep). The four M2 × 6 lock screws, two at each side `lock_spread` (14 mm) apart, pass
+  through the box's band 1 mm up from the ledge, so the hole's lower edge runs into the solid wall
+  below, and cut their own thread about 4.7 mm into the head's lock blocks; the holes are deep
+  enough for an M2 × 8.
 
 ![The head from inside, with the BAT socket ghosted](renders/fig-stand-head.png)
 
 ## Where the numbers come from
 
-Sources: Waveshare's [dimension drawing](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.8)
-and [3D model](https://files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8/ESP32-S3-Touch-AMOLED-1.8-3D.zip)
+Sources: Waveshare's [dimension drawing](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.8) and
+[3D
+model](https://files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8/ESP32-S3-Touch-AMOLED-1.8-3D.zip)
 ([resources page](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.8/Resources-And-Documents)),
 and the photos in `photos/`. Copies are kept in [`reference/`](reference/README.md), with
 `reference/measure.py` to re-derive them. The 3D model has the board and display but not the case.

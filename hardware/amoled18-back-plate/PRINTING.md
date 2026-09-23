@@ -40,8 +40,8 @@ off, [TROUBLESHOOTING.md](TROUBLESHOOTING.md) says which number to change.
 ## 3. Clear the screw towers
 
 Each screw runs up a hollow tower, and its hole is closed at the top by a thin printed skin
-(`bridge_skin`, two layers) so the printer can bridge it. Drill it through with a 2 mm bit turned by hand; the screw alone may
-struggle.
+(`bridge_skin`, two layers) so the printer can bridge it. Drill it through with a 2 mm bit turned
+by hand; the screw alone may struggle.
 
 ![Top of a screw tower: the thin layer to push through, the seat the screw head bears on, and the board's nut above](renders/fig-tower-top.png)
 
@@ -97,7 +97,7 @@ The two-part version ([README](README.md#or-the-desk-stand)). Parts are the same
 | **Head** | `amoled18_stand_head.stl`: one, whatever the battery |
 | **Box** | `amoled18_stand_box_<battery>.stl`, for your battery |
 | **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short 1.5 mm hex key reaches: the towers are only 3.5 mm deep |
-| **2 × M2 × 6 pan head or wafer head screws** | Head to box, one each side. They cut their own thread in the head. A pan head stands about 1.3 mm proud of the box's side; a wafer (flat) head sits lower |
+| **4 × M2 × 6 pan head or wafer head screws** | Head to box, two each side. They cut their own thread in the head. A pan head stands about 1.3 mm proud of the box's side; a wafer (flat) head sits lower |
 | No plugs | The head's back is hidden inside the box |
 
 ### Print
@@ -107,8 +107,9 @@ on its bottom as the file loads, sloped top up. Neither needs supports.
 
 ![The head back face down, the box on its bottom](renders/stand-print-bed.png)
 
-The box's top band — the wall round the head, which the front shell sits on — is only 1.1 mm
-thick. Check the slicer preview shows it solid (two or three lines), as for the plate's rim.
+The band round the box's angled end — the wall round the head, which the front shell sits on — is
+only 1.1 mm thick. Check the slicer preview shows it solid (two or three lines), as for the
+plate's rim.
 
 ![The box from above: the thin top wall the front shell sits on, and the ledge inside it the head rests on](renders/stand-box-top.png)
 
@@ -134,8 +135,8 @@ the board through the head, so it goes in this order:
 5. Lay the foam on the battery, tuck the spare wire into the box, and **lower the head into the
    box's sloped end**, USB-C side to the box's short wall — away from the long flat wall. It
    sinks in until its back rests on the ledge inside and the front shell sits on the box's rim.
-6. **Lock it**: drive an M2 × 6 through the hole on each side of the box into the head. Snug,
-   not tight — it's cutting its own thread in plastic.
+6. **Lock it**: drive an M2 × 6 through each of the four holes, two on each side of the box,
+   into the head. Snug, not tight — it's cutting its own thread in plastic.
 7. **Lay it down** on its long flat side, screen facing you: the USB-C and buttons are now along
    the top.
 
@@ -146,4 +147,4 @@ the board through the head, so it goes in this order:
 ![Apart: the display on its head, and the box it sinks into; the USB-C and buttons are on the top edge](renders/stand-back.png)
 
 To charge, plug into the USB-C on the top edge; nothing needs taking apart. To take it apart,
-undo the two side screws and lift the head out.
+undo the four side screws and lift the head out.

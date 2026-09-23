@@ -62,5 +62,5 @@ run stand-section-104050.png src/fig_stand.scad $sec --camera=45,0,20,90,0,0,190
 run stand-box-top.png "$MODEL" --imgsize=900,700 --camera=0,0,24,35,0,250,200 -p "$PRESETS" -P "$B1"
 run fig-stand-side.png src/fig_stand_side.scad --projection=o --imgsize=1400,1000 --camera=36,0,22,90,0,0,215 -p "$PRESETS" -P "$B1"
 run fig-stand-joint.png src/fig_stand_joint.scad --projection=o --imgsize=1300,900 --camera=0,21.5,1.2,90,0,90,50 -p "$PRESETS" -P "$B1"
-run fig-stand-head.png src/fig_stand_head.scad --projection=o --imgsize=1300,950 --camera=-9,2,0,0,0,0,240 -p "$PRESETS" -P "$B1"
+run fig-stand-head.png src/fig_stand_head.scad --projection=o --imgsize=1500,1000 --camera=0,2,0,30,0,0,265 -p "$PRESETS" -P "$B1"
 run stand-print-bed.png src/fig_stand_print.scad --imgsize=1000,700 --camera=-15,0,10,50,0,15,260 -p "$PRESETS" -P "$B1"
