@@ -682,13 +682,14 @@ module box_prism() {
         linear_extrude(height = h) box_outline();
 }
 
-// The same bands as the plate's ribs, stopping below the box's lowest top edge.
+// The same bands as the plate's ribs, the whole length of the box; stand_box()
+// trims them grip_margin short of the angled end.
 module box_ribs() {
     flat  = max(0.4, grip_size - 2 * grip_depth);
     rib_h = 2 * grip_depth + flat;
     pitch = rib_h + grip_gap;
     z0    = grip_margin;
-    z1    = box_front_h - grip_margin;
+    z1    = box_back_h + body_h;
     n     = floor((z1 - z0 - rib_h) / pitch) + 1;
     z_start = (z0 + z1) / 2 - ((n - 1) * pitch + rib_h) / 2;
     if (n > 0)
@@ -740,12 +741,14 @@ module stand_box() {
     difference() {
         union() {
             intersection() {
-                union() {
-                    box_prism();
-                    if (grip_depth > 0 && grip_style != "none") box_ribs();
-                }
+                box_prism();
                 below_head();
             }
+            if (grip_depth > 0 && grip_style != "none")
+                intersection() {
+                    box_ribs();
+                    below_head(-grip_margin);
+                }
             multmatrix(m_head) pocket_ring();
         }
         lock_holes();
