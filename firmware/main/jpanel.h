@@ -56,6 +56,12 @@ bool jpanel_play_next(void);
    so a reader that sees a count sees a name that goes with it. */
 int jpanel_waiting(char *from, size_t cap);
 
+/* THE OTHER PANEL'S NAME, learned from the poll, "" when the box did not name one. Written
+   into `out` (up to `cap`), returns its length — so a caller can fall back in one test.
+   Empty is the normal answer on a box with one panel, or with three: it is only filled where
+   there is EXACTLY ONE other unit, which is the same rule addressing already follows. */
+int jpanel_sibling(char *out, size_t cap);
+
 /* Where the last request got to, and back to idle once the renderer has shown the outcome. */
 jpanel_state_t jpanel_state(void);
 void jpanel_clear(void);

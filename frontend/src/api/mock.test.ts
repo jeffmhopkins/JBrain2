@@ -648,10 +648,29 @@ describe("mock API", () => {
   // jpanel's fixture exists to exercise the states the real inbox will be full of: a
   // transcript the transcriber mangled, one it returned empty, and a twin who has not
   // sent anything yet.
+  it("serves a fleet with something actually wrong with it", async () => {
+    /* The fixture's job is to exercise the half of the card that matters. A mock where both
+       panels were healthy would validate a surface that only ever renders the boring case,
+       and the case this card exists for is the panel that has stopped reporting. */
+    const out = (await (await call("/api/endpoint/status")).json()) as {
+      panels: { name: string; version: string; age_s: number; report: Record<string, unknown> }[];
+    };
+    expect(out.panels).toHaveLength(2);
+    const [live, stale] = out.panels;
+    expect(live?.version).toBe("0.2.94");
+    // The reading that stops a sleeping panel being read as a stalled render task.
+    expect(live?.report.screen).toBe("dark");
+    expect(stale?.age_s).toBeGreaterThan(8 * 3600);
+    expect(stale?.report.blit_fail_total).toBeGreaterThan(0);
+  });
+
   it("serves jpanel messages grouped by panel, newest first", async () => {
     const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
     const ellie = out.panels.find((p) => p.name === "Ellie");
-    const mabel = out.panels.find((p) => p.name === "Mabel");
+    // BY ID, NOT BY NAME. The second twin's panel is unnamed in the fixture — which is the
+    // live box's own state and the case the rename control exists for — and a name is now a
+    // thing the owner can change from the screen, so it cannot be an identity here.
+    const mabel = out.panels.find((p) => p.device_id === "panel-mabel");
     expect(ellie?.unplayed).toBe(2);
     expect(mabel?.messages).toEqual([]);
     expect(mabel?.unplayed).toBe(0);
@@ -700,7 +719,7 @@ describe("mock API", () => {
     expect(sent.transcript).toBe("goodnight, see you in the morning");
 
     const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
-    const mabel = out.panels.find((p) => p.name === "Mabel");
+    const mabel = out.panels.find((p) => p.device_id === "panel-mabel");
     expect(mabel?.messages[0]?.id).toBe(sent.id);
     // Dad's own message is not something Dad has to play: the badge counts what the
     // panels sent HIM.

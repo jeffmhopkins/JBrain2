@@ -51,11 +51,23 @@ recorded as open rather than explained:
   form works in every one.
 - *The animation is broken* — `do a dance` and `do a burp` both play.
 
-What would answer it is the raw decode `speech.c` already computes when a phrase is heard and
-the command graph rejects it. It goes only to the serial console, which the owner has no way to
-reach (`CLAUDE.md` #10), because the `heard` ring that would carry it to the box holds **three**
-entries and ships with the 15-minute telemetry poll. Widening that ring is the prerequisite for
-fixing this, not an optimisation.
+What answers it is the raw decode `speech.c` already computes when a phrase is heard and the
+command graph rejects it — it records near misses as well as hits. The obstacle was never the
+measurement; it was the pipe. The `heard` ring held **three** entries and ships with the
+15-minute telemetry poll, so a whole play session of children shouting at a panel arrived as the
+last three things it thought it heard, and every attempt to look found it empty.
+
+**Widened to twelve in 0.2.91**, with consecutive identical decodes collapsed into one entry and
+a repeat count — a television saying one word, or a child saying "burp" eight times because it
+is not working, would otherwise flush the ring with eight copies of one fact and push out
+everything that explained it. The repetition is itself the signature of a false trigger, so it
+is kept rather than spent.
+
+So the next play session after 0.2.91 should answer this. What to look for in the telemetry:
+a `burp` entry with `fired: 0` says the recogniser heard it and the command graph rejected the
+decode; a raw decode of something else entirely says the pronunciation guess is wrong and
+`esp_mn_commands_phoneme_add()` is the lever; nothing at all says the microphone never resolved
+it as speech.
 
 `esp_mn_commands_phoneme_add()` (beside the plain-text `esp_mn_commands_add()` the firmware
 uses) is the lever if the cause turns out to be the built-in pronunciation guess; phonemes come

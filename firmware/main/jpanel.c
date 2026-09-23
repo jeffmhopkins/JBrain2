@@ -107,6 +107,14 @@ static char s_in_from[32];
 static char s_wait_from[32];
 static volatile int s_wait_count;
 
+/* THE OTHER PANEL'S NAME, which this device has no other way to learn — it is not in NVS,
+   because the box mints it at the SIBLING'S flash, and a panel that had to be re-flashed every
+   time its twin was named would be a cable for a fact. It rides the poll that was already
+   happening. Empty until the first successful poll, and empty forever where the box says there
+   is not exactly one other panel: with two siblings "the other one" is a question, not a name,
+   and a guess would put the wrong child on the glass. */
+static char s_sibling[32];
+
 static void trust(esp_http_client_config_t *hc)
 {
     if (s_cfg->ca != NULL && s_cfg->ca[0] != '\0') {
@@ -265,11 +273,18 @@ static void do_poll(void)
         if (root != NULL) {
             const cJSON *n = cJSON_GetObjectItemCaseSensitive(root, "count");
             const cJSON *f = cJSON_GetObjectItemCaseSensitive(root, "from_name");
+            const cJSON *sib = cJSON_GetObjectItemCaseSensitive(root, "sibling");
             const int count = cJSON_IsNumber(n) ? n->valueint : 0;
             /* Name first, then the count: see the declaration. */
             if (count > 0 && cJSON_IsString(f) && f->valuestring != NULL) {
                 strlcpy(s_wait_from, f->valuestring, sizeof(s_wait_from));
             }
+            /* Whatever the box says, including "" — a panel renamed out of the pair must
+               stop claiming a sibling, and an older box that does not send the field leaves
+               the word MESSAGE in place rather than a stale name. */
+            strlcpy(s_sibling, cJSON_IsString(sib) && sib->valuestring != NULL ? sib->valuestring
+                                                                              : "",
+                    sizeof(s_sibling));
             if (count != s_wait_count) ESP_LOGI(TAG, "waiting: %d from %s", count, s_wait_from);
             s_wait_count = count;
             if (count == 0) s_wait_from[0] = '\0';
@@ -534,6 +549,13 @@ int jpanel_waiting(char *from, size_t cap)
     const int n = s_wait_count;
     if (from != NULL && cap > 0) strlcpy(from, s_wait_from, cap);
     return n;
+}
+
+int jpanel_sibling(char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) return 0;
+    strlcpy(out, s_sibling, cap);
+    return (int)strlen(out);
 }
 
 jpanel_state_t jpanel_state(void)

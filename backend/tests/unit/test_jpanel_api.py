@@ -10,8 +10,11 @@ principals and that label is the only thing marking one.
 import re
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
+from jbrain.api import endpoint as endpoint_api
 from jbrain.api import jpanel
 
 
@@ -27,32 +30,33 @@ class TestDisplayName:
         assert jpanel._display_name("panel") == "the other one"
 
     def test_the_label_the_flash_route_actually_writes_is_one_this_understands(self) -> None:
-        """THE COUPLING, PINNED. A panel is reachable only if its label matches what this
-        module looks for, and the label is written somewhere else entirely — `/flash`, in
-        `endpoint.py`. Nothing connects the two but this test.
+        """THE COUPLING, AND IT IS A ROUND TRIP NOW RATHER THAN A REGEX.
 
-        The first cut matched `label LIKE 'panel%'` and therefore silently lost every unit
-        flashed WITHOUT a name, because that branch writes "room endpoint panel". The panel
-        would have enrolled, polled, and simply never been addressable, with nothing anywhere
-        saying why. So both branches of that expression are read out of the source and checked,
-        rather than remembered."""
+        A panel is reachable only if its label matches what the addressing looks for, and the
+        label is written somewhere else entirely — `/flash`, in `endpoint.py`. The first cut
+        matched `label LIKE 'panel%'` and therefore silently lost every unit flashed WITHOUT a
+        name, because that branch writes "room endpoint panel": the panel would enrol, poll,
+        and simply never be addressable, with nothing anywhere saying why.
+
+        This test used to read that expression out of `endpoint.py` with a regular expression,
+        which was the best available check while the two modules each spelled the convention
+        out. They no longer do — `jpanel` imports `panel_label`/`panel_display_name` rather
+        than restating them — so the two halves are now the same symbols and what is worth
+        asserting is that they compose: whatever `/flash` writes, the addressing reads back.
+        """
+        # The named branch, and the unnamed one, through the pair as the routes use them.
+        assert jpanel._display_name(endpoint_api.panel_label("Ellie")) == "Ellie"
+        assert jpanel._display_name(endpoint_api.panel_label("")) == "the other one"
+        assert endpoint_api.panel_label("") == jpanel._UNNAMED_LABEL
+        # And `/flash` really does write it through that function rather than its own literal,
+        # which is the one thing composing the pair here cannot prove.
         src = (
             Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api" / "endpoint.py"
         ).read_text()
-        match = re.search(r'label = (f"[^"]+"[^\n]*?if name else "([^"]+)")', src)
-        assert match is not None, "the /flash label expression moved; re-pin this test"
-        named, unnamed = match.group(1), match.group(2)
-
-        # The named branch: whatever prefix it uses must be one `_display_name` strips.
-        assert "panel" in named, f"/flash no longer labels a named panel with 'panel': {named}"
-        assert jpanel._display_name("panel Ellie") == "Ellie"
-
-        # The unnamed branch, verbatim from the source rather than typed again here.
-        assert unnamed == jpanel._UNNAMED_LABEL, (
-            f"/flash labels an unnamed panel {unnamed!r} and jpanel looks for "
-            f"{jpanel._UNNAMED_LABEL!r} — such a panel would never be addressable"
+        assert "label = panel_label(name)" in src, (
+            "/flash no longer labels a panel through `panel_label`; the convention has two "
+            "definitions again and an unnamed unit can go unaddressable without anything saying so"
         )
-        assert jpanel._display_name(unnamed) == "the other one"
 
 
 class TestNameOf:
@@ -290,3 +294,198 @@ class TestDadsVoice:
         the cheapest possible signal to a four-year-old that this is a person and not the toy."""
         name = jpanel.DAD_VOICE.split("-", 1)[-1]
         assert name.startswith(("am_", "bm_")), f"{name!r} is not one of Kokoro's male voices"
+
+
+class TestTheHeardRingCrossesThePackageBoundary:
+    """THE FIRMWARE FILLS IT AND THE BOX VALIDATES IT, AND NOTHING ELSE CONNECTS THEM.
+
+    `speech.c` builds the ring and `main.c` serialises it into the telemetry body; `TelemetryIn`
+    decides whether that body is accepted at all. A shape mismatch is not a soft failure: the
+    body 422s, and a 422 telemetry is a FAILED report — the panel keeps its crash ring and the
+    reading never arrives. From the box it looks exactly like a panel that had nothing to say.
+
+    This is the same class of coupling as the `/api/jpanel` route paths, which shipped broken
+    for a release because two packages disagreed and no test read both.
+    """
+
+    def _speech_source(self) -> str:
+        return (Path(__file__).resolve().parents[3] / "firmware" / "main" / "speech.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_box_accepts_both_the_old_and_the_new_entry_shape(self) -> None:
+        """A fleet upgrades one panel at a time, so both arities are live at once."""
+        from jbrain.api.endpoint import TelemetryIn
+
+        old = TelemetryIn(version="0.2.90", uptime_ms=1, heard=[("burp", 21, 1)])
+        assert len(old.heard) == 1
+
+        new = TelemetryIn(version="0.2.91", uptime_ms=1, heard=[("burp", 21, 1, 4)])
+        assert len(new.heard) == 1
+        # Through `list()` because the field is a union of both arities, and indexing position
+        # 3 is only valid on one of them — which is the point of the union.
+        assert list(new.heard[0])[3] == 4, "the repeat count must survive validation"
+
+        both = TelemetryIn(
+            version="0.2.91", uptime_ms=1, heard=[("burp", 21, 1), ("dance", 9, 0, 3)]
+        )
+        assert len(both.heard) == 2
+
+    def test_the_ring_is_deep_enough_to_outlive_a_poll(self) -> None:
+        """THE DEPTH IS THE WHOLE POINT OF THE CHANGE. Three entries were sized for a bench,
+        where the question is asked seconds later; the owner asks his from another room off a
+        poll that runs every fifteen minutes. `dance` and `burp` went undiagnosed because every
+        attempt to look found an empty ring (docs/reference/PANEL_COMMANDS.md).
+
+        Read out of the firmware so shrinking it back fails here rather than quietly costing
+        another evening of data."""
+        src = self._speech_source()
+        match = re.search(r"#define DECODE_MAX (\d+)", src)
+        assert match is not None, "DECODE_MAX moved; re-pin this test"
+        assert int(match.group(1)) >= 8, (
+            f"the ring holds {match.group(1)} decodes — too few to survive a fifteen-minute "
+            "poll with children shouting at the panel, which is the case it exists for"
+        )
+
+    def test_the_firmware_sends_the_repeat_count(self) -> None:
+        """Consecutive identical decodes collapse into one entry with a count, so a television
+        repeating one word cannot flush the ring. The count only helps if it is on the wire."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text(
+            encoding="utf-8"
+        )
+        assert '[\\"%s\\",%d,%d,%d]' in src, (
+            "the telemetry body no longer carries four fields per decode; the box accepts them "
+            "and nothing is sending them"
+        )
+
+
+class TestNamingAPanelWithoutACable:
+    """The rename, and the two packages it is coupled to at once.
+
+    A panel's name lives on the BOX — `/flash` writes `panel <name>` onto the device key it
+    mints — so a unit enrolled without one announces itself as "the other one" until somebody
+    re-flashes it over USB. That is a terminal by another name (CLAUDE.md #10), and the route
+    this class covers is what removes it.
+
+    What cannot be checked here is the SQL: the group rename runs against real Postgres in
+    `tests/integration/test_jpanel_rename_pg.py`, where the policies are. What CAN be checked
+    without a database is the name itself, and the name is constrained by a file two packages
+    away that nothing else connects to this one.
+    """
+
+    @staticmethod
+    def _font_source() -> str:
+        return (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_a_name_is_normalised_rather_than_taken_literally(self) -> None:
+        assert jpanel._panel_name("  Nora  ") == "Nora"
+        assert jpanel._panel_name("Mary   Jane") == "Mary Jane"
+
+    def test_a_name_the_panel_cannot_draw_is_refused_at_the_door(self) -> None:
+        """A character the 5x7 font has no cell for draws as NOTHING. A name with an
+        apostrophe would reach a four-year-old as a pop-up from someone missing a letter, and
+        the only person who can fix that is the owner, who is standing at the text box."""
+        for bad in ("O'Brien", "Zoë", "panel #2", "", "   "):
+            with pytest.raises(HTTPException) as caught:
+                jpanel._panel_name(bad)
+            assert caught.value.status_code == 422
+
+    def test_the_name_an_unnamed_panel_already_answers_to_is_reserved(self) -> None:
+        """Typed as a real name it would produce two panels that the PWA and the pop-up both
+        call "the other one" — the exact ambiguity this route exists to remove."""
+        with pytest.raises(HTTPException) as caught:
+            jpanel._panel_name("The Other One")
+        assert caught.value.status_code == 409
+
+    def test_every_character_the_route_allows_is_one_the_panel_can_draw(self) -> None:
+        """THE COUPLING, PINNED, AND IN THE DIRECTION THAT MATTERS. The allowed set is written
+        here and the glyphs are written in `firmware/main/font.c`; nothing but this test says
+        they have to agree. Read the glyph table out of the firmware rather than trusting a
+        transcription — a name accepted by the box and unrenderable by the panel is a bug with
+        no symptom on this side of the wire."""
+        src = self._font_source()
+        glyphs = {
+            # `{'A', {0x7E, ...}}` — the character literal each cell is keyed by. The space
+            # glyph is written `{' ', ...}` like any other, so one pattern finds them all.
+            match.group(1)
+            for match in re.finditer(r"\{'(.)', \{0x", src)
+        }
+        assert len(glyphs) > 30, "the glyph table did not parse; re-pin this test"
+        missing = {c for c in jpanel._PANEL_NAME_CHARS if c not in glyphs}
+        assert not missing, (
+            f"the rename accepts {sorted(missing)}, which the panel's font cannot draw — "
+            "a name with one of those in it reaches a child with a letter missing"
+        )
+
+    def test_the_cap_fits_the_buffer_the_panel_receives_it_in(self) -> None:
+        """`X-Jpanel-From` lands in a fixed `char s_wait_from[N]` and is drawn from there.
+        A name that overruns it arrives truncated — a name cut in half names nobody, which is
+        the same reason `draw_popup` shrinks rather than clips."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(r"static char s_wait_from\[(\d+)\];", src)
+        assert match is not None, "the panel's from-name buffer moved; re-pin this test"
+        assert int(match.group(1)) > jpanel.MAX_PANEL_NAME, (
+            f"names up to {jpanel.MAX_PANEL_NAME} characters are accepted into a "
+            f"{match.group(1)}-byte buffer"
+        )
+
+    def test_the_cap_fits_the_bubble_the_panel_draws_it_in(self) -> None:
+        """And the other end of the same name: the pop-up. `font_text_w` is
+        `(n * FONT_W + (n - 1)) * scale`, the bubble is `bw` wide with the padding
+        `draw_popup` subtracts before it decides to shrink — so the longest accepted name has
+        to fit at the shrunk scale, or it overruns the box it is centred in. All four numbers
+        are read out of the firmware rather than assumed."""
+        display = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+        font_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.h").read_text(
+            encoding="utf-8"
+        )
+        # Sliced to `draw_popup` first: the smaller badge drawn after fifteen seconds has its
+        # own `bw`, and a search over the whole file finds whichever comes first rather than
+        # the box the name is actually centred in.
+        start = display.index("static void draw_popup(")
+        popup = display[start : display.index("\n}", start)]
+        scale = re.search(r"#define POPUP_SCALE (\d+)", display)
+        box = re.search(r"const int bw = (\d+), bh = \d+;", popup)
+        pad = re.search(r"w > bw - (\d+) \?", popup)
+        width = re.search(r"#define FONT_W (\d+)", font_h)
+        assert scale and box and pad and width, "the pop-up's geometry moved; re-pin this test"
+        n = jpanel.MAX_PANEL_NAME
+        drawn = (n * int(width.group(1)) + (n - 1)) * int(scale.group(1))
+        assert drawn <= int(box.group(1)) - int(pad.group(1)), (
+            f"a {n}-character name draws {drawn} px wide into a "
+            f"{int(box.group(1)) - int(pad.group(1))} px bubble"
+        )
+
+    def test_the_panel_reads_the_sibling_name_this_poll_serves(self) -> None:
+        """The other half of the name, and the other direction of the same coupling. The blue
+        recording indicator said MESSAGE because nothing on the panel could answer "who is my
+        twin" — it is flashed with its OWN name and the box mints the other one's at the other
+        unit's flash. `GET /waiting` carries it now, and a field the box spends bytes on that
+        the firmware never reads is exactly the fault `tap` shipped with for months."""
+        assert "sibling" in jpanel.Waiting.model_fields
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"sibling"' in src, "the panel stopped reading the sibling name off the poll"
+        display = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+        assert "jpanel_sibling(" in display, (
+            "the recording indicator no longer asks who the message is going to"
+        )
+
+    def test_the_route_is_where_the_pwa_will_look(self) -> None:
+        paths = {
+            (route.path, method)
+            for route in jpanel.router.routes
+            if isinstance(route, APIRoute)
+            for method in route.methods
+            if method != "HEAD"
+        }
+        assert ("/jpanel/panels/{device_id}/name", "POST") in paths

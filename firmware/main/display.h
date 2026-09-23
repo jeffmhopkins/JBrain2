@@ -20,6 +20,15 @@ int display_mic_peak(void);
    a setting cannot be quietly undone thirty seconds later by the recovery write. */
 void display_set_brightness(int level);
 
+/* "awake", "dim" or "dark" — which stage of the screen sleep the panel is in (`screen.h`).
+ *
+ * A DARK PANEL AND A DEAD PANEL LOOK THE SAME FROM A BEDROOM DOORWAY, and until this they
+ * looked the same from the box as well: a sleeping screen stops blitting, so `blit_ok` stops
+ * climbing — which is the exact signature of the stalled render task that cost 0.2.44 a
+ * photograph from the owner to diagnose. Reported so the two can be told apart by someone
+ * with no terminal. */
+const char *display_screen(void);
+
 /* The face task's smallest observed stack headroom, in words. Reported in telemetry so a
    near-overflow shows up as a shrinking number rather than as a panic. */
 int display_stack_free(void);

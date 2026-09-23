@@ -518,6 +518,80 @@ async def test_every_reference_in_the_list_is_a_real_table_and_column(
             )
 
 
+# Columns whose NAME looks like a digest but which hold something else. Each one is here
+# because it was looked at, not because the pattern was loosened until the test passed.
+#
+# `%hash%` is deliberately NOT part of the pattern, and that is a rule rather than a
+# convenience: every digest in the content-addressed store is named for what it is — `sha256`,
+# `blob_sha256`, `image_sha`, `artifact_sha256`, `source_sha256` — while `*_hash` in this
+# schema is a CREDENTIAL (`principals.key_hash`, `device_sessions.token_hash`,
+# `intake_links.secret_hash`, two share-link tables) or a cache key (`connector_cache`,
+# `connector_log`, `research_reports.question_hash`). None of those is a file, and listing
+# seven of them here so that the eighth credential column fails a blob test would teach
+# whoever hits it to widen the carve-out rather than read it.
+_NOT_BLOB_DIGESTS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("deploy_history", "git_sha"),  # a git revision, not a stored file
+        ("note_conversations", "note_body_sha"),  # a hash of a note's TEXT, for change detection
+        ("canonical_predicates", "value_shape"),  # caught by "sha" inside "shape"
+        ("place_share", "shared_at"),  # caught by "sha" inside "shared"
+    }
+)
+
+
+async def test_no_blob_holding_column_is_missing_from_the_list(
+    maker: async_sessionmaker,
+) -> None:
+    """THE ABSENCE, MADE CATCHABLE.
+
+    `blob_refs.py` says the failure mode of that list is an absence — add a blob-holding
+    table, forget the row, and nothing goes wrong until something deletes, after which that
+    feature's files vanish under it with a 200 on the delete that caused it — and concludes
+    that "there is no test that can catch the omission from the other side".
+
+    There is one, from THIS side: ask the real schema which columns look like digests, and
+    require each to be either registered or explicitly named as something else. It is not
+    hypothetical — `app.jpanel_message.blob_sha256` was added by migration 0208 and never
+    registered, so a digest shared with a chat attachment would have unlinked a
+    four-year-old's voice message. This test is what makes the next one fail in CI instead of
+    on the owner's disk.
+
+    The pattern cannot see a digest held INSIDE json (`$.frames[*].thumb_id`), so it is a
+    floor rather than a proof — but the tables that do that are all registered already, and a
+    new column is the shape this has actually been got wrong in."""
+    async with scoped_session(maker, OWNER) as s:
+        rows = (
+            await s.execute(
+                text(
+                    """
+                    SELECT table_name, column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'app'
+                      AND data_type = 'text'
+                      AND (column_name LIKE '%sha%' OR column_name LIKE '%digest%')
+                    ORDER BY table_name, column_name
+                    """
+                )
+            )
+        ).all()
+
+    registered = {
+        (ref.table.removeprefix("app."), column)
+        for ref in BLOB_REFERENCES
+        for column in (ref.where.replace("(", " ").replace(")", " ").split())
+    }
+    missing = [
+        (table, column)
+        for table, column in ((str(r[0]), str(r[1])) for r in rows)
+        if (table, column) not in _NOT_BLOB_DIGESTS and (table, column) not in registered
+    ]
+    assert not missing, (
+        f"{missing} look like blob digests and are not in BLOB_REFERENCES. Either add them "
+        "there — a delete elsewhere will unlink these files without it — or add them to "
+        "_NOT_BLOB_DIGESTS above with the reason they are not stored blobs."
+    )
+
+
 @pytest.fixture
 async def a_chat_attachment(maker: async_sessionmaker) -> AsyncIterator[str]:
     """The owner downloaded a recording and attached the .mp3 to a chat.

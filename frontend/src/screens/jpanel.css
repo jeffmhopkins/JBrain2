@@ -316,6 +316,29 @@
   cursor: default;
 }
 
+/* The same quiet weight as `.jp-clear` and for the same reason — a name is set once and then
+   never again — but without its `margin-left: auto`, so it sits beside the name it changes
+   while the destructive control stays out at the far edge. */
+.jp-rename {
+  margin-left: 8px;
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.jp-rename:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.jp-rename:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .jp-cleared {
   display: block; /* `<output>` is inline by default */
   margin: 0 0 8px;

@@ -69,4 +69,9 @@ const char *speech_vocab_refused(int i);
    comment there says a confidence floor cannot be chosen until a real decode's score is known
    on this hardware — a measurement that needs a console this panel does not have. This is
    that measurement, taken where it happens and sent where it can be read. */
-bool speech_heard(int i, const char **phrase, int *prob, bool *fired);
+/* The i'th most recent decode, newest first, up to twelve. `fired` is false for a decode the
+   command graph REJECTED — the near miss, which is the half that says whether a phrase is
+   unreachable because nobody said it or because the recogniser could not resolve it. `count`
+   collapses consecutive identical decodes, so a television repeating one word does not flush
+   everything else out of the ring. Any pointer may be NULL. */
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired, int *count);

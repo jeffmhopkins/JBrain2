@@ -1,8 +1,13 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
 > **Status:** In progress · **Last verified:** 2026-09-23 · **Waves:** W1◻️ W2✅ W3✅ W4✅
-> — W2 and W4 shipped together in #1498; W3 is the firmware in this branch (0.2.88) and is
-> **built but not yet run on a panel**. W1 (the screen that sleeps) is the one left.
+> — W2 and W4 shipped together in #1498; W3 shipped across #1504/#1508/#1511/#1513 and is
+> **confirmed working on a panel** (voice post both ways, the pop-up, the queue).
+>
+> **W1's code has landed** — firmware 0.2.92, `screen.{c,h}` plus the render loop — and stays
+> open rather than ticked because the wave is not done until it has run on hardware: the
+> panel is away until tonight, the movement threshold it ships with is reasoned rather than
+> measured, and §5 says how to correct it from the box without a terminal.
 
 The owner, across two asks:
 
@@ -82,6 +87,42 @@ should not be reached for until the black screen has a confirmed root cause.
 The render loop is the panel's clock — the level meter, the recogniser feed and the capture all
 hang off it (§10.4). Sleep stops *blitting*, not the loop. The task keeps turning at a slower
 cadence; it simply stops sending pixels.
+
+### What shipped (0.2.92)
+
+The policy is `firmware/main/screen.{c,h}` — thresholds, the dim level and the movement test,
+pure arithmetic and host-tested, extracted for the same reason `orient.c` was: a rule about
+time and thresholds that is only ever *reasoned* about is how the first orientation shipped
+backwards. `display.c` keeps the half that needs the panel: which stage it is in, what wakes
+it, and the frame that does not get drawn.
+
+Three things are worth knowing beyond the rule above.
+
+**A message arriving wakes the screen; a message *waiting* does not hold it awake.** Counting
+the queue as activity would mean one unacknowledged good-night left the panel lit until
+morning, which is the exact thing this feature exists to stop. Nothing about sleeping drops the
+queue, so the pop-up is still there when the child touches the panel awake.
+
+**Waking to a message left overnight shows the big box again.** The pop-up stands down to a
+badge after fifteen seconds and deliberately does *not* come back when a second message arrives
+— the child has been interrupted once and has chosen not to come. A night is not that: whoever
+is looking at the panel now was not in the room when it shrank, and a corner badge is not how a
+four-year-old finds out their sister sent them something. Only out of dark, because at dim the
+screen was visible the whole time; and without a sound, because a message that chirped whenever
+somebody walked past the table would be the panel nagging.
+
+**A finger on a dark screen buys the screen and nothing else.** The child cannot see what they
+are aiming at, so the waking touch is spent on waking — it does not poke the pet, arm a gesture
+or acknowledge a message. The next tap, aimed at a face that is now visible, lands normally.
+Dim does not consume the touch: the pet is still on screen there, and a tap that hits what you
+can see should do what it looks like it does.
+
+**The stage is in the heartbeat and in the render beat, because a sleeping panel reports what a
+broken one reports.** Sleep stops blitting on purpose, so `blit_ok` stops climbing — which is
+the signature of the stalled render task that cost 0.2.44 a photograph from the owner to
+diagnose. `screen: "awake" | "dim" | "dark"` in telemetry, and the same word in the
+`render: N frames ok` log line, is what tells the two apart for someone with no terminal
+(CLAUDE.md #10).
 
 ---
 
@@ -413,6 +454,13 @@ costs two rewrites.
 
 ## 5. Open, and deliberately not guessed
 
+- **The movement threshold has never met a bedside table.** `SCREEN_MOVE_COUNTS` is 900 raw
+  counts summed over three axes, sample to sample — about 0.11 g, chosen to sit far above the
+  tens of counts a resting panel jitters by and far below a hand lifting it. That is reasoning,
+  not measurement. It is correctable without a terminal: every wake it causes logs
+  `screen: movement N counts (threshold 900)`, and a panel waking itself on an empty table will
+  say so with the number that justifies raising it. Two nights of logs decide it.
+
 - **The recording cap is ten seconds, not the twenty this plan asked for.** W3 reuses
   `audio.c`'s single capture buffer, which is what the plan told it to reuse, and that buffer
   is `CAPTURE_MAX_MS` — ten seconds, claimed once at start-up because a heap request in the
@@ -425,17 +473,47 @@ costs two rewrites.
   through a voice) would have stopped mid-word. The buffer is now sized by the longest audio
   any caller can hand over — twenty seconds, matching `MAX_MESSAGE_MS` on the box — and says
   so in the log when it still has to cut.
-- **A panel cannot learn the other panel's name**, so the blue recording indicator says
-  `TO DAD` or, for the twin, `MESSAGE`. There is no route that answers "what is the other
-  unit called" — `GET /waiting` names a sender only when something is already waiting — and
-  inventing a word for a child's twin would be worse than saying MESSAGE. The caption ticker
-  shows the phrase they just said in the same frame, so the recipient is on the glass either
-  way. This is the same missing mechanism as the bullet below about enumerating panels, and
-  it wants the same fix: a panel roster.
+- ~~**A panel cannot learn the other panel's name**~~ — **CLOSED (0.2.93).**
+
+  The gap was real and the placeholder was honest: a panel is flashed with its OWN name, the
+  box mints the other one's at the OTHER unit's flash, and no route answered "what is my twin
+  called", so the blue recording indicator said `TO DAD` or, for the sibling, `MESSAGE`.
+  Inventing a word for a child's twin would have been worse.
+
+  `GET /waiting` now carries `sibling`, so it says `TO ELORA`. It rides the poll the panel was
+  already making rather than adding a route, and the box answers only where there is EXACTLY
+  ONE other panel — the same rule `send(to="panel")` follows, because with two siblings "the
+  other one" is a question rather than a name and a guess puts the wrong child on the glass.
+  `MESSAGE` remains for that case, for a single-panel box, and for the moments before the
+  first poll. The caption ticker still shows the phrase they just said in the same frame, so
+  the recipient was on the glass either way; this makes it the name.
+
 - **The movement threshold** for waking. It has to be picked against a panel on a bedside table,
   not reasoned about here; the part is noisy enough at rest that §10.4af spent three releases
   on it.
-- **Retention.** 30 days after playing is a proposal. Unplayed-forever is not.
+- ~~**Retention.**~~ **BUILT.** `jbrain/jpanel/sweep.py`, a lifespan loop beside the
+  guided-intake reaper, every six hours. Played messages go 30 days after they were **played**
+  — not after they were sent, so a year-old message the owner listened to this morning is a
+  message from this morning as far as retention is concerned. Unplayed rows are not swept at
+  any age, which is the half that mattered: a message nobody has heard is a four-year-old's
+  words waiting on a wall, and `played_at IS NULL` is exactly that set. Thirty days is still
+  the proposal rather than a measured number, so it is one named constant.
+
+  **The audio is not the row's to delete.** Rows are deleted and committed first, and only
+  then is each digest offered for collection through `blob_referenced` — a message whose file
+  is also an unheard message's, or the owner's chat attachment of the same clip, keeps its
+  file. Which is how this turned up a live fault: **`app.jpanel_message.blob_sha256` was never
+  registered in `BLOB_REFERENCES`**, though migration 0208 added it and `blob_refs.py` says in
+  its own header that a blob column joins that list in the same PR. Nothing had gone wrong
+  yet, because nothing had deleted a digest these rows share — but a delete anywhere else on
+  the box would have unlinked a child's voice message, with a 200 on the delete and a 500 when
+  she pressed play. Registered now, and the sweep's test fails when the entry is removed.
+
+  That module also claimed an omission of this kind "cannot be tested from the other side,
+  because the omission is an absence". It can, from *this* side: ask the schema which columns
+  look like digests and require each to be registered or explicitly named as something else.
+  `test_sdr_recordings_rls.py` does, so the next table added and forgotten fails CI rather
+  than the owner's disk.
 - **More than two panels.** The refusal rule above is safe but unhelpful; addressing by name
   needs the twins' names in the offline vocabulary, which the owner has deferred.
 - **Panel-to-panel post could never have worked, for two reasons found on the live box**
@@ -484,6 +562,25 @@ costs two rewrites.
   not have picked between two panels called Elora either — but it is now the one thing that
   breaks addressing, so the collapse is logged.
 
+- **A panel can be NAMED from the PWA now, which is not the same as the roster being a
+  mechanism.** `POST /api/jpanel/panels/{id}/name` writes the `panel <name>` label the
+  convention below turns on, so a unit enrolled without a name no longer needs a cable to stop
+  being "the other one" — which was a re-flash over USB, i.e. a terminal, for a fault the owner
+  can see from his phone (CLAUDE.md #10). Two things about it are worth keeping in mind:
+
+  1. **It moves every unrevoked key under the old label, not the one addressed.** The label IS
+     the identity while `_panel_names` collapses with `DISTINCT ON (label)`; renaming one key
+     would leave the superseded ones under the old name and grow a second, unreachable panel in
+     the roster. Asserted against real Postgres in `test_jpanel_rename_pg.py`, which fails when
+     the `UPDATE` is narrowed to the addressed id.
+  2. **The name is constrained by the PANEL'S FONT, two packages away.** `font.c` has 5x7 cells
+     for A-Z, the digits, space, hyphen and full stop and nothing else, and a character it does
+     not have draws as *nothing* — so "O'Brien" would reach a four-year-old as a pop-up from
+     someone missing a letter. The route refuses those at the door and the cap (14) is the
+     arithmetic of `draw_popup`'s bubble at its shrunk scale. Both ends are read out of the
+     firmware by unit tests rather than transcribed.
+
+  It does not make the convention a mechanism, and the bullet below still stands.
 - **There is no way to enumerate panels that is a mechanism rather than a convention**, and W2
   ran into it immediately. A panel is an ordinary `device_key` principal — the same substrate as
   an OwnTracks phone — and the only thing marking one is the label `/flash` writes:

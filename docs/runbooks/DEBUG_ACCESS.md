@@ -279,6 +279,14 @@ Two gates protect the surface, both fail-closed:
 
 ## What the token can do (`/api/debug/*`)
 
+> **A panel's own state is in the PWA now — try that first.** **Ops → Panels** shows every
+> flashed panel's version, how long ago it last reported, its screen stage, and what is wrong
+> with it, sourced from the same telemetry that used to be readable only by grepping the box's
+> log through `/logs` below. That is the difference between the owner answering "did the update
+> land" himself and handing the question to somebody with a shell, which is what these routes
+> are for when the card is not enough (a panel that has never reported at all, or one whose
+> fault is in the boot before the first report).
+
 | Route | Purpose |
 |-------|---------|
 | `GET /whoami` | Token label, kind, and the fixed scope set (`llm.complete`, `sql.read`, `logs.read`, `llm.routing`, `llm.gateway`, `host.read`, `host.metrics`, `web.fetch`). `llm.gateway` is the gateway surface — load/unload, the served `-c`/`-np`, launch flags via the allowlist, props/slots/metrics, prime. |

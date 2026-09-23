@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MetricsHistory, OpsMetrics, OpsStatus } from "../api/client";
 import { OpsScreen } from "./OpsScreen";
@@ -184,6 +184,139 @@ function baseMock(input: RequestInfo | URL): Response | null {
   if (path.startsWith("/api/ops/metrics/history")) return json(HISTORY);
   return null;
 }
+
+/** Two panels, and deliberately not both healthy: the half of this card that matters is the
+ *  one that has stopped reporting. */
+const PANELS = {
+  panels: [
+    {
+      device_id: "panel-ellie",
+      name: "Ellie",
+      reported_at: "2026-09-23T17:00:00Z",
+      version: "0.2.94",
+      age_s: 240,
+      report: { screen: "dark", uptime_ms: 7_200_000, restart_why: "ota-park", crash_phase: -1 },
+    },
+    {
+      device_id: "panel-mabel",
+      name: "the other one",
+      reported_at: "2026-09-23T08:00:00Z",
+      version: "0.2.89",
+      age_s: 9 * 3600,
+      report: { screen: "awake", blit_fail_total: 249, blit_recov: 1, mic_peak: 0 },
+    },
+  ],
+};
+
+describe("OpsScreen panels", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("opens itself when a panel has stopped reporting, and stays shut when none has", async () => {
+    /* THE CARD HAS TO INTERRUPT OR IT IS NOT AN INSTRUMENT. Everything it shows arrived in a
+       telemetry body the owner could not read without a terminal (CLAUDE.md #10) — a version
+       of it that had to be opened to find a dead panel would be the same blind spot with more
+       steps. */
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") return json(PANELS);
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    expect(await screen.findByText("Ellie")).toBeInTheDocument();
+    expect(screen.getByText("the other one")).toBeInTheDocument();
+    expect(screen.getByText("9 hours ago")).toBeInTheDocument();
+
+    fetchMock.mockClear();
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") {
+        return json({ panels: [PANELS.panels[0]] });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    expect(await screen.findByText("1 reporting")).toBeInTheDocument();
+  });
+
+  it("shows the version, the screen stage and what is wrong", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") return json(PANELS);
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+
+    // "Did the update land" is the question this was built for.
+    expect(await screen.findByText("0.2.94")).toBeInTheDocument();
+    // And the reading that stops a sleeping panel being read as a stalled render task.
+    expect(screen.getByText(/screen dark/)).toBeInTheDocument();
+    expect(screen.getByText(/249 failed frames/)).toBeInTheDocument();
+    expect(screen.getByText(/heard nothing since the last report/)).toBeInTheDocument();
+  });
+
+  it("says a panel has never reported rather than showing it as merely old", async () => {
+    /* A different fault from having gone quiet, with a different first move. */
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") {
+        return json({
+          panels: [
+            {
+              device_id: "fresh",
+              name: "Rae",
+              reported_at: "",
+              version: "",
+              age_s: -1,
+              report: {},
+            },
+          ],
+        });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    expect(await screen.findByText(/has never reported/)).toBeInTheDocument();
+  });
+
+  it("refetches the fleet when the owner presses Refresh", async () => {
+    /* The press right after an update is the owner asking THIS card whether the new version
+       landed. A card that answered with the pre-update reading would be worse than one that
+       made him reload the app. */
+    let version = "0.2.93";
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") {
+        return json({
+          panels: [{ ...PANELS.panels[0], version, report: { screen: "awake" } }],
+        });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    // Opened by hand: a fleet with nothing wrong with it stays collapsed, which is the point
+    // of the card — so the version is behind a click here exactly as it is for the owner.
+    fireEvent.click(await screen.findByRole("button", { name: /Panels/ }));
+    expect(await screen.findByText("0.2.93")).toBeInTheDocument();
+
+    version = "0.2.94";
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("0.2.94")).toBeInTheDocument();
+  });
+
+  it("does not take the whole screen down when the fleet cannot be read", async () => {
+    /* The card is one question among many on Ops; a 500 here must not cost the owner the
+       service list he came for. */
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") return new Response(null, { status: 500 });
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    expect(await screen.findByRole("button", { name: /Core/ })).toBeInTheDocument();
+  });
+});
 
 describe("OpsScreen", () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -670,6 +803,12 @@ describe("OpsScreen", () => {
     render(<OpsScreen />);
 
     expect(await screen.findByRole("button", { name: /Core/ })).toBeInTheDocument();
-    expect(screen.getByText("unavailable", { exact: false })).toBeInTheDocument();
+    // Scoped to this card: the Panels card degrades the same way and says the same word, so a
+    // bare text query would find two and fail on a screen where both are behaving correctly.
+    expect(
+      within(screen.getByRole("button", { name: /Host settings/ })).getByText("unavailable", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
   });
 });

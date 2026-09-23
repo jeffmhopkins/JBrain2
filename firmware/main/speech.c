@@ -99,38 +99,66 @@ static int s_refused_n;
  *
  * That capture needs a serial console. This panel has not had one since the day it went in a
  * bedroom, so the version after never came — and "turn red" firing `jump up` at p=0.19 has
- * been waiting on an instrument that does not exist. Three deep is enough to see what a real
- * command scores next to a false one, and small enough to ride in a telemetry body. */
-#define DECODE_MAX 3
-#define DECODE_CHARS 20
+ * been waiting on an instrument that does not exist.
+ *
+ * TWELVE, NOT THREE, AND THE REASON IS A PLAY SESSION. Three was sized to "what did it hear
+ * JUST now", which answers a question asked seconds later at a bench. The owner asks his from
+ * a different room, hours later, off a telemetry poll that runs every fifteen minutes — so
+ * three entries meant a whole session of children shouting at a panel arrived as the last
+ * three things it thought it heard. `dance` and `burp` are still undiagnosed for exactly that
+ * reason (docs/reference/PANEL_COMMANDS.md): every attempt to look produced an empty ring.
+ *
+ * CONSECUTIVE IDENTICAL DECODES ARE COUNTED, NOT STACKED, and that matters more than the
+ * depth. A television saying one word repeatedly, or a child saying "burp" eight times
+ * because it is not working, would otherwise flush the ring with eight copies of the same
+ * fact and push out everything that made it interesting. `count` keeps the repetition — which
+ * is itself the signal for a false trigger — without spending a slot on each one. */
+#define DECODE_MAX 12
+#define DECODE_CHARS 28
 typedef struct {
     char phrase[DECODE_CHARS];
-    uint8_t prob; /* 0..100, because a float in a JSON body buys nothing here */
-    bool fired;   /* false when the decode TIMED OUT — a near miss, which is the interesting half */
+    uint8_t prob;  /* 0..100, because a float in a JSON body buys nothing here */
+    uint8_t count; /* consecutive identical decodes, collapsed into this one entry */
+    bool fired;    /* false when the decode TIMED OUT — a near miss, the interesting half */
 } decode_t;
 static decode_t s_decode[DECODE_MAX];
 static int s_decode_n;
 
 static void note_heard(const char *phrase, float prob, bool fired)
 {
-    /* Newest first, oldest pushed off the end: what someone asks after a command did not work
-       is "what did it hear JUST now", not "what has it heard since Tuesday". */
-    for (int i = DECODE_MAX - 1; i > 0; i--) s_decode[i] = s_decode[i - 1];
-    snprintf(s_decode[0].phrase, DECODE_CHARS, "%s", phrase != NULL ? phrase : "?");
+    const char *what = phrase != NULL && phrase[0] != '\0' ? phrase : "?";
     float p = prob * 100.0f;
     if (p < 0.0f) p = 0.0f;
     if (p > 100.0f) p = 100.0f;
+
+    /* THE SAME THING AGAIN IS A COUNT, NOT A SLOT. Eight identical near-misses say one fact
+       eight times and would push out the seven other facts that explain it. The repetition is
+       kept — it is the signature of a television rather than a child — and the probability
+       tracks the LOUDEST of the run, because the question a floor has to answer is how high a
+       wrong decode ever scores. */
+    if (s_decode_n > 0 && s_decode[0].fired == fired &&
+        strncmp(s_decode[0].phrase, what, DECODE_CHARS - 1) == 0) {
+        if (s_decode[0].count < 255) s_decode[0].count++;
+        if ((uint8_t)p > s_decode[0].prob) s_decode[0].prob = (uint8_t)p;
+        return;
+    }
+
+    /* Newest first, oldest pushed off the end. */
+    for (int i = DECODE_MAX - 1; i > 0; i--) s_decode[i] = s_decode[i - 1];
+    snprintf(s_decode[0].phrase, DECODE_CHARS, "%s", what);
     s_decode[0].prob = (uint8_t)p;
+    s_decode[0].count = 1;
     s_decode[0].fired = fired;
     if (s_decode_n < DECODE_MAX) s_decode_n++;
 }
 
-bool speech_heard(int i, const char **phrase, int *prob, bool *fired)
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired, int *count)
 {
     if (i < 0 || i >= s_decode_n) return false;
     if (phrase != NULL) *phrase = s_decode[i].phrase;
     if (prob != NULL) *prob = s_decode[i].prob;
     if (fired != NULL) *fired = s_decode[i].fired;
+    if (count != NULL) *count = s_decode[i].count;
     return true;
 }
 

@@ -4221,6 +4221,60 @@ button.small {
 /* Host settings card: the checks the app cannot apply itself.
    A healthy row is one quiet line; a failing one earns the space to say what breaks and
    what to do, because this card exists to stop a bad setting being silent. */
+/* The fleet rows, sharing the host-settings card's shape on purpose: both answer "is this
+   thing as it should be", and two different layouts for one question would read as two
+   different kinds of answer. */
+.ops-panel-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ops-panel-row:last-child {
+  border-bottom: none;
+}
+
+.ops-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ops-panel-name {
+  font-weight: 600;
+}
+
+.ops-panel-version {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+/* Pushed to the far edge: it is the first thing scanned down a list of panels, and the one
+   that decides whether anything below it is worth reading. */
+.ops-panel-seen {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+.ops-panel-row.bad .ops-panel-seen {
+  color: var(--danger);
+}
+
+.ops-panel-facts,
+.ops-panel-note {
+  margin: 4px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+.ops-panel-concern {
+  margin: 4px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--danger);
+}
+
 .ops-host-row {
   padding: 8px 0;
   border-bottom: 1px solid var(--border);

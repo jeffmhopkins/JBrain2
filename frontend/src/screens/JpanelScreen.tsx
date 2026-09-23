@@ -269,6 +269,46 @@ function MessagesTab() {
 
   const [clearing, setClearing] = useState<string | null>(null);
   const [cleared, setCleared] = useState<Record<string, string>>({});
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renamed, setRenamed] = useState<Record<string, string>>({});
+
+  /* NAMING A PANEL, WHICH USED TO MEAN A CABLE.
+     A panel's name lives on the box, not in its firmware: `/flash` writes it onto the device
+     key it mints, and a unit enrolled without one calls itself "the other one" to its sibling
+     forever. Correcting that meant re-flashing over USB — a terminal by another name, which is
+     the thing CLAUDE.md #10 exists to stop. A prompt rather than an inline form because this
+     is done once per panel and never again. */
+  async function renamePanel(deviceId: string, current: string) {
+    if (renaming !== null) return;
+    const typed = window.prompt(
+      `What should ${current} be called? The panel draws it in a 5×7 font, so letters, digits, spaces, hyphens and full stops only.`,
+      current === "the other one" ? "" : current,
+    );
+    if (typed === null) return;
+    const name = typed.trim();
+    if (!name || name === current) return;
+    setRenaming(deviceId);
+    setSendError("");
+    try {
+      const done = await api.renameJpanelPanel(deviceId, name);
+      /* SAID OUT LOUD WHEN IT IS NOT ONE KEY, because it usually is not: every flash mints a
+         fresh device key and nothing retires the old one, so a panel flashed four times is
+         four principals carrying one label. They all move together — otherwise the roster
+         grows a second panel still called "the other one" that nothing can reach. */
+      setRenamed((r) => ({
+        ...r,
+        [deviceId]:
+          done.keys > 1
+            ? `Now ${done.name} — ${done.keys} device keys moved (every flash mints one).`
+            : `Now ${done.name}.`,
+      }));
+      await refresh();
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRenaming(null);
+    }
+  }
 
   async function clearHistory(deviceId: string, name: string) {
     if (clearing !== null) return;
@@ -360,6 +400,15 @@ function MessagesTab() {
           <h2 className="jp-panel-head">
             <span className="jp-panel-name">{thread.name}</span>
             {thread.unplayed > 0 && <span className="jp-unplayed">{thread.unplayed} unplayed</span>}
+            <button
+              type="button"
+              className="jp-rename"
+              aria-label={`Rename ${thread.name}`}
+              disabled={renaming !== null}
+              onClick={() => void renamePanel(thread.device_id, thread.name)}
+            >
+              {renaming === thread.device_id ? "Renaming…" : "Rename"}
+            </button>
             {thread.messages.length > 0 && (
               <button
                 type="button"
@@ -372,6 +421,9 @@ function MessagesTab() {
               </button>
             )}
           </h2>
+          {renamed[thread.device_id] && (
+            <output className="jp-cleared">{renamed[thread.device_id]}</output>
+          )}
           {cleared[thread.device_id] && (
             /* `<output>`, not a `<p role="status">`: it carries the same implicit role and is
                the element the rule asks for — and a screen reader should announce what a
