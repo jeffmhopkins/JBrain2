@@ -780,6 +780,28 @@ static uint32_t s_repeat_until;
  * the clock forever and never shrink. */
 #define POPUP_BIG_MS 15000
 static uint32_t s_popup_since;
+
+/* A TOUCH THAT MAKES A SOUND AND STILL PLAYS AT ONCE.
+ *
+ * The owner asked for a sound on these two controls and the first attempt produced none, on an
+ * argument that was simply wrong: the cue was made conditional on nothing already sounding, and
+ * once the prefetch landed the message ALWAYS starts on the same frame — so the condition was
+ * never true. "The message is its own acknowledgement" is not an answer to a four-year-old who
+ * pressed something; the press has to answer.
+ *
+ * The real constraint is that `audio_play` refuses while anything else sounds, so a cue and a
+ * message cannot overlap: an unconditional cue would simply eat the message. So the cue plays
+ * and the audio is DEFERRED by one speaker — `CUE_BLIP` is 55 ms, which is under the 100 ms a
+ * press and its sound can be apart and still feel like one event, and far under the ~2 s this
+ * release removed.
+ *
+ * A DEADLINE, because a deferral that never fires is a button that did nothing. If the speaker
+ * is somehow still busy after this, the action is dropped rather than firing late into silence
+ * a child has stopped associating with their finger. */
+#define PENDING_MS 1500
+typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY } pending_t;
+static pending_t s_pending;
+static uint32_t s_pending_until;
 /* Where the pop-up and the repeat icon were drawn, in the space they were drawn in — which
    is NOT the space `panel_to_frame` hands back; see `tap_to_overlay` immediately below. Both
    are rectangles; -1 in the first slot means not on screen. */
@@ -951,11 +973,20 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count)
     w = font_text_w(line, name_scale);
     font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 34, name_scale, line, SWAP16(0xFFFF));
 
-    const char *sub = count > 1 ? "SENT YOU SOME" : "SENT YOU ONE";
+    /* THE NUMBER, not "SOME". Five messages used to be five pop-ups and five taps, which is
+       indistinguishable from the panel repeating itself — and it is the count that tells a
+       child whether one press is about to cost them ten seconds or a minute. */
+    char sub[28];
+    if (count > 1) {
+        snprintf(sub, sizeof(sub), "SENT YOU %d", count);
+    } else {
+        snprintf(sub, sizeof(sub), "SENT YOU ONE");
+    }
     w = font_text_w(sub, 2);
     font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 84, 2, sub, SWAP16(0xFFFF));
-    w = font_text_w("TAP TO HEAR", POPUP_SCALE);
-    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 112, POPUP_SCALE, "TAP TO HEAR",
+    const char *act = count > 1 ? "TAP FOR ALL" : "TAP TO HEAR";
+    w = font_text_w(act, POPUP_SCALE);
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 112, POPUP_SCALE, act,
               SWAP16(0x07FF));
 
     s_popup_box[0] = bx;
@@ -996,6 +1027,31 @@ static void draw_popup_badge(uint16_t *fb, int y0, const char *from)
     s_popup_box[1] = by;
     s_popup_box[2] = bx + bw;
     s_popup_box[3] = by + bh;
+}
+
+/* PLAYING, AND TAPPABLE TO STOP. A run a child cannot see the end of needs a way out they can
+ * SEE — "touch it and it stops" is not discoverable on a pet's face, and the whole reason this
+ * is a queue rather than one message at a time is that a press should be able to cost a minute.
+ *
+ * Deliberately small and at the bottom, not over the face: the pet is animating and talking
+ * through this and that is the thing worth watching. It says how many are left, because the
+ * question a child sitting through four messages has is how many more. */
+static void draw_run(uint16_t *fb, int y0, int h, int left)
+{
+    /* Sized for the format rather than for the expected value: `left` is an int and a count
+       that ever came back wrong would truncate the words rather than the number. */
+    char line[40];
+    if (left > 0) {
+        snprintf(line, sizeof(line), "%d MORE  TAP TO STOP", left);
+    } else {
+        snprintf(line, sizeof(line), "TAP TO STOP");
+    }
+    const int tw = font_text_w(line, 2);
+    const int bw = tw + 28, bh = 38;
+    const int bx = (FACE_W - bw) / 2;
+    const int by = y0 + (h - y0) - bh - 16;
+    bubble(fb, bx, by, bw, bh, 12, SWAP16(0x0010));
+    font_draw(fb, FACE_W, FACE_H, bx + 14, by + 11, 2, line, SWAP16(0x07FF));
 }
 
 /* THE REPEAT ICON: top-left, five seconds, then gone (`REPEAT_MS`).
@@ -1757,19 +1813,10 @@ static void face_task(void *arg)
                        `jpanel_play_next` refuses that one — so the child would be pressing a
                        button that had stopped working. */
                     s_popup_box[0] = -1;
-                    const bool went = jpanel_play_next();
-                    if (!went) ESP_LOGW(TAG, "jpanel: busy, not fetching");
-                    /* A SOUND ON THE PRESS, and only when the message did NOT start at once.
-                     *
-                     * The owner asked for a sound on this touch, and the obvious reading —
-                     * always beep — is wrong now that the audio usually starts on the same
-                     * frame: `audio_play` refuses while anything else is sounding, so the
-                     * acknowledgement would be the thing that swallowed the message. The
-                     * message IS the acknowledgement when it plays immediately.
-                     *
-                     * It is exactly the slow path that needed the sound anyway — the tap that
-                     * has to wait for a fetch is the one that felt unanswered. */
-                    if (sound && !audio_playing()) audio_cue(went ? CUE_HEARD : CUE_OOPS);
+                    /* The press sounds FIRST and the message follows it — see `PENDING_MS`. */
+                    if (sound) audio_cue(CUE_HEARD);
+                    s_pending = PEND_PLAY;
+                    s_pending_until = now + PENDING_MS;
                     dirty = true;
                     goto tap_done;
                 }
@@ -1778,7 +1825,13 @@ static void face_task(void *arg)
                     /* Replayed from this panel's own buffer — no box, no network — so it
                        works when the link is down, which is when a child is most likely to be
                        asking what she said. */
-                    if (jpanel_replay()) s_repeat_until = now + REPEAT_MS;
+                    /* Same shape as the pop-up: a sound for the finger, then the audio. This
+                       had NO cue at all, which made the one control a child presses when they
+                       missed something the one that answered with silence. */
+                    if (sound) audio_cue(CUE_HEARD);
+                    s_pending = PEND_REPLAY;
+                    s_pending_until = now + PENDING_MS;
+                    s_repeat_until = now + REPEAT_MS; /* they are still asking; keep it up */
                     dirty = true;
                     goto tap_done;
                 }
@@ -1877,11 +1930,29 @@ static void face_task(void *arg)
             dirty = true;
         tap_done:;
         } else if (tapped) {
-            /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would read
-               as a frozen pet — but no beep, no colour change and no new action, so the reply
-               finishes with the mouth still moving. */
-            s_flinch = 1.0f;
-            dirty = true;
+            /* A FINGER STOPS A RUN OF MESSAGES, and this is the third place that rule applies —
+               it already ends a listen and abandons a recording. A child who has heard enough
+               of their sister must be able to get out without waiting for the last one, and the
+               gesture they would reach for is the one they already know.
+             *
+               Only a RUN. A poke during the pet's own reply still just flinches: that is one
+               sustained utterance the panel is making, not a queue the child is sitting
+               through, and cutting it off was never asked for. */
+            if (jpanel_running()) {
+                jpanel_stop();
+                s_pending = PEND_NONE; /* a deferred play must not resurrect the run */
+                s_flinch = 1.0f;
+                ESP_LOGI(TAG, "jpanel: run stopped by touch");
+                dirty = true;
+                /* No cue: the silence IS the answer, and a sound here would be the panel
+                   making noise in the half-second a child asked it to stop making noise. */
+            } else {
+                /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would
+                   read as a frozen pet — but no beep, no colour change and no new action, so
+                   the reply finishes with the mouth still moving. */
+                s_flinch = 1.0f;
+                dirty = true;
+            }
         }
         /* WHAT THE PANEL HEARD. Popped once a frame, so a phrase cannot arrive between two
            frames and be lost, and acted on in exactly the way a tap is — the voice is
@@ -2279,6 +2350,23 @@ static void face_task(void *arg)
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
         }
+        /* THE DEFERRED HALF OF A TOUCH: the cue has finished, so the audio it announced starts
+           now. Checked every frame rather than on a timer, so it fires on the first frame the
+           speaker is free — the 55 ms cue and this are what a child experiences as one press. */
+        if (s_pending != PEND_NONE) {
+            if (!audio_playing()) {
+                if (s_pending == PEND_PLAY) {
+                    if (!jpanel_play_next()) ESP_LOGW(TAG, "jpanel: busy, not fetching");
+                } else if (!jpanel_replay()) {
+                    ESP_LOGW(TAG, "jpanel: nothing to replay");
+                }
+                s_pending = PEND_NONE;
+                dirty = true;
+            } else if (now > s_pending_until) {
+                ESP_LOGW(TAG, "jpanel: speaker never freed — dropping the tap");
+                s_pending = PEND_NONE;
+            }
+        }
         /* WHAT THE BOX SAID ABOUT THE MESSAGE, answered in sound because the child who sent
            it is four and the screen is showing a pet. Each outcome gets its OWN cue: "it
            went", "there is nobody to send it to", and "it did not go" are three different
@@ -2306,8 +2394,15 @@ static void face_task(void *arg)
         case JPANEL_PLAYING:
             /* Held until the speaker stops, so the repeat window starts when the message
                ENDS rather than when it began — five seconds measured from the wrong end
-               would expire before a twenty-second message finished. */
-            if (!speaking) {
+               would expire before a twenty-second message finished.
+             *
+               `audio_playing()` READ AGAIN HERE, not the frame's `speaking`. That flag is
+               sampled at the top of the frame and a tap LATER in the same frame is what starts
+               the message, so on exactly the frame a child presses the pop-up `speaking` still
+               says false — and this branch would fire the instant playback began. It used to
+               clear the state that armed the acknowledgement, which is how one message came
+               back every thirty seconds forever. */
+            if (!audio_playing()) {
                 jpanel_clear();
                 s_repeat_until = now + REPEAT_MS;
                 dirty = true;
@@ -2357,6 +2452,7 @@ static void face_task(void *arg)
             s_repeat_box[0] = -1;
             dirty = true;
         }
+        if (jpanel_running()) dirty = true; /* the count in the run bar has to stay true */
         if (s_talk != TALK_IDLE) dirty = true; /* the dot pulses and the dots cycle */
         const bool rebooting = act == GESTURE_REBOOT;
         if (act == GESTURE_CALIBRATE) cal_begin();
@@ -2485,7 +2581,14 @@ static void face_task(void *arg)
                     }
                 }
             }
-            if (s_repeat_until != 0) draw_repeat(fb, over_y0);
+            /* Drawn over everything else while a run is sounding, including the caption: a
+               control that can end what the child is hearing outranks a ticker telling them
+               what it heard. */
+            if (jpanel_running()) {
+                draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0));
+            } else if (s_repeat_until != 0) {
+                draw_repeat(fb, over_y0);
+            }
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
             /* In FRAME coordinates (`panel_to_frame`), and after the flip: upside down that

@@ -182,6 +182,19 @@ bool audio_playing(void)
     return s_play_pos < s_play_len;
 }
 
+/* CUT IT SHORT. The one thing this panel could not do to its own speaker until voice post
+   started playing a QUEUE of messages: a run a child wants out of has to end on the finger,
+   not on the last message.
+ *
+   Done by moving the read cursor to the end rather than by zeroing the length, so the audio
+   task's `s_play_pos < s_play_len` test sees a finished buffer on its next chunk and stops
+   where it is. Nothing is freed and nothing is racing: the writer only ever moves `pos`
+   forward and a reader that is mid-chunk finishes that chunk, which is ~20 ms. */
+void audio_stop(void)
+{
+    s_play_pos = s_play_len;
+}
+
 /* THE RUDE NOISE, AND WHY IT IS AN OSCILLATOR RATHER THAN A FILE.
  *
  * `burp` and `fart` have been in the vocabulary since bring-up and have only ever moved the

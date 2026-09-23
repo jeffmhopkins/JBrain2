@@ -23,7 +23,45 @@ export const PANEL_RATE = 16000;
  *  the bug `audio_play` had on the panel, and it should not be reintroduced from this end. */
 export const MAX_MESSAGE_MS = 20_000;
 
-/** Mono-mix, resample to 16 kHz, and pack to signed 16-bit little-endian. */
+/* WHAT A RECORDING IS SCALED TO, AND WHY IT HAS TO BE SCALED AT ALL.
+ *
+ * The owner: *"my pwa recording seems to be way lower gain than the robot voices."* Kokoro
+ * renders speech close to full scale; a browser microphone capture of someone talking normally
+ * peaks far below it, often by 20 dB. The panel plays both at the same volume, so a message
+ * from Dad in his own voice arrived noticeably quieter than the same words read by the box —
+ * which is backwards, since the recording is the version that is supposed to carry more.
+ *
+ * PEAK, NOT RMS. RMS matches perceived loudness better, but it cannot promise the result will
+ * not clip, and a clipped consonant on a small hard-cased speaker is worse than being a decibel
+ * off. 0.89 leaves headroom for the resampler's interpolation, which can overshoot the samples
+ * it sits between. */
+const TARGET_PEAK = 0.89;
+
+/* A CEILING ON THE GAIN, because normalising is not the same as turning it up.
+ *
+ * Without one, a recording of an empty room gets multiplied until the room hiss is at full
+ * scale — a pop-up on a child's wall playing amplified nothing. 8x (~18 dB) rescues a quiet
+ * phone held at arm's length and still leaves genuine near-silence quiet. */
+const MAX_GAIN = 8;
+
+/* Below this the clip is silence rather than a quiet voice, and nothing is applied at all: the
+ * box's `_trim_to_speech` will reject it anyway, and amplifying it first only makes the thing
+ * it rejects louder. ~-46 dBFS. */
+const SILENCE_PEAK = 0.005;
+
+/** The gain to apply so a recording lands near `TARGET_PEAK`, bounded at both ends. Exported
+ *  because the bounds are the interesting part and they are worth testing on their own. */
+export function normalisingGain(samples: Float32Array): number {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const v = Math.abs(samples[i] ?? 0);
+    if (v > peak) peak = v;
+  }
+  if (peak < SILENCE_PEAK) return 1;
+  return Math.min(TARGET_PEAK / peak, MAX_GAIN);
+}
+
+/** Mono-mix, resample to 16 kHz, normalise, and pack to signed 16-bit little-endian. */
 export function toPanelPcm(buffer: AudioBuffer): ArrayBuffer {
   const channels = buffer.numberOfChannels;
   const mono = new Float32Array(buffer.getChannelData(0));
@@ -41,6 +79,10 @@ export function toPanelPcm(buffer: AudioBuffer): ArrayBuffer {
     for (let i = 0; i < mono.length; i++) mono[i] = (mono[i] ?? 0) / channels;
   }
 
+  /* Measured on the mono mix and BEFORE resampling — the same samples either way, and doing it
+     here means one pass over the data rather than a second one over the output. */
+  const gain = normalisingGain(mono);
+
   const ratio = buffer.sampleRate / PANEL_RATE;
   const outLength = Math.max(0, Math.floor(mono.length / ratio));
   const out = new Int16Array(outLength);
@@ -49,7 +91,7 @@ export function toPanelPcm(buffer: AudioBuffer): ArrayBuffer {
     const lo = Math.floor(at);
     const hi = Math.min(lo + 1, mono.length - 1);
     const t = at - lo;
-    const v = (mono[lo] ?? 0) * (1 - t) + (mono[hi] ?? 0) * t;
+    const v = ((mono[lo] ?? 0) * (1 - t) + (mono[hi] ?? 0) * t) * gain;
     /* Clamped BEFORE scaling: a sample above 1.0 — which a browser's own gain can produce —
        would wrap to full negative through the Int16Array cast. That is the loudest possible
        click, and it is the same trap `cue.c` documents on the firmware side. */

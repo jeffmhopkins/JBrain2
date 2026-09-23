@@ -101,6 +101,10 @@ bool audio_play(const int16_t *pcm, size_t bytes);
    state on this rather than on a timer, or a long reply ends on screen mid-sentence. */
 bool audio_playing(void);
 
+/* Stop whatever is sounding, at the next chunk. For a child getting out of a run of messages
+   (`jpanel.h`) — a queue has to end on the finger, not only on the last message. */
+void audio_stop(void);
+
 /* How long the current recording is, in milliseconds — for the cap, and for the log line that
    says how much audio a hold actually produced. */
 int audio_capture_ms(void);

@@ -206,6 +206,25 @@ and a sender name. A waiting message draws a **pop-up over the face** — big, t
 inside, naming who it is from — and wakes the screen if it is asleep. It does not auto-play; an
 unplayed message survives a reboot because the state lives on the box.
 
+**MULTIPLE MESSAGES ARE ONE PRESS, and a finger gets out.** The owner: *"when multiple messages
+stack up it doesn't have a good way to show them."* One pop-up per message meant five messages
+were five pop-ups and five taps — tedious, and indistinguishable from the panel repeating itself
+even when it was working.
+
+A tap now plays **everything waiting, oldest first**. "Press once, hear everything" is how a
+four-year-old thinks, and the escape is the gesture this panel already has in two other places:
+**a finger cancels**. Touch during a run and it stops — the third use of the same rule rather
+than something new to teach. A bar along the bottom says how many are left and that a touch
+stops it, because a run whose end you cannot see needs a way out you can see.
+
+Each message is **acknowledged as it plays**, one at a time, so stopping halfway leaves the rest
+genuinely unheard and the pop-up comes back for them. The pop-up itself now names the count
+(`SENT YOU 4` / `TAP FOR ALL`) rather than saying "some": the number is what tells a child
+whether one press costs them ten seconds or a minute.
+
+Deliberately NOT announcing each sender between messages — the voices are recognisable, and a
+child sitting through four messages wants them, not an index.
+
 **The pop-up stands down after 15 s** to a small badge in the top-left, carrying the sender's
 name and the same tap target. Big is right while it must interrupt; big for an hour holds a
 child's toy hostage over a message nobody has come to. The clock runs from when the WAIT began,
