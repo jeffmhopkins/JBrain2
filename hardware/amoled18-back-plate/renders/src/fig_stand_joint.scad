@@ -10,7 +10,7 @@ m_inv = [[sc, 0, ss, -ss * stand_zh], [0, 1, 0, 0], [-ss, 0, sc, -sc * stand_zh]
 module slice() intersection() { children(); translate([lx - 0.2, 15, -6]) cube([0.4, 10, 13]); }
 color("SteelBlue") render() slice() multmatrix(m_inv) stand_box();
 color("LightSteelBlue") render() slice() back_plate();
-// Front shell (estimated), sitting on the box's top band.
+// Front shell (estimated), sitting on the band round the box's angled end.
 color("LightGray") translate([lx - 0.1, plate_y / 2 - 1.3, body_h]) cube([0.3, 1.3, 3.5]);
 label([x, 23.9, 5.8], "front shell (ghost)", v, t, "left", c = "DimGray");
 // A countersunk screw, its head flush with the band's outer face; drawn just

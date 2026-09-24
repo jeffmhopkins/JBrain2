@@ -108,10 +108,10 @@ on its bottom as the file loads, sloped top up. Neither needs supports.
 ![The head back face down, the box on its bottom](renders/stand-print-bed.png)
 
 The band round the box's angled end — the wall round the head, which the front shell sits on — is
-only 1.1 mm thick. Check the slicer preview shows it solid (two or three lines), as for the
-plate's rim.
+only 1.1 mm thick (2.25 mm at the six screw pads). Check the slicer preview shows it solid (two
+or three lines), as for the plate's rim.
 
-![The box from above: the thin top wall the front shell sits on, and the ledge inside it the head rests on](renders/stand-box-top.png)
+![The box from above: the thin wall the front shell sits on, the six screw pads on its inside, and the ledge the head rests on](renders/stand-box-top.png)
 
 ### Assemble
 

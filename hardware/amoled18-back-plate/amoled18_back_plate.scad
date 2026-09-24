@@ -359,7 +359,7 @@ top_needed = box_floor + tape_t + cell_h + foam_t + lead_space + extra_clearance
 stand_zh = max(top_needed - cell_x0 * ss / sc, stand_front_min + p_out_x * ss);
 box_front_h = stand_zh - p_out_x * ss;
 box_back_h  = stand_zh + p_out_x * ss;
-// Overall sizes, including the top band that leans forward with the head, and
+// Overall sizes, including the band round the angled end, which leans with the head, and
 // with the display on (the stock unit is 15 mm thick: 11.5 above the seam).
 band_top_front = box_front_h + body_h * sc;
 band_top_back  = box_back_h + body_h * sc;
@@ -750,7 +750,7 @@ module box_ribs() {
                 }
 }
 
-// The box's top band: stands on the head's plane around the head, as tall as
+// The band round the box's angled end: stands on the head's plane around the head, as tall as
 // the head's body, its outside the case outline so the front shell sits flush on it.
 module pocket_ring() {
     difference() {
