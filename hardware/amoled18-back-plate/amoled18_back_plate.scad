@@ -211,6 +211,9 @@ box_floor = 2.0;        // [1.2:0.1:4]
 lock_spread = 14;       // [0:1:16]
 // Also one lock screw in the top and bottom sides, diagonally opposite each other
 lock_top_bottom = true;
+// How far the thicker pad at each lock screw reaches into a notch in the head, at most
+// stand_ledge (0 = no pads)
+lock_pad = 1.0;         // [0:0.1:2]
 
 
 /* [6. Output] */
@@ -388,7 +391,7 @@ if (desk) {
         echo(str("Room around cell:   ", box_side_gap, " mm each side; it lies on the box's long flat side"));
     }
     echo(str("SCREWS:             4 x ", screw_size, " x 4 socket head (display to head), ", lock_count, " x ",
-             screw_size, " x 6 countersunk flat head, e.g. DIN 965 (head to box, flush)"));
+             screw_size, " x 8 countersunk flat head, e.g. DIN 965 (head to box, flush)"));
     echo("-------------------------------------------");
     if (!rim_fits) echo("*** RIM IS LARGER THAN THE HEAD - lower pocket_wall or pocket_clear ***");
     if (!desk_fits) echo(box_x_room < 0
@@ -628,8 +631,9 @@ module grip() {
 // into the solid wall below the ledge.
 lock_z     = 1.45;
 lock_pilot = shaft_table[0] * 0.8;
-// Deep enough for an M2 x 8 as well as the M2 x 6.
-lock_len   = 6.75;
+// The screw passes band, pad and two clearances before biting the head: an M2 x 8
+// bites about 5.6 mm. Deep enough for it, with a little spare.
+lock_len   = 7.25;
 // Countersunk (flat) heads sit flush in a 90 degree seat in the box's band.
 lock_cs_d  = shaft_table[1] + 0.2;
 lock_cs_h  = (lock_cs_d - shaft_d) / 2;
@@ -643,6 +647,20 @@ lock_pts   = concat(
     [for (sy = [-1, 1], lx = lock_xs) [lx, sy * head_y / 2, 0, sy]],
     lock_top_bottom ? [[head_x / 2, -lock_tb_y, 1, 0], [-head_x / 2, lock_tb_y, -1, 0]] : []);
 lock_count = len(lock_pts);
+
+// A pad on the band's inside at each lock screw, and the notch in the head's edge
+// it fills: the screw seats in band + pad instead of the band alone. The pad
+// reaches no further in than the ledge, so it stands on solid wall, and its top
+// (the notch's roof) slopes at 45 degrees so the head's rim above needs no bridge.
+lock_pad_w = 6;
+lock_pad_d = min(lock_pad, stand_ledge);
+module lock_pad_shape(grow, top) {
+    d = lock_pad_d + grow;
+    for (p = lock_pts)
+        translate([p[0], p[1], 0]) rotate(p[3] != 0 ? -90 * p[3] : (p[2] > 0 ? 180 : 0))
+            rotate([90, 0, 0]) linear_extrude(height = lock_pad_w + 2 * grow, center = true)
+                polygon([[-3, -1], [d, -1], [d, top - d], [0, top], [-3, top]]);
+}
 
 // Points +z inward from an edge whose outward direction is o.
 module inward(o) { rotate(o[1] != 0 ? [o[1] * 90, 0, 0] : [0, -o[0] * 90, 0]) children(); }
@@ -684,6 +702,7 @@ module back_plate() {
         }
         screw_holes();
         if (desk) head_holes();
+        if (desk && lock_pad > 0) lock_pad_shape(pocket_clear, body_h);
     }
 }
 
@@ -743,13 +762,14 @@ module pocket_ring() {
     }
 }
 
-// Through the band, with a countersink at its outer face so the heads sit flush.
+// Through the band and its pad, with a countersink at the outer face so the heads
+// sit flush.
 module lock_holes() {
     multmatrix(m_head)
         for (p = lock_pts)
             translate(p[3] != 0 ? [p[0], p[3] * plate_y / 2, lock_z] : [p[2] * plate_x / 2, p[1], lock_z])
                 inward([p[2], p[3]]) {
-                    translate([0, 0, -1]) cylinder(d = shaft_d, h = pocket_wall + pocket_clear + 2);
+                    translate([0, 0, -1]) cylinder(d = shaft_d, h = pocket_wall + pocket_clear + lock_pad_d + 2);
                     translate([0, 0, -1]) cylinder(d = lock_cs_d, h = 1 + eps);
                     cylinder(d1 = lock_cs_d, d2 = shaft_d, h = lock_cs_h);
                 }
@@ -783,6 +803,14 @@ module stand_box() {
                     below_head(-grip_margin);
                 }
             multmatrix(m_head) pocket_ring();
+            if (lock_pad > 0)
+                multmatrix(m_head) intersection() {
+                    lock_pad_shape(0, body_h - 0.2);
+                    // Short of the outer face, so the pad merges into the band with no
+                    // coincident skin.
+                    translate([0, 0, -eps]) linear_extrude(height = body_h)
+                        rrect(plate_x - 0.2, plate_y - 0.2, plate_r - 0.1);
+                }
         }
         lock_holes();
         // Open to the head, whose back is the lid.

@@ -13,15 +13,14 @@ color("LightSteelBlue") render() slice() back_plate();
 // Front shell (estimated), sitting on the box's top band.
 color("LightGray") translate([lx - 0.1, plate_y / 2 - 1.3, body_h]) cube([0.3, 1.3, 3.5]);
 label([x, 23.9, 5.8], "front shell (ghost)", v, t, "left", c = "DimGray");
-// The lock screw.
-// The lock screw lies just beside this cut.
 // A countersunk screw, its head flush with the band's outer face; drawn just
 // in front of the cut so it shows.
 color("Goldenrod") translate([lx + 0.25, plate_y / 2, lock_z]) rotate([90, 0, 0]) {
-    cylinder(d = 2, h = 6);
+    cylinder(d = 2, h = 8);
     cylinder(d1 = 3.8, d2 = 2, h = 0.9);
 }
-callout([x, plate_y / 2 - 1.5, lock_z], [x, 23.9, -2.6], "M2 × 6 countersunk, flush", v, t, "left");
+callout([x, plate_y / 2 - 1.5, lock_z], [x, 23.9, -2.6], "M2 × 8 countersunk, flush", v, t, "left");
+callout([x, 21.0, 2.8], [x, 16.0, 7.6], "pad (box) in a notch (head), 45° roof", v, t, "left");
 
 hy = head_y / 2;
 dim([x, hy + pocket_clear, body_h + 0.5], [x, plate_y / 2, body_h + 0.5], "", view = v);

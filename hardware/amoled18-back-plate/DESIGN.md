@@ -114,14 +114,19 @@ cover's shape:
   same as the front shell's. The band is 1.1 mm at the sides and about 1.3 mm along the long and
   short walls.
 - **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
-  3.5 mm deep). Six M2 × 6 countersunk lock screws hold the head in the box: two on each side,
+  3.5 mm deep). Six M2 × 8 countersunk lock screws hold the head in the box: two on each side,
   `lock_spread` (14 mm) apart, and one each in the top and bottom, diagonally opposite so they
   clear the battery slot and the head still fits either way round. Each goes through the band
-  round the box's angled end into a lock block in the head, cutting its own thread about 4.7 mm
-  deep (the holes take an M2 × 8 too). The band is only 1.1 mm thick, but an M2 countersunk head
-  needs just a 0.8 mm 90° seat, so the heads sit flush. The holes are 1.45 mm up from the ledge,
-  which keeps each seat under the seam with the front shell; its lower edge dips into the solid
-  wall below the ledge.
+  round the box's angled end into a lock block in the head, cutting its own thread about 5.6 mm
+  deep. An M2 countersunk head needs only a 0.8 mm 90° seat, so the heads sit flush in the 1.1 mm
+  band. The holes are 1.45 mm up from the ledge, which keeps each seat under the seam with the
+  front shell; its lower edge dips into the solid wall below the ledge.
+- **Pads and notches.** The band alone is 1.1 mm, thin for a screw to clamp on, so at each screw
+  the box has a pad on the band's inside, 6 mm wide, reaching `lock_pad` (1.0 mm) in — no further
+  than the ledge, so it stands on solid wall — and the head has a matching notch in its edge. The
+  wall under each screw head is 2.25 mm. The notch's roof, and the pad's top, slope at 45°, so the
+  head's rim above each notch is held up by solid plastic instead of printing as a bridge. The
+  pads also key the head into the box before it's screwed.
 
 ![The head from inside, with the BAT socket ghosted](renders/fig-stand-head.png)
 
