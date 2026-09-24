@@ -1,10 +1,14 @@
 # jpanel → Panels tab
 
-Kind: Plan (mock set) · Status: proposed · Last verified: 2026-09-24
+Kind: Living (mock set) · Status: **A shipped** · Last verified: 2026-09-24
 
 Three directions for rebuilding the **Panels** tab of `JpanelScreen.tsx`, which shipped
-ahead of its design pass and reads as noticeably less finished than the Messages and
+ahead of its design pass and read as noticeably less finished than the Messages and
 Flash tabs beside it.
+
+**The owner chose A.** It is shipped; B and C are kept because the reasoning in the table
+below is the record of what was weighed, and B's status spine is the obvious move if the
+fleet ever outgrows a screenful.
 
 Open `a-fleet-card.html`, `b-status-spine.html`, `c-expand-to-manage.html` directly in a
 browser. Each is standalone: `_shared.css` holds the tokens lifted verbatim from
@@ -15,26 +19,40 @@ variants include so it only exists once.
 
 These are faults, not preferences, and they land whichever direction is chosen.
 
-- **`--text-dim` does not exist.** It is referenced 17× — in `jpanel.css` and again in the
-  `.ops-panel-*` rules in `styles.css` — and is defined nowhere. Every line meant to
-  recede renders at full `--text`, which is most of why the tab reads as flat. Replace
-  with `--text-2` / `--text-3`.
-- **`.jp-panel`, `.jp-panel-head` and `.jp-panel-name` are each declared twice** in
-  `jpanel.css`, and `MessagesTab` uses `.jp-panel` as well — so the Panels block has been
-  silently restyling the Messages cards. De-duplicate *before* touching anything else in
-  that file.
-- **No gutter.** The list runs to the bezel while the segmented control above it is
-  inset, so nothing lines up. 16px, matching Flash.
-- **Tap targets under 44px**, and **Revoke styled like its neighbours** — the one
-  irreversible action on the screen is the least distinguishable. `--danger-tint`.
-- **Hardcoded type**, so the tab ignores Settings → Text size. Use `--fs-*`.
-- **Status by fade only.** A panel that has not reported in ten hours looks like one that
-  reported a minute ago, only greyer. Say it in words.
+- **`--text-dim` does not exist.** It was referenced 17× — in `jpanel.css` and again in the
+  `.ops-panel-*` rules in `styles.css` — and defined nowhere. Every line meant to recede
+  rendered at full `--text`, which is most of why the tab read as flat.
 
-Four behavioural bugs travel with the rebuild, independent of direction: revoke arms and
-never auto-disarms, "Saved." is permanent, the relative timestamp is computed once and
-freezes, and `PanelAudio` returns `null` while loading so the knobs card vanishes rather
-than showing a skeleton.
+  Writing the gate for it (`frontend/src/cssTokens.test.ts`) turned up **five more of the
+  same bug** elsewhere in `styles.css`, none of them noticed: `--fs-sm` on three plot labels
+  (which silently inherited their size), `--mono` on monospace that was not, `--border-2`,
+  `--surface-1` on a waveform label whose `color-mix` background was invalid and dropped
+  whole, and a dead `--teal-tint` fallback. All six are fixed; the gate now fails the build
+  on a seventh.
+- **`.jp-panel`, `.jp-panel-head` and `.jp-panel-name` were each declared twice** in
+  `jpanel.css`, and `MessagesTab` uses `.jp-panel` as well — so the Panels block had been
+  silently restyling the Messages cards: thread cards came out on `--surface-2` at 12px
+  radius under a 600-weight heading that had lost `--fs-title`. Two components shared one
+  set of names, so the fix is two sets of names — the Panels tab is `.jp-unit*` now, and
+  the gate is that no top-level selector in the sheet is declared twice.
+- **No gutter.** The list ran to the bezel while the segmented control above it was
+  inset, so nothing lined up. 16px, matching `.jp-threads`.
+- **Tap targets under 44px**, and **Revoke styled like its neighbours** — the one
+  irreversible action on the screen was the least distinguishable. `--danger-tint`, and
+  rose from the resting state rather than only once armed.
+- **Hardcoded type** — every font-size in the Panels half was a bare rem (0.72 … 0.88), all
+  of them below every token in the scale, so the one tab the owner reads standing in front
+  of a panel ignored Settings → Text size entirely.
+- **Status by fade only.** A panel that had not reported in ten hours looked like one that
+  reported a minute ago, only greyer. The words are on the meta line now
+  (`panelStateWords`), and the timestamp takes amber or rose beside them.
+
+Four behavioural bugs travelled with the rebuild, independent of direction, and are fixed:
+revoke armed and never auto-disarmed (3s now), "Saved." was permanent (4s), the relative
+timestamp was computed once and froze — so a panel that went silent an hour ago still read
+as twelve minutes, the exact failure this screen exists to catch — and `PanelAudio`
+returned `null` while loading, so the knobs card popped in a beat late and shoved every row
+down the screen under a thumb already moving.
 
 ## The three
 

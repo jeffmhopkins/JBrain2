@@ -1741,7 +1741,7 @@ fieldset.settings-field > legend {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.85rem;
 }
 .molt-versions {
@@ -4247,7 +4247,7 @@ button.small {
 .ops-panel-version {
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
-  color: var(--text-dim);
+  color: var(--text-2);
 }
 
 /* Pushed to the far edge: it is the first thing scanned down a list of panels, and the one
@@ -4255,7 +4255,7 @@ button.small {
 .ops-panel-seen {
   margin-left: auto;
   font-size: var(--fs-micro);
-  color: var(--text-dim);
+  color: var(--text-2);
 }
 
 .ops-panel-row.bad .ops-panel-seen {
@@ -4266,7 +4266,7 @@ button.small {
 .ops-panel-note {
   margin: 4px 0 0;
   font-size: var(--fs-micro);
-  color: var(--text-dim);
+  color: var(--text-2);
 }
 
 .ops-panel-concern {
@@ -4279,7 +4279,7 @@ button.small {
    on every row. Dim rather than coloured: it is a fact about the unit, not a warning. */
 .ops-panel-role {
   font-size: var(--fs-micro);
-  color: var(--text-dim);
+  color: var(--text-2);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0 6px;
@@ -4374,7 +4374,7 @@ button.small {
 }
 
 .plot-label {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-secondary);
   color: var(--text-2);
 }
 
@@ -4382,7 +4382,7 @@ button.small {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-secondary);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -4428,7 +4428,7 @@ button.small {
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 12px;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-secondary);
   color: var(--text);
 }
 
@@ -10701,7 +10701,7 @@ button.small {
   position: fixed;
   z-index: 61;
   background: var(--surface);
-  border: 1px solid var(--border-2);
+  border: 1px solid var(--border);
   border-radius: calc(10px * var(--font-scale));
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   padding: calc(8px * var(--font-scale));
@@ -18846,7 +18846,7 @@ button.auto-sect[aria-expanded="true"] > svg {
   transform: translate(-50%, -50%);
 }
 .atx-time {
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--text-2);
   min-width: 74px;
@@ -19035,7 +19035,7 @@ span.atx-w {
   position: absolute;
   left: 3px;
   bottom: 2px;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 9px;
   color: #fff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
@@ -19050,7 +19050,7 @@ span.atx-w {
 .tv-vid-now-t {
   flex: 0 0 auto;
   padding-top: 1px;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--steel);
 }
@@ -22404,7 +22404,7 @@ button.task-band:active {
   cursor: pointer;
 }
 .imgstepval {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--fs-secondary);
   color: var(--text);
   min-width: 26px;
@@ -22655,7 +22655,7 @@ button.task-band:active {
   align-items: center;
   gap: 8px;
   margin-top: 10px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--text-2);
   flex-wrap: wrap;
@@ -22835,7 +22835,7 @@ button.task-band:active {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--text-2);
   flex-wrap: wrap;
@@ -24461,7 +24461,7 @@ button.task-band:active {
   display: block;
   font-size: 11.5px;
   color: var(--text-2);
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   margin-top: 3px;
 }
 .jl-spec-note {
@@ -24519,7 +24519,7 @@ button.task-band:active {
   display: block;
   font-size: 11px;
   color: var(--text-3);
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   margin-top: 2px;
 }
 
@@ -24649,7 +24649,7 @@ button.task-band:active {
   font-weight: 600;
 }
 .jl-meta {
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.8;
   color: var(--text-2);
@@ -24671,7 +24671,7 @@ button.task-band:active {
   gap: 10px;
   padding: 9px 0;
   border-top: 1px solid var(--border);
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text-3);
 }
@@ -24706,7 +24706,7 @@ button.task-band:active {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 12px;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 11.5px;
   line-height: 1.55;
   color: #c6c8cb;
@@ -24719,7 +24719,7 @@ button.task-band:active {
 
 /* result / headline / share */
 .jl-headline {
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--text);
@@ -24735,7 +24735,7 @@ button.task-band:active {
 }
 .jl-chip {
   font-size: 10.5px;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   color: var(--text-2);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -24749,7 +24749,7 @@ button.task-band:active {
   justify-content: space-between;
   padding: 6px 0;
   border-top: 1px solid var(--border);
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-2);
 }
@@ -24759,7 +24759,7 @@ button.task-band:active {
   border: 1px solid var(--border);
   border-radius: 11px;
   padding: 10px 12px;
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--steel);
   word-break: break-all;
@@ -24798,7 +24798,7 @@ button.task-band:active {
   padding: 12px;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--border));
-  background: var(--location-tint, var(--teal-tint));
+  background: var(--location-tint);
   color: var(--teal);
   font-weight: 600;
   font-size: 14px;
@@ -24844,7 +24844,7 @@ button.task-band:active {
   line-height: 1.25;
 }
 .jl-share-repo {
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-3);
   margin: 0 0 16px;
@@ -26865,7 +26865,7 @@ button.task-band:active {
   left: 3px;
   padding: 0 3px;
   border-radius: 3px;
-  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
   font-size: var(--fs-micro);
   font-weight: 600;
   font-variant-numeric: tabular-nums;

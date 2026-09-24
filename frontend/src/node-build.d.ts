@@ -11,4 +11,10 @@ declare module "node:child_process" {
 
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: "utf8"): string;
+  // `cssTokens.test.ts` walks src/ for every stylesheet: the gate it runs is a loop, so it has
+  // to find the files itself rather than be handed a list that can silently fall behind.
+  export function readdirSync(
+    path: string,
+    options: { withFileTypes: true },
+  ): { name: string; isDirectory(): boolean }[];
 }

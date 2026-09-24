@@ -34,7 +34,7 @@ import {
   jpanelAudioUrl,
 } from "../api/client";
 import { MicIcon, PlayIcon, SendIcon, StopIcon } from "../components/icons";
-import { agoLabel, panelHealth } from "../panelStatus";
+import { agoLabel, panelHealth, panelStateWords } from "../panelStatus";
 import { useForeground } from "../visibility";
 import { MAX_MESSAGE_MS, type Recorder, startRecording } from "../voiceMessage";
 import { EndpointsScreen } from "./EndpointsScreen";
@@ -595,11 +595,12 @@ function PanelsTab() {
   const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const foreground = useForeground();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: tick is a re-run trigger, not read here
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const read = async (): Promise<void> => {
       try {
         const result = await api.panelStatus();
         if (!cancelled) {
@@ -609,11 +610,25 @@ function PanelsTab() {
       } catch {
         if (!cancelled) setError("Could not read the panels. Is the box reachable?");
       }
-    })();
+    };
+    // RE-READ RATHER THAN COUNT UP LOCALLY. "12 min ago" was computed once, at mount, and then
+    // sat there: leave the tab open and a panel that went silent an hour ago still reads as
+    // twelve minutes, which is the exact failure this screen exists to catch. Re-asking the box
+    // is also the only honest fix — `age_s` is computed THERE (see panelStatus.ts), because a
+    // phone that has been asleep disagrees with the box by minutes, and a locally-ticked clock
+    // would drift back into "last seen 4 minutes in the future".
+    //
+    // Foreground-gated and immediate-on-resume, the same shape `MessagesTab` above uses and for
+    // the same reason: a backgrounded phone polling a box on a home network is battery spent to
+    // refresh a screen nobody is looking at.
+    if (!foreground) return;
+    void read();
+    const timer = setInterval(() => void read(), POLL_MS);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [tick]);
+  }, [tick, foreground]);
 
   if (error) return <p className="jp-empty">{error}</p>;
   if (panels === null) return <p className="jp-empty">Reading the panels…</p>;
@@ -632,6 +647,11 @@ function PanelsTab() {
     </div>
   );
 }
+
+/** How long "Saved." stays up. Long enough to be read by someone who was looking at the panel
+ *  rather than the phone; short enough that it is gone before the next knob is touched, so it
+ *  can never be read as confirming THAT one. It used to stay for the life of the screen. */
+const SAVED_MS = 4_000;
 
 /** THE KNOBS EVERY PANEL SHARES — volume, microphone gain, and the codec's AGC.
  *
@@ -664,9 +684,19 @@ function PanelAudio() {
     };
   }, []);
 
+  // Cleared on a timer rather than left up, and the timer is restarted by each save — so the
+  // line always refers to the knob just turned. Cleared on unmount too: a `setSaved` after the
+  // tab is switched away is a React warning and a leak, for a message nobody will see.
+  useEffect(() => {
+    if (!saved) return;
+    const t = setTimeout(() => setSaved(false), SAVED_MS);
+    return () => clearTimeout(t);
+  }, [saved]);
+
   async function save(next: EndpointSettings): Promise<void> {
     setBusy(true);
     setError(null);
+    setSaved(false);
     try {
       // The box CLAMPS rather than rejects, so what comes back is the truth — show that rather
       // than the number just typed, or a value silently capped reads as the control ignoring you.
@@ -679,8 +709,18 @@ function PanelAudio() {
     }
   }
 
-  if (error !== null && cfg === null) return <p className="jp-panel-error">{error}</p>;
-  if (cfg === null) return null;
+  if (error !== null && cfg === null) return <p className="jp-unit-error">{error}</p>;
+  // A CARD-SHAPED HOLE, NOT NOTHING. This returned `null` while the settings were in flight, so
+  // the knobs appeared a beat after the panel list had already painted and shoved every row down
+  // the screen — under a thumb that was, by then, already moving towards one of them.
+  if (cfg === null) {
+    return (
+      <div className="jp-audio jp-audio-wait" aria-busy="true">
+        <h2>Every panel</h2>
+        <p className="jp-unit-hint">Reading the settings…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="jp-audio">
@@ -773,8 +813,8 @@ function PanelAudio() {
           </em>
         </span>
       </label>
-      {saved && <p className="jp-panel-hint">Saved. Panels pick this up within 15 minutes.</p>}
-      {error !== null && <p className="jp-panel-error">{error}</p>}
+      {saved && <p className="jp-unit-saved">Saved. Panels pick this up within 15 minutes.</p>}
+      {error !== null && <p className="jp-unit-error">{error}</p>}
     </div>
   );
 }
@@ -816,8 +856,8 @@ function PetEditor({
     };
   }, [panel.device_id]);
 
-  if (error !== null && look === null) return <p className="jp-panel-error">{error}</p>;
-  if (look === null) return <p className="jp-panel-hint">Reading…</p>;
+  if (error !== null && look === null) return <p className="jp-unit-error">{error}</p>;
+  if (look === null) return <p className="jp-unit-hint">Reading…</p>;
 
   const trimmed = look.pet_name.trim();
   // Empty is ALLOWED and means "leave it as the firmware shipped" — a blank name would otherwise
@@ -838,7 +878,7 @@ function PetEditor({
   }
 
   return (
-    <div className="jp-panel-rename">
+    <div className="jp-unit-edit">
       <label>
         Its name
         <input
@@ -851,7 +891,7 @@ function PetEditor({
       {/* SAID OUT LOUD, NOT JUST WRITTEN. Worth stating plainly on the screen where it is
           chosen: the owner is picking a word two four-year-olds have to be able to say and a
           speech model has to be able to hear, and a name that reads well can still land badly. */}
-      <p className="jp-panel-hint">
+      <p className="jp-unit-hint">
         This is what they <strong>say</strong> to it — the panel listens for &ldquo;hey{" "}
         {trimmed.toLowerCase() || "fish"}&rdquo;. Letters and spaces only, {PET_NAME_MAX} at most.
         Leave it empty to keep the name it shipped with.
@@ -872,23 +912,35 @@ function PetEditor({
         ))}
       </fieldset>
       {/* The gesture is not being taken away, and saying so stops this reading as a lock. */}
-      <p className="jp-panel-hint">
+      <p className="jp-unit-hint">
         What it comes back as after a restart. Four taps and a hold on the panel still swaps the
         body there and then.
       </p>
 
-      <div className="jp-panel-actions">
-        <button type="button" disabled={!nameOk || busy} onClick={() => void save()}>
-          {busy ? "saving…" : "save"}
+      <div className="jp-unit-actions">
+        <button
+          type="button"
+          className="primary"
+          disabled={!nameOk || busy}
+          onClick={() => void save()}
+        >
+          {busy ? "Saving…" : "Save"}
         </button>
         <button type="button" onClick={onDone}>
-          cancel
+          Cancel
         </button>
       </div>
-      {error !== null && <p className="jp-panel-error">{error}</p>}
+      {error !== null && <p className="jp-unit-error">{error}</p>}
     </div>
   );
 }
+
+/** How long a revoke stays armed. It never disarmed at all: an owner who tapped "revoke",
+ *  thought better of it and put the phone down left a panel one stray tap from being retired —
+ *  and the next tap on that card, minutes later, would not have looked like a confirmation of
+ *  anything. Long enough to read the label and mean it, short enough that walking away is a
+ *  cancellation, which is what walking away ought to mean. */
+const ARMED_MS = 3_000;
 
 /** One unit: what it is, what it last said, and the things the owner can do to it. */
 function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () => void }) {
@@ -898,6 +950,12 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), ARMED_MS);
+    return () => clearTimeout(t);
+  }, [armed]);
 
   const trimmed = draft.trim();
   // Checked here as well as on the box, so the owner finds out while still typing rather than
@@ -938,22 +996,41 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
   }
 
   const state = panelHealth(panel.age_s);
+  // `late` earns amber and the two worse states earn rose, which is the fleet card's own reading
+  // of the same number — the two surfaces must not disagree about whether a panel is in trouble.
+  const tone = state === "ok" ? "" : state === "late" ? " late" : " bad";
+  const words = panelStateWords(state);
 
   return (
-    <div className={`jp-panel${state === "ok" ? "" : " quiet"}`}>
-      <div className="jp-panel-head">
-        <span className="jp-panel-name">{panel.name}</span>
+    <div className="jp-unit">
+      <div className="jp-unit-head">
+        <span className="jp-unit-name">{panel.name}</span>
         {/* Only a display is badged: every panel in this house is a pet, so marking both would
             put a word on every row that answers a question nobody asked. */}
-        {panel.role === "display" && <span className="jp-panel-role">display</span>}
-        <span className="jp-panel-seen">
+        {panel.role === "display" && <span className="jp-unit-role">display</span>}
+        {/* "never reported" rather than `agoLabel`'s bare "never": a panel flashed and never
+            heard from is a DIFFERENT fault from one that reported and went quiet — check it was
+            provisioned against this box at all — and the slot is wide enough to say so. */}
+        <span className={`jp-unit-seen${tone}`}>
           {state === "never" ? "never reported" : agoLabel(panel.age_s)}
         </span>
       </div>
-      <p className="jp-panel-meta">{panel.version || "no firmware reported yet"}</p>
+      {/* THE STATE IN WORDS, beside the facts rather than instead of them. The card used to say
+          all of this by fading to 75% opacity — indistinguishable from a healthy panel, only
+          greyer, and invisible to anyone reading it in sunlight. */}
+      <p className="jp-unit-meta">
+        <span className="jp-unit-version">{panel.version || "no firmware reported yet"}</span>
+        {panel.report.screen ? ` · ${panel.report.screen}` : ""}
+        {words ? (
+          <>
+            {" · "}
+            <span className={`jp-unit-state${tone}`}>{words}</span>
+          </>
+        ) : null}
+      </p>
 
       {renaming ? (
-        <div className="jp-panel-rename">
+        <div className="jp-unit-edit">
           <label>
             Call it
             <input
@@ -972,16 +1049,21 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
               A-Z, the digits, space, hyphen and full stop, and a character it does not have draws
               as nothing — so an apostrophe would reach a four-year-old as a pop-up from someone
               missing a letter. Said plainly rather than enforced silently. */}
-          <p className="jp-panel-hint">
+          <p className="jp-unit-hint">
             Letters, digits, spaces, hyphens and full stops — {PANEL_NAME_MAX} at most. It is drawn
             on the other panel&rsquo;s screen, which has no other characters.
           </p>
-          <div className="jp-panel-actions">
-            <button type="button" disabled={!nameOk || busy} onClick={() => void rename()}>
-              {busy ? "saving…" : "save"}
+          <div className="jp-unit-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={!nameOk || busy}
+              onClick={() => void rename()}
+            >
+              {busy ? "Saving…" : "Save"}
             </button>
             <button type="button" onClick={() => setRenaming(false)}>
-              cancel
+              Cancel
             </button>
           </div>
         </div>
@@ -994,7 +1076,7 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
           }}
         />
       ) : (
-        <div className="jp-panel-actions">
+        <div className="jp-unit-actions">
           <button
             type="button"
             onClick={() => {
@@ -1003,10 +1085,10 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
               setRenaming(true);
             }}
           >
-            rename
+            Rename
           </button>
           {/* THE PANEL'S NAME AND THE PET'S NAME ARE DIFFERENT THINGS, and the labels have to
-              carry that: "rename" is which unit this is — the heading on the thread, what a
+              carry that: "Rename" is which unit this is — the heading on the thread, what a
               sibling's pop-up reads out — while this is the creature on the glass and the word
               the twins say to it. Two buttons a finger apart doing near-identical-sounding
               things is how the wrong one gets pressed. */}
@@ -1017,24 +1099,27 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
               setEditingPet(true);
             }}
           >
-            its pet
+            Its pet
           </button>
+          {/* ROSE FROM THE START, not only once armed. It was styled exactly like the two beside
+              it, so the one irreversible control on the screen was the least distinguishable —
+              arming it changes the weight and the label, which is what the second tap needs. */}
           <button
             type="button"
-            className={armed ? "jp-armed" : ""}
+            className={armed ? "danger armed" : "danger"}
             disabled={busy}
             onClick={() => void revoke()}
           >
-            {busy ? "revoking…" : armed ? "tap again to revoke" : "revoke"}
+            {busy ? "Revoking…" : armed ? "Tap again to revoke" : "Revoke"}
           </button>
           {armed && !busy && (
             <button type="button" onClick={() => setArmed(false)}>
-              cancel
+              Cancel
             </button>
           )}
         </div>
       )}
-      {error && <p className="jp-panel-error">{error}</p>}
+      {error && <p className="jp-unit-error">{error}</p>}
     </div>
   );
 }

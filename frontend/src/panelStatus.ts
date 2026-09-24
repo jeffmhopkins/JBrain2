@@ -50,6 +50,33 @@ export function agoLabel(ageS: number): string {
   return `${Math.round(ageS / 86400)} days ago`;
 }
 
+/** THE STATE IN WORDS, because on this screen the colour cannot be the only carrier.
+ *
+ * The Panels tab used to say it by fading the whole card to 75% opacity, which is what a panel
+ * that reported a minute ago looks like too, only greyer — and the fleet card beside it in Ops
+ * tints the timestamp, which is a second colour saying a thing neither of them ever spells out.
+ * `docs/reference/DESIGN.md` is binding on this: colour never carries a meaning alone.
+ *
+ * Empty for a healthy panel ON PURPOSE. "Reporting" on every row is a word that answers a
+ * question nobody asked, and it would make the two rows that DO need reading look like the
+ * three that do not.
+ *
+ * Empty for `never` too, and for the opposite reason: `agoLabel(-1)` is already the word
+ * "never" rather than a duration, so the state is said once, where the timestamp goes. The two
+ * that need this are `late` and `silent`, where the slot beside them holds "45 min ago" or "10
+ * hours ago" — a number the reader would otherwise have to judge for themselves. */
+export function panelStateWords(health: PanelHealth): string {
+  switch (health) {
+    case "ok":
+    case "never":
+      return "";
+    case "late":
+      return "late";
+    case "silent":
+      return "not reporting";
+  }
+}
+
 /** The report, as the panel spelled it. Every field is optional because it is a snapshot of
  *  whatever firmware that panel happens to be running — an older one simply says less, and a
  *  fleet view that broke on a panel mid-upgrade would be useless during exactly the event it

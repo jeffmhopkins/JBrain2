@@ -8,7 +8,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { PANEL_REPORT_S, agoLabel, panelConcerns, panelFacts, panelHealth } from "./panelStatus";
+import {
+  PANEL_REPORT_S,
+  agoLabel,
+  panelConcerns,
+  panelFacts,
+  panelHealth,
+  panelStateWords,
+} from "./panelStatus";
 
 describe("panelHealth", () => {
   it("does not cry wolf over one missed report", () => {
@@ -149,5 +156,40 @@ describe("panelConcerns", () => {
     /* A fleet view that broke on a panel mid-upgrade would be useless during exactly the
        event it exists to watch. */
     expect(panelConcerns({})).toEqual([]);
+  });
+});
+
+describe("the state in words", () => {
+  /* The Panels tab used to say all of this by fading the card to 75% opacity, which is what a
+     healthy panel looks like too, only greyer. `docs/reference/DESIGN.md` is binding: colour
+     never carries a meaning on its own. These are the words that carry it instead. */
+
+  it("names the two states a timestamp alone does not explain", () => {
+    /* "45 min ago" and "10 hours ago" are durations. Whether either is a problem is a judgement
+       about a 15-minute report cycle that the reader should not have to make on a phone. */
+    expect(panelStateWords("late")).toBe("late");
+    expect(panelStateWords("silent")).toBe("not reporting");
+  });
+
+  it("says nothing about a healthy panel", () => {
+    /* "Reporting" on every row answers a question nobody asked, and it would make the rows that
+       DO need reading look like the ones that do not. */
+    expect(panelStateWords("ok")).toBe("");
+  });
+
+  it("says nothing about a panel that has never reported, because the timestamp already did", () => {
+    /* The seen slot holds the WORD "never reported" for this one rather than a duration, so a
+       second phrase beside it would be the same fact twice. That the slot really does carry a
+       word here is what makes the silence safe — `agoLabel` is the other half of this pair. */
+    expect(panelStateWords("never")).toBe("");
+    expect(agoLabel(-1)).toBe("never");
+  });
+
+  it("covers every health this file can return", () => {
+    /* A new health with no words is a row whose only signal is a colour, which is the defect
+       this pair of functions exists to prevent — so the gate is exhaustiveness, not a list. */
+    for (const s of [0, PANEL_REPORT_S * 3, PANEL_REPORT_S * 20, -1]) {
+      expect(typeof panelStateWords(panelHealth(s))).toBe("string");
+    }
   });
 });
