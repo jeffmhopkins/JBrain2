@@ -114,7 +114,11 @@ async def _match_subject(
         await session.execute(
             text(
                 "SELECT DISTINCT s.id::text AS sid FROM app.subjects s"
-                " WHERE s.kind = 'device' AND ("
+                # PHONES ONLY. This binding is the human↔track link, and a panel has no track:
+                # it is the same `Subject(kind='device')` substrate but it writes no location
+                # fix and never will, so a Device entity named "room endpoint panel" binding to
+                # one would produce a person bound to a thing that cannot report where it is.
+                " WHERE s.kind = 'device' AND s.device_role IS NULL AND ("
                 "   s.display_name = :name"
                 "   OR s.display_name IN ("
                 "     SELECT a.alias FROM app.entity_aliases a WHERE a.entity_id = :eid"

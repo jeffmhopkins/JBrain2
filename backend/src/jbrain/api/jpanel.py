@@ -192,15 +192,15 @@ async def _panel_names(maker) -> dict[str, str]:
     was from, and `GET /next`'s `X-Jpanel-From` always said "the other one". One cause, three
     symptoms, none of which looks like a permissions problem from the outside.
 
-    THIS IS A LABEL CONVENTION, NOT A MECHANISM, and that is worth saying plainly. Panels are
-    ordinary `device_key` principals — the same substrate as an OwnTracks phone — and the only
-    thing distinguishing one is the label `/flash` writes.
-
-    Used anyway because the alternative is a schema change to mark a principal kind the auth
-    model does not have, and because the blast radius is small: the worst case is a message
-    offered to a device that RLS then refuses to deliver to — a dead letter, not a leak. Worth
-    replacing with a real marker the first time a third device key exists in this house
-    (JPANEL_PLAN.md §5).
+    IT IS A MECHANISM NOW. This used to read "a label convention, not a mechanism" — panels are
+    ordinary `device_key` principals, the same substrate as an OwnTracks phone, and the only
+    thing marking one was the label `/flash` wrote. The note ended: *worth replacing with a real
+    marker the first time a third device key exists in this house.* A third unit was flashed,
+    took the unnamed default, and `room endpoint panel` matched the predicate — so a box on the
+    owner's desk joined two children's addressing and stopped their messages. The roster now
+    reads `subjects.device_role = 'jpet'` (migration 0211), which a display cannot claim: the
+    role is written by the owner at flash time and `subjects_access` lets no device write its
+    own subject row.
 
     ONE ROW PER NAME, NEWEST KEY WINS, AND WITHOUT THAT VOICE POST DOES NOT WORK AT ALL.
 
@@ -224,14 +224,14 @@ async def _panel_names(maker) -> dict[str, str]:
             await session.execute(
                 text(
                     """
-                    SELECT DISTINCT ON (label) id::text, label
-                    FROM app.principals
-                    WHERE kind = 'device_key' AND revoked_at IS NULL
-                      AND (label LIKE 'panel%' OR label = :unnamed)
-                    ORDER BY label, created_at DESC
+                    SELECT DISTINCT ON (p.label) p.id::text, p.label
+                    FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.kind = 'device_key' AND p.revoked_at IS NULL
+                      AND s.device_role = 'jpet'
+                    ORDER BY p.label, p.created_at DESC
                     """
-                ),
-                {"unnamed": _UNNAMED_LABEL},
+                )
             )
         ).all()
         total = (
@@ -239,12 +239,12 @@ async def _panel_names(maker) -> dict[str, str]:
                 text(
                     """
                     SELECT count(*)
-                    FROM app.principals
-                    WHERE kind = 'device_key' AND revoked_at IS NULL
-                      AND (label LIKE 'panel%' OR label = :unnamed)
+                    FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.kind = 'device_key' AND p.revoked_at IS NULL
+                      AND s.device_role = 'jpet'
                     """
-                ),
-                {"unnamed": _UNNAMED_LABEL},
+                )
             )
         ).scalar_one()
     if int(total) > len(rows):
@@ -788,13 +788,14 @@ async def rename_panel(
             await session.execute(
                 text(
                     """
-                    SELECT label FROM app.principals
-                    WHERE id = CAST(:dev AS uuid) AND kind = 'device_key'
-                      AND revoked_at IS NULL
-                      AND (label LIKE 'panel%' OR label = :unnamed)
+                    SELECT p.label FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.id = CAST(:dev AS uuid) AND p.kind = 'device_key'
+                      AND p.revoked_at IS NULL
+                      AND s.device_role IS NOT NULL
                     """
                 ),
-                {"dev": device_id, "unnamed": _UNNAMED_LABEL},
+                {"dev": device_id},
             )
         ).scalar_one_or_none()
         if current is None:
@@ -830,6 +831,19 @@ async def rename_panel(
                     {"label": label, "current": str(current)},
                 )
             ).all()
+        )
+        # The subject's name moves with the key's. It used not to matter — nothing read
+        # `display_name` for a panel — but `retire_replaced` recognises a re-flashed unit by
+        # name, so a subject left behind at the old one would make the next flash mint a
+        # fourteenth live key instead of retiring the thirteen it replaced.
+        await session.execute(
+            text(
+                """
+                UPDATE app.subjects SET display_name = :label
+                WHERE kind = 'device' AND device_role IS NOT NULL AND display_name = :current
+                """
+            ),
+            {"label": label, "current": str(current)},
         )
         await session.commit()
     log.info("jpanel.panel_renamed", device=device_id, was=str(current), now=label, keys=moved)

@@ -1,6 +1,6 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** In progress · **Last verified:** 2026-09-23 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-09-24 · **Waves:** W1◻️ W2✅ W3✅ W4✅
 > — W2 and W4 shipped together in #1498; W3 shipped across #1504/#1508/#1511/#1513 and is
 > **confirmed working on a panel** (voice post both ways, the pop-up, the queue).
 >
@@ -8,6 +8,10 @@
 > open rather than ticked because the wave is not done until it has run on hardware: the
 > panel is away until tonight, the movement threshold it ships with is reasoned rather than
 > measured, and §5 says how to correct it from the box without a terminal.
+>
+> **§5's open roster item is closed** (migration 0211): a device now records whether it is a
+> phone, one of the twins' pets, or a display the owner operates, and panels are managed on the
+> fleet view — revoke included — rather than on the Location screen's phone list.
 
 The owner, across two asks:
 
@@ -644,17 +648,34 @@ costs two rewrites.
      arithmetic of `draw_popup`'s bubble at its shrunk scale. Both ends are read out of the
      firmware by unit tests rather than transcribed.
 
-  It does not make the convention a mechanism, and the bullet below still stands.
-- **There is no way to enumerate panels that is a mechanism rather than a convention**, and W2
-  ran into it immediately. A panel is an ordinary `device_key` principal — the same substrate as
-  an OwnTracks phone — and the only thing marking one is the label `/flash` writes:
-  `"panel {name}"`, or `"room endpoint panel"` when the owner named no unit. So "the other
-  panel" has to be resolved by `label LIKE 'panel%'`, which a hand-labelled device key could
-  join and which a re-flash without a name degrades.
-  It is survivable — the worst case is a message offered to a device that RLS then refuses to
-  deliver to, so the failure is a dead letter rather than a leak — and W2 proceeds on it. But it
-  wants a real marker (a principal sub-kind, or a panel roster table) the first time a third
-  device key exists in this house, and that is a schema change rather than a patch.
+  It does not make the convention a mechanism — see the bullet below, which the third unit
+  closed.
+- ~~**There is no way to enumerate panels that is a mechanism rather than a convention.**~~
+  **CLOSED by migration 0211 (`subjects.device_role`).** The note said it wanted a real marker
+  *"the first time a third device key exists in this house"*, and that is exactly when it broke.
+  A third unit was flashed, took the unnamed default, and `"room endpoint panel"` matched
+  `label LIKE 'panel%' OR label = :unnamed` — so a box on the owner's desk joined two children's
+  addressing, `send(to="panel")` saw three candidates where it needs one, and the twins' voice
+  messages stopped. The predicted failure was "a dead letter, not a leak"; the actual one was a
+  feature that stopped working in two bedrooms, which is worse and was not on the list.
+
+  A device now records what it IS at flash time: `NULL` = a phone, `'jpet'` = one of the twins'
+  panels, `'display'` = an endpoint the owner operates (OTA, settings, telemetry, `/converse`)
+  that no pet can reach. The roster reads `device_role = 'jpet'`; the fleet view reads
+  `device_role IS NOT NULL`; the Location screen's phone list reads `device_role IS NULL` and so
+  no longer lists panels at all. A device cannot write the column — `subjects_access` is
+  `WITH CHECK (app.is_owner())` — which is what stops a display talking its way into a bedroom.
+
+  Two things fell out of it that the note had not anticipated:
+
+  1. **Revoking a panel was unreachable.** It existed only on the Location screen's Phones tab,
+     under a swipe rail, among one row per flash — and the owner, who has no terminal
+     (CLAUDE.md #10), could not find it: *"I don't see a way to revoke from PWA."* There is now
+     a revoke on the fleet view, which retires every live key for that name rather than the one
+     the row was drawn from.
+  2. **A re-flash never retired what it replaced**, though `/flash` had claimed in a comment
+     since it was written that the old key "should stop working at that moment". Thirteen
+     flashes of one panel meant thirteen live keys under one name. It does now.
 - **Notifying Dad.** A message to the PWA currently waits to be looked at. Whether it should
   push is a question about a parent's phone, not about the panels.
 - **The transcriber mangles small children.** `"tell us a joke"` arrived as `"There is a joke.

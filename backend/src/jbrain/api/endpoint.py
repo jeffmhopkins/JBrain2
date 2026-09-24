@@ -36,6 +36,7 @@ import random
 import re
 import struct
 import time
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
@@ -53,6 +54,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices import service as devices
+from jbrain.devices.repo import DeviceRole
 from jbrain.llm.router import LlmRouter
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.transcribe import WhisperCppClient
@@ -658,6 +660,13 @@ MIC_GAIN_MAX = 42
 BRIGHTNESS_MIN = 10
 
 
+#: What a unit IS, recorded at flash time on its subject (migration 0211). `jpet` is one of the
+#: twins' panels — in the roster, addressable by its sibling. `display` is an endpoint the owner
+#: operates: same OTA, settings, telemetry and `/converse`, never reachable by a pet. Aliased
+#: rather than restated: the set belongs to the column, and two copies of it would drift.
+PanelRole = DeviceRole
+
+
 class EndpointSettings(BaseModel):
     volume: int = 70
     mic_gain_db: int = 30
@@ -697,15 +706,20 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
     )
 
 
-# THE LABEL CONVENTION, DEFINED WHERE IT IS WRITTEN.
+# THE LABEL IS A NAME. THE ROLE IS A KIND. They were one string until migration 0211.
 #
 # A panel is an ordinary `device_key` principal — the same substrate as an OwnTracks phone —
-# and the ONLY thing marking one is the label `/flash` puts on the key it mints. That makes
-# this string load-bearing for addressing, for the roster, and now for the fleet view, and it
-# was written in one module and matched in another with nothing but a test connecting them.
-# A unit flashed without a name was silently unaddressable for exactly that reason once
-# already. One definition, imported by the readers, is the version of that test that cannot
-# come apart. `jpanel` imports these; it does not restate them.
+# so for a long time the only thing marking one was the label `/flash` put on the key it minted,
+# and `label LIKE 'panel%'` was how three separate queries answered "is this a panel". That
+# string was therefore load-bearing for addressing, for the roster AND for the fleet view, with
+# nothing but a test connecting the module that wrote it to the modules that matched it.
+#
+# It broke the way a convention breaks: a third unit was flashed, took the unnamed default, and
+# `room endpoint panel` matched the roster predicate — so a box on the owner's desk silently
+# joined two children's addressing and stopped their messages, because it had been named
+# nothing in particular. `subjects.device_role` is now the mechanism, and these two keep only
+# the job they were always good at: carrying a name a four-year-old can be told out loud.
+# `jpanel` imports them; it does not restate them.
 UNNAMED_PANEL_LABEL = "room endpoint panel"
 
 
@@ -729,6 +743,11 @@ class PanelStatus(BaseModel):
 
     device_id: str
     name: str
+    # What this unit is, so the fleet view can say so and offer a pet the things only a pet
+    # has. Both roles appear here: a display the owner operates is part of his fleet whether
+    # or not the twins can reach it, and leaving it out would recreate in the one screen that
+    # matters the blind spot this column exists to remove.
+    role: PanelRole = "jpet"
     # Absent for a panel that has been flashed and has never reported — which is its own
     # answer, and a different one from "reported an hour ago and has gone quiet".
     reported_at: str = ""
@@ -768,16 +787,17 @@ async def panel_status(owner: OwnerDep, request: Request) -> PanelStatuses:
                 text(
                     """
                     SELECT DISTINCT ON (p.label)
-                           p.id::text, p.label, s.reported_at, s.version, s.report,
+                           p.id::text, p.label, sub.device_role,
+                           s.reported_at, s.version, s.report,
                            EXTRACT(EPOCH FROM (now() - s.reported_at))::bigint
                     FROM app.principals p
+                    JOIN app.subjects sub ON sub.id = p.subject_id
                     LEFT JOIN app.endpoint_status s ON s.principal_id = p.id
                     WHERE p.kind = 'device_key' AND p.revoked_at IS NULL
-                      AND (p.label LIKE 'panel%' OR p.label = :unnamed)
+                      AND sub.device_role IS NOT NULL
                     ORDER BY p.label, p.created_at DESC
                     """
-                ),
-                {"unnamed": UNNAMED_PANEL_LABEL},
+                )
             )
         ).all()
     return PanelStatuses(
@@ -785,18 +805,91 @@ async def panel_status(owner: OwnerDep, request: Request) -> PanelStatuses:
             PanelStatus(
                 device_id=str(row[0]),
                 name=panel_display_name(str(row[1])),
-                reported_at=row[2].isoformat() if row[2] is not None else "",
-                version=str(row[3] or ""),
-                age_s=int(row[5]) if row[5] is not None else -1,
-                report=dict(row[4] or {}),
+                # Narrowed rather than cast: the CHECK constraint permits only these two,
+                # and a row that somehow carries a third reads as a pet rather than crashing
+                # the one screen the owner uses to find out what is wrong.
+                role="display" if row[2] == "display" else "jpet",
+                reported_at=row[3].isoformat() if row[3] is not None else "",
+                version=str(row[4] or ""),
+                age_s=int(row[6]) if row[6] is not None else -1,
+                report=dict(row[5] or {}),
             )
-            # `DISTINCT ON (label)` for the reason `jpanel._panel_names` uses it: every flash
-            # mints a fresh key and nothing retires the old one, so a re-flashed panel is
-            # several principals under one label and the newest is the one it is using. Without
-            # this the owner's fleet view would show a unit once per time it was ever flashed.
+            # `DISTINCT ON (label)` is belt to the braces of retiring a replaced key at flash
+            # time: a panel re-flashed before that landed still has several live keys under one
+            # name, and the owner should see the unit once, not once per time it was ever
+            # flashed. Newest first, so the row shown is the identity the unit is actually using.
             for row in rows
         ]
     )
+
+
+class PanelRevoked(BaseModel):
+    name: str
+    keys: int
+
+
+@router.post("/panels/{device_id}/revoke")
+async def revoke_panel(device_id: str, owner: OwnerDep, request: Request) -> PanelRevoked:
+    """Stop a unit working, from the screen the owner already watches it on.
+
+    **This is the route that existed nowhere.** Revoking a panel meant the Location screen's
+    Phones tab — a location surface, landing on Map, listing every panel ever flashed as a row
+    reading "no fixes yet" — and the owner, who has no terminal (CLAUDE.md #10), could not find
+    it. Told where it was, he answered: *"I don't see a way to revoke from PWA."* He was right
+    about the part that mattered: there was no way to revoke a PANEL from anywhere a panel is
+    managed.
+
+    EVERY LIVE KEY FOR THAT NAME, not just the one the row was drawn from. The fleet view
+    collapses a unit's flashes into one row (`DISTINCT ON (p.label)`), so the row means "this
+    panel" and revoking it must mean what the owner sees: the unit stops working. Retiring only
+    the principal whose id the row carried would leave the twelve older keys of a re-flashed
+    panel still authenticating, which is the failure this whole change exists to end.
+
+    Scoped to endpoints. A phone reached through this route would be revoked with no
+    location-domain confirmation around it, so it 404s instead — phones are revoked where
+    phones are managed.
+    """
+    try:
+        uuid.UUID(device_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no such panel") from None
+
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT s.display_name, s.device_role
+                    FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.id = CAST(:dev AS uuid) AND p.kind = 'device_key'
+                      AND s.device_role IS NOT NULL
+                    """
+                ),
+                {"dev": device_id},
+            )
+        ).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="no such panel")
+        revoked = (
+            await session.execute(
+                text(
+                    """
+                    UPDATE app.principals p SET revoked_at = now()
+                    FROM app.subjects s
+                    WHERE s.id = p.subject_id AND p.kind = 'device_key'
+                      AND p.revoked_at IS NULL
+                      AND s.display_name = :label AND s.device_role = :role
+                    RETURNING p.id
+                    """
+                ),
+                {"label": row[0], "role": row[1]},
+            )
+        ).all()
+        await session.commit()
+    name = panel_display_name(str(row[0]))
+    log.info("endpoint.panel_revoked", name=name, keys=len(revoked))
+    return PanelRevoked(name=name, keys=len(revoked))
 
 
 @router.get("/settings")
@@ -812,6 +905,12 @@ async def panel_settings(principal: PanelDep, request: Request) -> EndpointSetti
     what permits it, so nothing here depends on this route choosing to return only three
     fields.
     """
+    # The ROLE IS NOT SERVED HERE, deliberately. A panel learns what it is from NVS, written by
+    # the same flash that wrote its subject row — one source, one moment. Serving it from this
+    # route as well would invite a second answer without giving the owner any way to change the
+    # first: nothing rewrites a role after the flash, so the field would have described a
+    # transition that cannot happen. When there is a way to re-role a unit in place, this is
+    # where it belongs.
     return await _read_settings(request, ctx_for(principal))
 
 
@@ -893,6 +992,12 @@ class FlashIn(BaseModel):
     # Which twin's panel this is. Carried into NVS so a log line names a unit rather than
     # a serial port that changes between plugs.
     name: str = ""
+    # jpet or Jeff — the one flag that decides what this unit IS. A `jpet` joins the twins'
+    # roster and can exchange voice messages with its sibling; a `display` is an endpoint the
+    # owner operates (OTA, settings, telemetry, /converse) and is never addressable by a pet.
+    # Defaults to `jpet` because that is what every panel flashed so far is, and a default that
+    # silently changed what existing units are would be a worse bug than the one this fixes.
+    role: PanelRole = "jpet"
     erase: bool = False
     # Keep this network on the box so a later re-flash needs no phone and no retyped
     # password. Defaults OFF: it is the one secret this surface stores, and starting to
@@ -910,6 +1015,7 @@ async def build_flash(
     ssid: str,
     password: str,
     name: str,
+    role: PanelRole = "jpet",
     erase: bool,
 ) -> dict[str, Any]:
     """Everything a panel needs, assembled: the images, and the config that makes it a unit.
@@ -931,7 +1037,16 @@ async def build_flash(
     # identity — correct, because a re-flash is how a unit is handed over or recovered,
     # and the old key should stop working at that moment.
     label = panel_label(name)
-    provisioned = await devices.provision_device(device_repo, ctx, label)
+    provisioned = await devices.provision_device(device_repo, ctx, label, device_role=role)
+    # The paragraph above has always said the old key "should stop working at that moment".
+    # Nothing made it. Thirteen flashes of one panel left thirteen live keys under one name, so
+    # the owner's device list was thirteen identical rows and the two he actually needed to
+    # revoke were buried in them — and every one of those keys still authenticated. Retiring
+    # them here is what the comment already promised, and it is the flash that knows which
+    # identity has just been replaced.
+    await devices.retire_replaced(
+        device_repo, ctx, label=label, device_role=role, keep_id=provisioned.device.id
+    )
 
     api_base, ca = _panel_base(request, settings)
     nvs = {
@@ -940,6 +1055,9 @@ async def build_flash(
         "api": api_base,
         "token": provisioned.key,
         "name": name,
+        # The firmware's one flag. It reads this at boot to decide whether to run the twin
+        # side at all — a display never polls for a sibling's voice messages.
+        "role": role,
     }
     # Only when it is the right root for that address. An internal root beside a public
     # URL is worse than no root: it fails every handshake and looks like a network fault.
@@ -987,6 +1105,7 @@ async def flash_panel(
         ssid=body.ssid,
         password=body.password,
         name=body.name,
+        role=body.role,
         erase=body.erase,
     )
 

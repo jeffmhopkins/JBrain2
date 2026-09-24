@@ -203,7 +203,12 @@ async def list_devices(request: Request, principal: PrincipalDep) -> list[Device
     no fixes still appears); activity is merged in per subject id."""
     ctx = ctx_for(principal)
     now = datetime.now(UTC)
-    devices = await get_device_repo(request).list(ctx)
+    # PHONES ONLY. Panels are the same `Subject(kind='device')` substrate, so this list
+    # showed every one ever flashed — one row per flash, each rendering a status line
+    # (last fix, battery, speed) that a panel structurally never produces. Fifteen rows
+    # of "no fixes yet" is not a device list, and the two the owner needed to revoke were
+    # buried in them. Panels are managed on the jpanel screen, where their telemetry is.
+    devices = await get_device_repo(request).list(ctx, scope="phones")
     activity = await get_location_repo(request).device_activity(ctx)
     return [DeviceSummaryOut.of(d, activity.get(d.id), now) for d in devices]
 

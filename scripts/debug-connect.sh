@@ -545,20 +545,31 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
-  panel-flash) # [--port /dev/ttyACM0] [--name Elora] [--erase] — flash a panel over USB
+  panel-flash) # [--port /dev/ttyACM0] [--name Elora] [--role jpet|display] [--erase] — flash a panel
     # Uses the network the owner asked this box to REMEMBER; a Wi-Fi password is never
     # taken from here, because it would then live in a debug transcript. Mints a fresh
-    # device key and revokes the old one, like every flash.
-    fport=""; fname=""; ferase="false"
+    # device key and retires the ones it replaced — which the flash only started actually
+    # doing with migration 0211; before that a re-flashed panel kept every key it had ever
+    # been given, and they all still authenticated.
+    #
+    # --role decides whether this unit joins the twins' addressing. Defaults to `jpet`,
+    # which is what every panel in the house is; `display` is an endpoint the owner
+    # operates that no pet can reach.
+    fport=""; fname=""; frole="jpet"; ferase="false"
     while [ $# -gt 0 ]; do
       case "$1" in
         --port) fport="$2"; shift 2 ;;
         --name) fname="$2"; shift 2 ;;
+        --role) frole="$2"; shift 2 ;;
         --erase) ferase="true"; shift ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
       esac
     done
-    body="$(P="$fport" N="$fname" E="$ferase" python3 -c 'import json,os; print(json.dumps({"port": os.environ["P"], "name": os.environ["N"], "erase": os.environ["E"] == "true"}))')"
+    case "$frole" in
+      jpet|display) ;;
+      *) echo "--role must be jpet or display" >&2; exit 2 ;;
+    esac
+    body="$(P="$fport" N="$fname" R="$frole" E="$ferase" python3 -c 'import json,os; print(json.dumps({"port": os.environ["P"], "name": os.environ["N"], "role": os.environ["R"], "erase": os.environ["E"] == "true"}))')"
     _call POST /api/debug/endpoint/flash "$body" | _pp ;;
 
   panel-address) # why a panel is, or is not, reaching this box over the LAN

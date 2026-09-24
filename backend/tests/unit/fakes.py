@@ -345,16 +345,39 @@ class FakeDeviceRepo:
     devices: list[DeviceInfo] = field(default_factory=list)
     key_hashes: dict[str, str] = field(default_factory=dict)  # device id -> active key hash
 
-    async def provision(self, ctx: SessionContext, *, label: str, key_hash: str) -> DeviceInfo:
+    async def provision(
+        self, ctx: SessionContext, *, label: str, key_hash: str, device_role: str | None = None
+    ) -> DeviceInfo:
         device = DeviceInfo(
-            id=str(uuid.uuid4()), label=label, created_at=datetime.now(UTC), revoked=False
+            id=str(uuid.uuid4()),
+            label=label,
+            created_at=datetime.now(UTC),
+            revoked=False,
+            device_role=device_role,
         )
         self.devices.append(device)
         self.key_hashes[device.id] = key_hash
         return device
 
-    async def list(self, ctx: SessionContext) -> Sequence[DeviceInfo]:
+    async def list(self, ctx: SessionContext, *, scope: str = "all") -> Sequence[DeviceInfo]:
+        if scope == "phones":
+            return [d for d in self.devices if d.device_role is None]
+        if scope == "endpoints":
+            return [d for d in self.devices if d.device_role is not None]
         return list(self.devices)
+
+    async def retire_replaced(
+        self, ctx: SessionContext, *, label: str, device_role: str, keep_id: str
+    ) -> int:
+        retired = 0
+        for i, d in enumerate(self.devices):
+            if d.id == keep_id or d.revoked:
+                continue
+            if d.label == label and d.device_role == device_role:
+                self.devices[i] = dataclasses.replace(d, revoked=True)
+                self.key_hashes.pop(d.id, None)
+                retired += 1
+        return retired
 
     async def rotate(self, ctx: SessionContext, device_id: str, key_hash: str) -> bool:
         if not any(d.id == device_id for d in self.devices):

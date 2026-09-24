@@ -192,6 +192,7 @@ const PANELS = {
     {
       device_id: "panel-ellie",
       name: "Ellie",
+      role: "jpet",
       reported_at: "2026-09-23T17:00:00Z",
       version: "0.2.94",
       age_s: 240,
@@ -200,6 +201,7 @@ const PANELS = {
     {
       device_id: "panel-mabel",
       name: "the other one",
+      role: "jpet",
       reported_at: "2026-09-23T08:00:00Z",
       version: "0.2.89",
       age_s: 9 * 3600,
@@ -304,6 +306,55 @@ describe("OpsScreen panels", () => {
     version = "0.2.94";
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(await screen.findByText("0.2.94")).toBeInTheDocument();
+  });
+
+  it("revokes a panel from the fleet view, on the second tap", async () => {
+    /* THE CONTROL THAT EXISTED NOWHERE. Revoking a panel used to mean the Location screen's
+       Phones tab — a location surface listing every panel ever flashed as a row reading "no
+       fixes yet" — and the owner, who has no terminal, could not find it: "I don't see a way
+       to revoke from PWA." One tap arms, the second does it, the same idiom as the phone rail. */
+    const revoked: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/endpoint/status") {
+        return json({ panels: PANELS.panels.filter((p) => !revoked.includes(p.device_id)) });
+      }
+      if (url.endsWith("/panels/panel-ellie/revoke") && (init as RequestInit)?.method === "POST") {
+        revoked.push("panel-ellie");
+        return json({ name: "Ellie", keys: 13 });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Panels/ }));
+    expect(await screen.findByText("Ellie")).toBeInTheDocument();
+
+    const [revoke] = screen.getAllByRole("button", { name: "revoke" });
+    fireEvent.click(revoke as HTMLElement);
+    // Armed, not done: one tap must not retire a panel on a child's wall.
+    expect(screen.getByRole("button", { name: "tap again to revoke" })).toBeInTheDocument();
+    expect(revoked).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "tap again to revoke" }));
+    // The row goes because the BOX stopped returning it, not because the card hid it: a row
+    // that vanished optimistically and came back would leave the owner unsure which of two
+    // identically-named units he had just killed.
+    await waitFor(() => expect(screen.queryByText("Ellie")).not.toBeInTheDocument());
+    expect(revoked).toEqual(["panel-ellie"]);
+  });
+
+  it("badges a display, and leaves a pet unmarked", async () => {
+    /* The exception is what earns a word. Every panel in the house is a pet, so badging both
+       would put a label on every row answering a question nobody asked. */
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") {
+        return json({ panels: [{ ...PANELS.panels[0], name: "Jeff", role: "display" }] });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Panels/ }));
+    expect(await screen.findByText("display")).toBeInTheDocument();
   });
 
   it("does not take the whole screen down when the fleet cannot be read", async () => {

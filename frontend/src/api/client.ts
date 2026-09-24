@@ -2615,11 +2615,18 @@ export interface EndpointFirmware {
   url: string;
 }
 
+/** What a unit IS, chosen at flash time. A `jpet` is one of the twins' panels: it joins the
+ *  roster and can exchange voice messages with its sibling. A `display` is an endpoint the
+ *  owner operates — same OTA, settings and telemetry — that no pet can reach. */
+export type PanelRole = "jpet" | "display";
+
 export interface FlashRequest {
   port: string;
   ssid: string;
   password: string;
   name?: string;
+  /** Defaults to `jpet` on the box, which is what every panel flashed so far is. */
+  role?: PanelRole;
   erase?: boolean;
   /** Keep this network on the box so a panel can be re-flashed without a phone. */
   remember?: boolean;
@@ -2656,6 +2663,7 @@ export interface JpanelMessage {
 export interface PanelStatusOut {
   device_id: string;
   name: string;
+  role: PanelRole;
   /** "" for a panel that has been flashed and has never reported. */
   reported_at: string;
   version: string;
@@ -2666,6 +2674,13 @@ export interface PanelStatusOut {
 
 export interface PanelStatuses {
   panels: PanelStatusOut[];
+}
+
+/** What a revoke retired: the unit's name, and how many live keys it had. More than one is
+ *  normal for a panel flashed repeatedly before the flash began retiring what it replaced. */
+export interface PanelRevoked {
+  name: string;
+  keys: number;
 }
 
 /** One panel's thread: the messaging surface is grouped by panel because "which twin,
@@ -5002,6 +5017,16 @@ export const api = {
   async panelStatus(): Promise<PanelStatuses> {
     const response = await request("/api/endpoint/status");
     return (await response.json()) as PanelStatuses;
+  },
+
+  // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for
+  // that name, which is what the row means: the fleet collapses a panel's flashes into one
+  // row, so revoking it retires the unit rather than the single key the row was drawn from.
+  async revokePanel(deviceId: string): Promise<PanelRevoked> {
+    const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/revoke`, {
+      method: "POST",
+    });
+    return (await response.json()) as PanelRevoked;
   },
 
   // ===== jpanel messages (docs/plans/JPANEL_PLAN.md §3b) =====

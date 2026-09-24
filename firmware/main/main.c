@@ -388,8 +388,17 @@ void app_main(void)
             /* Voice post, for the same reasons in the same place: it needs `cfg`, and its
                own ~30 s poll is a socket that cannot open before the radio is up. A panel
                that starts without it is still a pet — it simply cannot carry messages, which
-               is worth a line in the log rather than a refusal to boot. */
-            if (!jpanel_start(&cfg)) ESP_LOGW(TAG, "no voice post — messages will not arrive");
+               is worth a line in the log rather than a refusal to boot.
+
+               A display never starts it at all. The box's roster is `device_role = 'jpet'`,
+               so a display asking for messages gets nothing it could ever be sent — this is
+               not a feature being withheld but a poll with no possible answer, and skipping
+               it saves a task, 6 KB of stack and a request every thirty seconds forever. */
+            if (!cfg_is_jpet(&cfg)) {
+                ESP_LOGI(TAG, "display — no voice post");
+            } else if (!jpanel_start(&cfg)) {
+                ESP_LOGW(TAG, "no voice post — messages will not arrive");
+            }
             mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router

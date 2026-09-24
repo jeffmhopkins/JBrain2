@@ -67,19 +67,62 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
 
 
 async def _panel(maker: async_sessionmaker[AsyncSession], label: str, age_days: int) -> str:
-    """One device key, as `/flash` leaves it. `age_days` orders the group: `_panel_names` keeps
-    the NEWEST key per label, so which one the PWA is looking at is decided by this."""
-    pid = str(uuid.uuid4())
-    async with scoped_session(maker, _BOOTSTRAP) as s:
+    """One device key with its subject, as `/flash` leaves it. `age_days` orders the group:
+    `_panel_names` keeps the NEWEST key per label, so which one the PWA is looking at is decided
+    by this.
+
+    THE SUBJECT IS NOT OPTIONAL SCENERY. Since migration 0211 the roster reads
+    `subjects.device_role = 'jpet'`, so a key with no subject is not a panel at all — which is
+    exactly the property that keeps the owner's desk box out of two children's addressing, and
+    it means a fixture that mints a bare principal is no longer modelling a flashed unit."""
+    pid, sid = str(uuid.uuid4()), str(uuid.uuid4())
+    # OWNER, not `_BOOTSTRAP`, now that there is a subject to write: `subjects_access` is
+    # `WITH CHECK (app.is_owner())` and refuses the bootstrap context outright. That refusal is
+    # the property the role relies on — no device may write the row that says what it is — so
+    # the fixture moves to the context that is actually allowed rather than the policy moving.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.subjects (id, display_name, kind, device_role)"
+                " VALUES (CAST(:sid AS uuid), :label, 'device', 'jpet')"
+            ),
+            {"sid": sid, "label": label},
+        )
         await s.execute(
             text(
                 """
-                INSERT INTO app.principals (id, kind, key_hash, label, created_at)
-                VALUES (CAST(:id AS uuid), 'device_key', :hash, :label,
+                INSERT INTO app.principals (id, kind, subject_id, key_hash, label, created_at)
+                VALUES (CAST(:id AS uuid), 'device_key', CAST(:sid AS uuid), :hash, :label,
                         now() - make_interval(days => :age))
                 """
             ),
-            {"id": pid, "hash": f"hash-{pid}", "label": label, "age": age_days},
+            {"id": pid, "sid": sid, "hash": f"hash-{pid}", "label": label, "age": age_days},
+        )
+        await s.commit()
+    return pid
+
+
+async def _phone(maker: async_sessionmaker[AsyncSession], label: str) -> str:
+    """An OwnTracks phone: the same `device_key` substrate, with NO role.
+
+    That is now the entire difference between the owner's phone and a panel on a child's wall,
+    and it is the difference this route must respect — writing a panel name onto a phone key
+    would enrol it into the twins' post."""
+    pid, sid = str(uuid.uuid4()), str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.subjects (id, display_name, kind)"
+                " VALUES (CAST(:sid AS uuid), :label, 'device')"
+            ),
+            {"sid": sid, "label": label},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.principals (id, kind, subject_id, key_hash, label)"
+                " VALUES (CAST(:id AS uuid), 'device_key', CAST(:sid AS uuid), :hash, :label)"
+            ),
+            {"id": pid, "sid": sid, "hash": f"hash-{pid}", "label": label},
         )
         await s.commit()
     return pid
@@ -175,16 +218,18 @@ async def test_a_panel_learns_its_twin_s_name_from_the_poll_it_already_makes(
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        mine = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        mine = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
 
         # Alone on the box: there is no sibling, and saying so is the correct answer.
         assert _sibling(client, key, mine["key"]) == ""
 
-        client.post("/api/devices", json={"label": "panel Nora"})
+        client.post("/api/devices", json={"label": "panel Nora", "device_role": "jpet"})
         assert _sibling(client, key, mine["key"]) == "Nora"
 
         # A third unit, and the answer goes back to nothing rather than to a guess.
-        client.post("/api/devices", json={"label": "panel Rae"})
+        client.post("/api/devices", json={"label": "panel Rae", "device_role": "jpet"})
         assert _sibling(client, key, mine["key"]) == ""
 
 
@@ -199,8 +244,10 @@ async def test_renaming_the_twin_changes_what_the_panel_is_told_to_say(
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        mine = client.post("/api/devices", json={"label": "panel Ellie"}).json()
-        client.post("/api/devices", json={"label": "room endpoint panel"})
+        mine = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
+        client.post("/api/devices", json={"label": "room endpoint panel", "device_role": "jpet"})
         assert _sibling(client, key, mine["key"]) == "the other one"
 
         # THE ID THE PWA WOULD USE, which is the panel's PRINCIPAL id off the thread list —
@@ -241,12 +288,13 @@ async def test_only_a_panel_can_be_renamed_through_this_route(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """The owner's phone is a `device_key` too. This route writes the `panel ` prefix that makes
-    a principal ADDRESSABLE as a panel, so pointing it at an OwnTracks key would enrol that
-    phone into the twins' post — which is why the lookup filters on the label rather than
-    trusting the id in the path."""
+    """The owner's phone is a `device_key` too. This route writes the name a panel is addressed
+    by, so pointing it at an OwnTracks key would enrol that phone into the twins' post — which is
+    why the lookup checks what the device IS (`device_role IS NOT NULL`) rather than trusting the
+    id in the path. It used to check the label prefix, which was the same guard made of string
+    matching; a phone labelled `panel something` would have passed it."""
     key = await service.rotate_owner_key(SqlAuthRepo(maker))
-    phone = await _panel(maker, "owntracks phone", 5)
+    phone = await _phone(maker, "owntracks phone")
 
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
@@ -325,7 +373,9 @@ async def test_a_panel_can_re_fetch_a_message_it_has_already_heard(
     )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        panel = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
         pid = next(iter(_names(client)))
         message_id, _ = await _plant(maker, tmp_path, pid, b"\x11\x22")
 
@@ -372,8 +422,10 @@ async def test_a_panel_cannot_re_fetch_a_message_that_is_not_its_own(
     )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        client.post("/api/devices", json={"label": "panel Ellie"})
-        snooper = client.post("/api/devices", json={"label": "panel Nora"}).json()
+        client.post("/api/devices", json={"label": "panel Ellie", "device_role": "jpet"})
+        snooper = client.post(
+            "/api/devices", json={"label": "panel Nora", "device_role": "jpet"}
+        ).json()
         ellie_id = next(pid for pid, name in _names(client).items() if name == "Ellie")
         hers, _ = await _plant(maker, tmp_path, ellie_id, b"\x33\x44")
 
@@ -404,7 +456,9 @@ async def test_an_upload_that_does_not_match_its_hash_is_refused(
     )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        panel = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
         client.cookies.clear()
         head = {"Authorization": f"Bearer {panel['key']}"}
 
@@ -447,7 +501,9 @@ async def test_a_panel_that_cannot_prove_itself_is_still_heard(
     )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        panel = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
         client.cookies.clear()
         sent = client.post(
             "/api/jpanel/send?to=dad",
@@ -471,7 +527,9 @@ async def test_a_message_too_long_is_refused_rather_than_cut(
     )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        panel = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
         client.cookies.clear()
         too_long = b"\x10\x20" * (jpanel.MAX_MESSAGE_BYTES // 2 + 1000)
         answer = client.post(
@@ -497,7 +555,9 @@ async def test_the_box_says_what_it_sent_so_the_panel_can_check(
     )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        panel = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
         pid = next(iter(_names(client)))
         message_id, _ = await _plant(maker, tmp_path, pid, b"\x55\x66")
 

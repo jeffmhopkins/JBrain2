@@ -854,15 +854,72 @@ const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
 //
 // On Ops rather than beside the messages, because these are the questions asked ABOUT a panel
 // rather than through it — next to the update that put the version there.
+/** Retire a panel, from the fleet view.
+ *
+ * TAP AGAIN TO CONFIRM, the same two-step the phone rail uses, because the consequence is the
+ * same and the owner should not have to learn two idioms for it. Not a modal: this screen is
+ * read on a phone and a sheet over a list the owner is comparing rows in costs more than it
+ * protects.
+ *
+ * A revoked panel does not vanish from the list — the box stops returning it, and the refetch
+ * is what removes the row. That ordering matters: a row that disappeared optimistically and
+ * came back on the next poll would leave the owner unsure which of two identically-named units
+ * he had just killed, which is precisely the confusion this whole change is about. */
+function PanelRevoke({ panel, onRevoked }: { panel: PanelStatusOut; onRevoked: () => void }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function revoke(): Promise<void> {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.revokePanel(panel.device_id);
+      onRevoked();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+      setArmed(false);
+    }
+  }
+
+  return (
+    <div className="ops-panel-actions">
+      <button
+        type="button"
+        className={`ops-panel-revoke${armed ? " armed" : ""}`}
+        disabled={busy}
+        onClick={() => void revoke()}
+      >
+        {busy ? "revoking…" : armed ? "tap again to revoke" : "revoke"}
+      </button>
+      {armed && !busy && (
+        <button type="button" className="ops-panel-cancel" onClick={() => setArmed(false)}>
+          cancel
+        </button>
+      )}
+      {error && <span className="ops-panel-concern">{error}</span>}
+    </div>
+  );
+}
+
 function PanelsCard({ refreshKey }: { refreshKey: number }) {
   const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by a revoke, so the card re-reads the fleet rather than editing the list it is
+  // holding: the box collapses a unit's keys into one row, and only the box knows whether
+  // retiring them left anything behind.
+  const [tick, setTick] = useState(0);
 
   // Refetched whenever the top Refresh bumps `refreshKey`, like the history card, and for a
   // more pointed reason: the press right after an update is the owner asking THIS card
   // whether the new version landed, and a card that answered with the pre-update reading
   // would be worse than one that made him reload the app.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is a re-run trigger, not read in the effect
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey and tick are re-run triggers, not read in the effect
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -876,7 +933,7 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, tick]);
 
   const health = (panels ?? []).map((p) => panelHealth(p.age_s));
   const unwell = health.filter((h) => h !== "ok").length;
@@ -914,6 +971,10 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
           <div key={p.device_id} className={`ops-panel-row${state === "ok" ? "" : " bad"}`}>
             <div className="ops-panel-head">
               <span className="ops-panel-name">{p.name}</span>
+              {/* Only a display is badged. A pet is the ordinary case and every panel in the
+                  house is one, so badging both would put a word on every row that answers a
+                  question nobody asked; the badge earns its place by marking the exception. */}
+              {p.role === "display" && <span className="ops-panel-role">display</span>}
               <span className="ops-panel-version">{p.version || "—"}</span>
               <span className="ops-panel-seen">{agoLabel(p.age_s)}</span>
             </div>
@@ -930,6 +991,7 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
                 {c}
               </p>
             ))}
+            <PanelRevoke panel={p} onRevoked={() => setTick((t) => t + 1)} />
           </div>
         );
       })}

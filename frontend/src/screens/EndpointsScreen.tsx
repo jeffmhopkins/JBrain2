@@ -15,6 +15,7 @@ import {
   type EndpointFirmware,
   type EndpointPort,
   type FlashRequest,
+  type PanelRole,
   api,
 } from "../api/client";
 import "./endpoints.css";
@@ -51,6 +52,10 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
   const [ssid, setSsid] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  // jpet or Jeff. Defaults to a pet: every panel in the house is one, and a default
+  // that quietly made the next flash something else would be the same class of bug as
+  // the unnamed default that put a desk box into two children's addressing.
+  const [role, setRole] = useState<PanelRole>("jpet");
   const [erase, setErase] = useState(false);
   const [remember, setRemember] = useState(true);
 
@@ -101,7 +106,7 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
     setLog([]);
     setError("");
     try {
-      const body: FlashRequest = { port, ssid, password, erase, remember };
+      const body: FlashRequest = { port, ssid, password, erase, remember, role };
       if (name) body.name = name;
       for await (const line of api.flashEndpoint(body)) {
         setLog((prev) => [...prev, line]);
@@ -253,6 +258,41 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
                 placeholder="e.g. left"
               />
             </label>
+
+            {/* WRITTEN AT FLASH TIME AND NOWHERE ELSE ON THIS SCREEN, because it decides
+                whether this unit joins the twins' addressing — and a unit that can talk its
+                way into a child's bedroom by claiming to be a pet is the thing the role
+                exists to prevent. Changing it later is the box's to do, not the panel's. */}
+            <fieldset className="ep-field ep-role">
+              <legend>What is it</legend>
+              <label className="ep-radio">
+                <input
+                  type="radio"
+                  name="panel-role"
+                  checked={role === "jpet"}
+                  onChange={() => setRole("jpet")}
+                />
+                <span>
+                  A pet
+                  <em>One of the twins&rsquo; panels. Can send and receive voice messages.</em>
+                </span>
+              </label>
+              <label className="ep-radio">
+                <input
+                  type="radio"
+                  name="panel-role"
+                  checked={role === "display"}
+                  onChange={() => setRole("display")}
+                />
+                <span>
+                  A display
+                  <em>
+                    An endpoint you operate — same updates, settings and telemetry — that the pets
+                    cannot reach and that never appears as a twin.
+                  </em>
+                </span>
+              </label>
+            </fieldset>
           </Step>
 
           <Step n={3} title="Flash">
@@ -285,6 +325,16 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
             {port && !ssid && (
               <p className="ep-hint">A panel with no network can never be updated again.</p>
             )}
+
+            {/* WHERE A PANEL GOES AFTER IT IS FLASHED. This screen creates units and had no
+                answer to "and how do I retire one" — which cost the owner an evening looking
+                for a revoke that lived on the Location screen's phone list, under a swipe
+                rail, among one row per flash. One line, because the alternative is a second
+                copy of the fleet list on a screen whose job is a USB cable. */}
+            <p className="ep-hint">
+              Flashed panels are listed under <strong>Ops &rarr; Panels</strong>, with what each one
+              last reported — and a revoke, when a unit is finished with.
+            </p>
 
             {done && <p className="ep-ok">Done. The panel reboots into the new firmware.</p>}
             {failed && <p className="ep-warn">Flash failed — the log below says where.</p>}

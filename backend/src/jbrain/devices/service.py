@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from jbrain.auth import keys
 from jbrain.db.session import SessionContext
-from jbrain.devices.repo import DeviceInfo, DeviceRepo
+from jbrain.devices.repo import DeviceInfo, DeviceRepo, DeviceRole
 
 
 @dataclass(frozen=True)
@@ -28,10 +28,33 @@ def _valid_id(device_id: str) -> bool:
     return True
 
 
-async def provision_device(repo: DeviceRepo, ctx: SessionContext, label: str) -> ProvisionedDevice:
+async def provision_device(
+    repo: DeviceRepo, ctx: SessionContext, label: str, *, device_role: DeviceRole | None = None
+) -> ProvisionedDevice:
     key = keys.generate_owner_key()
-    device = await repo.provision(ctx, label=label, key_hash=keys.hash_key(key))
+    device = await repo.provision(
+        ctx, label=label, key_hash=keys.hash_key(key), device_role=device_role
+    )
     return ProvisionedDevice(device=device, key=key)
+
+
+async def retire_replaced(
+    repo: DeviceRepo, ctx: SessionContext, *, label: str, device_role: str, keep_id: str
+) -> int:
+    """Revoke the keys a just-flashed unit replaced, and say how many.
+
+    A panel's identity across a re-flash is its NAME — the physical unit carries nothing else
+    the box can recognise, since the flash is what mints its credential in the first place. So
+    "the same panel" is: the same label, the same role, and not the identity just issued. That
+    is narrow on purpose. Matching on label alone would let a display named `Jeff` retire a pet
+    named `Jeff`, which is the cross-role reach `device_role` exists to prevent.
+
+    Returns the count rather than nothing so the flash log can tell the owner what it cleaned
+    up. Twelve retired keys is worth a line; zero is the normal first flash of a new unit.
+    """
+    if not _valid_id(keep_id):
+        return 0
+    return await repo.retire_replaced(ctx, label=label, device_role=device_role, keep_id=keep_id)
 
 
 async def rotate_device_key(repo: DeviceRepo, ctx: SessionContext, device_id: str) -> str | None:

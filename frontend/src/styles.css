@@ -4275,6 +4275,46 @@ button.small {
   color: var(--danger);
 }
 
+/* Only a display carries this, so it reads as "not the usual thing" rather than as a label
+   on every row. Dim rather than coloured: it is a fact about the unit, not a warning. */
+.ops-panel-role {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.ops-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* Quiet until armed. An always-red revoke on every row of a fleet view reads as an alarm
+   about the fleet; the colour belongs to the moment the owner has actually asked for it. */
+.ops-panel-revoke,
+.ops-panel-cancel {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.ops-panel-revoke.armed {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.ops-panel-revoke:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .ops-host-row {
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
