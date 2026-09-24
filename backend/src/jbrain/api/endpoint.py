@@ -1410,13 +1410,39 @@ def _panel_history(key: str, now: float) -> list[tuple[str, str]]:
 _WAKE_PREFIX = re.compile(r"^\W*(?:hey|hay)\W+(?:fish|fishy|fisch|phish)\b\W*", re.IGNORECASE)
 
 
-def _strip_wake_prefix(text: str) -> str:
+def _wake_prefix_for(pet_name: str) -> re.Pattern[str]:
+    """The stripper for the name THIS panel answers to.
+
+    **This has to follow a rename or the bug comes back.** The pattern above is the shipped name
+    and its Whisper spellings; once the owner can rename the pet (migration 0212), a box still
+    stripping `fish` would leave `hey pip` on the front of every transcript and send it to the
+    model — which is exactly the symptom the owner reported and this stripper was written for.
+
+    A CUSTOM NAME GETS NO VARIANTS, and that is a real limitation rather than an oversight.
+    `fishy|fisch|phish` are transcriptions of the shipped name that were OBSERVED coming back
+    from Whisper; nobody can know in advance how it will spell a name it has never been given,
+    and guessing homophones would risk eating a word the child actually said. So a renamed pet
+    strips its name spelled correctly, and the occasional mis-spelt wake reaches the model as
+    part of the question — which reads as the pet answering something slightly odd, not as the
+    pet being deaf.
+    """
+    name = " ".join(pet_name.split())
+    if not name:
+        return _WAKE_PREFIX
+    words = r"\W+".join(re.escape(w) for w in name.split(" "))
+    return re.compile(rf"^\W*(?:hey|hay)\W+(?:{words})\b\W*", re.IGNORECASE)
+
+
+def _strip_wake_prefix(text: str, pet_name: str = "") -> str:
     """`text` without a leading wake phrase. Unchanged when it does not start with one.
 
     An utterance that was ONLY the name becomes empty, which is right: there is no question in
     it, and the caller already treats empty as "say that again" rather than as an error. That
-    is the correct answer to an accidental wake and a better one than a reply about fish."""
-    return _WAKE_PREFIX.sub("", text, count=1).strip()
+    is the correct answer to an accidental wake and a better one than a reply about fish.
+
+    ONLY AS A PREFIX, still: a name in the middle of a sentence is the child talking ABOUT the
+    pet, and deleting it there would change what they said."""
+    return _wake_prefix_for(pet_name).sub("", text, count=1).strip()
 
 
 def _panel_remember(key: str, now: float, heard: str, reply: str) -> None:
@@ -1636,7 +1662,13 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         log.warning("endpoint.converse_stt_error", error=repr(exc))
         raise HTTPException(status_code=503, detail="could not hear") from exc
     raw_heard = (transcript.text or "").strip()
-    heard = _strip_wake_prefix(raw_heard)
+    # THE NAME THIS PANEL ANSWERS TO, not the one the firmware shipped with. The owner can
+    # rename the pet (migration 0212) and the wake word changes with it, so a box stripping a
+    # constant would leave `hey pip` on the front of every question and send it to the model.
+    look = await _read_appearance(
+        request, ctx_for(principal), getattr(principal, "subject_id", "") or ""
+    )
+    heard = _strip_wake_prefix(raw_heard, look.pet_name)
     stt_ms = int((time.monotonic() - stt_started) * 1000)
 
     if not heard:
