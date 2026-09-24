@@ -124,6 +124,19 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
        OFF rather than "leave it as it was" — otherwise a panel that once had the overlay on
        keeps it forever and the switch only works in one direction. */
     out->debug_overlay = cJSON_IsTrue(d) ? 1 : 0;
+    /* Both absent on a box that predates them, and absent has to leave the firmware's own
+       answer standing — unlike `debug_overlay` above, where absent means OFF because that
+       switch has to work in both directions. Here the fallbacks are a name the panel already
+       answers to and a body it is already wearing, and overriding either from a silent box
+       would be a change nobody asked for. */
+    const cJSON *pn = cJSON_GetObjectItemCaseSensitive(root, "pet_name");
+    if (cJSON_IsString(pn) && pn->valuestring != NULL && pn->valuestring[0] != '\0') {
+        snprintf(out->pet_name, sizeof(out->pet_name), "%s", pn->valuestring);
+    }
+    const cJSON *fm = cJSON_GetObjectItemCaseSensitive(root, "form");
+    if (cJSON_IsString(fm) && fm->valuestring != NULL) {
+        out->form = strcmp(fm->valuestring, "robot") == 0 ? 1 : 0;
+    }
     cJSON_Delete(root);
 
 done:

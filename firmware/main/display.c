@@ -379,6 +379,28 @@ void display_set_brightness(int level)
     s_brightness_pending = true;
 }
 
+/* WHICH BODY THE PANEL COMES BACK AS. Four taps and a hold still toggles it live; this is the
+   answer it starts from, and until the box could hold one it was always the ostrich — so every
+   reboot and every OTA quietly undid a child who had chosen the robot.
+   Deferred to the render task like the brightness above, and for a weaker version of the same
+   reason: `st` belongs to that task, and writing a field of it from `apply_settings()` would be
+   a cross-task write into a struct being tweened at ~25 fps. */
+static volatile int s_form_box = -1;     /* what the box last SAID, not what is on screen */
+static volatile int s_form_pending = -1; /* a change for the render task to take */
+
+/* TAKEN ON CHANGE, NOT ON EVERY FETCH, and the difference is a child's afternoon. `apply_settings`
+   runs every fifteen minutes and the box serves a form unconditionally, so acting on each answer
+   would re-assert the owner's choice four times an hour — Elora switches to the robot, and the
+   panel silently switches her back before she has finished playing with it. Comparing against
+   what the box last said means the gesture wins until the OWNER actually changes his mind. */
+void display_set_form(int form)
+{
+    if (form != 0 && form != 1) return;
+    if (form == s_form_box) return;
+    s_form_box = form;
+    s_form_pending = form;
+}
+
 /* THE SLEEP ITSELF IS `screen.h` — thresholds, levels and the movement test, all pure
    arithmetic and all host-tested. What lives here is the half that needs the panel: which
    stage we are in, what wakes it, and the frame that does not get drawn. */
@@ -436,6 +458,18 @@ static bool s_show_version;
 /* The name in the font's own alphabet — it has uppercase, digits and a lowercase `v`, so a
    name has to be shouted. Built once; `vocab_name()` is derived from the wake phrase. */
 static char s_name_up[24];
+
+/* Rebuilt when the owner renames the pet. The label is drawn from `s_name_up` every frame, so
+   this is the whole of it — but it must happen on a task, not in an interrupt, and the render
+   task is the only one that reads the buffer. A torn read here costs one frame of a wrong name,
+   which is why this is a plain rebuild rather than a hand-off: the alternative is holding a
+   second buffer to fix a glitch nobody can see. */
+static void build_name(void);
+
+void display_refresh_name(void)
+{
+    build_name();
+}
 
 static void build_name(void)
 {
@@ -1780,6 +1814,10 @@ static void face_task(void *arg)
        turns one into an animation system. */
     face_state_t st;
     face_rest(&st);
+    /* Whatever the box said before this task started; -1 until it has said anything, in which
+       case `face_rest` has already chosen the shipped default. Left PENDING rather than cleared:
+       the loop below takes it on the first pass and logs it, so a boot and a later change read
+       the same way in the log. */
     action_t action = ACT_NONE;
     uint32_t action_start = 0;
     float action_mag = 1.0f;
@@ -2880,6 +2918,17 @@ static void face_task(void *arg)
             s_brightness_pending = false;
             PHASE(14);
             apply_brightness();
+        }
+        /* A settings refresh lands every fifteen minutes, so a body chosen from the PWA reaches
+           a panel on a wall without anyone touching it. Taken on the RENDER task, which is the
+           only one allowed to write `st`, and only when it actually differs — assigning every
+           cycle would fight the four-tap toggle, snapping a child's live choice back within the
+           quarter hour. */
+        if (s_form_pending >= 0) {
+            st.form = (face_form_t)s_form_pending;
+            s_form_pending = -1;
+            dirty = true;
+            ESP_LOGI(TAG, "form <- box: %s", st.form == FORM_OSTRICH ? "ostrich" : "robot");
         }
         if (since_reassert >= REASSERT_MS) {
             PHASE(12);

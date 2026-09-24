@@ -264,11 +264,29 @@ static esp_mn_state_t feed_multinet(const int16_t *pcm, int samples)
     return st;
 }
 
+/* Set from the main task when the owner renames the pet; consumed HERE, on the task that owns
+   the model. `esp_mn_commands_*` rebuilds the list `detect()` is reading, so doing it from
+   `apply_settings()` would be a cross-task rewrite of a structure in use — the same class of
+   fault as the brightness write that used to panic this firmware within a minute of boot.
+   There is no lock to take: this task is the only reader, so handing it the work IS the lock. */
+static volatile bool s_vocab_reload;
+static void load_vocabulary(void); /* defined below; the reload above is its only early caller */
+
+void speech_reload_vocabulary(void)
+{
+    s_vocab_reload = true;
+}
+
 static void detect_task(void *arg)
 {
     (void)arg;
     uint32_t last_report = 0;
     while (true) {
+        if (s_vocab_reload) {
+            s_vocab_reload = false;
+            load_vocabulary();
+            ESP_LOGI(TAG, "vocabulary reloaded — listening for '%s'", vocab_name());
+        }
         afe_fetch_result_t *res = s_afe->fetch(s_afe_data);
         if (res == NULL || res->ret_value == ESP_FAIL) {
             vTaskDelay(pdMS_TO_TICKS(20));

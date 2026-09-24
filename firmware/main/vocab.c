@@ -1,12 +1,20 @@
 #include "vocab.h"
 
+#include <stdio.h>
 #include <stddef.h>
+#include <string.h>
 
 /* Deliberately SHORT. Every phrase here is always listening (no wake word), so each one is a
    chance to fire at the room; a vocabulary that covers everything the twins might say would
    spend most of its day misfiring. These are the things they asked for, plus the gags that
    are worth asking for by name. */
-static const vocab_t VOCAB[] = {
+/* THE ONE PHRASE THAT IS NOT IN FLASH, because it is the one the owner has to be able to
+   change. Everything else here is fixed vocabulary; this is the pet's NAME, and the note below
+   the table has asked since it was written for it to stop being a rebuild away.
+   Sized for "hey " plus a name the box caps well under this. */
+static char s_listen[24] = "hey fish";
+
+static vocab_t VOCAB[] = {
     /* THE PANEL'S NAME, and the one phrase here whose cost is not an animation.
      *
      * The owner: *"both of these panels will have a wake word that will allow the same
@@ -28,7 +36,7 @@ static const vocab_t VOCAB[] = {
      * terminal, so a name only a rebuild can change is a name they cannot change, and the two
      * panels will want different ones. It belongs on `endpoint_settings` beside the other
      * knobs; `esp_mn_commands_update()` already supports re-registering at runtime. */
-    {"hey fish", VOCAB_LISTEN, 0},
+    {s_listen, VOCAB_LISTEN, 0},
 
     /* THE WAY OUT, and the owner found it the way these things get found: *"now that it auto
      * continues for six turns, it wants to keep going even if I say stop."*
@@ -192,6 +200,28 @@ const vocab_t *vocab_get(int id)
 {
     if (id < 0 || id >= vocab_count()) return NULL;
     return &VOCAB[id];
+}
+
+bool vocab_set_name(const char *name)
+{
+    /* RULE 1 OF THIS FILE, ENFORCED RATHER THAN ASSUMED: MultiNet's grapheme-to-phoneme pass
+       takes lowercase words and spaces, and silently refuses anything else — leaving the panel
+       deaf to exactly that one phrase with nothing on screen to say so. The box validates too,
+       but a panel that trusted it would be deaf on the say-so of a route it cannot see. */
+    if (name == NULL || name[0] == '\0') return false;
+    char phrase[sizeof(s_listen)];
+    int n = snprintf(phrase, sizeof(phrase), "hey ");
+    for (const char *p = name; *p != '\0'; p++) {
+        char c = *p;
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        if (c != ' ' && (c < 'a' || c > 'z')) return false;
+        if (n >= (int)sizeof(phrase) - 1) return false; /* longer than we can hold: refuse whole */
+        phrase[n++] = c;
+    }
+    phrase[n] = '\0';
+    if (strcmp(phrase, s_listen) == 0) return false;
+    snprintf(s_listen, sizeof(s_listen), "%s", phrase);
+    return true;
 }
 
 const char *vocab_name(void)

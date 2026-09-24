@@ -57,6 +57,16 @@ bool speech_take(char *out, int cap, int *id);
  * deaf to exactly that one thing. Reported to the debug API rather than discovered by ear. */
 void speech_vocab(int *accepted, int *rejected);
 
+/* Re-register the whole vocabulary with MultiNet, for when the pet has been renamed.
+ *
+ * The wake phrase is the only entry that can change at runtime, but the model's command list is
+ * rebuilt whole because that is the only granularity `esp_mn_commands_*` offers. Cheap and rare:
+ * it happens when the OWNER changes the name, not on every settings fetch — `vocab_set_name`
+ * returns false when the phrase is unchanged precisely so this is not called four times an hour.
+ *
+ * Safe to call while listening: it takes the same lock the detect loop holds. */
+void speech_reload_vocabulary(void);
+
 /* The i-th refused phrase, or NULL past the end. The counts say the panel is deaf to
    something; this says to WHAT, and it is the difference between a number the owner cannot
    act on and a name they can. Goes out in telemetry for the same reason the ALC reading and

@@ -44,6 +44,15 @@
  * `VOCAB_LISTEN` entry exists, which the host suite forbids. */
 const char *vocab_name(void);
 
+/* Rename the pet: rewrites the `VOCAB_LISTEN` phrase to "hey <name>". Returns true when the
+   phrase actually CHANGED, which is the caller's signal to re-register the vocabulary with
+   MultiNet — the settings fetch runs every fifteen minutes and re-registering on each one would
+   rebuild the model's command list four times an hour for nothing.
+   Refuses anything rule 1 refuses (a-z and spaces, case-folded here) and anything too long to
+   hold, rather than storing a phrase the model will silently decline: a name that cannot be
+   heard leaves a child saying it and getting nothing, which reads as a broken panel. */
+bool vocab_set_name(const char *name);
+
 typedef enum {
     VOCAB_ACTION = 0, /* play an action */
     VOCAB_FORM,       /* become a body */

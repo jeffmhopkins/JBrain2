@@ -53,6 +53,18 @@ typedef struct {
     int mic_gain_db; /* 0..42; the ES8311's PGA quantises to 6 dB steps */
     int brightness;  /* 0..255, written to the panel's 0x51 */
     int debug_overlay; /* draw the microphone meter; 0 unless the owner switched it on */
+    /* THE PET'S NAME, WHICH IS THE WAKE WORD. `vocab.c` compiles in "hey fish" and
+       `vocab_name()` takes the last word of it for the label above the pet's head, so this
+       renames the creature in the sense that matters to a four-year-old: what she says to it.
+       That file has asked for this since it was written — a name only a rebuild can change is
+       a name the owner cannot change, and the two panels want different ones.
+       EMPTY MEANS "keep what the firmware shipped with", never "no name": a blank would leave
+       a child saying something the panel cannot hear. */
+    char pet_name[16];
+    /* Which body to wear: 0 ostrich, 1 robot, -1 "the box did not say". Four taps and a hold
+       still toggles it live — this is only what the panel comes back AS, which until now was
+       always the ostrich because nothing wrote the choice down. */
+    int form;
 } ota_settings_t;
 
 esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out);
