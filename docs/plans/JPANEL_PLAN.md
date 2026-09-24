@@ -9,6 +9,12 @@
 > panel is away until tonight, the movement threshold it ships with is reasoned rather than
 > measured, and §5 says how to correct it from the box without a terminal.
 >
+> **The sleep timer no longer counts voice, and the pet sleeps rather than merely dimming**
+> (0.3.02): ambient speech held the screen lit — a parent in the hall, a sibling, a television —
+> which is the opposite of what a bedroom timer is for. Only a touch or real movement resets it
+> now; the pet ANSWERING still holds the screen, because a question answered to a dimming screen
+> reads as broken. On entering dim the pet shuts its eyes and drifts a zzz.
+>
 > **§5's open roster item is closed** (migration 0211): a device now records whether it is a
 > phone, one of the twins' pets, or a display the owner operates, and panels are managed on the
 > jpanel screen's **Panels** tab — rename, pet name, body and revoke — rather than on the

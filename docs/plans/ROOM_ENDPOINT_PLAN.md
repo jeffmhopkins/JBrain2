@@ -4722,6 +4722,33 @@ an honest floor needs more samples than one session gave. Still open. What did s
 ways to ask (`can you burp`, `can you fart`, `do a big jump`, `have a snack`, `give it a kick`,
 `do a spin`), because a phrase a child actually says is worth more than a threshold.
 
+###### The samples arrived, and "a confidence problem" was the wrong frame
+
+**2026-09-24, firmware 0.3.00, one 15-minute window on Lydian's panel** — the capture that entry
+was waiting for. Every phrase that fired: `eat` 13, `eat` 16, `stop stop` 23, `fart` 13,
+`laugh` 19, `spin` 26. Alongside them, **81 `?` entries** — decodes that timed out without
+resolving to any command.
+
+The owner, testing by hand in the same window: `spin` works, `dance` does not. `do a dance`
+works. `hey fish` works. `send a message` and `send dad a message` do not.
+
+**The failing phrases never appear in the ring at all, at any probability.** They are in the `?`
+bucket. That is not a phrase scoring under a bar — `speech.c` says outright *"There is no
+confidence floor here"*, so anything that decodes fires. `dance` is not losing a comparison; it
+is not being decoded.
+
+Which inverts the fix this entry proposed. **A floor set from these numbers would take the
+feature backwards**: the working phrases sit at 13-26, so any threshold high enough to suppress
+a false trigger would also silence `eat`, `fart` and `spin`, while doing nothing whatever for
+`dance`. The floor is not the missing piece; it is a trap that looks like the missing piece,
+and it stayed open for a version because nobody had the sample set to see that.
+
+What actually separates the two groups is whether MultiNet's grapheme-to-phoneme pass resolves
+the phrase at all, and on this evidence a short word is the weakest case — `dance` fails where
+`do a dance` succeeds, same action, same model, same session. **So the fix is phrasing, not
+thresholds**, which is what "six more ways to ask" was already groping toward. See
+`vocab.c` on the send phrases, reworded to `tell dad` / `tell sister` on the same evidence.
+
 ##### What was only visible on a cable, and now is not
 
 The instruction was to review every avenue of data reachable only over USB and put it in

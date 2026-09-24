@@ -2623,11 +2623,27 @@ static void face_task(void *arg)
             const int waiting = jpanel_waiting(NULL, 0);
             const bool arrived = waiting > prev_wait;
             prev_wait = waiting;
-            const bool used = tapped || down || woke_by_touch || s_moved || speaking ||
+            /* VOICE DOES NOT HOLD THE SCREEN AWAKE. The owner: *"the time out should not
+               consider voice to be something that extends the activity... You should only be
+               on longer from a poke or accelerometer data saying that it was moved."*
+
+               `speech_hearing()` is the VAD — ANY speech in the room. In a bedroom that is a
+               parent in the hall, a sibling, a television: all of it held the panel lit, which
+               is the opposite of what a sleep timer is for. `heard_voice` went with it, because
+               a recognised word is still voice rather than a finger.
+
+               WHAT STAYS IS THE PET ANSWERING, and that is the owner's call between two shapes
+               he was offered: ambient speech is ignored, but `speaking` and a live `s_talk`
+               hold the screen while a reply is actually coming out. A child who asks a question
+               and watches the screen dim mid-sentence reads that as broken, not as asleep. An
+               action holds it for the same reason — it is the pet doing the thing it was asked
+               to do, and the asking is the part being discounted, not the doing. */
+            const bool used = tapped || down || woke_by_touch || s_moved ||
                               gest.taps > 0 || cue > 0.0f || action != ACT_NONE ||
-                              s_talk != TALK_IDLE || s_repeat_until != 0 || heard_voice ||
-                              speech_hearing() || arrived || jpanel_running() ||
+                              speaking || s_talk != TALK_IDLE || s_repeat_until != 0 ||
+                              arrived || jpanel_running() ||
                               jpanel_state() != JPANEL_IDLE;
+            (void)heard_voice; /* still set for the caption; no longer extends the timer */
             if (s_moved) {
                 /* Logged only where it MATTERS — a waking nudge — and with the number that
                    would justify moving the threshold. A panel awake and being played with
@@ -2699,8 +2715,22 @@ static void face_task(void *arg)
             /* The face follows the conversation when there is one: attentive while it is
                listening, bewildered when it has nothing to say. A pet that keeps grinning
                through a failure is a pet that looks like it did not notice. */
+            /* DIM MEANS ASLEEP, NOT MERELY DARKER. The owner: *"as the unit starts to time
+               out and goes into the dim mode, the robot should go to sleep and should have a
+               zzz animation with eyes closed."* Before this the pet carried on with its idle
+               loop at a quarter brightness, which reads as neither awake nor asleep.
+
+               Only DIM wears it. At DARK the render loop stops blitting entirely, so there is
+               nothing to see and nothing to spend frames on — the zzz lives in the five-to-
+               fifteen-minute window and the night is simply dark.
+
+               It defers to a live conversation on purpose: the screen can still be dim while
+               the pet answers something asked of it (voice no longer resets the timer), and a
+               pet that replied with its eyes shut would look broken rather than sleepy. */
+            const bool dozing = screen_dozing(s_sleep, s_talk != TALK_IDLE, speaking);
             face_params_t target;
-            emotion_resolve(s_talk == TALK_LISTENING  ? FACE_CURIOUS
+            emotion_resolve(dozing                    ? FACE_SLEEPY
+                            : s_talk == TALK_LISTENING  ? FACE_CURIOUS
                             : s_talk == TALK_FAILED   ? FACE_BEWILDERED
                                                       : rig_spec(action)->face,
                             &target);
@@ -2720,7 +2750,12 @@ static void face_task(void *arg)
             rig_figure(action, p, action_mag, now, st.eyes.face_ang, &st.fig);
             st.bob = bob_step(frame++);
             st.lean = s_lean;
-            st.open = s_open;
+            /* TWEENED SHUT RATHER THAN SNAPPED, so falling asleep is something you can watch
+               happen: the same halving `emotion_approach` uses everywhere else, twice per frame
+               for the 25 fps reason given above. The blink value is left alone underneath, so
+               waking restores it without a seam. */
+            st.open = dozing ? emotion_approach(emotion_approach(st.open, 0.0f, 0.12f), 0.0f, 0.12f)
+                             : s_open;
             st.startle = s_flinch;
             /* THE MOUTH, WHILE THERE IS SOUND COMING OUT OF IT.
              *
@@ -2763,6 +2798,24 @@ static void face_task(void *arg)
             const int over_h = side ? SQ_Y0 + SQ : FACE_H;
             font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
                       s_show_version ? ota_running_version() : s_name_up, LABEL_COLOUR);
+            /* THE ZZZ, and it drifts rather than blinks. Three Z's rising one after another on
+               a slow cycle reads as breathing; all three appearing at once reads as an icon,
+               and an icon is a status light rather than a sleeping animal.
+               Drawn from the pet's own head rather than a fixed corner, so it follows the
+               quarter turn the way the label and the caption do. */
+            if (dozing) {
+                const uint32_t phase = (now / 700u) % 4u;   /* 0..3: one Z, two, three, rest */
+                char z[4] = {0};
+                for (uint32_t i = 0; i < phase && i < 3; i++) z[i] = 'Z';
+                if (z[0] != '\0') {
+                    /* Each Z a little higher and to the right than the last would need per-
+                       glyph placement; the font draws a run, so the RUN climbs instead — one
+                       step per phase, which gives the same lift for a fraction of the code. */
+                    const int zx = FACE_W / 2 + 26 + (int)phase * 4;
+                    const int zy = over_y0 + 40 - (int)phase * 6;
+                    font_draw(fb, FACE_W, FACE_H, zx, zy, 2, z, LABEL_COLOUR);
+                }
+            }
             draw_meter(fb, level);
             caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
             if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);

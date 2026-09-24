@@ -2943,24 +2943,66 @@ static void test_vocab_arguments_are_real(void)
     CHECK(to_dad == 1, "and one way to send to dad");
 }
 
-/* THE MARGIN BETWEEN THE TWO SEND PHRASES IS ONE LETTER, and rule 3 is what makes it matter.
+/* THE SEND PHRASES ARE "tell <recipient>", AND THE RECIPIENT IS THE LAST WORD.
  *
- * "send a message" and "send dad a message" diverge at `a` against `d`. `test_vocab_has_no_
- * ambiguity` already forbids a prefix anywhere in the table, so this does not re-check that.
- * What it pins is the SHAPE that keeps the margin: every send phrase names its recipient
- * BEFORE the noun, so a third one ("send ellie a message") is safe for the same reason —
- * where the natural-sounding "send a message to ellie" would make the existing short form its
- * prefix and take the whole feature down with it. The next person to add a recipient reads
- * this before they reach for the phrasing they would have said out loud. */
-static void test_send_phrases_name_the_recipient_before_the_noun(void)
+ * This replaces a test that pinned the opposite shape. The phrases were "send a message" and
+ * "send dad a message", and that test required the recipient BEFORE the noun so a third one
+ * ("send ellie a message") could not become a prefix of an existing phrase. The shape was
+ * sound; the phrases simply never fired — measured on two panels on 0.3.00, alongside `do a
+ * dance` firing and `dance` not — and the leading suspicion is that the pair sounded so alike
+ * (differing only at `a` against `dad`) that they split the confidence between them.
+ *
+ * The new shape moves the recipient to the end, which brings back the hazard the old one was
+ * built to avoid, in a form `test_vocab_has_no_ambiguity` CANNOT catch: that test only flags a
+ * prefix at a word boundary, so "tell ann" and "tell anna" would pass it while being exactly
+ * the collision rule 3 forbids — one phrase complete inside another. So this checks the
+ * recipients against each other directly, character by character.
+ *
+ * The next person to add a recipient reads this before choosing a name. */
+static void test_send_phrases_are_tell_plus_a_distinct_recipient(void)
 {
     const vocab_t *v = vocab_all();
+    const char *who[8];
+    int n = 0;
     for (int i = 0; i < vocab_count(); i++) {
         if (v[i].kind != VOCAB_SEND) continue;
-        const char *msg = strstr(v[i].phrase, "message");
-        CHECK(msg != NULL, "a send phrase says the word message");
-        CHECK(strcmp(msg, "message") == 0, "and ends on it, so no recipient trails the noun");
+        CHECK(strncmp(v[i].phrase, "tell ", 5) == 0, "a send phrase starts with the carrier");
+        const char *recipient = v[i].phrase + 5;
+        CHECK(*recipient != '\0', "and names somebody after it");
+        CHECK(strchr(recipient, ' ') == NULL, "the recipient is one word, and the last one");
+        CHECK(n < (int)(sizeof(who) / sizeof(who[0])), "more recipients than this test holds");
+        who[n++] = recipient;
     }
+    CHECK(n >= 2, "there are send phrases to check at all");
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (i == j) continue;
+            const size_t len = strlen(who[i]);
+            /* NOT a word-boundary check. `strncmp` alone is the point: "ann" inside "anna" is
+               the failure, and it carries no space to be found by. */
+            CHECK(!(strlen(who[j]) >= len && strncmp(who[i], who[j], len) == 0),
+                  "no recipient is a prefix of another");
+        }
+    }
+}
+
+/* THE PET SLEEPS WHILE THE SCREEN IS DIM, and defers to a reply.
+ *
+ * The second half is the one worth a test rather than a reading. Voice no longer resets the
+ * idle timer (the owner: *"you should only be on longer from a poke or accelerometer data"*),
+ * so the screen can reach DIM while a conversation is still going — and a pet answering a
+ * question with its eyes shut looks broken, not sleepy. The exception is the whole reason this
+ * predicate takes three arguments instead of being `stage == SCREEN_DIM`. */
+static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
+{
+    CHECK(screen_dozing(SCREEN_DIM, false, false), "dim and idle: asleep");
+    CHECK(!screen_dozing(SCREEN_AWAKE, false, false), "awake is awake");
+    /* Dark stops blitting entirely, so there is nothing to draw a zzz onto. Asserted so that
+       "dozing" is never quietly widened to mean "not awake". */
+    CHECK(!screen_dozing(SCREEN_DARK, false, false), "dark draws nothing at all");
+    CHECK(!screen_dozing(SCREEN_DIM, true, false), "not while a conversation is live");
+    CHECK(!screen_dozing(SCREEN_DIM, false, true), "nor while a reply is coming out");
+    CHECK(!screen_dozing(SCREEN_DIM, true, true), "nor both at once");
 }
 
 /* ---- the caption ticker -------------------------------------------------------------- */
@@ -3200,7 +3242,7 @@ int main(void)
     test_gesture_no_cue_for_a_count_that_does_nothing();
     test_gesture_cue();
     test_vocab_phrases_are_sayable();
-    test_send_phrases_name_the_recipient_before_the_noun();
+    test_send_phrases_are_tell_plus_a_distinct_recipient();
     test_vocab_has_no_ambiguity();
     test_vocab_arguments_are_real();
     test_the_way_out_is_the_word_a_child_would_actually_say();
@@ -3220,6 +3262,7 @@ int main(void)
     test_the_five_farts_are_five_different_farts();
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
+    test_the_pet_dozes_only_when_dim_and_not_mid_reply();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();
     test_caption_scrolls_and_drains();

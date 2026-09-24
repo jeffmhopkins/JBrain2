@@ -76,19 +76,35 @@ static vocab_t VOCAB[] = {
      * general "send a message to X": the name of the person would have to be in this table,
      * and the twins' names are not (JPANEL_PLAN.md §5).
      *
-     * NEITHER IS A PREFIX OF THE OTHER, which rule 3 requires and which nearly failed:
-     * "send a message" and "send dad a message" diverge at the fourth word — `a` against
-     * `d` — and that is the entire margin. A third recipient phrased "send X a message" would
-     * be safe for the same reason; "send a message to dad" would NOT be, because the short
-     * form is its prefix. Worth knowing before the third panel exists.
+     * THEY WERE "send a message" AND "send dad a message", AND NEITHER EVER FIRED. Measured on
+     * two panels on 0.3.00: `do a dance` fires, `dance` does not, `spin` does, and neither send
+     * phrase does. The old comment here called the pair's margin "the entire margin" — they
+     * differ only at their second word, `a` against `dad` — and that now looks less like a rule
+     * 3 near-miss than like the reason both failed: two phrases that sound alike appear to split
+     * the confidence between them, and §10.4bf already records how thin it is to begin with
+     * (`spin` fired at p=13/100).
+     *
+     * The owner's call, and the shape of it is his: *"let's change it up to 'tell Dad' and
+     * 'tell sister'."* Short, distinctive, no shared carrier with each other or with the wake
+     * phrase. "hey dad" was considered and rejected for two reasons — it is among the most-said
+     * sentences in a house with a dad in it, and this vocabulary is ALWAYS LIVE (rule 2), so it
+     * would record a message every time a child spoke to him; and it would have shared the `hey`
+     * carrier with the wake phrase, which is the very collision suspected of killing the pair
+     * being replaced.
+     *
+     * "sister" HARDCODES A RELATIONSHIP, which is a known cost rather than an oversight. The box
+     * already knows each panel's sibling by name — it is what the pop-up says out loud — and
+     * `endpoint_panel` can now carry per-panel strings to the firmware, so "tell Lydian" on one
+     * unit and "tell Elora" on the other is the better shape once there is evidence this one
+     * fires at all. That is the next step, not this one.
      *
      * THE ARGUMENT IS A `jpanel_to_t`, not a face or an action, and it is the first entry in
      * this table whose `arg` means something outside `face.h` and `rig.h`. Spelled as the
      * literal rather than by including `jpanel.h`: this file is pure C and built on the host,
      * and `jpanel.h` drags in `cfg.h` and the ESP headers behind it. The host suite pins the
      * two values together so the spelling cannot drift. */
-    {"send a message", VOCAB_SEND, 0},     /* JPANEL_TO_PANEL — the twin's unit */
-    {"send dad a message", VOCAB_SEND, 1}, /* JPANEL_TO_DAD — the owner's PWA */
+    {"tell sister", VOCAB_SEND, 0}, /* JPANEL_TO_PANEL — the twin's unit */
+    {"tell dad", VOCAB_SEND, 1},    /* JPANEL_TO_DAD — the owner's PWA */
 
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */

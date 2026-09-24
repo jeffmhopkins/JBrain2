@@ -55,6 +55,22 @@ typedef enum {
 /* How far gone the screen should be after this long with nothing happening. */
 screen_stage_t screen_stage(uint32_t idle_ms);
 
+/* Should the pet be ASLEEP on screen — eyes shut, zzz — rather than merely dimmer?
+ *
+ * Dim was only ever a backlight level, so the pet carried on with its idle loop at a quarter
+ * brightness and read as neither awake nor asleep. The owner asked for the pose.
+ *
+ * DIM ONLY. At DARK the render loop stops blitting, so there is nothing to draw and no frames
+ * to spend; the zzz lives in the five-to-fifteen-minute window and the night is simply dark.
+ *
+ * It yields to a live conversation, and that is not a detail: voice no longer resets the idle
+ * timer, so the screen CAN be dim while the pet answers something asked of it — and a pet that
+ * replied with its eyes shut would look broken rather than sleepy.
+ *
+ * Here rather than in `display.c` because this file is the sleep policy and is host-tested,
+ * which is the whole reason it was split out. */
+bool screen_dozing(screen_stage_t stage, bool conversing, bool speaking);
+
 /* What the panel should be showing, as against the brightness the BOX asked for — which has
    to survive a night's sleep unchanged, because it is a setting and this is a mood. */
 uint8_t screen_level(uint8_t configured, screen_stage_t stage);

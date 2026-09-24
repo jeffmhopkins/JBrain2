@@ -31,3 +31,8 @@ bool screen_moved(int magnitude)
 {
     return magnitude >= SCREEN_MOVE_COUNTS;
 }
+
+bool screen_dozing(screen_stage_t stage, bool conversing, bool speaking)
+{
+    return stage == SCREEN_DIM && !conversing && !speaking;
+}
