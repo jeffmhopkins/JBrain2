@@ -2986,6 +2986,25 @@ static void test_send_phrases_are_tell_plus_a_distinct_recipient(void)
     }
 }
 
+/* THE PET SLEEPS WHILE THE SCREEN IS DIM, and defers to a reply.
+ *
+ * The second half is the one worth a test rather than a reading. Voice no longer resets the
+ * idle timer (the owner: *"you should only be on longer from a poke or accelerometer data"*),
+ * so the screen can reach DIM while a conversation is still going — and a pet answering a
+ * question with its eyes shut looks broken, not sleepy. The exception is the whole reason this
+ * predicate takes three arguments instead of being `stage == SCREEN_DIM`. */
+static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
+{
+    CHECK(screen_dozing(SCREEN_DIM, false, false), "dim and idle: asleep");
+    CHECK(!screen_dozing(SCREEN_AWAKE, false, false), "awake is awake");
+    /* Dark stops blitting entirely, so there is nothing to draw a zzz onto. Asserted so that
+       "dozing" is never quietly widened to mean "not awake". */
+    CHECK(!screen_dozing(SCREEN_DARK, false, false), "dark draws nothing at all");
+    CHECK(!screen_dozing(SCREEN_DIM, true, false), "not while a conversation is live");
+    CHECK(!screen_dozing(SCREEN_DIM, false, true), "nor while a reply is coming out");
+    CHECK(!screen_dozing(SCREEN_DIM, true, true), "nor both at once");
+}
+
 /* ---- the caption ticker -------------------------------------------------------------- */
 
 static void test_caption_starts_empty_and_silent(void)
@@ -3243,6 +3262,7 @@ int main(void)
     test_the_five_farts_are_five_different_farts();
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
+    test_the_pet_dozes_only_when_dim_and_not_mid_reply();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();
     test_caption_scrolls_and_drains();
