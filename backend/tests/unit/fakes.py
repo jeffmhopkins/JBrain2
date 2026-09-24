@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from jbrain.auth.service import CapabilityToken, ExternalSession, PrincipalInfo
 from jbrain.db.session import SessionContext
-from jbrain.devices.repo import DeviceInfo
+from jbrain.devices.repo import DeviceInfo, DeviceRole, DeviceScope
 from jbrain.locations.pairing import CODE_TTL, RedeemedDevice
 
 
@@ -346,7 +346,12 @@ class FakeDeviceRepo:
     key_hashes: dict[str, str] = field(default_factory=dict)  # device id -> active key hash
 
     async def provision(
-        self, ctx: SessionContext, *, label: str, key_hash: str, device_role: str | None = None
+        self,
+        ctx: SessionContext,
+        *,
+        label: str,
+        key_hash: str,
+        device_role: DeviceRole | None = None,
     ) -> DeviceInfo:
         device = DeviceInfo(
             id=str(uuid.uuid4()),
@@ -359,7 +364,9 @@ class FakeDeviceRepo:
         self.key_hashes[device.id] = key_hash
         return device
 
-    async def list(self, ctx: SessionContext, *, scope: str = "all") -> Sequence[DeviceInfo]:
+    async def list(
+        self, ctx: SessionContext, *, scope: DeviceScope = "all"
+    ) -> Sequence[DeviceInfo]:
         if scope == "phones":
             return [d for d in self.devices if d.device_role is None]
         if scope == "endpoints":

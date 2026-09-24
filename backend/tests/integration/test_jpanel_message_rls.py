@@ -285,21 +285,40 @@ async def test_the_owners_badge_counts_only_what_was_sent_to_him(
 
 
 async def _make_panel(maker: async_sessionmaker, label: str, age_s: int = 0) -> str:
-    """A device_key principal exactly as `/flash` mints one, returning its id.
+    """A pet panel exactly as `/flash` mints one — subject AND key — returning the key's id.
 
     `created_at` is set rather than defaulted: these tests turn on WHICH key is newest, and
-    three inserts a few milliseconds apart is not a margin to rest an assertion on."""
-    pid = str(uuid.uuid4())
-    async with scoped_session(maker, SessionContext(auth_context="bootstrap")) as s:
+    three inserts a few milliseconds apart is not a margin to rest an assertion on. A fresh
+    SUBJECT per call is not padding either: a re-flash mints both, which is why three keys can
+    share one name and why the roster has to collapse them.
+
+    THE SUBJECT CARRIES THE ROLE, and without it there is no panel here at all. The roster used
+    to match `label LIKE 'panel%'`, so a bare principal was enough; since migration 0211 it reads
+    `subjects.device_role = 'jpet'`, and a key with no subject is a key belonging to nothing.
+    That is the property keeping the owner's desk box out of two children's addressing, so the
+    fixture moves to match the world rather than the query loosening to match the fixture.
+
+    OWNER rather than `bootstrap`, because `subjects_access` is `WITH CHECK (app.is_owner())`
+    and refuses the bootstrap context outright — the same refusal that stops a device declaring
+    itself a pet."""
+    pid, sid = str(uuid.uuid4()), str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.subjects (id, display_name, kind, device_role)"
+                " VALUES (CAST(:sid AS uuid), :label, 'device', 'jpet')"
+            ),
+            {"sid": sid, "label": label},
+        )
         await s.execute(
             text(
                 """
-                INSERT INTO app.principals (id, kind, key_hash, label, created_at)
-                VALUES (CAST(:id AS uuid), 'device_key', :kh, :label,
+                INSERT INTO app.principals (id, kind, subject_id, key_hash, label, created_at)
+                VALUES (CAST(:id AS uuid), 'device_key', CAST(:sid AS uuid), :kh, :label,
                         now() - make_interval(secs => :age))
                 """
             ),
-            {"id": pid, "kh": f"hash-{pid}", "label": label, "age": age_s},
+            {"id": pid, "sid": sid, "kh": f"hash-{pid}", "label": label, "age": age_s},
         )
         await s.commit()
     return pid

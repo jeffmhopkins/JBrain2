@@ -74,7 +74,6 @@ def upgrade() -> None:
         """
     )
 
-
     # `_panel_names` — the roster that answers "who is this panel's sibling" — runs under the
     # narrow `login` context ON PURPOSE: reading it under a panel's own context returned exactly
     # one row (itself), which is why panel-to-panel messaging answered 409 from the first commit.
