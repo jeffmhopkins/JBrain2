@@ -124,6 +124,10 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
        OFF rather than "leave it as it was" — otherwise a panel that once had the overlay on
        keeps it forever and the switch only works in one direction. */
     out->debug_overlay = cJSON_IsTrue(d) ? 1 : 0;
+    const cJSON *agc = cJSON_GetObjectItemCaseSensitive(root, "mic_agc");
+    out->mic_agc = cJSON_IsTrue(agc) ? 1 : 0;
+    const cJSON *dp = cJSON_GetObjectItemCaseSensitive(root, "dim_percent");
+    if (cJSON_IsNumber(dp)) out->dim_percent = dp->valueint;
     /* Both absent on a box that predates them, and absent has to leave the firmware's own
        answer standing — unlike `debug_overlay` above, where absent means OFF because that
        switch has to work in both directions. Here the fallbacks are a name the panel already

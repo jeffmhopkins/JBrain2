@@ -56,6 +56,11 @@ void display_set_debug_overlay(bool on);
 /* Which body the panel comes back as: 0 ostrich, 1 robot. The four-tap gesture still toggles it
    live and this does not fight that — the box's answer is taken once per change, not re-asserted
    every cycle, so a child who switches to the robot keeps it until the owner says otherwise. */
+/* How dim the first sleep stage is, 0-100% of the configured brightness. A quarter was
+   hardcoded and the owner found what that is worth in a bedroom at full brightness: 63
+   of 255, which does not read as dim at all. Takes effect immediately, even mid-dim. */
+void display_set_dim_percent(int percent);
+
 void display_set_form(int form);
 
 /* Re-read the pet's name from `vocab_name()` into the label above his head. Called when the

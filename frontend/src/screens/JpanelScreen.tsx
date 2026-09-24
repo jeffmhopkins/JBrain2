@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
+  type EndpointSettings,
   type JpanelMessage,
   type JpanelThread,
   PANEL_NAME_CHARS,
@@ -624,9 +625,156 @@ function PanelsTab() {
 
   return (
     <div className="jp-panels">
+      <PanelAudio />
       {panels.map((p) => (
         <PanelRow key={p.device_id} panel={p} onChanged={() => setTick((t) => t + 1)} />
       ))}
+    </div>
+  );
+}
+
+/** THE KNOBS EVERY PANEL SHARES — volume, microphone gain, and the codec's AGC.
+ *
+ * ONE ROW ON THE BOX, not per panel, which is why this sits above the list rather than inside a
+ * row. Until now it was reachable only from the debug console, which needs a token the owner has
+ * to be handed — the same no-terminal gap (CLAUDE.md #10) that hid revoke on the Location screen.
+ *
+ * `mic_agc` is the reason this surface exists at all. The owner, after the first real voice
+ * message came off a panel: *"we need the auto gain control from panel mic too, it was way too
+ * quiet."* Both panels run the same gain and their last readings were a clipping 32767 and a
+ * near-silent 814 — one constant cannot serve both. */
+function PanelAudio() {
+  const [cfg, setCfg] = useState<EndpointSettings | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const got = await api.endpointSettings();
+        if (!cancelled) setCfg(got);
+      } catch {
+        if (!cancelled) setError("Could not read the panel settings.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function save(next: EndpointSettings): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      // The box CLAMPS rather than rejects, so what comes back is the truth — show that rather
+      // than the number just typed, or a value silently capped reads as the control ignoring you.
+      setCfg(await api.setEndpointSettings(next));
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save it.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error !== null && cfg === null) return <p className="jp-panel-error">{error}</p>;
+  if (cfg === null) return null;
+
+  return (
+    <div className="jp-audio">
+      <h2>Every panel</h2>
+      <label className="jp-slider">
+        <span>
+          Speaker volume <strong>{cfg.volume}</strong>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={cfg.volume}
+          disabled={busy}
+          onChange={(e) => setCfg({ ...cfg, volume: Number(e.target.value) })}
+          onPointerUp={() => void save(cfg)}
+          onKeyUp={() => void save(cfg)}
+        />
+      </label>
+      <label className="jp-slider">
+        <span>
+          Microphone gain <strong>{cfg.mic_gain_db} dB</strong>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={42}
+          value={cfg.mic_gain_db}
+          disabled={busy}
+          onChange={(e) => setCfg({ ...cfg, mic_gain_db: Number(e.target.value) })}
+          onPointerUp={() => void save(cfg)}
+          onKeyUp={() => void save(cfg)}
+        />
+      </label>
+      <label className="jp-slider">
+        <span>
+          Screen brightness <strong>{cfg.brightness}</strong>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={255}
+          value={cfg.brightness}
+          disabled={busy}
+          onChange={(e) => setCfg({ ...cfg, brightness: Number(e.target.value) })}
+          onPointerUp={() => void save(cfg)}
+          onKeyUp={() => void save(cfg)}
+        />
+      </label>
+      {/* THE ONE THE OWNER ASKED FOR BY FINDING IT BROKEN. It was a hardcoded quarter, and a
+          quarter of 255 is 63 — which does not read as dim in a dark room, because a quarter of
+          a register is nowhere near a quarter of perceived brightness. Shown as the resulting
+          VALUE as well as the percentage, so the number being chosen is the one the panel will
+          actually use rather than an abstraction over it. */}
+      <label className="jp-slider">
+        <span>
+          Dimmed to <strong>{cfg.dim_percent}%</strong>{" "}
+          {/* One interpolated string rather than several nodes: this is the number that misled
+              us, and it should be greppable on screen and in a test as one piece of text. */}
+          {/* FLOOR, NOT ROUND, because the panel truncates: `screen_level()` does the same sum in C
+              integer arithmetic, so 255 at 25% is 63 there and rounding would show 64 here. A
+              control that reports a value the device never uses is worse than one that reports
+              nothing — this whole setting exists because a brightness number misled us once. */}
+          <em>{`(${Math.floor((cfg.brightness * cfg.dim_percent) / 100)} of ${cfg.brightness})`}</em>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={cfg.dim_percent}
+          disabled={busy}
+          onChange={(e) => setCfg({ ...cfg, dim_percent: Number(e.target.value) })}
+          onPointerUp={() => void save(cfg)}
+          onKeyUp={() => void save(cfg)}
+        />
+      </label>
+      <label className="jp-check">
+        <input
+          type="checkbox"
+          checked={cfg.mic_agc}
+          disabled={busy}
+          onChange={(e) => void save({ ...cfg, mic_agc: e.target.checked })}
+        />
+        <span>
+          Automatic microphone gain
+          <em>
+            Lets the panel turn its own microphone up for a quiet voice and down for a loud one,
+            instead of one fixed setting for every child and every room. New &mdash; worth trying if
+            a panel sounds too quiet.
+          </em>
+        </span>
+      </label>
+      {saved && <p className="jp-panel-hint">Saved. Panels pick this up within 15 minutes.</p>}
+      {error !== null && <p className="jp-panel-error">{error}</p>}
     </div>
   );
 }

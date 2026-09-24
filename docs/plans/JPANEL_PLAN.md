@@ -9,6 +9,19 @@
 > panel is away until tonight, the movement threshold it ships with is reasoned rather than
 > measured, and §5 says how to correct it from the box without a terminal.
 >
+> **"Dim" is now a number the owner can turn** (0.3.04): the bird slept on schedule but the
+> screen still looked lit — `screen_level()` dimmed to a hardcoded QUARTER, and a quarter of 255
+> is 63, which does not read as dim in a bedroom because a quarter of a register is nowhere near
+> a quarter of perceived brightness. It is a percentage from the box now (25 reproduces the old
+> behaviour), with brightness and dim sliders beside the sound knobs.
+>
+> **The microphone can turn itself up** (0.3.03): the ES8311's own AGC had never been on — the
+> driver never writes REG18, so it sat at the chip's reset default and telemetry reported
+> `00 already-off` on every panel. A fixed gain cannot serve two units whose last readings were
+> a clipping 32767 and a near-silent 814. It is a SETTING rather than a rebuild, and the shared
+> panel knobs (volume, microphone gain, AGC) now have a PWA control at all — until this they
+> were reachable only from the debug console, which needs a token the owner has to be handed.
+>
 > **The sleep timer no longer counts voice, and the pet sleeps rather than merely dimming**
 > (0.3.02): ambient speech held the screen lit — a parent in the hall, a sibling, a television —
 > which is the opposite of what a bedroom timer is for. Only a touch or real movement resets it

@@ -73,11 +73,13 @@ static const char *TAG = "endpoint";
    code that does not serve the route, leaves the panel exactly as it shipped. */
 static void apply_settings(const cfg_t *cfg)
 {
-    ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1};
+    ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1, .dim_percent = -1};
     if (ota_fetch_settings(cfg, &st) != ESP_OK) return;
     if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
     if (st.brightness >= 0) display_set_brightness(st.brightness);
     display_set_debug_overlay(st.debug_overlay != 0);
+    audio_set_agc(st.mic_agc != 0);
+    if (st.dim_percent >= 0) display_set_dim_percent(st.dim_percent);
     if (st.form >= 0) display_set_form(st.form);
     /* RENAMING THE PET IS RENAMING THE WAKE WORD, so the model has to be told and the label
        above his head has to be redrawn. `vocab_set_name` answers false when the phrase is

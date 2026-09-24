@@ -1146,9 +1146,9 @@ static void test_sleeping_never_makes_the_screen_brighter(void)
        a shift and shifts are exactly where an off-by-one hides. */
     for (int c = 0; c <= 255; c++) {
         const uint8_t want = (uint8_t)c;
-        CHECK(screen_level(want, SCREEN_AWAKE) == want, "awake shows what the box asked for");
-        CHECK(screen_level(want, SCREEN_DIM) <= want, "dim is never brighter than configured");
-        CHECK(screen_level(want, SCREEN_DARK) == 0, "dark is off, whatever was configured");
+        CHECK(screen_level(want, SCREEN_AWAKE, SCREEN_DIM_PERCENT_DEFAULT) == want, "awake shows what the box asked for");
+        CHECK(screen_level(want, SCREEN_DIM, SCREEN_DIM_PERCENT_DEFAULT) <= want, "dim is never brighter than configured");
+        CHECK(screen_level(want, SCREEN_DARK, SCREEN_DIM_PERCENT_DEFAULT) == 0, "dark is off, whatever was configured");
     }
 }
 
@@ -1157,14 +1157,14 @@ static void test_dim_is_dimmer_but_still_a_visible_pet(void)
     /* THE WHOLE POINT OF THE FIRST STAGE. A dim that reached zero would be a second dark
        stage ten minutes early, and the child would be told the panel had crashed. */
     for (int c = 1; c <= 255; c++) {
-        CHECK(screen_level((uint8_t)c, SCREEN_DIM) > 0, "a configured screen never dims to off");
+        CHECK(screen_level((uint8_t)c, SCREEN_DIM, SCREEN_DIM_PERCENT_DEFAULT) > 0, "a configured screen never dims to off");
     }
-    CHECK(screen_level(0xFF, SCREEN_DIM) < 0xFF, "full brightness actually dims");
-    CHECK(screen_level(0, SCREEN_DIM) == 0, "an already-dark panel is left alone");
+    CHECK(screen_level(0xFF, SCREEN_DIM, SCREEN_DIM_PERCENT_DEFAULT) < 0xFF, "full brightness actually dims");
+    CHECK(screen_level(0, SCREEN_DIM, SCREEN_DIM_PERCENT_DEFAULT) == 0, "an already-dark panel is left alone");
     /* And the floor raises nothing: a box that asked for a very dim screen at bedtime gets
        that screen back, not a brighter one, when the five minutes are up. */
     for (int c = 1; c < SCREEN_DIM_FLOOR; c++) {
-        CHECK(screen_level((uint8_t)c, SCREEN_DIM) <= (uint8_t)c, "the floor never brightens");
+        CHECK(screen_level((uint8_t)c, SCREEN_DIM, SCREEN_DIM_PERCENT_DEFAULT) <= (uint8_t)c, "the floor never brightens");
     }
 }
 
@@ -3005,6 +3005,27 @@ static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
     CHECK(!screen_dozing(SCREEN_DIM, true, true), "nor both at once");
 }
 
+/* HOW DIM "DIM" IS, now that the box chooses it.
+ *
+ * The owner: *"the bird was sleeping when I saw it this morning I think, but the screen wasn't
+ * dimmed."* It was — at brightness 255 a quarter is 63, and 63 does not read as dim in a
+ * bedroom. The fraction is a setting now, so what needs pinning is that it cannot be turned
+ * into something harmful: not brighter than configured, not off, and not trusting a number a
+ * box might send wrong. */
+static void test_the_dim_fraction_is_the_boxs_to_choose(void)
+{
+    CHECK(screen_level(200, SCREEN_DIM, 25) == 50, "a quarter is what it always was");
+    CHECK(screen_level(200, SCREEN_DIM, 10) == 20, "and a bedroom can ask for a tenth");
+    CHECK(screen_level(200, SCREEN_DIM, 100) == 200, "100% is no dimming, not an error");
+    /* THE CLAMPS, which matter because this runs on whatever a box sent. A negative would
+       underflow the cast and a screen meant to dim would come back black or bright. */
+    CHECK(screen_level(200, SCREEN_DIM, -5) >= SCREEN_DIM_FLOOR, "a negative cannot black it out");
+    CHECK(screen_level(200, SCREEN_DIM, 500) <= 200, "nor can an absurd one brighten it");
+    /* The floor still only ever lifts a rounding-to-zero, never raises a genuinely dim screen. */
+    CHECK(screen_level(4, SCREEN_DIM, 1) == 4, "an already-dim panel is left alone");
+    CHECK(screen_level(0, SCREEN_DIM, 50) == 0, "and an off one stays off");
+}
+
 /* ---- the caption ticker -------------------------------------------------------------- */
 
 static void test_caption_starts_empty_and_silent(void)
@@ -3263,6 +3284,7 @@ int main(void)
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
     test_the_pet_dozes_only_when_dim_and_not_mid_reply();
+    test_the_dim_fraction_is_the_boxs_to_choose();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();
     test_caption_scrolls_and_drains();

@@ -495,3 +495,61 @@
   width: 20px;
   height: 20px;
 }
+
+/* ===== The knobs every panel shares ===== */
+
+/* Above the list rather than inside a row, because these are ONE row on the box: a control that
+   looked per-panel while quietly changing both would be worse than no control. */
+.jp-audio {
+  padding: 12px;
+  margin: 0 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.jp-audio h2 {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.jp-slider {
+  display: block;
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.jp-slider span {
+  display: block;
+  margin: 0 0 4px;
+}
+
+.jp-slider input {
+  width: 100%;
+  /* Coarse enough for a thumb: this is operated on a phone, one-handed, usually while looking
+     at the panel rather than at the screen. */
+  height: 28px;
+}
+
+.jp-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.88rem;
+}
+
+.jp-check input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+
+.jp-check em {
+  display: block;
+  font-style: normal;
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  margin-top: 3px;
+}

@@ -677,7 +677,16 @@ class EndpointSettings(BaseModel):
     # pet in a child's bedroom. Off by default; a debug overlay that defaults on is one
     # nobody turns off. See `0207_endpoint_debug_overlay.py`.
     debug_overlay: bool = False
-    # PER-PANEL, unlike the four above, which are one answer for the whole house. Defaulted here
+    # THE CODEC'S OWN AGC (ES8311 REG18 bit 7), which has never been on — `audio.c` has reported
+    # `00 already-off` in every telemetry report this box has received. A fixed PGA cannot serve
+    # two panels whose last readings were `mic_peak` 32767 and 814 on the same gain. Default OFF,
+    # so an upgrade changes nothing until the owner asks it to (migration 0214).
+    mic_agc: bool = False
+    # HOW DIM "DIM" IS, as a percentage of `brightness`. It was a hardcoded quarter, and the
+    # owner found what that is worth in a bedroom at full brightness: 63 of 255, which does not
+    # read as dim at all. 25 reproduces the old behaviour exactly (migration 0215).
+    dim_percent: int = 25
+    # PER-PANEL, unlike the five above, which are one answer for the whole house. Defaulted here
     # so the model stays the shape the PUT takes: the owner's write touches only the four
     # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
     pet_name: str = ""
@@ -691,6 +700,8 @@ def _clamp(v: EndpointSettings) -> EndpointSettings:
         brightness=max(BRIGHTNESS_MIN, min(v.brightness, 255)),
         # Nothing to clamp: a bool is already its own range.
         debug_overlay=v.debug_overlay,
+        mic_agc=v.mic_agc,
+        dim_percent=max(0, min(v.dim_percent, 100)),
     )
 
 
@@ -699,7 +710,8 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
         row = (
             await session.execute(
                 text(
-                    "SELECT volume, mic_gain_db, brightness, debug_overlay"
+                    "SELECT volume, mic_gain_db, brightness, debug_overlay, mic_agc,"
+                    " dim_percent"
                     " FROM app.endpoint_settings WHERE id = 1"
                 )
             )
@@ -707,7 +719,12 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
     if row is None:
         return EndpointSettings()
     return EndpointSettings(
-        volume=row[0], mic_gain_db=row[1], brightness=row[2], debug_overlay=row[3]
+        volume=row[0],
+        mic_gain_db=row[1],
+        brightness=row[2],
+        debug_overlay=row[3],
+        mic_agc=row[4],
+        dim_percent=row[5],
     )
 
 
@@ -1090,13 +1107,16 @@ async def set_panel_settings(
         await session.execute(
             text(
                 "UPDATE app.endpoint_settings SET volume = :v, mic_gain_db = :g,"
-                " brightness = :b, debug_overlay = :d, updated_at = now() WHERE id = 1"
+                " brightness = :b, debug_overlay = :d, mic_agc = :agc,"
+                " dim_percent = :dim, updated_at = now() WHERE id = 1"
             ),
             {
                 "v": clamped.volume,
                 "g": clamped.mic_gain_db,
                 "b": clamped.brightness,
                 "d": clamped.debug_overlay,
+                "agc": clamped.mic_agc,
+                "dim": clamped.dim_percent,
             },
         )
         await session.commit()
