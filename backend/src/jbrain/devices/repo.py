@@ -76,9 +76,9 @@ class DeviceRepo(Protocol):
 
     async def revoke(self, ctx: SessionContext, device_id: str) -> bool: ...
 
-    async def retire_replaced(
-        self, ctx: SessionContext, *, label: str, device_role: str, keep_id: str
-    ) -> int: ...
+    async def reflash(
+        self, ctx: SessionContext, *, label: str, device_role: DeviceRole, key_hash: str
+    ) -> DeviceInfo | None: ...
 
     async def rename(self, ctx: SessionContext, device_id: str, label: str) -> bool: ...
 
@@ -174,32 +174,73 @@ class SqlDeviceRepo:
             await self._revoke_keys(session, device_id)
         return True
 
-    async def retire_replaced(
-        self, ctx: SessionContext, *, label: str, device_role: str, keep_id: str
-    ) -> int:
-        """Revoke every other live key for this name-and-role. Returns how many.
+    async def reflash(
+        self, ctx: SessionContext, *, label: str, device_role: DeviceRole, key_hash: str
+    ) -> DeviceInfo | None:
+        """Re-credential the panel already known by this name and role. None if there is none.
 
-        One statement, so a re-flash cannot leave the fleet half-retired if the request dies
-        between two of them. Only `revoked_at IS NULL` rows are counted, which makes the call
-        idempotent: flashing the same unit twice retires twelve keys and then zero, rather
-        than reporting twelve again.
+        A PANEL IS THE SUBJECT; THE KEY IS ONLY ITS CREDENTIAL. This is what `rotate` has always
+        done for a phone, and what the flash could not do for a panel because it had no way to
+        recognise the unit in front of it — so every flash minted a whole new identity, and a
+        panel flashed thirteen times was thirteen subjects and thirteen live keys under one name.
+
+        Name AND role is that recognition, and it is narrow on purpose: it will not let a display
+        called `Jeff` step into a pet called `Jeff`. It is also the ONLY handle there is — the
+        physical board carries nothing the box can read, because the flash is what puts a
+        credential on it in the first place.
+
+        What this buys beyond tidiness is that a panel becomes a durable thing to hang settings
+        off. `endpoint_panel` keys on the subject, so a unit's name and the body it wears survive
+        a re-flash — which matters precisely because re-flashing is what the owner does when
+        something is wrong, and losing a child's chosen pet to a recovery step would be its own
+        small betrayal.
+
+        Older keys are revoked in the same transaction rather than left behind: `/flash` has said
+        since it was written that the old key "should stop working at that moment", and until
+        0211 nothing made it so.
         """
         async with scoped_session(self._maker, ctx) as session:
-            rows = (
+            row = (
                 await session.execute(
                     text(
-                        "UPDATE app.principals p SET revoked_at = now()"
-                        " FROM app.subjects s"
-                        " WHERE s.id = p.subject_id AND p.kind = 'device_key'"
-                        "   AND p.revoked_at IS NULL"
-                        "   AND s.display_name = :label AND s.device_role = :role"
-                        "   AND s.id <> :keep"
-                        " RETURNING p.id"
+                        "SELECT id, display_name, created_at FROM app.subjects"
+                        " WHERE kind = 'device' AND display_name = :label AND device_role = :role"
+                        # Oldest wins, so repeated flashes converge on ONE subject rather than
+                        # ping-ponging between the several a pre-0212 world left behind.
+                        " ORDER BY created_at ASC LIMIT 1"
                     ),
-                    {"label": label, "role": device_role, "keep": keep_id},
+                    {"label": label, "role": device_role},
                 )
-            ).all()
-        return len(rows)
+            ).first()
+            if row is None:
+                return None
+            sid = str(row.id)
+            # Every live key for this name, not just the one on the subject being kept: the
+            # older flashes left their own subjects behind and those keys still authenticate.
+            await session.execute(
+                text(
+                    "UPDATE app.principals p SET revoked_at = now()"
+                    " FROM app.subjects s"
+                    " WHERE s.id = p.subject_id AND p.kind = 'device_key'"
+                    "   AND p.revoked_at IS NULL"
+                    "   AND s.display_name = :label AND s.device_role = :role"
+                ),
+                {"label": label, "role": device_role},
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO app.principals (id, kind, subject_id, key_hash, label)"
+                    " VALUES (gen_random_uuid(), 'device_key', :sid, :kh, :label)"
+                ),
+                {"sid": sid, "kh": key_hash, "label": label},
+            )
+        return DeviceInfo(
+            id=sid,
+            label=row.display_name,
+            created_at=row.created_at,
+            revoked=False,
+            device_role=device_role,
+        )
 
     async def rename(self, ctx: SessionContext, device_id: str, label: str) -> bool:
         """Owner-only label edit. Updates the subject's display_name (its active key

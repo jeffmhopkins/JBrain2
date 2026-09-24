@@ -373,18 +373,20 @@ class FakeDeviceRepo:
             return [d for d in self.devices if d.device_role is not None]
         return list(self.devices)
 
-    async def retire_replaced(
-        self, ctx: SessionContext, *, label: str, device_role: str, keep_id: str
-    ) -> int:
-        retired = 0
+    async def reflash(
+        self, ctx: SessionContext, *, label: str, device_role: DeviceRole, key_hash: str
+    ) -> DeviceInfo | None:
+        match = [d for d in self.devices if d.label == label and d.device_role == device_role]
+        if not match:
+            return None
+        keep = match[0]
         for i, d in enumerate(self.devices):
-            if d.id == keep_id or d.revoked:
-                continue
             if d.label == label and d.device_role == device_role:
-                self.devices[i] = dataclasses.replace(d, revoked=True)
-                self.key_hashes.pop(d.id, None)
-                retired += 1
-        return retired
+                self.devices[i] = dataclasses.replace(d, revoked=d.id != keep.id)
+                if d.id != keep.id:
+                    self.key_hashes.pop(d.id, None)
+        self.key_hashes[keep.id] = key_hash
+        return dataclasses.replace(keep, revoked=False)
 
     async def rotate(self, ctx: SessionContext, device_id: str, key_hash: str) -> bool:
         if not any(d.id == device_id for d in self.devices):

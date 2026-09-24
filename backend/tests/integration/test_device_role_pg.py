@@ -177,22 +177,21 @@ async def test_a_reflash_retires_the_keys_it_replaced(maker: async_sessionmaker)
         devices, OWNER, "panel reflash", device_role="jpet"
     )
 
-    retired = await device_service.retire_replaced(
-        devices, OWNER, label="panel reflash", device_role="jpet", keep_id=second.device.id
+    again = await device_service.provision_or_reflash(
+        devices, OWNER, "panel reflash", device_role="jpet"
     )
-    assert retired == 1
+    assert again.device.id == first.device.id, "a re-flash re-credentials the panel it already is"
 
     live = {d.id for d in await devices.list(OWNER, scope="endpoints") if not d.revoked}
-    assert second.device.id in live
-    assert first.device.id not in live
+    assert first.device.id in live
+    # The stray subject a pre-0212 flash left behind is retired, not left authenticating.
+    assert second.device.id not in live
 
-    # Idempotent: flashing again retires what is left, which is nothing.
-    assert (
-        await device_service.retire_replaced(
-            devices, OWNER, label="panel reflash", device_role="jpet", keep_id=second.device.id
-        )
-        == 0
+    # Idempotent: flashing again lands on the same subject rather than growing a third.
+    third = await device_service.provision_or_reflash(
+        devices, OWNER, "panel reflash", device_role="jpet"
     )
+    assert third.device.id == first.device.id
 
 
 async def test_retirement_does_not_reach_across_roles(maker: async_sessionmaker) -> None:
@@ -210,10 +209,10 @@ async def test_retirement_does_not_reach_across_roles(maker: async_sessionmaker)
         devices, OWNER, "panel crossrole", device_role="display"
     )
 
-    retired = await device_service.retire_replaced(
-        devices, OWNER, label="panel crossrole", device_role="display", keep_id=desk.device.id
+    again = await device_service.provision_or_reflash(
+        devices, OWNER, "panel crossrole", device_role="display"
     )
-    assert retired == 0
+    assert again.device.id == desk.device.id, "the display re-credentials itself, not the pet"
 
     live = {d.id for d in await devices.list(OWNER, scope="endpoints") if not d.revoked}
     assert {pet.device.id, desk.device.id} <= live

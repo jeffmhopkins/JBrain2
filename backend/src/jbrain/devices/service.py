@@ -38,23 +38,30 @@ async def provision_device(
     return ProvisionedDevice(device=device, key=key)
 
 
-async def retire_replaced(
-    repo: DeviceRepo, ctx: SessionContext, *, label: str, device_role: str, keep_id: str
-) -> int:
-    """Revoke the keys a just-flashed unit replaced, and say how many.
+async def provision_or_reflash(
+    repo: DeviceRepo, ctx: SessionContext, label: str, *, device_role: DeviceRole
+) -> ProvisionedDevice:
+    """The flash's identity step: re-credential this panel if the box already knows it, else
+    enrol it as a new one. Either way the caller gets one plaintext key, exactly once.
 
-    A panel's identity across a re-flash is its NAME — the physical unit carries nothing else
-    the box can recognise, since the flash is what mints its credential in the first place. So
-    "the same panel" is: the same label, the same role, and not the identity just issued. That
-    is narrow on purpose. Matching on label alone would let a display named `Jeff` retire a pet
-    named `Jeff`, which is the cross-role reach `device_role` exists to prevent.
+    A PANEL IS A THING, NOT A KEY. Re-flashing used to mint a whole new identity every time,
+    because the box had no way to recognise the board in front of it — so one panel became
+    thirteen subjects with thirteen live keys, the owner's device list became thirteen identical
+    rows, and there was nowhere durable to record what that panel was called or what body it
+    wore. Matching on name and role is that recognition, and `reflash` says why it is narrow.
 
-    Returns the count rather than nothing so the flash log can tell the owner what it cleaned
-    up. Twelve retired keys is worth a line; zero is the normal first flash of a new unit.
+    Enrolling is still what happens for a name the box has never seen, which is the first flash
+    of a new unit and the only case that SHOULD mint an identity.
     """
-    if not _valid_id(keep_id):
-        return 0
-    return await repo.retire_replaced(ctx, label=label, device_role=device_role, keep_id=keep_id)
+    key = keys.generate_owner_key()
+    device = await repo.reflash(
+        ctx, label=label, device_role=device_role, key_hash=keys.hash_key(key)
+    )
+    if device is None:
+        device = await repo.provision(
+            ctx, label=label, key_hash=keys.hash_key(key), device_role=device_role
+        )
+    return ProvisionedDevice(device=device, key=key)
 
 
 async def rotate_device_key(repo: DeviceRepo, ctx: SessionContext, device_id: str) -> str | None:

@@ -39,7 +39,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 import structlog
@@ -677,6 +677,11 @@ class EndpointSettings(BaseModel):
     # pet in a child's bedroom. Off by default; a debug overlay that defaults on is one
     # nobody turns off. See `0207_endpoint_debug_overlay.py`.
     debug_overlay: bool = False
+    # PER-PANEL, unlike the four above, which are one answer for the whole house. Defaulted here
+    # so the model stays the shape the PUT takes: the owner's write touches only the four
+    # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
+    pet_name: str = ""
+    form: PanelForm = "ostrich"
 
 
 def _clamp(v: EndpointSettings) -> EndpointSettings:
@@ -892,6 +897,153 @@ async def revoke_panel(device_id: str, owner: OwnerDep, request: Request) -> Pan
     return PanelRevoked(name=name, keys=len(revoked))
 
 
+#: Which body the panel draws. `display.c` has `FORM_OSTRICH` and `FORM_ROBOT` and toggles
+#: between them on four taps and a hold — in RAM, so every reboot and every OTA has silently
+#: put both twins back to the ostrich. This is the answer the panel comes back as.
+PanelForm = Literal["ostrich", "robot"]
+
+#: The panel's font has 5x7 cells for A-Z, the digits, space, hyphen and full stop and nothing
+#: else, and the wake word runs through MultiNet, which matches PHONEMES. Both ends constrain a
+#: pet's name, so it is validated once, here, against the stricter reading of the two.
+PET_NAME_MAX = 12
+_PET_NAME_OK = re.compile(r"^[A-Za-z][A-Za-z ]*$")
+
+
+class PanelAppearance(BaseModel):
+    """What one panel is called and what it looks like — its own, not the box's.
+
+    `pet_name` IS THE WAKE WORD, not a caption. `vocab.c` compiles in `hey fish` and
+    `vocab_name()` takes the last word of it for the label above the pet's head, so renaming the
+    pet changes what a four-year-old SAYS to it. Empty means "whatever the firmware shipped
+    with", which is the only safe reading of absent: a blank name would leave a child saying
+    something the panel cannot hear.
+    """
+
+    pet_name: str = ""
+    form: PanelForm = "ostrich"
+
+
+async def _read_appearance(
+    request: Request, ctx: SessionContext, subject_id: str
+) -> PanelAppearance:
+    if not subject_id:
+        return PanelAppearance()
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT pet_name, form FROM app.endpoint_panel"
+                    " WHERE subject_id = CAST(:sid AS uuid)"
+                ),
+                {"sid": subject_id},
+            )
+        ).first()
+    if row is None:
+        return PanelAppearance()
+    return PanelAppearance(pet_name=str(row[0]), form="robot" if row[1] == "robot" else "ostrich")
+
+
+@router.put("/panels/{device_id}/appearance")
+async def set_panel_appearance(
+    device_id: str, owner: OwnerDep, request: Request, body: PanelAppearance
+) -> PanelAppearance:
+    """What this panel's pet is called, and what body it wears. Owner only.
+
+    **`pet_name` IS THE WAKE WORD.** `vocab.c` compiles in `hey fish`, `vocab_name()` takes the
+    last word of it for the label above the pet's head, and the panel re-registers the phrase
+    with MultiNet when this changes. So this route renames the creature in the sense that
+    matters to a four-year-old: what she says to it. The file has wanted this since it was
+    written — *"a name only a rebuild can change is a name they cannot change, and the two
+    panels will want different ones"* — and a rebuild is a cable, which the owner does not have.
+
+    LETTERS AND SPACES ONLY, and a short cap. Two unrelated systems constrain it and the
+    stricter one wins: the panel's 5x7 font has no glyph for an apostrophe and draws it as
+    NOTHING, and MultiNet matches phonemes, so digits and punctuation are not sayable at all. A
+    name is refused here rather than half-drawn on a bedroom wall.
+
+    **It cannot promise the name will HEAR as well as the one it replaces.** `hey fish` was
+    chosen partly because it collides with nothing else in the command table; a thin or short
+    name may recognise worse, and the failure mode is a child saying it and getting nothing.
+    That is a tuning question for the confidence floor, not a reason to withhold the control.
+    """
+    name = " ".join(body.pet_name.split())
+    if name and (len(name) > PET_NAME_MAX or not _PET_NAME_OK.match(name)):
+        raise HTTPException(
+            status_code=422,
+            detail=f"a pet name may use letters and spaces only, {PET_NAME_MAX} at most — "
+            "the panel's font has no other characters and the wake word has to be sayable",
+        )
+    try:
+        uuid.UUID(device_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no such panel") from None
+
+    ctx = ctx_for(owner)
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
+        subject_id = (
+            await session.execute(
+                text(
+                    """
+                    SELECT s.id::text FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.id = CAST(:dev AS uuid) AND p.kind = 'device_key'
+                      AND s.device_role IS NOT NULL
+                    """
+                ),
+                {"dev": device_id},
+            )
+        ).scalar_one_or_none()
+        if subject_id is None:
+            raise HTTPException(status_code=404, detail="no such panel")
+        # Upsert on the SUBJECT, which is what survives a re-flash now that the flash rotates
+        # rather than re-provisions. A row keyed on the key would have been orphaned by the next
+        # recovery flash, losing a child's pet to the step meant to fix her panel.
+        await session.execute(
+            text(
+                """
+                INSERT INTO app.endpoint_panel (subject_id, pet_name, form)
+                VALUES (CAST(:sid AS uuid), :name, :form)
+                ON CONFLICT (subject_id) DO UPDATE
+                SET pet_name = EXCLUDED.pet_name, form = EXCLUDED.form, updated_at = now()
+                """
+            ),
+            {"sid": subject_id, "name": name, "form": body.form},
+        )
+        await session.commit()
+    log.info("endpoint.appearance_set", device=device_id, pet=name or "(default)", form=body.form)
+    return PanelAppearance(pet_name=name, form=body.form)
+
+
+@router.get("/panels/{device_id}/appearance")
+async def get_panel_appearance(
+    device_id: str, owner: OwnerDep, request: Request
+) -> PanelAppearance:
+    """What the owner last chose for this panel, so the PWA opens on the truth rather than on
+    a default that would silently overwrite a real setting the moment he pressed save."""
+    try:
+        uuid.UUID(device_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no such panel") from None
+    ctx = ctx_for(owner)
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
+        subject_id = (
+            await session.execute(
+                text(
+                    """
+                    SELECT s.id::text FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.id = CAST(:dev AS uuid) AND p.kind = 'device_key'
+                      AND s.device_role IS NOT NULL
+                    """
+                ),
+                {"dev": device_id},
+            )
+        ).scalar_one_or_none()
+    if subject_id is None:
+        raise HTTPException(status_code=404, detail="no such panel")
+    return await _read_appearance(request, ctx, str(subject_id))
+
+
 @router.get("/settings")
 async def panel_settings(principal: PanelDep, request: Request) -> EndpointSettings:
     """The knobs a panel applies to itself, fetched with its own key.
@@ -911,7 +1063,15 @@ async def panel_settings(principal: PanelDep, request: Request) -> EndpointSetti
     # first: nothing rewrites a role after the flash, so the field would have described a
     # transition that cannot happen. When there is a way to re-role a unit in place, this is
     # where it belongs.
-    return await _read_settings(request, ctx_for(principal))
+    #
+    # THE APPEARANCE IS SERVED, and for the opposite reason: it is the owner's to change and the
+    # panel's to obey, so there has to be a way for a change to reach a unit on a wall. Read
+    # under the panel's own context, where `endpoint_panel_own` shows it exactly one row — its
+    # own — so this route cannot be talked into describing a sibling.
+    ctx = ctx_for(principal)
+    settings = await _read_settings(request, ctx)
+    look = await _read_appearance(request, ctx, getattr(principal, "subject_id", "") or "")
+    return settings.model_copy(update={"pet_name": look.pet_name, "form": look.form})
 
 
 @router.put("/settings")
@@ -1030,23 +1190,18 @@ async def build_flash(
         for iname, offset in sorted(ARTIFACT_IMAGES.items(), key=lambda kv: int(kv[1], 16))
     ]
 
-    # A fresh device identity per flash, on the shipped `device_key` substrate rather than
-    # a new auth model (ROOM_ENDPOINT_PLAN.md §3). The plaintext key exists only inside
-    # this request: it goes into NVS and is never stored here, which is the same contract
-    # the owner's own key rotation has. Re-flashing a panel therefore issues a NEW
-    # identity — correct, because a re-flash is how a unit is handed over or recovered,
-    # and the old key should stop working at that moment.
+    # A fresh CREDENTIAL per flash, on the shipped `device_key` substrate rather than a new auth
+    # model (ROOM_ENDPOINT_PLAN.md §3). The plaintext key exists only inside this request: it
+    # goes into NVS and is never stored here, which is the same contract the owner's own key
+    # rotation has. Re-flashing therefore issues a new key and the old one stops working at that
+    # moment, which is what this comment promised long before anything implemented it.
+    #
+    # THE IDENTITY, THOUGH, IS NOT FRESH — and that is the correction. This used to provision a
+    # whole new subject every time, so one panel became thirteen subjects under one name and
+    # there was nowhere durable to record what that unit was called or what body it wore. A
+    # panel is now the subject and the key merely hangs off it, the way a phone's always has.
     label = panel_label(name)
-    provisioned = await devices.provision_device(device_repo, ctx, label, device_role=role)
-    # The paragraph above has always said the old key "should stop working at that moment".
-    # Nothing made it. Thirteen flashes of one panel left thirteen live keys under one name, so
-    # the owner's device list was thirteen identical rows and the two he actually needed to
-    # revoke were buried in them — and every one of those keys still authenticated. Retiring
-    # them here is what the comment already promised, and it is the flash that knows which
-    # identity has just been replaced.
-    await devices.retire_replaced(
-        device_repo, ctx, label=label, device_role=role, keep_id=provisioned.device.id
-    )
+    provisioned = await devices.provision_or_reflash(device_repo, ctx, label, device_role=role)
 
     api_base, ca = _panel_base(request, settings)
     nvs = {
