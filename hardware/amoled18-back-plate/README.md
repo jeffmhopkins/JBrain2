@@ -29,10 +29,11 @@ a choking hazard**.
 ![The desk stand: the box lies on its side, the screen leans back 30°, USB-C and buttons along the top](renders/stand.png)
 
 A two-part version for a desk. A thin **head** screws to the display in place of the stock
-cover, then sinks right into the angled end of a plain **battery box**, held by two screws at
-each side. The box's rim is the case outline, so the front shell sits flush on it and the head
-is hidden inside. The box lies on its long flat side, and the screen faces you, landscape, leaning
-back 30° from upright, with the USB-C and buttons along its top edge.
+cover, then sinks right into the angled end of a plain **battery box**, held by six flush
+countersunk screws round its rim. The box's rim is the case outline, so the front shell sits
+flush on it and the head is hidden inside. The box lies on its long flat side, and the screen
+faces you, landscape, leaning back 30° from upright, with the USB-C and buttons along its top
+edge.
 The head is the same for every box, so changing battery only means printing another box.
 
 | | [**103035, 1000 mAh**](renders/stand-section-103035.png) (recommended) | [802525, 400 mAh](renders/stand-section-802525.png) | [104050, 2400 mAh](renders/stand-section-104050.png) |

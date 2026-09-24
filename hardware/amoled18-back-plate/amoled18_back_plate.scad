@@ -191,7 +191,7 @@ grip_margin = 1.5;      // [0.5:0.5:5]
 
 // Build the desk stand instead of the back plate. A head that screws to the
 // display like the stock cover sinks right into the angled end of a battery box,
-// whose outside is flush with the case, and two screws at each side lock it. The
+// whose outside is flush with the case, and flush countersunk screws lock it. The
 // box lies on its long flat side; the screen leans back from upright, landscape,
 // with the USB-C and buttons along its top edge.
 desk_stand = false;
@@ -209,6 +209,11 @@ stand_front_min = 8.0;  // [4:0.5:30]
 box_floor = 2.0;        // [1.2:0.1:4]
 // Distance between the two lock screws on each side (0 = one screw per side, in the middle)
 lock_spread = 14;       // [0:1:16]
+// Also one lock screw in the top and bottom sides, diagonally opposite each other
+lock_top_bottom = true;
+// How far the thicker pad at each lock screw reaches into a notch in the head, at most
+// stand_ledge (0 = no pads)
+lock_pad = 1.0;         // [0:0.1:2]
 
 
 /* [6. Output] */
@@ -354,7 +359,7 @@ top_needed = box_floor + tape_t + cell_h + foam_t + lead_space + extra_clearance
 stand_zh = max(top_needed - cell_x0 * ss / sc, stand_front_min + p_out_x * ss);
 box_front_h = stand_zh - p_out_x * ss;
 box_back_h  = stand_zh + p_out_x * ss;
-// Overall sizes, including the top band that leans forward with the head, and
+// Overall sizes, including the band round the angled end, which leans with the head, and
 // with the display on (the stock unit is 15 mm thick: 11.5 above the seam).
 band_top_front = box_front_h + body_h * sc;
 band_top_back  = box_back_h + body_h * sc;
@@ -386,7 +391,7 @@ if (desk) {
         echo(str("Room around cell:   ", box_side_gap, " mm each side; it lies on the box's long flat side"));
     }
     echo(str("SCREWS:             4 x ", screw_size, " x 4 socket head (display to head), ", lock_count, " x ",
-             screw_size, " x 6 pan or wafer head (head to box, ", lock_count / 2, " each side)"));
+             screw_size, " x 8 countersunk flat head, e.g. DIN 965 (head to box, flush)"));
     echo("-------------------------------------------");
     if (!rim_fits) echo("*** RIM IS LARGER THAN THE HEAD - lower pocket_wall or pocket_clear ***");
     if (!desk_fits) echo(box_x_room < 0
@@ -622,28 +627,61 @@ module grip() {
 
 // ---- desk stand: the head -----------------------------------------------
 
-lock_y     = head_y / 2 + pocket_clear + pocket_wall / 2;
-// Low in the band, so the hole's lower edge runs into the solid wall below.
-lock_z     = 1.0;
+// Low in the band, so the countersink stays under the seam; its lower edge runs
+// into the solid wall below the ledge.
+lock_z     = 1.45;
 lock_pilot = shaft_table[0] * 0.8;
-// Deep enough for an M2 x 8 as well as the M2 x 6.
-lock_len   = 6.75;
-// Along each side, where the lock screws go.
+// The screw passes band, pad and two clearances before biting the head: an M2 x 8
+// bites about 5.6 mm. Deep enough for it, with a little spare.
+lock_len   = 7.25;
+// Countersunk (flat) heads sit flush in a 90 degree seat in the box's band.
+lock_cs_d  = shaft_table[1] + 0.2;
+lock_cs_h  = (lock_cs_d - shaft_d) / 2;
+// Each lock screw as [x, y, ox, oy]: a point on the head's edge and the edge's
+// outward direction. Two on each side (y), and one in the top and bottom (x)
+// placed diagonally opposite, clear of the battery slot, so the head still fits
+// either way round. lock_tb_y keeps them on the flat part of the case outline.
 lock_xs    = lock_spread > 0 ? [-lock_spread / 2, lock_spread / 2] : [0];
-lock_count = 2 * len(lock_xs);
+lock_tb_y  = 11;
+lock_pts   = concat(
+    [for (sy = [-1, 1], lx = lock_xs) [lx, sy * head_y / 2, 0, sy]],
+    lock_top_bottom ? [[head_x / 2, -lock_tb_y, 1, 0], [-head_x / 2, lock_tb_y, -1, 0]] : []);
+lock_count = len(lock_pts);
 
-// A solid block inside the head's short ends for each lock screw to bite into.
+// A pad on the band's inside at each lock screw, and the notch in the head's edge
+// it fills: the screw seats in band + pad instead of the band alone. The pad
+// reaches no further in than the ledge, so it stands on solid wall, and its top
+// (the notch's roof) slopes at 45 degrees so the head's rim above needs no bridge.
+lock_pad_w = 6;
+lock_pad_d = min(lock_pad, stand_ledge);
+module lock_pad_shape(grow, top) {
+    d = lock_pad_d + grow;
+    for (p = lock_pts)
+        translate([p[0], p[1], 0]) rotate(p[3] != 0 ? -90 * p[3] : (p[2] > 0 ? 180 : 0))
+            rotate([90, 0, 0]) linear_extrude(height = lock_pad_w + 2 * grow, center = true)
+                polygon([[-3, -1], [d, -1], [d, top - d], [0, top], [-3, top]]);
+}
+
+// Points +z inward from an edge whose outward direction is o.
+module inward(o) { rotate(o[1] != 0 ? [o[1] * 90, 0, 0] : [0, -o[0] * 90, 0]) children(); }
+
+// A solid block inside the head's edge for each lock screw to bite into.
 module lock_blocks() {
-    for (sy = [-1, 1], lx = lock_xs)
-        let(l = lock_len + 0.8 - (head_y - cav_y) / 2)
-            translate([lx - 3, sy > 0 ? cav_y / 2 - l : -cav_y / 2 - eps, plate_t - eps])
+    for (p = lock_pts) {
+        l = lock_len + 0.8 - (p[3] != 0 ? head_y - cav_y : head_x - cav_x) / 2;
+        if (p[3] != 0)
+            translate([p[0] - 3, p[3] > 0 ? cav_y / 2 - l : -cav_y / 2 - eps, plate_t - eps])
                 cube([6, l + eps, body_h - plate_t + eps]);
+        else
+            translate([p[2] > 0 ? cav_x / 2 - l : -cav_x / 2 - eps, p[1] - 3, plate_t - eps])
+                cube([l + eps, 6, body_h - plate_t + eps]);
+    }
 }
 
 module head_holes() {
-    for (sy = [-1, 1], lx = lock_xs)
-        translate([lx, sy * (head_y / 2 + eps), lock_z])
-            rotate([sy * 90, 0, 0]) cylinder(d = lock_pilot, h = lock_len);
+    for (p = lock_pts)
+        translate([p[0] + p[2] * eps, p[1] + p[3] * eps, lock_z])
+            inward([p[2], p[3]]) cylinder(d = lock_pilot, h = lock_len);
     // The battery's plug comes up through the floor just in front of the mouth of
     // the board's BAT socket, which faces -y (Waveshare's 3D model).
     translate([-12.15, -8.25, -eps]) linear_extrude(height = total_h)
@@ -664,6 +702,7 @@ module back_plate() {
         }
         screw_holes();
         if (desk) head_holes();
+        if (desk && lock_pad > 0) lock_pad_shape(pocket_clear, body_h);
     }
 }
 
@@ -711,7 +750,7 @@ module box_ribs() {
                 }
 }
 
-// The box's top band: stands on the head's plane around the head, as tall as
+// The band round the box's angled end: stands on the head's plane around the head, as tall as
 // the head's body, its outside the case outline so the front shell sits flush on it.
 module pocket_ring() {
     difference() {
@@ -723,11 +762,17 @@ module pocket_ring() {
     }
 }
 
+// Through the band and its pad, with a countersink at the outer face so the heads
+// sit flush.
 module lock_holes() {
     multmatrix(m_head)
-        for (sy = [-1, 1], lx = lock_xs)
-            translate([lx, sy * lock_y, lock_z]) rotate([90, 0, 0])
-                cylinder(d = shaft_d, h = pocket_wall + 2, center = true);
+        for (p = lock_pts)
+            translate(p[3] != 0 ? [p[0], p[3] * plate_y / 2, lock_z] : [p[2] * plate_x / 2, p[1], lock_z])
+                inward([p[2], p[3]]) {
+                    translate([0, 0, -1]) cylinder(d = shaft_d, h = pocket_wall + pocket_clear + lock_pad_d + 2);
+                    translate([0, 0, -1]) cylinder(d = lock_cs_d, h = 1 + eps);
+                    cylinder(d1 = lock_cs_d, d2 = shaft_d, h = lock_cs_h);
+                }
 }
 
 // Below the ledge, with a 45 degree chamfer of cx (front and back walls) or
@@ -758,6 +803,14 @@ module stand_box() {
                     below_head(-grip_margin);
                 }
             multmatrix(m_head) pocket_ring();
+            if (lock_pad > 0)
+                multmatrix(m_head) intersection() {
+                    lock_pad_shape(0, body_h - 0.2);
+                    // Short of the outer face, so the pad merges into the band with no
+                    // coincident skin.
+                    translate([0, 0, -eps]) linear_extrude(height = body_h)
+                        rrect(plate_x - 0.2, plate_y - 0.2, plate_r - 0.1);
+                }
         }
         lock_holes();
         // Open to the head, whose back is the lid.
