@@ -660,10 +660,10 @@ describe("the Panels tab", () => {
     openPanels();
     expect(await screen.findByText("the other one")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "rename" })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("button", { name: "Rename" })[0] as HTMLElement);
     const input = screen.getByLabelText(/Call it/);
     fireEvent.change(input, { target: { value: "Elora" } });
-    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(sent).toEqual(["Elora"]));
   });
@@ -677,12 +677,12 @@ describe("the Panels tab", () => {
     openPanels();
     await screen.findByText("the other one");
 
-    fireEvent.click(screen.getAllByRole("button", { name: "rename" })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("button", { name: "Rename" })[0] as HTMLElement);
     fireEvent.change(screen.getByLabelText(/Call it/), { target: { value: "O'Brien" } });
-    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.change(screen.getByLabelText(/Call it/), { target: { value: "Elora" } });
-    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
 
@@ -705,13 +705,77 @@ describe("the Panels tab", () => {
     openPanels();
     await screen.findByText("the other one");
 
-    const [revoke] = screen.getAllByRole("button", { name: "revoke" });
+    const [revoke] = screen.getAllByRole("button", { name: "Revoke" });
     fireEvent.click(revoke as HTMLElement);
-    expect(screen.getByRole("button", { name: "tap again to revoke" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tap again to revoke" })).toBeInTheDocument();
     expect(revoked).toBe(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "tap again to revoke" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap again to revoke" }));
     await waitFor(() => expect(revoked).toBe(1));
+  });
+
+  it("disarms a revoke that is walked away from", async () => {
+    /* IT NEVER DISARMED. An owner who tapped "Revoke", thought better of it and put the phone
+       down left a panel one stray tap from retirement — and that tap, minutes later, would not
+       have looked like the confirmation of anything. Walking away should mean cancelling. */
+    vi.useFakeTimers();
+    try {
+      let revoked = 0;
+      fetchMock.mockImplementation(
+        box({
+          revoke: () => {
+            revoked += 1;
+            return json({ name: "Ellie", keys: 13 });
+          },
+        }),
+      );
+      openPanels();
+      await vi.waitFor(() => screen.getByText("the other one"));
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Revoke" })[0] as HTMLElement);
+      expect(screen.getByRole("button", { name: "Tap again to revoke" })).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+      });
+
+      // Back to the resting label, and the next tap arms rather than revoking.
+      expect(screen.queryByRole("button", { name: "Tap again to revoke" })).toBeNull();
+      fireEvent.click(screen.getAllByRole("button", { name: "Revoke" })[0] as HTMLElement);
+      expect(revoked).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the age honest while the tab is left open", async () => {
+    /* "12 min ago" was computed once, at mount, and then sat there. Leave the tab open and a
+       panel that went silent an hour ago still reads as twelve minutes — the exact failure this
+       screen exists to catch. Re-ASKING is the fix rather than counting up locally: `age_s` is
+       computed on the box, because a phone that has been asleep disagrees with it by minutes. */
+    vi.useFakeTimers();
+    try {
+      let age = 40;
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/endpoint/status") {
+          return json({ panels: [{ ...PANELS[0], age_s: age }, PANELS[1]] });
+        }
+        return box()(input, init);
+      });
+      openPanels();
+      await vi.waitFor(() => screen.getByText("just now"));
+
+      age = 3 * 60 * 60; // three hours of silence, which is well past "late"
+      await act(async () => {
+        vi.advanceTimersByTime(20_000);
+      });
+
+      expect(await vi.waitFor(() => screen.getByText("3 hours ago"))).toBeInTheDocument();
+      // And the state is in WORDS, not only in the colour on that timestamp.
+      expect(screen.getByText("not reporting")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks a display, and says which panel has never reported", async () => {
@@ -742,7 +806,7 @@ describe("the pet on a panel", () => {
     render(<JpanelScreen onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
     await screen.findByText("the other one");
-    fireEvent.click(screen.getAllByRole("button", { name: "its pet" })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("button", { name: "Its pet" })[0] as HTMLElement);
   }
 
   it("renames the pet and picks its body in one save", async () => {
@@ -766,7 +830,7 @@ describe("the pet on a panel", () => {
     const name = await screen.findByLabelText(/Its name/);
     fireEvent.change(name, { target: { value: "Pip" } });
     fireEvent.click(screen.getByRole("radio", { name: "Robot" }));
-    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(sent).toEqual([{ pet_name: "Pip", form: "robot" }]));
   });
@@ -790,10 +854,10 @@ describe("the pet on a panel", () => {
     const name = await screen.findByLabelText(/Its name/);
 
     fireEvent.change(name, { target: { value: "R2D2" } });
-    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.change(name, { target: { value: "Pip" } });
-    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
   });
@@ -804,7 +868,7 @@ describe("the pet on a panel", () => {
     fetchMock.mockImplementation(box({ appearance: { pet_name: "Pip", form: "robot" } }));
     await openPet();
     fireEvent.change(await screen.findByLabelText(/Its name/), { target: { value: "" } });
-    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
   });
@@ -835,6 +899,59 @@ describe("the shared panel knobs", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
     await screen.findByText("the other one");
   }
+
+  it("takes the save note back down, so it cannot be read as confirming the next knob", async () => {
+    /* "Saved." went up on the first save and stayed up for the life of the screen. Turn the
+       brightness minutes later and a note about the volume is still sitting under it, which is
+       the one thing a confirmation must never do — confirm something it did not witness. */
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(box());
+      render(<JpanelScreen onClose={vi.fn()} />);
+      fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+      await vi.waitFor(() => screen.getByText("the other one"));
+
+      const vol = screen.getByLabelText(/Speaker volume/);
+      fireEvent.change(vol, { target: { value: "40" } });
+      fireEvent.pointerUp(vol);
+      await vi.waitFor(() => screen.getByText(/^Saved\./));
+
+      await act(async () => {
+        vi.advanceTimersByTime(4_000);
+      });
+      expect(screen.queryByText(/^Saved\./)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds the card's place while the settings are still in flight", async () => {
+    /* It rendered `null` until the settings landed, so the knobs popped into existence a beat
+       after the panel list had already painted — and shoved every row down the screen, under a
+       thumb that was by then already moving towards one of them. */
+    // Typed up front rather than inferred: TypeScript narrows an assignment made inside a
+    // Promise executor to the initialiser, and `release?.()` below then reads as `never`.
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/endpoint/settings") {
+        await held;
+      }
+      return box()(input, init);
+    });
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+
+    // The heading is on screen before the numbers are, so the list below it does not move.
+    expect(await screen.findByRole("heading", { name: "Every panel" })).toBeInTheDocument();
+    expect(screen.getByText("Reading the settings…")).toBeInTheDocument();
+
+    release();
+    expect(await screen.findByLabelText(/Speaker volume/)).toBeInTheDocument();
+    expect(screen.queryByText("Reading the settings…")).toBeNull();
+  });
 
   it("turns the microphone AGC on, which nothing outside the debug console could do", async () => {
     /* The owner: "we need the auto gain control from panel mic too, it was way too quiet."

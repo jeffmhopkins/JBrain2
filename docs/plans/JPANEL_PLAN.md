@@ -9,6 +9,27 @@
 > panel is away until tonight, the movement threshold it ships with is reasoned rather than
 > measured, and §5 says how to correct it from the box without a terminal.
 >
+> **The Panels tab has had its design pass.** It shipped ahead of one and read it: the owner,
+> *"the panels sub view looks considerably less polished."* Three directions were mocked
+> (`docs/mocks/jpanel-panels/`) and **A — converge on the Ops fleet card** was chosen, since
+> both surfaces answer "is this thing as it should be" and the owner reads them minutes apart.
+>
+> Most of what made it read as unfinished was not taste. **`--text-dim` did not exist**: it was
+> referenced seventeen times, across this sheet and the Ops fleet card, and declared nowhere, so
+> every line written to recede rendered at full `--text`. A `var()` at an undefined name is not
+> an error — it resolves to nothing, and `color:` then inherits while `color-mix(…)` drops the
+> declaration whole — which is why nothing caught it. `cssTokens.test.ts` catches it now, and
+> catching it turned up five more of the same shape elsewhere in `styles.css`.
+>
+> **`.jp-panel`, `.jp-panel-head` and `.jp-panel-name` were each declared twice**, and the
+> Messages tab uses the first set — so the Panels block had been quietly restyling the message
+> threads. The Panels tab is `.jp-unit*` now, and no top-level selector in the sheet may repeat.
+> Beyond that: a 16px gutter, 44px action buttons with Revoke rose from its resting state, the
+> type scale (every size in the half was a bare rem, all below every token in the scale), and
+> the health said in WORDS rather than by fading the card to 75% opacity. Four state bugs went
+> with it — a revoke that armed and never disarmed, a permanent "Saved.", a relative timestamp
+> computed once at mount, and a knobs card that rendered `null` while loading.
+>
 > **"Dim" is now a number the owner can turn** (0.3.04): the bird slept on schedule but the
 > screen still looked lit — `screen_level()` dimmed to a hardcoded QUARTER, and a quarter of 255
 > is 63, which does not read as dim in a bedroom because a quarter of a register is nowhere near

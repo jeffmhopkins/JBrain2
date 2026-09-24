@@ -273,12 +273,12 @@
    work opened the app to find out. */
 .jp-status {
   margin-left: auto;
-  font-size: 0.78rem;
-  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
 }
 
 .jp-status-heard {
-  color: var(--ok, #2e7d32);
+  color: var(--ok);
 }
 
 /* THE CONVERSATION SCROLLS RATHER THAN PUSHING EVERYTHING ELSE OFF THE PAGE.
@@ -301,14 +301,14 @@
   border: 0;
   background: none;
   padding: 2px 4px;
-  font-size: 0.78rem;
-  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
   text-decoration: underline;
   cursor: pointer;
 }
 
 .jp-clear:hover:not(:disabled) {
-  color: var(--danger, #c0392b);
+  color: var(--danger);
 }
 
 .jp-clear:disabled {
@@ -324,8 +324,8 @@
   border: 0;
   background: none;
   padding: 2px 4px;
-  font-size: 0.78rem;
-  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
   text-decoration: underline;
   cursor: pointer;
 }
@@ -342,128 +342,198 @@
 .jp-cleared {
   display: block; /* `<output>` is inline by default */
   margin: 0 0 8px;
-  font-size: 0.82rem;
-  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
 }
 
 /* A delivery the box stopped retrying. Warning-coloured, unlike "not heard yet", because this
    one is a fault rather than a child who has not walked past their panel. */
 .jp-status-stuck {
-  color: var(--danger, #c0392b);
+  color: var(--danger);
 }
 
-/* ===== Panels tab — the units themselves ===== */
+/* ===== Panels tab — the units themselves =====
+
+   `.jp-unit*`, NOT `.jp-panel*`, and the rename is the point. This block used to redeclare
+   `.jp-panel`, `.jp-panel-head` and `.jp-panel-name` — all three already defined above for the
+   MESSAGE THREAD cards, which `MessagesTab` still uses. Later wins in CSS, so for as long as
+   both blocks existed the Panels tab was quietly restyling the Messages tab: thread cards came
+   out on `--surface-2` at 12px radius with a 600-weight heading that had lost `--fs-title`.
+   Nothing on the Messages tab asked for that and nothing there could have explained it. Two
+   different components had one set of names, so the fix is two sets of names.
+
+   Shape follows the Ops fleet card (`.ops-panel-*` in styles.css) on purpose: both answer "is
+   this thing as it should be", and the owner reads them minutes apart. Ops diagnoses a fault;
+   here a unit is named, dressed or retired. */
 
 .jp-panels {
+  /* The gutter. Without it the list ran to the bezel while the segmented control above it sat
+     inset 16px, so nothing on the screen lined up with anything else — most of why this tab
+     read as unfinished beside Messages and Flash. Matches `.jp-threads`. */
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
+  max-width: 640px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.jp-panel {
-  padding: 12px;
+.jp-unit {
+  padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-2, transparent);
+  border-radius: var(--r-card);
+  background: var(--surface);
 }
 
-/* A panel that has gone quiet, not one that is broken — dimmed rather than alarmed. The fleet
-   card in Ops is where a fault is diagnosed; this tab is where a unit is named or retired. */
-.jp-panel.quiet {
-  opacity: 0.75;
-}
-
-.jp-panel-head {
+.jp-unit-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
-.jp-panel-name {
+.jp-unit-name {
+  font-size: var(--fs-title);
   font-weight: 600;
 }
 
-.jp-panel-role {
-  font-size: 0.72rem;
-  color: var(--text-dim);
+.jp-unit-role {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 0 6px;
 }
 
-.jp-panel-seen {
+/* Pushed to the far edge, like the fleet card's: it is the first thing scanned down a list, and
+   it decides whether anything below it is worth reading. */
+.jp-unit-seen {
   margin-left: auto;
-  font-size: 0.78rem;
-  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  white-space: nowrap;
 }
 
-.jp-panel-meta {
-  margin: 4px 0 0;
-  font-size: 0.78rem;
-  color: var(--text-dim);
+/* COLOUR IS NEVER THE ONLY CARRIER (docs/reference/DESIGN.md). These two tint the timestamp,
+   and `.jp-unit-state` below says the same thing in words on the meta line — the card used to
+   fade to 75% opacity instead, which is indistinguishable from a panel that reported a minute
+   ago, only greyer, and unreadable to anyone who cannot separate the two greys. */
+.jp-unit-seen.late {
+  color: var(--warn);
 }
 
-.jp-panel-actions {
+.jp-unit-seen.bad {
+  color: var(--danger);
+}
+
+.jp-unit-meta {
+  margin: 6px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.jp-unit-version {
+  font-family: var(--font-mono);
+}
+
+.jp-unit-state.late {
+  color: var(--warn);
+}
+
+.jp-unit-state.bad {
+  color: var(--danger);
+}
+
+/* REAL BUTTONS AT 44px. They were borderless text at 0.82rem — about 10px of glyph with no box
+   at the shipped scale — sitting 14px apart, which is under the binding minimum on the one row
+   of this screen that holds an irreversible action. */
+.jp-unit-actions {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-top: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
 }
 
-.jp-panel-actions button {
-  background: none;
-  border: none;
-  padding: 0;
+.jp-unit-actions button {
+  min-height: 44px;
+  padding: 0 14px;
   font: inherit;
-  font-size: 0.82rem;
-  color: var(--text-dim);
+  font-size: var(--fs-secondary);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
   cursor: pointer;
 }
 
-.jp-panel-actions button:disabled {
+.jp-unit-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-/* Quiet until armed. A revoke that is red on every row reads as an alarm about the fleet; the
-   colour belongs to the moment the owner has actually asked for it. */
-.jp-panel-actions .jp-armed {
-  color: var(--danger, #c0392b);
+/* The one irreversible control on the screen, and it used to be visually identical to the two
+   beside it. Tinted rather than filled: still the quietest thing that can honestly be called
+   destructive, which is the register the rest of the app uses for the same weight of action. */
+.jp-unit-actions button.danger {
+  background: var(--danger-tint);
+  border-color: transparent;
+  color: var(--danger);
+}
+
+.jp-unit-actions button.primary {
+  background: var(--accent-tint);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+/* Armed. Already rose from `.danger`, so what changes is the WEIGHT and the label — "tap again
+   to revoke" is the part that carries it, and a second colour change would say less. */
+.jp-unit-actions button.armed {
   font-weight: 600;
 }
 
-.jp-panel-rename {
-  margin-top: 10px;
+.jp-unit-edit {
+  margin-top: 14px;
 }
 
-.jp-panel-rename label {
+.jp-unit-edit label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 0.78rem;
-  color: var(--text-dim);
+  gap: 6px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
 }
 
-.jp-panel-rename input {
+.jp-unit-edit input {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--r-input);
+  padding: 11px 12px;
   font: 400 16px system-ui; /* 16px+ so iOS does not zoom the viewport on focus */
   color: var(--text);
-  background: var(--surface, transparent);
+  background: var(--surface-2);
 }
 
-.jp-panel-hint {
+.jp-unit-hint {
   margin: 6px 0 0;
-  font-size: 0.74rem;
-  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.45;
 }
 
-.jp-panel-error {
+.jp-unit-error {
   margin: 8px 0 0;
-  font-size: 0.78rem;
-  color: var(--danger, #c0392b);
+  font-size: var(--fs-secondary);
+  color: var(--danger);
+}
+
+/* Transient, and it has to LOOK transient — it clears itself a few seconds after the save, so
+   it fades rather than vanishing mid-glance. */
+.jp-unit-saved {
+  margin: 10px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--ok);
 }
 
 /* The body picker. A fieldset rather than a checkbox pair because the two are exclusive and one
@@ -471,29 +541,31 @@
    is exactly what left both twins on the ostrich in the first place. */
 .jp-form-pick {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-input);
   padding: 8px 12px 4px;
-  margin: 12px 0 0;
+  margin: 14px 0 0;
 }
 
 .jp-form-pick legend {
   padding: 0 4px;
-  font-size: 0.78rem;
-  color: var(--text-dim);
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
 }
 
 .jp-radio {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 0 8px;
-  font-size: 0.88rem;
+  /* 44px of row, so the whole label is the target rather than the 20px dot. */
+  min-height: 44px;
+  font-size: var(--fs-body);
 }
 
 .jp-radio input {
   flex: none;
   width: 20px;
   height: 20px;
+  accent-color: var(--accent);
 }
 
 /* ===== The knobs every panel shares ===== */
@@ -501,28 +573,44 @@
 /* Above the list rather than inside a row, because these are ONE row on the box: a control that
    looked per-panel while quietly changing both would be worse than no control. */
 .jp-audio {
-  padding: 12px;
-  margin: 0 0 14px;
+  padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-card);
+  background: var(--surface);
 }
 
 .jp-audio h2 {
-  margin: 0 0 10px;
-  font-size: 0.88rem;
-  font-weight: 600;
+  margin: 0 0 12px;
+  font-size: var(--fs-title);
+  font-weight: 500;
+}
+
+/* While the settings are still in flight. A card-shaped hole rather than nothing: this used to
+   render `null`, so the whole knobs card popped into existence a beat after the panels below it
+   and pushed them down the screen under a thumb already moving. */
+.jp-audio-wait {
+  min-height: 180px;
 }
 
 .jp-slider {
   display: block;
-  margin: 0 0 12px;
-  font-size: 0.82rem;
-  color: var(--text-dim);
+  margin: 0 0 14px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.jp-slider strong {
+  color: var(--text);
+}
+
+.jp-slider em {
+  font-style: normal;
+  color: var(--text-3);
 }
 
 .jp-slider span {
   display: block;
-  margin: 0 0 4px;
+  margin: 0 0 6px;
 }
 
 .jp-slider input {
@@ -530,13 +618,14 @@
   /* Coarse enough for a thumb: this is operated on a phone, one-handed, usually while looking
      at the panel rather than at the screen. */
   height: 28px;
+  accent-color: var(--accent);
 }
 
 .jp-check {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  font-size: 0.88rem;
+  font-size: var(--fs-body);
 }
 
 .jp-check input {
@@ -544,12 +633,14 @@
   width: 20px;
   height: 20px;
   margin-top: 2px;
+  accent-color: var(--accent);
 }
 
 .jp-check em {
   display: block;
   font-style: normal;
-  font-size: 0.76rem;
-  color: var(--text-dim);
-  margin-top: 3px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 4px;
+  line-height: 1.45;
 }
