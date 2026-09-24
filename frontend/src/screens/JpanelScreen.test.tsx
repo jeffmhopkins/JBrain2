@@ -152,6 +152,7 @@ function box(
           brightness: 255,
           debug_overlay: false,
           mic_agc: false,
+          dim_percent: 25,
         },
       );
     }
@@ -875,6 +876,7 @@ describe("the shared panel knobs", () => {
           brightness: 255,
           debug_overlay: false,
           mic_agc: false,
+          dim_percent: 25,
         },
         settingsPut: () =>
           json({
@@ -883,6 +885,7 @@ describe("the shared panel knobs", () => {
             brightness: 255,
             debug_overlay: false,
             mic_agc: false,
+            dim_percent: 25,
           }),
       }),
     );
@@ -893,5 +896,54 @@ describe("the shared panel knobs", () => {
     fireEvent.pointerUp(gain);
 
     await waitFor(() => expect(screen.getByText("42 dB")).toBeInTheDocument());
+  });
+});
+
+describe("how dim dim is", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the resulting brightness, not just the percentage", async () => {
+    /* THE WHOLE REASON THIS CONTROL EXISTS. The owner: "the bird was sleeping when I saw it this
+       morning I think, but the screen wasn't dimmed." It WAS — a quarter of 255 is 63, and 63
+       does not read as dim in a bedroom. A percentage alone would hide exactly the number that
+       misled us, so the control shows what the panel will actually be set to. */
+    const sent: Record<string, unknown>[] = [];
+    fetchMock.mockImplementation(
+      box({
+        settings: {
+          volume: 70,
+          mic_gain_db: 30,
+          brightness: 255,
+          debug_overlay: false,
+          mic_agc: false,
+          dim_percent: 25,
+        },
+        settingsPut: (body) => {
+          sent.push(body);
+          return json(body);
+        },
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+    await screen.findByText("the other one");
+
+    // 25% of 255 is 63 — the number that looked like "not dimmed" on a bedroom wall.
+    expect(await screen.findByText(/\(63 of 255\)/)).toBeInTheDocument();
+
+    const dim = screen.getByLabelText(/Dimmed to/);
+    fireEvent.change(dim, { target: { value: "10" } });
+    fireEvent.pointerUp(dim);
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.dim_percent).toBe(10);
   });
 });

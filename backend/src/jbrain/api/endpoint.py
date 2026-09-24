@@ -682,6 +682,10 @@ class EndpointSettings(BaseModel):
     # two panels whose last readings were `mic_peak` 32767 and 814 on the same gain. Default OFF,
     # so an upgrade changes nothing until the owner asks it to (migration 0214).
     mic_agc: bool = False
+    # HOW DIM "DIM" IS, as a percentage of `brightness`. It was a hardcoded quarter, and the
+    # owner found what that is worth in a bedroom at full brightness: 63 of 255, which does not
+    # read as dim at all. 25 reproduces the old behaviour exactly (migration 0215).
+    dim_percent: int = 25
     # PER-PANEL, unlike the five above, which are one answer for the whole house. Defaulted here
     # so the model stays the shape the PUT takes: the owner's write touches only the four
     # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
@@ -697,6 +701,7 @@ def _clamp(v: EndpointSettings) -> EndpointSettings:
         # Nothing to clamp: a bool is already its own range.
         debug_overlay=v.debug_overlay,
         mic_agc=v.mic_agc,
+        dim_percent=max(0, min(v.dim_percent, 100)),
     )
 
 
@@ -705,7 +710,8 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
         row = (
             await session.execute(
                 text(
-                    "SELECT volume, mic_gain_db, brightness, debug_overlay, mic_agc"
+                    "SELECT volume, mic_gain_db, brightness, debug_overlay, mic_agc,"
+                    " dim_percent"
                     " FROM app.endpoint_settings WHERE id = 1"
                 )
             )
@@ -713,7 +719,12 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
     if row is None:
         return EndpointSettings()
     return EndpointSettings(
-        volume=row[0], mic_gain_db=row[1], brightness=row[2], debug_overlay=row[3], mic_agc=row[4]
+        volume=row[0],
+        mic_gain_db=row[1],
+        brightness=row[2],
+        debug_overlay=row[3],
+        mic_agc=row[4],
+        dim_percent=row[5],
     )
 
 
@@ -1097,7 +1108,7 @@ async def set_panel_settings(
             text(
                 "UPDATE app.endpoint_settings SET volume = :v, mic_gain_db = :g,"
                 " brightness = :b, debug_overlay = :d, mic_agc = :agc,"
-                " updated_at = now() WHERE id = 1"
+                " dim_percent = :dim, updated_at = now() WHERE id = 1"
             ),
             {
                 "v": clamped.volume,
@@ -1105,6 +1116,7 @@ async def set_panel_settings(
                 "b": clamped.brightness,
                 "d": clamped.debug_overlay,
                 "agc": clamped.mic_agc,
+                "dim": clamped.dim_percent,
             },
         )
         await session.commit()

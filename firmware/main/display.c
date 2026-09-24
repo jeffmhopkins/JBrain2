@@ -344,6 +344,9 @@ bool display_start(void)
 #define BRIGHTNESS_DEFAULT 0xFF
 static volatile uint8_t s_brightness = BRIGHTNESS_DEFAULT;
 static volatile bool s_brightness_pending;
+/* How dim the first sleep stage is, as a percentage of the configured brightness.
+   The box's answer; the shipped default reproduces the old fixed quarter exactly. */
+static volatile int s_dim_percent = SCREEN_DIM_PERCENT_DEFAULT;
 /* Set from the OTA task, honoured by the render loop — see `display_request_restart`. A flag
    rather than a call, for the reason the codec has one: the owner of a peripheral restarts
    it, never a passer-by. */
@@ -393,6 +396,19 @@ static volatile int s_form_pending = -1; /* a change for the render task to take
    would re-assert the owner's choice four times an hour — Elora switches to the robot, and the
    panel silently switches her back before she has finished playing with it. Comparing against
    what the box last said means the gesture wins until the OWNER actually changes his mind. */
+void display_set_dim_percent(int percent)
+{
+    if (percent < 0 || percent > 100) return;
+    if (percent == s_dim_percent) return;
+    s_dim_percent = percent;
+    /* Applied on the next frame rather than here: this is called from the main task and the
+       backlight register belongs to the render task — the same hand-off the brightness itself
+       uses, and for the same reason a cross-task write used to panic this firmware at boot.
+       Pending unconditionally so a change made WHILE dim takes effect without waiting for the
+       next stage transition, which could be ten minutes away. */
+    s_brightness_pending = true;
+}
+
 void display_set_form(int form)
 {
     if (form != 0 && form != 1) return;
@@ -425,7 +441,7 @@ static void sleep_wake(const char *why)
 static void apply_brightness(void)
 {
     if (s_io == NULL) return;
-    const uint8_t level = screen_level(s_brightness, s_sleep);
+    const uint8_t level = screen_level(s_brightness, s_sleep, s_dim_percent);
     const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
     if (err != ESP_OK) ESP_LOGW(TAG, "brightness: %s", esp_err_to_name(err));
 }

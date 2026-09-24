@@ -58,6 +58,9 @@ typedef struct {
        to work in both directions, and a box that stopped sending it must not leave a panel
        stuck with gain the owner turned off. */
     int mic_agc;
+    /* How dim the first sleep stage is, 0-100; -1 when the box did not say, which
+       leaves the firmware's own default standing. */
+    int dim_percent;
     /* THE PET'S NAME, WHICH IS THE WAKE WORD. `vocab.c` compiles in "hey fish" and
        `vocab_name()` takes the last word of it for the label above the pet's head, so this
        renames the creature in the sense that matters to a four-year-old: what she says to it.

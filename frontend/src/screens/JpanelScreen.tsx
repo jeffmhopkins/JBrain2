@@ -684,7 +684,7 @@ function PanelAudio() {
 
   return (
     <div className="jp-audio">
-      <h2>Sound, on every panel</h2>
+      <h2>Every panel</h2>
       <label className="jp-slider">
         <span>
           Speaker volume <strong>{cfg.volume}</strong>
@@ -711,6 +711,48 @@ function PanelAudio() {
           value={cfg.mic_gain_db}
           disabled={busy}
           onChange={(e) => setCfg({ ...cfg, mic_gain_db: Number(e.target.value) })}
+          onPointerUp={() => void save(cfg)}
+          onKeyUp={() => void save(cfg)}
+        />
+      </label>
+      <label className="jp-slider">
+        <span>
+          Screen brightness <strong>{cfg.brightness}</strong>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={255}
+          value={cfg.brightness}
+          disabled={busy}
+          onChange={(e) => setCfg({ ...cfg, brightness: Number(e.target.value) })}
+          onPointerUp={() => void save(cfg)}
+          onKeyUp={() => void save(cfg)}
+        />
+      </label>
+      {/* THE ONE THE OWNER ASKED FOR BY FINDING IT BROKEN. It was a hardcoded quarter, and a
+          quarter of 255 is 63 — which does not read as dim in a dark room, because a quarter of
+          a register is nowhere near a quarter of perceived brightness. Shown as the resulting
+          VALUE as well as the percentage, so the number being chosen is the one the panel will
+          actually use rather than an abstraction over it. */}
+      <label className="jp-slider">
+        <span>
+          Dimmed to <strong>{cfg.dim_percent}%</strong>{" "}
+          {/* One interpolated string rather than several nodes: this is the number that misled
+              us, and it should be greppable on screen and in a test as one piece of text. */}
+          {/* FLOOR, NOT ROUND, because the panel truncates: `screen_level()` does the same sum in C
+              integer arithmetic, so 255 at 25% is 63 there and rounding would show 64 here. A
+              control that reports a value the device never uses is worse than one that reports
+              nothing — this whole setting exists because a brightness number misled us once. */}
+          <em>{`(${Math.floor((cfg.brightness * cfg.dim_percent) / 100)} of ${cfg.brightness})`}</em>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={cfg.dim_percent}
+          disabled={busy}
+          onChange={(e) => setCfg({ ...cfg, dim_percent: Number(e.target.value) })}
           onPointerUp={() => void save(cfg)}
           onKeyUp={() => void save(cfg)}
         />

@@ -2705,6 +2705,9 @@ export interface EndpointSettings {
   brightness: number;
   debug_overlay: boolean;
   mic_agc: boolean;
+  /** How dim the first sleep stage is, as a percentage of `brightness`. It was a hardcoded
+   *  quarter, and at brightness 255 that is 63 — which does not read as dim in a bedroom. */
+  dim_percent: number;
 }
 
 /** Which body a panel comes back as. The gesture on the glass still toggles it live; this is

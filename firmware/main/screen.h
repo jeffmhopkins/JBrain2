@@ -47,9 +47,19 @@ typedef enum {
    means reading the box's log rather than guessing a second time. */
 #define SCREEN_MOVE_COUNTS 900
 
-/* Dim is a quarter of whatever the box configured, floored so it cannot round away to off:
-   the point of the first stage is that the pet is still VISIBLE. */
-#define SCREEN_DIM_SHIFT 2
+/* HOW DIM "DIM" IS, as a percentage of whatever the box configured, floored so it cannot round
+   away to off: the point of the first stage is that the pet is still VISIBLE.
+
+   It was a fixed `>> 2` — a quarter — and the owner found what that is worth in a bedroom:
+   *"the bird was sleeping when I saw it this morning I think, but the screen wasn't dimmed."*
+   It WAS dimmed. At brightness 255 a quarter is 63, and 63 does not read as dim, because a
+   quarter of a register is nowhere near a quarter of perceived brightness — vision is roughly
+   logarithmic and this panel's response is not linear either.
+
+   So the number comes from the box now (`endpoint_settings.dim_percent`), and 25 reproduces the
+   old shift exactly. A guess replaced by a different guess would have been the same mistake;
+   this one can be turned in a room, by the person in it, without a cable. */
+#define SCREEN_DIM_PERCENT_DEFAULT 25
 #define SCREEN_DIM_FLOOR 8
 
 /* How far gone the screen should be after this long with nothing happening. */
@@ -73,7 +83,7 @@ bool screen_dozing(screen_stage_t stage, bool conversing, bool speaking);
 
 /* What the panel should be showing, as against the brightness the BOX asked for — which has
    to survive a night's sleep unchanged, because it is a setting and this is a mood. */
-uint8_t screen_level(uint8_t configured, screen_stage_t stage);
+uint8_t screen_level(uint8_t configured, screen_stage_t stage, int dim_percent);
 
 /* MOVEMENT IS THE CHANGE, NOT THE TILT. A panel lying at an angle is still a panel nobody is
    touching, so this is a sample-to-sample difference — which is also why it cannot reuse

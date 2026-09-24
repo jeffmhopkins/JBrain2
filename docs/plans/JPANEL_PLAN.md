@@ -9,6 +9,12 @@
 > panel is away until tonight, the movement threshold it ships with is reasoned rather than
 > measured, and §5 says how to correct it from the box without a terminal.
 >
+> **"Dim" is now a number the owner can turn** (0.3.04): the bird slept on schedule but the
+> screen still looked lit — `screen_level()` dimmed to a hardcoded QUARTER, and a quarter of 255
+> is 63, which does not read as dim in a bedroom because a quarter of a register is nowhere near
+> a quarter of perceived brightness. It is a percentage from the box now (25 reproduces the old
+> behaviour), with brightness and dim sliders beside the sound knobs.
+>
 > **The microphone can turn itself up** (0.3.03): the ES8311's own AGC had never been on — the
 > driver never writes REG18, so it sat at the chip's reset default and telemetry reported
 > `00 already-off` on every panel. A fixed gain cannot serve two units whose last readings were
