@@ -70,8 +70,10 @@ async def test_the_owner_sees_what_each_panel_last_said_about_itself(
             client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
 
         login()
-        ellie = client.post("/api/devices", json={"label": "panel Ellie"}).json()
-        client.post("/api/devices", json={"label": "room endpoint panel"})
+        ellie = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
+        client.post("/api/devices", json={"label": "room endpoint panel", "device_role": "jpet"})
 
         _report(
             client,
@@ -119,7 +121,9 @@ async def test_a_second_report_replaces_the_first(
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
-        ellie = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        ellie = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
 
         _report(client, ellie["key"], {"version": "0.2.89", "uptime_ms": 1, "ota_err": "X"})
         _report(client, ellie["key"], {"version": "0.2.94", "uptime_ms": 2})
@@ -147,8 +151,10 @@ async def test_a_re_flashed_panel_appears_once(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
         for _ in range(3):
-            client.post("/api/devices", json={"label": "panel Ellie"})
-        newest = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+            client.post("/api/devices", json={"label": "panel Ellie", "device_role": "jpet"})
+        newest = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
 
         _report(client, newest["key"], {"version": "0.2.94", "uptime_ms": 1})
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
@@ -156,3 +162,58 @@ async def test_a_re_flashed_panel_appears_once(
         panels = client.get("/api/endpoint/status").json()["panels"]
         assert len(panels) == 1, "four keys, one panel"
         assert panels[0]["version"] == "0.2.94", "and the newest key is the one reporting"
+
+
+async def test_the_owner_can_revoke_a_panel_from_the_fleet_view(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """THE CONTROL THAT EXISTED NOWHERE (CLAUDE.md #10).
+
+    Revoking a panel meant the Location screen's Phones tab — a location surface, landing on
+    Map, listing every panel ever flashed as a row reading "no fixes yet" — and the owner, who
+    has no terminal, could not find it: *"I don't see a way to revoke from PWA."*
+
+    EVERY LIVE KEY FOR THAT NAME, because that is what the row means. The fleet collapses a
+    unit's flashes into one row, so retiring only the principal the row was drawn from would
+    leave the older keys of a re-flashed panel still authenticating — and the owner would have
+    watched a row disappear while the unit kept working.
+    """
+    owner_key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
+        for _ in range(2):
+            client.post("/api/devices", json={"label": "panel Ellie", "device_role": "jpet"})
+        newest = client.post(
+            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        ).json()
+        keeper = client.post(
+            "/api/devices", json={"label": "panel Nora", "device_role": "jpet"}
+        ).json()
+        phone = client.post("/api/devices", json={"label": "Jeff's phone"}).json()
+
+        _report(client, newest["key"], {"version": "0.2.94", "uptime_ms": 1})
+        client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
+
+        panels = {p["name"]: p for p in client.get("/api/endpoint/status").json()["panels"]}
+        assert set(panels) == {"Ellie", "Nora"}
+
+        answer = client.post(f"/api/endpoint/panels/{panels['Ellie']['device_id']}/revoke")
+        assert answer.status_code == 200, answer.text
+        assert answer.json() == {"name": "Ellie", "keys": 3}, "all three flashes, not just one"
+
+        # Gone from the fleet, and her sister untouched.
+        after = {p["name"] for p in client.get("/api/endpoint/status").json()["panels"]}
+        assert after == {"Nora"}
+
+        # And the keys really are dead — the row vanishing is not the assertion worth making.
+        assert await service.authenticate_device(SqlAuthRepo(maker), newest["key"]) is None
+        assert await service.authenticate_device(SqlAuthRepo(maker), keeper["key"]) is not None
+
+        # A PHONE IS NOT REVOCABLE HERE. It would be retired with none of the location-domain
+        # confirmation around it, so the route refuses rather than reaching across.
+        assert (
+            client.post(f"/api/endpoint/panels/{phone['device']['id']}/revoke").status_code == 404
+        )
+        assert client.post("/api/endpoint/panels/not-a-uuid/revoke").status_code == 404

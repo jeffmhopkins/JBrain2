@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from jbrain.auth.service import CapabilityToken, ExternalSession, PrincipalInfo
 from jbrain.db.session import SessionContext
-from jbrain.devices.repo import DeviceInfo
+from jbrain.devices.repo import DeviceInfo, DeviceRole, DeviceScope
 from jbrain.locations.pairing import CODE_TTL, RedeemedDevice
 
 
@@ -345,16 +345,48 @@ class FakeDeviceRepo:
     devices: list[DeviceInfo] = field(default_factory=list)
     key_hashes: dict[str, str] = field(default_factory=dict)  # device id -> active key hash
 
-    async def provision(self, ctx: SessionContext, *, label: str, key_hash: str) -> DeviceInfo:
+    async def provision(
+        self,
+        ctx: SessionContext,
+        *,
+        label: str,
+        key_hash: str,
+        device_role: DeviceRole | None = None,
+    ) -> DeviceInfo:
         device = DeviceInfo(
-            id=str(uuid.uuid4()), label=label, created_at=datetime.now(UTC), revoked=False
+            id=str(uuid.uuid4()),
+            label=label,
+            created_at=datetime.now(UTC),
+            revoked=False,
+            device_role=device_role,
         )
         self.devices.append(device)
         self.key_hashes[device.id] = key_hash
         return device
 
-    async def list(self, ctx: SessionContext) -> Sequence[DeviceInfo]:
+    async def list(
+        self, ctx: SessionContext, *, scope: DeviceScope = "all"
+    ) -> Sequence[DeviceInfo]:
+        if scope == "phones":
+            return [d for d in self.devices if d.device_role is None]
+        if scope == "endpoints":
+            return [d for d in self.devices if d.device_role is not None]
         return list(self.devices)
+
+    async def reflash(
+        self, ctx: SessionContext, *, label: str, device_role: DeviceRole, key_hash: str
+    ) -> DeviceInfo | None:
+        match = [d for d in self.devices if d.label == label and d.device_role == device_role]
+        if not match:
+            return None
+        keep = match[0]
+        for i, d in enumerate(self.devices):
+            if d.label == label and d.device_role == device_role:
+                self.devices[i] = dataclasses.replace(d, revoked=d.id != keep.id)
+                if d.id != keep.id:
+                    self.key_hashes.pop(d.id, None)
+        self.key_hashes[keep.id] = key_hash
+        return dataclasses.replace(keep, revoked=False)
 
     async def rotate(self, ctx: SessionContext, device_id: str, key_hash: str) -> bool:
         if not any(d.id == device_id for d in self.devices):

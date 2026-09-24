@@ -904,7 +904,16 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
       {error && <p className="muted ops-vrow-empty">{error}</p>}
       {panels?.length === 0 && (
         <p className="muted ops-vrow-empty">
-          No panels flashed against this box yet — the Flash tab on the Panels screen adds one.
+          No panels flashed against this box yet — the Flash tab on the jpanel screen adds one.
+        </p>
+      )}
+      {/* READ-ONLY, deliberately. This card is where a fault is NOTICED — a version that did not
+          move, a unit that has gone quiet — and jpanel is where a panel is named or retired. Two
+          places to revoke would be two places to get it wrong, and jpanel is the door the owner
+          already thinks of as "the panels in my house". */}
+      {panels !== null && panels.length > 0 && (
+        <p className="muted ops-panel-note">
+          Rename or revoke a panel on the <strong>jpanel</strong> screen, Panels tab.
         </p>
       )}
       {panels?.map((p) => {
@@ -914,6 +923,10 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
           <div key={p.device_id} className={`ops-panel-row${state === "ok" ? "" : " bad"}`}>
             <div className="ops-panel-head">
               <span className="ops-panel-name">{p.name}</span>
+              {/* Only a display is badged. A pet is the ordinary case and every panel in the
+                  house is one, so badging both would put a word on every row that answers a
+                  question nobody asked; the badge earns its place by marking the exception. */}
+              {p.role === "display" && <span className="ops-panel-role">display</span>}
               <span className="ops-panel-version">{p.version || "—"}</span>
               <span className="ops-panel-seen">{agoLabel(p.age_s)}</span>
             </div>

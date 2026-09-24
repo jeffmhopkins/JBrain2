@@ -31,6 +31,7 @@
 #include "audio.h"
 
 #include "cue.h"
+#include "ring.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -124,10 +125,21 @@ static const audio_codec_ctrl_if_t *s_ctrl;
    ending turns before the hush could. The extra padding costs the box nothing now that it
    trims the silence off before whisper sees it (`_trim_to_speech`).
 
-   10 s of 16 kHz mono s16 is 320 KB, claimed ONCE at start-up out of the 7.8 MB of PSRAM
-   nothing else wants. Never allocated while recording: a heap request in the middle of a
-   four-year-old talking is a failure with no good outcome. */
-#define CAPTURE_MAX_MS 10000
+   THIRTY NOW, AT THE OWNER'S ASK (0.2.95), up from ten. Ten was chosen as "a long message for
+   a four-year-old" and left with a note to revisit it if the twins ever hit the ceiling — the
+   `full` branch below logs when they do. Nobody waited for that evidence; the ask came first,
+   and the cost is only memory.
+
+   30 s of 16 kHz mono s16 is 960 KB, claimed ONCE at start-up out of the board's 8 MB of
+   PSRAM. Never allocated while recording: a heap request in the middle of a four-year-old
+   talking is a failure with no good outcome.
+
+   IT IS THE LARGEST BUFFER ON THIS PANEL NOW, and by a wide margin. Streaming took the
+   inbound buffer away entirely and cut the play buffer to the reply it actually holds, so the
+   three come to about 1.4 MB — 960 KB here, 320 KB of playback, 128 KB of ring — beside a
+   322 KB framebuffer. The number to watch is `free_psram` in telemetry rather than this
+   comment. */
+#define CAPTURE_MAX_MS 30000
 #define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
 static int16_t *s_cap;          /* PSRAM, claimed at start-up */
 static volatile int s_cap_used; /* samples written this recording */
@@ -145,18 +157,79 @@ static volatile bool s_cap_on;
  * `REPLY_MAX_BYTES` in `talk.c` is how much of a reply this panel will read. That cap belongs
  * to the REPLY and stays with it.
  *
- * WHAT THIS BUFFER HOLDS IS A DIFFERENT QUESTION, and conflating the two is how the cut
- * happened in the first place. Voice post (`jpanel.c`) plays messages the box caps at
- * `MAX_MESSAGE_MS` — twenty seconds — and Dad's are typed text put through a voice, where
- * `SendText` allows 600 characters. Sized to a reply, every one of those would stop mid-word.
- * So the buffer is sized for the LONGEST audio any caller can hand over, not for the shortest
- * ceiling one of them happens to have; the extra 320 KB comes out of the same PSRAM the
- * capture buffer is claimed from. */
-#define PLAY_BUF_MS 20000
+ * IT HOLDS A REPLY, AND SINCE 0.2.96 ONLY A REPLY. Voice post used to be copied through here
+ * too, which is why this was sized to the longest message the box would serve — and why it
+ * grew every time that cap did. Messages stream through the ring now (`audio_stream_*`), so
+ * this is back to the one caller it was ever really for: `talk.c`, whose own `REPLY_MAX_BYTES`
+ * is the same ten seconds and whose `PANEL_REPLY_MAX` on the box matches both.
+ *
+ * The cut this warns about therefore belongs to a reply that overran, not to a child's
+ * message — a message is no longer capped at all. */
+#define PLAY_BUF_MS 10000
 #define PLAY_BUF_SAMPLES (AUDIO_RATE * PLAY_BUF_MS / 1000)
 static int16_t *s_play;
 static volatile int s_play_len;  /* samples still to write */
 static volatile int s_play_pos;
+
+/* ── THE STREAM RING ────────────────────────────────────────────────────────────────────
+ *
+ * Four seconds, which is not a guess about messages — it is a guess about the WORST GAP this
+ * panel's Wi-Fi will have in a bedroom, and the ring only has to outlast that. A message of
+ * any length passes through it; what the depth buys is tolerance of a network that stalls.
+ *
+ * `s_ring_w` and `s_ring_r` are MONOTONIC sample counts, not indices, and the modulo happens
+ * where they are used. Two cursors chasing each other around a buffer cannot tell full from
+ * empty when they meet; counting forever can, and the subtraction is what every test below
+ * asks. Single producer (the jpanel task), single consumer (this task), so neither needs a
+ * lock — but they need that discipline, which is the same one `esp_codec_dev` demands. */
+#define STREAM_RING_MS 4000
+#define STREAM_RING_SAMPLES (AUDIO_RATE * STREAM_RING_MS / 1000)
+/* HOW MUCH ARRIVES BEFORE THE FIRST SOUND. Long enough that an ordinary hiccup is invisible,
+   short enough that the tap still feels answered: 1.5 s is ~48 KB, against the ~960 KB a
+   whole message used to need before anything happened. */
+#define STREAM_PREROLL_SAMPLES (AUDIO_RATE * 1500 / 1000)
+static int16_t *s_ring_buf;
+static ring_t s_ring;
+static volatile bool s_stream_open;  /* the producer has not said it is finished */
+static volatile bool s_stream_primed; /* the preroll has landed; sound has started */
+
+static int stream_filled(void)
+{
+    return s_ring_buf != NULL ? ring_filled(&s_ring) : 0;
+}
+
+bool audio_stream_begin(void)
+{
+    if (s_ring_buf == NULL) return false;
+    if (s_play_pos < s_play_len || s_stream_open || stream_filled() > 0) return false;
+    ring_reset(&s_ring);
+    s_stream_primed = false;
+    s_stream_open = true;
+    return true;
+}
+
+size_t audio_stream_write(const void *pcm, size_t bytes)
+{
+    if (s_ring_buf == NULL || !s_stream_open) return 0;
+    return (size_t)ring_write(&s_ring, pcm, (int)bytes);
+}
+
+void audio_stream_end(void)
+{
+    s_stream_open = false;
+}
+
+bool audio_stream_live(void)
+{
+    return s_stream_open;
+}
+
+void audio_stream_abort(void)
+{
+    s_stream_open = false;
+    ring_reset(&s_ring);
+    s_stream_primed = false;
+}
 
 bool audio_play(const int16_t *pcm, size_t bytes)
 {
@@ -179,7 +252,13 @@ bool audio_play(const int16_t *pcm, size_t bytes)
 
 bool audio_playing(void)
 {
-    return s_play_pos < s_play_len;
+    /* A STREAM COUNTS, INCLUDING WHILE ITS RING IS MOMENTARILY DRY. Everything that asks this
+       question — the render loop's `speaking`, the pop-up, the queue, `POST /played` — is
+       really asking "is this message finished", and a Wi-Fi stall is not an answer to that.
+       See `audio.h`: a panel that said no here mid-sentence would mark the message played and
+       drop the rest of it. */
+    if (s_play_pos < s_play_len) return true;
+    return s_stream_open || stream_filled() > 0;
 }
 
 /* CUT IT SHORT. The one thing this panel could not do to its own speaker until voice post
@@ -193,6 +272,7 @@ bool audio_playing(void)
 void audio_stop(void)
 {
     s_play_pos = s_play_len;
+    audio_stream_abort();
 }
 
 /* THE RUDE NOISE, AND WHY IT IS AN OSCILLATOR RATHER THAN A FILE.
@@ -371,9 +451,15 @@ bool audio_start(void)
        smaller loss than refusing to start. */
     s_cap = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     s_play = heap_caps_malloc((size_t)PLAY_BUF_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "capture %s, playback %s (%d ms each)",
-             s_cap != NULL ? "ready" : "UNAVAILABLE",
-             s_play != NULL ? "ready" : "UNAVAILABLE", CAPTURE_MAX_MS);
+    s_ring_buf =
+        heap_caps_malloc((size_t)STREAM_RING_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    ring_init(&s_ring, s_ring_buf, STREAM_RING_SAMPLES);
+    /* ALL THREE AT START-UP AND NEVER AGAIN. A heap request in the middle of a four-year-old
+       talking — or of her father's message playing — is a failure with no good outcome. */
+    ESP_LOGI(TAG, "capture %s (%d ms), playback %s (%d ms), stream %s (%d ms)",
+             s_cap != NULL ? "ready" : "UNAVAILABLE", CAPTURE_MAX_MS,
+             s_play != NULL ? "ready" : "UNAVAILABLE", PLAY_BUF_MS,
+             s_ring_buf != NULL ? "ready" : "UNAVAILABLE", STREAM_RING_MS);
 
     if (xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "audio task");
@@ -500,6 +586,31 @@ static void audio_task(void *arg)
                heard. Feeding our own reply to the recogniser would have the pet answering
                itself. */
             s_deaf = DEAF_CHUNKS;
+        } else if (s_ring_buf != NULL && stream_filled() > 0) {
+            /* THE SAME ONE-CHUNK DISCIPLINE, for the same reason — this task is the clock. */
+            if (!s_stream_primed) {
+                /* Wait for the preroll, unless the producer has already finished: a message
+                   shorter than the preroll would otherwise sit in the ring forever. */
+                if (stream_filled() >= STREAM_PREROLL_SAMPLES || !s_stream_open) {
+                    s_stream_primed = true;
+                }
+            }
+            if (s_stream_primed) {
+                const int have = stream_filled();
+                /* AN UNDERRUN WAITS RATHER THAN PLAYING SHORT. A partial chunk into a blocking
+                   codec write is a click; doing nothing for one pass is 40 ms of silence the
+                   ear does not catch. Only drain below a chunk once nothing more is coming. */
+                if (have >= AUDIO_CHUNK || !s_stream_open) {
+                    int at = 0;
+                    const int run = ring_read_run(&s_ring, AUDIO_CHUNK, &at);
+                    if (run > 0) {
+                        esp_codec_dev_write(s_codec, &s_ring_buf[at],
+                                            (int)(run * sizeof(int16_t)));
+                        ring_advance(&s_ring, run);
+                        s_deaf = DEAF_CHUNKS;
+                    }
+                }
+            }
         }
         apply_levels();
 

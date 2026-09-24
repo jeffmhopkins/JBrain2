@@ -63,6 +63,7 @@ esp_err_t cfg_load(cfg_t *out)
         {"ssid", &out->ssid, true},
         {"pass", &out->pass, true},
         {"name", &out->name, false},
+        {"role", &out->role, false},
     };
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
         err = dup_str(h, fields[i].key, fields[i].dst, fields[i].required);
@@ -73,8 +74,19 @@ esp_err_t cfg_load(cfg_t *out)
         }
     }
     nvs_close(h);
-    ESP_LOGI(TAG, "provisioned as '%s' against %s", out->name ? out->name : "(unnamed)", out->api);
+    ESP_LOGI(TAG, "provisioned as '%s' (%s) against %s", out->name ? out->name : "(unnamed)",
+             cfg_is_jpet(out) ? "jpet" : "display", out->api);
     return ESP_OK;
+}
+
+bool cfg_is_jpet(const cfg_t *c)
+{
+    /* Anything that is not explicitly "display" is a pet, including a missing key. The two
+       failure directions are not symmetric: a display wrongly running the twin side polls an
+       endpoint that refuses it, which costs a request and shows up in the log, while a pet
+       wrongly treated as a display goes silent in a child's bedroom with nothing on screen to
+       say why. Default to the one that fails loudly. */
+    return c->role == NULL || strcmp(c->role, "display") != 0;
 }
 
 void cfg_free(cfg_t *c)
@@ -85,6 +97,7 @@ void cfg_free(cfg_t *c)
     free(c->ssid);
     free(c->pass);
     free(c->name);
+    free(c->role);
     memset(c, 0, sizeof(*c));
 }
 

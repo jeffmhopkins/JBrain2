@@ -1786,6 +1786,10 @@ class PanelFlashIn(BaseModel):
     # not a thing this should be able to do.
     port: str = ""
     name: str = ""
+    # Same flag the PWA offers, same default. The debug console is the fallback operator path
+    # (CLAUDE.md #10), so a unit kind it cannot choose is a unit kind the owner cannot fix from
+    # here when the PWA is the thing that is broken.
+    role: endpoint_api.PanelRole = "jpet"
     erase: bool = False
 
 
@@ -1850,6 +1854,7 @@ async def panel_flash(
                 ssid=ssid,
                 password=password,
                 name=body.name,
+                role=body.role,
                 erase=body.erase,
             )
             async with client.stream("POST", f"{base}/flash", json=payload) as stream:

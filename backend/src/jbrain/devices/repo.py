@@ -12,12 +12,28 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+
+#: Which devices a listing wants. Named at every call site rather than defaulted, because the
+#: answer is a privacy boundary as much as a filter: the Location screen's list must not show
+#: panels (they write no fixes, and one row per flash buried the two the owner needed to revoke),
+#: while the owner's admin API must still see every device there is.
+DeviceScope = Literal["all", "phones", "endpoints"]
+
+#: What an endpoint device IS (migration 0211). `None` is a phone. Defined here, beside the
+#: column that stores it, so the API layer names a role rather than restating the set.
+DeviceRole = Literal["jpet", "display"]
+
+_SCOPE_SQL: dict[str, str] = {
+    "all": "",
+    "phones": " AND s.device_role IS NULL",
+    "endpoints": " AND s.device_role IS NOT NULL",
+}
 
 
 @dataclass(frozen=True)
@@ -29,6 +45,8 @@ class DeviceInfo:
     label: str
     created_at: datetime
     revoked: bool
+    #: `None` for a phone; `'jpet'` or `'display'` for an endpoint panel (migration 0211).
+    device_role: DeviceRole | None = None
 
 
 @dataclass(frozen=True)
@@ -41,13 +59,26 @@ class LinkedPerson:
 
 
 class DeviceRepo(Protocol):
-    async def provision(self, ctx: SessionContext, *, label: str, key_hash: str) -> DeviceInfo: ...
+    async def provision(
+        self,
+        ctx: SessionContext,
+        *,
+        label: str,
+        key_hash: str,
+        device_role: DeviceRole | None = None,
+    ) -> DeviceInfo: ...
 
-    async def list(self, ctx: SessionContext) -> Sequence[DeviceInfo]: ...
+    async def list(
+        self, ctx: SessionContext, *, scope: DeviceScope = "all"
+    ) -> Sequence[DeviceInfo]: ...
 
     async def rotate(self, ctx: SessionContext, device_id: str, key_hash: str) -> bool: ...
 
     async def revoke(self, ctx: SessionContext, device_id: str) -> bool: ...
+
+    async def reflash(
+        self, ctx: SessionContext, *, label: str, device_role: DeviceRole, key_hash: str
+    ) -> DeviceInfo | None: ...
 
     async def rename(self, ctx: SessionContext, device_id: str, label: str) -> bool: ...
 
@@ -58,16 +89,23 @@ class SqlDeviceRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
 
-    async def provision(self, ctx: SessionContext, *, label: str, key_hash: str) -> DeviceInfo:
+    async def provision(
+        self,
+        ctx: SessionContext,
+        *,
+        label: str,
+        key_hash: str,
+        device_role: DeviceRole | None = None,
+    ) -> DeviceInfo:
         sid, pid = str(uuid.uuid4()), str(uuid.uuid4())
         async with scoped_session(self._maker, ctx) as session:
             created_at = (
                 await session.execute(
                     text(
-                        "INSERT INTO app.subjects (id, display_name, kind)"
-                        " VALUES (:sid, :label, 'device') RETURNING created_at"
+                        "INSERT INTO app.subjects (id, display_name, kind, device_role)"
+                        " VALUES (:sid, :label, 'device', :role) RETURNING created_at"
                     ),
-                    {"sid": sid, "label": label},
+                    {"sid": sid, "label": label, "role": device_role},
                 )
             ).scalar_one()
             await session.execute(
@@ -77,21 +115,28 @@ class SqlDeviceRepo:
                 ),
                 {"pid": pid, "sid": sid, "kh": key_hash, "label": label},
             )
-        return DeviceInfo(id=sid, label=label, created_at=created_at, revoked=False)
+        return DeviceInfo(
+            id=sid, label=label, created_at=created_at, revoked=False, device_role=device_role
+        )
 
-    async def list(self, ctx: SessionContext) -> Sequence[DeviceInfo]:
+    async def list(
+        self, ctx: SessionContext, *, scope: DeviceScope = "all"
+    ) -> Sequence[DeviceInfo]:
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
                     text(
-                        "SELECT s.id, s.display_name, s.created_at,"
+                        "SELECT s.id, s.display_name, s.created_at, s.device_role,"
                         " bool_or(p.id IS NOT NULL) AS has_active_key"
                         " FROM app.subjects s"
                         " LEFT JOIN app.principals p"
                         "   ON p.subject_id = s.id AND p.kind = 'device_key'"
                         "   AND p.revoked_at IS NULL"
-                        " WHERE s.kind = 'device'"
-                        " GROUP BY s.id, s.display_name, s.created_at"
+                        # Interpolated, not bound: the scope is a Literal the type checker
+                        # closes over, so the only strings that can reach here are the three
+                        # in `_SCOPE_SQL`.
+                        f" WHERE s.kind = 'device'{_SCOPE_SQL[scope]}"
+                        " GROUP BY s.id, s.display_name, s.created_at, s.device_role"
                         " ORDER BY s.created_at DESC"
                     )
                 )
@@ -102,6 +147,7 @@ class SqlDeviceRepo:
                 label=r.display_name,
                 created_at=r.created_at,
                 revoked=not r.has_active_key,
+                device_role=r.device_role,
             )
             for r in rows
         ]
@@ -127,6 +173,74 @@ class SqlDeviceRepo:
                 return False
             await self._revoke_keys(session, device_id)
         return True
+
+    async def reflash(
+        self, ctx: SessionContext, *, label: str, device_role: DeviceRole, key_hash: str
+    ) -> DeviceInfo | None:
+        """Re-credential the panel already known by this name and role. None if there is none.
+
+        A PANEL IS THE SUBJECT; THE KEY IS ONLY ITS CREDENTIAL. This is what `rotate` has always
+        done for a phone, and what the flash could not do for a panel because it had no way to
+        recognise the unit in front of it — so every flash minted a whole new identity, and a
+        panel flashed thirteen times was thirteen subjects and thirteen live keys under one name.
+
+        Name AND role is that recognition, and it is narrow on purpose: it will not let a display
+        called `Jeff` step into a pet called `Jeff`. It is also the ONLY handle there is — the
+        physical board carries nothing the box can read, because the flash is what puts a
+        credential on it in the first place.
+
+        What this buys beyond tidiness is that a panel becomes a durable thing to hang settings
+        off. `endpoint_panel` keys on the subject, so a unit's name and the body it wears survive
+        a re-flash — which matters precisely because re-flashing is what the owner does when
+        something is wrong, and losing a child's chosen pet to a recovery step would be its own
+        small betrayal.
+
+        Older keys are revoked in the same transaction rather than left behind: `/flash` has said
+        since it was written that the old key "should stop working at that moment", and until
+        0211 nothing made it so.
+        """
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, display_name, created_at FROM app.subjects"
+                        " WHERE kind = 'device' AND display_name = :label AND device_role = :role"
+                        # Oldest wins, so repeated flashes converge on ONE subject rather than
+                        # ping-ponging between the several a pre-0212 world left behind.
+                        " ORDER BY created_at ASC LIMIT 1"
+                    ),
+                    {"label": label, "role": device_role},
+                )
+            ).first()
+            if row is None:
+                return None
+            sid = str(row.id)
+            # Every live key for this name, not just the one on the subject being kept: the
+            # older flashes left their own subjects behind and those keys still authenticate.
+            await session.execute(
+                text(
+                    "UPDATE app.principals p SET revoked_at = now()"
+                    " FROM app.subjects s"
+                    " WHERE s.id = p.subject_id AND p.kind = 'device_key'"
+                    "   AND p.revoked_at IS NULL"
+                    "   AND s.display_name = :label AND s.device_role = :role"
+                ),
+                {"label": label, "role": device_role},
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO app.principals (id, kind, subject_id, key_hash, label)"
+                    " VALUES (gen_random_uuid(), 'device_key', :sid, :kh, :label)"
+                ),
+                {"sid": sid, "kh": key_hash, "label": label},
+            )
+        return DeviceInfo(
+            id=sid,
+            label=row.display_name,
+            created_at=row.created_at,
+            revoked=False,
+            device_role=device_role,
+        )
 
     async def rename(self, ctx: SessionContext, device_id: str, label: str) -> bool:
         """Owner-only label edit. Updates the subject's display_name (its active key

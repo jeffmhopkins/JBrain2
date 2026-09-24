@@ -21,7 +21,7 @@ export const PANEL_RATE = 16000;
 /** What the box accepts (`MAX_MESSAGE_MS` in `jpanel.py`). The recorder stops itself here
  *  rather than letting the box truncate: a message cut mid-word with nothing said about it is
  *  the bug `audio_play` had on the panel, and it should not be reintroduced from this end. */
-export const MAX_MESSAGE_MS = 20_000;
+export const MAX_MESSAGE_MS = 30_000;
 
 /* WHAT A RECORDING IS SCALED TO, AND WHY IT HAS TO BE SCALED AT ALL.
  *

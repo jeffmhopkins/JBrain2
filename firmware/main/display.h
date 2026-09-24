@@ -53,6 +53,16 @@ int display_crash_phase(void);
    rebuild. */
 void display_set_debug_overlay(bool on);
 
+/* Which body the panel comes back as: 0 ostrich, 1 robot. The four-tap gesture still toggles it
+   live and this does not fight that — the box's answer is taken once per change, not re-asserted
+   every cycle, so a child who switches to the robot keeps it until the owner says otherwise. */
+void display_set_form(int form);
+
+/* Re-read the pet's name from `vocab_name()` into the label above his head. Called when the
+   owner has renamed him; the name is derived from the wake phrase rather than stored twice, so
+   there is nothing to pass in. */
+void display_refresh_name(void);
+
 /* Frames that reached the glass and frames that did not, since the last recovery. The render
    heartbeat says this on the console every ten seconds; this is the same two numbers for a
    panel with no console, which is the only kind there will be from now on. */

@@ -2,6 +2,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EndpointsScreen } from "./EndpointsScreen";
 
+/** The PORT radios only. The flash form carries a second radio group (jpet / display), so a
+ *  bare `getAllByRole("radio")` silently changes what it is asserting the moment one is added.
+ *  Queried by the group's `name`, which is what makes them one choice in the first place. */
+function portRadios(container: HTMLElement): HTMLInputElement[] {
+  return Array.from(container.querySelectorAll<HTMLInputElement>('input[name="ep-port"]'));
+}
+
 // On a box with no terminal this screen is the owner's only window onto a panel plugged
 // into the box's USB port, so what it says when nothing is there matters as much as what
 // it says when something is.
@@ -64,19 +71,47 @@ describe("EndpointsScreen", () => {
 
   it("preselects a lone panel, so the obvious case needs no choice", async () => {
     fetchMock.mockImplementation(mock([PANEL]));
-    render(<EndpointsScreen onClose={vi.fn()} />);
-    const radio = (await screen.findByRole("radio")) as HTMLInputElement;
-    await waitFor(() => expect(radio.checked).toBe(true));
+    const { container } = render(<EndpointsScreen onClose={vi.fn()} />);
+    await screen.findByRole("radio", { name: /ttyACM0/ });
+    // Scoped to the port group: the form also carries the jpet/display radios, and a bare
+    // "every radio" query would start asserting about the wrong question the moment a
+    // second group appears — which is exactly what happened.
+    const radios = portRadios(container);
+    expect(radios).toHaveLength(1);
+    await waitFor(() => expect(radios[0]?.checked).toBe(true));
   });
 
   it("does NOT preselect when both twins' panels are connected", async () => {
     // Choosing for them here is how a bootloader lands on the wrong child's unit.
     fetchMock.mockImplementation(mock([PANEL, { ...PANEL, device: "/dev/ttyACM1" }]));
-    render(<EndpointsScreen onClose={vi.fn()} />);
-    const radios = (await screen.findAllByRole("radio")) as HTMLInputElement[];
+    const { container } = render(<EndpointsScreen onClose={vi.fn()} />);
+    await screen.findByText(/Two panels are connected/);
+    const radios = portRadios(container);
     expect(radios).toHaveLength(2);
     expect(radios.every((r) => !r.checked)).toBe(true);
-    expect(screen.getByText(/Two panels are connected/)).toBeTruthy();
+  });
+
+  it("flashes a pet by default, and a display only when asked", async () => {
+    // THE FLAG THAT DECIDES WHETHER A UNIT JOINS TWO CHILDREN'S ADDRESSING. A third box took
+    // the unnamed default, matched the old label predicate and stopped the twins' messages;
+    // the default here must stay the thing every panel in the house already is.
+    fetchMock.mockImplementation(mock([PANEL]));
+    render(<EndpointsScreen onClose={vi.fn()} />);
+    const pet = (await screen.findByRole("radio", { name: /A pet/ })) as HTMLInputElement;
+    const display = screen.getByRole("radio", { name: /A display/ }) as HTMLInputElement;
+    expect(pet.checked).toBe(true);
+    expect(display.checked).toBe(false);
+
+    fireEvent.click(display);
+    await waitFor(() => expect(display.checked).toBe(true));
+    fireEvent.change(screen.getByLabelText(/Network name/), { target: { value: "house" } });
+    fireEvent.click(screen.getByRole("button", { name: "Flash panel" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/endpoint/flash"));
+      expect(call).toBeTruthy();
+      expect(JSON.parse(String((call?.[1] as RequestInit)?.body)).role).toBe("display");
+    });
   });
 
   it("still lists ports when the firmware status call fails", async () => {

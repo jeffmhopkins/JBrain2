@@ -15,7 +15,7 @@ from jbrain.api.deps import OwnerDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices import service
-from jbrain.devices.repo import DeviceInfo, DeviceRepo
+from jbrain.devices.repo import DeviceInfo, DeviceRepo, DeviceRole
 
 router = APIRouter()
 
@@ -36,10 +36,18 @@ class DeviceOut(BaseModel):
     label: str
     created_at: datetime
     revoked: bool
+    # `None` for a phone; `'jpet'` or `'display'` for a panel. This listing is the owner's
+    # admin view and deliberately shows EVERY device, so it has to say which kind each one is.
+    device_role: DeviceRole | None = None
 
 
 class ProvisionRequest(BaseModel):
     label: str = Field(min_length=1, max_length=128)
+    # OMITTED MEANS A PHONE, which is what this route has always made. A panel identity can be
+    # minted here too — the owner is the only one who can reach this route, and the owner is who
+    # decides what a unit is — but it stays opt-in: a role that appeared by default would put
+    # devices into the twins' addressing the same way the unnamed flash label did.
+    device_role: DeviceRole | None = None
 
 
 class RenameRequest(BaseModel):
@@ -57,14 +65,22 @@ class RotatedOut(BaseModel):
 
 
 def _device_out(d: DeviceInfo) -> DeviceOut:
-    return DeviceOut(id=d.id, label=d.label, created_at=d.created_at, revoked=d.revoked)
+    return DeviceOut(
+        id=d.id,
+        label=d.label,
+        created_at=d.created_at,
+        revoked=d.revoked,
+        device_role=d.device_role,
+    )
 
 
 @router.post("/devices", status_code=201)
 async def create_device(
     body: ProvisionRequest, owner: OwnerDep, repo: DeviceRepoDep
 ) -> ProvisionedOut:
-    provisioned = await service.provision_device(repo, _owner_ctx(owner), body.label)
+    provisioned = await service.provision_device(
+        repo, _owner_ctx(owner), body.label, device_role=body.device_role
+    )
     return ProvisionedOut(device=_device_out(provisioned.device), key=provisioned.key)
 
 

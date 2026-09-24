@@ -1646,18 +1646,59 @@ class TestWakePrefix:
         assert endpoint_api._strip_wake_prefix("") == ""
 
     def test_it_strips_the_phrase_the_firmware_actually_listens_for(self) -> None:
-        """THE COUPLING, PINNED. The wake phrase lives in the firmware's vocabulary table and
-        the pattern here is a copy of it, so a rename would silently leave the box stripping a
-        name the panel no longer answers to — and the symptom is the one the owner reported,
-        returning. Read from `vocab.c` so that rename fails here instead."""
+        """THE COUPLING, PINNED — and it has just caught its first real break.
+
+        The wake phrase used to be a string literal in the firmware's vocabulary table and the
+        pattern here was a copy of it. It is now `s_listen`, a buffer the box can rewrite at
+        runtime (migration 0212), because the owner has to be able to rename the pet without a
+        cable. This still reads the firmware rather than restating the name, for exactly the
+        original reason: a change to the default that did not reach the box would leave it
+        stripping a name the panel no longer answers to, and the symptom is the one the owner
+        reported returning.
+        """
         vocab = Path(__file__).resolve().parents[3] / "firmware" / "main" / "vocab.c"
         text = vocab.read_text()
-        match = re.search(r'\{"([^"]+)",\s*VOCAB_LISTEN', text)
-        assert match is not None, "no VOCAB_LISTEN phrase in vocab.c"
+        match = re.search(r'static char s_listen\[\d+\] = "([^"]+)";', text)
+        assert match is not None, "no s_listen default in vocab.c"
         phrase = match.group(1)
         assert (
             endpoint_api._strip_wake_prefix(f"{phrase} what do dogs eat?") == "what do dogs eat?"
-        ), f"the firmware listens for {phrase!r} and the box does not strip it"
+        ), f"the firmware ships listening for {phrase!r} and the box does not strip it"
+
+    def test_the_listen_entry_still_points_at_the_settable_buffer(self) -> None:
+        """The other half of the same coupling. `vocab_set_name` rewrites `s_listen`, and it only
+        reaches MultiNet because the `VOCAB_LISTEN` row points AT that buffer rather than holding
+        a literal of its own. Re-inlining the phrase would leave renaming silently ineffective on
+        the panel while every test above still passed."""
+        vocab = Path(__file__).resolve().parents[3] / "firmware" / "main" / "vocab.c"
+        assert re.search(r"\{s_listen,\s*VOCAB_LISTEN", vocab.read_text()) is not None, (
+            "the listen row no longer points at s_listen — renaming the pet would do nothing"
+        )
+
+    def test_a_renamed_pet_has_ITS_name_stripped(self) -> None:
+        """THE BUG THIS FEATURE WOULD HAVE SHIPPED WITH. Once the pet can be renamed, a box that
+        went on stripping `fish` would send `hey pip what do dogs eat?` to the model — the wake
+        word reaching the pet as part of the question, which is the exact complaint the stripper
+        exists to answer."""
+        assert endpoint_api._strip_wake_prefix("hey pip what do dogs eat?", "Pip") == (
+            "what do dogs eat?"
+        )
+        assert endpoint_api._strip_wake_prefix("Hey, Pip! What do dogs eat?", "Pip") == (
+            "What do dogs eat?"
+        )
+        # Still only a prefix, and still not eating a longer word that starts with the name.
+        assert endpoint_api._strip_wake_prefix("I told hey pip a joke", "Pip") == (
+            "I told hey pip a joke"
+        )
+        assert endpoint_api._strip_wake_prefix("hey pippin", "Pip") == "hey pippin"
+
+    def test_the_shipped_name_is_used_when_no_rename_has_happened(self) -> None:
+        """Empty means "whatever the firmware shipped with", so the default keeps its observed
+        Whisper spellings — which a renamed pet cannot have, because nobody knows in advance how
+        Whisper will spell a name it has never been given."""
+        assert endpoint_api._strip_wake_prefix("hey fishy what do dogs eat?", "") == (
+            "what do dogs eat?"
+        )
 
 
 class TestPanelPrompt:

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -15,7 +16,18 @@ typedef struct {
     char *ssid;
     char *pass;
     char *name; /* which twin's endpoint this is — logs and, later, the pet it binds to */
+    /* jpet or Jeff: the one flag that says what this unit IS. A `jpet` runs the twin side —
+       it polls for a sibling's voice messages and can send them. A `display` does not, and
+       never asks: the box would refuse it anyway (the roster is `device_role = 'jpet'`), so
+       asking would be a request per interval that can only ever 404. Absent means `jpet`,
+       which is what every unit flashed before this flag existed is. */
+    char *role;
 } cfg_t;
+
+/* True when this unit is one of the twins' pets rather than a plain display. Takes the whole
+   config so the NULL case lives in one place: a panel flashed before the flag existed has no
+   `role` at all and must keep behaving exactly as it did. */
+bool cfg_is_jpet(const cfg_t *c);
 
 /* Reads the `jbrain` NVS namespace. Returns ESP_ERR_NVS_NOT_FOUND when the unit has never
    been provisioned, which is a normal state on a freshly flashed board and not a fault. */

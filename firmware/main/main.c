@@ -28,6 +28,7 @@
 #include "esp_system.h"
 #include "mem.h"
 #include "ota.h"
+#include "vocab.h"
 #include "speech.h"
 #include "talk.h"
 #include "pmu.h"
@@ -72,11 +73,20 @@ static const char *TAG = "endpoint";
    code that does not serve the route, leaves the panel exactly as it shipped. */
 static void apply_settings(const cfg_t *cfg)
 {
-    ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1};
+    ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1};
     if (ota_fetch_settings(cfg, &st) != ESP_OK) return;
     if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
     if (st.brightness >= 0) display_set_brightness(st.brightness);
     display_set_debug_overlay(st.debug_overlay != 0);
+    if (st.form >= 0) display_set_form(st.form);
+    /* RENAMING THE PET IS RENAMING THE WAKE WORD, so the model has to be told and the label
+       above his head has to be redrawn. `vocab_set_name` answers false when the phrase is
+       unchanged — which is every fetch but the one after the owner actually edits it — so the
+       command list is not rebuilt four times an hour for nothing. */
+    if (vocab_set_name(st.pet_name)) {
+        speech_reload_vocabulary();
+        display_refresh_name();
+    }
 }
 
 static void report(const cfg_t *cfg)
@@ -388,8 +398,17 @@ void app_main(void)
             /* Voice post, for the same reasons in the same place: it needs `cfg`, and its
                own ~30 s poll is a socket that cannot open before the radio is up. A panel
                that starts without it is still a pet — it simply cannot carry messages, which
-               is worth a line in the log rather than a refusal to boot. */
-            if (!jpanel_start(&cfg)) ESP_LOGW(TAG, "no voice post — messages will not arrive");
+               is worth a line in the log rather than a refusal to boot.
+
+               A display never starts it at all. The box's roster is `device_role = 'jpet'`,
+               so a display asking for messages gets nothing it could ever be sent — this is
+               not a feature being withheld but a poll with no possible answer, and skipping
+               it saves a task, 6 KB of stack and a request every thirty seconds forever. */
+            if (!cfg_is_jpet(&cfg)) {
+                ESP_LOGI(TAG, "display — no voice post");
+            } else if (!jpanel_start(&cfg)) {
+                ESP_LOGW(TAG, "no voice post — messages will not arrive");
+            }
             mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router

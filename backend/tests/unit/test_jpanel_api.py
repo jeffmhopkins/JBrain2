@@ -480,6 +480,42 @@ class TestNamingAPanelWithoutACable:
             "the recording indicator no longer asks who the message is going to"
         )
 
+    def test_both_ends_agree_on_the_name_of_the_integrity_header(self) -> None:
+        """A HEADER NAME IS A CONTRACT SPELLED TWICE, which on this route has already gone
+        wrong twice: the firmware called `/api/endpoint/jpanel/*` for a release, and `tap` was
+        sent for months into a model that dropped it. This one fails quieter than either — a
+        misspelt header is simply absent, the box logs `upload_unverified` and accepts
+        everything, and the verification silently does nothing at all.
+
+        Read out of the firmware rather than transcribed, in both directions: the panel must
+        SEND it on an upload and READ it on a download."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        assert src.count('"X-Jpanel-Sha256"') >= 2, (
+            "the panel must both send this header when uploading and read it when downloading"
+        )
+        backend = (
+            Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api" / "jpanel.py"
+        ).read_text()
+        assert '"X-Jpanel-Sha256"' in backend
+        assert 'headers.get("X-Jpanel-Sha256"' in backend, (
+            "the box no longer reads the digest the panel sends"
+        )
+
+    def test_the_panel_retries_only_the_status_a_retry_can_fix(self) -> None:
+        """422 means the bytes on the box are not the bytes in the capture buffer, and the
+        buffer is the good copy — so sending it again is exactly right. Everything else is
+        permanent or already reported, and hammering it would only delay the child's answer.
+
+        Pinned because the number is chosen HERE and acted on THERE, and a panel that retried
+        a 409 would ask for a sibling that does not exist until it gave up."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        assert "status == 422" in src, "the panel no longer recognises a failed verification"
+        assert "SEND_ATTEMPTS" in src, "the retry is gone"
+
     def test_the_route_is_where_the_pwa_will_look(self) -> None:
         paths = {
             (route.path, method)

@@ -23,6 +23,7 @@ only way to find out whether they do.
 
 from __future__ import annotations
 
+import hashlib
 import string
 import time
 import uuid
@@ -55,7 +56,7 @@ router = APIRouter(prefix="/jpanel", tags=["jpanel"])
 
 # A panel's clip: longer than a conversational turn, because a message is a thought rather
 # than an answer, and short enough that a pocket-dial cannot fill the box.
-MAX_MESSAGE_MS = 20_000
+MAX_MESSAGE_MS = 30_000
 MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
 
 # DAD'S VOICE, AND THE `kokoro-` PREFIX IS NOT DECORATION.
@@ -191,15 +192,15 @@ async def _panel_names(maker) -> dict[str, str]:
     was from, and `GET /next`'s `X-Jpanel-From` always said "the other one". One cause, three
     symptoms, none of which looks like a permissions problem from the outside.
 
-    THIS IS A LABEL CONVENTION, NOT A MECHANISM, and that is worth saying plainly. Panels are
-    ordinary `device_key` principals — the same substrate as an OwnTracks phone — and the only
-    thing distinguishing one is the label `/flash` writes.
-
-    Used anyway because the alternative is a schema change to mark a principal kind the auth
-    model does not have, and because the blast radius is small: the worst case is a message
-    offered to a device that RLS then refuses to deliver to — a dead letter, not a leak. Worth
-    replacing with a real marker the first time a third device key exists in this house
-    (JPANEL_PLAN.md §5).
+    IT IS A MECHANISM NOW. This used to read "a label convention, not a mechanism" — panels are
+    ordinary `device_key` principals, the same substrate as an OwnTracks phone, and the only
+    thing marking one was the label `/flash` wrote. The note ended: *worth replacing with a real
+    marker the first time a third device key exists in this house.* A third unit was flashed,
+    took the unnamed default, and `room endpoint panel` matched the predicate — so a box on the
+    owner's desk joined two children's addressing and stopped their messages. The roster now
+    reads `subjects.device_role = 'jpet'` (migration 0211), which a display cannot claim: the
+    role is written by the owner at flash time and `subjects_access` lets no device write its
+    own subject row.
 
     ONE ROW PER NAME, NEWEST KEY WINS, AND WITHOUT THAT VOICE POST DOES NOT WORK AT ALL.
 
@@ -223,14 +224,14 @@ async def _panel_names(maker) -> dict[str, str]:
             await session.execute(
                 text(
                     """
-                    SELECT DISTINCT ON (label) id::text, label
-                    FROM app.principals
-                    WHERE kind = 'device_key' AND revoked_at IS NULL
-                      AND (label LIKE 'panel%' OR label = :unnamed)
-                    ORDER BY label, created_at DESC
+                    SELECT DISTINCT ON (p.label) p.id::text, p.label
+                    FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.kind = 'device_key' AND p.revoked_at IS NULL
+                      AND s.device_role = 'jpet'
+                    ORDER BY p.label, p.created_at DESC
                     """
-                ),
-                {"unnamed": _UNNAMED_LABEL},
+                )
             )
         ).all()
         total = (
@@ -238,12 +239,12 @@ async def _panel_names(maker) -> dict[str, str]:
                 text(
                     """
                     SELECT count(*)
-                    FROM app.principals
-                    WHERE kind = 'device_key' AND revoked_at IS NULL
-                      AND (label LIKE 'panel%' OR label = :unnamed)
+                    FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.kind = 'device_key' AND p.revoked_at IS NULL
+                      AND s.device_role = 'jpet'
                     """
-                ),
-                {"unnamed": _UNNAMED_LABEL},
+                )
             )
         ).scalar_one()
     if int(total) > len(rows):
@@ -329,11 +330,44 @@ async def send(
     Transcribed on the way in, because the owner reads before he listens. A failed
     transcription is NOT a failed send: the audio is the message, the text is a convenience,
     and refusing to deliver a child's voice because whisper was busy would be the wrong
-    trade."""
+    trade.
+
+    **VERIFIED, NOT ASSUMED.** The panel hashes the recording before it sends and puts the
+    digest in `X-Jpanel-Sha256`; this compares it against what actually arrived. The upload is
+    a chunked write over a radio in a bedroom, and a connection that ends cleanly two thirds of
+    the way through a sentence is indistinguishable, from here, from a child who stopped
+    talking — so without this the box would store the fragment, whisper would transcribe it,
+    and she would be told her message went. A mismatch is a 422 and the panel sends the same
+    buffer again, which is the right answer because the buffer is the good copy.
+
+    Unverified uploads are still accepted, with a log line. A panel on older firmware sends no
+    header, and refusing it would take voice post away from a unit mid-fleet-upgrade to fix a
+    fault it does not have."""
     audio = await request.body()
     if not audio:
         raise HTTPException(status_code=400, detail="no audio")
-    audio = audio[:MAX_MESSAGE_BYTES]
+    if len(audio) > MAX_MESSAGE_BYTES:
+        # REFUSED RATHER THAN TRUNCATED. This used to silently keep the first N bytes, which is
+        # the same fault the hash exists to catch, committed deliberately: a child's message
+        # stored with its end cut off and nothing anywhere saying so.
+        raise HTTPException(
+            status_code=413,
+            detail=f"message longer than {MAX_MESSAGE_MS // 1000}s",
+        )
+    claimed = request.headers.get("X-Jpanel-Sha256", "").strip().lower()
+    if claimed:
+        actual = hashlib.sha256(audio).hexdigest()
+        if actual != claimed:
+            log.warning(
+                "jpanel.upload_corrupt",
+                panel=principal.id,
+                bytes=len(audio),
+                claimed=claimed,
+                actual=actual,
+            )
+            raise HTTPException(status_code=422, detail="audio did not survive the upload")
+    else:
+        log.info("jpanel.upload_unverified", panel=principal.id, bytes=len(audio))
     audio = _trim_to_speech(audio)
     if not audio:
         # Silence is not an error; it is a child who pressed and said nothing.
@@ -522,10 +556,73 @@ async def next_message(principal: PanelDep, request: Request) -> Response:
 
     wav = await request.app.state.blob_store.get(row[1])
     pcm, rate = _pcm_from_wav(wav)
+    body = _to_panel_rate(pcm, rate)
     return Response(
-        content=_to_panel_rate(pcm, rate),
+        content=body,
         media_type="application/octet-stream",
-        headers={"X-Jpanel-Id": row[0], "X-Jpanel-From": _name_of(names, row[2], row[3])},
+        headers={
+            "X-Jpanel-Id": row[0],
+            "X-Jpanel-From": _name_of(names, row[2], row[3]),
+            # THE OTHER HALF OF THE PROOF. The panel streams this straight into its speaker and
+            # discards it as it plays, so a download that ends early is a message that stops
+            # mid-sentence — and the panel would then acknowledge it and the box would never
+            # offer it again. With the digest it can hash as it plays and simply not
+            # acknowledge what it could not verify, which leaves the message unplayed and the
+            # pop-up standing.
+            "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+        },
+    )
+
+
+@router.get("/message/{message_id}/pcm")
+async def message_pcm(message_id: str, principal: PanelDep, request: Request) -> Response:
+    """One message's audio by id, for a panel that has already been given it.
+
+    **THIS EXISTS BECAUSE THE PANEL NO LONGER KEEPS THE BYTES.** It used to hold a whole
+    message in PSRAM, so the repeat icon — *tap to hear it again* — replayed from memory. Since
+    0.2.96 the audio streams through a four-second ring and is gone as it plays, which is what
+    lifts the length cap; the cost is that "again" has to ask the box a second time.
+
+    **It does NOT touch `deliveries`.** That counter is the give-up rule: five attempts to hand
+    a message over and the box stops trying (`JPANEL_MAX_DELIVERIES`). A replay is not an
+    attempt to deliver — the child has already heard it and is asking for it again — and
+    counting it would make listening twice a way to lose a message. For the same reason this
+    route does not care whether the row is played: by definition it is.
+
+    Isolation is the table's, not this handler's. `jpanel_message_panel_read` opens a row only
+    to the panel that sent it or was sent it, so a panel guessing another twin's message id
+    gets a 404 from the policy rather than from a check written here (migration 0208)."""
+    try:
+        # A path segment that is not a uuid would reach the cast below and come back as a 500,
+        # which reads as the box being broken rather than as a message that is not there.
+        uuid.UUID(message_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no such message") from None
+    async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT blob_sha256 FROM app.jpanel_message
+                    WHERE id = CAST(:id AS uuid) AND recipient_device = :me
+                    """
+                ),
+                {"id": message_id, "me": principal.id},
+            )
+        ).first()
+    if row is None or not row[0]:
+        raise HTTPException(status_code=404, detail="no such message")
+
+    wav = await request.app.state.blob_store.get(str(row[0]))
+    pcm, rate = _pcm_from_wav(wav)
+    body = _to_panel_rate(pcm, rate)
+    return Response(
+        content=body,
+        media_type="application/octet-stream",
+        headers={
+            "X-Jpanel-Id": message_id,
+            "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+        },
     )
 
 
@@ -639,8 +736,9 @@ class Renamed(BaseModel):
     device_id: str
     name: str
     # HOW MANY KEYS MOVED, because the answer is routinely not one and the owner should see
-    # that rather than wonder. Every `/flash` mints a fresh device key and nothing retires the
-    # old one, so a panel flashed four times is four principals carrying one label.
+    # that rather than wonder. A flash retires the keys it replaces as of migration 0211, but
+    # every flash BEFORE that left its key live, so a panel flashed four times in the old world
+    # is still four principals carrying one label and renaming it moves all four.
     keys: int
 
 
@@ -691,13 +789,14 @@ async def rename_panel(
             await session.execute(
                 text(
                     """
-                    SELECT label FROM app.principals
-                    WHERE id = CAST(:dev AS uuid) AND kind = 'device_key'
-                      AND revoked_at IS NULL
-                      AND (label LIKE 'panel%' OR label = :unnamed)
+                    SELECT p.label FROM app.principals p
+                    JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.id = CAST(:dev AS uuid) AND p.kind = 'device_key'
+                      AND p.revoked_at IS NULL
+                      AND s.device_role IS NOT NULL
                     """
                 ),
-                {"dev": device_id, "unnamed": _UNNAMED_LABEL},
+                {"dev": device_id},
             )
         ).scalar_one_or_none()
         if current is None:
@@ -733,6 +832,19 @@ async def rename_panel(
                     {"label": label, "current": str(current)},
                 )
             ).all()
+        )
+        # The subject's name moves with the key's. It used not to matter — nothing read
+        # `display_name` for a panel — but `retire_replaced` recognises a re-flashed unit by
+        # name, so a subject left behind at the old one would make the next flash mint a
+        # fourteenth live key instead of retiring the thirteen it replaced.
+        await session.execute(
+            text(
+                """
+                UPDATE app.subjects SET display_name = :label
+                WHERE kind = 'device' AND device_role IS NOT NULL AND display_name = :current
+                """
+            ),
+            {"label": label, "current": str(current)},
         )
         await session.commit()
     log.info("jpanel.panel_renamed", device=device_id, was=str(current), now=label, keys=moved)

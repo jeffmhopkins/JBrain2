@@ -192,6 +192,7 @@ const PANELS = {
     {
       device_id: "panel-ellie",
       name: "Ellie",
+      role: "jpet",
       reported_at: "2026-09-23T17:00:00Z",
       version: "0.2.94",
       age_s: 240,
@@ -200,6 +201,7 @@ const PANELS = {
     {
       device_id: "panel-mabel",
       name: "the other one",
+      role: "jpet",
       reported_at: "2026-09-23T08:00:00Z",
       version: "0.2.89",
       age_s: 9 * 3600,
@@ -304,6 +306,20 @@ describe("OpsScreen panels", () => {
     version = "0.2.94";
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(await screen.findByText("0.2.94")).toBeInTheDocument();
+  });
+
+  it("badges a display, and leaves a pet unmarked", async () => {
+    /* The exception is what earns a word. Every panel in the house is a pet, so badging both
+       would put a label on every row answering a question nobody asked. */
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/endpoint/status") {
+        return json({ panels: [{ ...PANELS.panels[0], name: "Jeff", role: "display" }] });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Panels/ }));
+    expect(await screen.findByText("display")).toBeInTheDocument();
   });
 
   it("does not take the whole screen down when the fleet cannot be read", async () => {

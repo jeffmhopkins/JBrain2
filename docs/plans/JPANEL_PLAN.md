@@ -1,6 +1,6 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** In progress · **Last verified:** 2026-09-23 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-09-24 · **Waves:** W1◻️ W2✅ W3✅ W4✅
 > — W2 and W4 shipped together in #1498; W3 shipped across #1504/#1508/#1511/#1513 and is
 > **confirmed working on a panel** (voice post both ways, the pop-up, the queue).
 >
@@ -8,6 +8,13 @@
 > open rather than ticked because the wave is not done until it has run on hardware: the
 > panel is away until tonight, the movement threshold it ships with is reasoned rather than
 > measured, and §5 says how to correct it from the box without a terminal.
+>
+> **§5's open roster item is closed** (migration 0211): a device now records whether it is a
+> phone, one of the twins' pets, or a display the owner operates, and panels are managed on the
+> jpanel screen's **Panels** tab — rename, pet name, body and revoke — rather than on the
+> Location screen's phone list. `vocab.c`'s own open note is closed with it (migration 0212,
+> firmware 0.3.00): the wake word is a per-panel setting, so the pet can be renamed without a
+> cable, and the chosen body survives a reboot.
 
 The owner, across two asks:
 
@@ -22,9 +29,9 @@ The owner, across two asks:
 > *"Change it to jpanel, and integrate it with the flashing stuff on another tab."*
 
 **`jpanel` is the panels as one thing** — the messages they carry, and the panels themselves.
-The PWA surface is tabbed: **Messages** and **Flash**, the latter being today's
+The PWA surface is tabbed: **Messages**, **Panels** and **Flash**, the last being today's
 `EndpointsScreen` moved rather than rebuilt (it is already "its own surface, not a card inside
-Ops"). One launcher for "the panels in my house" beats two that each do half.
+Ops"). One launcher for "the panels in my house" beats several that each do half.
 
 ---
 
@@ -302,7 +309,7 @@ clears. Deliberately short: it is for *"what did she say?"*, not a permanent con
 `Pet face` comes out of the launcher and **`jpanel`** goes in (`Launcher.tsx`, target `petface`
 → `jpanel`). The separate `Pet` → `petcontrol` tile stays; it is a different thing.
 
-Two tabs:
+Three tabs:
 
 - **Messages** — one list grouped by panel, newest first. An unplayed badge per panel, because
   that is the question being asked at work. Each message shows sender, time, duration, and **the
@@ -311,7 +318,34 @@ Two tabs:
   transcriber handles four-year-olds, it often will not. A compose box per panel: type, send;
   TTS speaks it, the audio is stored, and the typed text is kept as the transcript so both ends
   agree about what was said.
-- **Flash** — today's `EndpointsScreen`, moved rather than rebuilt.
+- **Panels** — the units themselves, one row per unit (the fleet route already collapses a
+  panel's flashes, so this reads that rather than deriving it a second time): name, role,
+  firmware, last seen, and what the owner can do to one — **rename**, **its pet** (the
+  creature's name and which body it wears) and **revoke**.
+
+  **The panel's name and the pet's name are different things**, and the buttons say so. The
+  panel's is which unit this is: the heading on the thread, what a sibling's pop-up reads out.
+  The pet's IS THE WAKE WORD — `vocab.c` builds its listen phrase as `hey <name>` and the label
+  above the creature's head is the last word of it — so renaming the pet changes what a
+  four-year-old says to the thing on her wall. That file asked for this the day it was written:
+  *"a name only a rebuild can change is a name they cannot change, and the two panels will want
+  different ones."* A rebuild is a cable.
+
+  **The body is a DEFAULT, not a lock.** Four taps and a hold still swaps it on the glass; this
+  is what the panel comes back as, which until `endpoint_panel` existed was always the ostrich
+  because nothing wrote the choice down — so every reboot and every OTA quietly undid a child
+  who had chosen the robot. The panel may read that row and not write it, which is what keeps
+  the gesture from promoting itself into a setting nobody made on purpose.
+  Added late, and the reason is worth keeping: both used to live somewhere else or nowhere.
+  Revoke was on the LOCATION screen's phone list, because panels are the same
+  `Subject(kind='device')` substrate as an OwnTracks phone — under a swipe rail, among one row
+  per flash, beside a status line a panel never produces — and the owner could not find it at
+  all: *"I don't see a way to revoke from PWA."* Rename had a route and no UI whatsoever, so a
+  unit enrolled without a name answered to "the other one" until somebody re-flashed it over
+  USB. The Ops fleet card stays READ-ONLY: it is where a fault is noticed, this is where a panel
+  is managed, and two places to revoke would be two places to get it wrong.
+- **Flash** — today's `EndpointsScreen`, moved rather than rebuilt. It also carries the one flag
+  that decides what a unit IS: a pet, or a display the owner operates.
 
 **Dad's voice is male.** The pet answers in `kokoro-af_heart`; a message from Dad arriving in
 the pet's own voice would teach a four-year-old that the robot and their father are the same
@@ -459,20 +493,87 @@ costs two rewrites.
   tens of counts a resting panel jitters by and far below a hand lifting it. That is reasoning,
   not measurement. It is correctable without a terminal: every wake it causes logs
   `screen: movement N counts (threshold 900)`, and a panel waking itself on an empty table will
-  say so with the number that justifies raising it. Two nights of logs decide it.
+  say so with the number that justifies raising it. Two nights of logs decide it — and the part
+  is noisy enough at rest that §10.4af spent three releases on exactly that noise, which is why
+  this is measured rather than argued.
 
-- **The recording cap is ten seconds, not the twenty this plan asked for.** W3 reuses
-  `audio.c`'s single capture buffer, which is what the plan told it to reuse, and that buffer
-  is `CAPTURE_MAX_MS` — ten seconds, claimed once at start-up because a heap request in the
-  middle of a four-year-old talking is a failure with no good outcome. Twenty would mean
-  either a second 320 KB buffer or doubling a conversational cap that whisper's flat ~10.7 s
-  is already sized against. Ten seconds of a four-year-old is a long message; revisit it if
-  the twins actually hit the ceiling, which the `full` branch logs when they do.
-  **Playback is NOT capped at ten**, and that was a real bug on the way past: `audio_play`
-  truncated everything at the REPLY ceiling, so a typed message from Dad (600 characters
-  through a voice) would have stopped mid-word. The buffer is now sized by the longest audio
-  any caller can hand over — twenty seconds, matching `MAX_MESSAGE_MS` on the box — and says
-  so in the log when it still has to cut.
+- ~~**Nothing checked that a message arrived whole**~~ — **VERIFIED BOTH WAYS (0.2.97).**
+
+  The upload is a chunked write over a radio in a bedroom. A stalled write the panel already
+  caught; a connection that ended cleanly two thirds of the way through a sentence it did not —
+  and from the box that is indistinguishable from a child who stopped talking. The fragment was
+  stored, transcribed, and she was told her message went.
+
+  The panel now hashes the recording before it sends (`X-Jpanel-Sha256`, SHA-256 in the S3's
+  hardware, `mbedtls` already linked for the CA bundle) and the box compares it against what
+  arrived. A mismatch is a **422**, which is the one status the panel retries — its capture
+  buffer still holds the good copy, which is precisely why the recording is not streamed
+  straight off the microphone. Two failures in a row is reported rather than retried forever.
+
+  **And the same proof on the way down**, which streaming made necessary: the panel discards a
+  message as it plays it, so a short download is a message that stops mid-sentence — and
+  acknowledging that would RETIRE it, because `/next` never offers a played message again. The
+  box sends the digest with the audio, the panel hashes as it streams, and what it cannot
+  verify it simply does not acknowledge: the row stays unplayed, the pop-up comes back, and the
+  delivery cap turns a repeated failure into the box giving up loudly rather than a message
+  quietly lost.
+
+  **An unverified upload is still accepted**, with a log line, because a panel mid-fleet-upgrade
+  sends no header and refusing it would take voice post away from a unit to fix a fault it does
+  not have. The header name is pinned at both ends by a test, since a misspelt one fails
+  silently — it simply looks like every panel being old.
+
+  **Oversize is now a 413 rather than a truncation.** Keeping the first N bytes was the same
+  fault the hash exists to catch, committed on purpose.
+
+- ~~**The message length cap**~~ — **GONE (0.2.96); the recording cap is thirty (0.2.95).**
+
+  Playback no longer has a ceiling at all. The panel streams a message through a four-second
+  ring in `audio.c` — the network writes into it as bytes arrive, the codec drains it — so a
+  message is bounded by what the box will store rather than by this board's PSRAM. The ring's
+  arithmetic is `ring.c`, its own file and host-tested for the reason `orient.c` and `screen.c`
+  are: a wrap off by one plays a fragment of an earlier second in the middle of a child's
+  message, and neither that nor a full-versus-empty mistake shows up as a crash.
+
+  **It gave memory back rather than costing it.** The 960 KB inbound buffer and the 960 KB play
+  buffer are both gone; what replaces them is a 128 KB ring, and the play buffer shrinks to the
+  reply cap it always described. **And it made the tap faster**, which is why the prefetch could
+  go: the first sound needs only the 1.5 s preroll (~48 KB) rather than a whole message, so a
+  panel that used to fetch ahead and hold the bytes now holds nothing and answers sooner. The
+  owner's *"couple of seconds between me acknowledging the message and it starting to play"* is
+  removed at its source rather than worked around.
+
+  Three things had to move with it, and each is the kind of thing that fails quietly:
+  **`audio_playing()` now covers a stream**, including while the ring is momentarily dry — the
+  render loop, the pop-up, the queue and `POST /played` all ask that one question, and a panel
+  that answered "finished" during a Wi-Fi stall would mark a message played mid-sentence and
+  drop the rest. **The producer checks `audio_stream_live()` every pass**, because a full ring
+  and a stopped stream both refuse bytes: a writer that could not tell them apart would spin
+  forever on the task that also polls, sends and acknowledges — a child tapping to stop a long
+  message is exactly how that would have been found. And **"again" re-asks the box**
+  (`GET /message/{id}/pcm`), since the bytes are gone as they play; that route does not spend a
+  delivery attempt, or listening twice would become a way to lose a message.
+
+- ~~**The recording cap is ten seconds**~~ — **THIRTY (0.2.95), at the owner's ask.**
+  Ten was reasoned rather than measured: "ten seconds of a four-year-old is a long message",
+  with a note to revisit it if the twins hit the ceiling and a `full` branch that logs when
+  they do. Nobody waited for that evidence — the ask came first, and the only real cost was
+  memory. Four numbers had to move together or a thirty-second message would be cut at
+  whichever stayed lowest: `CAPTURE_MAX_MS` and `PLAY_BUF_MS` in `audio.c`, `JPANEL_MAX_BYTES`
+  in `jpanel.c`, and `MAX_MESSAGE_MS` on the box (which the PWA recorder reads, pinned by a
+  test at each end). **That figure was briefly wrong here**: it said 2.8 MB, which was the total
+  while the play buffer was also thirty seconds. Streaming (0.2.96) removed the inbound buffer
+  and cut playback back to the ten-second reply it actually holds, so the three come to about
+  **1.4 MB** of the board's 8 MB — 960 KB of capture, 320 KB of playback, 128 KB of ring —
+  beside a 322 KB framebuffer. `free_psram` in telemetry is the number to watch rather than any
+  arithmetic written here, which is the lesson of having got it wrong.
+
+  **A maxed-out TYPED message is still cut, and that gap is now the open one.** `SendText`
+  allows 600 characters, which through Kokoro runs nearer fifty seconds — and `send_text`
+  does not cap what it stores, so the panel truncates on fetch and `audio_play` says so in its
+  log. Thirty narrows the gap; closing it means bringing the text cap and the audio cap into
+  line, which is a decision about how long a message to a four-year-old should be rather than
+  a memory question.
 - ~~**A panel cannot learn the other panel's name**~~ — **CLOSED (0.2.93).**
 
   The gap was real and the placeholder was honest: a panel is flashed with its OWN name, the
@@ -488,9 +589,6 @@ costs two rewrites.
   first poll. The caption ticker still shows the phrase they just said in the same frame, so
   the recipient was on the glass either way; this makes it the name.
 
-- **The movement threshold** for waking. It has to be picked against a panel on a bedside table,
-  not reasoned about here; the part is noisy enough at rest that §10.4af spent three releases
-  on it.
 - ~~**Retention.**~~ **BUILT.** `jbrain/jpanel/sweep.py`, a lifespan loop beside the
   guided-intake reaper, every six hours. Played messages go 30 days after they were **played**
   — not after they were sent, so a year-old message the owner listened to this morning is a
@@ -580,17 +678,34 @@ costs two rewrites.
      arithmetic of `draw_popup`'s bubble at its shrunk scale. Both ends are read out of the
      firmware by unit tests rather than transcribed.
 
-  It does not make the convention a mechanism, and the bullet below still stands.
-- **There is no way to enumerate panels that is a mechanism rather than a convention**, and W2
-  ran into it immediately. A panel is an ordinary `device_key` principal — the same substrate as
-  an OwnTracks phone — and the only thing marking one is the label `/flash` writes:
-  `"panel {name}"`, or `"room endpoint panel"` when the owner named no unit. So "the other
-  panel" has to be resolved by `label LIKE 'panel%'`, which a hand-labelled device key could
-  join and which a re-flash without a name degrades.
-  It is survivable — the worst case is a message offered to a device that RLS then refuses to
-  deliver to, so the failure is a dead letter rather than a leak — and W2 proceeds on it. But it
-  wants a real marker (a principal sub-kind, or a panel roster table) the first time a third
-  device key exists in this house, and that is a schema change rather than a patch.
+  It does not make the convention a mechanism — see the bullet below, which the third unit
+  closed.
+- ~~**There is no way to enumerate panels that is a mechanism rather than a convention.**~~
+  **CLOSED by migration 0211 (`subjects.device_role`).** The note said it wanted a real marker
+  *"the first time a third device key exists in this house"*, and that is exactly when it broke.
+  A third unit was flashed, took the unnamed default, and `"room endpoint panel"` matched
+  `label LIKE 'panel%' OR label = :unnamed` — so a box on the owner's desk joined two children's
+  addressing, `send(to="panel")` saw three candidates where it needs one, and the twins' voice
+  messages stopped. The predicted failure was "a dead letter, not a leak"; the actual one was a
+  feature that stopped working in two bedrooms, which is worse and was not on the list.
+
+  A device now records what it IS at flash time: `NULL` = a phone, `'jpet'` = one of the twins'
+  panels, `'display'` = an endpoint the owner operates (OTA, settings, telemetry, `/converse`)
+  that no pet can reach. The roster reads `device_role = 'jpet'`; the fleet view reads
+  `device_role IS NOT NULL`; the Location screen's phone list reads `device_role IS NULL` and so
+  no longer lists panels at all. A device cannot write the column — `subjects_access` is
+  `WITH CHECK (app.is_owner())` — which is what stops a display talking its way into a bedroom.
+
+  Two things fell out of it that the note had not anticipated:
+
+  1. **Revoking a panel was unreachable.** It existed only on the Location screen's Phones tab,
+     under a swipe rail, among one row per flash — and the owner, who has no terminal
+     (CLAUDE.md #10), could not find it: *"I don't see a way to revoke from PWA."* There is now
+     a revoke on the fleet view, which retires every live key for that name rather than the one
+     the row was drawn from.
+  2. **A re-flash never retired what it replaced**, though `/flash` had claimed in a comment
+     since it was written that the old key "should stop working at that moment". Thirteen
+     flashes of one panel meant thirteen live keys under one name. It does now.
 - **Notifying Dad.** A message to the PWA currently waits to be looked at. Whether it should
   push is a question about a parent's phone, not about the panels.
 - **The transcriber mangles small children.** `"tell us a joke"` arrived as `"There is a joke.

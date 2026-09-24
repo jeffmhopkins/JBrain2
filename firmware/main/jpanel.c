@@ -10,6 +10,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
+#include "mbedtls/sha256.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -24,20 +25,20 @@ static const char *TAG = "jpanel";
    this is not slow, it is broken. */
 #define JPANEL_HTTP_TIMEOUT_MS 20000
 
-/* WHAT THE BOX WILL HAND OVER AT MOST, and it is NOT the reply cap.
+/* THERE IS NO INBOUND CEILING ANY MORE, and its absence is the feature.
  *
- * `MAX_MESSAGE_MS` in `backend/src/jbrain/api/jpanel.py` is twenty seconds, and a message
- * from Dad is text put through a voice — `SendText` allows 600 characters, which is far more
- * speech than the ten seconds `audio.c` used to truncate at without a word to anyone. The two
- * numbers must move together; `audio.c`'s buffer is sized from this one. */
-#define JPANEL_MAX_BYTES (16000 * 2 * 20)
+ * This used to be the size of the buffer a whole message was read into — twenty seconds, then
+ * thirty — and it had to be kept in step with `MAX_MESSAGE_MS` on the box and with `audio.c`'s
+ * play buffer, or a message was cut at whichever was smallest, silently. The audio streams
+ * through a ring now (`audio_stream_*`), so the only limit left on a message's length is what
+ * the box is willing to store, and the panel does not need to know that number at all. */
 
 /* ~30 s, as the plan's contract says: fast enough that "my sister just sent me something" is
    answered while she is still in the room, small enough that two panels asking forever costs
    the box nothing — the route returns a count and a name and touches one index. */
 #define POLL_EVERY_MS 30000
 
-typedef enum { CMD_SEND = 0, CMD_FETCH, CMD_POLL } cmd_kind_t;
+typedef enum { CMD_SEND = 0, CMD_FETCH, CMD_POLL, CMD_REPLAY } cmd_kind_t;
 
 typedef struct {
     cmd_kind_t kind;
@@ -55,21 +56,25 @@ static volatile size_t s_bytes;
 
 /* The incoming message: PSRAM, claimed once at start-up, because a heap request in the middle
    of a child waiting for their sister's voice is a failure with no good outcome. */
-static uint8_t *s_in;
-static volatile int s_in_len;
-/* A FETCHED MESSAGE, WAITING FOR A FINGER — the difference between a pop-up that plays and
-   one that makes a child wait.
+/* ONE HTTP READ'S WORTH, NOT ONE MESSAGE'S. The 960 KB that used to sit here held a whole
+   message so the repeat icon could replay it from memory; it is a ring in `audio.c` now, and
+   "again" asks the box a second time (`GET /message/{id}/pcm`). What is left is the staging
+   buffer between the socket and that ring. */
+#define JPANEL_READ_CHUNK 4096
+static uint8_t s_chunk[JPANEL_READ_CHUNK];
+/* WHY THERE IS NO LONGER A HELD MESSAGE, because the reason there WAS one still matters.
  *
  * The owner: *"the message should start playing faster. There's a couple seconds between me
  * acknowledging the message and it's starting to play."* That gap was the whole round trip —
  * a TLS handshake, a blob read on the box, a rate conversion and up to 640 KB down the wire —
- * and it ran AFTER the tap because the tap is what used to start it.
+ * and it ran AFTER the tap, because the tap is what started it. The answer then was to fetch
+ * early and hold the bytes, so the tap became a memcpy.
  *
- * Nothing required that order. `GET /next` deliberately does not mark a message played, so
- * fetching one early costs nothing and risks nothing: a panel that loses power holding an
- * unplayed message still has it on the box. So the poll that discovers a message now also
- * collects it, and the tap is a memcpy into the speaker's buffer. */
-static volatile bool s_held;
+ * Streaming removes the gap at its source instead. The first sound needs only the preroll —
+ * about 48 KB rather than the whole message — so the tap is answered sooner than the prefetch
+ * ever managed, and nothing is held. The 960 KB that held it, and the 960 KB play buffer it
+ * was copied into, are both gone; what replaces them is a four-second ring in `audio.c`. */
+
 /* A MESSAGE HAS BEEN HANDED TO THE SPEAKER AND THE BOX HAS NOT BEEN TOLD YET.
  *
  * SET WHERE THE PLAY HAPPENS, NOT BY WATCHING FOR A STATE. It was armed by polling for
@@ -95,11 +100,20 @@ static volatile bool s_owed;
  * WHAT IS PLAYED IS ACKNOWLEDGED AS IT GOES, one message at a time, so stopping halfway leaves
  * the rest genuinely unheard rather than silently consumed — the pop-up comes back for them. */
 static volatile bool s_run;
+/* A finger ended the last stream, rather than the network. See `jpanel_stop`. */
+static volatile bool s_stopped;
 /* The id the box gave it, held so `POST /played` can name it after the speaker finishes, and
    who it came from, which is what the repeat icon's caption says. Both are filled by the
    header handler below. */
 static char s_in_id[48];
 static char s_in_from[32];
+/* WHAT THE BOX SAYS IT SENT, hex, or "" from a box too old to say. The panel hashes the
+   message as it streams it into the speaker and compares at the end — not to re-play it, which
+   it cannot, but to decide whether to ACKNOWLEDGE it. A download that ends early plays a
+   message that stops mid-sentence, and acknowledging that would retire it: the box would never
+   offer it again and nobody would know the rest existed. Unverified, it is simply not
+   acknowledged, so it stays unplayed and the pop-up comes back. */
+static char s_in_sha[72];
 
 /* What the poll last saw. `s_wait_from` is written BEFORE `s_wait_count` is raised and
    cleared AFTER it is lowered, so a renderer that sees a non-zero count always reads a name
@@ -168,6 +182,8 @@ static void on_header(const esp_http_client_event_t *e)
         strlcpy(s_in_id, e->header_value, sizeof(s_in_id));
     } else if (strcasecmp(e->header_key, "X-Jpanel-From") == 0) {
         strlcpy(s_in_from, e->header_value, sizeof(s_in_from));
+    } else if (strcasecmp(e->header_key, "X-Jpanel-Sha256") == 0) {
+        strlcpy(s_in_sha, e->header_value, sizeof(s_in_sha));
     }
 }
 
@@ -194,17 +210,72 @@ static esp_http_client_handle_t open_client(const char *path, esp_http_client_me
 
 /* --- POST /send?to=panel|dad ------------------------------------------------------------- */
 
+/* One retry, and only for the one failure a retry can fix.
+ *
+ * A hash mismatch means the bytes on the box are not the bytes in this buffer — a truncated
+ * upload or a flipped bit on the wire — and sending the same buffer again is exactly the right
+ * response, because the buffer is the good copy. Everything else (no sibling, a 500, a dead
+ * socket) is either permanent or already reported, and hammering it would only delay the
+ * child's answer. */
+#define SEND_ATTEMPTS 2
+
+static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt);
+
 static void do_send(jpanel_to_t to)
+{
+    for (int attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
+        bool corrupt = false;
+        const jpanel_state_t out = do_send_once(to, &corrupt);
+        if (!corrupt || attempt == SEND_ATTEMPTS) {
+            if (corrupt) {
+                /* LOUD, because this is a child's message that did not go and the panel is
+                   about to say so on the glass. Twice in a row is not a bad packet. */
+                ESP_LOGE(TAG, "upload failed verification twice — not sent");
+            }
+            s_state = out;
+            return;
+        }
+        ESP_LOGW(TAG, "box did not get what we sent — trying once more");
+    }
+}
+
+static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
 {
     char url[288];
     char path[32];
     snprintf(path, sizeof(path), "/send?to=%s", to == JPANEL_TO_DAD ? "dad" : "panel");
     esp_http_client_handle_t c = open_client(path, HTTP_METHOD_POST, url, sizeof(url));
-    if (c == NULL) {
-        s_state = JPANEL_FAILED;
-        return;
-    }
+    if (c == NULL) return JPANEL_FAILED;
     esp_http_client_set_header(c, "Content-Type", "application/octet-stream");
+
+    /* WHAT THE BOX SHOULD END UP WITH, SAID BEFORE THE BYTES GO.
+     *
+     * The upload is a chunked write over a radio in a bedroom, and until now nothing on either
+     * end could tell a message that arrived whole from one that arrived short. A stalled write
+     * is caught here, but a connection that ends cleanly after two thirds of a sentence is not
+     * — the box would store what it got, whisper would transcribe it, and a child would be
+     * told her message went. Hashing what we are about to send turns that into a refusal the
+     * panel can act on.
+     *
+     * Computed over the capture buffer before the first byte, because a header cannot follow a
+     * body. The buffer is still ours until the box says yes, which is what makes a retry
+     * possible — and is the reason the recording is not streamed straight off the microphone.
+     *
+     * SHA-256 because the ESP32-S3 has it in hardware and `mbedtls` is already linked for the
+     * CA bundle; a cheaper checksum would catch a truncation but not a corruption, and the box
+     * is content-addressing these bytes with the same function anyway. */
+    unsigned char digest[32];
+    char hex[65];
+    if (mbedtls_sha256((const unsigned char *)s_pcm, s_bytes, digest, 0) == 0) {
+        for (int i = 0; i < 32; i++) snprintf(&hex[i * 2], 3, "%02x", digest[i]);
+        hex[64] = '\0';
+        esp_http_client_set_header(c, "X-Jpanel-Sha256", hex);
+    } else {
+        /* Not fatal: an older box ignores the header and a newer one treats its absence as
+           "this panel cannot prove it", which is exactly what has been true all along. */
+        ESP_LOGW(TAG, "could not hash the recording — sending it unverified");
+        hex[0] = '\0';
+    }
 
     const int64_t t0 = esp_timer_get_time();
     jpanel_state_t out = JPANEL_FAILED;
@@ -235,6 +306,12 @@ static void do_send(jpanel_to_t to)
         out = JPANEL_NOBODY;
         goto done;
     }
+    if (status == 422) {
+        /* The box hashed what arrived and got something else. Recoverable, and the only
+           status this panel retries. */
+        *corrupt = true;
+        goto done;
+    }
     if (status != 200) {
         ESP_LOGW(TAG, "box said %d", status);
         goto done;
@@ -246,7 +323,7 @@ done:
              to == JPANEL_TO_DAD ? "dad" : "panel",
              (int)((esp_timer_get_time() - t0) / 1000), (int)out);
     esp_http_client_cleanup(c);
-    s_state = out;
+    return out;
 }
 
 /* --- GET /waiting ------------------------------------------------------------------------ */
@@ -298,6 +375,155 @@ done:
 
 /* --- GET /next: collect a message, do NOT play it ------------------------------------------ */
 
+/* Socket to ring, at the speed of the speaker.
+ *
+ * `audio_stream_write` takes what fits and returns how much it took, so a full ring is not an
+ * error — it is the speaker saying "not yet". Waiting here is what bounds the memory: without
+ * it a fast network would need somewhere to put a whole message again, which is the thing this
+ * path exists to stop. Twenty milliseconds is half a chunk, so the codec never starves waiting
+ * for this loop to come back.
+ *
+ * Returns the bytes handed over, which is how the caller tells a real message from an empty
+ * one. */
+static int pump(esp_http_client_handle_t c, char *got_hex, size_t hex_cap)
+{
+    /* FIRST, NOT LAST. Every path out of this function — including the early one when a finger
+       stops the stream — must leave a readable string behind, or the caller compares the box's
+       digest against whatever was on the stack. */
+    if (got_hex != NULL && hex_cap > 0) got_hex[0] = '\0';
+
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    bool hashing = mbedtls_sha256_starts(&sha, 0) == 0;
+    int total = 0;
+    /* AN ODD BYTE IS CARRIED, NOT OFFERED, and that is not tidiness — it is a hang.
+       `esp_http_client_read` returns whatever the transport has, which on a timeout or a FIN
+       mid-body is routinely an odd count; the ring deals in samples and refuses anything under
+       two bytes, so a lone trailing byte would be offered forever at 20 ms a go on the task
+       that also polls, sends and acknowledges. Held over and prepended to the next read
+       instead, which is also the only way the samples stay aligned. */
+    uint8_t odd = 0;
+    bool have_odd = false;
+    while (audio_stream_live()) {
+        const int n = esp_http_client_read(c, (char *)s_chunk + (have_odd ? 1 : 0),
+                                           (int)sizeof(s_chunk) - (have_odd ? 1 : 0));
+        if (n <= 0) break;
+        if (have_odd) s_chunk[0] = odd;
+        int avail = n + (have_odd ? 1 : 0);
+        have_odd = false;
+        if (avail % 2 == 1) {
+            odd = s_chunk[avail - 1];
+            have_odd = true;
+            avail -= 1;
+        }
+        if (hashing && mbedtls_sha256_update(&sha, s_chunk, (size_t)avail) != 0) hashing = false;
+        int off = 0;
+        while (off < avail) {
+            /* CHECKED EVERY TIME ROUND, because a refusal has two meanings. A full ring says
+               "not yet"; a stopped stream says "never" — and waiting out the second one would
+               hang this task forever on a speaker that is no longer listening. */
+            if (!audio_stream_live()) {
+                mbedtls_sha256_free(&sha);
+                return total;
+            }
+            const size_t took = audio_stream_write(s_chunk + off, (size_t)(avail - off));
+            if (took == 0) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
+            off += (int)took;
+        }
+        total += avail;
+    }
+    /* A body that ended on an odd byte is a body that was cut: the digest will not match, and
+       the last half-sample is not worth playing. Hashed as received so the mismatch is honest
+       about what arrived. */
+    if (have_odd && hashing && mbedtls_sha256_update(&sha, &odd, 1) == 0) total += 1;
+    unsigned char digest[32];
+    if (got_hex != NULL && hex_cap >= 65 && hashing && mbedtls_sha256_finish(&sha, digest) == 0) {
+        for (int i = 0; i < 32; i++) snprintf(&got_hex[i * 2], 3, "%02x", digest[i]);
+        got_hex[64] = '\0';
+    }
+    mbedtls_sha256_free(&sha);
+    return total;
+}
+
+/* Did we get what the box said it was sending.
+ *
+ * TRUE WHEN THE BOX DID NOT SAY, and that is deliberate rather than lax: a panel talking to an
+ * older box has exactly the assurance it always had, and refusing to acknowledge messages it
+ * cannot verify would make every one of them play forever. What changes is only that a box
+ * which DOES say is believed. */
+static bool verified(const char *claimed, const char *got)
+{
+    if (claimed[0] == '\0') return true;
+    if (got[0] == '\0') return false;
+    return strcasecmp(claimed, got) == 0;
+}
+
+/* "AGAIN", WHICH USED TO BE A MEMCPY. The bytes are gone once they have played, so the repeat
+   icon re-asks the box for that id. It is a different route from `/next` on purpose: replaying
+   must not spend one of the five delivery attempts that exist to stop the box trying forever
+   (`JPANEL_MAX_DELIVERIES`), or listening twice would be a way to lose a message. */
+static void do_replay(void)
+{
+    if (s_in_id[0] == '\0') return;
+    bool ok = false;
+    char path[96];
+    snprintf(path, sizeof(path), "/message/%s/pcm", s_in_id);
+    char url[288];
+    esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
+    if (c == NULL) {
+        s_state = JPANEL_FAILED;
+        return;
+    }
+    /* CLEARED AFTER `path` IS BUILT, because that used `s_in_id` — and cleared at all because
+       a box too old to send the header would otherwise leave the PREVIOUS message's digest
+       standing, and this replay would be judged against it. */
+    s_in_sha[0] = '\0';
+    /* EVERY WAY OUT OF HERE SAYS SO. A replay that fails silently is the control a child
+       presses when she missed something answering with nothing at all — which is exactly what
+       the touch cue was added to stop, and the link being down is when she is most likely to
+       be pressing it. */
+    if (esp_http_client_open(c, 0) != ESP_OK) {
+        ESP_LOGW(TAG, "replay: could not reach the box");
+        goto done;
+    }
+    if (esp_http_client_fetch_headers(c) < 0) {
+        ESP_LOGW(TAG, "replay: no answer from the box");
+        goto done;
+    }
+    if (esp_http_client_get_status_code(c) != 200) {
+        ESP_LOGW(TAG, "replay: box said %d", esp_http_client_get_status_code(c));
+        goto done;
+    }
+    if (!audio_stream_begin()) {
+        ESP_LOGW(TAG, "replay: speaker busy");
+        goto done;
+    }
+    ok = true;
+    /* NO `s_owed` AND NO `s_run`. This message was already acknowledged the first time it
+       played; telling the box again would be a second `POST /played` for one listen, and
+       joining the run would make "again" walk on into the next unheard message. */
+    char heard[72];
+    const int got = pump(c, heard, sizeof(heard));
+    audio_stream_end();
+    if (got < 2) {
+        audio_stream_abort();
+    } else if (!verified(s_in_sha, heard)) {
+        /* Nothing to un-acknowledge — this message was acknowledged the first time it played.
+           Worth a line, because a replay that arrives short is the same network fault that
+           would cut a first play, and this is where it shows up without costing anything. */
+        ESP_LOGW(TAG, "replay arrived incomplete (%d B), id %s", got, s_in_id);
+    } else {
+        ESP_LOGI(TAG, "replayed %d B, id %s", got, s_in_id);
+    }
+
+done:
+    esp_http_client_cleanup(c);
+    if (!ok) s_state = JPANEL_FAILED;
+}
+
 static void do_fetch(bool asked)
 {
     char url[288];
@@ -311,6 +537,7 @@ static void do_fetch(bool asked)
     int got = 0;
     s_in_id[0] = '\0';
     s_in_from[0] = '\0';
+    s_in_sha[0] = '\0';
     if (esp_http_client_open(c, 0) != ESP_OK) goto done;
     if (esp_http_client_fetch_headers(c) < 0) goto done;
     const int status = esp_http_client_get_status_code(c);
@@ -328,19 +555,54 @@ static void do_fetch(bool asked)
     /* `s_in_id` and `s_in_from` were filled by `on_header` while `fetch_headers` ran, and
        both were cleared before the request so a box that sends neither cannot leave the last
        message's id standing. */
-    while (got < JPANEL_MAX_BYTES) {
-        const int n = esp_http_client_read(c, (char *)s_in + got, JPANEL_MAX_BYTES - got);
-        if (n <= 0) break;
-        got += n;
-    }
-    if (got < 2) {
-        ESP_LOGW(TAG, "empty message");
+    if (!audio_stream_begin()) {
+        ESP_LOGW(TAG, "speaker busy — not starting this message");
         goto done;
     }
-    s_in_len = got;
-    s_held = true;
-    out = JPANEL_IDLE;
-    ESP_LOGI(TAG, "holding %d B from %s, id %s", got, s_in_from[0] ? s_in_from : "?",
+    s_stopped = false;
+    /* CLAIMED BEFORE THE FIRST BYTE, and that ordering is the whole safety of this path.
+       `audio_playing()` is true from here until the ring drains, so the renderer, the pop-up
+       and `POST /played` all see one message in flight — including during the seconds before
+       the preroll has landed, when nothing is audible yet. */
+    s_owed = true;
+    s_run = true;
+    s_state = JPANEL_PLAYING;
+    if (s_wait_count > 0) s_wait_count--;
+    if (s_wait_count == 0) s_wait_from[0] = '\0';
+    char heard[72];
+    got = pump(c, heard, sizeof(heard));
+    audio_stream_end();
+    if (got < 2) {
+        ESP_LOGW(TAG, "empty message");
+        audio_stream_abort();
+        s_owed = false;
+        s_run = false;
+        goto done;
+    }
+    if (s_stopped) {
+        /* Her choice, not a fault. `s_owed` stays set, so `POST /played` fires when the ring
+           finishes draining and the message retires as it always did. */
+        ESP_LOGI(TAG, "stopped by a finger after %d B, id %s", got,
+                 s_in_id[0] ? s_in_id : "(none)");
+        out = JPANEL_PLAYING;
+        goto done;
+    }
+    if (!verified(s_in_sha, heard)) {
+        /* NOT ACKNOWLEDGED, WHICH IS THE WHOLE POINT. What played was short — the child heard
+           her father stop mid-sentence — and telling the box it was played would retire it:
+           `/next` would never offer it again and nobody would know the rest existed. Leaving
+           `s_owed` clear keeps the row unplayed, so the pop-up comes back and the next tap
+           fetches it whole. `deliveries` counts this attempt, and five of them is the box
+           giving up loudly rather than a message quietly lost. */
+        ESP_LOGE(TAG, "message arrived incomplete (%d B) — not acknowledging, id %s", got,
+                 s_in_id[0] ? s_in_id : "(none)");
+        s_owed = false;
+        s_run = false;
+        out = JPANEL_PLAYING;
+        goto done;
+    }
+    out = JPANEL_PLAYING;
+    ESP_LOGI(TAG, "streamed %d B from %s, id %s", got, s_in_from[0] ? s_in_from : "?",
              s_in_id[0] ? s_in_id : "(none)");
 
 done:
@@ -352,21 +614,9 @@ done:
        an outcome worth reporting.
      *
        And never PLAYING: nothing was played. `jpanel_play_next` owns that transition. */
+    /* `out` is already PLAYING when a stream started — the sound IS the outcome, and it began
+       inside the loop above rather than after it. */
     if (asked) s_state = out;
-    if (asked && s_held) {
-        /* Tapped before the poll had collected it. Play it now rather than making the child
-           tap a second time — the pop-up is already gone from their screen. */
-        if (audio_play((const int16_t *)s_in, (size_t)s_in_len)) {
-            s_held = false;
-            s_owed = true;
-            s_run = true;
-            s_state = JPANEL_PLAYING;
-            if (s_wait_count > 0) s_wait_count--;
-            if (s_wait_count == 0) s_wait_from[0] = '\0';
-            ESP_LOGI(TAG, "playing %d B from %s (fetched on the tap)", s_in_len,
-                     s_in_from[0] ? s_in_from : "?");
-        }
-    }
 }
 
 /* --- POST /played ------------------------------------------------------------------------ */
@@ -410,6 +660,7 @@ static void jpanel_task(void *arg)
             switch (cmd.kind) {
             case CMD_SEND: do_send(cmd.to); break;
             case CMD_FETCH: do_fetch(cmd.asked); break;
+            case CMD_REPLAY: do_replay(); break;
             case CMD_POLL: next_poll = 0; break;
             }
         }
@@ -440,7 +691,10 @@ static void jpanel_task(void *arg)
                path and into the wait nobody is watching, which is what turns two seconds of a
                child staring at a pop-up into a memcpy. Safe precisely because `GET /next` does
                not mark a message played. */
-            if (s_wait_count > 0 && !s_held && s_state != JPANEL_BUSY) do_fetch(false);
+            /* NO PREFETCH ANY MORE, and that is the point of streaming rather than a loss.
+               The panel used to collect a whole message in the background so a tap would not
+               wait two seconds for it; a stream needs only the preroll before the first sound,
+               so the tap is answered sooner with nothing held in PSRAM at all. */
         }
     }
 }
@@ -449,9 +703,8 @@ bool jpanel_start(const cfg_t *cfg)
 {
     if (cfg == NULL) return false;
     s_cfg = cfg;
-    s_in = heap_caps_malloc(JPANEL_MAX_BYTES, MALLOC_CAP_SPIRAM);
     s_q = xQueueCreate(2, sizeof(cmd_t));
-    if (s_in == NULL || s_q == NULL) {
+    if (s_q == NULL) {
         ESP_LOGE(TAG, "no memory for voice post");
         return false;
     }
@@ -486,26 +739,10 @@ bool jpanel_send(const int16_t *pcm, size_t bytes, jpanel_to_t to)
 bool jpanel_play_next(void)
 {
     if (s_q == NULL) return false;
-    /* THE FAST PATH, AND IT IS THE ONLY ONE A CHILD SHOULD EVER MEET. A message collected by
-       the poll is already in PSRAM, so this is a memcpy into the speaker's buffer and the
-       sound starts on the same frame as the finger. */
-    if (s_held && s_in_len >= 2) {
-        if (!audio_play((const int16_t *)s_in, (size_t)s_in_len)) return false;
-        s_held = false;
-        s_owed = true;
-        s_run = true;
-        s_state = JPANEL_PLAYING;
-        /* Optimistic, and deliberately so: the count is what draws the pop-up, and leaving it
-           up while the message plays would tell a child there is still one waiting. The next
-           poll corrects it either way. */
-        if (s_wait_count > 0) s_wait_count--;
-        if (s_wait_count == 0) s_wait_from[0] = '\0';
-        ESP_LOGI(TAG, "playing %d B from %s", s_in_len, s_in_from[0] ? s_in_from : "?");
-        return true;
-    }
-    /* The slow path survives for the case the fast one cannot cover: a pop-up tapped before
-       the poll that announced it had time to collect the audio. It still works, it is simply
-       the two seconds this change exists to remove. */
+    /* ONE PATH NOW. The fetch and the playing are the same act: the jpanel task opens the
+       message, claims the speaker before the first byte and feeds the ring as it arrives, so
+       there is nothing here to do but ask for it. The count and the state move on that task,
+       where the stream actually begins, rather than optimistically here. */
     if (s_state == JPANEL_BUSY) return false;
     s_state = JPANEL_BUSY;
     if (post(CMD_FETCH, JPANEL_TO_PANEL, true)) return true;
@@ -515,14 +752,25 @@ bool jpanel_play_next(void)
 
 bool jpanel_replay(void)
 {
-    if (s_in == NULL || s_in_len < 2) return false;
-    return audio_play((const int16_t *)s_in, (size_t)s_in_len);
+    if (s_in_id[0] == '\0') return false;
+    if (audio_playing()) return false;
+    return post(CMD_REPLAY, JPANEL_TO_PANEL, false);
 }
 
 /* Stop a run. The message sounding is cut and nothing more is fetched; whatever has not been
    played is still unplayed on the box, so the pop-up returns for it. */
 void jpanel_stop(void)
 {
+    /* RECORDED, BECAUSE A STOP AND A CUT LOOK IDENTICAL FROM THE HASH.
+     *
+       Both end the stream early, so both fail verification — but they mean opposite things. A
+       truncated download must NOT be acknowledged, or the box retires a message nobody heard
+       the end of. A child putting her finger on the screen must BE acknowledged, exactly as it
+       was before streaming: she heard it and chose to stop. Without this the stop path burns a
+       delivery attempt every time, and after five `GET /next` filters the message out while
+       `GET /waiting` still counts it — a pop-up that returns every thirty seconds and that no
+       tap can ever satisfy. */
+    s_stopped = true;
     s_run = false;
     audio_stop();
 }

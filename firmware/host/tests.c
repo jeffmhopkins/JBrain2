@@ -21,6 +21,7 @@
 #include "font.h"
 #include "gesture.h"
 #include "orient.h"
+#include "ring.h"
 #include "screen.h"
 #include "rig.h"
 #include "variants.h"
@@ -914,6 +915,188 @@ static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
         const int opposite = (q + 2) % 4;
         CHECK(orient_quarter(opposite, ax, ay) == q, "and reachable from the far side");
     }
+}
+
+/* ---- the playback ring -------------------------------------------------------------- */
+
+#define RING_CAP 64
+
+static void fill_seq(int16_t *out, int n, int start)
+{
+    for (int i = 0; i < n; i++) out[i] = (int16_t)(start + i);
+}
+
+/** Drain the whole ring into `out`, one contiguous run at a time, as the audio task does. */
+static int drain(ring_t *r, int16_t *out, int want)
+{
+    int got = 0;
+    while (got < want) {
+        int at = 0;
+        const int run = ring_read_run(r, want - got, &at);
+        if (run <= 0) break;
+        for (int i = 0; i < run; i++) out[got + i] = r->buf[at + i];
+        ring_advance(r, run);
+        got += run;
+    }
+    return got;
+}
+
+static void test_an_empty_ring_and_a_full_one_are_not_the_same_answer(void)
+{
+    /* The classic ring bug, and the reason the cursors count rather than index: two indices
+       that have met could mean either, and picking wrong either ends a child's message early
+       or overwrites the second she is listening to. */
+    int16_t buf[RING_CAP];
+    int16_t in[RING_CAP];
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    CHECK(ring_filled(&r) == 0, "a fresh ring is empty");
+
+    fill_seq(in, RING_CAP, 1);
+    CHECK(ring_write(&r, in, RING_CAP * 2) == RING_CAP * 2, "a full ring's worth is accepted");
+    CHECK(ring_filled(&r) == RING_CAP, "and it reads as full, not as empty");
+    CHECK(ring_write(&r, in, 2) == 0, "a full ring refuses rather than overwriting");
+}
+
+static void test_what_goes_in_comes_out_in_order_across_the_wrap(void)
+{
+    /* THE WRAP IS WHERE THIS GOES WRONG QUIETLY. An off-by-one plays a fragment of an earlier
+       second in the middle of a message — not a crash, not a log line, just a child hearing
+       something her father did not say. Written and drained in sizes that do not divide the
+       capacity, so the seam lands somewhere different every pass. */
+    int16_t buf[RING_CAP];
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+
+    int16_t in[7];
+    int16_t out[7];
+    int next = 0;
+    for (int pass = 0; pass < 50; pass++) {
+        fill_seq(in, 7, next);
+        CHECK(ring_write(&r, in, 7 * 2) == 7 * 2, "a small write always fits a drained ring");
+        CHECK(drain(&r, out, 7) == 7, "and comes straight back out");
+        for (int i = 0; i < 7; i++) {
+            CHECK(out[i] == (int16_t)(next + i), "every sample survives the wrap, in order");
+        }
+        next += 7;
+    }
+}
+
+static void test_a_partial_write_reports_what_it_took(void)
+{
+    /* The producer offers the rest of what it read; a wrong count here silently drops audio
+       out of the middle of a message. */
+    int16_t buf[RING_CAP];
+    int16_t in[RING_CAP];
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    fill_seq(in, RING_CAP, 100);
+
+    CHECK(ring_write(&r, in, (RING_CAP - 10) * 2) == (RING_CAP - 10) * 2, "most of it fits");
+    const int took = ring_write(&r, in, 40 * 2);
+    CHECK(took == 10 * 2, "and the rest takes exactly the room that was left");
+    CHECK(ring_filled(&r) == RING_CAP, "which fills it");
+}
+
+static void test_a_lone_byte_is_refused_so_the_caller_must_carry_it(void)
+{
+    /* THE SHARP EDGE THAT CAUSED A HANG, pinned so it cannot be forgotten twice.
+     *
+     * This ring deals in SAMPLES, so a single byte is not a unit it can take — and a caller
+     * that treats the refusal as "full, try again" spins forever. That is exactly what
+     * `jpanel.c`'s pump did on its first cut: `esp_http_client_read` returns whatever the
+     * transport has, which on a timeout or a FIN mid-body is routinely an odd count, and the
+     * lone trailing byte was offered every 20 ms to a ring that would never take it — on the
+     * task that also polls, sends and acknowledges.
+     *
+     * The fix is in the caller (it carries the odd byte into the next read, which is also the
+     * only way the samples stay aligned). What is fixed HERE is the contract being explicit,
+     * so the next person to write a producer learns it from a test rather than from a panel
+     * that stopped answering. */
+    int16_t buf[RING_CAP];
+    const uint8_t one = 0x7F;
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    CHECK(ring_write(&r, &one, 1) == 0, "a lone byte is not a sample and is refused");
+    CHECK(ring_filled(&r) == 0, "and nothing is consumed by the attempt");
+
+    /* An odd count takes the whole samples and leaves the last byte, which the caller must
+       notice: the RETURN is what says how much was taken, never the argument. */
+    const uint8_t three[3] = {1, 2, 3};
+    CHECK(ring_write(&r, three, 3) == 2, "an odd write reports the even part it took");
+    CHECK(ring_filled(&r) == 1, "one sample in");
+}
+
+static void test_a_read_run_never_crosses_the_seam(void)
+{
+    /* The codec is handed a POINTER, not a callback, so a run that wrapped would play the
+       wrong memory. The reader asks for a chunk and is given however much is contiguous. */
+    int16_t buf[RING_CAP];
+    int16_t in[RING_CAP];
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    fill_seq(in, RING_CAP, 1);
+
+    /* Put the read cursor near the end so the next fill straddles the seam. */
+    ring_write(&r, in, RING_CAP * 2);
+    int16_t sink[RING_CAP];
+    drain(&r, sink, RING_CAP - 5);
+    ring_write(&r, in, (RING_CAP - 5) * 2);
+
+    int at = 0;
+    const int run = ring_read_run(&r, RING_CAP, &at);
+    CHECK(run > 0, "there is something to play");
+    CHECK(at + run <= RING_CAP, "and the run stays inside the buffer");
+}
+
+static void test_an_empty_ring_offers_nothing_rather_than_garbage(void)
+{
+    int16_t buf[RING_CAP];
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    int at = 99;
+    CHECK(ring_read_run(&r, 16, &at) == 0, "nothing to play");
+    CHECK(at == 0, "and a start index that cannot be used by accident");
+    ring_advance(&r, 0);
+    CHECK(ring_filled(&r) == 0, "advancing nothing changes nothing");
+}
+
+static void test_the_cursors_survive_their_own_wrap(void)
+{
+    /* `w` and `r` are uint32 sample counts. At 16 kHz they roll over after about three days
+       of continuous audio — a panel is up for longer than that — and unsigned subtraction has
+       to keep giving the right answer through it. */
+    int16_t buf[RING_CAP];
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    r.w = 0xFFFFFFF0u;
+    r.r = 0xFFFFFFF0u;
+    CHECK(ring_filled(&r) == 0, "empty right before the counters wrap");
+
+    int16_t in[32];
+    fill_seq(in, 32, 7);
+    CHECK(ring_write(&r, in, 32 * 2) == 32 * 2, "a write across the counter wrap is accepted");
+    CHECK(ring_filled(&r) == 32, "and the fill is still counted correctly");
+
+    int16_t out[32];
+    CHECK(drain(&r, out, 32) == 32, "it all comes back");
+    for (int i = 0; i < 32; i++) CHECK(out[i] == (int16_t)(7 + i), "in order, through the wrap");
+    CHECK(ring_filled(&r) == 0, "and the ring is empty again");
+}
+
+static void test_a_reset_empties_it_without_touching_the_bytes(void)
+{
+    /* `audio_stream_abort` is a finger on the screen: stop now, keep nothing. */
+    int16_t buf[RING_CAP];
+    int16_t in[16];
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    fill_seq(in, 16, 3);
+    ring_write(&r, in, 16 * 2);
+    ring_reset(&r);
+    CHECK(ring_filled(&r) == 0, "a reset ring has nothing to play");
+    int at = 0;
+    CHECK(ring_read_run(&r, 16, &at) == 0, "and offers nothing");
 }
 
 /* ---- screen sleep ------------------------------------------------------------------ */
@@ -2965,6 +3148,14 @@ int main(void)
     test_the_open_mouth_is_the_smile_opening();
     test_the_shuffle_is_driven_by_distance_not_by_a_clock();
     test_the_orientation_needs_a_band_crossed_on_purpose();
+    test_an_empty_ring_and_a_full_one_are_not_the_same_answer();
+    test_what_goes_in_comes_out_in_order_across_the_wrap();
+    test_a_partial_write_reports_what_it_took();
+    test_a_lone_byte_is_refused_so_the_caller_must_carry_it();
+    test_a_read_run_never_crosses_the_seam();
+    test_an_empty_ring_offers_nothing_rather_than_garbage();
+    test_the_cursors_survive_their_own_wrap();
+    test_a_reset_empties_it_without_touching_the_bytes();
     test_the_screen_only_ever_gets_darker_with_time();
     test_each_stage_arrives_exactly_when_it_says();
     test_a_long_night_does_not_wrap_back_to_a_lit_screen();

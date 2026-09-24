@@ -2615,11 +2615,18 @@ export interface EndpointFirmware {
   url: string;
 }
 
+/** What a unit IS, chosen at flash time. A `jpet` is one of the twins' panels: it joins the
+ *  roster and can exchange voice messages with its sibling. A `display` is an endpoint the
+ *  owner operates — same OTA, settings and telemetry — that no pet can reach. */
+export type PanelRole = "jpet" | "display";
+
 export interface FlashRequest {
   port: string;
   ssid: string;
   password: string;
   name?: string;
+  /** Defaults to `jpet` on the box, which is what every panel flashed so far is. */
+  role?: PanelRole;
   erase?: boolean;
   /** Keep this network on the box so a panel can be re-flashed without a phone. */
   remember?: boolean;
@@ -2656,6 +2663,7 @@ export interface JpanelMessage {
 export interface PanelStatusOut {
   device_id: string;
   name: string;
+  role: PanelRole;
   /** "" for a panel that has been flashed and has never reported. */
   reported_at: string;
   version: string;
@@ -2666,6 +2674,54 @@ export interface PanelStatusOut {
 
 export interface PanelStatuses {
   panels: PanelStatusOut[];
+}
+
+/** What a rename moved. `keys` is routinely not 1: every flash before retirement landed left
+ *  a live key behind, and they all carry the label, so the owner sees the real number rather
+ *  than wondering why one panel had four. */
+export interface PanelRenamed {
+  device_id: string;
+  name: string;
+  keys: number;
+}
+
+/** The panel font's alphabet, and the reason the rename box refuses anything else: `font.c` has
+ *  5x7 cells for A-Z, the digits, space, hyphen and full stop, and a character it does not have
+ *  draws as NOTHING — so "O'Brien" would reach a four-year-old as a pop-up from someone missing
+ *  a letter. The box refuses these too; this is so the owner finds out while still typing. */
+export const PANEL_NAME_CHARS = /^[A-Za-z0-9 .-]+$/;
+/** The pop-up bubble's arithmetic, not a guess — see `MAX_PANEL_NAME` on the box. */
+export const PANEL_NAME_MAX = 14;
+
+/** Which body a panel comes back as. The gesture on the glass still toggles it live; this is
+ *  the answer the panel STARTS from, which until now was always the ostrich because nothing
+ *  wrote the choice down — so every reboot and every update undid a child who chose the robot. */
+export type PanelForm = "ostrich" | "robot";
+
+/** What one panel's pet is called and what body it wears.
+ *
+ *  `pet_name` IS THE WAKE WORD. The panel's `vocab.c` builds its listen phrase as `hey <name>`,
+ *  and the label above the pet's head is the last word of that phrase — so renaming the pet
+ *  changes what a four-year-old SAYS to it, not just what is written on the glass. Empty means
+ *  "whatever the firmware shipped with", never "no name": a blank would leave a child saying
+ *  something the panel cannot hear. */
+export interface PanelAppearance {
+  pet_name: string;
+  form: PanelForm;
+}
+
+/** Letters and spaces only, and short. TWO unrelated systems constrain this and the stricter one
+ *  wins: the panel's 5x7 font has no glyph for an apostrophe and draws it as NOTHING, and the
+ *  wake word runs through MultiNet, which matches phonemes — so digits and punctuation are not
+ *  sayable at all. The box refuses the same set; this is so the owner finds out while typing. */
+export const PET_NAME_CHARS = /^[A-Za-z][A-Za-z ]*$/;
+export const PET_NAME_MAX = 12;
+
+/** What a revoke retired: the unit's name, and how many live keys it had. More than one is
+ *  normal for a panel flashed repeatedly before the flash began retiring what it replaced. */
+export interface PanelRevoked {
+  name: string;
+  keys: number;
 }
 
 /** One panel's thread: the messaging surface is grouped by panel because "which twin,
@@ -5002,6 +5058,50 @@ export const api = {
   async panelStatus(): Promise<PanelStatuses> {
     const response = await request("/api/endpoint/status");
     return (await response.json()) as PanelStatuses;
+  },
+
+  // NAME A PANEL, with no cable and no re-flash. The name lives on the BOX — `/flash` writes
+  // `panel <name>` onto the device key — so a unit enrolled without one answers to "the other
+  // one" until this is used. Moves EVERY key under the old label, which is why `keys` comes back.
+  async renamePanel(deviceId: string, name: string): Promise<PanelRenamed> {
+    const response = await request(`/api/jpanel/panels/${encodeURIComponent(deviceId)}/name`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    return (await response.json()) as PanelRenamed;
+  },
+
+  // WHAT THIS PANEL'S PET IS CALLED AND WHAT IT LOOKS LIKE. Read before showing the form, so the
+  // PWA opens on the truth rather than on a default that would overwrite a real setting the
+  // moment the owner pressed save.
+  async panelAppearance(deviceId: string): Promise<PanelAppearance> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/appearance`,
+    );
+    return (await response.json()) as PanelAppearance;
+  },
+
+  async setPanelAppearance(deviceId: string, body: PanelAppearance): Promise<PanelAppearance> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/appearance`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    return (await response.json()) as PanelAppearance;
+  },
+
+  // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for
+  // that name, which is what the row means: the fleet collapses a panel's flashes into one
+  // row, so revoking it retires the unit rather than the single key the row was drawn from.
+  async revokePanel(deviceId: string): Promise<PanelRevoked> {
+    const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/revoke`, {
+      method: "POST",
+    });
+    return (await response.json()) as PanelRevoked;
   },
 
   // ===== jpanel messages (docs/plans/JPANEL_PLAN.md §3b) =====

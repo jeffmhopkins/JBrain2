@@ -115,6 +115,6 @@ describe("toPanelPcm", () => {
   it("agrees with the box about how long a message may be", () => {
     /* `MAX_MESSAGE_MS` in backend/src/jbrain/api/jpanel.py. If the box's ceiling drops below
        this, a recording is cut on arrival with nothing said about it. */
-    expect(MAX_MESSAGE_MS).toBe(20_000);
+    expect(MAX_MESSAGE_MS).toBe(30_000);
   });
 });
