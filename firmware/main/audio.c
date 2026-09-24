@@ -111,7 +111,7 @@ static const char *TAG = "audio";
    direction — two objects writing the same chip's registers over the same I2C bus. A single
    IN_OUT device is the same hardware with one owner. */
 static esp_codec_dev_handle_t s_codec;
-/* Kept so the ALC can be read back from the audio task — see `alc_settle()`. */
+/* Kept so the ALC can be read back from the audio task — see `alc_apply()`. */
 static const audio_codec_ctrl_if_t *s_ctrl;
 
 /* THE RECORDING. Ten seconds, and the box enforces the same cap: the panel must not fill
@@ -520,7 +520,27 @@ const char *audio_alc_state(void)
     return s_alc;
 }
 
-static void alc_settle(void)
+/* What the box last asked for, so a re-apply after a settings fetch knows which way to go.
+   Off until told otherwise, which is the state this panel has always been in. */
+static bool s_alc_want;
+
+/* ENABLE OR DISABLE THE CODEC'S OWN AGC, and read back what actually happened.
+ *
+ * The owner: *"we need the auto gain control from panel mic too, it was way too quiet."* Both
+ * panels run `mic_gain_db = 30` and their last readings were `mic_peak` 32767 — full scale,
+ * clipping — and 814. One constant cannot serve both; that is what an ALC is for.
+ *
+ * ONLY BIT 7 IS TOUCHED, and the restraint is deliberate. REG18's lower bits are the window
+ * size and REG19 is the max level, and this firmware has no datasheet behind it — only the
+ * register map's one-line names. Writing values nobody here can justify is how the four
+ * unverified settings above got their comment ("set and never read back, and every wrong
+ * diagnosis traced to exactly that"). So the window and the target keep the chip's own
+ * defaults, the enable bit moves, and `mic_peak` in telemetry says whether it helped. If the
+ * defaults turn out wrong, that will be visible in the number rather than guessed at twice.
+ *
+ * Read back either way, because a write this chip refuses must not read as a write that
+ * worked — that distinction is the entire value of the telemetry field. */
+static void alc_apply(void)
 {
     if (s_ctrl == NULL || s_ctrl->read_reg == NULL || s_ctrl->write_reg == NULL) {
         ESP_LOGW(TAG, "alc: no control interface; state unknown");
@@ -534,12 +554,14 @@ static void alc_settle(void)
         return;
     }
     const uint8_t before = v;
-    if ((v & ES8311_ALC_ENABLE) == 0) {
-        ESP_LOGI(TAG, "alc: already off (reg18 0x%02x)", before);
-        snprintf(s_alc, sizeof(s_alc), "%02x already-off", before);
+    const bool on_now = (before & ES8311_ALC_ENABLE) != 0;
+    if (on_now == s_alc_want) {
+        ESP_LOGI(TAG, "alc: already %s (reg18 0x%02x)", on_now ? "on" : "off", before);
+        snprintf(s_alc, sizeof(s_alc), "%02x already-%s", before, on_now ? "on" : "off");
         return;
     }
-    v = (uint8_t)(before & (uint8_t)~ES8311_ALC_ENABLE);
+    v = s_alc_want ? (uint8_t)(before | ES8311_ALC_ENABLE)
+                   : (uint8_t)(before & (uint8_t)~ES8311_ALC_ENABLE);
     if (s_ctrl->write_reg(s_ctrl, ES8311_REG_ALC, 1, &v, 1) != 0) {
         ESP_LOGW(TAG, "alc: write REFUSED (reg18 still 0x%02x)", before);
         snprintf(s_alc, sizeof(s_alc), "%02x REFUSED", before);
@@ -551,10 +573,18 @@ static void alc_settle(void)
         snprintf(s_alc, sizeof(s_alc), "%02x no-readback", before);
         return;
     }
-    ESP_LOGI(TAG, "alc: 0x%02x -> 0x%02x (%s)", before, after,
-             (after & ES8311_ALC_ENABLE) ? "STILL ON" : "off");
-    snprintf(s_alc, sizeof(s_alc), "%02x-%02x %s", before, after,
-             (after & ES8311_ALC_ENABLE) ? "STILL-ON" : "off");
+    const bool landed = ((after & ES8311_ALC_ENABLE) != 0) == s_alc_want;
+    ESP_LOGI(TAG, "alc: 0x%02x -> 0x%02x (%s%s)", before, after, s_alc_want ? "on" : "off",
+             landed ? "" : " REFUSED");
+    snprintf(s_alc, sizeof(s_alc), "%02x-%02x %s%s", before, after, s_alc_want ? "on" : "off",
+             landed ? "" : "-REFUSED");
+}
+
+void audio_set_agc(bool on)
+{
+    if (on == s_alc_want) return; /* the box says this every fetch; only a CHANGE costs a write */
+    s_alc_want = on;
+    alc_apply();
 }
 
 /* Chunks to ignore after the speaker runs. The codec routes the DAC into the ADC by design
@@ -570,7 +600,7 @@ static void audio_task(void *arg)
     (void)arg;
     /* From THIS task, before the loop. esp_codec_dev has no lock of any kind, so a register
        poke from anywhere else is the race that panicked a panel on 2026-09-21. */
-    alc_settle();
+    alc_apply();
     while (true) {
         if (s_play_pos < s_play_len) {
             /* ONE CHUNK PER PASS, NOT THE WHOLE REPLY. `esp_codec_dev_write` blocks, so

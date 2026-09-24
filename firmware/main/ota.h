@@ -53,6 +53,11 @@ typedef struct {
     int mic_gain_db; /* 0..42; the ES8311's PGA quantises to 6 dB steps */
     int brightness;  /* 0..255, written to the panel's 0x51 */
     int debug_overlay; /* draw the microphone meter; 0 unless the owner switched it on */
+    /* The codec's own AGC; 0 unless the owner switched it on. Absent means OFF rather than
+       "leave it", like `debug_overlay` above and unlike the two below: it is a switch that has
+       to work in both directions, and a box that stopped sending it must not leave a panel
+       stuck with gain the owner turned off. */
+    int mic_agc;
     /* THE PET'S NAME, WHICH IS THE WAKE WORD. `vocab.c` compiles in "hey fish" and
        `vocab_name()` takes the last word of it for the label above the pet's head, so this
        renames the creature in the sense that matters to a four-year-old: what she says to it.

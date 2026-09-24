@@ -40,6 +40,18 @@ bool audio_start(void);
    would hide a bad one. */
 void audio_set_levels(int volume, int mic_gain_db);
 
+/* Turn the codec's own AGC on or off (ES8311 REG18 bit 7), and read back what happened.
+ *
+ * It has never been on: `es8311.c` never writes that register, so it has sat at the chip's
+ * reset default since first bring-up, and telemetry has reported `00 already-off` on every
+ * panel. A fixed PGA cannot serve two units whose last readings were `mic_peak` 32767 and 814
+ * on the same gain, which is what this exists for.
+ *
+ * Idempotent: the box sends its answer on every settings fetch, and only a CHANGE costs a
+ * register write. `audio_alc_state()` carries the outcome into telemetry either way — including
+ * when the chip refuses, which must never read as a write that worked. */
+void audio_set_agc(bool on);
+
 
 
 

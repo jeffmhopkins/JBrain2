@@ -105,6 +105,8 @@ function box(
     revoke?: () => Response;
     appearance?: unknown;
     appearancePut?: (init?: RequestInit) => Response;
+    settings?: unknown;
+    settingsPut?: (sent: Record<string, unknown>) => Response;
   } = {},
 ) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -137,6 +139,21 @@ function box(
           : json({ pet_name: "Pip", form: "robot" });
       }
       return json(opts.appearance ?? { pet_name: "", form: "ostrich" });
+    }
+    if (path === "/api/endpoint/settings") {
+      if (method === "PUT") {
+        const sent = JSON.parse(String(init?.body));
+        return opts.settingsPut ? opts.settingsPut(sent) : json(sent);
+      }
+      return json(
+        opts.settings ?? {
+          volume: 70,
+          mic_gain_db: 30,
+          brightness: 255,
+          debug_overlay: false,
+          mic_agc: false,
+        },
+      );
     }
     if (path === "/api/endpoint/ports") return json({ ports: [], flasher: true });
     if (path === "/api/endpoint/firmware") return json({ version: "0.2.0", url: "https://box/fw" });
@@ -798,5 +815,83 @@ describe("the pet on a panel", () => {
     await openPet();
     expect(((await screen.findByLabelText(/Its name/)) as HTMLInputElement).value).toBe("Nim");
     expect((screen.getByRole("radio", { name: "Robot" }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe("the shared panel knobs", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function openPanels(): Promise<void> {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+    await screen.findByText("the other one");
+  }
+
+  it("turns the microphone AGC on, which nothing outside the debug console could do", async () => {
+    /* The owner: "we need the auto gain control from panel mic too, it was way too quiet."
+       Both panels run the same gain and their last readings were a clipping 32767 and a
+       near-silent 814 — one constant cannot serve both. Reachable from the PWA because the
+       owner has no terminal, and a setting he cannot reach is a setting he does not have. */
+    const sent: Record<string, unknown>[] = [];
+    fetchMock.mockImplementation(
+      box({
+        settingsPut: (body) => {
+          sent.push(body);
+          return json(body);
+        },
+      }),
+    );
+    await openPanels();
+
+    const agc = (await screen.findByRole("checkbox", {
+      name: /Automatic microphone gain/,
+    })) as HTMLInputElement;
+    expect(agc.checked).toBe(false);
+    fireEvent.click(agc);
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.mic_agc).toBe(true);
+    // The other knobs ride along unchanged rather than being reset to defaults by a partial PUT.
+    expect(sent[0]?.volume).toBe(70);
+    expect(sent[0]?.mic_gain_db).toBe(30);
+  });
+
+  it("shows what the box CLAMPED, not what was asked for", async () => {
+    /* The box clamps rather than rejects. Echoing the typed number back would let a value that
+       was silently capped read as a control that ignored you. */
+    fetchMock.mockImplementation(
+      box({
+        settings: {
+          volume: 70,
+          mic_gain_db: 30,
+          brightness: 255,
+          debug_overlay: false,
+          mic_agc: false,
+        },
+        settingsPut: () =>
+          json({
+            volume: 70,
+            mic_gain_db: 42,
+            brightness: 255,
+            debug_overlay: false,
+            mic_agc: false,
+          }),
+      }),
+    );
+    await openPanels();
+
+    const gain = (await screen.findByLabelText(/Microphone gain/)) as HTMLInputElement;
+    fireEvent.change(gain, { target: { value: "99" } });
+    fireEvent.pointerUp(gain);
+
+    await waitFor(() => expect(screen.getByText("42 dB")).toBeInTheDocument());
   });
 });

@@ -2693,6 +2693,20 @@ export const PANEL_NAME_CHARS = /^[A-Za-z0-9 .-]+$/;
 /** The pop-up bubble's arithmetic, not a guess — see `MAX_PANEL_NAME` on the box. */
 export const PANEL_NAME_MAX = 14;
 
+/** The knobs every panel in the house shares — one row on the box, not per panel.
+ *
+ *  `mic_agc` is the codec's own automatic gain control (ES8311 REG18 bit 7), which has never
+ *  been on: the driver never writes that register, so it has sat at the chip's reset default
+ *  since first bring-up. A fixed PGA cannot serve two panels whose last readings were a
+ *  clipping 32767 and a near-silent 814 on the same gain. */
+export interface EndpointSettings {
+  volume: number;
+  mic_gain_db: number;
+  brightness: number;
+  debug_overlay: boolean;
+  mic_agc: boolean;
+}
+
 /** Which body a panel comes back as. The gesture on the glass still toggles it live; this is
  *  the answer the panel STARTS from, which until now was always the ostrich because nothing
  *  wrote the choice down — so every reboot and every update undid a child who chose the robot. */
@@ -5058,6 +5072,24 @@ export const api = {
   async panelStatus(): Promise<PanelStatuses> {
     const response = await request("/api/endpoint/status");
     return (await response.json()) as PanelStatuses;
+  },
+
+  // THE SHARED PANEL KNOBS. Owner-only, and until now reachable ONLY from the debug console —
+  // which needs a token, which the owner has to be handed. That is the same no-terminal gap
+  // (CLAUDE.md #10) that hid revoke on the Location screen, so the controls come with the
+  // setting rather than after it.
+  async endpointSettings(): Promise<EndpointSettings> {
+    const response = await request("/api/endpoint/settings");
+    return (await response.json()) as EndpointSettings;
+  },
+
+  async setEndpointSettings(body: EndpointSettings): Promise<EndpointSettings> {
+    const response = await request("/api/endpoint/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return (await response.json()) as EndpointSettings;
   },
 
   // NAME A PANEL, with no cable and no re-flash. The name lives on the BOX — `/flash` writes

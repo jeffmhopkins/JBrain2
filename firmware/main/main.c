@@ -78,6 +78,7 @@ static void apply_settings(const cfg_t *cfg)
     if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
     if (st.brightness >= 0) display_set_brightness(st.brightness);
     display_set_debug_overlay(st.debug_overlay != 0);
+    audio_set_agc(st.mic_agc != 0);
     if (st.form >= 0) display_set_form(st.form);
     /* RENAMING THE PET IS RENAMING THE WAKE WORD, so the model has to be told and the label
        above his head has to be redrawn. `vocab_set_name` answers false when the phrase is
