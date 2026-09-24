@@ -11,7 +11,10 @@
 >
 > **§5's open roster item is closed** (migration 0211): a device now records whether it is a
 > phone, one of the twins' pets, or a display the owner operates, and panels are managed on the
-> fleet view — revoke included — rather than on the Location screen's phone list.
+> jpanel screen's **Panels** tab — rename, pet name, body and revoke — rather than on the
+> Location screen's phone list. `vocab.c`'s own open note is closed with it (migration 0212,
+> firmware 0.3.00): the wake word is a per-panel setting, so the pet can be renamed without a
+> cable, and the chosen body survives a reboot.
 
 The owner, across two asks:
 
@@ -317,7 +320,22 @@ Three tabs:
   agree about what was said.
 - **Panels** — the units themselves, one row per unit (the fleet route already collapses a
   panel's flashes, so this reads that rather than deriving it a second time): name, role,
-  firmware, last seen, and the two things the owner can do to one — **rename** and **revoke**.
+  firmware, last seen, and what the owner can do to one — **rename**, **its pet** (the
+  creature's name and which body it wears) and **revoke**.
+
+  **The panel's name and the pet's name are different things**, and the buttons say so. The
+  panel's is which unit this is: the heading on the thread, what a sibling's pop-up reads out.
+  The pet's IS THE WAKE WORD — `vocab.c` builds its listen phrase as `hey <name>` and the label
+  above the creature's head is the last word of it — so renaming the pet changes what a
+  four-year-old says to the thing on her wall. That file asked for this the day it was written:
+  *"a name only a rebuild can change is a name they cannot change, and the two panels will want
+  different ones."* A rebuild is a cable.
+
+  **The body is a DEFAULT, not a lock.** Four taps and a hold still swaps it on the glass; this
+  is what the panel comes back as, which until `endpoint_panel` existed was always the ostrich
+  because nothing wrote the choice down — so every reboot and every OTA quietly undid a child
+  who had chosen the robot. The panel may read that row and not write it, which is what keeps
+  the gesture from promoting itself into a setting nobody made on purpose.
   Added late, and the reason is worth keeping: both used to live somewhere else or nowhere.
   Revoke was on the LOCATION screen's phone list, because panels are the same
   `Subject(kind='device')` substrate as an OwnTracks phone — under a swipe rail, among one row

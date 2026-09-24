@@ -24,6 +24,10 @@ import {
   type JpanelThread,
   PANEL_NAME_CHARS,
   PANEL_NAME_MAX,
+  PET_NAME_CHARS,
+  PET_NAME_MAX,
+  type PanelAppearance,
+  type PanelForm,
   type PanelStatusOut,
   api,
   jpanelAudioUrl,
@@ -627,9 +631,121 @@ function PanelsTab() {
   );
 }
 
-/** One unit: what it is, what it last said, and the two things the owner can do to it. */
+/** THE PET ITSELF: what it is called, and which body it wears.
+ *
+ * `pet_name` is the WAKE WORD, so this is not a caption — it changes what a four-year-old says
+ * to the thing on her wall. The panel's `vocab.c` has wanted this since it was written: *"a name
+ * only a rebuild can change is a name they cannot change, and the two panels will want different
+ * ones."* A rebuild is a cable, and the owner has no terminal.
+ *
+ * Both fields save together in one PUT, because they are one question — "what is this pet" —
+ * and two saves would let the owner leave the panel half-changed while walking away from it. */
+function PetEditor({
+  panel,
+  onDone,
+}: {
+  panel: PanelStatusOut;
+  onDone: () => void;
+}) {
+  const [look, setLook] = useState<PanelAppearance | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Read before editing: opening on a default would overwrite a real setting the moment the
+  // owner pressed save without ever showing him what he was replacing.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const got = await api.panelAppearance(panel.device_id);
+        if (!cancelled) setLook(got);
+      } catch {
+        if (!cancelled) setError("Could not read this panel's pet.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [panel.device_id]);
+
+  if (error !== null && look === null) return <p className="jp-panel-error">{error}</p>;
+  if (look === null) return <p className="jp-panel-hint">Reading…</p>;
+
+  const trimmed = look.pet_name.trim();
+  // Empty is ALLOWED and means "leave it as the firmware shipped" — a blank name would otherwise
+  // leave a child saying something the panel cannot hear.
+  const nameOk = trimmed === "" || (trimmed.length <= PET_NAME_MAX && PET_NAME_CHARS.test(trimmed));
+
+  async function save(): Promise<void> {
+    if (!nameOk || busy || look === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setPanelAppearance(panel.device_id, { ...look, pet_name: trimmed });
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save it.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="jp-panel-rename">
+      <label>
+        Its name
+        <input
+          value={look.pet_name}
+          maxLength={PET_NAME_MAX}
+          placeholder="fish"
+          onChange={(e) => setLook({ ...look, pet_name: e.target.value })}
+        />
+      </label>
+      {/* SAID OUT LOUD, NOT JUST WRITTEN. Worth stating plainly on the screen where it is
+          chosen: the owner is picking a word two four-year-olds have to be able to say and a
+          speech model has to be able to hear, and a name that reads well can still land badly. */}
+      <p className="jp-panel-hint">
+        This is what they <strong>say</strong> to it — the panel listens for &ldquo;hey{" "}
+        {trimmed.toLowerCase() || "fish"}&rdquo;. Letters and spaces only, {PET_NAME_MAX} at most.
+        Leave it empty to keep the name it shipped with.
+      </p>
+
+      <fieldset className="jp-form-pick">
+        <legend>Its body</legend>
+        {(["ostrich", "robot"] as PanelForm[]).map((f) => (
+          <label className="jp-radio" key={f}>
+            <input
+              type="radio"
+              name={`form-${panel.device_id}`}
+              checked={look.form === f}
+              onChange={() => setLook({ ...look, form: f })}
+            />
+            <span>{f === "ostrich" ? "Ostrich" : "Robot"}</span>
+          </label>
+        ))}
+      </fieldset>
+      {/* The gesture is not being taken away, and saying so stops this reading as a lock. */}
+      <p className="jp-panel-hint">
+        What it comes back as after a restart. Four taps and a hold on the panel still swaps the
+        body there and then.
+      </p>
+
+      <div className="jp-panel-actions">
+        <button type="button" disabled={!nameOk || busy} onClick={() => void save()}>
+          {busy ? "saving…" : "save"}
+        </button>
+        <button type="button" onClick={onDone}>
+          cancel
+        </button>
+      </div>
+      {error !== null && <p className="jp-panel-error">{error}</p>}
+    </div>
+  );
+}
+
+/** One unit: what it is, what it last said, and the things the owner can do to it. */
 function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () => void }) {
   const [renaming, setRenaming] = useState(false);
+  const [editingPet, setEditingPet] = useState(false);
   const [draft, setDraft] = useState(panel.name);
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -721,6 +837,14 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
             </button>
           </div>
         </div>
+      ) : editingPet ? (
+        <PetEditor
+          panel={panel}
+          onDone={() => {
+            setEditingPet(false);
+            onChanged();
+          }}
+        />
       ) : (
         <div className="jp-panel-actions">
           <button
@@ -732,6 +856,20 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
             }}
           >
             rename
+          </button>
+          {/* THE PANEL'S NAME AND THE PET'S NAME ARE DIFFERENT THINGS, and the labels have to
+              carry that: "rename" is which unit this is — the heading on the thread, what a
+              sibling's pop-up reads out — while this is the creature on the glass and the word
+              the twins say to it. Two buttons a finger apart doing near-identical-sounding
+              things is how the wrong one gets pressed. */}
+          <button
+            type="button"
+            onClick={() => {
+              setArmed(false);
+              setEditingPet(true);
+            }}
+          >
+            its pet
           </button>
           <button
             type="button"

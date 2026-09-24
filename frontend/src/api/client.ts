@@ -2693,6 +2693,30 @@ export const PANEL_NAME_CHARS = /^[A-Za-z0-9 .-]+$/;
 /** The pop-up bubble's arithmetic, not a guess — see `MAX_PANEL_NAME` on the box. */
 export const PANEL_NAME_MAX = 14;
 
+/** Which body a panel comes back as. The gesture on the glass still toggles it live; this is
+ *  the answer the panel STARTS from, which until now was always the ostrich because nothing
+ *  wrote the choice down — so every reboot and every update undid a child who chose the robot. */
+export type PanelForm = "ostrich" | "robot";
+
+/** What one panel's pet is called and what body it wears.
+ *
+ *  `pet_name` IS THE WAKE WORD. The panel's `vocab.c` builds its listen phrase as `hey <name>`,
+ *  and the label above the pet's head is the last word of that phrase — so renaming the pet
+ *  changes what a four-year-old SAYS to it, not just what is written on the glass. Empty means
+ *  "whatever the firmware shipped with", never "no name": a blank would leave a child saying
+ *  something the panel cannot hear. */
+export interface PanelAppearance {
+  pet_name: string;
+  form: PanelForm;
+}
+
+/** Letters and spaces only, and short. TWO unrelated systems constrain this and the stricter one
+ *  wins: the panel's 5x7 font has no glyph for an apostrophe and draws it as NOTHING, and the
+ *  wake word runs through MultiNet, which matches phonemes — so digits and punctuation are not
+ *  sayable at all. The box refuses the same set; this is so the owner finds out while typing. */
+export const PET_NAME_CHARS = /^[A-Za-z][A-Za-z ]*$/;
+export const PET_NAME_MAX = 12;
+
 /** What a revoke retired: the unit's name, and how many live keys it had. More than one is
  *  normal for a panel flashed repeatedly before the flash began retiring what it replaced. */
 export interface PanelRevoked {
@@ -5046,6 +5070,28 @@ export const api = {
       body: JSON.stringify({ name }),
     });
     return (await response.json()) as PanelRenamed;
+  },
+
+  // WHAT THIS PANEL'S PET IS CALLED AND WHAT IT LOOKS LIKE. Read before showing the form, so the
+  // PWA opens on the truth rather than on a default that would overwrite a real setting the
+  // moment the owner pressed save.
+  async panelAppearance(deviceId: string): Promise<PanelAppearance> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/appearance`,
+    );
+    return (await response.json()) as PanelAppearance;
+  },
+
+  async setPanelAppearance(deviceId: string, body: PanelAppearance): Promise<PanelAppearance> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/appearance`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    return (await response.json()) as PanelAppearance;
   },
 
   // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for

@@ -103,6 +103,8 @@ function box(
     panels?: unknown[];
     rename?: (init?: RequestInit) => Response;
     revoke?: () => Response;
+    appearance?: unknown;
+    appearancePut?: (init?: RequestInit) => Response;
   } = {},
 ) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -127,6 +129,14 @@ function box(
     }
     if (/^\/api\/endpoint\/panels\/[^/]+\/revoke$/.test(path) && method === "POST") {
       return opts.revoke ? opts.revoke() : json({ name: "Ellie", keys: 13 });
+    }
+    if (/^\/api\/endpoint\/panels\/[^/]+\/appearance$/.test(path)) {
+      if (method === "PUT") {
+        return opts.appearancePut
+          ? opts.appearancePut(init)
+          : json({ pet_name: "Pip", form: "robot" });
+      }
+      return json(opts.appearance ?? { pet_name: "", form: "ostrich" });
     }
     if (path === "/api/endpoint/ports") return json({ ports: [], flasher: true });
     if (path === "/api/endpoint/firmware") return json({ version: "0.2.0", url: "https://box/fw" });
@@ -696,5 +706,97 @@ describe("the Panels tab", () => {
     expect(await screen.findByText("Jeff")).toBeInTheDocument();
     expect(screen.getByText("display")).toBeInTheDocument();
     expect(screen.getByText("never reported")).toBeInTheDocument();
+  });
+});
+
+describe("the pet on a panel", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function openPet(): Promise<void> {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+    await screen.findByText("the other one");
+    fireEvent.click(screen.getAllByRole("button", { name: "its pet" })[0] as HTMLElement);
+  }
+
+  it("renames the pet and picks its body in one save", async () => {
+    /* THE NAME IS THE WAKE WORD. `vocab.c` builds its listen phrase as `hey <name>` and the
+       label above the pet's head is the last word of it, so this changes what a four-year-old
+       SAYS to the thing on her wall — which is why the file asked for it and why a rebuild,
+       being a cable, was never an answer. Both fields go in one PUT because they are one
+       question; two saves would let the owner walk away half-changed. */
+    const sent: unknown[] = [];
+    fetchMock.mockImplementation(
+      box({
+        appearance: { pet_name: "", form: "ostrich" },
+        appearancePut: (init) => {
+          sent.push(JSON.parse(String(init?.body)));
+          return json({ pet_name: "Pip", form: "robot" });
+        },
+      }),
+    );
+    await openPet();
+
+    const name = await screen.findByLabelText(/Its name/);
+    fireEvent.change(name, { target: { value: "Pip" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Robot" }));
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(sent).toEqual([{ pet_name: "Pip", form: "robot" }]));
+  });
+
+  it("shows what they will have to say, as they type it", async () => {
+    /* The owner is choosing a word two four-year-olds must be able to say and a speech model
+       must be able to hear. Showing the phrase makes that concrete while there is still time to
+       pick a different one. */
+    fetchMock.mockImplementation(box({ appearance: { pet_name: "", form: "ostrich" } }));
+    await openPet();
+    fireEvent.change(await screen.findByLabelText(/Its name/), { target: { value: "Pip" } });
+    expect(screen.getByText(/hey pip/i)).toBeInTheDocument();
+  });
+
+  it("refuses a name the font cannot draw and the model cannot hear", async () => {
+    /* Two unrelated systems constrain this and the stricter wins: the 5x7 font has no glyph for
+       an apostrophe and draws it as NOTHING, and MultiNet matches phonemes, so digits are not
+       sayable at all. Caught while typing rather than after a round trip. */
+    fetchMock.mockImplementation(box({ appearance: { pet_name: "", form: "ostrich" } }));
+    await openPet();
+    const name = await screen.findByLabelText(/Its name/);
+
+    fireEvent.change(name, { target: { value: "R2D2" } });
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(name, { target: { value: "Pip" } });
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("allows an empty name, which keeps the one the firmware shipped with", async () => {
+    /* Empty must not mean "no name": a blank would leave a child saying something the panel
+       cannot hear at all. It means "leave it alone", and the box reads it the same way. */
+    fetchMock.mockImplementation(box({ appearance: { pet_name: "Pip", form: "robot" } }));
+    await openPet();
+    fireEvent.change(await screen.findByLabelText(/Its name/), { target: { value: "" } });
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("opens on what the panel actually has, not on a default", async () => {
+    /* Opening on a default would overwrite a real setting the moment the owner pressed save,
+       without ever showing him what he was replacing. */
+    fetchMock.mockImplementation(box({ appearance: { pet_name: "Nim", form: "robot" } }));
+    await openPet();
+    expect(((await screen.findByLabelText(/Its name/)) as HTMLInputElement).value).toBe("Nim");
+    expect((screen.getByRole("radio", { name: "Robot" }) as HTMLInputElement).checked).toBe(true);
   });
 });
