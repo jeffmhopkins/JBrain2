@@ -3,10 +3,16 @@
 // back and manages the paired phones.
 //
 // The Phones tab (docs/mocks/phone-management/b-swipe-rail.html) is a swipe-rail
-// list with an Active / Revoked filter: swipe a phone left for re-pair · rename ·
-// revoke · delete. "Re-pair" rolls a fresh pairing code (rotating the phone's key
-// when it redeems) — the only way to rotate a paired phone's credential. The
+// list with an Active / Revoked filter: tap a phone, or swipe it left, for re-pair ·
+// rename · revoke · delete. "Re-pair" rolls a fresh pairing code (rotating the phone's
+// key when it redeems) — the only way to rotate a paired phone's credential. The
 // location domain stays on --steel.
+//
+// PHONES ONLY, and it took a while to become true. Panels are the same `Subject(kind='device')`
+// substrate, so this list showed every one ever flashed — one row per flash, each rendering a
+// status line (last fix, battery, speed) that a panel structurally never produces, and the two
+// the owner needed to revoke buried among thirteen identical rows. `/api/locations/devices` now
+// asks for `scope="phones"` (migration 0211); panels are managed on the jpanel screen.
 
 import { QRCodeSVG } from "qrcode.react";
 import { type TouchEvent, useEffect, useRef, useState } from "react";
@@ -202,7 +208,11 @@ function DevicesTab({ deps }: { deps: LocationDeps | undefined }) {
             </button>
           </div>
 
-          <p className="loc-swipe-hint">Swipe a phone left for actions.</p>
+          {/* IT SAID "SWIPE" AND ONLY "SWIPE". The row is a button — a tap opens the same rail —
+              but the hint named the gesture that is hard to discover and hard to land, and the
+              owner went looking for an action he was standing on top of. Tap first, because it
+              is the one that always works. */}
+          <p className="loc-swipe-hint">Tap a phone for actions, or swipe it left.</p>
 
           {shown.length === 0 ? (
             <p className="analysis-quiet">

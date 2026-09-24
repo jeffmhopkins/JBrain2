@@ -736,8 +736,9 @@ class Renamed(BaseModel):
     device_id: str
     name: str
     # HOW MANY KEYS MOVED, because the answer is routinely not one and the owner should see
-    # that rather than wonder. Every `/flash` mints a fresh device key and nothing retires the
-    # old one, so a panel flashed four times is four principals carrying one label.
+    # that rather than wonder. A flash retires the keys it replaces as of migration 0211, but
+    # every flash BEFORE that left its key live, so a panel flashed four times in the old world
+    # is still four principals carrying one label and renaming it moves all four.
     keys: int
 
 

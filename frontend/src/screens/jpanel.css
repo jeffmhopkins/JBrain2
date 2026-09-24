@@ -351,3 +351,117 @@
 .jp-status-stuck {
   color: var(--danger, #c0392b);
 }
+
+/* ===== Panels tab — the units themselves ===== */
+
+.jp-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jp-panel {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2, transparent);
+}
+
+/* A panel that has gone quiet, not one that is broken — dimmed rather than alarmed. The fleet
+   card in Ops is where a fault is diagnosed; this tab is where a unit is named or retired. */
+.jp-panel.quiet {
+  opacity: 0.75;
+}
+
+.jp-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.jp-panel-name {
+  font-weight: 600;
+}
+
+.jp-panel-role {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.jp-panel-seen {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.jp-panel-meta {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.jp-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.jp-panel-actions button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.jp-panel-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Quiet until armed. A revoke that is red on every row reads as an alarm about the fleet; the
+   colour belongs to the moment the owner has actually asked for it. */
+.jp-panel-actions .jp-armed {
+  color: var(--danger, #c0392b);
+  font-weight: 600;
+}
+
+.jp-panel-rename {
+  margin-top: 10px;
+}
+
+.jp-panel-rename label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.jp-panel-rename input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: 400 16px system-ui; /* 16px+ so iOS does not zoom the viewport on focus */
+  color: var(--text);
+  background: var(--surface, transparent);
+}
+
+.jp-panel-hint {
+  margin: 6px 0 0;
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+.jp-panel-error {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--danger, #c0392b);
+}

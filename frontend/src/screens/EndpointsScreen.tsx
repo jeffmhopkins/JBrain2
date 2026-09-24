@@ -327,13 +327,13 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
             )}
 
             {/* WHERE A PANEL GOES AFTER IT IS FLASHED. This screen creates units and had no
-                answer to "and how do I retire one" — which cost the owner an evening looking
-                for a revoke that lived on the Location screen's phone list, under a swipe
-                rail, among one row per flash. One line, because the alternative is a second
-                copy of the fleet list on a screen whose job is a USB cable. */}
+                answer to "and how do I rename or retire one" — which cost the owner an evening
+                looking for a revoke that lived on the Location screen's phone list, under a
+                swipe rail, among one row per flash. One line, because the alternative is a
+                second copy of that list on a screen whose job is a USB cable. */}
             <p className="ep-hint">
-              Flashed panels are listed under <strong>Ops &rarr; Panels</strong>, with what each one
-              last reported — and a revoke, when a unit is finished with.
+              Flashed panels are listed on the <strong>Panels</strong> tab, where one can be renamed
+              or retired.
             </p>
 
             {done && <p className="ep-ok">Done. The panel reboots into the new firmware.</p>}

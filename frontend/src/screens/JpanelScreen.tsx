@@ -1,9 +1,16 @@
 // jpanel — the panels in the house as one surface (docs/plans/JPANEL_PLAN.md).
 //
-// Two tabs, because one door for "the panels in my house" beats two that each do half:
-// Messages (what the twins posted, and what Dad types back) and Flash (the panel
-// flasher, MOVED here rather than rebuilt — it was already its own surface, so it slots
-// in whole).
+// Three tabs, because one door for "the panels in my house" beats several that each do half:
+// Messages (what the twins posted, and what Dad types back), Panels (the units themselves —
+// name them, retire them) and Flash (the panel flasher, MOVED here rather than rebuilt — it
+// was already its own surface, so it slots in whole).
+//
+// Panels exists because managing a panel used to mean the LOCATION screen: panels are the same
+// `Subject(kind='device')` substrate as an OwnTracks phone, so every one ever flashed was listed
+// there, under a swipe rail, beside a status line (last fix, battery, speed) a panel structurally
+// never produces. The owner could not find a revoke at all — "I don't see a way to revoke from
+// PWA" — and there was no rename anywhere, so a unit enrolled without a name answered to "the
+// other one" until somebody re-flashed it over USB. That is a terminal by another name.
 //
 // The messaging half is asymmetric on purpose and the asymmetry is the product: the
 // panels send audio and are read to; the PWA sends TEXT and reads a transcript. A
@@ -11,14 +18,24 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { type JpanelMessage, type JpanelThread, api, jpanelAudioUrl } from "../api/client";
+import {
+  ApiError,
+  type JpanelMessage,
+  type JpanelThread,
+  PANEL_NAME_CHARS,
+  PANEL_NAME_MAX,
+  type PanelStatusOut,
+  api,
+  jpanelAudioUrl,
+} from "../api/client";
 import { MicIcon, PlayIcon, SendIcon, StopIcon } from "../components/icons";
+import { agoLabel, panelHealth } from "../panelStatus";
 import { useForeground } from "../visibility";
 import { MAX_MESSAGE_MS, type Recorder, startRecording } from "../voiceMessage";
 import { EndpointsScreen } from "./EndpointsScreen";
 import "./jpanel.css";
 
-export type JpanelTab = "messages" | "flash";
+export type JpanelTab = "messages" | "panels" | "flash";
 
 interface JpanelScreenProps {
   onClose: () => void;
@@ -562,6 +579,180 @@ function MessagesTab() {
   );
 }
 
+/** THE PANELS THEMSELVES — name one, retire one.
+ *
+ * Read from the fleet route rather than a list of its own: that route already collapses a unit's
+ * flashes into ONE row (`DISTINCT ON (label)`), which is the only reading under which "this
+ * panel" means a thing on a wall rather than a key in a table. A second listing would have had
+ * to re-derive that and would eventually have disagreed with the one in Ops.
+ */
+function PanelsTab() {
+  const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tick is a re-run trigger, not read here
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await api.panelStatus();
+        if (!cancelled) {
+          setPanels(result.panels);
+          setError(null);
+        }
+      } catch {
+        if (!cancelled) setError("Could not read the panels. Is the box reachable?");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  if (error) return <p className="jp-empty">{error}</p>;
+  if (panels === null) return <p className="jp-empty">Reading the panels…</p>;
+  if (panels.length === 0) {
+    return (
+      <p className="jp-empty">No panels yet. Flash one on the Flash tab and it shows up here.</p>
+    );
+  }
+
+  return (
+    <div className="jp-panels">
+      {panels.map((p) => (
+        <PanelRow key={p.device_id} panel={p} onChanged={() => setTick((t) => t + 1)} />
+      ))}
+    </div>
+  );
+}
+
+/** One unit: what it is, what it last said, and the two things the owner can do to it. */
+function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () => void }) {
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(panel.name);
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmed = draft.trim();
+  // Checked here as well as on the box, so the owner finds out while still typing rather than
+  // after a round trip. The box is still the authority — this cannot be the only check.
+  const nameOk =
+    trimmed.length > 0 && trimmed.length <= PANEL_NAME_MAX && PANEL_NAME_CHARS.test(trimmed);
+
+  async function rename(): Promise<void> {
+    if (!nameOk || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.renamePanel(panel.device_id, trimmed);
+      setRenaming(false);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not rename it.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(): Promise<void> {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.revokePanel(panel.device_id);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not revoke it.");
+      setBusy(false);
+      setArmed(false);
+    }
+  }
+
+  const state = panelHealth(panel.age_s);
+
+  return (
+    <div className={`jp-panel${state === "ok" ? "" : " quiet"}`}>
+      <div className="jp-panel-head">
+        <span className="jp-panel-name">{panel.name}</span>
+        {/* Only a display is badged: every panel in this house is a pet, so marking both would
+            put a word on every row that answers a question nobody asked. */}
+        {panel.role === "display" && <span className="jp-panel-role">display</span>}
+        <span className="jp-panel-seen">
+          {state === "never" ? "never reported" : agoLabel(panel.age_s)}
+        </span>
+      </div>
+      <p className="jp-panel-meta">{panel.version || "no firmware reported yet"}</p>
+
+      {renaming ? (
+        <div className="jp-panel-rename">
+          <label>
+            Call it
+            <input
+              // biome-ignore lint/a11y/noAutofocus: the owner tapped rename; the box is the next thing they want
+              autoFocus
+              value={draft}
+              maxLength={PANEL_NAME_MAX}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void rename();
+                if (e.key === "Escape") setRenaming(false);
+              }}
+            />
+          </label>
+          {/* The constraint is the PANEL'S FONT, two packages away: `font.c` has 5x7 cells for
+              A-Z, the digits, space, hyphen and full stop, and a character it does not have draws
+              as nothing — so an apostrophe would reach a four-year-old as a pop-up from someone
+              missing a letter. Said plainly rather than enforced silently. */}
+          <p className="jp-panel-hint">
+            Letters, digits, spaces, hyphens and full stops — {PANEL_NAME_MAX} at most. It is drawn
+            on the other panel&rsquo;s screen, which has no other characters.
+          </p>
+          <div className="jp-panel-actions">
+            <button type="button" disabled={!nameOk || busy} onClick={() => void rename()}>
+              {busy ? "saving…" : "save"}
+            </button>
+            <button type="button" onClick={() => setRenaming(false)}>
+              cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="jp-panel-actions">
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(panel.name);
+              setArmed(false);
+              setRenaming(true);
+            }}
+          >
+            rename
+          </button>
+          <button
+            type="button"
+            className={armed ? "jp-armed" : ""}
+            disabled={busy}
+            onClick={() => void revoke()}
+          >
+            {busy ? "revoking…" : armed ? "tap again to revoke" : "revoke"}
+          </button>
+          {armed && !busy && (
+            <button type="button" onClick={() => setArmed(false)}>
+              cancel
+            </button>
+          )}
+        </div>
+      )}
+      {error && <p className="jp-panel-error">{error}</p>}
+    </div>
+  );
+}
+
 export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenProps) {
   const [tab, setTab] = useState<JpanelTab>(initialTab);
 
@@ -574,7 +765,7 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         <h1>jpanel</h1>
       </header>
 
-      <div className="jp-seg" role="tablist" aria-label="Messages or Flash">
+      <div className="jp-seg" role="tablist" aria-label="Messages, Panels or Flash">
         <button
           type="button"
           role="tab"
@@ -587,6 +778,15 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         <button
           type="button"
           role="tab"
+          aria-selected={tab === "panels"}
+          className={tab === "panels" ? "on" : ""}
+          onClick={() => setTab("panels")}
+        >
+          Panels
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === "flash"}
           className={tab === "flash" ? "on" : ""}
           onClick={() => setTab("flash")}
@@ -595,9 +795,11 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         </button>
       </div>
 
-      {/* Unmounted rather than hidden when the other tab is up: Flash holds a USB console
+      {/* Unmounted rather than hidden when another tab is up: Flash holds a USB console
           stream open, and Messages polls — neither should run behind a tab nobody is on. */}
-      {tab === "messages" ? <MessagesTab /> : <EndpointsScreen />}
+      {tab === "messages" && <MessagesTab />}
+      {tab === "panels" && <PanelsTab />}
+      {tab === "flash" && <EndpointsScreen />}
     </div>
   );
 }

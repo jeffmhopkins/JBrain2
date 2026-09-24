@@ -2676,6 +2676,23 @@ export interface PanelStatuses {
   panels: PanelStatusOut[];
 }
 
+/** What a rename moved. `keys` is routinely not 1: every flash before retirement landed left
+ *  a live key behind, and they all carry the label, so the owner sees the real number rather
+ *  than wondering why one panel had four. */
+export interface PanelRenamed {
+  device_id: string;
+  name: string;
+  keys: number;
+}
+
+/** The panel font's alphabet, and the reason the rename box refuses anything else: `font.c` has
+ *  5x7 cells for A-Z, the digits, space, hyphen and full stop, and a character it does not have
+ *  draws as NOTHING — so "O'Brien" would reach a four-year-old as a pop-up from someone missing
+ *  a letter. The box refuses these too; this is so the owner finds out while still typing. */
+export const PANEL_NAME_CHARS = /^[A-Za-z0-9 .-]+$/;
+/** The pop-up bubble's arithmetic, not a guess — see `MAX_PANEL_NAME` on the box. */
+export const PANEL_NAME_MAX = 14;
+
 /** What a revoke retired: the unit's name, and how many live keys it had. More than one is
  *  normal for a panel flashed repeatedly before the flash began retiring what it replaced. */
 export interface PanelRevoked {
@@ -5017,6 +5034,18 @@ export const api = {
   async panelStatus(): Promise<PanelStatuses> {
     const response = await request("/api/endpoint/status");
     return (await response.json()) as PanelStatuses;
+  },
+
+  // NAME A PANEL, with no cable and no re-flash. The name lives on the BOX — `/flash` writes
+  // `panel <name>` onto the device key — so a unit enrolled without one answers to "the other
+  // one" until this is used. Moves EVERY key under the old label, which is why `keys` comes back.
+  async renamePanel(deviceId: string, name: string): Promise<PanelRenamed> {
+    const response = await request(`/api/jpanel/panels/${encodeURIComponent(deviceId)}/name`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    return (await response.json()) as PanelRenamed;
   },
 
   // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for

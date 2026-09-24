@@ -26,9 +26,9 @@ The owner, across two asks:
 > *"Change it to jpanel, and integrate it with the flashing stuff on another tab."*
 
 **`jpanel` is the panels as one thing** — the messages they carry, and the panels themselves.
-The PWA surface is tabbed: **Messages** and **Flash**, the latter being today's
+The PWA surface is tabbed: **Messages**, **Panels** and **Flash**, the last being today's
 `EndpointsScreen` moved rather than rebuilt (it is already "its own surface, not a card inside
-Ops"). One launcher for "the panels in my house" beats two that each do half.
+Ops"). One launcher for "the panels in my house" beats several that each do half.
 
 ---
 
@@ -306,7 +306,7 @@ clears. Deliberately short: it is for *"what did she say?"*, not a permanent con
 `Pet face` comes out of the launcher and **`jpanel`** goes in (`Launcher.tsx`, target `petface`
 → `jpanel`). The separate `Pet` → `petcontrol` tile stays; it is a different thing.
 
-Two tabs:
+Three tabs:
 
 - **Messages** — one list grouped by panel, newest first. An unplayed badge per panel, because
   that is the question being asked at work. Each message shows sender, time, duration, and **the
@@ -315,7 +315,19 @@ Two tabs:
   transcriber handles four-year-olds, it often will not. A compose box per panel: type, send;
   TTS speaks it, the audio is stored, and the typed text is kept as the transcript so both ends
   agree about what was said.
-- **Flash** — today's `EndpointsScreen`, moved rather than rebuilt.
+- **Panels** — the units themselves, one row per unit (the fleet route already collapses a
+  panel's flashes, so this reads that rather than deriving it a second time): name, role,
+  firmware, last seen, and the two things the owner can do to one — **rename** and **revoke**.
+  Added late, and the reason is worth keeping: both used to live somewhere else or nowhere.
+  Revoke was on the LOCATION screen's phone list, because panels are the same
+  `Subject(kind='device')` substrate as an OwnTracks phone — under a swipe rail, among one row
+  per flash, beside a status line a panel never produces — and the owner could not find it at
+  all: *"I don't see a way to revoke from PWA."* Rename had a route and no UI whatsoever, so a
+  unit enrolled without a name answered to "the other one" until somebody re-flashed it over
+  USB. The Ops fleet card stays READ-ONLY: it is where a fault is noticed, this is where a panel
+  is managed, and two places to revoke would be two places to get it wrong.
+- **Flash** — today's `EndpointsScreen`, moved rather than rebuilt. It also carries the one flag
+  that decides what a unit IS: a pet, or a display the owner operates.
 
 **Dad's voice is male.** The pet answers in `kokoro-af_heart`; a message from Dad arriving in
 the pet's own voice would teach a four-year-old that the robot and their father are the same

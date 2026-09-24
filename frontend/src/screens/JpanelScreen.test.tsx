@@ -60,6 +60,29 @@ const THREADS = [
   { device_id: "panel-mabel", name: "Mabel", unplayed: 0, messages: [] },
 ];
 
+/** The fleet, as the Panels tab reads it. One row per UNIT: the box collapses a panel's
+ *  flashes before this ever sees them. */
+const PANELS = [
+  {
+    device_id: "panel-ellie",
+    name: "the other one",
+    role: "jpet",
+    reported_at: new Date(Date.now() - 40_000).toISOString(),
+    version: "0.2.99",
+    age_s: 40,
+    report: { screen: "awake" },
+  },
+  {
+    device_id: "panel-desk",
+    name: "Jeff",
+    role: "display",
+    reported_at: "",
+    version: "",
+    age_s: -1,
+    report: {},
+  },
+];
+
 const SENT = {
   id: "jp-sent-1",
   from_name: "Dad",
@@ -73,7 +96,15 @@ const SENT = {
 };
 
 /** The requests each case cares about; everything else 404s, as a real box would. */
-function box(opts: { threads?: unknown[]; post?: () => Response } = {}) {
+function box(
+  opts: {
+    threads?: unknown[];
+    post?: () => Response;
+    panels?: unknown[];
+    rename?: (init?: RequestInit) => Response;
+    revoke?: () => Response;
+  } = {},
+) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
@@ -85,6 +116,17 @@ function box(opts: { threads?: unknown[]; post?: () => Response } = {}) {
     }
     if (/^\/api\/jpanel\/messages\/[^/]+\/played$/.test(path) && method === "POST") {
       return new Response(null, { status: 204 });
+    }
+    if (path === "/api/endpoint/status" && method === "GET") {
+      return json({ panels: opts.panels ?? PANELS });
+    }
+    if (/^\/api\/jpanel\/panels\/[^/]+\/name$/.test(path) && method === "POST") {
+      return opts.rename
+        ? opts.rename(init)
+        : json({ device_id: "panel-ellie", name: "Elora", keys: 4 });
+    }
+    if (/^\/api\/endpoint\/panels\/[^/]+\/revoke$/.test(path) && method === "POST") {
+      return opts.revoke ? opts.revoke() : json({ name: "Ellie", keys: 13 });
     }
     if (path === "/api/endpoint/ports") return json({ ports: [], flasher: true });
     if (path === "/api/endpoint/firmware") return json({ version: "0.2.0", url: "https://box/fw" });
@@ -555,5 +597,104 @@ describe("message metadata", () => {
     expect(durationText(65_000)).toBe("1:05");
     // A message too short to round to a second is still a message, not "0s".
     expect(durationText(200)).toBe("1s");
+  });
+});
+
+describe("the Panels tab", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function openPanels(): void {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+  }
+
+  it("names a panel that has never had one, with no cable", async () => {
+    /* THE ROUTE HAD NO UI AT ALL. A unit enrolled without a name answers to "the other one"
+       forever — in the PWA thread and in its sibling's pop-up — and until this the only way to
+       correct it was to re-flash over USB, which is a terminal by another name (CLAUDE.md #10). */
+    const sent: string[] = [];
+    fetchMock.mockImplementation(
+      box({
+        rename: (init) => {
+          sent.push(JSON.parse(String(init?.body)).name);
+          return json({ device_id: "panel-ellie", name: "Elora", keys: 4 });
+        },
+      }),
+    );
+    openPanels();
+    expect(await screen.findByText("the other one")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "rename" })[0] as HTMLElement);
+    const input = screen.getByLabelText(/Call it/);
+    fireEvent.change(input, { target: { value: "Elora" } });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(sent).toEqual(["Elora"]));
+  });
+
+  it("refuses a name the panel's font cannot draw, before asking the box", async () => {
+    /* `font.c` has 5x7 cells for A-Z, the digits, space, hyphen and full stop, and a character
+       it does not have draws as NOTHING — so "O'Brien" would reach a four-year-old as a pop-up
+       from someone missing a letter. The box refuses it too; this is so the owner finds out
+       while still typing rather than after a round trip. */
+    fetchMock.mockImplementation(box());
+    openPanels();
+    await screen.findByText("the other one");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "rename" })[0] as HTMLElement);
+    fireEvent.change(screen.getByLabelText(/Call it/), { target: { value: "O'Brien" } });
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/Call it/), { target: { value: "Elora" } });
+    expect((screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+
+    // Nothing was asked of the box while the name was unusable.
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/name"))).toBe(false);
+  });
+
+  it("revokes only on the second tap", async () => {
+    /* One tap must not retire a panel on a child's wall. The same two-step the phone rail uses,
+       because the consequence is the same and the owner should not learn two idioms for it. */
+    let revoked = 0;
+    fetchMock.mockImplementation(
+      box({
+        revoke: () => {
+          revoked += 1;
+          return json({ name: "the other one", keys: 2 });
+        },
+      }),
+    );
+    openPanels();
+    await screen.findByText("the other one");
+
+    const [revoke] = screen.getAllByRole("button", { name: "revoke" });
+    fireEvent.click(revoke as HTMLElement);
+    expect(screen.getByRole("button", { name: "tap again to revoke" })).toBeInTheDocument();
+    expect(revoked).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "tap again to revoke" }));
+    await waitFor(() => expect(revoked).toBe(1));
+  });
+
+  it("marks a display, and says which panel has never reported", async () => {
+    /* The exception earns the word: every panel in this house is a pet, so badging both would
+       label every row with an answer nobody asked for. And "flashed but never reported" is a
+       different fault from "reported and went quiet" — one was never provisioned against this
+       box, the other was working and stopped. */
+    fetchMock.mockImplementation(box());
+    openPanels();
+    expect(await screen.findByText("Jeff")).toBeInTheDocument();
+    expect(screen.getByText("display")).toBeInTheDocument();
+    expect(screen.getByText("never reported")).toBeInTheDocument();
   });
 });
