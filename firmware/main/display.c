@@ -1946,6 +1946,18 @@ static void face_task(void *arg)
             touch_point(&rx, &ry);
             calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
             panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+            /* OVERLAY COORDINATES, RESOLVED ONCE BESIDE THE FRAME ONES, because every hit test
+               below wants these and one of them forgot. Anything drawn BEFORE `flip_frame` —
+               the pop-up, the repeat icon, the label, the caption, the tick and the cross — is
+               written in frame order and then reversed, so its rectangle has to be compared
+               against a touch reversed the same way. The tap MARKER is the exception and the
+               reason this is easy to get wrong: it is drawn AFTER the flip, so it sits under
+               the finger using `s_fig` directly, which makes a panel look like it is tracking
+               touch correctly while every pre-flip target on it is 180 degrees away.
+               MEASURED 2026-09-25, upside down: a press on the tick at frame (276,368) arrives
+               here as (91,79) and missed by 289 px. */
+            int ox = -1, oy = -1;
+            tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
             /* THE POP-UP AND THE REPEAT ICON OUTRANK EVERYTHING, tested before the cancels
              * and the poke for exactly the reason the label is: a tap that both played a
              * message and made the pet fart reads as two things happening, and the child
@@ -1953,8 +1965,6 @@ static void face_task(void *arg)
              *
              * Against overlay coordinates, not frame ones — see `tap_to_overlay`. */
             {
-                int ox = -1, oy = -1;
-                tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
                 if (in_box(s_popup_box, ox, oy)) {
                     s_flinch = 1.0f;
                     /* Cleared the moment it is pressed, not when the audio arrives: a box
@@ -2007,7 +2017,7 @@ static void face_task(void *arg)
             if ((s_talk == TALK_LISTENING && s_listen_voice) || s_talk == TALK_RECORDING) {
                 const int over_h_now =
                     (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
-                const confirm_hit_t pressed = confirm_hit(s_fig_x, s_fig_y, over_h_now);
+                const confirm_hit_t pressed = confirm_hit(ox, oy, over_h_now);
                 const bool recording = (s_talk == TALK_RECORDING);
                 const char *who = recording ? "jpanel" : "talk";
                 if (pressed == CONFIRM_CANCEL) {
@@ -2070,7 +2080,19 @@ static void face_task(void *arg)
                 /* Off both targets: CONSUMED, and deliberately without a flinch. Every other
                    tap on this glass answers somehow, and that is exactly what must not happen
                    here — a pet that twitches while a child is talking to it is the panel
-                   inviting the next poke mid-sentence. */
+                   inviting the next poke mid-sentence.
+                 *
+                 * BUT IT SAYS SO, and the first version of this did not. A miss that is silent
+                 * on the glass AND silent in the log is a control that cannot be diagnosed
+                 * without a cable: 0.3.07 shipped with the coordinates 180 degrees out on an
+                 * upside-down panel and the only symptom available to the owner was "it does
+                 * not respond". One line here would have named it. Both pairs, for the same
+                 * reason the poke logs both: frame and overlay agreeing places the fault in
+                 * calibration, disagreeing places it in the flip. */
+                ESP_LOGI(TAG, "%s: tap at frame (%d,%d) overlay (%d,%d) hit neither target "
+                              "(tick %d, cross %d, cy %d)",
+                         who, s_fig_x, s_fig_y, ox, oy, CONFIRM_CX_SEND, CONFIRM_CX_CANCEL,
+                         confirm_cy(over_h_now));
                 goto tap_done;
             }
             colour = (colour + 1) % face_colour_count();
@@ -2085,7 +2107,7 @@ static void face_task(void *arg)
                that says something cannot also be a poke. It sits above the pet's head where
                `face_zone` returns nothing anyway, so no reaction is lost — and a tap that both
                flipped the label and made the pet sneeze would read as two things happening. */
-            if (label_hit(s_fig_x, s_fig_y, (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0)) {
+            if (label_hit(ox, oy, (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0)) {
                 s_show_version = !s_show_version;
                 ESP_LOGI(TAG, "label -> %s", s_show_version ? "version" : "name");
                 if (sound) audio_cue(CUE_TOGGLE);

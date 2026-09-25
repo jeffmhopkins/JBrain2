@@ -5620,6 +5620,50 @@ third either way — the same rule the caption and the label were moved to obey.
 hardcoded the frame would put them off the edge of a turned panel, where a child would press
 glass that does nothing and a message would have no way out but silence. Pinned by a test.
 
+#### 10.4db The tick and the cross were 289 pixels from the finger (0.3.08, 2026-09-25)
+
+0.3.07 drew the icons correctly and could not be pressed. The owner: *"I tried to do a tell
+Dad, and the icon show up for check mark and x. But they don't respond when I touch it"* — and,
+crucially, *"That might be the reason why I couldn't click on the version to name in the top
+left also"*, which is the same fault in a control that predates this one.
+
+**THE PANEL WAS UPSIDE DOWN, AND THE HIT TEST WAS THE ONLY ONE THAT DID NOT KNOW.** Anything
+drawn BEFORE `flip_frame` — the pop-up, the repeat icon, the label, the caption, and now the
+tick and the cross — is written in frame order and then reversed, so a touch has to be reversed
+the same way before it is compared (`tap_to_overlay`). `confirm_hit` was given raw frame
+coordinates. Measured on the box: a press on the tick, drawn at frame (276,368), arrives as
+(91,79) — **289 px away**, on a 82 px target.
+
+**THE TAP MARKER IS WHY THIS LOOKS IMPOSSIBLE FROM THE OUTSIDE, and it is the clue that solved
+it.** The owner: *"there's a little yellow circle that shows up where I click and I'm pretty
+sure that yellow circle showed when I was ... clicking the icons and they didn't respond."* The
+marker is drawn AFTER the flip and uses `s_fig` directly, so it sits under the finger by
+construction. A panel therefore *looks* like it is tracking touch perfectly while every
+pre-flip target on it is a half turn away. Every other symptom fell out of the same cause: the
+label dead (`label_hit` had the identical gap), pokes still working (`face_zone` takes
+`s_upside_down`), and the pop-up fine (it already used `tap_to_overlay`).
+
+**Fixed by resolving the overlay pair ONCE, beside the frame pair**, and pointing every overlay
+hit test at it — including `label_hit`, whose fault was older than this release and which
+`tap_to_overlay`'s own comment had already predicted by naming the label.
+
+**A DIAGNOSIS THAT NEEDED A USB CABLE, AND SHOULD NOT HAVE.** The miss was silent on the glass
+by design — a pet that twitches while a child is talking to it invites the next poke — but it
+was also silent in the LOG, which was not a design decision, just an omission. The only symptom
+available to an owner with no terminal (CLAUDE.md #10) was "it does not respond". It now prints
+both pairs on every miss: agreeing puts the fault in calibration, disagreeing puts it in the
+flip. One line would have answered this without anyone finding a cable.
+
+**A WRONG TURN WORTH RECORDING, because the evidence was read carelessly rather than being
+ambiguous.** The first reading of the two logged taps assumed they were left-then-right and
+concluded only Y was inverted — pointing at calibration, which the boot log supported (neither
+`touch calibration loaded` nor `stored touch calibration rejected` prints, so nothing is
+stored). The owner had said right-then-left. With the stated order BOTH axes invert, which is a
+half turn, which is the flip. The panel is genuinely uncalibrated and that is still worth doing
+one day; it was never this bug, and calibrating while upside down would have written a 180
+degree error into NVS — wrong in the other three orientations and double-corrected the moment
+the code was fixed.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
