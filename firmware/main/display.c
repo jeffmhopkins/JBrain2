@@ -2056,6 +2056,16 @@ static void face_task(void *arg)
                         dirty = true;
                         goto tap_done;
                     }
+                    /* A SOUND FOR THE FINGER, THEN THE OUTCOME — the pop-up's rule, and the
+                       tick needed it more than the pop-up did. `CUE_SENT` exists and is played,
+                       but only when the BOX confirms (`JPANEL_SENT`), which is a network round
+                       trip away; the cross answers instantly with `CUE_STOP`. So the two
+                       targets felt different in the hand, and the owner reported exactly that:
+                       *"there is a sound effect when hitting cancel, but not the check mark"* —
+                       while the messages were arriving the whole time. The one control a child
+                       presses to send their voice must not be the one that answers with
+                       silence. */
+                    if (sound) audio_cue(CUE_HEARD);
                     size_t got = 0;
                     const int16_t *pcm = audio_capture_close(&got);
                     s_listen_voice = false;

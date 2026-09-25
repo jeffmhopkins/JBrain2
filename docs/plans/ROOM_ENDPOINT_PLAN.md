@@ -5620,7 +5620,7 @@ third either way — the same rule the caption and the label were moved to obey.
 hardcoded the frame would put them off the edge of a turned panel, where a child would press
 glass that does nothing and a message would have no way out but silence. Pinned by a test.
 
-#### 10.4db The tick and the cross were 289 pixels from the finger (0.3.08, 2026-09-25)
+#### 10.4db The tick and the cross were 289 pixels from the finger (0.3.08-0.3.09, 2026-09-25)
 
 0.3.07 drew the icons correctly and could not be pressed. The owner: *"I tried to do a tell
 Dad, and the icon show up for check mark and x. But they don't respond when I touch it"* — and,
@@ -5653,6 +5653,24 @@ was also silent in the LOG, which was not a design decision, just an omission. T
 available to an owner with no terminal (CLAUDE.md #10) was "it does not respond". It now prints
 both pairs on every miss: agreeing puts the fault in calibration, disagreeing puts it in the
 flip. One line would have answered this without anyone finding a cable.
+
+**CONFIRMED ON HARDWARE, and the shape of the confirmation is the diagnosis.** With the flip
+fix not yet deployed, the owner tested all four orientations: *"I tried it in one orientation
+and it worked rotated 90° and it worked rotated another 90° and it didn't work."* Three of four
+is exactly what a missing `tap_to_overlay` predicts — quarters 0, 1 and 3 need no correction and
+only quarter 2 does. *"But the little yellow circles show up everywhere where I press"*, which
+is the marker being drawn after the flip in every orientation, as designed, and is why the
+panel looks like it is tracking touch correctly in the one orientation where nothing can be
+pressed.
+
+**AND THE TICK WAS SILENT WHILE WORKING, which is its own bug (0.3.09).** The owner: *"there is
+a sound effect when hitting cancel, but not the check mark"* — with four messages arriving on
+the box from that panel in the same four minutes, so the target was never dead. `CUE_SENT`
+exists and is played, but only on `JPANEL_SENT`, when the BOX confirms, a network round trip
+after the press; the cross answers instantly with `CUE_STOP`. The two targets therefore felt
+different in the hand. The tick now sounds for the FINGER first and lets the outcome follow —
+the rule the pop-up already had, and whose own comment warns that a control answering with
+silence is the one a child gives up on.
 
 **A WRONG TURN WORTH RECORDING, because the evidence was read carelessly rather than being
 ambiguous.** The first reading of the two logged taps assumed they were left-then-right and
