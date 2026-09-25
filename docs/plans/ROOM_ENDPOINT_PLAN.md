@@ -5573,6 +5573,53 @@ overshooting slice underflowed `uint32_t` and the test hung instead of failing. 
 in the committed version: the period is deliberately ragged, and the fit is asserted before the
 subtraction.
 
+#### 10.4da The tick and the cross (0.3.07, 2026-09-25)
+
+The owner: *"I want to change when we are recording, how the gui looks ... I want icons that
+are green check and red x that are kind of large in the bottom third ... Green check will
+finish when pressed and send, red x cancel."* For `hey fish` and for messages to dad or a
+sister — the two turns that run hands-free.
+
+**What a recording had before this was three silent exits and one gesture.** Going quiet sent
+it, saying nothing dropped it, the cap sent what there was — and a touch ANYWHERE cancelled and
+discarded. That last rule was the owner's own (*"when it's listening, if I touch the screen it
+should stop and discard"*) and it was right while it was the only way out: a hands-free listen
+has to be escapable by someone who is not going to speak, and a finger is the one input always
+available.
+
+**It is the wrong rule the moment there is somewhere deliberate to press.** The finger that
+means "send this" is then one bad aim from the finger that destroys it, and the reader is four.
+So: the cross cancels, the tick sends, and **anything else on the glass does nothing** —
+including the pet, which stops being a cancel button while a child is talking to it.
+
+**Going quiet still sends,** and that was a decision rather than an omission. A voice assistant
+that needs a button press every time is not hands-free; the tick means *"I am done, do not wait
+it out"*. A held listen never reaches any of this — it ends on the release of the finger that
+started it, so a tick would be a second way to finish a gesture that already has one.
+
+**A tick pressed into silence does not send.** The hush branch already refuses to send a room
+nobody spoke into, and the one exit that skips the silence check had to refuse too — otherwise
+the shortcut becomes the way six seconds of a bedroom reaches dad. It drops with the same
+out-loud cue, because a child who pressed the tick and heard nothing has been told it went.
+
+**`confirm.c` is pure, and that buys two things a `display.c` static could not.** The hit
+geometry is host-tested — the assertion that matters most in the file is that the two targets
+**cannot overlap**: 184 px between centres against an 82 px reach leaves a 20 px dead band, so
+a finger that lands between them does NOTHING rather than picking whichever circle won.
+Verified by widening the reach until they touched and watching the test fail. And because the
+drawing takes only a framebuffer, the same code that runs on the panel can be RENDERED on a
+host — the half of this feature a hit test cannot check was looked at before it went near a
+panel.
+
+**The target is deliberately larger than the disc** (82 against 56), on the pop-up's own
+lesson: *"a four-year-old aiming at a small target with an excited finger is a miss."*
+
+**Anchored to the overlay band, not the frame.** `over_h` is the frame on a portrait panel and
+the SQUARE on a side-mounted one, so measuring up from its bottom puts these in the bottom
+third either way — the same rule the caption and the label were moved to obey. A version that
+hardcoded the frame would put them off the edge of a turned panel, where a child would press
+glass that does nothing and a message would have no way out but silence. Pinned by a test.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

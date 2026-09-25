@@ -37,6 +37,7 @@
 #include "talk.h"
 #include "calib.h"
 #include "caption.h"
+#include "confirm.h"
 #include "cfg.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -1988,54 +1989,88 @@ static void face_task(void *arg)
                     goto tap_done;
                 }
             }
-            /* A FINGER CANCELS A LISTEN, AND THROWS THE RECORDING AWAY.
+            /* THE TICK AND THE CROSS, AND THEY REPLACE "A TOUCH ANYWHERE CANCELS".
              *
-             * The owner: *"when it's listening, if I touch the screen it should stop and
-             * discard."* A hands-free listen has no other way out for someone who is not
-             * going to say a phrase — it runs until the room goes quiet, so an accidental
-             * wake, or a child who changes their mind, is otherwise committed to a turn they
-             * did not want. A finger is the one input that is always available and never
-             * ambiguous.
+             * That rule was right while it was the only way out — the owner asked for it
+             * ("when it's listening, if I touch the screen it should stop and discard") when a
+             * hands-free listen had no other exit for someone who was not going to speak. It
+             * is the wrong rule the moment there is somewhere deliberate to press: the same
+             * finger that means "send this" is one bad aim away from destroying it, and the
+             * reader is four. So the cross cancels, the tick sends, and ANYTHING ELSE ON THE
+             * GLASS DOES NOTHING — including the pet, which cannot be poked mid-message.
              *
-             * ONLY THE VOICE-STARTED LISTEN. A held turn ends on the RELEASE of the same
-             * finger that started it, which is the gesture working, not a cancel — treating
-             * the touch as an abort there would make press-and-hold impossible to complete.
+             * GOING QUIET STILL SENDS (see the hush branch below). The tick is "I am done, do
+             * not wait it out", not a button the child has to find every time.
              *
-             * This does exactly what "stop stop" does, deliberately: the same three states
-             * left the same way, the follow-up window closed so the microphone does not
-             * reopen, and the turn counter parked at its cap until a deliberate start resets
-             * it. Two ways to say stop that behaved differently would be a worse toy than one
-             * that only had a word.
-             *
-             * The tap is CONSUMED — no colour change, no action, no poke. A touch that both
-             * cancelled the question and made the pet fart reads as two things happening, and
-             * the child cannot tell which one they asked for. The flinch stays, because
-             * something has to acknowledge the finger. */
-            if (s_talk == TALK_LISTENING && s_listen_voice) {
-                size_t dropped = 0;
-                (void)audio_capture_close(&dropped);
-                s_talk = TALK_IDLE;
-                s_listen_voice = false;
-                s_follow_armed = false;
-                s_follow_turns = FOLLOW_MAX_TURNS;
-                s_flinch = 1.0f;
-                if (sound) audio_cue(CUE_STOP);
-                ESP_LOGI(TAG, "talk: cancelled by touch, %u bytes discarded",
-                         (unsigned)dropped);
-                dirty = true;
-                goto tap_done;
-            }
-            /* A FINGER CANCELS A MESSAGE TOO, on exactly the rule the listen has: silence
-               sends, a finger abandons, and there is no third gesture to learn. */
-            if (s_talk == TALK_RECORDING) {
-                size_t dropped = 0;
-                (void)audio_capture_close(&dropped);
-                s_talk = TALK_IDLE;
-                s_flinch = 1.0f;
-                if (sound) audio_cue(CUE_STOP);
-                ESP_LOGI(TAG, "jpanel: message cancelled by touch, %u bytes discarded",
-                         (unsigned)dropped);
-                dirty = true;
+             * ONLY THE HANDS-FREE TURNS. A held listen ends on the release of the finger that
+             * started it, so it never reaches here and keeps its gesture intact. */
+            if ((s_talk == TALK_LISTENING && s_listen_voice) || s_talk == TALK_RECORDING) {
+                const int over_h_now =
+                    (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
+                const confirm_hit_t pressed = confirm_hit(s_fig_x, s_fig_y, over_h_now);
+                const bool recording = (s_talk == TALK_RECORDING);
+                const char *who = recording ? "jpanel" : "talk";
+                if (pressed == CONFIRM_CANCEL) {
+                    /* Exactly what "stop stop" and the old touch-anywhere did, so the two ways
+                       to say stop still behave identically: the capture dropped, the follow-up
+                       window closed, and the turn counter parked at its cap. */
+                    size_t dropped = 0;
+                    (void)audio_capture_close(&dropped);
+                    s_talk = TALK_IDLE;
+                    s_listen_voice = false;
+                    if (!recording) {
+                        s_follow_armed = false;
+                        s_follow_turns = FOLLOW_MAX_TURNS;
+                    }
+                    s_flinch = 1.0f;
+                    if (sound) audio_cue(CUE_STOP);
+                    ESP_LOGI(TAG, "%s: cancelled by cross, %u bytes discarded", who,
+                             (unsigned)dropped);
+                    dirty = true;
+                    goto tap_done;
+                }
+                if (pressed == CONFIRM_SEND) {
+                    /* NOTHING HEARD IS NOT A SEND. The hush branch already refuses to send a
+                       room nobody spoke into, and a tick pressed into that same silence must
+                       refuse too — otherwise the one exit that skips the silence check becomes
+                       the way six seconds of a bedroom reaches dad. Said out loud, because a
+                       child who pressed the tick and heard nothing has been told it went. */
+                    if (!(recording ? s_rec_heard : s_listen_heard)) {
+                        size_t got = 0;
+                        (void)audio_capture_close(&got);
+                        s_talk = TALK_IDLE;
+                        s_listen_voice = false;
+                        s_flinch = 1.0f;
+                        if (sound) audio_cue(CUE_OOPS);
+                        ESP_LOGI(TAG, "%s: tick pressed but nobody spoke — dropped", who);
+                        dirty = true;
+                        goto tap_done;
+                    }
+                    size_t got = 0;
+                    const int16_t *pcm = audio_capture_close(&got);
+                    s_listen_voice = false;
+                    ESP_LOGI(TAG, "%s: sent by tick after %u ms (%u bytes)", who,
+                             (unsigned)audio_capture_ms(), (unsigned)got);
+                    if (recording) {
+                        s_talk = TALK_IDLE;
+                        if (pcm == NULL || !jpanel_send(pcm, got, s_rec_to)) {
+                            if (sound) audio_cue(CUE_OOPS);
+                            ESP_LOGW(TAG, "jpanel: nothing to send");
+                        }
+                    } else if (pcm == NULL || !talk_send(pcm, got)) {
+                        s_talk = TALK_IDLE;
+                    } else {
+                        s_talk = TALK_THINKING;
+                        s_talk_since = now;
+                    }
+                    s_flinch = 1.0f;
+                    dirty = true;
+                    goto tap_done;
+                }
+                /* Off both targets: CONSUMED, and deliberately without a flinch. Every other
+                   tap on this glass answers somehow, and that is exactly what must not happen
+                   here — a pet that twitches while a child is talking to it is the panel
+                   inviting the next poke mid-sentence. */
                 goto tap_done;
             }
             colour = (colour + 1) % face_colour_count();
@@ -2845,6 +2880,14 @@ static void face_task(void *arg)
             caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
             if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);
             else if (s_talk == TALK_RECORDING) draw_recording(fb, over_y0, now, s_rec_to);
+            /* ONLY WHERE THERE IS SOMETHING TO CONFIRM, and a HELD listen is not it: that turn
+               ends on the release of the finger that started it, so a tick would be a second
+               way to finish a gesture that already has one, and a cross would be a target the
+               finger is not free to reach. Voice-started listens ("hey fish") and messages to
+               dad or a sister are the two that run hands-free and need somewhere to press. */
+            if ((s_talk == TALK_LISTENING && s_listen_voice) || s_talk == TALK_RECORDING) {
+                confirm_draw(fb, FACE_W, FACE_H, over_h);
+            }
             else if (s_talk != TALK_IDLE) {
                 draw_thinking(fb, over_y0, over_h - over_y0, now, s_talk == TALK_FAILED);
             }
