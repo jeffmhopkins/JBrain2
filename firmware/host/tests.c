@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cadence.h"
 #include "calib.h"
 #include "caption.h"
 #include "emotion.h"
@@ -3012,6 +3013,98 @@ static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
  * bedroom. The fraction is a setting now, so what needs pinning is that it cannot be turned
  * into something harmful: not brighter than configured, not off, and not trusting a number a
  * box might send wrong. */
+/* --- cadence ----------------------------------------------------------------------------- */
+
+/* The property the update loop depends on and cannot assert for itself: slicing a long period
+   into short ones must not move where the long period ENDS. Before settings had their own
+   cadence the loop was a single `vTaskDelay`, so there was nothing here to get wrong; now the
+   manifest fetch happens after a loop of slices, and a slice that overshoots would push the
+   update check later every cycle — fifteen minutes, then fifteen and ten seconds, then fifteen
+   and twenty, on a panel nobody can reach to notice.
+
+   THE PERIOD IS DELIBERATELY NOT A WHOLE NUMBER OF SLICES. The shipped constants (fifteen
+   minutes, ten seconds) divide evenly, so an overshooting slice is invisible against them —
+   the first version of this test used them and passed against a `cadence_slice_ms` with its
+   tail case deleted. A ragged period is the only shape that can see the fault.
+
+   `slice <= left` IS CHECKED BEFORE THE SUBTRACTION, and that ordering is the test's own
+   safety: these are `uint32_t`, so subtracting an overshooting slice underflows to ~4.29e9 and
+   the loop spins forever instead of failing. A test that hangs reports nothing and burns CI's
+   timeout; CHECK exits on the spot instead. */
+/* The backoff the fast poll made necessary. `ota_apply` has no cap of its own, and the install
+   fires whenever the served version differs from the running one — so at a three-second poll a
+   FAILING install would retry twelve hundred times an hour, each pulling a 3.25 MB image, of a
+   failure the plan calls silent. Noticing stays fast; retrying does not. */
+static void test_a_failed_install_waits_out_its_backoff(void)
+{
+    const uint32_t backoff = 15u * 60u * 1000u;
+    CHECK(cadence_retry_due(0, 0, backoff), "never having tried is always due");
+    CHECK(cadence_retry_due(1000, 0, backoff), "and stays due whatever the clock says");
+    CHECK(!cadence_retry_due(1000, 1, backoff), "a fresh attempt is not retried a second later");
+    CHECK(!cadence_retry_due(backoff, 1, backoff), "nor one millisecond early");
+    CHECK(cadence_retry_due(backoff + 1, 1, backoff), "and is due exactly on the backoff");
+    CHECK(cadence_retry_due(backoff * 4, 1, backoff), "long past it, still due");
+}
+
+/* WRAP-SAFE, because the alternative is a panel that stops accepting updates for seven weeks.
+   `esp_timer` is read into a uint32 of milliseconds here, which rolls over about every 49 days,
+   and a panel in a bedroom is exactly the device that gets there.
+
+   THE BUG THIS CATCHES is the plausible-looking guard `if (now_ms < last_ms) return false;` —
+   "the clock went backwards, so don't retry". After a rollover `now` IS less than `last`, so
+   that reads a due retry as a clock fault and blocks every update until the timer wraps again.
+   Verified by writing it: the third assertion below fails against that version.
+
+   It does NOT catch a signed difference, and the first draft of this comment claimed it did.
+   `(int32_t)now - (int32_t)last` is the standard timer idiom and gives the right answer for any
+   gap under 2^31; its problem is signed-overflow UB at the extremes, which is a reason to keep
+   the subtraction unsigned but not something a value assertion can see. */
+static void test_the_backoff_survives_a_clock_rollover(void)
+{
+    const uint32_t backoff = 15u * 60u * 1000u;
+    const uint32_t before = 0xFFFFFF00u; /* moments from the top of the range */
+    CHECK(!cadence_retry_due(before + 10u, before, backoff), "just after the attempt, not due");
+    /* `now` has wrapped past zero; the elapsed time is small and unsigned arithmetic says so. */
+    CHECK(!cadence_retry_due(0x00000100u, before, backoff), "a wrap is not a licence to retry");
+    CHECK(cadence_retry_due(before + backoff + 1u, before, backoff),
+          "and a genuine backoff across the wrap is still due");
+}
+
+static void test_slicing_a_period_does_not_move_its_end(void)
+{
+    const uint32_t period = 15u * 60u * 1000u + 3000u;
+    const uint32_t slice_ms = 10u * 1000u;
+    uint32_t left = period, total = 0, passes = 0;
+    while (left > 0 && passes < period / slice_ms + 8) {
+        const uint32_t slice = cadence_slice_ms(left, slice_ms);
+        CHECK(slice > 0, "a slice is never zero while time remains");
+        CHECK(slice <= left, "and never overshoots what is left, so the manifest is not late");
+        CHECK(slice <= slice_ms, "nor outlasts the short cadence");
+        left -= slice; /* safe: the CHECK above has proven it fits */
+        total += slice;
+        passes++;
+    }
+    CHECK(left == 0, "the loop drains the period rather than spinning");
+    CHECK(total == period, "the slices sum to exactly the period, to the millisecond");
+    CHECK(passes == period / slice_ms + 1, "a ragged period spends one extra, shorter pass");
+}
+
+/* The tail is the remainder rather than the period being rounded up to the next whole slice. */
+static void test_the_tail_of_a_period_is_short(void)
+{
+    CHECK(cadence_slice_ms(3000, 10000) == 3000, "the tail is what is left, not a full slice");
+    CHECK(cadence_slice_ms(10000, 10000) == 10000, "an exact fit is not shortened");
+    CHECK(cadence_slice_ms(10001, 10000) == 10000, "and one past it is still a full slice");
+}
+
+/* Zero means "no short cadence", which is what an OFFLINE panel asks for: there is nobody to
+   fetch settings from, so the retry should be one sleep rather than six wakeups a minute. */
+static void test_no_short_cadence_sleeps_the_whole_remainder(void)
+{
+    CHECK(cadence_slice_ms(60000, 0) == 60000, "offline, the retry is a single sleep");
+    CHECK(cadence_slice_ms(0, 10000) == 0, "and nothing left is nothing to wait for");
+}
+
 static void test_the_dim_fraction_is_the_boxs_to_choose(void)
 {
     CHECK(screen_level(200, SCREEN_DIM, 25) == 50, "a quarter is what it always was");
@@ -3284,6 +3377,11 @@ int main(void)
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
     test_the_pet_dozes_only_when_dim_and_not_mid_reply();
+    test_a_failed_install_waits_out_its_backoff();
+    test_the_backoff_survives_a_clock_rollover();
+    test_slicing_a_period_does_not_move_its_end();
+    test_the_tail_of_a_period_is_short();
+    test_no_short_cadence_sleeps_the_whole_remainder();
     test_the_dim_fraction_is_the_boxs_to_choose();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();

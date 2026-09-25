@@ -73,6 +73,10 @@ typedef struct {
        still toggles it live — this is only what the panel comes back AS, which until now was
        always the ostrich because nothing wrote the choice down. */
     int form;
+    /* WHAT THE BOX WOULD SERVE, so this one fetch answers "any new firmware?" as well as "what
+       are my knobs?". Empty when the box has no image in its checkout, which is not an error and
+       must not be read as "you are out of date" — there is simply nothing to compare against. */
+    char fw_version[OTA_VERSION_MAX];
 } ota_settings_t;
 
 esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out);

@@ -686,6 +686,17 @@ class EndpointSettings(BaseModel):
     # owner found what that is worth in a bedroom at full brightness: 63 of 255, which does not
     # read as dim at all. 25 reproduces the old behaviour exactly (migration 0215).
     dim_percent: int = 25
+    # THE FIRMWARE VERSION THIS BOX WOULD SERVE, so the settings poll is also the "is there
+    # anything new" poll. It rides here rather than being a second request because every fetch a
+    # panel makes is a fresh TLS handshake and `int_largest` on these units sits at 31 KB — one
+    # round trip that answers both questions costs half the handshakes of two that each answer
+    # one. A panel now learns about an update within a poll instead of at the end of the
+    # fifteen-minute manifest cycle, while the 3.25 MB image is still only fetched when the
+    # version actually CHANGES.
+    #
+    # Read-only in effect, by the same mechanism as `pet_name` below: the PUT writes six named
+    # columns and ignores every other field of this model.
+    fw_version: str = ""
     # PER-PANEL, unlike the five above, which are one answer for the whole house. Defaulted here
     # so the model stays the shape the PUT takes: the owner's write touches only the four
     # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
@@ -1062,7 +1073,9 @@ async def get_panel_appearance(
 
 
 @router.get("/settings")
-async def panel_settings(principal: PanelDep, request: Request) -> EndpointSettings:
+async def panel_settings(
+    principal: PanelDep, request: Request, settings: SettingsDep
+) -> EndpointSettings:
     """The knobs a panel applies to itself, fetched with its own key.
 
     `PanelDep`, so a panel reads this the same way it reads the manifest. The table is
@@ -1086,9 +1099,18 @@ async def panel_settings(principal: PanelDep, request: Request) -> EndpointSetti
     # under the panel's own context, where `endpoint_panel_own` shows it exactly one row — its
     # own — so this route cannot be talked into describing a sibling.
     ctx = ctx_for(principal)
-    settings = await _read_settings(request, ctx)
+    knobs = await _read_settings(request, ctx)
     look = await _read_appearance(request, ctx, getattr(principal, "subject_id", "") or "")
-    return settings.model_copy(update={"pet_name": look.pet_name, "form": look.form})
+    # An empty string when this box has no firmware in its checkout, NOT a 503 like the manifest
+    # route: the knobs are still the truth and a panel that cannot be told about an update must
+    # still be told how bright to be. The panel reads "" as "nothing to compare against".
+    return knobs.model_copy(
+        update={
+            "pet_name": look.pet_name,
+            "form": look.form,
+            "fw_version": _firmware_version(settings) or "",
+        }
+    )
 
 
 @router.put("/settings")
