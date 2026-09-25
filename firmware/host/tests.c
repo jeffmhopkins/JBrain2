@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cadence.h"
 #include "calib.h"
 #include "caption.h"
 #include "emotion.h"
@@ -3012,6 +3013,59 @@ static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
  * bedroom. The fraction is a setting now, so what needs pinning is that it cannot be turned
  * into something harmful: not brighter than configured, not off, and not trusting a number a
  * box might send wrong. */
+/* --- cadence ----------------------------------------------------------------------------- */
+
+/* The property the update loop depends on and cannot assert for itself: slicing a long period
+   into short ones must not move where the long period ENDS. Before settings had their own
+   cadence the loop was a single `vTaskDelay`, so there was nothing here to get wrong; now the
+   manifest fetch happens after a loop of slices, and a slice that overshoots would push the
+   update check later every cycle — fifteen minutes, then fifteen and ten seconds, then fifteen
+   and twenty, on a panel nobody can reach to notice.
+
+   THE PERIOD IS DELIBERATELY NOT A WHOLE NUMBER OF SLICES. The shipped constants (fifteen
+   minutes, ten seconds) divide evenly, so an overshooting slice is invisible against them —
+   the first version of this test used them and passed against a `cadence_slice_ms` with its
+   tail case deleted. A ragged period is the only shape that can see the fault.
+
+   `slice <= left` IS CHECKED BEFORE THE SUBTRACTION, and that ordering is the test's own
+   safety: these are `uint32_t`, so subtracting an overshooting slice underflows to ~4.29e9 and
+   the loop spins forever instead of failing. A test that hangs reports nothing and burns CI's
+   timeout; CHECK exits on the spot instead. */
+static void test_slicing_a_period_does_not_move_its_end(void)
+{
+    const uint32_t period = 15u * 60u * 1000u + 3000u;
+    const uint32_t slice_ms = 10u * 1000u;
+    uint32_t left = period, total = 0, passes = 0;
+    while (left > 0 && passes < period / slice_ms + 8) {
+        const uint32_t slice = cadence_slice_ms(left, slice_ms);
+        CHECK(slice > 0, "a slice is never zero while time remains");
+        CHECK(slice <= left, "and never overshoots what is left, so the manifest is not late");
+        CHECK(slice <= slice_ms, "nor outlasts the short cadence");
+        left -= slice; /* safe: the CHECK above has proven it fits */
+        total += slice;
+        passes++;
+    }
+    CHECK(left == 0, "the loop drains the period rather than spinning");
+    CHECK(total == period, "the slices sum to exactly the period, to the millisecond");
+    CHECK(passes == period / slice_ms + 1, "a ragged period spends one extra, shorter pass");
+}
+
+/* The tail is the remainder rather than the period being rounded up to the next whole slice. */
+static void test_the_tail_of_a_period_is_short(void)
+{
+    CHECK(cadence_slice_ms(3000, 10000) == 3000, "the tail is what is left, not a full slice");
+    CHECK(cadence_slice_ms(10000, 10000) == 10000, "an exact fit is not shortened");
+    CHECK(cadence_slice_ms(10001, 10000) == 10000, "and one past it is still a full slice");
+}
+
+/* Zero means "no short cadence", which is what an OFFLINE panel asks for: there is nobody to
+   fetch settings from, so the retry should be one sleep rather than six wakeups a minute. */
+static void test_no_short_cadence_sleeps_the_whole_remainder(void)
+{
+    CHECK(cadence_slice_ms(60000, 0) == 60000, "offline, the retry is a single sleep");
+    CHECK(cadence_slice_ms(0, 10000) == 0, "and nothing left is nothing to wait for");
+}
+
 static void test_the_dim_fraction_is_the_boxs_to_choose(void)
 {
     CHECK(screen_level(200, SCREEN_DIM, 25) == 50, "a quarter is what it always was");
@@ -3284,6 +3338,9 @@ int main(void)
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
     test_the_pet_dozes_only_when_dim_and_not_mid_reply();
+    test_slicing_a_period_does_not_move_its_end();
+    test_the_tail_of_a_period_is_short();
+    test_no_short_cadence_sleeps_the_whole_remainder();
     test_the_dim_fraction_is_the_boxs_to_choose();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();

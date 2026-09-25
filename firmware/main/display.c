@@ -368,7 +368,7 @@ void display_request_restart(void)
  * clear a descriptor that DMA is still reading.
  *
  * This was a live cross-task call until 0.2.26: `apply_settings()` runs on the main task, at
- * boot and every fifteen minutes, and the box serves a brightness unconditionally — so every
+ * boot and every ten seconds, and the box serves a brightness unconditionally — so every
  * boot issued an 0x51 from the main task into an io handle the face task was driving at
  * ~25 fps. A panic within a minute of boot is exactly the shape that produces.
  *
@@ -378,6 +378,13 @@ void display_request_restart(void)
 void display_set_brightness(int level)
 {
     if (level < 0 || level > 255) return;
+    /* ON CHANGE, like the dim percentage below. `apply_settings` asks every ten seconds now
+       rather than every fifteen minutes, and the box serves a brightness unconditionally, so
+       an unguarded assignment raised `s_brightness_pending` six times a minute forever — six
+       backlight register writes for a value that had not moved. Harmless on the glass, because
+       `apply_brightness` recomputes through `screen_level` and so re-asserts the DIMMED level
+       while dim rather than waking the screen; pointless all the same. */
+    if ((uint8_t)level == s_brightness) return;
     s_brightness = (uint8_t)level;
     s_brightness_pending = true;
 }
@@ -392,10 +399,12 @@ static volatile int s_form_box = -1;     /* what the box last SAID, not what is 
 static volatile int s_form_pending = -1; /* a change for the render task to take */
 
 /* TAKEN ON CHANGE, NOT ON EVERY FETCH, and the difference is a child's afternoon. `apply_settings`
-   runs every fifteen minutes and the box serves a form unconditionally, so acting on each answer
-   would re-assert the owner's choice four times an hour — Elora switches to the robot, and the
+   runs every ten seconds and the box serves a form unconditionally, so acting on each answer
+   would re-assert the owner's choice six times a minute — Elora switches to the robot, and the
    panel silently switches her back before she has finished playing with it. Comparing against
-   what the box last said means the gesture wins until the OWNER actually changes his mind. */
+   what the box last said means the gesture wins until the OWNER actually changes his mind.
+   (This guard was load-bearing at four times an hour; at six times a minute it is the only
+   thing standing between a gesture and a child who cannot keep the body she picked.) */
 void display_set_dim_percent(int percent)
 {
     if (percent < 0 || percent > 100) return;
@@ -2988,11 +2997,11 @@ static void face_task(void *arg)
             PHASE(14);
             apply_brightness();
         }
-        /* A settings refresh lands every fifteen minutes, so a body chosen from the PWA reaches
+        /* A settings refresh lands every ten seconds, so a body chosen from the PWA reaches
            a panel on a wall without anyone touching it. Taken on the RENDER task, which is the
            only one allowed to write `st`, and only when it actually differs — assigning every
-           cycle would fight the four-tap toggle, snapping a child's live choice back within the
-           quarter hour. */
+           cycle would fight the four-tap toggle, snapping a child's live choice back before she
+           had finished the gesture. */
         if (s_form_pending >= 0) {
             st.form = (face_form_t)s_form_pending;
             s_form_pending = -1;

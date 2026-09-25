@@ -699,7 +699,7 @@ int audio_peak(const int16_t *buf, int samples)
  * I2C registers. The component's one mutex lives in `audio_codec_data_i2s.c` and serialises
  * the DATA path only, so it does nothing for a control write.
  *
- * `apply_settings()` calls this from the MAIN task, at boot and every fifteen minutes, while
+ * `apply_settings()` calls this from the MAIN task, at boot and every ten seconds, while
  * the render task sits inside `esp_codec_dev_read` for about 40 ms of every 40 ms frame. On
  * 2026-09-21 the panel panicked in exactly that window: the box logged `GET /settings`
  * answered and then NO telemetry post, which puts the fault between this call and the next

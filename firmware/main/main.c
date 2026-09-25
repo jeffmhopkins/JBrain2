@@ -11,6 +11,7 @@
 
 #include <stdbool.h>
 
+#include "cadence.h"
 #include "cfg.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -48,6 +49,22 @@ static const char *TAG = "endpoint";
    settled panel asking sooner is noise, but an unreachable one is the failure this whole
    design exists to prevent, and every minute of it is a minute nobody can fix remotely. */
 #define OFFLINE_RETRY_MS (60 * 1000)
+/* HOW OFTEN A KNOB REACHES THE GLASS, and it is no longer the update cycle's business.
+   `apply_settings` used to run ONLY after the manifest fetch above, so a brightness the owner
+   moved in the PWA took up to fifteen minutes to arrive while a message took thirty seconds —
+   a quarter of an hour of a slider that looks broken, on the one surface the owner has
+   (CLAUDE.md #10). The interval it inherited was chosen for UPDATES ("a pushed update is not
+   urgent"), which was never an argument about settings.
+
+   TEN SECONDS, NOT THE THREE THAT WERE ASKED FOR, and the difference is measured rather than
+   cautious. `ota_fetch_settings` inits and cleans up its own client, so every pass is a fresh
+   TLS handshake; both panels report `int_largest` — the largest free INTERNAL DMA block — down
+   at 31 KB, and internal fragmentation is the fault `report()` says "has explained the fault
+   twice". Ten seconds is three times the handshake rate of the thirty-second voice poll that
+   has run for months without trouble; three seconds would have been ten times it, on the one
+   number this panel cannot afford to be wrong about. Lower it when telemetry shows
+   `int_largest` holding under the new rate — the evidence will be there to read. */
+#define SETTINGS_PERIOD_MS (10 * 1000)
 
 /* Tries the manifest repeatedly, and reports both whether the box was reachable at all and
    what it offered. Reachability is the rollback criterion; the manifest is the payload. */
@@ -71,10 +88,16 @@ static const char *TAG = "endpoint";
 
    Defaults are the firmware's own, so a box that has never had them set, or one running older
    code that does not serve the route, leaves the panel exactly as it shipped. */
-static void apply_settings(const cfg_t *cfg)
+/* Answers whether the box was actually reachable, which the ten-second cadence needs and the
+   fifteen-minute one never did: `joined` is only re-read after the sleep below, so a router that
+   goes down mid-period leaves this being called on a dead network. Each of those costs
+   `HTTP_TIMEOUT_MS` (15 s) of a BLOCKED main task against a 10 s slice, which would stretch the
+   period to ~37 minutes and delay the manifest fetch and the telemetry post on exactly the panel
+   that most needs them. One failure ends the asking for the rest of the period. */
+static bool apply_settings(const cfg_t *cfg)
 {
     ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1, .dim_percent = -1};
-    if (ota_fetch_settings(cfg, &st) != ESP_OK) return;
+    if (ota_fetch_settings(cfg, &st) != ESP_OK) return false;
     if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
     if (st.brightness >= 0) display_set_brightness(st.brightness);
     display_set_debug_overlay(st.debug_overlay != 0);
@@ -84,11 +107,12 @@ static void apply_settings(const cfg_t *cfg)
     /* RENAMING THE PET IS RENAMING THE WAKE WORD, so the model has to be told and the label
        above his head has to be redrawn. `vocab_set_name` answers false when the phrase is
        unchanged — which is every fetch but the one after the owner actually edits it — so the
-       command list is not rebuilt four times an hour for nothing. */
+       command list is not rebuilt six times a minute for nothing. */
     if (vocab_set_name(st.pet_name)) {
         speech_reload_vocabulary();
         display_refresh_name();
     }
+    return true;
 }
 
 static void report(const cfg_t *cfg)
@@ -415,7 +439,32 @@ void app_main(void)
         }
         /* Offline panels come back faster than settled ones check for updates: a router
            reboot should cost a minute, not a quarter of an hour. */
-        vTaskDelay(pdMS_TO_TICKS(joined ? CHECK_PERIOD_MS : OFFLINE_RETRY_MS));
+        const uint32_t period = joined ? CHECK_PERIOD_MS : OFFLINE_RETRY_MS;
+        /* SLICED, SO SETTINGS ARE NOT A PASSENGER ON THE UPDATE CYCLE. The sleep is the same
+           length in total — `cadence_slice_ms` never overshoots, so the manifest fetch below
+           still lands on its own schedule rather than drifting later every round — but a knob
+           the owner moves is picked up within a slice instead of at the end of the period.
+
+           THE FETCH STAYS ON THIS TASK, and that is the whole reason this is a slice loop
+           rather than a flag set by the voice-post task. `apply_settings` walks into the
+           codec's I2C registers through `audio_set_levels`, and on 2026-09-21 doing that from
+           anywhere but here panicked the panel while the render task sat inside
+           `esp_codec_dev_read` (see `audio.h`). Same task, same call, only more often.
+
+           Only while joined: offline there is nobody to ask, and the retry below is what
+           matters. */
+        bool box_answering = joined;
+        for (uint32_t left = period; left > 0;) {
+            /* Zero once the box stops answering, which sleeps out the remainder in one go —
+               see `apply_settings`. That puts an offline panel back on exactly the single-sleep
+               behaviour it had before settings got their own cadence. */
+            const uint32_t slice = cadence_slice_ms(left, box_answering ? SETTINGS_PERIOD_MS : 0);
+            vTaskDelay(pdMS_TO_TICKS(slice));
+            left -= slice;
+            /* Not on the last slice: the manifest branch below applies settings anyway, and
+               asking twice in the same instant is a handshake for nothing. */
+            if (box_answering && left > 0) box_answering = apply_settings(&cfg);
+        }
         if (!joined) {
             joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;
             if (joined) ESP_LOGI(TAG, "network recovered");
