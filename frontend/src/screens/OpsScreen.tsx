@@ -912,7 +912,7 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
           places to revoke would be two places to get it wrong, and jpanel is the door the owner
           already thinks of as "the panels in my house". */}
       {panels !== null && panels.length > 0 && (
-        <p className="muted ops-panel-note">
+        <p className="muted ops-panel-note ops-panel-intro">
           Rename or revoke a panel on the <strong>jpanel</strong> screen, Panels tab.
         </p>
       )}

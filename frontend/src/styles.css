@@ -4225,7 +4225,7 @@ button.small {
    thing as it should be", and two different layouts for one question would read as two
    different kinds of answer. */
 .ops-panel-row {
-  padding: 8px 0;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -4269,6 +4269,11 @@ button.small {
   color: var(--text-2);
 }
 
+.ops-panel-intro {
+  margin: 0;
+  padding: 10px 14px 0;
+}
+
 .ops-panel-concern {
   margin: 4px 0 0;
   font-size: var(--fs-micro);
@@ -4286,7 +4291,7 @@ button.small {
 }
 
 .ops-host-row {
-  padding: 8px 0;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
 
