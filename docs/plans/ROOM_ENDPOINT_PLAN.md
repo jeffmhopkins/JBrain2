@@ -5470,7 +5470,7 @@ cut of that match lost every unit flashed *without* a name. `panel_label` and
 readers. One definition cannot come apart; a test that two strings agree can only notice after
 they already have.
 
-#### 10.4cz The knob that took a quarter of an hour (0.3.05, 2026-09-25)
+#### 10.4cz The knob that took a quarter of an hour (0.3.06, 2026-09-25)
 
 The owner, minutes after moving the brightness slider on a panel he had just powered on:
 *"I set the panel brightness but apparently it's going to take 15 minutes... That seems
@@ -5491,10 +5491,42 @@ hammering the box is a worse failure than a late rollout"* — which is a sound 
 firmware and was never an argument about a slider. The code already knew it hurt:
 `display.c`'s form guard says the difference is *"a child's afternoon"*.
 
-**Ten seconds, on the main task, in slices.** `cadence_slice_ms` (new, pure, host-tested) cuts
-the update period into settings-sized pieces without moving where the period ENDS, so the
-manifest fetch and the telemetry post keep the fifteen-minute schedule they were designed for
-while a knob lands within ten seconds.
+**Three seconds, on the main task, in slices — and the update question rides the same poll.**
+`cadence_slice_ms` (new, pure, host-tested) cuts the update period into poll-sized pieces
+without moving where the period ENDS, so the telemetry post keeps the fifteen-minute schedule it
+was designed for while a knob lands within three seconds.
+
+The owner asked for the standardisation explicitly: *"I think even the update should go through
+the same path standardize it to 3 seconds and if there's anything new it should be using it."*
+So `GET /endpoint/settings` now also carries **`fw_version`** — what this box would serve — and
+one round trip answers both "what are my knobs" and "is there new firmware". A panel learns
+about an update within three seconds instead of at the end of a fifteen-minute manifest cycle.
+
+**What deliberately did NOT move onto three seconds, and why each one is a measurement rather
+than a preference:**
+
+| stays slow | why |
+| --- | --- |
+| the 3.25 MB image | fetched only when the version actually CHANGES, never per poll |
+| a FAILED install | backs off to the old fifteen minutes — see below |
+| the telemetry post | an upsert, so no table grows, but §10.4bh reads a report at 6-7 s of uptime as PROOF OF A BOOT, and that only works while the interval is long |
+| a second request for the version | it rides the settings response instead: every fetch is a fresh TLS handshake, and two requests answering one question each would cost twice the handshakes of one answering both |
+
+**THE BACKOFF IS THE PART THAT MAKES THREE SECONDS SAFE, and without it this change would have
+been a denial of service against the owner's own box.** `ota_apply` has no backoff and no attempt
+cap — `ota_tries` is a reported counter, not a limiter — and the install fires whenever the
+served version differs from the running one. At fifteen minutes a failing install retried four
+times an hour. At three seconds it would retry **twelve hundred times an hour**, each pulling
+3.25 MB: about **65 MB a minute per panel**, ~7.8 GB/hour across the pair, for a failure this
+plan itself calls silent and *"indistinguishable from a panel nobody offered an update to"* —
+and the first OTA this project ever attempted failed exactly that way. `cadence_retry_due` now
+gates both install paths on `OTA_RETRY_BACKOFF_MS`, which is the old fifteen minutes: the
+NOTICING is fast, the RETRYING is not.
+
+Scope worth stating: the backoff bounds the WITHIN-SESSION retry rate, which is the risk the
+fast poll created. A crash during an install still re-attempts on the next boot exactly as it
+always has — that path predates this change, and fixing it needs the attempt written to NVS,
+which is its own decision rather than a rider on a cadence change.
 
 **The fetch stays on the main task, and that is why this is a slice loop rather than a flag.**
 The obvious design — long-poll on the voice-post task, set a flag, let the main task apply it —
@@ -5504,33 +5536,31 @@ here. `apply_settings` walks into the codec's I2C registers through `audio_set_l
 the main task was already taking needs no cross-task signal at all: same call, same task, only
 more often.
 
-**Why not the three seconds that were asked for, and why not push.** Two measurements decided
-both, and neither was available from reading the code:
+**Why not true push.** One measurement decided it, and it was not available from reading the
+code:
 
-- `ota_fetch_settings` inits and cleans up its own client, so **every pass is a fresh TLS
-  handshake**. Ten seconds is three times the handshake rate of the thirty-second voice poll
-  that has run for months; three seconds would have been ten times it.
 - Both panels report `int_largest` — the largest free INTERNAL DMA block — at **31 KB**, on a
   device where `report()`'s own comment says internal fragmentation *"has explained the fault
   twice"*. That is also what rules out true push for now: a long-poll needs its own task,
   because `jpanel.c`'s ticks every 250 ms to service taps and the speaker-finished
   acknowledgement and cannot block for fifteen seconds — and a second concurrent mbedTLS
   session against a 31 KB largest block is the ESP-SR-versus-radio fault (§10) wearing new
-  clothes. Lower the interval, or take the long-poll, when telemetry shows `int_largest`
-  holding under the new rate. The number is in every report; the evidence will be there.
+  clothes. Take the long-poll when telemetry shows `int_largest` holding under the three-second
+  rate. The number is in every report, so the evidence arrives without anyone instrumenting
+  anything — and if it sags, `POLL_PERIOD_MS` is the one number to raise.
 
 **One guard added, and it is load-bearing now in a way it was not before.**
 `display_set_brightness` raised its pending flag unconditionally, which at fifteen minutes was
-invisible and at ten seconds is six backlight writes a minute for a value that had not moved.
+invisible and at three seconds is twenty backlight writes a minute for a value that had not moved.
 Harmless on the glass — `apply_brightness` recomputes through `screen_level`, so re-asserting
 while dim writes the DIMMED level rather than waking the screen — but the form guard beside it
 is the one that matters: it was protecting a child's gesture from being undone four times an
-hour, and it is now protecting it six times a minute.
+hour, and it is now protecting it twenty times a minute.
 
 **A second flaw the diff review caught, and it only exists because of the new rate.** `joined`
 is re-read only AFTER the sleep, so a router that goes down mid-period leaves `apply_settings`
 being called on a dead network — and each failure blocks the main task for `HTTP_TIMEOUT_MS`
-(15 s) against a 10 s slice, stretching the period to roughly **37 minutes** and delaying the
+(15 s) against a 3 s slice, stretching the period well past its hour and delaying the
 manifest fetch and the telemetry post on precisely the panel that most needs both. At fifteen
 minutes this could not happen, because there was only ever one attempt. `apply_settings` now
 answers whether the box replied, and one failure stops the asking for the rest of the period —

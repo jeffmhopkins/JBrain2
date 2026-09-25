@@ -3031,6 +3031,45 @@ static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
    safety: these are `uint32_t`, so subtracting an overshooting slice underflows to ~4.29e9 and
    the loop spins forever instead of failing. A test that hangs reports nothing and burns CI's
    timeout; CHECK exits on the spot instead. */
+/* The backoff the fast poll made necessary. `ota_apply` has no cap of its own, and the install
+   fires whenever the served version differs from the running one — so at a three-second poll a
+   FAILING install would retry twelve hundred times an hour, each pulling a 3.25 MB image, of a
+   failure the plan calls silent. Noticing stays fast; retrying does not. */
+static void test_a_failed_install_waits_out_its_backoff(void)
+{
+    const uint32_t backoff = 15u * 60u * 1000u;
+    CHECK(cadence_retry_due(0, 0, backoff), "never having tried is always due");
+    CHECK(cadence_retry_due(1000, 0, backoff), "and stays due whatever the clock says");
+    CHECK(!cadence_retry_due(1000, 1, backoff), "a fresh attempt is not retried a second later");
+    CHECK(!cadence_retry_due(backoff, 1, backoff), "nor one millisecond early");
+    CHECK(cadence_retry_due(backoff + 1, 1, backoff), "and is due exactly on the backoff");
+    CHECK(cadence_retry_due(backoff * 4, 1, backoff), "long past it, still due");
+}
+
+/* WRAP-SAFE, because the alternative is a panel that stops accepting updates for seven weeks.
+   `esp_timer` is read into a uint32 of milliseconds here, which rolls over about every 49 days,
+   and a panel in a bedroom is exactly the device that gets there.
+
+   THE BUG THIS CATCHES is the plausible-looking guard `if (now_ms < last_ms) return false;` —
+   "the clock went backwards, so don't retry". After a rollover `now` IS less than `last`, so
+   that reads a due retry as a clock fault and blocks every update until the timer wraps again.
+   Verified by writing it: the third assertion below fails against that version.
+
+   It does NOT catch a signed difference, and the first draft of this comment claimed it did.
+   `(int32_t)now - (int32_t)last` is the standard timer idiom and gives the right answer for any
+   gap under 2^31; its problem is signed-overflow UB at the extremes, which is a reason to keep
+   the subtraction unsigned but not something a value assertion can see. */
+static void test_the_backoff_survives_a_clock_rollover(void)
+{
+    const uint32_t backoff = 15u * 60u * 1000u;
+    const uint32_t before = 0xFFFFFF00u; /* moments from the top of the range */
+    CHECK(!cadence_retry_due(before + 10u, before, backoff), "just after the attempt, not due");
+    /* `now` has wrapped past zero; the elapsed time is small and unsigned arithmetic says so. */
+    CHECK(!cadence_retry_due(0x00000100u, before, backoff), "a wrap is not a licence to retry");
+    CHECK(cadence_retry_due(before + backoff + 1u, before, backoff),
+          "and a genuine backoff across the wrap is still due");
+}
+
 static void test_slicing_a_period_does_not_move_its_end(void)
 {
     const uint32_t period = 15u * 60u * 1000u + 3000u;
@@ -3338,6 +3377,8 @@ int main(void)
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
     test_the_pet_dozes_only_when_dim_and_not_mid_reply();
+    test_a_failed_install_waits_out_its_backoff();
+    test_the_backoff_survives_a_clock_rollover();
     test_slicing_a_period_does_not_move_its_end();
     test_the_tail_of_a_period_is_short();
     test_no_short_cadence_sleeps_the_whole_remainder();

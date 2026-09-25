@@ -248,6 +248,24 @@ class TestAPanelCanActuallyAuthenticate:
         assert resp.status_code == 200, resp.text
         assert resp.json()["version"] == VERSION
 
+    def test_a_panel_cannot_write_the_served_version_back(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """`fw_version` shares the model the owner's PUT takes, so it is worth pinning that it
+        is read-only in effect: the UPDATE names six columns and ignores everything else. A
+        panel that could set this could talk its siblings into installing anything."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.put(
+            "/api/endpoint/settings",
+            headers={"Authorization": f"Bearer {key}"},
+            json={"brightness": 10, "fw_version": "9.9.9"},
+        )
+        # Owner-only route; a panel key is not an owner session.
+        assert resp.status_code in (401, 403), resp.text
+
     def test_a_panel_can_download_the_image_the_manifest_points_at(
         self, client: tuple[TestClient, Path, list[Any]]
     ) -> None:

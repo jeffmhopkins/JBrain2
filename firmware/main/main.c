@@ -49,22 +49,41 @@ static const char *TAG = "endpoint";
    settled panel asking sooner is noise, but an unreachable one is the failure this whole
    design exists to prevent, and every minute of it is a minute nobody can fix remotely. */
 #define OFFLINE_RETRY_MS (60 * 1000)
-/* HOW OFTEN A KNOB REACHES THE GLASS, and it is no longer the update cycle's business.
+/* THE ONE POLL, and everything a panel can learn from the box rides it.
    `apply_settings` used to run ONLY after the manifest fetch above, so a brightness the owner
    moved in the PWA took up to fifteen minutes to arrive while a message took thirty seconds —
    a quarter of an hour of a slider that looks broken, on the one surface the owner has
    (CLAUDE.md #10). The interval it inherited was chosen for UPDATES ("a pushed update is not
    urgent"), which was never an argument about settings.
 
-   TEN SECONDS, NOT THE THREE THAT WERE ASKED FOR, and the difference is measured rather than
-   cautious. `ota_fetch_settings` inits and cleans up its own client, so every pass is a fresh
-   TLS handshake; both panels report `int_largest` — the largest free INTERNAL DMA block — down
-   at 31 KB, and internal fragmentation is the fault `report()` says "has explained the fault
-   twice". Ten seconds is three times the handshake rate of the thirty-second voice poll that
-   has run for months without trouble; three seconds would have been ten times it, on the one
-   number this panel cannot afford to be wrong about. Lower it when telemetry shows
-   `int_largest` holding under the new rate — the evidence will be there to read. */
-#define SETTINGS_PERIOD_MS (10 * 1000)
+   THREE SECONDS, AND IT NOW ANSWERS THE UPDATE QUESTION TOO. `GET /endpoint/settings` carries
+   `fw_version` — what this box would serve — so ONE round trip says both "here are your knobs"
+   and "there is new firmware". That matters because every pass is a fresh TLS handshake
+   (`ota_fetch_settings` inits and cleans up its own client) and both panels report
+   `int_largest` — the largest free INTERNAL DMA block — at 31 KB, where internal fragmentation
+   is the fault `report()` says "has explained the fault twice". Two requests answering one
+   question each would cost twice the handshakes of one answering both.
+
+   WHAT IS NOT ON THIS CADENCE, deliberately:
+     - the 3.25 MB image, which is fetched only when the version actually CHANGES, never per
+       poll (see `maybe_install`);
+     - a FAILED install, which backs off to `OTA_RETRY_BACKOFF_MS` — the noticing is fast, the
+       retrying is not;
+     - the telemetry post, which stays on `CHECK_PERIOD_MS`. It is an upsert so there is no
+       table to grow, but twenty writes a minute per panel buys nothing, and
+       `ROOM_ENDPOINT_PLAN.md` §10.4bh reads a report at 6-7 s of uptime as PROOF OF A BOOT —
+       a diagnostic that only works while the interval is long.
+
+   If `int_largest` sags under this rate, this is the number to raise; it is reported every
+   cycle, so the evidence arrives without anyone instrumenting anything. */
+#define POLL_PERIOD_MS (3 * 1000)
+/* HOW LONG A FAILED INSTALL WAITS, and it is the old cycle on purpose: a version that genuinely
+   changed is installed within a poll, while an install that failed retries no faster than it
+   ever did. Bounds the WITHIN-SESSION rate, which is the one the fast poll created. A crash
+   during an install still re-attempts on the next boot exactly as it always has — that path
+   predates this change and fixing it needs the attempt written to NVS, which is its own
+   decision, not a rider on a cadence change. */
+#define OTA_RETRY_BACKOFF_MS CHECK_PERIOD_MS
 
 /* Tries the manifest repeatedly, and reports both whether the box was reachable at all and
    what it offered. Reachability is the rollback criterion; the manifest is the payload. */
@@ -94,10 +113,13 @@ static const char *TAG = "endpoint";
    `HTTP_TIMEOUT_MS` (15 s) of a BLOCKED main task against a 10 s slice, which would stretch the
    period to ~37 minutes and delay the manifest fetch and the telemetry post on exactly the panel
    that most needs them. One failure ends the asking for the rest of the period. */
-static bool apply_settings(const cfg_t *cfg)
+static bool apply_settings(const cfg_t *cfg, char *served, size_t served_cap)
 {
     ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1, .dim_percent = -1};
     if (ota_fetch_settings(cfg, &st) != ESP_OK) return false;
+    /* The version this box would serve, for the caller's install check. Optional, because the
+       two callers that only want the knobs applied should not have to declare a buffer. */
+    if (served != NULL && served_cap > 0) snprintf(served, served_cap, "%s", st.fw_version);
     if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
     if (st.brightness >= 0) display_set_brightness(st.brightness);
     display_set_debug_overlay(st.debug_overlay != 0);
@@ -107,12 +129,41 @@ static bool apply_settings(const cfg_t *cfg)
     /* RENAMING THE PET IS RENAMING THE WAKE WORD, so the model has to be told and the label
        above his head has to be redrawn. `vocab_set_name` answers false when the phrase is
        unchanged — which is every fetch but the one after the owner actually edits it — so the
-       command list is not rebuilt six times a minute for nothing. */
+       command list is not rebuilt twenty times a minute for nothing. */
     if (vocab_set_name(st.pet_name)) {
         speech_reload_vocabulary();
         display_refresh_name();
     }
     return true;
+}
+
+/* THE INSTALL, off the fast poll instead of the fifteen-minute cycle. `served` is what the box
+   said it would serve, from the same fetch that just applied the knobs, so noticing an update
+   costs no extra round trip at all.
+ *
+ * `last_try_ms` is the caller's, so the backoff survives the whole loop rather than each pass.
+ * Recorded BEFORE the attempt because `ota_apply` reboots on success and never returns: an
+ * attempt that is not written down first is an attempt that never happened. */
+static void maybe_install(const cfg_t *cfg, const char *served, uint32_t *last_try_ms)
+{
+    /* Empty means the box has no image in its checkout — nothing to compare against, which is
+       not the same as being out of date. The settings route answers "" rather than 503 here
+       precisely so the knobs still arrive on a box mid-deploy. */
+    if (served == NULL || served[0] == '\0') return;
+    if (strcmp(served, ota_running_version()) == 0) return;
+
+    const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (!cadence_retry_due(now, *last_try_ms, OTA_RETRY_BACKOFF_MS)) return;
+
+    /* The URL comes from the manifest, which is the route that owns it; the poll only told us a
+       version. One extra fetch on the rare pass where an update is actually waiting. */
+    ota_manifest_t m;
+    if (ota_fetch_manifest(cfg, &m) != ESP_OK) return;
+    if (strcmp(m.version, ota_running_version()) == 0) return; /* raced a deploy; nothing to do */
+
+    ESP_LOGI(TAG, "update offered by poll: %s -> %s", ota_running_version(), m.version);
+    *last_try_ms = (now == 0) ? 1 : now; /* 0 is reserved for "never tried" */
+    ota_apply(cfg, m.url);               /* reboots on success */
 }
 
 static void report(const cfg_t *cfg)
@@ -376,7 +427,7 @@ void app_main(void)
     }
 
     if (reachable) {
-        apply_settings(&cfg);
+        apply_settings(&cfg, NULL, 0);
         report(&cfg);
         /* THE SECOND BOOT AFTER AN UPDATE — `ota.h` explains what it works around and why it
            is a workaround. Placed HERE and nowhere earlier: `ota_confirm_health` above has
@@ -393,12 +444,24 @@ void app_main(void)
     }
 
     bool ears_tried = false;
+    /* Shared by both install paths — the manifest one below and the fast poll's `maybe_install`
+       — so a failed attempt is one attempt however it was noticed. Zero is "never tried". */
+    uint32_t ota_last_try_ms = 0;
     while (true) {
         if (reachable) {
             const char *running = ota_running_version();
+            const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
             if (strcmp(manifest.version, running) != 0) {
-                ESP_LOGI(TAG, "update offered: %s -> %s", running, manifest.version);
-                ota_apply(&cfg, manifest.url); /* reboots on success */
+                /* THROUGH THE SAME BACKOFF AS THE POLL, so the two paths cannot between them
+                   retry a failing install faster than one of them would alone. */
+                if (cadence_retry_due(now, ota_last_try_ms, OTA_RETRY_BACKOFF_MS)) {
+                    ESP_LOGI(TAG, "update offered: %s -> %s", running, manifest.version);
+                    ota_last_try_ms = (now == 0) ? 1 : now;
+                    ota_apply(&cfg, manifest.url); /* reboots on success */
+                } else {
+                    ESP_LOGW(TAG, "install of %s failed recently — waiting out the backoff",
+                             manifest.version);
+                }
             } else {
                 ESP_LOGI(TAG, "up to date at %s", running);
             }
@@ -458,12 +521,19 @@ void app_main(void)
             /* Zero once the box stops answering, which sleeps out the remainder in one go —
                see `apply_settings`. That puts an offline panel back on exactly the single-sleep
                behaviour it had before settings got their own cadence. */
-            const uint32_t slice = cadence_slice_ms(left, box_answering ? SETTINGS_PERIOD_MS : 0);
+            const uint32_t slice = cadence_slice_ms(left, box_answering ? POLL_PERIOD_MS : 0);
             vTaskDelay(pdMS_TO_TICKS(slice));
             left -= slice;
             /* Not on the last slice: the manifest branch below applies settings anyway, and
                asking twice in the same instant is a handshake for nothing. */
-            if (box_answering && left > 0) box_answering = apply_settings(&cfg);
+            if (box_answering && left > 0) {
+                char served[OTA_VERSION_MAX] = "";
+                box_answering = apply_settings(&cfg, served, sizeof(served));
+                /* Same pass, no extra fetch unless something is actually waiting. Reboots on a
+                   successful install, so anything after this line runs only when there was
+                   nothing to do or the attempt failed. */
+                if (box_answering) maybe_install(&cfg, served, &ota_last_try_ms);
+            }
         }
         if (!joined) {
             joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;
@@ -471,7 +541,7 @@ void app_main(void)
         }
         reachable = joined && ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
         if (reachable) {
-            apply_settings(&cfg);
+            apply_settings(&cfg, NULL, 0);
             report(&cfg);
         }
     }
