@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "cfg.c" "net.c" "ota.c" "display.c" "face.c" "font.c" "emotion.c" "rig.c" "variants.c" "gesture.c" "orient.c" "screen.c" "cadence.c" "ring.c" "calib.c" "caption.c" "cue.c" "vocab.c" "speech.c" "imu.c" "pmu.c" "mem.c" "touch.c" "audio.c" "talk.c" "jpanel.c" "i2c_bus.c"
+    SRCS "main.c" "cfg.c" "net.c" "ota.c" "display.c" "face.c" "font.c" "emotion.c" "rig.c" "variants.c" "gesture.c" "orient.c" "screen.c" "cadence.c" "confirm.c" "ring.c" "calib.c" "caption.c" "cue.c" "vocab.c" "speech.c" "imu.c" "pmu.c" "mem.c" "touch.c" "audio.c" "talk.c" "jpanel.c" "i2c_bus.c"
     INCLUDE_DIRS "."
     # See linker.lf: it exiles a 117 KB scratch buffer belonging to a model this
     # firmware never runs out of the internal RAM the Wi-Fi driver needs.

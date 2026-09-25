@@ -17,6 +17,7 @@
 #include "cadence.h"
 #include "calib.h"
 #include "caption.h"
+#include "confirm.h"
 #include "emotion.h"
 #include "face.h"
 #include "font.h"
@@ -3035,6 +3036,77 @@ static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
    fires whenever the served version differs from the running one — so at a three-second poll a
    FAILING install would retry twelve hundred times an hour, each pulling a 3.25 MB image, of a
    failure the plan calls silent. Noticing stays fast; retrying does not. */
+/* --- confirm ------------------------------------------------------------------------------ */
+
+/* THE TWO TARGETS MUST NOT OVERLAP, and this is the assertion that matters most in the file:
+   the finger that means "send this" is one bad aim from the one that destroys it, and the
+   reader is four. A gap between them means a miss does NOTHING, which is the only safe thing
+   a miss can do. */
+static void test_the_tick_and_the_cross_cannot_both_be_hit(void)
+{
+    const int over_h = FACE_H;
+    const int cy = confirm_cy(over_h);
+    CHECK(confirm_hit(CONFIRM_CX_CANCEL, cy, over_h) == CONFIRM_CANCEL, "the cross cancels");
+    CHECK(confirm_hit(CONFIRM_CX_SEND, cy, over_h) == CONFIRM_SEND, "the tick sends");
+    /* Walk the whole line between the two centres: every point is one thing or nothing. */
+    int gap = 0;
+    for (int x = CONFIRM_CX_CANCEL; x <= CONFIRM_CX_SEND; x++) {
+        const confirm_hit_t h = confirm_hit(x, cy, over_h);
+        CHECK(h == CONFIRM_CANCEL || h == CONFIRM_SEND || h == CONFIRM_NONE, "one of three");
+        if (h == CONFIRM_NONE) gap++;
+        /* Monotone: once past the cross you never get it back, and you cannot reach the tick
+           before leaving the cross. Both are implied by a genuine dead band. */
+        if (x > CONFIRM_CX_CANCEL + CONFIRM_HIT_R) CHECK(h != CONFIRM_CANCEL, "cross ends");
+        if (x < CONFIRM_CX_SEND - CONFIRM_HIT_R) CHECK(h != CONFIRM_SEND, "tick starts late");
+    }
+    CHECK(gap > 0, "there is a dead band between them, so a miss is not a cancel");
+}
+
+/* The targets are BIGGER than the discs, on the pop-up's own lesson: "a four-year-old aiming
+   at a small target with an excited finger is a miss". */
+static void test_the_target_is_larger_than_the_icon(void)
+{
+    const int over_h = FACE_H;
+    const int cy = confirm_cy(over_h);
+    CHECK(CONFIRM_HIT_R > CONFIRM_R, "the reach exceeds what is drawn");
+    /* Just outside the drawn disc still sends. */
+    CHECK(confirm_hit(CONFIRM_CX_SEND + CONFIRM_R + 4, cy, over_h) == CONFIRM_SEND,
+          "a finger just past the edge of the tick still sends");
+    CHECK(confirm_hit(CONFIRM_CX_CANCEL, cy - CONFIRM_R - 4, over_h) == CONFIRM_CANCEL,
+          "and just above the cross still cancels");
+}
+
+/* THE REST OF THE GLASS DOES NOTHING, which is the behaviour change: a touch anywhere used to
+   cancel, and the pet itself must not be a cancel button while a child is talking to it. */
+static void test_everywhere_else_is_nothing(void)
+{
+    const int over_h = FACE_H;
+    CHECK(confirm_hit(FACE_W / 2, FACE_H / 2, over_h) == CONFIRM_NONE, "the pet is not a button");
+    CHECK(confirm_hit(0, 0, over_h) == CONFIRM_NONE, "nor the top corner");
+    CHECK(confirm_hit(FACE_W / 2, confirm_cy(over_h), over_h) == CONFIRM_NONE,
+          "nor dead centre between them");
+}
+
+/* ANCHORED TO THE BAND, NOT THE FRAME. A side-mounted panel draws its overlays in the square
+   the quarter turn preserves, so the icons have to move with it — measured from the bottom of
+   whatever band they are given, they land in its bottom third either way. A version that
+   hardcoded the frame would put these off the edge of a turned panel, where a child would
+   press glass that does nothing and a message would have no way out but silence. */
+static void test_the_targets_follow_a_turned_panel(void)
+{
+    const int portrait = FACE_H;      /* the whole frame */
+    const int square = 40 + 368;      /* SQ_Y0 + SQ, what a quarter turn keeps */
+    CHECK(confirm_cy(portrait) != confirm_cy(square), "a turned panel puts them somewhere else");
+    /* In the bottom third of whichever band, and inside it. */
+    CHECK(confirm_cy(portrait) > portrait * 2 / 3, "portrait: in the bottom third");
+    CHECK(confirm_cy(portrait) + CONFIRM_R <= portrait, "portrait: and on the glass");
+    CHECK(confirm_cy(square) > square - (square - 40) / 3, "turned: in the bottom third");
+    CHECK(confirm_cy(square) + CONFIRM_R <= square, "turned: and inside the square");
+    /* The same press that sends on a portrait panel must not cancel on a turned one. */
+    CHECK(confirm_hit(CONFIRM_CX_SEND, confirm_cy(square), square) == CONFIRM_SEND,
+          "the tick is still the tick a quarter turn later");
+}
+
 static void test_a_failed_install_waits_out_its_backoff(void)
 {
     const uint32_t backoff = 15u * 60u * 1000u;
@@ -3377,6 +3449,10 @@ int main(void)
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
     test_the_pet_dozes_only_when_dim_and_not_mid_reply();
+    test_the_tick_and_the_cross_cannot_both_be_hit();
+    test_the_target_is_larger_than_the_icon();
+    test_everywhere_else_is_nothing();
+    test_the_targets_follow_a_turned_panel();
     test_a_failed_install_waits_out_its_backoff();
     test_the_backoff_survives_a_clock_rollover();
     test_slicing_a_period_does_not_move_its_end();
