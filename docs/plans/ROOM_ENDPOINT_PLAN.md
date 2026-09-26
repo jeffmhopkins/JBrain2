@@ -5859,6 +5859,19 @@ G2P with out-of-vocabulary handling (`g2p_en` carries a neural net for it, and c
 installed here — its `distance` dependency will not build), which is also what per-panel sibling
 names ("tell Elora") would need. Worth doing deliberately rather than as a rider on this.
 
+**AND A SECOND BUG, CAUGHT BY CI ON THIS PR RATHER THAN BY A PANEL.** §10.4dc added a fifth
+field to each telemetry decode — the decoder's RAW phoneme string, the only thing that can
+separate "the microphone never carried it" from "it was heard as something else" — and widened
+`main.c`'s format string without widening `TelemetryIn.heard`, whose union still ended at four.
+Every report from a panel on 0.3.10 or later would have 422'd, and a 422 is a FAILED report: the
+crash ring kept rather than cleared, the reading never arriving, and from the box a panel that
+looks like it had nothing to say. The first casualty would have been the measurement that field
+exists to take. Nothing had shipped it — 0.3.10 to 0.3.12 are unmerged — so no panel was ever
+affected. `TestTheHeardRingCrossesThePackageBoundary` is the test that caught it, from the
+format-string side; the model now has its own case so the two cannot drift apart from the other
+side either. The union's own comment already described this failure and anticipated the wrong
+direction: an old panel against a new box, rather than a new panel against a box nobody updated.
+
 Backend: seven unit cases on the converter, including one that cross-checks it against **every
 phrase already in flash** — a consistency check rather than independent verification, and it
 catches the thing that actually happens, a hand-edit to `vocab.c` or to the alphabet leaving the

@@ -454,13 +454,25 @@ class TelemetryIn(BaseModel):
     # the panel does not have — and its own comment says the confidence floor that would stop
     # "turn red" firing `jump up` at p=0.19 cannot be chosen until a CORRECT decode's score is
     # known on this hardware. This is that measurement, finally leaving the device.
-    # BOTH ARITIES, AND THE UNION IS THE ROLLOUT. 0.2.91 adds a fourth field — how many times
-    # the same decode repeated in a row — and during an OTA one panel is on the old firmware
-    # while the other is on the new. A model that took only the new shape would 422 the old
-    # panel's telemetry, and a 422 is a FAILED report: the crash ring it was carrying would be
-    # kept rather than cleared, and the reading would simply never arrive. Accepting both is
-    # what makes a fleet upgradable one panel at a time.
-    heard: list[tuple[str, int, int] | tuple[str, int, int, int]] = Field(default_factory=list)
+    # EVERY ARITY, AND THE UNION IS THE ROLLOUT. 0.2.91 added a fourth field — how many times
+    # the same decode repeated in a row — and 0.3.10 a fifth, the decoder's RAW phoneme string,
+    # which is the only way to tell "the microphone never carried it" from "it was heard as
+    # something else". During an OTA one panel is on the old firmware while the other is on the
+    # new. A model that took only the newest shape would 422 the older panel's telemetry, and a
+    # 422 is a FAILED report: the crash ring it was carrying would be kept rather than cleared,
+    # and the reading would simply never arrive. Accepting all three is what makes a fleet
+    # upgradable one panel at a time.
+    #
+    # THE FIFTH WAS MISSED WHEN IT LANDED, and only CI caught it, from the test that reads both
+    # `main.c` and this model. 0.3.10 widened the firmware's format string without widening
+    # this, so every report from an upgraded panel would have 422'd — losing the very
+    # measurement that change exists to take, and looking from here like a panel with nothing
+    # to say. That is the failure this union's first paragraph describes, arriving by the one
+    # route it did not anticipate: not an old panel against a new box, but a new panel against
+    # a box nobody had updated.
+    heard: list[
+        tuple[str, int, int] | tuple[str, int, int, int] | tuple[str, int, int, int, str]
+    ] = Field(default_factory=list)
     # The largest free INTERNAL DMA block. `free_heap` above is the total, and the total is
     # exactly the number that cannot tell 60 KB free-and-contiguous from 60 KB
     # free-and-fragmented — which is the difference between a panel that draws and one where
