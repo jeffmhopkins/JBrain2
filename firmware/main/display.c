@@ -886,7 +886,6 @@ static uint32_t s_pending_until;
    is NOT the space `panel_to_frame` hands back; see `tap_to_overlay` immediately below. Both
    are rectangles; -1 in the first slot means not on screen. */
 static int s_popup_box[4] = {-1, -1, -1, -1};
-static int s_repeat_box[4] = {-1, -1, -1, -1};
 
 static bool in_box(const int box[4], int x, int y)
 {
@@ -1136,20 +1135,28 @@ static void draw_popup_badge(uint16_t *fb, int y0, const char *from)
  * question a child sitting through four messages has is how many more. */
 static void draw_run(uint16_t *fb, int y0, int h, int left)
 {
-    /* Sized for the format rather than for the expected value: `left` is an int and a count
-       that ever came back wrong would truncate the words rather than the number. */
-    char line[40];
+    (void)y0;
+    /* THE ICON CARRIES "STOP" AND THE NUMERAL CARRIES "HOW MANY MORE", which is the split the
+       text bar could not make: "2 MORE  TAP TO STOP" is one sentence for an adult, and the
+       reader here cannot read either half. The count stays because the question a child
+       sitting through four messages actually has is how many are left — a digit they can
+       count on their fingers answers it and the word never did. Above the disc, so it does
+       not fight the square. */
+    confirm_draw_stop(fb, FACE_W, FACE_H, h);
     if (left > 0) {
-        snprintf(line, sizeof(line), "%d MORE  TAP TO STOP", left);
-    } else {
-        snprintf(line, sizeof(line), "TAP TO STOP");
+        /* Sized for the FORMAT, not the expected value — the rule the text bar this replaced
+           already followed: `left` is an int, so eleven digits and a sign must fit or the
+           compiler is right to refuse it. */
+        char n[12];
+        snprintf(n, sizeof(n), "%d", left);
+        /* BESIDE THE DISC, NOT ABOVE IT, and the first version had it above: white numerals
+           landed on the pet's own light body and all but vanished. Out here it sits on the
+           black margin the bottom third already has, in the slot the cross occupies on the
+           recording screen — so the row keeps its balance and the digit keeps its contrast. */
+        const int tw = font_text_w(n, 3);
+        font_draw(fb, FACE_W, FACE_H, CONFIRM_CX_CANCEL - tw / 2,
+                  confirm_cy(h) - (FONT_H * 3) / 2, 3, n, SWAP16(0xFFFF));
     }
-    const int tw = font_text_w(line, 2);
-    const int bw = tw + 28, bh = 38;
-    const int bx = (FACE_W - bw) / 2;
-    const int by = y0 + (h - y0) - bh - 16;
-    bubble(fb, bx, by, bw, bh, 12, SWAP16(0x0010));
-    font_draw(fb, FACE_W, FACE_H, bx + 14, by + 11, 2, line, SWAP16(0x07FF));
 }
 
 /* THE REPEAT ICON: top-left, five seconds, then gone (`REPEAT_MS`).
@@ -1164,17 +1171,15 @@ static void draw_run(uint16_t *fb, int y0, int h, int left)
  * A WORD RATHER THAN A GLYPH. There is no drawing library here and a hand-plotted circular
  * arrow at this size reads as a smudge; "AGAIN" is what the adult in the room needs, and the
  * twins learn a box that appears where the sound just came from by pressing it once. */
-static void draw_repeat(uint16_t *fb, int y0)
+static void draw_repeat(uint16_t *fb, int over_h)
 {
-    const int w = font_text_w("AGAIN", 3);
-    const int bw = w + 32, bh = 52;
-    const int bx = 14, by = y0 + 14;
-    bubble(fb, bx, by, bw, bh, 14, SWAP16(0x001F));
-    font_draw(fb, FACE_W, FACE_H, bx + 16, by + 14, 3, "AGAIN", SWAP16(0xFFFF));
-    s_repeat_box[0] = bx;
-    s_repeat_box[1] = by;
-    s_repeat_box[2] = bx + bw;
-    s_repeat_box[3] = by + bh;
+    /* THE GLYPH, AT LAST. The word was here because "a hand-plotted circular arrow at this
+       size reads as a smudge" — true of a 52 px corner box and not of a 112 px disc. It also
+       moves from the top-left corner to the bottom third, where every other thing a finger is
+       meant to press now lives; a control whose location a child has to learn separately is a
+       control they will not find. No stored rectangle any more: it is a circle and it is
+       hit-tested as one. */
+    confirm_draw_repeat(fb, FACE_W, FACE_H, over_h);
 }
 
 /* 0 upright, 1 clockwise, 2 upside down, 3 anticlockwise — a quarter turn each. */
@@ -1958,6 +1963,10 @@ static void face_task(void *arg)
                here as (91,79) and missed by 289 px. */
             int ox = -1, oy = -1;
             tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
+            /* The overlay BAND, resolved here for the same reason the coordinates are: the
+               centred controls are placed against it and a hit test that guessed a different
+               band would miss by the difference. */
+            const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
             /* THE POP-UP AND THE REPEAT ICON OUTRANK EVERYTHING, tested before the cancels
              * and the poke for exactly the reason the label is: a tap that both played a
              * message and made the pet fart reads as two things happening, and the child
@@ -1979,7 +1988,7 @@ static void face_task(void *arg)
                     dirty = true;
                     goto tap_done;
                 }
-                if (in_box(s_repeat_box, ox, oy)) {
+                if (s_repeat_until != 0 && confirm_hit_centre(ox, oy, over_h_tap)) {
                     s_flinch = 1.0f;
                     /* IT ASKS THE BOX NOW, and that is a real change from what this comment
                        used to promise. The message was replayed from this panel's own buffer
@@ -2015,9 +2024,7 @@ static void face_task(void *arg)
              * ONLY THE HANDS-FREE TURNS. A held listen ends on the release of the finger that
              * started it, so it never reaches here and keeps its gesture intact. */
             if ((s_talk == TALK_LISTENING && s_listen_voice) || s_talk == TALK_RECORDING) {
-                const int over_h_now =
-                    (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
-                const confirm_hit_t pressed = confirm_hit(ox, oy, over_h_now);
+                const confirm_hit_t pressed = confirm_hit(ox, oy, over_h_tap);
                 const bool recording = (s_talk == TALK_RECORDING);
                 const char *who = recording ? "jpanel" : "talk";
                 if (pressed == CONFIRM_CANCEL) {
@@ -2102,7 +2109,7 @@ static void face_task(void *arg)
                 ESP_LOGI(TAG, "%s: tap at frame (%d,%d) overlay (%d,%d) hit neither target "
                               "(tick %d, cross %d, cy %d)",
                          who, s_fig_x, s_fig_y, ox, oy, CONFIRM_CX_SEND, CONFIRM_CX_CANCEL,
-                         confirm_cy(over_h_now));
+                         confirm_cy(over_h_tap));
                 goto tap_done;
             }
             colour = (colour + 1) % face_colour_count();
@@ -2673,7 +2680,6 @@ static void face_task(void *arg)
         }
         if (s_repeat_until != 0 && now > s_repeat_until) {
             s_repeat_until = 0;
-            s_repeat_box[0] = -1;
             dirty = true;
         }
         if (jpanel_running()) dirty = true; /* the count in the run bar has to stay true */
@@ -2955,7 +2961,7 @@ static void face_task(void *arg)
             if (jpanel_running()) {
                 draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0));
             } else if (s_repeat_until != 0) {
-                draw_repeat(fb, over_y0);
+                draw_repeat(fb, over_h);
             }
             PHASE(8);
             if (s_upside_down) flip_frame(fb);

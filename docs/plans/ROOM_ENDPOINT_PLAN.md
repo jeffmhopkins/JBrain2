@@ -5732,6 +5732,44 @@ Two defects caught while writing it: the loop guard reserved 64 bytes against an
 now reach ~69, which is the unterminated-JSON failure §10.4 already paid for once; and `raw`
 lands inside a JSON string that nothing downstream escapes, so it is sanitised on the way in.
 
+#### 10.4dd A stop and an again, at the tick's size (0.3.11, 2026-09-26)
+
+The owner: *"when panel is playing back a message from my pwa, show a big stop icon similar to
+the x when recording. And when we have the again have it the same size icon but with like a
+repeat and big like that."*
+
+Both replaced text controls sized for an adult reading them: a `"N MORE  TAP TO STOP"` bar and
+an `"AGAIN"` word box. `draw_repeat`'s comment had defended the word — *"a hand-plotted circular
+arrow at this size reads as a smudge"* — and that objection was entirely about SIZE. True of a
+52 px corner box, not of a 112 px disc. The readers are four and cannot read "AGAIN" anyway.
+
+**CENTRED, because unlike the tick and the cross these are ALONE.** Two targets need a dead band
+between them so a miss cannot pick the wrong one; one target belongs where the thumb already is.
+Same disc, same reach, same bottom third, same overlay band — so they follow a turned panel for
+free, and `confirm_hit_centre` is the same circle test.
+
+**A SQUARE FOR STOP, NOT AN X.** The cross already means "throw this away" on the recording
+screen, and a control that stops playback must not read as one that destroys the message — it
+stays in the queue either way. Square is also what every transport control these children have
+already seen uses.
+
+**AGAIN MOVES FROM THE TOP-LEFT CORNER TO THE BOTTOM THIRD**, where everything else a finger is
+meant to press now lives. A control whose location has to be learned separately is one a child
+will not find.
+
+**TAP-ANYWHERE STILL STOPS A RUN, deliberately unlike the recording screen.** That rule was
+removed from recording because a mis-aim there destroys a message; stopping playback has no
+destructive neighbour to mis-aim into, the message survives, and it is the gesture the children
+already know. The icon adds the discoverability `draw_run`'s own comment asked for ("a way out
+they can SEE") without taking away the forgiving one.
+
+**THE COUNT SURVIVED, AND MOVED TWICE.** "How many more" is the question a child sitting through
+four messages actually has, and a digit answers it where the word never could. Drawn above the
+disc first, where white numerals landed on the pet's own light body and all but vanished in the
+render; it sits beside the disc now, on the black margin, in the slot the cross occupies on the
+recording screen. Caught by looking at the picture before it shipped, which is the whole reason
+`confirm.c` renders on a host.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
