@@ -141,6 +141,12 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     if (cJSON_IsString(pn) && pn->valuestring != NULL && pn->valuestring[0] != '\0') {
         snprintf(out->pet_name, sizeof(out->pet_name), "%s", pn->valuestring);
     }
+    /* Unlike the name above, an EMPTY value here is taken: "" is the box saying it could not
+       pronounce this name, and that has to be able to undo a previous answer it could. */
+    const cJSON *pp = cJSON_GetObjectItemCaseSensitive(root, "pet_name_phonemes");
+    if (cJSON_IsString(pp) && pp->valuestring != NULL) {
+        snprintf(out->pet_name_phonemes, sizeof(out->pet_name_phonemes), "%s", pp->valuestring);
+    }
     const cJSON *fm = cJSON_GetObjectItemCaseSensitive(root, "form");
     if (cJSON_IsString(fm) && fm->valuestring != NULL) {
         out->form = strcmp(fm->valuestring, "robot") == 0 ? 1 : 0;

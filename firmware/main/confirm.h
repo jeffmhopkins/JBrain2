@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "face.h"
@@ -66,3 +67,31 @@ confirm_hit_t confirm_hit(int fx, int fy, int over_h);
    nothing else, which is what lets the host suite RENDER this rather than only measure it —
    the drawing is the half of this feature a hit test cannot check. */
 void confirm_draw(uint16_t *fb, int w, int h, int over_h);
+
+/* --- THE SINGLE-CONTROL ICONS, same size and the same place ---------------------------------
+ *
+ * The owner, after the tick and the cross were working: *"when panel is playing back a message
+ * from my pwa, show a big stop icon similar to the x when recording. And when we have the again
+ * have it the same size icon but with like a repeat and big like that."*
+ *
+ * Both replace text controls that were sized for an adult reading them: a
+ * `"N MORE  TAP TO STOP"` bar and an `"AGAIN"` word box. `draw_repeat`'s comment explained why
+ * it was a WORD — *"a hand-plotted circular arrow at this size reads as a smudge"* — and that
+ * objection was entirely about SIZE. At the tick's size an arrow is a symbol again, and the
+ * readers are four and pre-literate, so a glyph beats a word they cannot read.
+ *
+ * CENTRED, because unlike the tick and the cross these are ALONE. Two targets need a dead band
+ * between them; one target should be where the thumb already is. */
+#define CONFIRM_CX_CENTRE (FACE_W / 2)
+/* Blue, the colour the AGAIN box already used, so the one control that survives from the old
+   design keeps the colour a child had learned. */
+#define CONFIRM_BLUE CONFIRM_SWAP(0x001F)
+
+/* A red disc with a white square: stop what is playing. */
+void confirm_draw_stop(uint16_t *fb, int w, int h, int over_h);
+
+/* A blue disc with a circular arrow: play it again. */
+void confirm_draw_repeat(uint16_t *fb, int w, int h, int over_h);
+
+/* Whether a finger landed on a centred single control. Same generous reach as the pair. */
+bool confirm_hit_centre(int fx, int fy, int over_h);

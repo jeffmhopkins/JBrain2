@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-25 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-26 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -5681,6 +5681,203 @@ half turn, which is the flip. The panel is genuinely uncalibrated and that is st
 one day; it was never this bug, and calibrating while upside down would have written a 180
 degree error into NVS — wrong in the other three orientations and double-corrected the moment
 the code was fixed.
+
+#### 10.4dc The raw decode, in telemetry rather than down a cable (0.3.10, 2026-09-26)
+
+*"Tell sister" isn't recognized* — with `tell dad` firing and both phrases registered. The owner
+then asked the right question: *"Can you take out some research on how this actually works for
+the recognition. I feel like we're not adequately understanding the issue."* He was right; this
+section had been reasoning from its own folklore.
+
+**WHAT THE PRIMARY SOURCES SAY, AND WHERE `vocab.c` WAS WRONG.** MultiNet7 English decodes
+**phonemes, not words**: the shipped model's own `vocab` file is a language model over the
+single-letter phoneme classes `tool/multinet_g2p.py` emits (`D`, `Z`, `ST`, `cN`, `eR`…), with
+log-probabilities. The `tool/README.md` line *"for English, words are used as units"* is
+**MultiNet6** — a different model from the one this firmware builds
+(`CONFIG_SR_MN_EN_MULTINET7_QUANT`).
+
+So the claim in `vocab.c` that two phrases sharing a first word *"split the confidence between
+them"* does not describe this decoder. A shared prefix is ordinary. Running Espressif's own
+alphabet over CMUdict shows the two phrases diverging completely after the carrier:
+
+| phrase | phonemes | encoded |
+| --- | --- | --- |
+| tell dad | `T EH1 L / D AE1 D` | `TfL DaD` |
+| tell sister | `T EH1 L / S IH1 S T ER0` | `TfL SgSTk` |
+
+What stands out is not the shared `TfL` but what "sister" is made of — `S-IH-S-T-ER`, sibilants
+around a weak vowel, ending in schwa-r — against `D-AE-D`, voiced plosives around a strong open
+one. On a far-field mic behind noise suppression those are not equally survivable.
+
+**AND WE ARE ON THE DOCUMENTED FALLBACK PATH.** Espressif: *"use `tool/multinet_g2p.py` to do
+the Grapheme-to-Phoneme conversion"*, and if that step is skipped *"an internal
+Grapheme-to-Phoneme tool will be called at runtime"* with potential accuracy reduction. There is
+a dedicated API for the correct path —
+`esp_mn_commands_phoneme_add(id, string, phonemes)`, whose own doc says to use that tool — and
+`speech.c` calls `esp_mn_commands_add(i, phrase)`. **All 48 commands go through the fallback.**
+
+**MEASURED, from the panel the owner actually speaks to** (which is the one WITHOUT a cable):
+`tell dad` at p=17, `tell sister` never once in the ring, and a run of **212 consecutive
+non-matches** beside it. `mic_peak` 8676, so the microphone is hearing him; `alc` still
+`00 already-off`.
+
+**WHICH IS WHY THIS COMMIT IS A TELEMETRY CHANGE AND NOT A FIX.** Two candidate causes remain
+and they need opposite remedies: the audio never carried the sibilants, or it did and they
+scored below something else. The decoder's own `raw_string` separates them in one field — and
+it was only ever visible on a USB console, on a panel that has no cable in it, which is the
+CLAUDE.md #10 failure this section keeps rediscovering. The ring now carries it, on the report
+that was already being sent.
+
+Two defects caught while writing it: the loop guard reserved 64 bytes against an entry that can
+now reach ~69, which is the unterminated-JSON failure §10.4 already paid for once; and `raw`
+lands inside a JSON string that nothing downstream escapes, so it is sanitised on the way in.
+
+#### 10.4dd A stop and an again, at the tick's size (0.3.11, 2026-09-26)
+
+The owner: *"when panel is playing back a message from my pwa, show a big stop icon similar to
+the x when recording. And when we have the again have it the same size icon but with like a
+repeat and big like that."*
+
+Both replaced text controls sized for an adult reading them: a `"N MORE  TAP TO STOP"` bar and
+an `"AGAIN"` word box. `draw_repeat`'s comment had defended the word — *"a hand-plotted circular
+arrow at this size reads as a smudge"* — and that objection was entirely about SIZE. True of a
+52 px corner box, not of a 112 px disc. The readers are four and cannot read "AGAIN" anyway.
+
+**CENTRED, because unlike the tick and the cross these are ALONE.** Two targets need a dead band
+between them so a miss cannot pick the wrong one; one target belongs where the thumb already is.
+Same disc, same reach, same bottom third, same overlay band — so they follow a turned panel for
+free, and `confirm_hit_centre` is the same circle test.
+
+**A SQUARE FOR STOP, NOT AN X.** The cross already means "throw this away" on the recording
+screen, and a control that stops playback must not read as one that destroys the message — it
+stays in the queue either way. Square is also what every transport control these children have
+already seen uses.
+
+**AGAIN MOVES FROM THE TOP-LEFT CORNER TO THE BOTTOM THIRD**, where everything else a finger is
+meant to press now lives. A control whose location has to be learned separately is one a child
+will not find.
+
+**TAP-ANYWHERE STILL STOPS A RUN, deliberately unlike the recording screen.** That rule was
+removed from recording because a mis-aim there destroys a message; stopping playback has no
+destructive neighbour to mis-aim into, the message survives, and it is the gesture the children
+already know. The icon adds the discoverability `draw_run`'s own comment asked for ("a way out
+they can SEE") without taking away the forgiving one.
+
+**THE COUNT SURVIVED, AND MOVED TWICE.** "How many more" is the question a child sitting through
+four messages actually has, and a digit answers it where the word never could. Drawn above the
+disc first, where white numerals landed on the pet's own light body and all but vanished in the
+render; it sits beside the disc now, on the black margin, in the slot the cross occupies on the
+recording screen. Caught by looking at the picture before it shipped, which is the whole reason
+`confirm.c` renders on a host.
+
+#### 10.4de Every phrase converted at build time, not at run time (0.3.12, 2026-09-26)
+
+The research in §10.4dc found this firmware on the path Espressif warn about, and the owner's
+call was to take the documented one: *"let's go ahead and do Precomputed phonemes. Switch all 48
+commands from esp_mn_commands_add to esp_mn_commands_phoneme_add(id, string, phonemes)."*
+
+**WHAT CHANGED.** `vocab_t` carries a `phonemes` string beside every phrase, and `speech.c`
+registers through `esp_mn_commands_phoneme_add` — the API whose own documentation says to use
+`tool/multinet_g2p.py`. 47 of 48 entries arrive already converted. `tell sister` is `TfL SgSTk`
+and `tell dad` is `TfL DaD`.
+
+**THE ONE EXCEPTION IS STRUCTURAL, NOT AN OVERSIGHT.** The wake phrase carries the pet's NAME,
+the owner can change it from the PWA, and a name that does not exist at build time cannot have
+been converted at build time. That entry keeps the runtime converter — the path every entry was
+on until now — rather than being refused, and the host suite pins that it is the ONLY one.
+
+**HOW THE STRINGS WERE PRODUCED, and where the honest gap is.** `g2p_en`, which
+`multinet_g2p.py` wraps, could not be installed here — its `distance` dependency will not build
+— so the encodings come from **CMUdict** run through that tool's own alphabet map. That is the
+same source `g2p_en` uses for in-vocabulary words; its neural net only serves words CMUdict does
+not have. Exactly one phrase hit that case: **"peekaboo"**, which is absent from CMUdict and is
+therefore composed from `peek` + `a` + `boo`, all three of which are present. Composed, not
+invented — but worth naming, because it is the one string here that was not looked up whole.
+
+**THE STRUCT PUTS `phonemes` SECOND ON PURPOSE.** An entry that forgets it puts an enum where a
+`const char *` belongs and fails to build. A table of 48 transcribed strings stays honest only
+if omission is a compile error rather than a silent NULL that drops back to the runtime path.
+
+**AND WHETHER IT FIXES "TELL SISTER" IS A MEASUREMENT, NOT A CLAIM.** The evidence that led here
+is that `tell dad` fires at p=17 while `tell sister` has never once appeared, with 212
+consecutive non-matches beside it, on a microphone reading `mic_peak` 8676 with `mic_agc` still
+off. Better conversion is the vendor-documented improvement and it was free to take; it is not
+proof the sibilants were surviving the microphone in the first place. `raw_string` (§10.4dc)
+lands in the same deploy to answer that, and `mic_agc` is still a toggle nobody has turned.
+
+Four host cases pin the data, each verified to fail against a deliberate break: every character
+is in the g2p alphabet, exactly one entry converts at runtime and it is the wake phrase, a word
+shared between phrases encodes identically, and the two send phrases are literally what was
+measured.
+
+#### 10.4df The last phrase on the runtime path, converted on the box (0.3.13, 2026-09-26)
+
+§10.4de left exactly one entry converting at runtime, and named it structural: the wake phrase
+carries the pet's NAME, the owner changes that from the PWA, and a name that does not exist at
+build time cannot have been converted then. The owner's read was that the exception did not have
+to stand — *"I feel like you could have the server box be able to construct them on the fly"* —
+and then scoped it: *"Yeah I would keep your pre-generated static ones and only generate the pet
+name."* Which is the right scope: 47 phrases are fixed and belong in flash; one is not.
+
+**WHAT CHANGED.** `backend/src/jbrain/g2p.py` carries the value half of `tool/multinet_g2p.py`'s
+alphabet and looks words up in CMUdict. `GET /endpoint/settings` gained `pet_name_phonemes`
+beside `pet_name`, so the name and its pronunciation arrive in one answer on the poll the panel
+already makes every three seconds — no second TLS handshake, which matters on a panel whose
+largest free internal block is 31 KB. `vocab_set_name(name, phonemes)` stores both, and the
+`VOCAB_LISTEN` row points at both buffers. The carrier word's phonemes stay in the firmware
+(`hd`, i.e. `HH EY1`): the box sends the NAME alone, because "hey" is `vocab.c`'s word and a box
+sending the whole phrase would be encoding a decision it cannot see.
+
+**IT REFUSES RATHER THAN REPAIRS, on both sides.** A phrase half-converted is worse than one not
+converted at all, so `phonemes_for` returns None if ANY word is unknown, and the panel drops a
+phoneme string whole if it carries a character outside the alphabet or will not fit. Both land
+on the same fallback: the runtime converter, which is where this phrase already was. The case
+that actually bites is renaming FROM a name the box could pronounce TO one it cannot — the old
+phonemes must be cleared, or the panel listens for the sound of the previous name while showing
+the new one, and there is a host test for exactly that.
+
+**AND A BUG IT UNCOVERED, which was the more serious half.** Building this meant testing that the
+name reaches a panel, and it does not: `panel_settings` read `app.endpoint_panel` under
+`ctx_for(principal)`, which carries a principal id and kind and NO subject pin, while
+`endpoint_panel_own` (migration 0212) grants a panel its row on `principal_kind = 'device_key'`
+AND `subject_id = app.subject_id`. The policy matched nothing, so **every panel has been served
+the default appearance since 0212** — empty name, `ostrich` — however the owner set it. The
+symptom is that renaming the pet from the PWA did nothing at all, and choosing the robot did not
+survive a reboot, both of which read as firmware faults and are not.
+`tests/integration/test_endpoint_panel_rls.py` passed throughout: it builds the pinned context by
+hand and proves the POLICY works. Nothing checked that the ROUTE built the same context, which is
+the gap. `panel_context()` is that context — deliberately not `device_context`, which carries the
+`location` domain scope a panel has no use for — and the new integration tests assert the owner's
+`robot` arrives rather than the default `ostrich`, because a test pinning `ostrich` would have
+passed for the whole life of the bug.
+
+**WHAT THIS DOES NOT FIX, stated so the next step is not mis-scoped.** CMUdict is a dictionary,
+not a model. Measured: `fish`, `blink`, `merc`, `nessa` and `bluey` are present; **`elora` and
+`lydian` are NOT** — the twins' own names, and the obvious thing to call a panel. An invented
+name is not a word, gets "", and converts on-chip exactly as before. Closing that needs a real
+G2P with out-of-vocabulary handling (`g2p_en` carries a neural net for it, and could not be
+installed here — its `distance` dependency will not build), which is also what per-panel sibling
+names ("tell Elora") would need. Worth doing deliberately rather than as a rider on this.
+
+**AND A SECOND BUG, CAUGHT BY CI ON THIS PR RATHER THAN BY A PANEL.** §10.4dc added a fifth
+field to each telemetry decode — the decoder's RAW phoneme string, the only thing that can
+separate "the microphone never carried it" from "it was heard as something else" — and widened
+`main.c`'s format string without widening `TelemetryIn.heard`, whose union still ended at four.
+Every report from a panel on 0.3.10 or later would have 422'd, and a 422 is a FAILED report: the
+crash ring kept rather than cleared, the reading never arriving, and from the box a panel that
+looks like it had nothing to say. The first casualty would have been the measurement that field
+exists to take. Nothing had shipped it — 0.3.10 to 0.3.12 are unmerged — so no panel was ever
+affected. `TestTheHeardRingCrossesThePackageBoundary` is the test that caught it, from the
+format-string side; the model now has its own case so the two cannot drift apart from the other
+side either. The union's own comment already described this failure and anticipated the wrong
+direction: an old panel against a new box, rather than a new panel against a box nobody updated.
+
+Backend: seven unit cases on the converter, including one that cross-checks it against **every
+phrase already in flash** — a consistency check rather than independent verification, and it
+catches the thing that actually happens, a hand-edit to `vocab.c` or to the alphabet leaving the
+wake phrase encoded in a scheme the other 47 are not. Three integration cases on the route, two
+of which fail against the pre-fix context. Six host cases on the panel's half, each verified
+against a deliberate break.
 
 ### 10.5 Three findings from the board in hand
 

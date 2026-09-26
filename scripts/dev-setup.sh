@@ -85,8 +85,13 @@ ensure_uv() {
 # tests/unit/test_stream_deps.py; and `feedparser` (RSS/Atom parsing for the news_feed
 # tool, docs/plans/NEWS_FEED_PLAN.md), guarded by tests/unit/test_feed_deps.py; and `sympy`
 # (exact arithmetic for the `calculate` tool, docs/archive/EXACT_MATH_TOOLS_PLAN.md), guarded
-# by tests/unit/test_math_deps.py. All are pure pip deps synced here (yt-dlp reuses the ffmpeg
-# installed above); the smoke tests enforce CLAUDE.md rule #8.
+# by tests/unit/test_math_deps.py; and `cmudict` (the pronunciation dictionary behind
+# jbrain/g2p.py, which converts a panel's pet name to the phonemes MultiNet7 actually matches
+# — docs/plans/ROOM_ENDPOINT_PLAN.md §10.4df), guarded by tests/unit/test_g2p.py, which pins
+# output strings rather than presence because a missing dictionary degrades SILENTLY: the
+# panel falls back to converting on-chip and nothing anywhere says so. All are pure pip deps
+# synced here (yt-dlp reuses the ffmpeg installed above); the smoke tests enforce CLAUDE.md
+# rule #8.
 #
 # The `run_python` tool needs NO dependency here: its interpreter is the `pysandbox` compose
 # service (deploy/Dockerfile.pysandbox), deliberately a separate container so nothing it runs

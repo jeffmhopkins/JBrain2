@@ -44,14 +44,22 @@
  * `VOCAB_LISTEN` entry exists, which the host suite forbids. */
 const char *vocab_name(void);
 
-/* Rename the pet: rewrites the `VOCAB_LISTEN` phrase to "hey <name>". Returns true when the
-   phrase actually CHANGED, which is the caller's signal to re-register the vocabulary with
-   MultiNet — the settings fetch runs every fifteen minutes and re-registering on each one would
-   rebuild the model's command list four times an hour for nothing.
+/* Rename the pet: rewrites the `VOCAB_LISTEN` phrase to "hey <name>", and stores the box's
+   phonemes for it. Returns true when either actually CHANGED, which is the caller's signal to
+   re-register the vocabulary with MultiNet — the settings poll runs every three seconds and
+   re-registering on each one would rebuild the model's command list twenty times a minute for
+   nothing.
    Refuses anything rule 1 refuses (a-z and spaces, case-folded here) and anything too long to
    hold, rather than storing a phrase the model will silently decline: a name that cannot be
-   heard leaves a child saying it and getting nothing, which reads as a broken panel. */
-bool vocab_set_name(const char *name);
+   heard leaves a child saying it and getting nothing, which reads as a broken panel.
+
+   `phonemes` IS THE NAME'S ALONE — the carrier ("hey") is this file's word, so this file
+   supplies its phonemes; the box knows only what the pet is called. NULL or "" is normal and
+   means the box could not pronounce it (an invented name is in no dictionary), and this entry
+   then goes back to being converted on-chip, which is where it was for its whole life. A
+   string carrying anything outside the phoneme alphabet is treated the same way: see
+   `compose_phonemes`. */
+bool vocab_set_name(const char *name, const char *phonemes);
 
 typedef enum {
     VOCAB_ACTION = 0, /* play an action */
@@ -64,6 +72,20 @@ typedef enum {
 
 typedef struct {
     const char *phrase;  /* what is said, and what the ticker shows */
+    /* THE PHRASE AS PHONEMES, precomputed, in the single-letter classes Espressif's
+       `tool/multinet_g2p.py` emits. NULL means "convert it at runtime" and is correct for
+       exactly one entry, the wake phrase, whose name the owner can change.
+     *
+       MultiNet7 English decodes PHONEMES, not words — the shipped model's own `vocab` file is
+       a language model over these classes — and Espressif's documentation says to run that
+       tool, warning that skipping it calls an internal converter at runtime "with potential
+       accuracy reduction". This firmware skipped it for its whole life. `speech.c` hands these
+       to `esp_mn_commands_phoneme_add`, which is the API whose doc points at the tool.
+     *
+       SECOND IN THE STRUCT ON PURPOSE: an entry that forgets it puts an enum where a
+       `const char *` belongs and fails to build, which is the only way a table of 48 stays
+       honest. */
+    const char *phonemes;
     vocab_kind_t kind;
     int arg;             /* action_t, face_form_t, jpanel_to_t, or a palette index (VOCAB_COLOUR) */
 } vocab_t;

@@ -115,8 +115,23 @@ static int s_refused_n;
  * is itself the signal for a false trigger — without spending a slot on each one. */
 #define DECODE_MAX 12
 #define DECODE_CHARS 28
+/* THE RAW PHONEME STRING, and it is here because a diagnosis needed a USB cable twice.
+ *
+ * MultiNet7 English decodes PHONEMES, not words: the model's own `vocab` is a language model
+ * over the single-letter phoneme classes `tool/multinet_g2p.py` emits, and `raw_string` is what
+ * the decoder actually built out of the room. The winning phrase alone cannot distinguish "the
+ * microphone never carried the sounds" from "it heard them and scored them below something
+ * else" — and those need opposite fixes. `raw_string` separates them in one field.
+ *
+ * MEASURED 2026-09-26: "tell dad" fires at p=17 while "tell sister" has never once appeared,
+ * with a run of 212 consecutive non-matches in the ring beside it. Both phrases are registered
+ * and neither was refused, so the question is entirely which of those two shapes it is — and
+ * the panel that the owner actually speaks to is the one WITHOUT a cable in it, so a console
+ * capture cannot answer it (CLAUDE.md #10). It rides the report that was already being sent. */
+#define DECODE_RAW_CHARS 24
 typedef struct {
     char phrase[DECODE_CHARS];
+    char raw[DECODE_RAW_CHARS]; /* the decoder's phoneme string, truncated; "" when unknown */
     uint8_t prob;  /* 0..100, because a float in a JSON body buys nothing here */
     uint8_t count; /* consecutive identical decodes, collapsed into this one entry */
     bool fired;    /* false when the decode TIMED OUT — a near miss, the interesting half */
@@ -124,9 +139,27 @@ typedef struct {
 static decode_t s_decode[DECODE_MAX];
 static int s_decode_n;
 
-static void note_heard(const char *phrase, float prob, bool fired)
+static void note_heard(const char *phrase, float prob, bool fired, const char *raw)
 {
     const char *what = phrase != NULL && phrase[0] != '\0' ? phrase : "?";
+    /* SANITISED ON THE WAY IN, because this lands inside a JSON string in the telemetry body
+       and nothing downstream escapes it. The phoneme classes are letters and spaces, so a quote
+       or a backslash here would mean the decoder returned something unexpected — and the cost
+       of that surprise must not be a report the box rejects as malformed. */
+    char rawbuf[DECODE_RAW_CHARS];
+    rawbuf[0] = '\0';
+    if (raw != NULL) {
+        size_t o = 0;
+        for (size_t i = 0; raw[i] != '\0' && o < sizeof(rawbuf) - 1; i++) {
+            const char c = raw[i];
+            if (c == '"' || c == '\\' || (unsigned char)c < 0x20 || (unsigned char)c > 0x7E) {
+                continue;
+            }
+            rawbuf[o++] = c;
+        }
+        rawbuf[o] = '\0';
+    }
+    const char *rawx = rawbuf;
     float p = prob * 100.0f;
     if (p < 0.0f) p = 0.0f;
     if (p > 100.0f) p = 100.0f;
@@ -139,22 +172,30 @@ static void note_heard(const char *phrase, float prob, bool fired)
     if (s_decode_n > 0 && s_decode[0].fired == fired &&
         strncmp(s_decode[0].phrase, what, DECODE_CHARS - 1) == 0) {
         if (s_decode[0].count < 255) s_decode[0].count++;
-        if ((uint8_t)p > s_decode[0].prob) s_decode[0].prob = (uint8_t)p;
+        /* The LOUDEST of the run keeps its raw string as well as its probability, so the
+           sample being explained is the same sample in both fields. */
+        if ((uint8_t)p > s_decode[0].prob) {
+            s_decode[0].prob = (uint8_t)p;
+            snprintf(s_decode[0].raw, DECODE_RAW_CHARS, "%s", rawx);
+        }
         return;
     }
 
     /* Newest first, oldest pushed off the end. */
     for (int i = DECODE_MAX - 1; i > 0; i--) s_decode[i] = s_decode[i - 1];
     snprintf(s_decode[0].phrase, DECODE_CHARS, "%s", what);
+    snprintf(s_decode[0].raw, DECODE_RAW_CHARS, "%s", rawx);
     s_decode[0].prob = (uint8_t)p;
     s_decode[0].count = 1;
     s_decode[0].fired = fired;
     if (s_decode_n < DECODE_MAX) s_decode_n++;
 }
 
-bool speech_heard(int i, const char **phrase, int *prob, bool *fired, int *count)
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired, int *count,
+                  const char **raw)
 {
     if (i < 0 || i >= s_decode_n) return false;
+    if (raw != NULL) *raw = s_decode[i].raw;
     if (phrase != NULL) *phrase = s_decode[i].phrase;
     if (prob != NULL) *prob = s_decode[i].prob;
     if (fired != NULL) *fired = s_decode[i].fired;
@@ -342,7 +383,7 @@ static void detect_task(void *arg)
                     ESP_LOGI(TAG, "  also '%s' p=%.2f",
                              alt != NULL ? alt->phrase : "?", (double)r->prob[k]);
                 }
-                note_heard(v->phrase, r->prob[0], true);
+                note_heard(v->phrase, r->prob[0], true, r->raw_string);
                 publish(r->command_id[0], v->phrase);
             }
             /* MUST be cleaned after a detection or the next phrase decodes against this
@@ -357,7 +398,7 @@ static void detect_task(void *arg)
             /* The near miss, kept beside the hits. A decode the command graph REJECTED is
                what says whether a phrase is unreachable because nobody said it or because
                the model keeps almost hearing it — and those need opposite fixes. */
-            note_heard(r != NULL ? r->raw_string : NULL, 0.0f, false);
+            note_heard(NULL, 0.0f, false, r != NULL ? r->raw_string : NULL);
             s_mn->clean(s_mn_data);
         }
     }
@@ -398,15 +439,50 @@ static void load_vocabulary(void)
      * The kids say the word — like the code word is wrong."* That is exactly what this hole
      * looks like from a bedroom, and the instrumentation that should have answered it said
      * everything was fine. Both paths are counted now, and both name the phrase. */
+    /* PRECOMPUTED PHONEMES, WHICH IS THE PATH ESPRESSIF DOCUMENTS AND THIS FIRMWARE HAD NEVER
+     * TAKEN. MultiNet7 English decodes phonemes rather than words — the shipped model's own
+     * `vocab` file is a language model over the single-letter classes `tool/multinet_g2p.py`
+     * emits — and the docs say to run that tool, warning that skipping it calls an internal
+     * converter at runtime "with potential accuracy reduction". `esp_mn_commands_phoneme_add`
+     * is the API whose own doc points at the tool; `esp_mn_commands_add` is the fallback.
+     * Every phrase but one now arrives already converted (`vocab.h`).
+     *
+     * THE WAKE PHRASE IS CONVERTED TOO, but not here and not at build time: it carries the
+     * pet's name, the owner changes that from the PWA, and a name that does not exist when
+     * this firmware is built cannot have been converted then. The BOX converts it and sends
+     * the phonemes on the settings poll (`vocab_set_name`), which is why the check below is
+     * on the string being non-empty rather than on the entry being the wake phrase. Empty
+     * means the box could not — an invented name is in no dictionary — and that entry then
+     * takes the runtime path, the behaviour every entry had until now, rather than being
+     * refused or registered with a guess.
+     *
+     * WHY THIS LANDED: "tell dad" fired at p=17 while "tell sister" never appeared once, with
+     * 212 consecutive non-matches beside it in the decode ring. Both were registered and
+     * neither refused, so the question was the quality of the conversion, and this firmware
+     * was on the path the vendor warns about. Whether it is ENOUGH is a measurement, not a
+     * claim — `raw_string` rides the telemetry now (0.3.10) to answer that from the panel the
+     * owner actually speaks to. */
     int added = 0;
+    int with_phonemes = 0;
     for (int i = 0; i < vocab_count(); i++) {
-        if (esp_mn_commands_add(i, all[i].phrase) == ESP_OK) {
+        const bool have = all[i].phonemes != NULL && all[i].phonemes[0] != '\0';
+        const esp_err_t err =
+            have ? esp_mn_commands_phoneme_add(i, all[i].phrase, all[i].phonemes)
+                 : esp_mn_commands_add(i, all[i].phrase);
+        if (err == ESP_OK) {
             added++;
+            if (have) with_phonemes++;
             continue;
         }
-        ESP_LOGE(TAG, "phrase refused when added: '%s'", all[i].phrase);
+        ESP_LOGE(TAG, "phrase refused when added: '%s'%s", all[i].phrase,
+                 have ? " (with phonemes)" : "");
         note_refused(all[i].phrase);
     }
+    /* Said out loud, because "we are on the documented path" is precisely the kind of claim
+       that rots silently: a table entry that loses its phonemes in an edit would otherwise
+       drop back to the runtime converter with no symptom but slightly worse recognition. */
+    ESP_LOGI(TAG, "vocabulary: %d added, %d with precomputed phonemes, %d converted at runtime",
+             added, with_phonemes, added - with_phonemes);
 
     /* The second pass: a phrase the model takes but cannot then tokenise. Silent here too,
        and the panel is deaf to that one thing with nothing on the glass to say so — which is

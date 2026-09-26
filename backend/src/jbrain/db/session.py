@@ -100,6 +100,33 @@ def device_context(principal_id: str, subject_id: str) -> SessionContext:
     )
 
 
+def panel_context(principal_id: str, subject_id: str) -> SessionContext:
+    """The session a room-endpoint panel reads its OWN row under.
+
+    `endpoint_panel_own` (migration 0212) grants a panel exactly one row, on two GUCs:
+    `principal_kind = 'device_key'` AND `subject_id = app.subject_id`. `ctx_for` builds
+    neither the second one nor any subject pin — it carries the principal id and kind and
+    nothing else — so the panel settings poll was reading that table with `app.subject_id`
+    unset, matching no row, and every panel was served the DEFAULT appearance: an empty
+    pet name and `ostrich`, whatever the owner had set. The name is the WAKE WORD, so the
+    visible symptom was that changing it from the PWA did nothing at all, which looks like
+    a firmware fault and is not one.
+
+    `tests/integration/test_endpoint_panel_rls.py` passes and always did: it builds the
+    pinned context by hand and proves the POLICY works. Nothing checked that the route
+    built the same context, which is the gap this closes.
+
+    Deliberately NOT `device_context`: that one carries `domain_scopes=("location",)`
+    because an OwnTracks device posts fixes. A panel on a bedroom wall reads its name and
+    its body, and handing it the location domain to do that is authority it has no use
+    for. Same shape otherwise — a NON-owner principal whose subject pin is load-bearing,
+    so a stolen panel key still reads only its own row.
+    """
+    return SessionContext(
+        principal_id=principal_id, principal_kind="device_key", subject_id=subject_id
+    )
+
+
 def intake_context(principal_id: str) -> SessionContext:
     """The session a guided-intake recipient (a non-owner stranger) runs under.
 

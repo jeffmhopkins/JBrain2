@@ -26,6 +26,9 @@ from jbrain.auth import keys
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.devices import service as device_service
+from jbrain.devices.repo import SqlDeviceRepo
+from jbrain.g2p import phonemes_for
 from jbrain.main import create_app
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -204,3 +207,155 @@ async def test_a_box_with_no_firmware_still_serves_the_knobs(
         assert resp.json()["fw_version"] == ""
         # In range, not equal to a default: see the sibling test above.
         assert 0 <= resp.json()["brightness"] <= 255
+
+
+async def test_the_poll_carries_the_wake_phrase_name_as_phonemes(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker,
+    tmp_path: Path,
+) -> None:
+    """The name and its pronunciation arrive together, in the answer the panel already asks for.
+
+    MultiNet7 matches PHONEMES. Every other phrase the panel listens for was converted when the
+    firmware was built and sits in flash; the wake phrase carries the pet's NAME, which the
+    owner changes from the PWA, so it had no build-time value and was the one phrase left on
+    the runtime converter Espressif warn about. The box has the name and a dictionary, so it
+    converts — and it rides this poll rather than a second request because the panel's largest
+    free internal block is 31 KB and every fetch is its own TLS handshake.
+
+    Asserted as EQUAL TO THE CONVERSION OF THE NAME IN THE SAME RESPONSE, not to a fixed
+    string: the two fields are read from one row, and a panel handed phonemes for a name it was
+    not also handed would be listening for the previous pet.
+    """
+    made = await device_service.provision_or_reflash(
+        SqlDeviceRepo(maker), OWNER, "panel Phoneme", device_role="jpet"
+    )
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.endpoint_panel (subject_id, pet_name, form)"
+                " VALUES (CAST(:sid AS uuid), 'fish', 'robot')"
+                " ON CONFLICT (subject_id) DO UPDATE"
+                " SET pet_name = EXCLUDED.pet_name, form = EXCLUDED.form"
+            ),
+            {"sid": made.device.id},
+        )
+        await s.commit()
+
+    app = create_app(
+        Settings(
+            secure_cookies=False,
+            database_url=database_url,
+            firmware_dir=str(_firmware_tree(tmp_path / "firmware")),
+        )
+    )
+    with TestClient(app) as client:
+        resp = client.get("/api/endpoint/settings", headers={"Authorization": f"Bearer {made.key}"})
+    assert resp.status_code == 200, resp.text
+    got = resp.json()
+    assert got["pet_name"] == "fish"
+    assert got["pet_name_phonemes"] == phonemes_for("fish") == "Fgs"
+    # THE APPEARANCE ITSELF, pinned here because it was broken and nothing caught it: the
+    # route read `endpoint_panel` under a context carrying no subject, the policy matched no
+    # row, and every panel was served the default — empty name, `ostrich` — however the owner
+    # had set it. `robot` is asserted rather than `ostrich` precisely because the default is
+    # `ostrich`: a test pinning that would have passed throughout the bug. See `panel_context`.
+    assert got["form"] == "robot", "the owner's choice must reach the panel, not the default"
+
+
+async def test_a_name_no_dictionary_knows_is_served_empty_rather_than_guessed(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker,
+    tmp_path: Path,
+) -> None:
+    """An invented name has no entry, and a guess would be worse than nothing.
+
+    CMUdict knows words; `elora` and `lydian` — the twins' own names, and the obvious thing to
+    call a panel — are not words. Empty means "I could not", the panel keeps converting the
+    name itself exactly as it does today, and the wake phrase is no worse than before. A
+    half-guess would be: the panel would register a pronunciation nobody says and the failure
+    would look like a broken microphone.
+    """
+    made = await device_service.provision_or_reflash(
+        SqlDeviceRepo(maker), OWNER, "panel Invented", device_role="jpet"
+    )
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.endpoint_panel (subject_id, pet_name, form)"
+                " VALUES (CAST(:sid AS uuid), 'elora', 'ostrich')"
+                " ON CONFLICT (subject_id) DO UPDATE SET pet_name = EXCLUDED.pet_name"
+            ),
+            {"sid": made.device.id},
+        )
+        await s.commit()
+
+    app = create_app(
+        Settings(
+            secure_cookies=False,
+            database_url=database_url,
+            firmware_dir=str(_firmware_tree(tmp_path / "firmware")),
+        )
+    )
+    with TestClient(app) as client:
+        resp = client.get("/api/endpoint/settings", headers={"Authorization": f"Bearer {made.key}"})
+    assert resp.status_code == 200, resp.text
+    got = resp.json()
+    assert got["pet_name"] == "elora", "the name still arrives; only its phonemes are missing"
+    assert got["pet_name_phonemes"] == ""
+
+
+async def test_a_panel_is_told_its_own_name_and_not_its_siblings(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker,
+    tmp_path: Path,
+) -> None:
+    """The isolation the new context has to keep, asserted through the ROUTE.
+
+    `panel_context` exists because `ctx_for` carried no subject pin and the appearance read
+    therefore matched no row. The fix hands the panel's own subject to Postgres — which is the
+    moment to prove the pin is doing the narrowing rather than the accident of an unset GUC.
+    Two panels, two names, one key each: each must be told its own.
+
+    Through the route rather than the table on purpose. `test_endpoint_panel_rls.py` already
+    proves the POLICY isolates, by building the pinned context by hand; what went wrong was
+    that the route built a different one, and only a request can catch that.
+    """
+    mine = await device_service.provision_or_reflash(
+        SqlDeviceRepo(maker), OWNER, "panel Mine", device_role="jpet"
+    )
+    theirs = await device_service.provision_or_reflash(
+        SqlDeviceRepo(maker), OWNER, "panel Theirs", device_role="jpet"
+    )
+    async with scoped_session(maker, OWNER) as s:
+        for sid, pet in ((mine.device.id, "fish"), (theirs.device.id, "bluey")):
+            await s.execute(
+                text(
+                    "INSERT INTO app.endpoint_panel (subject_id, pet_name, form)"
+                    " VALUES (CAST(:sid AS uuid), :pet, 'ostrich')"
+                    " ON CONFLICT (subject_id) DO UPDATE SET pet_name = EXCLUDED.pet_name"
+                ),
+                {"sid": sid, "pet": pet},
+            )
+        await s.commit()
+
+    app = create_app(
+        Settings(
+            secure_cookies=False,
+            database_url=database_url,
+            firmware_dir=str(_firmware_tree(tmp_path / "firmware")),
+        )
+    )
+    with TestClient(app) as client:
+        a = client.get(
+            "/api/endpoint/settings", headers={"Authorization": f"Bearer {mine.key}"}
+        ).json()
+        b = client.get(
+            "/api/endpoint/settings", headers={"Authorization": f"Bearer {theirs.key}"}
+        ).json()
+    assert (a["pet_name"], b["pet_name"]) == ("fish", "bluey")
+    # And the phonemes follow the name rather than the route: a panel handed its sibling's
+    # pronunciation would be listening for the wrong pet while showing the right one.
+    assert a["pet_name_phonemes"] == phonemes_for("fish")
+    assert b["pet_name_phonemes"] == phonemes_for("bluey")
+    assert a["pet_name_phonemes"] != b["pet_name_phonemes"], "two names, two pronunciations"

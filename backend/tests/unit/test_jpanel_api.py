@@ -314,7 +314,7 @@ class TestTheHeardRingCrossesThePackageBoundary:
         )
 
     def test_the_box_accepts_both_the_old_and_the_new_entry_shape(self) -> None:
-        """A fleet upgrades one panel at a time, so both arities are live at once."""
+        """A fleet upgrades one panel at a time, so every arity is live at once."""
         from jbrain.api.endpoint import TelemetryIn
 
         old = TelemetryIn(version="0.2.90", uptime_ms=1, heard=[("burp", 21, 1)])
@@ -322,14 +322,42 @@ class TestTheHeardRingCrossesThePackageBoundary:
 
         new = TelemetryIn(version="0.2.91", uptime_ms=1, heard=[("burp", 21, 1, 4)])
         assert len(new.heard) == 1
-        # Through `list()` because the field is a union of both arities, and indexing position
-        # 3 is only valid on one of them — which is the point of the union.
+        # Through `list()` because the field is a union of arities, and indexing position 3 is
+        # only valid on some of them — which is the point of the union.
         assert list(new.heard[0])[3] == 4, "the repeat count must survive validation"
 
         both = TelemetryIn(
             version="0.2.91", uptime_ms=1, heard=[("burp", 21, 1), ("dance", 9, 0, 3)]
         )
         assert len(both.heard) == 2
+
+    def test_the_box_accepts_the_raw_phoneme_string_the_firmware_now_sends(self) -> None:
+        """THE REGRESSION THIS CLASS EXISTS FOR, AND IT HAD ALREADY HAPPENED.
+
+        0.3.10 added a FIFTH field — the decoder's raw phoneme string, the only thing that can
+        tell "the microphone never carried it" from "it was heard as something else" — and
+        widened `main.c`'s format string without widening `TelemetryIn`. Every report from an
+        upgraded panel would have 422'd, which is a FAILED report: the crash ring kept, the
+        reading lost, and from the box a panel that simply had nothing to say. The measurement
+        the field was added to take would have been the first casualty.
+
+        The sibling test below reads the format string and caught it; this one pins the model
+        so the two cannot drift apart from the other side either.
+        """
+        from jbrain.api.endpoint import TelemetryIn
+
+        got = TelemetryIn(
+            version="0.3.10", uptime_ms=1, heard=[("tell sister", 17, 0, 3, "TfL SgSTk")]
+        )
+        assert list(got.heard[0])[4] == "TfL SgSTk", "the raw decode must survive validation"
+
+        # And still beside the older shapes, because that is what an OTA looks like from here.
+        mixed = TelemetryIn(
+            version="0.3.10",
+            uptime_ms=1,
+            heard=[("burp", 21, 1), ("dance", 9, 0, 3), ("tell dad", 17, 1, 1, "TfL DaD")],
+        )
+        assert len(mixed.heard) == 3
 
     def test_the_ring_is_deep_enough_to_outlive_a_poll(self) -> None:
         """THE DEPTH IS THE WHOLE POINT OF THE CHANGE. Three entries were sized for a bench,
@@ -347,14 +375,21 @@ class TestTheHeardRingCrossesThePackageBoundary:
             "poll with children shouting at the panel, which is the case it exists for"
         )
 
-    def test_the_firmware_sends_the_repeat_count(self) -> None:
+    def test_the_firmware_sends_the_repeat_count_and_the_raw_decode(self) -> None:
         """Consecutive identical decodes collapse into one entry with a count, so a television
-        repeating one word cannot flush the ring. The count only helps if it is on the wire."""
+        repeating one word cannot flush the ring; the fifth field is what the decoder actually
+        heard. Neither helps if it is not on the wire.
+
+        READ OUT OF THE FIRMWARE, which is the point: this pins the exact literal, so widening
+        the entry on one side of the package boundary fails here rather than on a panel. It
+        did exactly that for the fifth field — the format string grew in 0.3.10 and
+        `TelemetryIn` did not, and this is where that surfaced.
+        """
         src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text(
             encoding="utf-8"
         )
-        assert '[\\"%s\\",%d,%d,%d]' in src, (
-            "the telemetry body no longer carries four fields per decode; the box accepts them "
+        assert '[\\"%s\\",%d,%d,%d,\\"%s\\"]' in src, (
+            "the telemetry body no longer carries five fields per decode; the box accepts them "
             "and nothing is sending them"
         )
 
