@@ -5770,6 +5770,46 @@ render; it sits beside the disc now, on the black margin, in the slot the cross 
 recording screen. Caught by looking at the picture before it shipped, which is the whole reason
 `confirm.c` renders on a host.
 
+#### 10.4de Every phrase converted at build time, not at run time (0.3.12, 2026-09-26)
+
+The research in §10.4dc found this firmware on the path Espressif warn about, and the owner's
+call was to take the documented one: *"let's go ahead and do Precomputed phonemes. Switch all 48
+commands from esp_mn_commands_add to esp_mn_commands_phoneme_add(id, string, phonemes)."*
+
+**WHAT CHANGED.** `vocab_t` carries a `phonemes` string beside every phrase, and `speech.c`
+registers through `esp_mn_commands_phoneme_add` — the API whose own documentation says to use
+`tool/multinet_g2p.py`. 47 of 48 entries arrive already converted. `tell sister` is `TfL SgSTk`
+and `tell dad` is `TfL DaD`.
+
+**THE ONE EXCEPTION IS STRUCTURAL, NOT AN OVERSIGHT.** The wake phrase carries the pet's NAME,
+the owner can change it from the PWA, and a name that does not exist at build time cannot have
+been converted at build time. That entry keeps the runtime converter — the path every entry was
+on until now — rather than being refused, and the host suite pins that it is the ONLY one.
+
+**HOW THE STRINGS WERE PRODUCED, and where the honest gap is.** `g2p_en`, which
+`multinet_g2p.py` wraps, could not be installed here — its `distance` dependency will not build
+— so the encodings come from **CMUdict** run through that tool's own alphabet map. That is the
+same source `g2p_en` uses for in-vocabulary words; its neural net only serves words CMUdict does
+not have. Exactly one phrase hit that case: **"peekaboo"**, which is absent from CMUdict and is
+therefore composed from `peek` + `a` + `boo`, all three of which are present. Composed, not
+invented — but worth naming, because it is the one string here that was not looked up whole.
+
+**THE STRUCT PUTS `phonemes` SECOND ON PURPOSE.** An entry that forgets it puts an enum where a
+`const char *` belongs and fails to build. A table of 48 transcribed strings stays honest only
+if omission is a compile error rather than a silent NULL that drops back to the runtime path.
+
+**AND WHETHER IT FIXES "TELL SISTER" IS A MEASUREMENT, NOT A CLAIM.** The evidence that led here
+is that `tell dad` fires at p=17 while `tell sister` has never once appeared, with 212
+consecutive non-matches beside it, on a microphone reading `mic_peak` 8676 with `mic_agc` still
+off. Better conversion is the vendor-documented improvement and it was free to take; it is not
+proof the sibilants were surviving the microphone in the first place. `raw_string` (§10.4dc)
+lands in the same deploy to answer that, and `mic_agc` is still a toggle nobody has turned.
+
+Four host cases pin the data, each verified to fail against a deliberate break: every character
+is in the g2p alphabet, exactly one entry converts at runtime and it is the wake phrase, a word
+shared between phrases encodes identically, and the two send phrases are literally what was
+measured.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

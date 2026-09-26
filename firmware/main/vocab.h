@@ -64,6 +64,20 @@ typedef enum {
 
 typedef struct {
     const char *phrase;  /* what is said, and what the ticker shows */
+    /* THE PHRASE AS PHONEMES, precomputed, in the single-letter classes Espressif's
+       `tool/multinet_g2p.py` emits. NULL means "convert it at runtime" and is correct for
+       exactly one entry, the wake phrase, whose name the owner can change.
+     *
+       MultiNet7 English decodes PHONEMES, not words — the shipped model's own `vocab` file is
+       a language model over these classes — and Espressif's documentation says to run that
+       tool, warning that skipping it calls an internal converter at runtime "with potential
+       accuracy reduction". This firmware skipped it for its whole life. `speech.c` hands these
+       to `esp_mn_commands_phoneme_add`, which is the API whose doc points at the tool.
+     *
+       SECOND IN THE STRUCT ON PURPOSE: an entry that forgets it puts an enum where a
+       `const char *` belongs and fails to build, which is the only way a table of 48 stays
+       honest. */
+    const char *phonemes;
     vocab_kind_t kind;
     int arg;             /* action_t, face_form_t, jpanel_to_t, or a palette index (VOCAB_COLOUR) */
 } vocab_t;

@@ -3042,6 +3042,83 @@ static void test_the_pet_dozes_only_when_dim_and_not_mid_reply(void)
    the finger that means "send this" is one bad aim from the one that destroys it, and the
    reader is four. A gap between them means a miss does NOTHING, which is the only safe thing
    a miss can do. */
+/* --- the precomputed phonemes ------------------------------------------------------------- */
+
+/* THE ALPHABET IS NOT FREE TEXT. These strings are consumed by `esp_mn_commands_phoneme_add`
+   and MultiNet7's own `vocab` is a language model over exactly these classes, so a character
+   outside the set is not a typo that degrades recognition — it is a phrase the model cannot
+   represent. The set is the value half of the map in Espressif's `tool/multinet_g2p.py`. */
+static void test_every_phoneme_is_in_the_alphabet(void)
+{
+    static const char *ALPHABET = "abcdefghijklmnopqrstuvwNVLFSBRDGKWTMZPY ";
+    const vocab_t *all = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        if (all[i].phonemes == NULL) continue;
+        for (const char *c = all[i].phonemes; *c != '\0'; c++) {
+            CHECK(strchr(ALPHABET, *c) != NULL, "phoneme character is in the g2p alphabet");
+        }
+        CHECK(all[i].phonemes[0] != ' ', "no leading space");
+        const size_t n = strlen(all[i].phonemes);
+        CHECK(n > 0, "a phoneme string is not empty");
+        CHECK(all[i].phonemes[n - 1] != ' ', "no trailing space");
+    }
+}
+
+/* EXACTLY ONE ENTRY MAY LACK THEM, and it is the wake phrase, because it carries a name the
+   owner can change from the PWA and a name that does not exist at build time cannot have been
+   converted at build time. Any OTHER null is a table entry that quietly dropped back to the
+   runtime converter — the path Espressif warn reduces accuracy, and the one this firmware was
+   accidentally on for its whole life. */
+static void test_only_the_wake_phrase_converts_at_runtime(void)
+{
+    const vocab_t *all = vocab_all();
+    int without = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (all[i].phonemes != NULL && all[i].phonemes[0] != '\0') continue;
+        without++;
+        CHECK(all[i].kind == VOCAB_LISTEN, "only the wake phrase has no precomputed phonemes");
+    }
+    CHECK(without == 1, "and there is exactly one of it");
+}
+
+/* A WORD'S ENCODING IS THE SAME WHEREVER IT APPEARS. "tell" opens two phrases and "change
+   into" opens two more; if a transcription slipped in one of them the pair would disagree, and
+   nothing else in this suite would notice. Checks the shared prefix rather than the whole
+   string, which is the part a hand-edit is most likely to break. */
+static void test_a_shared_word_encodes_identically(void)
+{
+    const vocab_t *all = vocab_all();
+    const char *tell = NULL;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (all[i].phonemes == NULL) continue;
+        if (strncmp(all[i].phrase, "tell ", 5) != 0) continue;
+        CHECK(strncmp(all[i].phonemes, "TfL ", 4) == 0, "'tell' encodes as TfL every time");
+        if (tell == NULL) tell = all[i].phonemes;
+    }
+    CHECK(tell != NULL, "there is at least one 'tell' phrase to check");
+}
+
+/* The two the owner reported on, pinned literally. `tell dad` fires and `tell sister` does
+   not; these are the strings that were handed to the model when that was measured, so a change
+   to either should be a deliberate edit rather than a silent drift. */
+static void test_the_two_send_phrases_are_what_was_measured(void)
+{
+    const vocab_t *all = vocab_all();
+    int seen = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (all[i].phonemes == NULL) continue;
+        if (strcmp(all[i].phrase, "tell dad") == 0) {
+            CHECK(strcmp(all[i].phonemes, "TfL DaD") == 0, "tell dad is TfL DaD");
+            seen++;
+        }
+        if (strcmp(all[i].phrase, "tell sister") == 0) {
+            CHECK(strcmp(all[i].phonemes, "TfL SgSTk") == 0, "tell sister is TfL SgSTk");
+            seen++;
+        }
+    }
+    CHECK(seen == 2, "both send phrases are present");
+}
+
 static void test_the_tick_and_the_cross_cannot_both_be_hit(void)
 {
     const int over_h = FACE_H;
@@ -3449,6 +3526,10 @@ int main(void)
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
     test_the_pet_dozes_only_when_dim_and_not_mid_reply();
+    test_every_phoneme_is_in_the_alphabet();
+    test_only_the_wake_phrase_converts_at_runtime();
+    test_a_shared_word_encodes_identically();
+    test_the_two_send_phrases_are_what_was_measured();
     test_the_tick_and_the_cross_cannot_both_be_hit();
     test_the_target_is_larger_than_the_icon();
     test_everywhere_else_is_nothing();

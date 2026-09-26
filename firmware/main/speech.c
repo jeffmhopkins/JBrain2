@@ -439,15 +439,46 @@ static void load_vocabulary(void)
      * The kids say the word — like the code word is wrong."* That is exactly what this hole
      * looks like from a bedroom, and the instrumentation that should have answered it said
      * everything was fine. Both paths are counted now, and both name the phrase. */
+    /* PRECOMPUTED PHONEMES, WHICH IS THE PATH ESPRESSIF DOCUMENTS AND THIS FIRMWARE HAD NEVER
+     * TAKEN. MultiNet7 English decodes phonemes rather than words — the shipped model's own
+     * `vocab` file is a language model over the single-letter classes `tool/multinet_g2p.py`
+     * emits — and the docs say to run that tool, warning that skipping it calls an internal
+     * converter at runtime "with potential accuracy reduction". `esp_mn_commands_phoneme_add`
+     * is the API whose own doc points at the tool; `esp_mn_commands_add` is the fallback.
+     * Every phrase but one now arrives already converted (`vocab.h`).
+     *
+     * THE ONE EXCEPTION IS THE WAKE PHRASE, and it must stay the exception: it carries the
+     * pet's name, the owner can change that name from the PWA, and a name that does not exist
+     * at build time cannot have been converted at build time. That entry keeps the runtime
+     * path — the behaviour every entry had until now — rather than being refused.
+     *
+     * WHY THIS LANDED: "tell dad" fired at p=17 while "tell sister" never appeared once, with
+     * 212 consecutive non-matches beside it in the decode ring. Both were registered and
+     * neither refused, so the question was the quality of the conversion, and this firmware
+     * was on the path the vendor warns about. Whether it is ENOUGH is a measurement, not a
+     * claim — `raw_string` rides the telemetry now (0.3.10) to answer that from the panel the
+     * owner actually speaks to. */
     int added = 0;
+    int with_phonemes = 0;
     for (int i = 0; i < vocab_count(); i++) {
-        if (esp_mn_commands_add(i, all[i].phrase) == ESP_OK) {
+        const bool have = all[i].phonemes != NULL && all[i].phonemes[0] != '\0';
+        const esp_err_t err =
+            have ? esp_mn_commands_phoneme_add(i, all[i].phrase, all[i].phonemes)
+                 : esp_mn_commands_add(i, all[i].phrase);
+        if (err == ESP_OK) {
             added++;
+            if (have) with_phonemes++;
             continue;
         }
-        ESP_LOGE(TAG, "phrase refused when added: '%s'", all[i].phrase);
+        ESP_LOGE(TAG, "phrase refused when added: '%s'%s", all[i].phrase,
+                 have ? " (with phonemes)" : "");
         note_refused(all[i].phrase);
     }
+    /* Said out loud, because "we are on the documented path" is precisely the kind of claim
+       that rots silently: a table entry that loses its phonemes in an edit would otherwise
+       drop back to the runtime converter with no symptom but slightly worse recognition. */
+    ESP_LOGI(TAG, "vocabulary: %d added, %d with precomputed phonemes, %d converted at runtime",
+             added, with_phonemes, added - with_phonemes);
 
     /* The second pass: a phrase the model takes but cannot then tokenise. Silent here too,
        and the panel is deaf to that one thing with nothing on the glass to say so — which is

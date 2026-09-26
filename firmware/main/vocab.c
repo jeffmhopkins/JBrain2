@@ -36,7 +36,10 @@ static vocab_t VOCAB[] = {
      * terminal, so a name only a rebuild can change is a name they cannot change, and the two
      * panels will want different ones. It belongs on `endpoint_settings` beside the other
      * knobs; `esp_mn_commands_update()` already supports re-registering at runtime. */
-    {s_listen, VOCAB_LISTEN, 0},
+    /* NULL, AND IT IS THE ONLY ONE. The wake phrase carries the pet's NAME, which the owner
+       can change from the PWA, so its phonemes cannot exist until the name does — see
+       `speech.c`, which falls back to the runtime converter for exactly this entry. */
+    {s_listen, NULL, VOCAB_LISTEN, 0},
 
     /* THE WAY OUT, and the owner found it the way these things get found: *"now that it auto
      * continues for six turns, it wants to keep going even if I say stop."*
@@ -66,7 +69,7 @@ static vocab_t VOCAB[] = {
      *
      * It still costs nothing in false triggers that bare "stop" did not already cost less of:
      * a television saying "stop" twice in a row ends a conversation that was not happening. */
-    {"stop stop", VOCAB_STOP, 0},
+    {"stop stop", "STnP STnP", VOCAB_STOP, 0},
 
     /* VOICE POST, AND THE TWO PHRASES ARE THE WHOLE INTERFACE TO IT.
      *
@@ -103,15 +106,15 @@ static vocab_t VOCAB[] = {
      * literal rather than by including `jpanel.h`: this file is pure C and built on the host,
      * and `jpanel.h` drags in `cfg.h` and the ESP headers behind it. The host suite pins the
      * two values together so the spelling cannot drift. */
-    {"tell sister", VOCAB_SEND, 0}, /* JPANEL_TO_PANEL — the twin's unit */
-    {"tell dad", VOCAB_SEND, 1},    /* JPANEL_TO_DAD — the owner's PWA */
+    {"tell sister", "TfL SgSTk", VOCAB_SEND, 0}, /* JPANEL_TO_PANEL — the twin's unit */
+    {"tell dad", "TfL DaD", VOCAB_SEND, 1},    /* JPANEL_TO_DAD — the owner's PWA */
 
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */
-    {"change into merc", VOCAB_FORM, FORM_OSTRICH},
-    {"be an ostrich", VOCAB_FORM, FORM_OSTRICH},
-    {"change into robot", VOCAB_FORM, FORM_ROBOT},
-    {"be a robot", VOCAB_FORM, FORM_ROBOT},
+    {"change into merc", "pdNq gNTo MkK", VOCAB_FORM, FORM_OSTRICH},
+    {"be an ostrich", "Bm aN eSTRgp", VOCAB_FORM, FORM_OSTRICH},
+    {"change into robot", "pdNq gNTo RbBnT", VOCAB_FORM, FORM_ROBOT},
+    {"be a robot", "Bm c RbBnT", VOCAB_FORM, FORM_ROBOT},
 
     /* THE SHORT FORMS, asked for by name: "burp", "fart", "dance", "jump". They break the
        two-word rule in `vocab.h` and the reason that rule exists has not gone away — these
@@ -123,41 +126,41 @@ static vocab_t VOCAB[] = {
        "dance with me". So the long forms that collide are gone or reworded, and the ones that
        merely CONTAIN the word ("do a dance", "do a burp") are untouched — those start with
        "do" and collide with nothing. */
-    {"dance", VOCAB_ACTION, ACT_DANCE},
-    {"jump", VOCAB_ACTION, ACT_JUMP},
-    {"burp", VOCAB_ACTION, ACT_BURP},
-    {"fart", VOCAB_ACTION, ACT_FART},
-    {"wave", VOCAB_ACTION, ACT_WAVE},
-    {"shake", VOCAB_ACTION, ACT_SHIMMY},
-    {"laugh", VOCAB_ACTION, ACT_GIGGLE},
-    {"eat", VOCAB_ACTION, ACT_EAT},
-    {"kick", VOCAB_ACTION, ACT_KICK},
-    {"spin", VOCAB_ACTION, ACT_SPIN},
+    {"dance", "DaNS", VOCAB_ACTION, ACT_DANCE},
+    {"jump", "qcMP", VOCAB_ACTION, ACT_JUMP},
+    {"burp", "BkP", VOCAB_ACTION, ACT_BURP},
+    {"fart", "FnRT", VOCAB_ACTION, ACT_FART},
+    {"wave", "WdV", VOCAB_ACTION, ACT_WAVE},
+    {"shake", "sdK", VOCAB_ACTION, ACT_SHIMMY},
+    {"laugh", "LaF", VOCAB_ACTION, ACT_GIGGLE},
+    {"eat", "mT", VOCAB_ACTION, ACT_EAT},
+    {"kick", "KgK", VOCAB_ACTION, ACT_KICK},
+    {"spin", "SPgN", VOCAB_ACTION, ACT_SPIN},
 
-    {"do a dance", VOCAB_ACTION, ACT_DANCE},
+    {"do a dance", "Do c DaNS", VOCAB_ACTION, ACT_DANCE},
     /* Was "dance with me", which "dance" is now a prefix of. Reworded rather than dropped so
        bop keeps a voice — since 0.2.45 dance, bop and shimmy are three different animations
        on the bird, not three names for one. */
-    {"come and boogie", VOCAB_ACTION, ACT_BOP},
+    {"come and boogie", "KcM cND BoGm", VOCAB_ACTION, ACT_BOP},
     /* Was "shake your body" and "wave hello", both of which the new one-word forms are a
        prefix of. Reworded rather than dropped: two ways to ask is the point of having long
        forms at all, since a four-year-old will say the one you did not think of. */
-    {"wiggle your body", VOCAB_ACTION, ACT_SHIMMY},
-    {"say hello", VOCAB_ACTION, ACT_WAVE},
-    {"bounce around", VOCAB_ACTION, ACT_BOING},
-    {"nod your head", VOCAB_ACTION, ACT_NOD},
-    {"be silly", VOCAB_ACTION, ACT_WIGGLE},
-    {"make me laugh", VOCAB_ACTION, ACT_GIGGLE},
+    {"wiggle your body", "WgGcL YeR BnDm", VOCAB_ACTION, ACT_SHIMMY},
+    {"say hello", "Sd hcLb", VOCAB_ACTION, ACT_WAVE},
+    {"bounce around", "BtNS ktND", VOCAB_ACTION, ACT_BOING},
+    {"nod your head", "NnD YeR hfD", VOCAB_ACTION, ACT_NOD},
+    {"be silly", "Bm SgLm", VOCAB_ACTION, ACT_WIGGLE},
+    {"make me laugh", "MdK Mm LaF", VOCAB_ACTION, ACT_GIGGLE},
     /* Peekaboo by name. It is the action most worth asking for and the hardest to discover by
        poking, since `hide` looks like sitting down until the hands come up. */
-    {"play peekaboo", VOCAB_ACTION, ACT_HIDE},
-    {"hide your eyes", VOCAB_ACTION, ACT_HIDE},
-    {"go to sleep", VOCAB_ACTION, ACT_SLEEP},
-    {"wake up now", VOCAB_ACTION, ACT_BOING},
+    {"play peekaboo", "PLd PmKcBo", VOCAB_ACTION, ACT_HIDE},
+    {"hide your eyes", "hiD YeR iZ", VOCAB_ACTION, ACT_HIDE},
+    {"go to sleep", "Gb To SLmP", VOCAB_ACTION, ACT_SLEEP},
+    {"wake up now", "WdK cP Nt", VOCAB_ACTION, ACT_BOING},
     /* The gags. A four-year-old will ask for these more than everything above combined, and
        the long bewildered hold after them is the joke (`rig.c`). */
-    {"do a burp", VOCAB_ACTION, ACT_BURP},
-    {"make a rude noise", VOCAB_ACTION, ACT_FART},
+    {"do a burp", "Do c BkP", VOCAB_ACTION, ACT_BURP},
+    {"make a rude noise", "MdK c RoD NuZ", VOCAB_ACTION, ACT_FART},
 
     /* A WAY IN THAT IS NOT ONE WORD, FOR EVERY ACTION.
      *
@@ -170,19 +173,19 @@ static vocab_t VOCAB[] = {
      *
      * None of these may start with the single word it backs up: "jump up high" would make
      * "jump" a prefix of it, which rule 3 forbids and which MultiNet refuses outright. */
-    {"can you burp", VOCAB_ACTION, ACT_BURP},
-    {"can you fart", VOCAB_ACTION, ACT_FART},
-    {"do a big jump", VOCAB_ACTION, ACT_JUMP},
-    {"have a snack", VOCAB_ACTION, ACT_EAT},
-    {"give it a kick", VOCAB_ACTION, ACT_KICK},
-    {"do a spin", VOCAB_ACTION, ACT_SPIN},
+    {"can you burp", "KaN Yo BkP", VOCAB_ACTION, ACT_BURP},
+    {"can you fart", "KaN Yo FnRT", VOCAB_ACTION, ACT_FART},
+    {"do a big jump", "Do c BgG qcMP", VOCAB_ACTION, ACT_JUMP},
+    {"have a snack", "haV c SNaK", VOCAB_ACTION, ACT_EAT},
+    {"give it a kick", "GgV gT c KgK", VOCAB_ACTION, ACT_KICK},
+    {"do a spin", "Do c SPgN", VOCAB_ACTION, ACT_SPIN},
 
     /* "color", not "colour", and this is the one place in the repo that spells it that way.
        The phrase is not prose — it is fed to MultiNet's English grapheme-to-phoneme pass,
        whose lexicon is American. The two spellings are the same sound; only one is looked
        up rather than guessed at. */
-    {"change your color", VOCAB_COLOUR, -1},
-    {"pick a new color", VOCAB_COLOUR, -1},
+    {"change your color", "pdNq YeR KcLk", VOCAB_COLOUR, -1},
+    {"pick a new color", "PgK c No KcLk", VOCAB_COLOUR, -1},
 
     /* NAMED COLOURS. `arg` is a palette index into `face.c`'s PALETTE, and the two at the end
        (red, blue) exist because this palette had no colour a child would give those names to:
@@ -192,14 +195,14 @@ static vocab_t VOCAB[] = {
        "turn X" rather than bare "X": two words, so these obey the rule the four short action
        words break, and no colour word is left live on its own in a room where someone might
        simply say "white" or "orange" in conversation. */
-    {"turn red", VOCAB_COLOUR, 11},
-    {"turn blue", VOCAB_COLOUR, 12},
-    {"turn green", VOCAB_COLOUR, 7},
-    {"turn yellow", VOCAB_COLOUR, 3},
-    {"turn orange", VOCAB_COLOUR, 4},
-    {"turn pink", VOCAB_COLOUR, 8},
-    {"turn purple", VOCAB_COLOUR, 9},
-    {"turn white", VOCAB_COLOUR, 10},
+    {"turn red", "TkN RfD", VOCAB_COLOUR, 11},
+    {"turn blue", "TkN BLo", VOCAB_COLOUR, 12},
+    {"turn green", "TkN GRmN", VOCAB_COLOUR, 7},
+    {"turn yellow", "TkN YfLb", VOCAB_COLOUR, 3},
+    {"turn orange", "TkN eRcNq", VOCAB_COLOUR, 4},
+    {"turn pink", "TkN PglK", VOCAB_COLOUR, 8},
+    {"turn purple", "TkN PkPcL", VOCAB_COLOUR, 9},
+    {"turn white", "TkN WiT", VOCAB_COLOUR, 10},
 };
 
 const vocab_t *vocab_all(void)
