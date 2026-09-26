@@ -308,14 +308,21 @@ static void report(const cfg_t *cfg)
            entries are variable-length now (a raw decode is as long as whatever was said) and a
            body that ran out mid-token is the unterminated-JSON failure the comment below is
            about. A fourth field carries how many times the same decode repeated. */
-        for (int i = 0; i < 12 && w > 0 && w < (int)sizeof(body) - 64; i++) {
+        /* NINETY-SIX, NOT SIXTY-FOUR, and the number is arithmetic rather than habit. One
+           entry is now `,["<27>",100,1,255,"<23>"]` — about 69 bytes at its worst — so a guard
+           of 64 could admit an entry it cannot finish, and a body cut mid-token is the
+           unterminated JSON the comment below is about. Reserve more than the largest entry
+           can possibly be. */
+        for (int i = 0; i < 12 && w > 0 && w < (int)sizeof(body) - 96; i++) {
             const char *phrase = NULL;
             int prob = 0;
             int count = 0;
             bool fired = false;
-            if (!speech_heard(i, &phrase, &prob, &fired, &count)) break;
-            w += snprintf(body + w, sizeof(body) - (size_t)w, "%s[\"%s\",%d,%d,%d]",
-                          i ? "," : "", phrase, prob, fired ? 1 : 0, count);
+            const char *raw = "";
+            if (!speech_heard(i, &phrase, &prob, &fired, &count, &raw)) break;
+            w += snprintf(body + w, sizeof(body) - (size_t)w, "%s[\"%s\",%d,%d,%d,\"%s\"]",
+                          i ? "," : "", phrase, prob, fired ? 1 : 0, count,
+                          raw != NULL ? raw : "");
         }
         if (w > 0 && w < (int)sizeof(body) - 4) w += snprintf(body + w, sizeof(body) - (size_t)w, "]");
     }

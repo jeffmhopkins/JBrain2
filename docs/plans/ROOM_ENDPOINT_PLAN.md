@@ -5682,6 +5682,56 @@ one day; it was never this bug, and calibrating while upside down would have wri
 degree error into NVS — wrong in the other three orientations and double-corrected the moment
 the code was fixed.
 
+#### 10.4dc The raw decode, in telemetry rather than down a cable (0.3.10, 2026-09-26)
+
+*"Tell sister" isn't recognized* — with `tell dad` firing and both phrases registered. The owner
+then asked the right question: *"Can you take out some research on how this actually works for
+the recognition. I feel like we're not adequately understanding the issue."* He was right; this
+section had been reasoning from its own folklore.
+
+**WHAT THE PRIMARY SOURCES SAY, AND WHERE `vocab.c` WAS WRONG.** MultiNet7 English decodes
+**phonemes, not words**: the shipped model's own `vocab` file is a language model over the
+single-letter phoneme classes `tool/multinet_g2p.py` emits (`D`, `Z`, `ST`, `cN`, `eR`…), with
+log-probabilities. The `tool/README.md` line *"for English, words are used as units"* is
+**MultiNet6** — a different model from the one this firmware builds
+(`CONFIG_SR_MN_EN_MULTINET7_QUANT`).
+
+So the claim in `vocab.c` that two phrases sharing a first word *"split the confidence between
+them"* does not describe this decoder. A shared prefix is ordinary. Running Espressif's own
+alphabet over CMUdict shows the two phrases diverging completely after the carrier:
+
+| phrase | phonemes | encoded |
+| --- | --- | --- |
+| tell dad | `T EH1 L / D AE1 D` | `TfL DaD` |
+| tell sister | `T EH1 L / S IH1 S T ER0` | `TfL SgSTk` |
+
+What stands out is not the shared `TfL` but what "sister" is made of — `S-IH-S-T-ER`, sibilants
+around a weak vowel, ending in schwa-r — against `D-AE-D`, voiced plosives around a strong open
+one. On a far-field mic behind noise suppression those are not equally survivable.
+
+**AND WE ARE ON THE DOCUMENTED FALLBACK PATH.** Espressif: *"use `tool/multinet_g2p.py` to do
+the Grapheme-to-Phoneme conversion"*, and if that step is skipped *"an internal
+Grapheme-to-Phoneme tool will be called at runtime"* with potential accuracy reduction. There is
+a dedicated API for the correct path —
+`esp_mn_commands_phoneme_add(id, string, phonemes)`, whose own doc says to use that tool — and
+`speech.c` calls `esp_mn_commands_add(i, phrase)`. **All 48 commands go through the fallback.**
+
+**MEASURED, from the panel the owner actually speaks to** (which is the one WITHOUT a cable):
+`tell dad` at p=17, `tell sister` never once in the ring, and a run of **212 consecutive
+non-matches** beside it. `mic_peak` 8676, so the microphone is hearing him; `alc` still
+`00 already-off`.
+
+**WHICH IS WHY THIS COMMIT IS A TELEMETRY CHANGE AND NOT A FIX.** Two candidate causes remain
+and they need opposite remedies: the audio never carried the sibilants, or it did and they
+scored below something else. The decoder's own `raw_string` separates them in one field — and
+it was only ever visible on a USB console, on a panel that has no cable in it, which is the
+CLAUDE.md #10 failure this section keeps rediscovering. The ring now carries it, on the report
+that was already being sent.
+
+Two defects caught while writing it: the loop guard reserved 64 bytes against an entry that can
+now reach ~69, which is the unterminated-JSON failure §10.4 already paid for once; and `raw`
+lands inside a JSON string that nothing downstream escapes, so it is sanitised on the way in.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

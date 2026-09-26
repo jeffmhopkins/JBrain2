@@ -84,4 +84,9 @@ const char *speech_vocab_refused(int i);
    unreachable because nobody said it or because the recogniser could not resolve it. `count`
    collapses consecutive identical decodes, so a television repeating one word does not flush
    everything else out of the ring. Any pointer may be NULL. */
-bool speech_heard(int i, const char **phrase, int *prob, bool *fired, int *count);
+/* `raw` is the decoder's own phoneme string for that decode (MultiNet7 English decodes phonemes,
+   not words), or "" when it had none. It is what separates "the microphone never carried those
+   sounds" from "it heard them and scored them below something else" — two faults with opposite
+   fixes that the winning phrase alone cannot tell apart. */
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired, int *count,
+                  const char **raw);
