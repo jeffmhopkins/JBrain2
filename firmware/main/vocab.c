@@ -13,6 +13,27 @@
    the table has asked since it was written for it to stop being a rebuild away.
    Sized for "hey " plus a name the box caps well under this. */
 static char s_listen[24] = "hey fish";
+/* AND ITS PRONUNCIATION, which arrives from the box beside the name.
+ *
+   Every other phrase in this table was converted to phonemes when this firmware was built and
+   sits in flash beside its words. This one could not be: it carries the NAME, and the owner
+   changes that from the PWA, so there was nothing to convert at build time. It was therefore
+   the only phrase still going through the runtime converter Espressif's own documentation
+   warns about — and it is the phrase that starts every conversation.
+
+   The box has the name and a dictionary, so the box converts it and sends the result on the
+   settings poll it already answers (`pet_name_phonemes`; `backend/src/jbrain/g2p.py`).
+
+   EMPTY IS A REAL AND EXPECTED STATE, not a failure: an invented name is not a word any
+   dictionary holds, and the box sends "" rather than a guess. `speech.c` reads empty as
+   "convert this one at runtime", which is exactly where this phrase already was — so a name
+   the box cannot pronounce is no worse off than before, and a name it can is better. */
+static char s_listen_phon[48] = "";
+/* The carrier word's own phonemes. "hey" is spelled here rather than sent, because the carrier
+   belongs to this file: the box sends the phonemes of the NAME and knows nothing about what
+   this firmware puts in front of it. Keep the two in step — `hd` is `HH EY1` through the
+   alphabet in `tool/multinet_g2p.py`, and the host suite pins it against the phrase. */
+#define LISTEN_CARRIER_PHON "hd"
 
 static vocab_t VOCAB[] = {
     /* THE PANEL'S NAME, and the one phrase here whose cost is not an animation.
@@ -32,14 +53,16 @@ static vocab_t VOCAB[] = {
      * "robot", and rule 3 forbids a phrase being a prefix of another — "change into robot" and
      * "be a robot" are already in this table. "hey fish" collides with nothing.
      *
-     * COMPILED IN FOR NOW, WHICH IS A GAP. §10.4ab's argument applies: the owner has no
-     * terminal, so a name only a rebuild can change is a name they cannot change, and the two
-     * panels will want different ones. It belongs on `endpoint_settings` beside the other
-     * knobs; `esp_mn_commands_update()` already supports re-registering at runtime. */
-    /* NULL, AND IT IS THE ONLY ONE. The wake phrase carries the pet's NAME, which the owner
-       can change from the PWA, so its phonemes cannot exist until the name does — see
-       `speech.c`, which falls back to the runtime converter for exactly this entry. */
-    {s_listen, NULL, VOCAB_LISTEN, 0},
+     * NO LONGER COMPILED IN: §10.4ab's gap is closed. The name lives on `endpoint_settings`,
+     * arrives on the settings poll and is re-registered live by `vocab_set_name` — the owner
+     * has no terminal, so a name only a rebuild could change was a name they could not change.
+     * What is compiled in is the FALLBACK, which is what a panel answers to until the box
+     * tells it otherwise. */
+    /* THE ONE ENTRY WHOSE PHONEMES ARE NOT IN FLASH. Every other line here was converted when
+       this firmware was built; this one carries the pet's NAME, which the owner changes from
+       the PWA, so it has no build-time value. The box converts it and sends it on the settings
+       poll, and `s_listen_phon` above says what happens when it cannot. */
+    {s_listen, s_listen_phon, VOCAB_LISTEN, 0},
 
     /* THE WAY OUT, and the owner found it the way these things get found: *"now that it auto
      * continues for six turns, it wants to keep going even if I say stop."*
@@ -221,7 +244,28 @@ const vocab_t *vocab_get(int id)
     return &VOCAB[id];
 }
 
-bool vocab_set_name(const char *name)
+/* The box's phonemes for the name, as "<carrier> <name>", or "" if they cannot be used.
+ *
+   REFUSES RATHER THAN REPAIRS. A phoneme string is not readable by the person who would have
+   to notice it is wrong: it is single letters whose case is significant, and a stray character
+   is invisible in a log line. So anything outside the alphabet — or too long to hold whole —
+   yields "", which puts this phrase back on the runtime converter. Being converted on-chip is
+   a known, working state; being registered with a pronunciation nobody says is a panel that
+   has gone deaf for no visible reason. */
+static void compose_phonemes(const char *phon, char *out, size_t cap)
+{
+    out[0] = '\0';
+    if (phon == NULL || phon[0] == '\0') return;
+    for (const char *p = phon; *p != '\0'; p++) {
+        const char c = *p;
+        /* The classes `tool/multinet_g2p.py` emits, plus the space between words. */
+        if (c != ' ' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z')) return;
+    }
+    const int n = snprintf(out, cap, "%s %s", LISTEN_CARRIER_PHON, phon);
+    if (n < 0 || (size_t)n >= cap) out[0] = '\0'; /* truncated is wrong, not short */
+}
+
+bool vocab_set_name(const char *name, const char *phonemes)
 {
     /* RULE 1 OF THIS FILE, ENFORCED RATHER THAN ASSUMED: MultiNet's grapheme-to-phoneme pass
        takes lowercase words and spaces, and silently refuses anything else — leaving the panel
@@ -238,8 +282,15 @@ bool vocab_set_name(const char *name)
         phrase[n++] = c;
     }
     phrase[n] = '\0';
-    if (strcmp(phrase, s_listen) == 0) return false;
+    /* BOTH HALVES DECIDE. The pronunciation can change while the name does not — the box
+       learns a name it could not convert before, or stops being able to — and re-registering
+       is the only way that reaches the model. Checking the name alone would leave a panel
+       listening for the old sound of a name it had already accepted. */
+    char phon[sizeof(s_listen_phon)];
+    compose_phonemes(phonemes, phon, sizeof(phon));
+    if (strcmp(phrase, s_listen) == 0 && strcmp(phon, s_listen_phon) == 0) return false;
     snprintf(s_listen, sizeof(s_listen), "%s", phrase);
+    snprintf(s_listen_phon, sizeof(s_listen_phon), "%s", phon);
     return true;
 }
 

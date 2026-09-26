@@ -3053,13 +3053,16 @@ static void test_every_phoneme_is_in_the_alphabet(void)
     static const char *ALPHABET = "abcdefghijklmnopqrstuvwNVLFSBRDGKWTMZPY ";
     const vocab_t *all = vocab_all();
     for (int i = 0; i < vocab_count(); i++) {
-        if (all[i].phonemes == NULL) continue;
+        /* EMPTY IS A STATE, NOT A STRING, and the test below is what pins which entry may be
+           in it: the wake phrase's buffer starts empty and fills when the box sends the name's
+           phonemes. Checking it for a trailing space before it holds anything would be
+           checking nothing. */
+        if (all[i].phonemes == NULL || all[i].phonemes[0] == '\0') continue;
         for (const char *c = all[i].phonemes; *c != '\0'; c++) {
             CHECK(strchr(ALPHABET, *c) != NULL, "phoneme character is in the g2p alphabet");
         }
         CHECK(all[i].phonemes[0] != ' ', "no leading space");
         const size_t n = strlen(all[i].phonemes);
-        CHECK(n > 0, "a phoneme string is not empty");
         CHECK(all[i].phonemes[n - 1] != ' ', "no trailing space");
     }
 }
@@ -3072,13 +3075,18 @@ static void test_every_phoneme_is_in_the_alphabet(void)
 static void test_only_the_wake_phrase_converts_at_runtime(void)
 {
     const vocab_t *all = vocab_all();
-    int without = 0;
+    int listen = 0;
     for (int i = 0; i < vocab_count(); i++) {
+        if (all[i].kind == VOCAB_LISTEN) listen++;
         if (all[i].phonemes != NULL && all[i].phonemes[0] != '\0') continue;
-        without++;
         CHECK(all[i].kind == VOCAB_LISTEN, "only the wake phrase has no precomputed phonemes");
     }
-    CHECK(without == 1, "and there is exactly one of it");
+    /* Counted by KIND rather than by emptiness, because the wake phrase's own string is no
+       longer a fixed state: it is empty until the box sends the name's phonemes and filled
+       afterwards, so a count of empty entries would depend on whether another test in this
+       file had already renamed the pet. What must hold either way is that no OTHER entry is
+       ever in that state. */
+    CHECK(listen == 1, "and there is exactly one wake phrase");
 }
 
 /* A WORD'S ENCODING IS THE SAME WHEREVER IT APPEARS. "tell" opens two phrases and "change
@@ -3117,6 +3125,90 @@ static void test_the_two_send_phrases_are_what_was_measured(void)
         }
     }
     CHECK(seen == 2, "both send phrases are present");
+}
+
+/* --- the one phrase whose phonemes come from the box ---------------------------------------
+ *
+ * The wake phrase carries the pet's NAME, the owner changes that from the PWA, and MultiNet7
+ * matches phonemes rather than words — so this is the only entry that could not be converted
+ * when the firmware was built, and it was consequently the only one still going through the
+ * runtime converter Espressif warn about. The box converts it now and sends the answer on the
+ * settings poll. These pin the panel's half of that: what it accepts, what it refuses, and —
+ * the case that actually bites — what it does when the answer goes AWAY. */
+
+/* The entry as MultiNet will see it. */
+static const vocab_t *wake_entry(void)
+{
+    const vocab_t *all = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        if (all[i].kind == VOCAB_LISTEN) return &all[i];
+    }
+    return NULL;
+}
+
+static void test_the_boxs_phonemes_reach_the_wake_phrase_behind_the_carrier(void)
+{
+    CHECK(vocab_set_name("fish", "Fgs"), "a new name and pronunciation is a change");
+    const vocab_t *w = wake_entry();
+    CHECK(w != NULL, "there is a wake entry");
+    CHECK(strcmp(w->phrase, "hey fish") == 0, "the carrier word is still in front");
+    /* THE CARRIER'S PHONEMES ARE THE FIRMWARE'S, not the box's: it sends the name alone
+       because "hey" is this file's word, and a box that sent the whole phrase would be
+       encoding a decision it cannot see. `hd` is `HH EY1`. */
+    CHECK(strcmp(w->phonemes, "hd Fgs") == 0, "phrase and phonemes agree word for word");
+}
+
+static void test_a_name_the_box_cannot_pronounce_leaves_the_entry_empty(void)
+{
+    CHECK(vocab_set_name("bloop", ""), "the name changed even though the phonemes did not");
+    const vocab_t *w = wake_entry();
+    CHECK(w->phonemes[0] == '\0', "empty, which speech.c reads as 'convert it at runtime'");
+    CHECK(strcmp(w->phrase, "hey bloop") == 0, "and the panel still answers to the name");
+}
+
+/* THE CASE THAT BITES. The owner renames the pet from one the dictionary knows to one it does
+   not. If the old phonemes survived, the panel would be listening for the sound of the
+   PREVIOUS name while showing the new one — deaf in a way nothing on the glass explains, and
+   worse than never having had them. */
+static void test_losing_the_pronunciation_clears_the_old_one(void)
+{
+    CHECK(vocab_set_name("fish", "Fgs"), "start from a name the box could pronounce");
+    CHECK(strcmp(wake_entry()->phonemes, "hd Fgs") == 0, "it took");
+    CHECK(vocab_set_name("bloop", NULL), "renaming to one it cannot is still a change");
+    CHECK(wake_entry()->phonemes[0] == '\0', "the old pronunciation must not survive it");
+}
+
+/* The name can stay put while its pronunciation changes — the box gains a dictionary entry,
+   or loses one. Re-registering is the only way that reaches the model, and the caller
+   re-registers on a true, so answering false here would strand the panel. */
+static void test_a_new_pronunciation_for_the_same_name_is_a_change(void)
+{
+    (void)vocab_set_name("fish", NULL);
+    CHECK(vocab_set_name("fish", "Fgs"), "same name, newly pronounceable: re-register");
+    CHECK(!vocab_set_name("fish", "Fgs"), "and saying it twice is not");
+}
+
+/* A phoneme string is unreadable to the person who would have to spot it was wrong, so the
+   panel refuses rather than repairs. Being converted on-chip is a known working state;
+   registering a pronunciation nobody says is a panel gone deaf for no visible reason. */
+static void test_a_phoneme_string_outside_the_alphabet_is_refused_whole(void)
+{
+    (void)vocab_set_name("fish", "Fgs");
+    CHECK(vocab_set_name("fish", "Fg5"), "a digit is not a phoneme class: back to empty");
+    CHECK(wake_entry()->phonemes[0] == '\0', "refused whole rather than sanitised");
+}
+
+static void test_phonemes_too_long_to_hold_are_refused_rather_than_truncated(void)
+{
+    char huge[128];
+    memset(huge, 'a', sizeof(huge) - 1);
+    huge[sizeof(huge) - 1] = '\0';
+    (void)vocab_set_name("fish", "Fgs");
+    (void)vocab_set_name("fish", huge);
+    /* A TRUNCATED PRONUNCIATION IS A WRONG ONE, and it is the failure mode that would look
+       most like working: the first several classes match, so it would half-recognise. */
+    CHECK(wake_entry()->phonemes[0] == '\0', "a half-string is worse than none");
+    (void)vocab_set_name("fish", NULL); /* leave the table as the firmware ships it */
 }
 
 static void test_the_tick_and_the_cross_cannot_both_be_hit(void)
@@ -3530,6 +3622,12 @@ int main(void)
     test_only_the_wake_phrase_converts_at_runtime();
     test_a_shared_word_encodes_identically();
     test_the_two_send_phrases_are_what_was_measured();
+    test_the_boxs_phonemes_reach_the_wake_phrase_behind_the_carrier();
+    test_a_name_the_box_cannot_pronounce_leaves_the_entry_empty();
+    test_losing_the_pronunciation_clears_the_old_one();
+    test_a_new_pronunciation_for_the_same_name_is_a_change();
+    test_a_phoneme_string_outside_the_alphabet_is_refused_whole();
+    test_phonemes_too_long_to_hold_are_refused_rather_than_truncated();
     test_the_tick_and_the_cross_cannot_both_be_hit();
     test_the_target_is_larger_than_the_icon();
     test_everywhere_else_is_nothing();

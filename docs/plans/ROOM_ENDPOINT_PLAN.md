@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-25 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-26 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -5809,6 +5809,62 @@ Four host cases pin the data, each verified to fail against a deliberate break: 
 is in the g2p alphabet, exactly one entry converts at runtime and it is the wake phrase, a word
 shared between phrases encodes identically, and the two send phrases are literally what was
 measured.
+
+#### 10.4df The last phrase on the runtime path, converted on the box (0.3.13, 2026-09-26)
+
+§10.4de left exactly one entry converting at runtime, and named it structural: the wake phrase
+carries the pet's NAME, the owner changes that from the PWA, and a name that does not exist at
+build time cannot have been converted then. The owner's read was that the exception did not have
+to stand — *"I feel like you could have the server box be able to construct them on the fly"* —
+and then scoped it: *"Yeah I would keep your pre-generated static ones and only generate the pet
+name."* Which is the right scope: 47 phrases are fixed and belong in flash; one is not.
+
+**WHAT CHANGED.** `backend/src/jbrain/g2p.py` carries the value half of `tool/multinet_g2p.py`'s
+alphabet and looks words up in CMUdict. `GET /endpoint/settings` gained `pet_name_phonemes`
+beside `pet_name`, so the name and its pronunciation arrive in one answer on the poll the panel
+already makes every three seconds — no second TLS handshake, which matters on a panel whose
+largest free internal block is 31 KB. `vocab_set_name(name, phonemes)` stores both, and the
+`VOCAB_LISTEN` row points at both buffers. The carrier word's phonemes stay in the firmware
+(`hd`, i.e. `HH EY1`): the box sends the NAME alone, because "hey" is `vocab.c`'s word and a box
+sending the whole phrase would be encoding a decision it cannot see.
+
+**IT REFUSES RATHER THAN REPAIRS, on both sides.** A phrase half-converted is worse than one not
+converted at all, so `phonemes_for` returns None if ANY word is unknown, and the panel drops a
+phoneme string whole if it carries a character outside the alphabet or will not fit. Both land
+on the same fallback: the runtime converter, which is where this phrase already was. The case
+that actually bites is renaming FROM a name the box could pronounce TO one it cannot — the old
+phonemes must be cleared, or the panel listens for the sound of the previous name while showing
+the new one, and there is a host test for exactly that.
+
+**AND A BUG IT UNCOVERED, which was the more serious half.** Building this meant testing that the
+name reaches a panel, and it does not: `panel_settings` read `app.endpoint_panel` under
+`ctx_for(principal)`, which carries a principal id and kind and NO subject pin, while
+`endpoint_panel_own` (migration 0212) grants a panel its row on `principal_kind = 'device_key'`
+AND `subject_id = app.subject_id`. The policy matched nothing, so **every panel has been served
+the default appearance since 0212** — empty name, `ostrich` — however the owner set it. The
+symptom is that renaming the pet from the PWA did nothing at all, and choosing the robot did not
+survive a reboot, both of which read as firmware faults and are not.
+`tests/integration/test_endpoint_panel_rls.py` passed throughout: it builds the pinned context by
+hand and proves the POLICY works. Nothing checked that the ROUTE built the same context, which is
+the gap. `panel_context()` is that context — deliberately not `device_context`, which carries the
+`location` domain scope a panel has no use for — and the new integration tests assert the owner's
+`robot` arrives rather than the default `ostrich`, because a test pinning `ostrich` would have
+passed for the whole life of the bug.
+
+**WHAT THIS DOES NOT FIX, stated so the next step is not mis-scoped.** CMUdict is a dictionary,
+not a model. Measured: `fish`, `blink`, `merc`, `nessa` and `bluey` are present; **`elora` and
+`lydian` are NOT** — the twins' own names, and the obvious thing to call a panel. An invented
+name is not a word, gets "", and converts on-chip exactly as before. Closing that needs a real
+G2P with out-of-vocabulary handling (`g2p_en` carries a neural net for it, and could not be
+installed here — its `distance` dependency will not build), which is also what per-panel sibling
+names ("tell Elora") would need. Worth doing deliberately rather than as a rider on this.
+
+Backend: seven unit cases on the converter, including one that cross-checks it against **every
+phrase already in flash** — a consistency check rather than independent verification, and it
+catches the thing that actually happens, a hand-edit to `vocab.c` or to the alphabet leaving the
+wake phrase encoded in a scheme the other 47 are not. Three integration cases on the route, two
+of which fail against the pre-fix context. Six host cases on the panel's half, each verified
+against a deliberate break.
 
 ### 10.5 Three findings from the board in hand
 

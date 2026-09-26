@@ -1687,11 +1687,17 @@ class TestWakePrefix:
         """The other half of the same coupling. `vocab_set_name` rewrites `s_listen`, and it only
         reaches MultiNet because the `VOCAB_LISTEN` row points AT that buffer rather than holding
         a literal of its own. Re-inlining the phrase would leave renaming silently ineffective on
-        the panel while every test above still passed."""
+        the panel while every test above still passed.
+
+        BOTH BUFFERS NOW, for the same reason twice over: the row carries the phrase and its
+        PHONEMES, and MultiNet7 matches the phonemes. A row holding a literal pronunciation
+        would leave the panel listening for the sound of whatever name the firmware was built
+        with, however the box renamed it — the same silence, one level further down.
+        """
         vocab = Path(__file__).resolve().parents[3] / "firmware" / "main" / "vocab.c"
-        assert re.search(r"\{s_listen,\s*VOCAB_LISTEN", vocab.read_text()) is not None, (
-            "the listen row no longer points at s_listen — renaming the pet would do nothing"
-        )
+        assert (
+            re.search(r"\{s_listen,\s*s_listen_phon,\s*VOCAB_LISTEN", vocab.read_text()) is not None
+        ), "the listen row no longer points at both buffers — renaming the pet would do nothing"
 
     def test_a_renamed_pet_has_ITS_name_stripped(self) -> None:
         """THE BUG THIS FEATURE WOULD HAVE SHIPPED WITH. Once the pet can be renamed, a box that

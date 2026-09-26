@@ -52,9 +52,10 @@ from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.db.session import SessionContext, panel_context, scoped_session
 from jbrain.devices import service as devices
 from jbrain.devices.repo import DeviceRole
+from jbrain.g2p import phonemes_for
 from jbrain.llm.router import LlmRouter
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.transcribe import WhisperCppClient
@@ -697,6 +698,17 @@ class EndpointSettings(BaseModel):
     # Read-only in effect, by the same mechanism as `pet_name` below: the PUT writes six named
     # columns and ignores every other field of this model.
     fw_version: str = ""
+    # THE WAKE PHRASE'S NAME, AS PHONEMES, and it is here because the firmware cannot produce
+    # it. Every other phrase the panel listens for is converted at build time and shipped in
+    # flash; this one carries `pet_name`, which the owner changes from the PWA, so it has no
+    # build-time value to have been converted. Without it the single most important phrase on
+    # the panel is the only one still using the runtime converter Espressif warn about.
+    #
+    # Empty when the name is not a word CMUdict knows — an invented name usually is not — and
+    # the panel then falls back to converting it itself, which is exactly where it was. See
+    # `jbrain/g2p.py`; the panel prepends the carrier's own phonemes, because the carrier
+    # ("hey ") belongs to the firmware and is spelled there.
+    pet_name_phonemes: str = ""
     # PER-PANEL, unlike the five above, which are one answer for the whole house. Defaulted here
     # so the model stays the shape the PUT takes: the owner's write touches only the four
     # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
@@ -1100,7 +1112,14 @@ async def panel_settings(
     # own — so this route cannot be talked into describing a sibling.
     ctx = ctx_for(principal)
     knobs = await _read_settings(request, ctx)
-    look = await _read_appearance(request, ctx, getattr(principal, "subject_id", "") or "")
+    # THE APPEARANCE NEEDS THE SUBJECT PIN, and `ctx_for` does not carry one — see
+    # `panel_context`. Read under that instead, or `endpoint_panel_own` matches no row and
+    # every panel is told its name is "" (i.e. keep the one in flash). The owner reaching this
+    # route by cookie has no subject at all and keeps the owner context, which sees every row
+    # and is asked for none: `_read_appearance` returns the default for an empty subject.
+    subject = getattr(principal, "subject_id", "") or ""
+    look_ctx = panel_context(principal.id, subject) if subject else ctx
+    look = await _read_appearance(request, look_ctx, subject)
     # An empty string when this box has no firmware in its checkout, NOT a 503 like the manifest
     # route: the knobs are still the truth and a panel that cannot be told about an update must
     # still be told how bright to be. The panel reads "" as "nothing to compare against".
@@ -1109,6 +1128,7 @@ async def panel_settings(
             "pet_name": look.pet_name,
             "form": look.form,
             "fw_version": _firmware_version(settings) or "",
+            "pet_name_phonemes": phonemes_for(look.pet_name) or "",
         }
     )
 

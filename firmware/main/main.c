@@ -127,10 +127,12 @@ static bool apply_settings(const cfg_t *cfg, char *served, size_t served_cap)
     if (st.dim_percent >= 0) display_set_dim_percent(st.dim_percent);
     if (st.form >= 0) display_set_form(st.form);
     /* RENAMING THE PET IS RENAMING THE WAKE WORD, so the model has to be told and the label
-       above his head has to be redrawn. `vocab_set_name` answers false when the phrase is
-       unchanged — which is every fetch but the one after the owner actually edits it — so the
-       command list is not rebuilt twenty times a minute for nothing. */
-    if (vocab_set_name(st.pet_name)) {
+       above his head has to be redrawn. `vocab_set_name` answers false when neither the phrase
+       nor its phonemes changed — which is every poll but the one after the owner actually
+       edits the name — so the command list is not rebuilt twenty times a minute for nothing.
+       THE PHONEMES ARE PART OF THAT: the box can start or stop being able to pronounce a name
+       it already sent, and only a re-registration gets that to the model. */
+    if (vocab_set_name(st.pet_name, st.pet_name_phonemes)) {
         speech_reload_vocabulary();
         display_refresh_name();
     }

@@ -447,10 +447,14 @@ static void load_vocabulary(void)
      * is the API whose own doc points at the tool; `esp_mn_commands_add` is the fallback.
      * Every phrase but one now arrives already converted (`vocab.h`).
      *
-     * THE ONE EXCEPTION IS THE WAKE PHRASE, and it must stay the exception: it carries the
-     * pet's name, the owner can change that name from the PWA, and a name that does not exist
-     * at build time cannot have been converted at build time. That entry keeps the runtime
-     * path — the behaviour every entry had until now — rather than being refused.
+     * THE WAKE PHRASE IS CONVERTED TOO, but not here and not at build time: it carries the
+     * pet's name, the owner changes that from the PWA, and a name that does not exist when
+     * this firmware is built cannot have been converted then. The BOX converts it and sends
+     * the phonemes on the settings poll (`vocab_set_name`), which is why the check below is
+     * on the string being non-empty rather than on the entry being the wake phrase. Empty
+     * means the box could not — an invented name is in no dictionary — and that entry then
+     * takes the runtime path, the behaviour every entry had until now, rather than being
+     * refused or registered with a guess.
      *
      * WHY THIS LANDED: "tell dad" fired at p=17 while "tell sister" never appeared once, with
      * 212 consecutive non-matches beside it in the decode ring. Both were registered and

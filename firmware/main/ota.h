@@ -69,6 +69,14 @@ typedef struct {
        EMPTY MEANS "keep what the firmware shipped with", never "no name": a blank would leave
        a child saying something the panel cannot hear. */
     char pet_name[16];
+    /* THE NAME AS PHONEMES, converted on the box. MultiNet7 matches phonemes, not words: every
+       other phrase this panel listens for was converted when the firmware was built, and this
+       one could not be, because the name did not exist yet. So the wake phrase — the one that
+       starts every conversation — was the only phrase still using the runtime converter
+       Espressif warn about. The box has the name and a dictionary; it sends the answer here.
+       EMPTY IS NORMAL, not an error: an invented name is in no dictionary, the box sends ""
+       rather than a guess, and the panel converts it itself exactly as it always did. */
+    char pet_name_phonemes[48];
     /* Which body to wear: 0 ostrich, 1 robot, -1 "the box did not say". Four taps and a hold
        still toggles it live — this is only what the panel comes back AS, which until now was
        always the ostrich because nothing wrote the choice down. */
