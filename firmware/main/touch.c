@@ -19,17 +19,44 @@
 #include "touch.h"
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 #include "i2c_bus.h"
 
 static const char *TAG = "touch";
+
+static void touch_task(void *arg);
 
 #define CST_ADDR 0x15
 #define REG_FINGERS 0x02
 
 static i2c_master_dev_handle_t s_dev;
-static bool s_down;
-static int s_x = -1;
-static int s_y = -1;
+static volatile bool s_down;
+static volatile int s_x = -1;
+static volatile int s_y = -1;
+
+/* THE PRESSES THE RENDERER HAS NOT COLLECTED YET.
+ *
+ * A REAL QUEUE, NOT A HAND-ROLLED RING. Two tasks touch this — the sampler pushes, the
+ * renderer drains — and a `count++` against a `count--` is not atomic on this core however
+ * volatile the variable is. FreeRTOS already owns a correct answer to exactly this, and
+ * writing a lock-free ring instead would be inventing a concurrency bug to save an allocation.
+ *
+ * Four deep, and the depth is a judgement about children rather than about buffers: a jab is
+ * one press, and the realistic worst case is a small person hitting the glass repeatedly while
+ * a slow frame is in flight. A fifth press inside one frame is hammering, where dropping it is
+ * the right answer rather than a loss — they all mean the same thing, and acting on every one
+ * would fire a control several times from what the child experienced as one impatient burst.
+ * The queue drops the NEWEST in that case, because the oldest is the one they aimed. */
+#define TAP_QUEUE 4
+
+typedef struct {
+    int x;
+    int y;
+} tap_t;
+
+static QueueHandle_t s_taps;
 
 bool touch_start(void)
 {
@@ -45,11 +72,27 @@ bool touch_start(void)
         ESP_LOGE(TAG, "add device: %s", esp_err_to_name(err));
         return false;
     }
-    ESP_LOGI(TAG, "whole-screen target ready");
+    s_taps = xQueueCreate(TAP_QUEUE, sizeof(tap_t));
+    if (s_taps == NULL) {
+        ESP_LOGE(TAG, "no tap queue — presses will be missed");
+        return false;
+    }
+    /* ITS OWN TASK, so that how fast this panel notices a finger stops depending on how much
+       it happens to be drawing. Small on purpose and genuinely small in truth: one I2C
+       transaction and a four-entry queue, no TLS, no buffers — 3072 is ample for that, and
+       the number is stated rather than guessed because under-provisioning a task stack is
+       exactly what crash-looped a panel in 0.3.22. Priority above the renderer, so a finger
+       is recorded while a frame is being composed rather than after it. */
+    if (xTaskCreate(touch_task, "touch", 3072, NULL, 6, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "no sampling task — presses will be missed");
+        return false;
+    }
+    ESP_LOGI(TAG, "sampling every %d ms", TOUCH_SAMPLE_MS);
     return true;
 }
 
-bool touch_tapped(void)
+/* One read of the controller. Returns whether this read saw a NEW finger. */
+static bool sample(void)
 {
     if (s_dev == NULL) return false;
     /* Five bytes in one transaction: the finger count at 0x02 and the coordinate that
@@ -71,6 +114,30 @@ bool touch_tapped(void)
         s_y = ((buf[3] & 0x0F) << 8) | buf[4];
     }
     return edge;
+}
+
+static void touch_task(void *arg)
+{
+    (void)arg;
+    while (true) {
+        if (sample()) {
+            /* LATCHED WITH ITS OWN POINT. Two presses queued behind one slow frame must not
+               both report the second one's coordinates — that is how a press aimed at a
+               notification gets acted on as a press somewhere else entirely. */
+            const tap_t t = {.x = s_x, .y = s_y};
+            (void)xQueueSend(s_taps, &t, 0); /* full means hammering; see TAP_QUEUE */
+        }
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_SAMPLE_MS));
+    }
+}
+
+bool touch_take(int *x, int *y)
+{
+    tap_t t;
+    if (s_taps == NULL || xQueueReceive(s_taps, &t, 0) != pdTRUE) return false;
+    if (x != NULL) *x = t.x;
+    if (y != NULL) *y = t.y;
+    return true;
 }
 
 bool touch_is_down(void)

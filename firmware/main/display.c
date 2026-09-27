@@ -907,11 +907,13 @@ static uint32_t s_rec_hush;
    glass to poke.
 
    TEN SECONDS, UP FROM FIVE. The owner, watching the children use it: *"the replay button
-   probably needs to stay on there for about 10 seconds after it shows."* Five was the first
-   guess and it was an adult's: deciding you missed something, finding the corner and landing a
-   four-year-old's finger on it is most of five seconds before the aiming even starts. Still a
-   deadline, and still inside `POPUP_BIG_MS`, so a waiting-message badge is only ever deferred
-   by this rather than displaced. */
+   probably needs to stay on there for about 10 seconds after it shows."*
+ *
+   IT IS NO LONGER A DEADLINE. Nothing expires `s_repeat_until` any more, so this is the moment
+   the pair went up rather than the moment it comes down, and the variable is really a flag
+   with a timestamp in it. Kept as a timestamp because it costs nothing and a log that can say
+   how long an offer stood is worth more than a bool. The pair leaves on the exit corner, or
+   when a new message displaces it — see the badge below. */
 #define REPEAT_MS 10000
 static uint32_t s_repeat_until;
 /* THE POP-UP SHRINKS RATHER THAN NAGS.
@@ -2113,10 +2115,18 @@ static void face_task(void *arg)
            part of a frame agrees about when it is. */
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         PHASE(2);
-        /* Read the edge ONCE. `touch_tapped()` is what refreshes the cached level that
-           `touch_is_down()` returns, so calling it twice in a frame would consume the edge
-           for whichever caller ran first. */
-        bool tapped = touch && touch_tapped();
+        /* DRAIN A PRESS, DO NOT SAMPLE FOR ONE. `touch.c` samples the controller on its own
+           task now, so a press that began and ended while this loop was composing a frame is
+           waiting here rather than having never happened — which is the whole of the owner's
+           *"the touch response is awful"*. One per pass is deliberate: each press gets its own
+           frame to be answered in, so two that arrive together still read as two presses
+           rather than one that skipped a state.
+
+           The point comes back WITH the press. Taking it from `touch_point()` here would hand
+           every queued press the coordinates of the most recent one — a press aimed at the
+           notification acted on as a press somewhere else entirely. */
+        int raw_x = -1, raw_y = -1;
+        bool tapped = touch && touch_take(&raw_x, &raw_y);
         bool down = touch && touch_is_down();
         /* A FINGER ON A DARK SCREEN BUYS THE SCREEN, AND NOTHING ELSE. The child cannot see
            what they are aiming at, so letting that touch also poke the pet, arm a gesture or
@@ -2175,9 +2185,7 @@ static void face_task(void *arg)
              * the last finger was, which is the same class of bug `s_down_x` exists to
              * document. Corrected once here and every branch below speaks the same
              * coordinates. */
-            int rx = -1, ry = -1;
-            touch_point(&rx, &ry);
-            calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
+            calib_apply(&s_cal, raw_x, raw_y, &s_tap_x, &s_tap_y);
             panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
             /* OVERLAY COORDINATES, RESOLVED ONCE BESIDE THE FRAME ONES, because every hit test
                below wants these and one of them forgot. Anything drawn BEFORE `flip_frame` —
@@ -2267,7 +2275,7 @@ static void face_task(void *arg)
                so a finger aimed at the exit can land ON it. Left there, the gesture would work
                or make the pet blink depending on where exactly a four-year-old put her finger,
                which is indistinguishable from it not working. */
-            if ((jpanel_running() || audio_stream_active()) && oy >= 0 &&
+            if ((jpanel_running() || audio_stream_active() || s_repeat_until != 0) && oy >= 0 &&
                 oy < over_h_tap / 2 && ox >= FACE_W / 2) {
                 jpanel_stop();
                 audio_stream_pause(false); /* never leave the ring held after a stop */
@@ -3108,10 +3116,14 @@ static void face_task(void *arg)
                 dirty = true;
             }
         }
-        if (s_repeat_until != 0 && now > s_repeat_until) {
-            s_repeat_until = 0;
-            dirty = true;
-        }
+        /* IT WAITS FOR HER NOW, rather than for a clock. The pair used to stand down after
+           `REPEAT_MS`, which meant a child who looked away, or thought about it, or was simply
+           slower than ten seconds, came back to a screen that had quietly withdrawn the offer.
+           The owner: *"no more waiting for it to time out and making it disappear. Have it
+           only disappear if we click out into the top right."* There is a visible way out in
+           that corner now, so there is nothing left for a timer to be protecting against —
+           and a control that vanishes while you are deciding is the same fault as one you
+           cannot press, wearing a different face. */
         if (jpanel_running()) dirty = true; /* the count in the run bar has to stay true */
         if (s_talk != TALK_IDLE) dirty = true; /* the dot pulses and the dots cycle */
         const bool rebooting = act == GESTURE_REBOOT;
@@ -3398,7 +3410,16 @@ static void face_task(void *arg)
                     if (now - s_popup_since < POPUP_BIG_MS) {
                         draw_popup(fb, over_y0, over_h, from, waiting,
                                    jpanel_waiting_from_dad() ? SENDTO_DAD : SENDTO_SISTER);
-                    } else if (s_repeat_until == 0) {
+                    } else {
+                        /* OVER THE PAIR, NOT DEFERRED BEHIND IT. This used to wait for
+                           `s_repeat_until` to lapse, which was fine while that was a ten-second
+                           deadline and is a bug now that the pair waits for a finger instead:
+                           a message arriving while the last one's again-and-reply stood would
+                           have been hidden for as long as nobody pressed the exit — which
+                           could be all night. The new message outranks the finished one, and
+                           taking the corner from the old sender's face is the right way round:
+                           it is the same quadrant meaning the same thing, updated to whoever
+                           is waiting now. */
                         draw_popup_badge(fb, over_y0, over_h, from, jpanel_waiting_from_dad() ? SENDTO_DAD
                                                                              : SENDTO_SISTER);
                     }
@@ -3427,9 +3448,18 @@ static void face_task(void *arg)
                    been taken and sound is coming, so a play icon would invite a second press
                    at exactly the moment the first is still being served. */
                 const bool playing = starting || (audio_playing() && !audio_stream_paused());
+                /* WHO IT IS FROM IS NOT KNOWN YET WHILE STARTING, and showing the wrong face
+                   for those seconds is worse than showing none: the owner opened a message
+                   from Dad and watched a little girl appear. `jpanel_in_from()` is read off
+                   the fetch's OWN response header, so until that fetch lands it still holds
+                   the PREVIOUS message's sender — and the previous message is usually the
+                   sister, which is why it looked like a fixed bug rather than a stale value.
+                   The queue already knows who is waiting; ask it until the fetch can answer. */
+                const bool from_dad =
+                    starting ? jpanel_waiting_from_dad() : jpanel_in_from() == JPANEL_TO_DAD;
                 draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0),
-                         jpanel_in_from() == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER,
-                         playing);
+                         from_dad ? SENDTO_DAD : SENDTO_SISTER, playing);
+                confirm_draw_exit(fb, FACE_W, FACE_H, over_y0, over_h);
             } else if (s_repeat_until != 0) {
                 /* THE FACE STAYS FOR THE WHOLE EXCHANGE, and this branch used to drop it: the
                    message ended, the pause became a play, and Dad vanished from the corner in
@@ -3445,6 +3475,7 @@ static void face_task(void *arg)
                                  jpanel_in_from() == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
                 confirm_draw_transport(fb, FACE_W, FACE_H, over_h,
                                        audio_playing() && !audio_stream_paused());
+                confirm_draw_exit(fb, FACE_W, FACE_H, over_y0, over_h);
             }
             /* THE GRID LAST OF ALL, over the pop-up and over the run control, because it is
                the one overlay here that a child asked for by pressing a button. Everything

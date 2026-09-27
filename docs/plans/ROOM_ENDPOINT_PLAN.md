@@ -5547,6 +5547,52 @@ conversation. It is sized *from* the quadrant because the quadrant is also the h
 is the same rule the rest of 0.3.24 exists to enforce: **what you can see and what you can press
 must not be able to disagree.**
 
+##### Touch stops being sampled by the renderer (0.3.25)
+
+The owner, after a run of local fixes that each addressed a symptom: *"touch reactions are still
+not very great. I think maybe we need to readdress that whole system... I think maybe we've let
+it spiral into many refactored areas and it's getting a little bit lost."* He was right, and the
+fault was one level below every patch so far.
+
+**`touch_tapped()` was read once per render-loop pass.** That loop is a 40 ms delay *plus*
+composing a face *plus* pushing 322 KB over QSPI — so the real sampling interval was 80-100 ms
+and it stretched whenever there was more to draw. An edge is only visible to the poll that
+straddles it, so **a press that began and ended between two passes had not happened**. Children
+jab; that is precisely the press being lost, and losing it more often when the screen was busy
+is why it felt worst exactly when a notification was up.
+
+So the controller is sampled on **its own task at 15 ms**, and every edge is **latched with the
+point it landed on** into a four-deep FreeRTOS queue that the renderer drains. A frame that
+takes 200 ms now costs a press its latency, never its existence.
+
+Three details that are load-bearing:
+
+- **A real queue, not a hand-rolled ring.** Two tasks touch it, and `count++` against `count--`
+  is not atomic however volatile the variable. FreeRTOS already owns a correct answer; writing a
+  lock-free ring to save an allocation would have been inventing a concurrency bug.
+- **The point travels with the press.** Reading `touch_point()` in the renderer would hand every
+  queued press the coordinates of the most recent one — a press aimed at the notification acted
+  on somewhere else entirely.
+- **Sharing the bus is safe, checked rather than assumed.** ESP-IDF's
+  `s_i2c_synchronous_transaction` takes a per-bus mutex, so the sampler coexists with the render
+  task's IMU and PMU reads. The task stack is stated at 3072 for one I2C transaction and no TLS
+   — under-provisioning a stack is what crash-looped a panel in 0.3.22.
+
+**Three more faults in the same round.** The sender's face showed the *previous* message's
+sender while a new one was starting (`jpanel_in_from()` is read off the fetch's own response
+header, so it is stale until that lands — and the previous message is usually the sister, which
+made a stale value look like a fixed bug): the queue is asked instead until the fetch can
+answer. The again-and-reply pair **no longer times out** — *"no more waiting for it to time out
+and making it disappear"* — because a control that vanishes while a child is deciding is the same
+fault as one she cannot press, wearing a different face. And the exit corner is **drawn** now,
+mirroring the sender's face across the top band: it worked before this and that was the problem,
+since the owner had to be told where to press, which means no child would ever have found it.
+
+Removing the timeout had one consequence worth naming: the waiting-message badge used to defer
+to the pair, which was fine against a ten-second deadline and a bug against one that waits for a
+finger — a message arriving while the last exchange stood would have been hidden until somebody
+pressed exit, possibly all night. The new message takes the corner.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The

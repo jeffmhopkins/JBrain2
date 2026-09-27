@@ -126,6 +126,16 @@ bool confirm_hit_centre(int fx, int fy, int over_h);
 
 void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing);
 
+/* THE WAY OUT, DRAWN. The corner worked before this existed and that was the problem: the
+ * owner had to be told where to press, which means no child would ever have found it. *"Make
+ * the top right an exit button to take up that top right corner so that there's a clear
+ * indication of where we should click to make it go away."*
+ *
+ * Mirrors the sender's face across the top band — same size, same inset, opposite corner — so
+ * the two read as a pair: who this is from, and how to be done with it. Red, because it is the
+ * only destructive control on this screen and red is what the cross already means here. */
+void confirm_draw_exit(uint16_t *fb, int w, int h, int y0, int over_h);
+
 /* --- THE "WHO?" GRID, AND WHY IT EXISTS -----------------------------------------------------
  *
  * MEASURED 2026-09-27, on 0.3.14, with all 48 phrases registered with hand-checked phonemes
