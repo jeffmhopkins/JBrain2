@@ -446,13 +446,47 @@ static void sleep_wake(const char *why)
     s_brightness_pending = true;
 }
 
+/* A COMMAND, FRAMED FOR QSPI — AND ITS ABSENCE IS WHY BRIGHTNESS NEVER WORKED.
+ *
+ * THE BUG: this panel is opened in QSPI mode (`use_qspi_interface`, `lcd_cmd_bits = 32`), and
+ * on that bus a command is a 32-bit prologue, not a byte. CO5300 datasheet V0.01 p.21, "QSPI
+ * write protocol":
+ *
+ *     Instruction[7:0] = 02h                 Command write
+ *     AD[23:0] = {8'h00, CMD[7:0], 8'h00}    Driver IC command address
+ *
+ * The vendor driver wraps every command it sends (`esp_lcd_co5300_spi.c`, `tx_param`), which
+ * is why the `init_cmds` array above — including `0x51 = 0xFF` — has always worked. The two
+ * calls this file made DIRECTLY did not wrap, so a bare `0x51` went out as instruction `0x00`,
+ * which is not a defined QSPI instruction. The controller discarded it. The SPI transfer
+ * succeeded, so `esp_lcd_panel_io_tx_param` returned ESP_OK every time.
+ *
+ * MEASURED FROM THE OTHER END, BY THE OWNER: brightness has never once changed on real
+ * hardware — not from the box's setting, and not from the panel's OWN dim-on-sleep stage,
+ * which needs no network at all. That second half is what proves it was never the settings
+ * fetch: the dim path is entirely local and it was equally dead.
+ *
+ * AND IT INVALIDATES TWO CONCLUSIONS ALREADY WRITTEN ABOVE. The `REASSERT_MS` experiment was
+ * re-sending `0x29` and `0x51` through this same unwrapped path, so its negative result says
+ * nothing about the OLED rail or the AXP2101. And "this panel does not answer reads over QSPI"
+ * was concluded from unwrapped READS, which need their own opcode (0x03, datasheet p.28) —
+ * the zeros were the bus, not the panel. Both are now open questions again rather than
+ * settled ones.
+ *
+ * Verified against the datasheet before changing anything: `0x51` takes ONE byte (p.184), the
+ * `0x53 = 0x20` we already write is sufficient because bit 5 (BCTRL) is what gates it and the
+ * CO5300 has no backlight bit at all (p.186), and `0x63` is HBM-mode brightness which is inert
+ * while `0x66`'s HBM_EN stays 0, as it does (p.196, p.199). None of those needed changing. */
+#define QSPI_WRITE_OPCODE 0x02
+#define QSPI_CMD(c) (((QSPI_WRITE_OPCODE) << 24) | ((c) << 8))
+
 /* The local copy is not a style choice: `esp_lcd_panel_io_tx_param` takes a plain `const
    void *`, and handing it a pointer into volatile storage discards the qualifier. */
 static void apply_brightness(void)
 {
     if (s_io == NULL) return;
     const uint8_t level = screen_level(s_brightness, s_sleep, s_dim_percent);
-    const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
+    const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, QSPI_CMD(0x51), &level, 1);
     if (err != ESP_OK) ESP_LOGW(TAG, "brightness: %s", esp_err_to_name(err));
 }
 
@@ -1890,7 +1924,7 @@ static void draw_meter(uint16_t *fb, int level)
 static void reassert_panel(void)
 {
     if (s_io == NULL) return;
-    const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0);
+    const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, QSPI_CMD(0x29), NULL, 0);
     if (on != ESP_OK) ESP_LOGW(TAG, "re-assert failed (0x29 %s)", esp_err_to_name(on));
     apply_brightness();
 }
