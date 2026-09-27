@@ -198,6 +198,7 @@ static int16_t *s_ring_buf;
 static ring_t s_ring;
 static volatile bool s_stream_open;  /* the producer has not said it is finished */
 static volatile bool s_stream_primed; /* the preroll has landed; sound has started */
+static volatile bool s_stream_paused;  /* a finger is holding it; the ring keeps its contents */
 
 static int stream_filled(void)
 {
@@ -210,6 +211,10 @@ bool audio_stream_begin(void)
     if (s_play_pos < s_play_len || s_stream_open || stream_filled() > 0) return false;
     ring_reset(&s_ring);
     s_stream_primed = false;
+    /* A NEW MESSAGE NEVER STARTS HELD. Nothing but a resume clears this flag, so a child who
+       paused one message and then let the run move on would have started the next one silent
+       with a play button over it — a panel that looks broken for a reason nobody can see. */
+    s_stream_paused = false;
     s_stream_open = true;
     return true;
 }
@@ -235,6 +240,7 @@ void audio_stream_abort(void)
     s_stream_open = false;
     ring_reset(&s_ring);
     s_stream_primed = false;
+    s_stream_paused = false; /* the same reason `audio_stream_begin` clears it */
 }
 
 bool audio_play(const int16_t *pcm, size_t bytes)
@@ -275,6 +281,22 @@ bool audio_playing(void)
    task's `s_play_pos < s_play_len` test sees a finished buffer on its next chunk and stops
    where it is. Nothing is freed and nothing is racing: the writer only ever moves `pos`
    forward and a reader that is mid-chunk finishes that chunk, which is ~20 ms. */
+void audio_stream_pause(bool on)
+{
+    /* NOT A RESET WHEN IT IS ALREADY THERE: pausing an already-paused stream must not disturb
+       the ring, because the renderer derives this from a button rather than an edge. */
+    if (s_stream_paused == on) return;
+    s_stream_paused = on;
+}
+
+bool audio_stream_paused(void)
+{
+    /* ONLY WHILE THERE IS A STREAM TO HOLD. The flag outlives a message that ended on its own
+       (nothing clears it but a resume), and a stale `true` would draw a play button over a
+       panel with nothing to play — so the answer is scoped to a stream actually being open. */
+    return s_stream_paused && (s_stream_open || stream_filled() > 0);
+}
+
 void audio_stop(void)
 {
     s_play_pos = s_play_len;
@@ -622,7 +644,7 @@ static void audio_task(void *arg)
                heard. Feeding our own reply to the recogniser would have the pet answering
                itself. */
             s_deaf = DEAF_CHUNKS;
-        } else if (s_ring_buf != NULL && stream_filled() > 0) {
+        } else if (s_ring_buf != NULL && stream_filled() > 0 && !s_stream_paused) {
             /* THE SAME ONE-CHUNK DISCIPLINE, for the same reason — this task is the clock. */
             if (!s_stream_primed) {
                 /* Wait for the preroll, unless the producer has already finished: a message

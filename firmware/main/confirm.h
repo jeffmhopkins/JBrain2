@@ -109,10 +109,22 @@ bool confirm_hit_centre(int fx, int fy, int over_h);
  * choice nobody needed to make, and it is the difference between a message and a conversation.
  *
  * Bottom left and bottom right, hit as the same halves `confirm_hit` uses, because the aim
- * that made the discs too small has not changed. Replay keeps the blue it already had. */
+ * that made the discs too small has not changed. The left disc keeps the blue it already had.
+ *
+ * AND IT IS THE SAME CONTROL WHILE A MESSAGE IS STILL PLAYING, which is what `playing` picks.
+ * The run used to carry one centred STOP disc, and the owner replaced it: *"when playing the
+ * message all we have is a stop button. I think we need a play pause button... and on the
+ * bottom right have the reply button... it looks very similar to the ending state where we have
+ * the play and reply button, but instead of the play button we have a pause button."*
+ *
+ * SO THE PAIR NEVER MOVES BETWEEN THE TWO STATES — same discs, same places, same colours, and
+ * only the left glyph changes. A child who has learned where "again" lives has learned where
+ * "hold on" lives, and the icon is the single thing that has to be read. `playing` true draws
+ * the pause bars (press to hold), false the play triangle (press to start or resume), so the
+ * button always shows what the press will DO rather than what the panel is doing. */
 #define CONFIRM_ENVELOPE CONFIRM_SWAP(0x07E0)
 
-void confirm_draw_replay_reply(uint16_t *fb, int w, int h, int over_h);
+void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing);
 
 /* --- THE "WHO?" GRID, AND WHY IT EXISTS -----------------------------------------------------
  *

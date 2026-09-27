@@ -3304,6 +3304,76 @@ static void test_a_face_of_nobody_draws_nothing(void)
     }
 }
 
+/* THE TRANSPORT PAIR IS ONE CONTROL IN TWO STATES, and the owner asked for exactly that: the
+ * playing screen should look like the ended one *"but instead of the play button we have a
+ * pause button"*. So the discs must not move between them — only the glyph may differ. A
+ * control that shifted by a few pixels when a message ended would be a second button as far as
+ * a four-year-old's finger is concerned. */
+static void test_the_transport_discs_do_not_move_between_play_and_pause(void)
+{
+    static uint16_t a[FACE_W * FACE_H];
+    static uint16_t b[FACE_W * FACE_H];
+    const int over_h = FACE_H;
+    memset(a, 0, sizeof(a));
+    memset(b, 0, sizeof(b));
+    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false); /* play */
+    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true);  /* pause */
+
+    /* The RIGHT half is the reply envelope in both, so it must be pixel-identical. */
+    int right_diff = 0, left_diff = 0;
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W; x++) {
+            const int i = y * FACE_W + x;
+            if (a[i] == b[i]) continue;
+            if (x >= FACE_W / 2) right_diff++;
+            else left_diff++;
+        }
+    }
+    CHECK(right_diff == 0, "the reply half is identical in both states");
+    CHECK(left_diff > 0, "the left glyph actually changes");
+
+    /* And the DISC underneath is the same in both — only the white glyph inside may differ, so
+       every differing pixel has to be one of the two glyph colours or the blue it sits on. */
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W / 2; x++) {
+            const int i = y * FACE_W + x;
+            if (a[i] == b[i]) continue;
+            const bool ok = (a[i] == CONFIRM_SWAP(CONFIRM_GLYPH) || a[i] == CONFIRM_BLUE) &&
+                            (b[i] == CONFIRM_SWAP(CONFIRM_GLYPH) || b[i] == CONFIRM_BLUE);
+            CHECK(ok, "only the glyph changes, never the disc");
+        }
+    }
+}
+
+/* PAUSE IS TWO BARS AND PLAY IS ONE TRIANGLE, which is the one thing the child actually reads.
+ * Counted by scanning the row through the disc's centre: the triangle crosses it as a single
+ * run of glyph pixels, the bars as two separated ones. A test that merely asserted "some
+ * pixels differ" would pass on a pause glyph that had come out as a solid block. */
+static void test_pause_reads_as_two_bars_and_play_as_one_shape(void)
+{
+    static uint16_t fbt[FACE_W * FACE_H];
+    const int over_h = FACE_H;
+    const int cy = confirm_cy(over_h);
+    const int glyph = (int)CONFIRM_SWAP(CONFIRM_GLYPH);
+
+    for (int pass = 0; pass < 2; pass++) {
+        memset(fbt, 0, sizeof(fbt));
+        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1);
+        int runs = 0;
+        bool in_run = false;
+        for (int x = 0; x < FACE_W / 2; x++) {
+            const bool on = fbt[cy * FACE_W + x] == (uint16_t)glyph;
+            if (on && !in_run) runs++;
+            in_run = on;
+        }
+        if (pass == 0) {
+            CHECK(runs == 1, "play is one shape across its centre");
+        } else {
+            CHECK(runs == 2, "pause is two bars across its centre");
+        }
+    }
+}
+
 static void test_the_qspi_command_word_matches_the_datasheet(void)
 {
     /* Exactly the form on p.21, spelled out rather than reusing the macro's own expression:
@@ -3892,6 +3962,8 @@ int main(void)
     test_a_face_is_the_same_drawing_wherever_it_is_used();
     test_a_face_survives_being_resized();
     test_a_face_of_nobody_draws_nothing();
+    test_the_transport_discs_do_not_move_between_play_and_pause();
+    test_pause_reads_as_two_bars_and_play_as_one_shape();
     test_the_qspi_command_word_matches_the_datasheet();
     test_the_who_grid_has_four_distinct_answers();
     test_the_who_grid_leaves_nowhere_to_miss();

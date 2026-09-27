@@ -156,6 +156,23 @@ void audio_stream_abort(void);
    that would be found. */
 bool audio_stream_live(void);
 
+/* HOLD THE STREAM WHERE IT IS, without throwing away what has not played. The codec simply
+ * stops being fed: the ring keeps what it has, the producer's `audio_stream_write` starts
+ * refusing bytes, and the network backs off on its own — which is the same backpressure a slow
+ * speaker already applies, so nothing new has to understand pausing.
+ *
+ * IT IS BOUNDED, AND THAT IS NOT TIDINESS. A paused stream is an HTTP response held open on
+ * the box, and a four-year-old who wanders off mid-message would otherwise hold it until the
+ * panel rebooted. The renderer resumes it after `AUDIO_PAUSE_MAX_MS` rather than aborting: a
+ * message that plays out to an empty room is recoverable and costs nothing, where discarding
+ * one a child had not finished hearing is the outcome this whole queue exists to prevent.
+ *
+ * Only a STREAM pauses. `audio_play` clips are the pet's own utterances — one sentence it is
+ * saying, not a queue being sat through — and pausing the panel mid-word was never asked for. */
+#define AUDIO_PAUSE_MAX_MS 60000
+void audio_stream_pause(bool on);
+bool audio_stream_paused(void);
+
 /* Stop whatever is sounding, at the next chunk. For a child getting out of a run of messages
    (`jpanel.h`) — a queue has to end on the finger, not only on the last message. */
 void audio_stop(void);
