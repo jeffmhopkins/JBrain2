@@ -255,9 +255,21 @@ static void smile(uint16_t *fb, int w, int h, int cx, int cy, int fr, uint16_t c
    a solid blue disc reads as a blank stare, and the dark centre is what makes it a face. */
 static void eye_blue(uint16_t *fb, int w, int h, int cx, int cy, int r)
 {
+    /* DEGRADES INSTEAD OF VANISHING. Three nested discs at full size — white, blue iris, dark
+       pupil — but integer division collapses them as the face shrinks: at an eye radius of 1
+       the iris rounds to 0 and the pupil covers what is left, and she ends up with a blank
+       stare. The host suite caught exactly that, which is the sort of thing that ships looking
+       deliberate. Below the size where three rings fit, drop the rings that no longer read and
+       keep the one that carries the meaning: her eyes are BLUE. */
+    if (r < 2) {
+        disc(fb, w, h, cx, cy, r < 1 ? 1 : r, SENDTO_BLUE_EYE);
+        return;
+    }
     disc(fb, w, h, cx, cy, r, CONFIRM_GLYPH);
-    disc(fb, w, h, cx, cy, r * 3 / 4, SENDTO_BLUE_EYE);
-    disc(fb, w, h, cx, cy, r * 3 / 8, SENDTO_HAIR);
+    const int iris = r * 3 / 4 < 1 ? 1 : r * 3 / 4;
+    disc(fb, w, h, cx, cy, iris, SENDTO_BLUE_EYE);
+    /* The pupil only when there is an iris left around it to see. */
+    if (iris >= 2) disc(fb, w, h, cx, cy, iris / 2, SENDTO_HAIR);
 }
 
 /* A LITTLE GIRL WITH LONG BLONDE HAIR, BLUE EYES AND A SMILE — the owner's daughters, not a
@@ -383,17 +395,14 @@ void sendto_draw(uint16_t *fb, int w, int h, int over_h)
 
     /* SISTER, top left. The face is deliberately smaller than the man's: she is a little girl,
        and the two faces sit on discs of the same size so what differs is the person. */
-    disc(fb, w, h, CONFIRM_CX_CANCEL, top, CONFIRM_R, SENDTO_SISTER_COLOUR);
-    face_girl(fb, w, h, CONFIRM_CX_CANCEL, top, CONFIRM_R * 9 / 20);
+    sendto_draw_face(fb, w, h, CONFIRM_CX_CANCEL, top, CONFIRM_R, SENDTO_SISTER);
 
     /* DAD, top right. */
-    disc(fb, w, h, CONFIRM_CX_SEND, top, CONFIRM_R, SENDTO_DAD_COLOUR);
-    face_man(fb, w, h, CONFIRM_CX_SEND, top, CONFIRM_R * 11 / 20);
+    sendto_draw_face(fb, w, h, CONFIRM_CX_SEND, top, CONFIRM_R, SENDTO_DAD);
 
     /* THE PET, bottom right — the fourth way this panel can be spoken into, and the one that
        was a blank corner until the owner decided what belonged in it. */
-    disc(fb, w, h, CONFIRM_CX_SEND, bottom, CONFIRM_R, SENDTO_PET_COLOUR);
-    face_pet(fb, w, h, CONFIRM_CX_SEND, bottom, CONFIRM_R * 3 / 5);
+    sendto_draw_face(fb, w, h, CONFIRM_CX_SEND, bottom, CONFIRM_R, SENDTO_PET);
 
     /* CANCEL, bottom left — the cross a child has already learned, in the colour and at the
        size they learned it, so leaving a menu is the gesture they already know. */
@@ -402,4 +411,84 @@ void sendto_draw(uint16_t *fb, int w, int h, int over_h)
            CONFIRM_GLYPH);
     stroke(fb, w, h, CONFIRM_CX_CANCEL + a, bottom - a, CONFIRM_CX_CANCEL - a, bottom + a,
            CONFIRM_GLYPH);
+}
+
+
+/* THE PAIR THAT REPLACES THE LONE REPEAT ICON: replay left, reply right. Hit through
+   `confirm_hit` — the halves, not the discs — so `CONFIRM_CANCEL` means replay here and
+   `CONFIRM_SEND` means reply. Reusing that test rather than adding a third is deliberate: the
+   geometry a child has learned is the geometry, and a second set of rules for the same two
+   places is how the tick and the cross got 289 px away from the finger once already. */
+void confirm_draw_replay_reply(uint16_t *fb, int w, int h, int over_h)
+{
+    const int cy = confirm_cy(over_h);
+
+    /* REPLAY, bottom left, in the blue it already had — the one control that survives from the
+       old design keeps the colour a child had learned.
+
+       A PLAY TRIANGLE, NOT A CIRCULAR ARROW. The arrow was drawn first and the owner replaced
+       it: *"change the replay icon to just a play icon like the triangle icon for play."* A
+       recycling arrow means "again" only if you already know the convention; a triangle means
+       "this makes a sound" to anybody who has ever seen a screen, which for these readers is
+       the whole of what it needs to say. */
+    disc(fb, w, h, CONFIRM_CX_CANCEL, cy, CONFIRM_R, CONFIRM_BLUE);
+    {
+        /* Drawn as rows rather than strokes: a filled triangle wants a scanline, and its apex
+           stays sharp this way where three thick strokes would round it off. Nudged right by an
+           eighth so it looks centred — a triangle's visual centre is not its bounding box's,
+           which is why a play button that is mathematically centred reads as too far left. */
+        const int hh = CONFIRM_R * 13 / 32;
+        const int x0 = CONFIRM_CX_CANCEL - hh * 5 / 6 + hh / 4;
+        for (int dy = -hh; dy <= hh; dy++) {
+            const int span = (hh - (dy < 0 ? -dy : dy)) * 3 / 2;
+            const int py = cy + dy;
+            if (py < 0 || py >= h) continue;
+            for (int dx = 0; dx <= span; dx++) {
+                const int px = x0 + dx;
+                if (px >= 0 && px < w) fb[py * w + px] = CONFIRM_GLYPH;
+            }
+        }
+    }
+
+    /* REPLY, bottom right: an envelope. Green, because this one SENDS — the same meaning the
+       tick carries in the same corner, so the colour is already learned too. */
+    disc(fb, w, h, CONFIRM_CX_SEND, cy, CONFIRM_R, CONFIRM_ENVELOPE);
+    {
+        const int hw = CONFIRM_R * 17 / 32, hh = CONFIRM_R * 12 / 32;
+        const int x0 = CONFIRM_CX_SEND - hw, x1 = CONFIRM_CX_SEND + hw;
+        const int y0 = cy - hh, y1 = cy + hh;
+        const int t = CONFIRM_STROKE / 2 - 1;
+        /* The body. */
+        stroke_r(fb, w, h, x0, y0, x1, y0, t, CONFIRM_GLYPH);
+        stroke_r(fb, w, h, x0, y1, x1, y1, t, CONFIRM_GLYPH);
+        stroke_r(fb, w, h, x0, y0, x0, y1, t, CONFIRM_GLYPH);
+        stroke_r(fb, w, h, x1, y0, x1, y1, t, CONFIRM_GLYPH);
+        /* The flap, which is the whole of what makes it an envelope rather than a box. */
+        stroke_r(fb, w, h, x0, y0, CONFIRM_CX_SEND, cy + hh / 3, t, CONFIRM_GLYPH);
+        stroke_r(fb, w, h, x1, y0, CONFIRM_CX_SEND, cy + hh / 3, t, CONFIRM_GLYPH);
+    }
+}
+
+
+void sendto_draw_face(uint16_t *fb, int w, int h, int cx, int cy, int r, sendto_hit_t who)
+{
+    /* The face fractions are the grid's own, scaled from its `CONFIRM_R` to whatever `r` the
+       caller wants, so a face on the indicator is the same drawing as the one in the menu
+       rather than a second version that can drift from it. */
+    switch (who) {
+    case SENDTO_SISTER:
+        disc(fb, w, h, cx, cy, r, SENDTO_SISTER_COLOUR);
+        face_girl(fb, w, h, cx, cy, r * 9 / 20);
+        break;
+    case SENDTO_DAD:
+        disc(fb, w, h, cx, cy, r, SENDTO_DAD_COLOUR);
+        face_man(fb, w, h, cx, cy, r * 11 / 20);
+        break;
+    case SENDTO_PET:
+        disc(fb, w, h, cx, cy, r, SENDTO_PET_COLOUR);
+        face_pet(fb, w, h, cx, cy, r * 3 / 5);
+        break;
+    default:
+        break;
+    }
 }

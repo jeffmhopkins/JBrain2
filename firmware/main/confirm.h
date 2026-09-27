@@ -96,6 +96,24 @@ void confirm_draw_repeat(uint16_t *fb, int w, int h, int over_h);
 /* Whether a finger landed on a centred single control. Same generous reach as the pair. */
 bool confirm_hit_centre(int fx, int fy, int over_h);
 
+/* --- REPLAY AND REPLY, THE PAIR THAT REPLACES A LONE REPEAT ICON ----------------------------
+ *
+ * The owner, watching the twins use it: *"on listening to a sister or a dad message that comes
+ * in where it has the replay button. I think maybe we need a replay and a reply button. Replay
+ * can keep the same but move it to the bottom left and then make the bottom right a [mail]
+ * envelope icon to send a reply. This way when sisters are sending messages back and forth they
+ * can just hit the reply button."*
+ *
+ * THE POINT IS THE ROUND TRIP. Answering a message meant opening the menu and choosing the
+ * person who had just spoken — a recipient the panel already knew. The reply button removes a
+ * choice nobody needed to make, and it is the difference between a message and a conversation.
+ *
+ * Bottom left and bottom right, hit as the same halves `confirm_hit` uses, because the aim
+ * that made the discs too small has not changed. Replay keeps the blue it already had. */
+#define CONFIRM_ENVELOPE CONFIRM_SWAP(0x07E0)
+
+void confirm_draw_replay_reply(uint16_t *fb, int w, int h, int over_h);
+
 /* --- THE "WHO?" GRID, AND WHY IT EXISTS -----------------------------------------------------
  *
  * MEASURED 2026-09-27, on 0.3.14, with all 48 phrases registered with hand-checked phonemes
@@ -155,6 +173,20 @@ sendto_hit_t sendto_hit(int fx, int fy, int over_h);
  * Neither disc is red or green: those two already mean cancel and send on this glass, and a
  * recipient that looked like a verb would undo the only colour vocabulary these children have. */
 void sendto_draw(uint16_t *fb, int w, int h, int over_h);
+
+/* ONE OF THOSE FACES, ANYWHERE, AT ANY SIZE — so the picture of a person means the same thing
+ * wherever it appears. The owner asked for the faces to follow the person around: on the
+ * indicator while a child is recording (*"a 1/4 size face of who they're talking to"*), and on
+ * the waiting badge (*"new message with the picture of the icon and who it's from"*).
+ *
+ * A NAME IS NOT ENOUGH FOR THE READERS HERE. They are four and pre-literate, so "TO DAD" is a
+ * shape they have memorised rather than a word they can read — and the panel already has a
+ * picture of Dad that they picked out of a menu themselves. Using it everywhere costs nothing
+ * and makes every one of these surfaces legible to someone who cannot read at all.
+ *
+ * `who` picks the face; `SENDTO_NONE` and `SENDTO_CANCEL` draw nothing. `r` is the disc radius,
+ * so the caller sizes it — a quarter of the glass on the indicator, smaller on the badge. */
+void sendto_draw_face(uint16_t *fb, int w, int h, int cx, int cy, int r, sendto_hit_t who);
 
 #define SENDTO_SISTER_COLOUR CONFIRM_SWAP(0xF81F) /* magenta */
 #define SENDTO_DAD_COLOUR CONFIRM_SWAP(0x07FF)    /* cyan */

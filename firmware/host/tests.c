@@ -3229,6 +3229,81 @@ static void test_phonemes_too_long_to_hold_are_refused_rather_than_truncated(voi
  * `display.c` cannot be linked here (it is all ESP), so this pins the arithmetic the macro
  * does, read out of the firmware, against the datasheet's own words. A change that breaks the
  * framing again fails here rather than on a panel in a bedroom that no longer dims. */
+/* ONE FACE, EVERYWHERE A PERSON IS NAMED. The faces follow the person around now — the menu a
+ * child picks from, the indicator while they record, the pop-up when a message lands and the
+ * badge it shrinks into. That only works if it is literally the same drawing: four versions of
+ * Dad would drift, and a picture that is nearly him is worse than a word, because a word at
+ * least fails honestly. */
+static void test_a_face_is_the_same_drawing_wherever_it_is_used(void)
+{
+    const int over_h = FACE_H;
+    const int r = CONFIRM_R;
+
+    /* Drawn through the shared entry point at the grid's own size and position... */
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    sendto_draw_face(fb, FACE_W, FACE_H, CONFIRM_CX_SEND, sendto_cy_top(over_h), r, SENDTO_DAD);
+    uint16_t *alone = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(alone != NULL, "scratch allocated");
+    if (alone == NULL) return;
+    memcpy(alone, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+    /* ...must be pixel-identical to what the whole grid draws in that corner. */
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    sendto_draw(fb, FACE_W, FACE_H, over_h);
+    int differs = 0;
+    const int cy = sendto_cy_top(over_h);
+    for (int y = cy - r; y <= cy + r; y++) {
+        for (int x = CONFIRM_CX_SEND - r; x <= CONFIRM_CX_SEND + r; x++) {
+            if (fb[y * FACE_W + x] != alone[y * FACE_W + x]) differs++;
+        }
+    }
+    CHECK(differs == 0, "the grid's dad and a lone dad are the same pixels");
+    free(alone);
+}
+
+/* AND IT SCALES, because the four places that draw it want four sizes: a quarter of the glass
+ * on the indicator, 50 px on the pop-up, smaller again on the badge. A face that only worked at
+ * one radius would have to be re-drawn per surface, which is the drift this avoids. */
+static void test_a_face_survives_being_resized(void)
+{
+    const int sizes[] = {18, 30, 42, 50, 62, CONFIRM_R};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        const int r = sizes[i];
+        memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        sendto_draw_face(fb, FACE_W, FACE_H, FACE_W / 2, FACE_H / 2, r, SENDTO_SISTER);
+        int skin = 0, blonde = 0, blue = 0;
+        for (int y = FACE_H / 2 - r; y <= FACE_H / 2 + r; y++) {
+            for (int x = FACE_W / 2 - r; x <= FACE_W / 2 + r; x++) {
+                const uint16_t px = fb[y * FACE_W + x];
+                if (px == SENDTO_SKIN) skin++;
+                if (px == SENDTO_BLONDE) blonde++;
+                if (px == SENDTO_BLUE_EYE) blue++;
+            }
+        }
+        CHECK(skin > 0, "she has a face at every size");
+        CHECK(blonde > 0, "and hair at every size");
+        /* The eyes are the first thing to vanish when a face is scaled down, and a blank stare
+           is exactly what would ship unnoticed. */
+        CHECK(blue > 0, "and blue eyes that do not disappear when shrunk");
+    }
+}
+
+/* NOTHING IS DRAWN FOR THE TWO THAT ARE NOT PEOPLE, which is what lets a caller pass whatever
+ * it has without checking first. */
+static void test_a_face_of_nobody_draws_nothing(void)
+{
+    const sendto_hit_t nobody[] = {SENDTO_NONE, SENDTO_CANCEL};
+    for (size_t i = 0; i < sizeof(nobody) / sizeof(nobody[0]); i++) {
+        memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        sendto_draw_face(fb, FACE_W, FACE_H, FACE_W / 2, FACE_H / 2, 40, nobody[i]);
+        int touched = 0;
+        for (int j = 0; j < FACE_W * FACE_H; j++) {
+            if (fb[j] != 0) touched++;
+        }
+        CHECK(touched == 0, "cancel and nobody have no face");
+    }
+}
+
 static void test_the_qspi_command_word_matches_the_datasheet(void)
 {
     /* Exactly the form on p.21, spelled out rather than reusing the macro's own expression:
@@ -3814,6 +3889,9 @@ int main(void)
     test_a_phoneme_string_outside_the_alphabet_is_refused_whole();
     test_phonemes_too_long_to_hold_are_refused_rather_than_truncated();
     test_the_tick_and_the_cross_split_the_bottom_half();
+    test_a_face_is_the_same_drawing_wherever_it_is_used();
+    test_a_face_survives_being_resized();
+    test_a_face_of_nobody_draws_nothing();
     test_the_qspi_command_word_matches_the_datasheet();
     test_the_who_grid_has_four_distinct_answers();
     test_the_who_grid_leaves_nowhere_to_miss();

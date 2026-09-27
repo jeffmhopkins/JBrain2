@@ -165,12 +165,18 @@ class TestTheButtonGridIsWiredToRealActions:
             encoding="utf-8"
         )
 
-    def test_the_button_is_a_hold_not_a_press(self) -> None:
-        """A press was the wrong event twice over: the contact bounces (15 presses read as 21),
-        and the button is on the edge of something a four-year-old picks up."""
+    def test_the_button_toggles_and_is_debounced(self) -> None:
+        """A TOGGLE IS ONLY SAFE BECAUSE OF THE DEBOUNCE, and that is the whole point of this
+        test. The contact bounces — 15 deliberate presses were reported as 21 — so a raw edge
+        toggle would close the menu on the same press that opened it, and the panel would look
+        like it was ignoring a child, which is the failure the grid exists to remove."""
         src = self._fw("display.c")
-        assert "#define BOOT_HOLD_MS 1000" in src, "the menu no longer needs a one-second hold"
-        assert "s_boot_fired" in src, "the once-per-hold guard is gone; leaning would re-open it"
+        assert "#define BOOT_DEBOUNCE_MS 250" in src, "the debounce window is gone"
+        assert "s_boot_last_ms" in src, "nothing rejects a bounced edge any more"
+        # Both halves of the toggle, so a press can always get back out.
+        assert "grid opened by button" in src and "grid closed by button" in src, (
+            "the button no longer both opens and closes the grid"
+        )
 
     def test_every_icon_reaches_the_same_path_the_voice_does(self) -> None:
         src = self._fw("display.c")

@@ -2642,7 +2642,10 @@ export interface JpanelMessage {
   id: string;
   from_name: string;
   to_name: string;
-  direction: "in" | "out";
+  /* Owner-relative, and `between` is the pair he is not an end of: twin-to-twin post. It used
+     to report as `in`, which drew a message from one girl to the other as though it had been
+     sent to Dad, and made his unplayed badge count a message that was never his. */
+  direction: "in" | "out" | "between";
   transcript: string;
   /** How it was MADE, not how it is played: Dad's `text` is spoken aloud by TTS. */
   composed: "voice" | "text";

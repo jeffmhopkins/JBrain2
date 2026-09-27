@@ -56,6 +56,16 @@ bool jpanel_play_next(void);
    so a reader that sees a count sees a name that goes with it. */
 int jpanel_waiting(char *from, size_t cap);
 
+/* WHERE A REPLY TO THE LAST MESSAGE SHOULD GO. Not derived from the name the child hears —
+   that is the owner's to change — but from `X-Jpanel-From-Kind`, which the box sends because
+   it is the only side that knows. `JPANEL_TO_PANEL` on a box too old to say. */
+jpanel_to_t jpanel_in_from(void);
+
+/* Whether the OLDEST WAITING message is from the owner, so the badge can draw their face. From
+   the poll's `from_owner`, for the same reason `jpanel_in_from` exists: the name is the owner's
+   to change and the kind is not. False on a box too old to say. */
+bool jpanel_waiting_from_dad(void);
+
 /* THE OTHER PANEL'S NAME, learned from the poll, "" when the box did not name one. Written
    into `out` (up to `cap`), returns its length — so a caller can fall back in one test.
    Empty is the normal answer on a box with one panel, or with three: it is only filled where

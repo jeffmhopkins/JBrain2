@@ -74,15 +74,22 @@ class TestNameOf:
 
 
 class TestMessageShape:
-    def _row(self, sender_kind: str, sender_device: str | None, deliveries: int = 0):
+    def _row(
+        self,
+        sender_kind: str,
+        sender_device: str | None,
+        deliveries: int = 0,
+        recipient_kind: str | None = None,
+        recipient_device: str | None = None,
+    ):
         from datetime import UTC, datetime
 
         return (
             "11111111-1111-1111-1111-111111111111",
             sender_kind,
             sender_device,
-            "owner" if sender_kind == "panel" else "panel",
-            None if sender_kind == "panel" else "p1",
+            recipient_kind or ("owner" if sender_kind == "panel" else "panel"),
+            recipient_device if recipient_kind else (None if sender_kind == "panel" else "p1"),
             "hello",
             "voice",
             1500,
@@ -92,11 +99,29 @@ class TestMessageShape:
         )
 
     def test_direction_is_relative_to_the_owner(self) -> None:
-        """ "in" and "out" are the PWA's axis, and the owner is the other end of every
-        conversation he can see — so the direction is decided by whether a panel sent it."""
+        """ "in" and "out" are the PWA's axis, and the owner is the other end of MOST
+        conversations he can see — so those two are decided by whether a panel sent it."""
         names = {"p1": "Ellie"}
         assert jpanel._row_to_message(self._row("panel", "p1"), names).direction == "in"
         assert jpanel._row_to_message(self._row("owner", None), names).direction == "out"
+
+    def test_twin_to_twin_post_is_neither_in_nor_out(self) -> None:
+        """THE CASE TWO VALUES COULD NOT EXPRESS, and it was reported as `in` — incoming to the
+        OWNER. So the PWA drew a message from one four-year-old to the other with only its
+        sender's name, exactly like one addressed to him, and its unplayed badge counted it as
+        something HE had failed to deal with. The owner saw both: *"my pwa is showing messages
+        between the girls ... make sure the pwa is correctly listing that it was lydian to
+        elora, not kid to Dad."*
+
+        `to_name` was already on the wire. Nothing said the message was not his, so nothing
+        drew it."""
+        names = {"p1": "Lydian", "p2": "Elora"}
+        msg = jpanel._row_to_message(
+            self._row("panel", "p1", recipient_kind="panel", recipient_device="p2"), names
+        )
+        assert msg.direction == "between"
+        # Both ends named, so the PWA can say who it was actually between.
+        assert (msg.from_name, msg.to_name) == ("Lydian", "Elora")
 
     def test_an_unplayed_message_reports_no_played_at(self) -> None:
         """`played_at is None` is the entire inbox query and the PWA's unplayed badge; a
