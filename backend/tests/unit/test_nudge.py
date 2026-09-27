@@ -66,7 +66,13 @@ class TestItNeverCostsADelivery:
     the slow poll is still underneath it. A nudge that RAISED would cost a child's message."""
 
     def setup_method(self) -> None:
+        # BOTH REGISTRIES, and forgetting the second one is what turned this file red on `main`.
+        # `fire_all` counts the UNION of remembered addresses and live streams, so a stream left
+        # behind by another class is an extra target here — invisible locally under a fixed test
+        # order, and a failure as soon as pytest-randomly shuffles. Module-level state has to be
+        # reset in full or not used.
         nudge._seen.clear()
+        nudge._streams.clear()
 
     def test_an_unknown_device_is_not_an_error(self) -> None:
         assert nudge.fire("never-seen", why="test") is False
