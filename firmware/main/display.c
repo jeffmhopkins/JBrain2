@@ -956,7 +956,14 @@ static uint32_t s_popup_since;
 /* Non-zero while the grid is up: the moment it closes itself. */
 static uint32_t s_sendto_until;
 
-#define PENDING_MS 1500
+/* HOW LONG A PRESS WAITS FOR THE SPEAKER BEFORE IT IS GIVEN UP ON. It was 1500 ms, and that
+   is shorter than it sounds: `audio_playing()` counts the panel's own cues, so a press landing
+   while the pet was mid-noise could be dropped with nothing but a log line to show for it —
+   which is the other half of the owner's *"it doesn't really play every single time"*. Eight
+   seconds is long enough to outlast anything the pet does to itself and still short enough that
+   a genuinely stuck speaker does not strand the tap forever. A child's press should not
+   evaporate because the toy happened to be burping. */
+#define PENDING_MS 8000
 typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY, PEND_REPLY } pending_t;
 static pending_t s_pending;
 static uint32_t s_pending_until;
@@ -2240,6 +2247,33 @@ static void face_task(void *arg)
                 dirty = true;
                 goto tap_done;
             }
+            /* THE WAY OUT, AND IT HAD BEEN MISSING SINCE 0.3.19. Replacing the lone STOP disc
+               with pause-and-reply took away the only way to leave a message early, and the
+               owner found the gap from the other side: *"when it does play and I want to exit
+               it, I should be able to click on the top right where there's no icon and have it
+               exit out."* That corner is the one quadrant this screen does not use — the
+               sender's face has the top left, the pair has the bottom — so it costs no target a
+               child has already learned.
+             *
+               TESTED HERE, WITH THE OVERLAYS THAT OUTRANK THE PET, and not down among the taps
+               that missed it: the pet is drawn centred and its head reaches into that corner,
+               so a finger aimed at the exit can land ON it. Left there, the gesture would work
+               or make the pet blink depending on where exactly a four-year-old put her finger,
+               which is indistinguishable from it not working. */
+            if ((jpanel_running() || audio_stream_active()) && oy >= 0 &&
+                oy < over_h_tap / 2 && ox >= FACE_W / 2) {
+                jpanel_stop();
+                audio_stream_pause(false); /* never leave the ring held after a stop */
+                s_paused_since = 0;
+                s_pending = PEND_NONE; /* a deferred play must not resurrect what she ended */
+                s_repeat_until = 0;
+                s_flinch = 1.0f;
+                dirty = true;
+                ESP_LOGI(TAG, "jpanel: ended by the top-right corner");
+                /* No cue: the silence IS the answer, and a sound in the half-second after a
+                   child asks for quiet is the panel arguing with her. */
+                goto tap_done;
+            }
             {
                 if (in_box(s_popup_box, ox, oy)) {
                     s_flinch = 1.0f;
@@ -2452,7 +2486,12 @@ static void face_task(void *arg)
                Only a RUN. A poke during the pet's own reply still just flinches: that is one
                sustained utterance the panel is making, not a queue the child is sitting
                through, and cutting it off was never asked for. */
-            if (jpanel_running()) {
+            /* A MESSAGE, NOT A QUEUE, and asked of the speaker rather than of `jpanel.c`.
+               `do_replay` sets none of the queue's flags on purpose, so `jpanel_running()` is
+               false through an entire replay — which left a replay with no working controls at
+               all. The ring belongs to messages alone (`audio.h`), so this covers both and
+               still leaves a poke at the pet mid-sentence as nothing but a flinch. */
+            if (jpanel_running() || audio_stream_active()) {
                 /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
                    of controls — see `confirm.h`. A tap anywhere used to end the run, and the
                    owner replaced that with a hold and an answer: stopping is what pausing does
@@ -3319,14 +3358,31 @@ static void face_task(void *arg)
                covers is the one they are already doing. It is not lost: the count lives on
                the box and the next idle frame draws it. */
             s_popup_box[0] = -1;
-            /* AND NOT WHILE THE FETCH IT STARTED IS STILL RUNNING. Clearing the rectangle on
-               the tap is not enough on its own: the count does not drop until the box hands
-               the message over, so the very next frame would draw the pop-up again and the
-               child would press a button that `jpanel_play_next` now refuses. The BUSY state
-               is the gap between the press and the sound, and it belongs to the fetch. */
+            /* THE TARGET IS A FACT ABOUT WHAT IS WAITING, NOT ABOUT WHAT WAS DRAWN, and tying
+               the two together is why the owner reported that a notification *"doesn't really
+               play every single time"*.
+             *
+               The rectangle used to be set only where the pop-up was PAINTED, inside the same
+               guard. So any frame that skipped the painting — the panel mid-cue, so `speaking`;
+               the fetch in flight, so BUSY — also cleared the target, while the glass went on
+               showing the notice from the previous frame. A child pressed exactly what they
+               could see and nothing happened, intermittently, depending on what the pet
+               happened to be doing at that instant. A control you can see is a control you
+               can press; the two must not be able to disagree.
+             *
+               So the hit test is armed here, from the queue, and only the PICTURE stays behind
+               the idle guard. Pressing while busy is harmless — it becomes a pending tap, which
+               waits for the speaker exactly as the first one did. */
+            char from[32];
+            const int waiting = jpanel_waiting(from, sizeof(from));
+            if (waiting > 0 && s_talk == TALK_IDLE) {
+                const int qh = (over_h - over_y0) / 2;
+                s_popup_box[0] = 0;
+                s_popup_box[1] = over_y0;
+                s_popup_box[2] = FACE_W / 2;
+                s_popup_box[3] = over_y0 + qh;
+            }
             if (s_talk == TALK_IDLE && !speaking && jpanel_state() != JPANEL_BUSY) {
-                char from[32];
-                const int waiting = jpanel_waiting(from, sizeof(from));
                 if (waiting > 0) {
                     /* Big for the first fifteen seconds, then a badge. The AGAIN button owns
                        the same corner for its ten seconds and wins there — it is transient
@@ -3344,13 +3400,32 @@ static void face_task(void *arg)
             /* Drawn over everything else while a run is sounding, including the caption: a
                control that can end what the child is hearing outranks a ticker telling them
                what it heard. */
-            if (jpanel_running()) {
+            /* FROM THE PRESS, NOT FROM THE STREAM. The controls used to appear only once
+               `jpanel_running()` went true, which is after the cue has finished AND the fetch
+               has opened AND the preroll has landed — seconds in which a child who has just
+               pressed something sees nothing happen. The owner: *"there is a big delay from
+               when I click the icon to when the next icons show up... as soon as I click it
+               and it's registered it should show right away."* A pending tap IS the press
+               being registered, so that is when they appear. */
+            const bool starting = s_pending == PEND_PLAY || s_pending == PEND_REPLAY ||
+                                  jpanel_state() == JPANEL_BUSY;
+            if (jpanel_running() || starting) {
+                /* PLAYING IS AN AUDIO FACT, NOT A QUEUE FACT, which is the whole of the replay
+                   bug: `do_replay` deliberately sets no `s_run` (the message was acknowledged
+                   the first time), so a replay left `jpanel_running()` false and the pair fell
+                   through to the ended state — a play triangle over a message that was
+                   audibly playing. The owner: *"on a replay of a message it doesn't go back to
+                   the pause button."* Ask the speaker instead, and a message is a message
+                   however it came to be sounding. While STARTING, show pause: the press has
+                   been taken and sound is coming, so a play icon would invite a second press
+                   at exactly the moment the first is still being served. */
+                const bool playing = starting || (audio_playing() && !audio_stream_paused());
                 draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0),
                          jpanel_in_from() == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER,
-                         !audio_stream_paused());
+                         playing);
             } else if (s_repeat_until != 0) {
-                /* The ended state is the SAME control showing play — `playing` false. */
-                confirm_draw_transport(fb, FACE_W, FACE_H, over_h, false);
+                confirm_draw_transport(fb, FACE_W, FACE_H, over_h,
+                                       audio_playing() && !audio_stream_paused());
             }
             /* THE GRID LAST OF ALL, over the pop-up and over the run control, because it is
                the one overlay here that a child asked for by pressing a button. Everything

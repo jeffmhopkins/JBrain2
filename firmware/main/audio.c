@@ -235,6 +235,13 @@ bool audio_stream_live(void)
     return s_stream_open;
 }
 
+bool audio_stream_active(void)
+{
+    /* The same test `audio_playing()` applies to the ring, without the clip path: still open,
+       or still draining. A momentarily dry ring is still a message in flight. */
+    return s_stream_open || stream_filled() > 0;
+}
+
 void audio_stream_abort(void)
 {
     s_stream_open = false;

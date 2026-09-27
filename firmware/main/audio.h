@@ -148,6 +148,14 @@ void audio_stream_end(void);
 /* Stop now and throw away what has not been played — a finger on the screen, not an end. */
 void audio_stream_abort(void);
 
+/* IS A STREAMED MESSAGE SOUNDING — as distinct from `audio_playing()`, which is true for a
+ * cue and for the pet's own reply too. Those go through `audio_play`'s clip path; the ring is
+ * `jpanel.c`'s alone. The renderer needs the distinction because a tap must be able to end a
+ * MESSAGE while still only flinching at a pet mid-sentence, and because a replay sets none of
+ * the queue's own flags (`jpanel.c`'s `do_replay`) — so "is a message playing" cannot be asked
+ * of the queue and has to be asked of the speaker. */
+bool audio_stream_active(void);
+
 /* IS THIS STREAM STILL WANTED. False once `audio_stream_end` or `audio_stream_abort` has run,
    and the producer MUST check it: a full ring and a stopped stream both refuse bytes, and a
    writer that could not tell them apart would offer the same bytes forever to a speaker that
