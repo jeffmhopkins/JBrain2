@@ -5489,6 +5489,64 @@ child's panel, and nothing arriving on it is trusted.
 channel that reconnects all day is working in the sense that messages arrive and failing in the
 sense that it is paying a handshake every time.
 
+##### Four faults the owner found by using it, and three of them share a root (0.3.24)
+
+*"When a message comes in, when I click on the blue notification or the little icon on the top
+left, it doesn't really play every single time."* · *"When it does play and I want to exit it, I
+should be able to click on the top right where there's no icon."* · *"On a replay it doesn't go
+back to the pause button."* · *"There is a big delay from when I click the icon to when the next
+icons show up."*
+
+**The root, three times over: state derived from the wrong thing.**
+
+- **The tap target was derived from the DRAW.** `s_popup_box` was set only where the pop-up was
+  painted, inside the idle guard — so any frame that skipped painting (mid-cue, so `speaking`;
+  fetch in flight, so BUSY) also cleared the target, while the glass went on showing the notice.
+  A child pressed exactly what she could see and nothing happened, *intermittently*, depending on
+  what the pet was doing at that instant. The target is now a fact about the **queue**; only the
+  picture stays behind the idle guard. **A control you can see is a control you can press, and
+  the two must not be able to disagree.**
+- **The transport icon was derived from the QUEUE.** `do_replay` deliberately sets no `s_run`
+  (the message was acknowledged the first time), so `jpanel_running()` is false through an entire
+  replay — a play triangle over a message that was audibly playing, and no working controls at
+  all. Playing is an **audio** fact now, via `audio_stream_active()`, which is true for the
+  message ring and false for cues and the pet's own clip-based speech. A message is a message
+  however it came to be sounding.
+- **The controls appeared when the STREAM started**, which is after the cue, the fetch and the
+  preroll — seconds of a child having pressed something and seen nothing. They appear on the
+  **pending tap** now, because that is the moment the press was registered, and they show
+  *pause*: sound is coming, and a play icon there invites a second press while the first is
+  still being served.
+
+**And the fourth was a press quietly evaporating.** `PENDING_MS` was 1500 ms, but
+`audio_playing()` counts the panel's own cues — so a press landing while the pet was mid-noise
+was dropped with nothing but a log line. Eight seconds now: long enough to outlast anything the
+pet does to itself, short enough that a stuck speaker does not strand the tap forever. **A
+child's press should not evaporate because the toy happened to be burping.**
+
+**The exit corner closes a gap 0.3.19 opened.** Replacing the lone STOP disc with pause-and-reply
+removed the only way to leave a message early — flagged at the time, and the owner hit it. The
+top right is the one quadrant this screen does not use (sender's face top left, the pair along
+the bottom), so it costs no target a child has learned. It is tested **with the overlays that
+outrank the pet**, not among the taps that missed it: the pet is drawn centred and its head
+reaches into that corner, so a finger aimed at the exit can land on it — and left there, the
+gesture would work or make the pet blink depending on exactly where a four-year-old put her
+finger, which is indistinguishable from it not working.
+
+**And the face stays for the whole exchange.** The ended state drew the pair without it, so the
+message finished, the pause became a play, and Dad vanished from the corner in the same frame —
+*"that is unintentional. The face should stay there the entire time."* The reason is stronger
+than consistency: the two buttons underneath are **again** and **reply**, and both are about a
+person. Taking their face away at the moment those appear removes the answer to "reply to whom?"
+from the one screen that asks it.
+
+There is now **one** `draw_sender_face` and three callers — the badge, a message playing, and
+the pair afterwards. That quadrant means exactly one thing on this screen, and a picture that
+moved or resized between the three states would read as three notices rather than one
+conversation. It is sized *from* the quadrant because the quadrant is also the hit area, which
+is the same rule the rest of 0.3.24 exists to enforce: **what you can see and what you can press
+must not be able to disagree.**
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The
