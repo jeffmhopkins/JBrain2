@@ -992,7 +992,7 @@ async def revoke_panel(device_id: str, owner: OwnerDep, request: Request) -> Pan
 
 
 #: Which body the panel draws. `display.c` has `FORM_OSTRICH` and `FORM_ROBOT` and toggles
-#: between them on four taps and a hold — in RAM, so every reboot and every OTA has silently
+#: between them on seven taps and a hold — in RAM, so every reboot and every OTA has silently
 #: put both twins back to the ostrich. This is the answer the panel comes back as.
 PanelForm = Literal["ostrich", "robot"]
 

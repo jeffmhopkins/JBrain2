@@ -145,8 +145,12 @@ lexicon, not to a reader.*
 
 **Not voice** — poke the pet (reaction by zone, cycles colour) · press and hold 0.7 s on the pet
 (same as `hey fish`) · touch while listening (cancels and discards) · tap the name label (flips
-name/version) · 3 taps then a 5 s hold (reboot) · 4 taps then hold (swap body) · 5 taps then
-hold (touch calibration).
+name/version) · **5 taps then a 5 s hold (restart) · 6 taps then hold (touch
+calibration) · 7 taps then hold (swap body)** — moved up from 3/5/4 in 0.3.19 so that a hold
+after the handful of taps a child actually produces reaches the "who?" grid instead of
+maintenance. A hold at ANY count these three have not claimed opens that grid, which is why
+they are as few and as high as they are; `gesture_reserved()` is the single place that says
+which counts are spoken for.
 
 ## Still untested
 

@@ -2094,7 +2094,7 @@ static void test_gesture_happy_path(void)
     gesture_t g;
     gesture_reset(&g);
     CHECK(do_sequence(&g, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
-          "three taps then a hold reboots");
+          "the reboot count then a hold reboots");
 }
 
 static void test_gesture_hold_alone_does_nothing(void)
@@ -2216,7 +2216,7 @@ static void test_gesture_selects_by_tap_count(void)
     gesture_t g;
     gesture_reset(&g);
     CHECK(do_sequence_n(&g, GESTURE_TAPS_REBOOT, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
-          "three taps then hold reboots");
+          "the reboot count then hold reboots");
     gesture_reset(&g);
     CHECK(do_sequence_n(&g, GESTURE_TAPS_FORM, 200, GESTURE_HOLD_MS + 200) == GESTURE_FORM,
           "four taps then hold swaps the body");
@@ -2250,7 +2250,7 @@ static void test_gesture_five_taps_survive_the_reboot_threshold(void)
         CHECK(press_for(&g, 120) == GESTURE_NONE, "a short tap never fires anything");
         idle_for(&g, 200);
     }
-    CHECK(g.taps == GESTURE_TAPS_CALIBRATE, "all five taps counted");
+    CHECK(g.taps == GESTURE_TAPS_CALIBRATE, "every tap of the calibrate count is counted");
 }
 
 static void test_gesture_no_cue_for_a_count_that_does_nothing(void)
@@ -3304,6 +3304,125 @@ static void test_a_face_of_nobody_draws_nothing(void)
     }
 }
 
+/* THE TRANSPORT PAIR IS ONE CONTROL IN TWO STATES, and the owner asked for exactly that: the
+ * playing screen should look like the ended one *"but instead of the play button we have a
+ * pause button"*. So the discs must not move between them — only the glyph may differ. A
+ * control that shifted by a few pixels when a message ended would be a second button as far as
+ * a four-year-old's finger is concerned. */
+static void test_the_transport_discs_do_not_move_between_play_and_pause(void)
+{
+    static uint16_t a[FACE_W * FACE_H];
+    static uint16_t b[FACE_W * FACE_H];
+    const int over_h = FACE_H;
+    memset(a, 0, sizeof(a));
+    memset(b, 0, sizeof(b));
+    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false); /* play */
+    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true);  /* pause */
+
+    /* The RIGHT half is the reply envelope in both, so it must be pixel-identical. */
+    int right_diff = 0, left_diff = 0;
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W; x++) {
+            const int i = y * FACE_W + x;
+            if (a[i] == b[i]) continue;
+            if (x >= FACE_W / 2) right_diff++;
+            else left_diff++;
+        }
+    }
+    CHECK(right_diff == 0, "the reply half is identical in both states");
+    CHECK(left_diff > 0, "the left glyph actually changes");
+
+    /* And the DISC underneath is the same in both — only the white glyph inside may differ, so
+       every differing pixel has to be one of the two glyph colours or the blue it sits on. */
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W / 2; x++) {
+            const int i = y * FACE_W + x;
+            if (a[i] == b[i]) continue;
+            const bool ok = (a[i] == CONFIRM_SWAP(CONFIRM_GLYPH) || a[i] == CONFIRM_BLUE) &&
+                            (b[i] == CONFIRM_SWAP(CONFIRM_GLYPH) || b[i] == CONFIRM_BLUE);
+            CHECK(ok, "only the glyph changes, never the disc");
+        }
+    }
+}
+
+/* PAUSE IS TWO BARS AND PLAY IS ONE TRIANGLE, which is the one thing the child actually reads.
+ * Counted by scanning the row through the disc's centre: the triangle crosses it as a single
+ * run of glyph pixels, the bars as two separated ones. A test that merely asserted "some
+ * pixels differ" would pass on a pause glyph that had come out as a solid block. */
+static void test_pause_reads_as_two_bars_and_play_as_one_shape(void)
+{
+    static uint16_t fbt[FACE_W * FACE_H];
+    const int over_h = FACE_H;
+    const int cy = confirm_cy(over_h);
+    const int glyph = (int)CONFIRM_SWAP(CONFIRM_GLYPH);
+
+    for (int pass = 0; pass < 2; pass++) {
+        memset(fbt, 0, sizeof(fbt));
+        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1);
+        int runs = 0;
+        bool in_run = false;
+        for (int x = 0; x < FACE_W / 2; x++) {
+            const bool on = fbt[cy * FACE_W + x] == (uint16_t)glyph;
+            if (on && !in_run) runs++;
+            in_run = on;
+        }
+        if (pass == 0) {
+            CHECK(runs == 1, "play is one shape across its centre");
+        } else {
+            CHECK(runs == 2, "pause is two bars across its centre");
+        }
+    }
+}
+
+/* THE COUNTS A HOLD MAY NOT MEAN "OPEN THE MENU", stated once so the renderer and this file
+ * cannot drift. The menu is what a hold means at every other count — that is the whole point of
+ * moving reboot and calibrate up — so this test is really about what is FREE. */
+static void test_the_low_tap_counts_are_free_for_the_menu(void)
+{
+    /* Nought through four: a child poking the pet and then holding it. Every one of these must
+       reach the grid, which means none of them may be claimed here. */
+    for (int n = 0; n <= 4; n++) {
+        CHECK(!gesture_reserved(n), "a hold after 0-4 taps belongs to the menu");
+    }
+    CHECK(gesture_reserved(GESTURE_TAPS_REBOOT), "five is the restart");
+    CHECK(gesture_reserved(GESTURE_TAPS_CALIBRATE), "six is the calibration");
+    CHECK(gesture_reserved(GESTURE_TAPS_FORM), "seven is the body swap");
+
+    /* THE OWNER ASKED FOR THESE TWO NUMBERS BY NAME, so they are pinned as numbers rather than
+       through the macros: a test written only in terms of the constants would follow them
+       wherever they went and never notice they had moved. */
+    CHECK(GESTURE_TAPS_REBOOT == 5, "restart is five presses then a hold");
+    CHECK(GESTURE_TAPS_CALIBRATE == 6, "calibration is six presses then a hold");
+
+    /* And nothing beyond the counter's own ceiling can be reserved, or it would be a gesture
+       with no way to perform it — `gesture_poll` stops counting at GESTURE_TAPS_MAX. */
+    for (int n = GESTURE_TAPS_MAX + 1; n <= GESTURE_TAPS_MAX + 4; n++) {
+        CHECK(!gesture_reserved(n), "nothing above the ceiling is reachable");
+    }
+}
+
+/* AND THE SEQUENCES STILL FIRE AT THEIR NEW LENGTHS — the renumbering is only safe if a real
+ * five-tap and six-tap rhythm still reaches the action, rather than the counter topping out
+ * somewhere on the way. */
+static void test_the_moved_gestures_still_fire_end_to_end(void)
+{
+    gesture_t g;
+    gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_REBOOT, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
+          "five taps and a hold restarts");
+    gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_CALIBRATE, 200, GESTURE_HOLD_MS + 200) ==
+              GESTURE_CALIBRATE,
+          "six taps and a hold calibrates");
+    /* The counts a child actually produces reach a hold that does NOTHING here, which is what
+       lets the renderer treat that hold as the menu. */
+    for (int n = 0; n <= 4; n++) {
+        gesture_reset(&g);
+        CHECK(do_sequence_n(&g, n, 200, GESTURE_HOLD_MS + 200) == GESTURE_NONE,
+              "a hold after 0-4 taps does no maintenance");
+    }
+}
+
 static void test_the_qspi_command_word_matches_the_datasheet(void)
 {
     /* Exactly the form on p.21, spelled out rather than reusing the macro's own expression:
@@ -3892,6 +4011,10 @@ int main(void)
     test_a_face_is_the_same_drawing_wherever_it_is_used();
     test_a_face_survives_being_resized();
     test_a_face_of_nobody_draws_nothing();
+    test_the_transport_discs_do_not_move_between_play_and_pause();
+    test_the_low_tap_counts_are_free_for_the_menu();
+    test_the_moved_gestures_still_fire_end_to_end();
+    test_pause_reads_as_two_bars_and_play_as_one_shape();
     test_the_qspi_command_word_matches_the_datasheet();
     test_the_who_grid_has_four_distinct_answers();
     test_the_who_grid_leaves_nowhere_to_miss();

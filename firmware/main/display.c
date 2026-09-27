@@ -390,7 +390,7 @@ void display_set_brightness(int level)
     s_brightness_pending = true;
 }
 
-/* WHICH BODY THE PANEL COMES BACK AS. Four taps and a hold still toggles it live; this is the
+/* WHICH BODY THE PANEL COMES BACK AS. Seven taps and a hold still toggles it live; this is the
    answer it starts from, and until the box could hold one it was always the ostrich — so every
    reboot and every OTA quietly undid a child who had chosen the robot.
    Deferred to the render task like the brightness above, and for a weaker version of the same
@@ -957,9 +957,15 @@ static uint32_t s_popup_since;
 static uint32_t s_sendto_until;
 
 #define PENDING_MS 1500
-typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY } pending_t;
+typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY, PEND_REPLY } pending_t;
 static pending_t s_pending;
 static uint32_t s_pending_until;
+/* WHO THE DEFERRED REPLY IS FOR, captured at the press rather than read when it fires: ending
+   the run is what frees the speaker, and `jpanel_in_from()` is about the message that was
+   playing — which by then is over. */
+static jpanel_to_t s_pend_reply_to;
+/* WHEN THE FINGER PUT IT ON HOLD, 0 when nothing is held. See `AUDIO_PAUSE_MAX_MS`. */
+static uint32_t s_paused_since;
 /* Where the pop-up and the repeat icon were drawn, in the space they were drawn in — which
    is NOT the space `panel_to_frame` hands back; see `tap_to_overlay` immediately below. Both
    are rectangles; -1 in the first slot means not on screen. */
@@ -1235,75 +1241,65 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
 static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
                              sendto_hit_t who)
 {
-    char line[20];
-    snprintf(line, sizeof(line), "%s", from != NULL && from[0] != '\0' ? from : "SOMEONE");
-    for (char *q = line; *q != '\0'; q++) {
-        if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
-    }
+    /* THE FACE ALONE, ON THE BLACK. It was a blue rounded box carrying a pulsing dot and the
+       sender's name, and the owner cut all three: *"when the notification is in the top left it
+       shouldn't have the blue background. It should just have a dad face."*
+       The box was solving a problem the face does not have. A name needed a panel to sit on to
+       be legible; a face is already a shape against an AMOLED black, and the box only made it
+       smaller — the one thing the child actually reads had been shrunk to make room for a label
+       they cannot read. */
+    (void)from;
+    const int qh = (over_h - y0) / 2;
+    const int qw = FACE_W / 2;
 
-    const int margin = 10;
-    const int bx = margin, by = y0 + margin;
-    const int bw = FACE_W / 2 - margin * 2;
-    const int bh = (over_h - y0) / 2 - margin * 2;
-    bubble(fb, bx, by, bw, bh, 18, SWAP16(0x001F));
+    /* SIZED TO THE QUADRANT rather than to a constant, because that is what the hit area is:
+       the picture should fill what the finger may press, or the two disagree about where the
+       notice is. The thirds leave a margin that keeps it off both edges. */
+    const int r = (qw < qh ? qw : qh) / 3;
+    sendto_draw_face(fb, FACE_W, FACE_H, qw / 2, y0 + qh / 2, r, who);
 
-    /* THE DOT, scaled with the box: it is the same pulsing mark the big pop-up carries, so the
-       two still read as one thing at two sizes rather than as two different notices. */
-    const int r = bh / 8;
-    const int dot_cy = by + bh / 3;
-    for (int dy = -r; dy <= r; dy++) {
-        for (int dx = -r; dx <= r; dx++) {
-            if (dx * dx + dy * dy > r * r) continue;
-            const int px = bx + bw / 2 + dx, py = dot_cy + dy;
-            if (px >= 0 && px < FACE_W && py >= 0 && py < FACE_H) fb[py * FACE_W + px] = CUE_COLOUR;
-        }
-    }
-
-    /* THE BIGGEST SCALE THE NAME FITS AT, measured rather than assumed: the names here are the
-       owner's to choose and "SOMEONE" is the fallback, so a fixed scale would either clip a
-       long one or waste the box on a short one. */
-    int scale = 4;
-    while (scale > 1 && font_text_w(line, scale) > bw - 16) scale--;
-    const int tw = font_text_w(line, scale);
-    font_draw(fb, FACE_W, FACE_H, bx + (bw - tw) / 2, by + bh * 3 / 5, scale, line,
-              SWAP16(0xFFFF));
-
-    s_popup_box[0] = bx;
-    s_popup_box[1] = by;
-    s_popup_box[2] = bx + bw;
-    s_popup_box[3] = by + bh;
+    /* THE WHOLE QUADRANT IS THE TARGET, not the face's own bounds. The owner, on the grid
+       first and now here: *"capture everything in that top left quadrant as far as clicks to
+       play it"* — the same reason the 2x2 menu stopped hit-testing discs. These readers are
+       four; a press near the picture is a press ON the picture as far as they are concerned,
+       and a notice that ignores it is a notice that does not work. */
+    s_popup_box[0] = 0;
+    s_popup_box[1] = y0;
+    s_popup_box[2] = qw;
+    s_popup_box[3] = y0 + qh;
 }
 
-/* PLAYING, AND TAPPABLE TO STOP. A run a child cannot see the end of needs a way out they can
- * SEE — "touch it and it stops" is not discoverable on a pet's face, and the whole reason this
- * is a queue rather than one message at a time is that a press should be able to cost a minute.
+/* PLAYING, AND THE SAME PAIR THE ENDED STATE CARRIES — see `confirm.h`. A lone centred STOP
+ * disc used to sit here, and it answered the wrong question: a child listening to Dad wants to
+ * hold it for a second, or answer him, far more often than they want it gone. Stopping is what
+ * pausing already does to the sound; the queue simply waits rather than being thrown away.
  *
- * Deliberately small and at the bottom, not over the face: the pet is animating and talking
- * through this and that is the thing worth watching. It says how many are left, because the
- * question a child sitting through four messages has is how many more. */
-static void draw_run(uint16_t *fb, int y0, int h, int left)
+ * AND WHO IS TALKING, TOP LEFT, because the voice alone does not say it for these readers: the
+ * owner asked for the badge's quadrant to keep carrying the sender *"when we're playing back a
+ * message"* too. It is the same face in the same corner the notice used, so the picture that
+ * said "Dad sent you one" is the picture that says "this is Dad" while it plays. */
+static void draw_run(uint16_t *fb, int y0, int over_h, int left, sendto_hit_t who, bool playing)
 {
-    (void)y0;
-    /* THE ICON CARRIES "STOP" AND THE NUMERAL CARRIES "HOW MANY MORE", which is the split the
-       text bar could not make: "2 MORE  TAP TO STOP" is one sentence for an adult, and the
-       reader here cannot read either half. The count stays because the question a child
-       sitting through four messages actually has is how many are left — a digit they can
-       count on their fingers answers it and the word never did. Above the disc, so it does
-       not fight the square. */
-    confirm_draw_stop(fb, FACE_W, FACE_H, h);
+    const int qh = (over_h - y0) / 2;
+    const int qw = FACE_W / 2;
+    const int r = (qw < qh ? qw : qh) / 3;
+    sendto_draw_face(fb, FACE_W, FACE_H, qw / 2, y0 + qh / 2, r, who);
+
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, playing);
+
     if (left > 0) {
-        /* Sized for the FORMAT, not the expected value — the rule the text bar this replaced
-           already followed: `left` is an int, so eleven digits and a sign must fit or the
-           compiler is right to refuse it. */
+        /* HOW MANY MORE, and it keeps the slot the count already had rather than the one the
+           old numeral used: that sat beside the left disc, which is now a button a finger goes
+           to. Between the two discs it is on black, clear of both targets, and still answers
+           the only question a child sitting through four messages actually asks.
+
+           Sized for the FORMAT, not the expected value: `left` is an int, so eleven digits and
+           a sign must fit or the compiler is right to refuse it. */
         char n[12];
         snprintf(n, sizeof(n), "%d", left);
-        /* BESIDE THE DISC, NOT ABOVE IT, and the first version had it above: white numerals
-           landed on the pet's own light body and all but vanished. Out here it sits on the
-           black margin the bottom third already has, in the slot the cross occupies on the
-           recording screen — so the row keeps its balance and the digit keeps its contrast. */
         const int tw = font_text_w(n, 3);
-        font_draw(fb, FACE_W, FACE_H, CONFIRM_CX_CANCEL - tw / 2,
-                  confirm_cy(h) - (FONT_H * 3) / 2, 3, n, SWAP16(0xFFFF));
+        font_draw(fb, FACE_W, FACE_H, FACE_W / 2 - tw / 2, confirm_cy(over_h) - (FONT_H * 3) / 2,
+                  3, n, SWAP16(0xFFFF));
     }
 }
 
@@ -2457,13 +2453,50 @@ static void face_task(void *arg)
                sustained utterance the panel is making, not a queue the child is sitting
                through, and cutting it off was never asked for. */
             if (jpanel_running()) {
-                jpanel_stop();
-                s_pending = PEND_NONE; /* a deferred play must not resurrect the run */
-                s_flinch = 1.0f;
-                ESP_LOGI(TAG, "jpanel: run stopped by touch");
-                dirty = true;
-                /* No cue: the silence IS the answer, and a sound here would be the panel
-                   making noise in the half-second a child asked it to stop making noise. */
+                /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
+                   of controls — see `confirm.h`. A tap anywhere used to end the run, and the
+                   owner replaced that with a hold and an answer: stopping is what pausing does
+                   to the sound, and the queue waits rather than being thrown away.
+
+                   Resolved here rather than shared with the pet-tap branch above: that is a
+                   different scope, and these targets can only be tested in overlay
+                   coordinates — a hit test against frame ones on an upside-down panel misses
+                   by 289 px (`tap_to_overlay`). */
+                int ox = -1, oy = -1;
+                tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
+                const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
+                const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
+                if (half == CONFIRM_CANCEL) {
+                    const bool hold = !audio_stream_paused();
+                    audio_stream_pause(hold);
+                    s_paused_since = hold ? now : 0;
+                    s_flinch = 1.0f;
+                    dirty = true;
+                    ESP_LOGI(TAG, "jpanel: run %s by touch", hold ? "held" : "resumed");
+                    /* No cue either way: a beep on top of the sentence it is holding, or on
+                       the first instant of the one it is resuming, is the panel talking over
+                       itself. The sound stopping IS the answer, exactly as the silence was. */
+                } else if (half == CONFIRM_SEND) {
+                    /* ANSWER THE PERSON TALKING, without waiting for them to finish. The
+                       recipient is the message being played, so it is read BEFORE the run
+                       ends. Deferred rather than started here: the fetch is still unwinding
+                       and `start_send_recording` would refuse a microphone it cannot have
+                       yet — silently, which is the one outcome a child cannot interpret. */
+                    s_pend_reply_to = jpanel_in_from();
+                    audio_stream_pause(false); /* never end a run holding the ring */
+                    s_paused_since = 0;
+                    jpanel_stop();
+                    s_pending = PEND_REPLY;
+                    s_pending_until = now + PENDING_MS;
+                    s_flinch = 1.0f;
+                    dirty = true;
+                } else {
+                    /* Off both targets: the flinch alone, and deliberately nothing else. This
+                       is where a tap used to end the run, so the one thing it must not do now
+                       is end it by accident. */
+                    s_flinch = 1.0f;
+                    dirty = true;
+                }
             } else {
                 /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would
                    read as a frozen pet — but no beep, no colour change and no new action, so
@@ -2751,7 +2784,14 @@ static void face_task(void *arg)
          * Nothing is lost; the pet is one press further on, and the two children who could not
          * get `tell sister` recognised gain a second way to reach each other that needs no
          * button on the case at all. */
-        if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && gest.taps == 0 &&
+        /* ANY COUNT THE MAINTENANCE GESTURES HAVE NOT CLAIMED, which used to be zero alone.
+           A hold is how a child reaches the grid, and children do not hold from a standing
+           start — they poke the pet, it does something, they poke it again, and then they hold.
+           Every one of those attempts did nothing, and the owner asked for it directly: *"make
+           sure long press will pull up the menu even if it's after multiple presses"*. The
+           counts moved to five and six in the same change so that there is almost nothing left
+           for this to lose to (`gesture.h`). */
+        if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && !gesture_reserved(gest.taps) &&
             held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
             s_sendto_until = now + SENDTO_MS;
             /* The same cue the button's press makes, because it is the same event: something
@@ -2759,7 +2799,7 @@ static void face_task(void *arg)
             if (sound) audio_cue(CUE_HEARD);
             ESP_LOGI(TAG, "sendto: grid opened by hold");
             dirty = true;
-        } else if (s_talk == TALK_IDLE && down && !on_the_pet && gest.taps == 0 &&
+        } else if (s_talk == TALK_IDLE && down && !on_the_pet && !gesture_reserved(gest.taps) &&
                    held >= HOLD_TALK_MS && held < HOLD_TALK_MS + poll_ms) {
             /* Once per press, on the frame the threshold passes — the owner has no terminal
                but does have the log, and a margin that is too wide looks exactly like a
@@ -2895,8 +2935,41 @@ static void face_task(void *arg)
         /* THE DEFERRED HALF OF A TOUCH: the cue has finished, so the audio it announced starts
            now. Checked every frame rather than on a timer, so it fires on the first frame the
            speaker is free — the 55 ms cue and this are what a child experiences as one press. */
+        /* A HOLD IS NOT FOREVER. A paused stream is an HTTP response held open on the box, and
+           a four-year-old who put the pet down mid-message would otherwise hold it until the
+           panel rebooted. It RESUMES rather than aborting: a message playing out to an empty
+           room costs nothing and is recoverable, where discarding one they had not finished
+           hearing is the outcome the queue exists to prevent (`audio.h`). */
+        if (s_paused_since != 0 && now - s_paused_since > AUDIO_PAUSE_MAX_MS) {
+            ESP_LOGI(TAG, "jpanel: held %u ms — resuming", (unsigned)(now - s_paused_since));
+            audio_stream_pause(false);
+            s_paused_since = 0;
+            dirty = true;
+        }
         if (s_pending != PEND_NONE) {
-            if (!audio_playing()) {
+            if (s_pending == PEND_REPLY) {
+                /* WAITS FOR THE FETCH AS WELL AS THE SPEAKER, which is the whole reason this
+                   is deferred: `jpanel_stop()` returns before the run has finished letting go,
+                   and a recording refused in that window would be a press that did nothing. */
+                if (!audio_playing() && jpanel_state() != JPANEL_BUSY) {
+                    if (start_send_recording(s_pend_reply_to, now, false)) {
+                        if (sound) audio_cue(CUE_LISTEN);
+                    } else if (sound) {
+                        audio_cue(CUE_OOPS);
+                    }
+                    s_pending = PEND_NONE;
+                    dirty = true;
+                } else if (now > s_pending_until) {
+                    /* SAID OUT LOUD, unlike the dropped play above. That one loses a message
+                       still sitting in the queue with a badge to prove it; this one loses a
+                       child's answer, and they would stand there having pressed reply and been
+                       given neither a microphone nor a reason. */
+                    ESP_LOGW(TAG, "jpanel: never settled — dropping the reply");
+                    if (sound) audio_cue(CUE_OOPS);
+                    s_pending = PEND_NONE;
+                    dirty = true;
+                }
+            } else if (!audio_playing()) {
                 if (s_pending == PEND_PLAY) {
                     if (!jpanel_play_next()) ESP_LOGW(TAG, "jpanel: busy, not fetching");
                 } else if (!jpanel_replay()) {
@@ -2999,7 +3072,7 @@ static void face_task(void *arg)
         if (act == GESTURE_CALIBRATE) cal_begin();
         if (act == GESTURE_FORM) {
             /* Until "change into merc" exists — the command list needs ESP-SR, which is not
-               wired up yet — four taps and a hold is how the twins get the other body. */
+               wired up yet — seven taps and a hold is how the twins get the other body. */
             st.form = st.form == FORM_OSTRICH ? FORM_ROBOT : FORM_OSTRICH;
             dirty = true;
             ESP_LOGI(TAG, "form -> %s", st.form == FORM_OSTRICH ? "ostrich" : "robot");
@@ -3272,9 +3345,12 @@ static void face_task(void *arg)
                control that can end what the child is hearing outranks a ticker telling them
                what it heard. */
             if (jpanel_running()) {
-                draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0));
+                draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0),
+                         jpanel_in_from() == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER,
+                         !audio_stream_paused());
             } else if (s_repeat_until != 0) {
-                confirm_draw_replay_reply(fb, FACE_W, FACE_H, over_h);
+                /* The ended state is the SAME control showing play — `playing` false. */
+                confirm_draw_transport(fb, FACE_W, FACE_H, over_h, false);
             }
             /* THE GRID LAST OF ALL, over the pop-up and over the run control, because it is
                the one overlay here that a child asked for by pressing a button. Everything
@@ -3318,7 +3394,7 @@ static void face_task(void *arg)
                     for (int x = 0; x < w; x++) fb[y * FACE_W + x] = CUE_COLOUR;
                 }
             } else if (gest.taps > 0) {
-                /* One pip per counted tap. Without it the three taps are invisible until the
+                /* One pip per counted tap. Without it the taps are invisible until the
                    hold succeeds, and a gesture with no feedback until it works is one an
                    owner cannot tell from a broken panel. They clear themselves half a second
                    after the rhythm lapses, so ordinary play leaves nothing on screen. */

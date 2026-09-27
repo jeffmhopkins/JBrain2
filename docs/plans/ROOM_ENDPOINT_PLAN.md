@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-26 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-27 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -1959,7 +1959,7 @@ fires, slow taps never arm it, long presses do not count as taps, letting go mid
 the whole sequence rather than leaving the panel one press from rebooting, and a completed hold
 fires exactly once while the finger is still down.
 
-**One pip per counted tap** now appears along the top edge. Without it the three taps are
+**One pip per counted tap** now appears along the top edge. Without it the taps are
 invisible until the hold succeeds, and a gesture with no feedback until it works is one an
 owner cannot tell from a broken panel — which is the exact failure mode this whole section of
 the plan has spent six releases on.
@@ -5342,6 +5342,77 @@ Two details that are easy to get wrong:
 - **The shrink is a frame nobody else asks for.** The count has not changed, no finger has
   landed, and the pet may be perfectly still — so without an explicit repaint the big box would
   sit there until the next blink happened to redraw it.
+
+##### The badge loses its box, and the run gains a hold (0.3.19)
+
+Three corrections from watching the twins use 0.3.18, and they converge on one idea: **the top
+left quadrant means "who", and the bottom row means "what you can do about it".**
+
+**The badge is a face on the black now, with no blue panel behind it.** The owner: *"when the
+notification is in the top left it shouldn't have the blue background. It should just have a dad
+face."* The box was solving a problem the face does not have — a name needs a panel to sit on to
+be legible, and a face is already a shape against an AMOLED black. All the box did was shrink the
+one thing these readers can actually read, to make room for a label they cannot.
+
+**And the whole quadrant is the target**, not the face's own bounds: *"capture everything in that
+top left quadrant as far as clicks to play it."* The same correction the 2×2 menu already took.
+A press near the picture is a press on the picture when you are four, and the drawing is sized to
+the quadrant so the picture and the hit area cannot disagree about where the notice is.
+
+**The lone STOP disc becomes the pair the ended state already has.** *"When playing the message
+all we have is a stop button. I think we need a play pause button... and on the bottom right have
+the reply button... it looks very similar to the ending state where we have the play and reply
+button, but instead of the play button we have a pause button."* Stop answered the wrong
+question: a child listening to Dad wants to hold it for a second, or answer him, far more often
+than they want it gone — and pausing already does to the sound what stopping did, without
+throwing the queue away.
+
+So it is **one control in two states**: same discs, same places, same colours, only the left
+glyph changes. A host test pins that — the reply half must be pixel-identical between the two,
+and every differing pixel on the left must be either glyph white or disc blue, so the button
+cannot drift into being two buttons. The glyph shows what the press will DO (pause while
+playing, play while held), not what the panel is doing.
+
+**A pause is bounded at `AUDIO_PAUSE_MAX_MS`, and it resumes rather than aborting.** A held
+stream is an HTTP response held open on the box, and a child who puts the pet down mid-message
+would otherwise hold it until the panel rebooted. Resuming plays a message out to an empty room,
+which costs nothing and is recoverable; aborting discards one they had not finished hearing,
+which is the outcome this queue exists to prevent.
+
+**Reply during playback is deferred, not immediate.** `jpanel_stop()` returns before the run has
+finished letting go, so starting the recording inline would hit `JPANEL_BUSY` and be refused —
+silently, which is the one outcome a child cannot interpret. It waits for the speaker *and* the
+fetch, and says so with `CUE_OOPS` if it never settles. The recipient is captured at the press,
+because by the time it fires the message that named them is over.
+
+##### The hold belongs to the child now, so the maintenance gestures moved out of its way
+
+Two requests that are really one change. *"Make sure long press will pull up the menu even if
+it's after multiple presses"*, and *"move a gesture to restart to five presses and then a hold
+and calibration and six presses and hold."*
+
+**The menu only opened from a standing start.** The hold that opens the "who?" grid was guarded
+by `gest.taps == 0`, and children do not hold from a standing start — they poke the pet, it
+does something, they poke it again, and *then* they hold. Every one of those attempts silently
+did nothing. Worse, three taps and a hold was a **reboot**, which is a reachable accident for
+someone who has just been poking a toy.
+
+So a hold now means the grid at **any count the maintenance gestures have not claimed**, and the
+way to keep that promise is to claim as few counts as possible and put them where a child does
+not land: **5 restart, 6 calibrate, 7 swap body** (from 3/4/5). Three and four — the two most
+reachable numbers on the panel — are free.
+
+**The body swap moved although it was not asked for**, and that is worth saying plainly: leaving
+it at four would have left one hole in the middle of the range the menu now owns, and "a hold
+after four taps does something completely different from a hold after three" is a rule nobody
+can hold in their head, least of all the person it would surprise. It is a one-line revert if
+the owner disagrees.
+
+`gesture_reserved()` is the single place that answers which counts are spoken for, so the
+renderer cannot drift from `gesture.h` — the coupling that would otherwise turn any future
+renumbering into a silent bug at the other end. The host tests pin **0–4 free** and the two
+numbers the owner named **as literals** rather than through the macros, because a test written
+only in terms of the constants would follow them wherever they went and never notice.
 
 The AGAIN button owns the same corner for its five seconds and wins there: it is transient and
 answers a question the child is asking right now, where the badge answers one they have already

@@ -419,7 +419,47 @@ void sendto_draw(uint16_t *fb, int w, int h, int over_h)
    `CONFIRM_SEND` means reply. Reusing that test rather than adding a third is deliberate: the
    geometry a child has learned is the geometry, and a second set of rules for the same two
    places is how the tick and the cross got 289 px away from the finger once already. */
-void confirm_draw_replay_reply(uint16_t *fb, int w, int h, int over_h)
+/* THE PLAY TRIANGLE, lifted out so the ended state and a paused message are provably the same
+   picture rather than two that merely look alike. */
+static void glyph_play(uint16_t *fb, int w, int h, int cx, int cy)
+{
+    /* Drawn as rows rather than strokes: a filled triangle wants a scanline, and its apex
+       stays sharp this way where three thick strokes would round it off. Nudged right by an
+       eighth so it looks centred — a triangle's visual centre is not its bounding box's,
+       which is why a play button that is mathematically centred reads as too far left. */
+    const int hh = CONFIRM_R * 13 / 32;
+    const int x0 = cx - hh * 5 / 6 + hh / 4;
+    for (int dy = -hh; dy <= hh; dy++) {
+        const int span = (hh - (dy < 0 ? -dy : dy)) * 3 / 2;
+        const int py = cy + dy;
+        if (py < 0 || py >= h) continue;
+        for (int dx = 0; dx <= span; dx++) {
+            const int px = x0 + dx;
+            if (px >= 0 && px < w) fb[py * w + px] = CONFIRM_GLYPH;
+        }
+    }
+}
+
+/* TWO BARS, AND THEY ARE THE TRIANGLE'S SIZE ON PURPOSE. The control does not move or change
+   colour between playing and paused — only the glyph inside it does — so a child's finger goes
+   to the same place either way and the icon is the only thing they have to read. */
+static void glyph_pause(uint16_t *fb, int w, int h, int cx, int cy)
+{
+    const int hh = CONFIRM_R * 13 / 32;
+    const int bw = hh * 2 / 5;          /* each bar */
+    const int gap = hh / 3;             /* and the space that makes them two rather than one */
+    for (int dy = -hh; dy <= hh; dy++) {
+        const int py = cy + dy;
+        if (py < 0 || py >= h) continue;
+        for (int dx = 0; dx < bw; dx++) {
+            const int lx = cx - gap - bw + dx, rx = cx + gap + dx;
+            if (lx >= 0 && lx < w) fb[py * w + lx] = CONFIRM_GLYPH;
+            if (rx >= 0 && rx < w) fb[py * w + rx] = CONFIRM_GLYPH;
+        }
+    }
+}
+
+void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing)
 {
     const int cy = confirm_cy(over_h);
 
@@ -432,22 +472,10 @@ void confirm_draw_replay_reply(uint16_t *fb, int w, int h, int over_h)
        "this makes a sound" to anybody who has ever seen a screen, which for these readers is
        the whole of what it needs to say. */
     disc(fb, w, h, CONFIRM_CX_CANCEL, cy, CONFIRM_R, CONFIRM_BLUE);
-    {
-        /* Drawn as rows rather than strokes: a filled triangle wants a scanline, and its apex
-           stays sharp this way where three thick strokes would round it off. Nudged right by an
-           eighth so it looks centred — a triangle's visual centre is not its bounding box's,
-           which is why a play button that is mathematically centred reads as too far left. */
-        const int hh = CONFIRM_R * 13 / 32;
-        const int x0 = CONFIRM_CX_CANCEL - hh * 5 / 6 + hh / 4;
-        for (int dy = -hh; dy <= hh; dy++) {
-            const int span = (hh - (dy < 0 ? -dy : dy)) * 3 / 2;
-            const int py = cy + dy;
-            if (py < 0 || py >= h) continue;
-            for (int dx = 0; dx <= span; dx++) {
-                const int px = x0 + dx;
-                if (px >= 0 && px < w) fb[py * w + px] = CONFIRM_GLYPH;
-            }
-        }
+    if (playing) {
+        glyph_pause(fb, w, h, CONFIRM_CX_CANCEL, cy);
+    } else {
+        glyph_play(fb, w, h, CONFIRM_CX_CANCEL, cy);
     }
 
     /* REPLY, bottom right: an envelope. Green, because this one SENDS — the same meaning the
