@@ -500,6 +500,19 @@ class TelemetryIn(BaseModel):
     # indistinguishable from a panel nobody offered an update to.
     ota_err: str = ""
     ota_tries: int = 0
+    # WHY THE PANEL'S SETTINGS FETCH LAST FAILED, AND HOW MANY HAVE FAILED SINCE BOOT.
+    #
+    # Every knob rides one fetch — volume, the appearance, the report-now counter — so a single
+    # silent failure stalls all of them, and it fails ON THE PANEL, where this box's access log
+    # cannot see it: the log shows only the requests that arrived. Measured 2026-09-27, that is
+    # exactly what had happened, and the symptom the owner reported was a volume slider that
+    # did nothing.
+    #
+    # DECLARED HERE OR IT IS NOT STORED. The route keeps `model_dump()`, not the raw body, so a
+    # field the firmware sends and this model does not name is dropped without a word — which
+    # would make the diagnostic invisible in precisely the way it was added to prevent.
+    set_err: str = ""
+    set_fails: int = 0
     # Where the last touch landed and which zone it resolved to: [x, y, zone].
     #
     # THE PANEL HAS BEEN SENDING THIS ALL ALONG and nothing declared it, so pydantic dropped
@@ -616,6 +629,9 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         # Only when there is something to say. An empty key on every report for fifteen
         # minutes of a healthy panel is how a log stops being read.
         **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),
+        # Only when something has actually failed; a zero on every healthy report is how a log
+        # stops being read.
+        **({"set_err": body.set_err, "set_fails": body.set_fails} if body.set_fails else {}),
         **({"heard": body.heard} if body.heard else {}),
         # Only when there are any: an empty list on every report is noise in a log a human
         # reads, and the counts already say when to look.
@@ -658,12 +674,20 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
 # a typo into a safe value and reports what it did, which is the difference between an owner
 # with no terminal being stuck and being informed (CLAUDE.md #10).
 #
-# VOLUME_MAX is the only one that is a safety limit rather than a range. The vendor ships 90;
-# 70 is the level the owner confirmed as good; 85 leaves room to go louder deliberately while
-# making it impossible for a slipped digit to put 100 into a speaker held against a
-# four-year-old's ear. Raising this ceiling should take a measurement and a commit, which is
-# exactly the friction §10.4q asked for.
-VOLUME_MAX = 85
+# VOLUME_MAX WAS 85 AND THE CEILING ITSELF WAS THE BUG REPORT. The reasoning was that 85 "leaves
+# room to go louder deliberately" above the 70 the owner had confirmed — but the owner had since
+# put the slider on its stop, so every further request clamped silently back to 85 and the
+# control read as broken: *"the volume slider will only go to 85."* A clamp that is reached in
+# normal use is not a safety limit, it is a dead control, and this one hid a real complaint
+# (*"the speaker just is not loud enough"*) behind an apparent UI fault.
+#
+# 100, because the range the panel accepts is 0-100 and the slider should be able to express it.
+# The friction §10.4q asked for is still here and is still a commit — this one — but it belongs
+# on CHANGING the ceiling, not on discovering it exists. The thing the old comment was actually
+# afraid of, a slipped digit deafening a child, is better served by the panel's own refusal path:
+# `audio.c` READS what the codec accepted and reports it as `levels`, so a value that does not
+# stick is visible rather than assumed.
+VOLUME_MAX = 100
 # The ES8311's PGA quantises to 6 dB steps and stops at 42; anything above is silently
 # truncated by the part, so accepting it would be a number that reads back wrong.
 MIC_GAIN_MAX = 42
@@ -681,7 +705,10 @@ PanelRole = DeviceRole
 
 
 class EndpointSettings(BaseModel):
-    volume: int = 70
+    # 95, RAISED FROM 70 ON THE OWNER'S MEASUREMENT: *"I want to default to 95 ... the speaker
+    # just is not loud enough."* This is the value a box with no row serves; the stored row is
+    # what a panel normally gets (migration 0217).
+    volume: int = 95
     mic_gain_db: int = 30
     brightness: int = 255
     # The microphone meter down the panel's left edge. It earned its place during bring-up —

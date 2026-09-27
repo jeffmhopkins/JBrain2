@@ -67,6 +67,23 @@ void speech_vocab(int *accepted, int *rejected);
  * Safe to call while listening: it takes the same lock the detect loop holds. */
 void speech_reload_vocabulary(void);
 
+/* DEAF TO COMMANDS WHILE A MESSAGE IS BEING RECORDED.
+ *
+ * The owner, on the twins recording messages: *"we are making sure that the wake word
+ * recognition doesn't run while we are making recordings — often I have farts or spins going on
+ * while I'm trying to record a message."*
+ *
+ * A message to a sister is a sentence spoken at a panel whose whole vocabulary is short words
+ * children say, so the recogniser fires inside it: the pet farts, the panel animates, the cue
+ * sounds, and all of it lands in the recording that is being made. The phrase was genuinely
+ * recognised — this is not a false-trigger bug — it is simply the wrong moment to act on one.
+ *
+ * MUTED, NOT STOPPED. The recogniser keeps running and keeps filling the decode ring, because
+ * that ring is the only window onto what this panel hears and a recording is exactly when it is
+ * most interesting. What stops is PUBLISHING: nothing is handed to the display, so nothing
+ * happens. See `note_heard`. */
+void speech_mute_commands(bool muted);
+
 /* The i-th refused phrase, or NULL past the end. The counts say the panel is deaf to
    something; this says to WHAT, and it is the difference between a number the owner cannot
    act on and a name they can. Goes out in telemetry for the same reason the ALC reading and

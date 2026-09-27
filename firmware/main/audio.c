@@ -97,7 +97,13 @@ static const char *TAG = "audio";
    nothing here able to measure decibels; the owner reported it a little quiet, and confirmed
    70 as good at the distance a child holds it. That is the measurement §10.4q said it was
    waiting for — so this number is no longer a guess, and still well under the vendor's 90. */
-#define VOLUME 90
+/* THE COMPILE-TIME VOLUME, AND IT IS THE ONE THAT HAS BEEN IN FORCE. Measured 2026-09-27: the
+   box's value has never reached Lydian's panel (`levels` empty at 941 s of uptime), so this
+   number — not the slider — is what the room has been hearing, and the owner's verdict on it
+   was *"the speaker just is not loud enough."* 95, which is what they asked the box for and
+   could not have, because `VOLUME_MAX` clamped the slider at 85.
+   A panel that never hears from the box is now loud enough on its own. */
+#define VOLUME 95
 /* What an ACKNOWLEDGEMENT should sound like on that same scale — the owner asked for 20
    against the voice's 90, back when there was one 880 Hz tone rather than twenty-six cues,
    and the reason holds for all of them: the cue is the part heard closest to a child's face

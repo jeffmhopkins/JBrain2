@@ -258,6 +258,12 @@ static void report(const cfg_t *cfg)
     const char *ota_err = "";
     int ota_tries = 0;
     ota_apply_faults(&ota_err, &ota_tries);
+    /* WHY THE KNOBS ARE NOT ARRIVING, if they are not. Every setting rides one fetch — volume,
+       the appearance, the report-now counter — so a single silent failure stalls all of them,
+       and it fails ON THE PANEL where the box cannot see it. */
+    const char *set_err = "";
+    int set_fails = 0;
+    ota_settings_faults(&set_err, &set_fails);
 
     /* 2048, up from 1536: the heard ring is twelve variable-length entries now and the loop
        below stops on room rather than on a count, so a small body silently costs the OLDEST
@@ -274,6 +280,7 @@ static void report(const cfg_t *cfg)
                      "\"blit_fail_total\":%d,\"blit_recov\":%d,\"meter_fail\":%d,"
                      "\"wifi_reason\":%d,\"wifi_drops\":%d,"
                      "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
+                     "\"set_err\":\"%s\",\"set_fails\":%d,"
                      "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"screen\":\"%s\","
                      "\"pmu_history\":[",
                      ota_running_version(),
@@ -288,7 +295,7 @@ static void report(const cfg_t *cfg)
                                                                MALLOC_CAP_DMA),
                      audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
                      wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
-                     tap_x, tap_y, tap_zone,
+                     set_err, set_fails, tap_x, tap_y, tap_zone,
                      display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
