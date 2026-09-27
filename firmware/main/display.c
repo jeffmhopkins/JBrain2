@@ -476,7 +476,33 @@ static void sleep_wake(const char *why)
  * Verified against the datasheet before changing anything: `0x51` takes ONE byte (p.184), the
  * `0x53 = 0x20` we already write is sufficient because bit 5 (BCTRL) is what gates it and the
  * CO5300 has no backlight bit at all (p.186), and `0x63` is HBM-mode brightness which is inert
- * while `0x66`'s HBM_EN stays 0, as it does (p.196, p.199). None of those needed changing. */
+ * while `0x66`'s HBM_EN stays 0, as it does (p.196, p.199). None of those needed changing.
+ *
+ * ---------------------------------------------------------------------------------------------
+ * AND THEN IT TOOK BOTH PANELS DOWN, so the framing is BACKED OUT and this macro is kept only
+ * as the record of what the right command word is.
+ *
+ * MEASURED 2026-09-27, within minutes of deploying 0.3.16: both panels went black, and — unlike
+ * every previous black screen on this hardware — they made NO SOUND and did not answer touch.
+ * The owner spotted that distinction: *"this is not responding to screen clicks. There's no
+ * audible sound effect like there was before, so this I feel is different."* Display, cues and
+ * touch are all the render task, so losing all three at once is that ONE task dying, not three
+ * faults. The panels stayed on the network throughout — their jpanel task kept polling — and
+ * only a power cycle brought them back.
+ *
+ * THE MECHANISM, AS FAR AS IT IS ESTABLISHED: `esp_lcd_panel_draw_bitmap` QUEUES and returns
+ * (see the stripe-blit comment at the top of this file), so a colour transfer can still be in
+ * flight when it does. `reassert_panel` fires a command write into the same interface every
+ * thirty seconds. Before 0.3.16 those writes were malformed and the controller discarded them;
+ * after it they are valid and the controller ACTS on them — and it did not survive being told
+ * to do so mid-frame. That last step is inference, not proof: what is measured is that framing
+ * them correctly hangs the renderer and unframing them does not.
+ *
+ * SO BRIGHTNESS IS BROKEN AGAIN, DELIBERATELY. A panel that cannot dim is a nuisance; a black
+ * panel in a four-year-old's bedroom that answers nothing is not, and it cannot be diagnosed
+ * from the box because the part that would report it is the part that died. Re-landing this
+ * needs the writes ordered against the blit — which needs a panel on a bench with a cable, not
+ * a guess deployed to a bedroom. */
 #define QSPI_WRITE_OPCODE 0x02
 #define QSPI_CMD(c) (((QSPI_WRITE_OPCODE) << 24) | ((c) << 8))
 
@@ -486,7 +512,10 @@ static void apply_brightness(void)
 {
     if (s_io == NULL) return;
     const uint8_t level = screen_level(s_brightness, s_sleep, s_dim_percent);
-    const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, QSPI_CMD(0x51), &level, 1);
+    /* UNFRAMED ON PURPOSE, AND THIS IS A RETREAT RATHER THAN A DESIGN. See `QSPI_CMD` above:
+       framing these correctly in 0.3.16 made brightness work for the first time, and took BOTH
+       panels' renderers down with it within minutes. */
+    const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
     if (err != ESP_OK) ESP_LOGW(TAG, "brightness: %s", esp_err_to_name(err));
 }
 
@@ -1971,7 +2000,7 @@ static void draw_meter(uint16_t *fb, int level)
 static void reassert_panel(void)
 {
     if (s_io == NULL) return;
-    const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, QSPI_CMD(0x29), NULL, 0);
+    const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0);
     if (on != ESP_OK) ESP_LOGW(TAG, "re-assert failed (0x29 %s)", esp_err_to_name(on));
     apply_brightness();
 }
