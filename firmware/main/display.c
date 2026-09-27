@@ -42,6 +42,7 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
+#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "face.h"
 #include "font.h"
@@ -431,6 +432,23 @@ void display_set_form(int form)
    arithmetic and all host-tested. What lives here is the half that needs the panel: which
    stage we are in, what wakes it, and the frame that does not get drawn. */
 static screen_stage_t s_sleep = SCREEN_AWAKE;
+
+/* STANDBY: THE BUTTON'S SHORT PRESS. The owner: *"single press blinks the screen and stops
+ * listening. But it keeps looking for incoming messages and will light up if a new message
+ * comes in."*
+ *
+ * It is NOT the idle sleep wearing a different hat, and the difference is the microphone. The
+ * idle stages darken a panel nobody is using and leave it listening, because a child walking
+ * back into the room says the wake phrase. This is a deliberate "be quiet now" — screen off AND
+ * deaf — and the network deliberately stays up, so a message from Dad still lights the room.
+ * That combination is the point: the panel stops watching the room without stopping being
+ * reachable.
+ *
+ * ANY WAKE CLEARS IT, including a touch. A screen that came back on but stayed deaf would be a
+ * pet looking straight at a child and ignoring her, which is worse than either state alone. */
+static bool s_standby;
+/* The hold completed; the render loop parks and powers down at the safe point. */
+static bool s_power_off;
 /* Set in `update_orientation()` and consumed by the same task a few lines later — the IMU
    read is where these numbers already are, so movement costs no extra bus traffic. */
 static bool s_moved;
@@ -440,6 +458,7 @@ static int s_move_mag;
    `s_brightness_pending` hand-off the box's setting uses, for the reason above it. */
 static void sleep_wake(const char *why)
 {
+    s_standby = false;
     if (s_sleep == SCREEN_AWAKE) return;
     ESP_LOGI(TAG, "screen: waking (%s)", why);
     s_sleep = SCREEN_AWAKE;
@@ -1434,9 +1453,25 @@ static bool label_hit(int fx, int fy, int over_y0)
  * the menu is modal, it times out on its own, and the cost of an accidental open is one press
  * of the cross, against the cost of a control that children could not work. */
 #define BOOT_DEBOUNCE_MS 250
-static uint32_t s_boot_last_ms; /* when this last ACCEPTED a press; 0 = never */
-static bool s_boot_press;       /* set here, consumed by the frame loop */
 
+/* HOW LONG IS "OFF". Five seconds, as the owner asked, and it is deliberately far past
+   anything a child produces by leaning on the button: this is the one control on the panel
+   whose outcome cannot be undone from the panel, because a unit in deep sleep answers nothing
+   but its own button. */
+#define BOOT_SLEEP_MS 5000
+
+static uint32_t s_boot_last_ms;  /* when this last ACCEPTED a press; 0 = never */
+static uint32_t s_boot_down_at;  /* when the current press began; 0 = not down */
+static bool s_boot_short;        /* a completed SHORT press, consumed by the frame loop */
+static bool s_boot_sleep;        /* the hold completed; the frame loop parks and sleeps */
+
+/* THE ACTION IS ON THE RELEASE, AND THAT IS THE WHOLE REASON THIS IS NOT A TOGGLE ANY MORE.
+ *
+ * A five-second hold begins with exactly the same falling edge a tap does. Acting on the edge
+ * would mean every attempt to turn the panel OFF first turned the screen off and the microphone
+ * off — the short-press action — and the child would be watching for the result of a gesture
+ * that had already half-fired. So a press is only a press once it ends, and it only counts as
+ * one if it ended soon enough. */
 static void boot_button_poll(void)
 {
     const bool down = gpio_get_level(BOOT_BTN) == 0; /* active low, pulled up */
@@ -1444,19 +1479,36 @@ static void boot_button_poll(void)
     if (down && !s_boot_was_down &&
         (s_boot_last_ms == 0 || now - s_boot_last_ms >= BOOT_DEBOUNCE_MS)) {
         s_boot_last_ms = now == 0 ? 1 : now;
+        s_boot_down_at = now == 0 ? 1 : now;
         s_boot_presses++;
-        s_boot_press = true;
         ESP_LOGI(TAG, "boot button: press %d", s_boot_presses);
+    }
+    if (down && s_boot_down_at != 0 && now - s_boot_down_at >= BOOT_SLEEP_MS) {
+        /* FIRES WHILE THE FINGER IS STILL DOWN, on purpose: the person holding it needs to
+           find out they have succeeded without having to guess when to let go. */
+        s_boot_down_at = 0;
+        s_boot_sleep = true;
+        ESP_LOGW(TAG, "boot button: held — powering down");
+    }
+    if (!down && s_boot_was_down && s_boot_down_at != 0) {
+        s_boot_short = true;
+        s_boot_down_at = 0;
     }
     s_boot_was_down = down;
 }
 
-/* Has the button been pressed since this was last asked? Consumed, so one press is one
-   answer — which is what lets the caller treat it as a toggle without counting edges. */
+/* A completed SHORT press. Consumed, so one press is one answer. */
 static bool boot_button_take(void)
 {
-    const bool was = s_boot_press;
-    s_boot_press = false;
+    const bool was = s_boot_short;
+    s_boot_short = false;
+    return was;
+}
+
+static bool boot_button_sleep_requested(void)
+{
+    const bool was = s_boot_sleep;
+    s_boot_sleep = false;
     return was;
 }
 
@@ -2737,7 +2789,10 @@ static void face_task(void *arg)
            on forever by whichever exit someone forgets. This cannot be wrong for longer than a
            frame, and `speech_mute_commands` only logs on a change, so it costs nothing to say
            every time. */
-        speech_mute_commands(s_talk == TALK_RECORDING);
+        /* Deaf while recording (a message must not also be a command) and deaf in standby
+           (the child asked it to stop listening). Derived per frame rather than armed at the
+           edges, so neither state can leave the microphone muted after it ends. */
+        speech_mute_commands(s_talk == TALK_RECORDING || s_standby);
         boot_button_poll();
         /* THE BUTTON TOGGLES THE GRID: press to show, press to hide. Safe as a toggle only
            because `boot_button_poll` debounces — a raw edge would close on the same press that
@@ -2748,21 +2803,41 @@ static void face_task(void *arg)
            already committed to a message, and a menu over a recording offers a second recipient
            for audio being captured for the first. Closing is never refused — getting OUT of
            something must not depend on the state you are in. */
+        /* THE BUTTON IS THE POWER CONTROL NOW, not the menu. It opened the "who?" grid until
+           a long press on the pet could do that — and one gesture per job is worth more than a
+           second way to reach the same menu, because the button is the only control on this
+           unit that can turn it off and that is not something to share. */
         if (boot_button_take()) {
-            if (s_sendto_until != 0) {
-                s_sendto_until = 0;
-                if (sound) audio_cue(CUE_STOP);
-                ESP_LOGI(TAG, "sendto: grid closed by button");
-                dirty = true;
-            } else if (s_talk == TALK_IDLE && !audio_playing()) {
-                s_sendto_until = now + SENDTO_MS;
+            if (s_standby) {
+                sleep_wake("button");
                 if (sound) audio_cue(CUE_HEARD);
-                ESP_LOGI(TAG, "sendto: grid opened by button");
                 dirty = true;
             } else {
-                ESP_LOGI(TAG, "sendto: busy — grid not opened");
+                /* IT BLINKS FIRST, which is the owner's word for it and the right behaviour:
+                   the screen going dark is indistinguishable from the screen having crashed
+                   unless something acknowledges the press. The cue is that acknowledgement,
+                   and it sounds BEFORE the dark rather than into it. */
+                if (sound) audio_cue(CUE_STOP);
+                s_sendto_until = 0;   /* nothing modal survives being told to be quiet */
+                s_repeat_until = 0;
+                if (s_talk != TALK_IDLE) {
+                    s_talk = TALK_IDLE;
+                    audio_capture_close(NULL);
+                }
+                jpanel_stop();
+                s_standby = true;
+                s_sleep = SCREEN_DARK;
+                s_brightness_pending = true;
+                dirty = true;
+                ESP_LOGI(TAG, "standby: screen off, microphone off, still reachable");
             }
         }
+        /* THE HOLD, AND IT LEAVES FROM THE SAME PLACE A REBOOT DOES — see the restart block
+           below for why: this is the one point in the firmware where a frame has just finished
+           and nothing is in flight on the QSPI bus. A panel that went to sleep mid-transfer is
+           a panel that may not come back, and the whole point of this gesture is that the only
+           way out is the button. */
+        if (boot_button_sleep_requested()) s_power_off = true;
         /* Closed by its own clock. The pet is what a child came back to, so a menu nobody
            answered gets out of the way rather than waiting forever. */
         if (s_sendto_until != 0 && now >= s_sendto_until) {
@@ -3196,10 +3271,25 @@ static void face_task(void *arg)
             }
             if (used) {
                 active_ms = now == 0 ? 1 : now;
-                if (s_sleep != SCREEN_AWAKE) {
+                /* STANDBY ENDS ON A PERSON OR A MESSAGE, AND ON NOTHING ELSE.
+                 *
+                   `used` is the IDLE timer's question — "is anything happening?" — and it is
+                   deliberately broad: it counts a lingering `JPANEL_FAILED`, a cue still
+                   sounding, an accelerometer twitch. Letting that same test end standby would
+                   mean a child pressed the button, the screen went dark, and then a failed
+                   fetch thirty seconds later quietly turned the panel back on. The owner asked
+                   for two ways back — the button, and a message arriving — so those are the
+                   two, plus a finger on the glass, which is a person saying the same thing. */
+                const bool wanted_back = arrived || tapped || down || woke_by_touch;
+                if (s_sleep != SCREEN_AWAKE && (!s_standby || wanted_back)) {
                     sleep_wake(arrived ? "message" : "activity");
                     dirty = true; /* the first frame back is a whole one, not a delta */
                 }
+            } else if (s_standby) {
+                /* PINNED, NOT COUNTED DOWN TO. The idle timer must not be allowed to promote
+                   this back to DIM or AWAKE the way it would for an ordinary dark screen — the
+                   child asked for off, and off does not expire. */
+                s_sleep = SCREEN_DARK;
             } else {
                 const uint32_t idle = now - active_ms;
                 const screen_stage_t want = screen_stage(idle);
@@ -3586,6 +3676,25 @@ static void face_task(void *arg)
            which is the difference between a panel that comes back and one the owner has to
            power-cycle by hand (`display.h`). The gesture has always left from here; the OTA
            used to restart from its own task, mid-transfer. */
+            /* OFF, AND IT LEAVES FROM HERE FOR THE REASON THE REBOOTS DO: a frame has just
+               finished and nothing is in flight on the QSPI bus. The difference is that this
+               one cannot be recovered from remotely — a unit in deep sleep answers nothing but
+               its own button — so leaving mid-transfer is not a four-second colour-bar cost
+               here, it is a panel somebody has to find and hold a button on. */
+        if (s_power_off) {
+            ESP_LOGW(TAG, "power: deep sleep — the button is the only way back");
+            /* Dark BEFORE the sleep rather than as a side effect of it: an AMOLED holds its
+               last frame with no clock running, so a panel that slept mid-face would sit there
+               showing a pet that is not there any more. */
+            s_sleep = SCREEN_DARK;
+            apply_brightness();
+            audio_stop();
+            /* LOW, because the button is active-low and pulled up: it reads 0 pressed. EXT0
+               rather than a timer — nothing is to wake this but a finger. */
+            esp_sleep_enable_ext0_wakeup(BOOT_BTN, 0);
+            vTaskDelay(pdMS_TO_TICKS(150)); /* let the log drain and the finger lift */
+            esp_deep_sleep_start();         /* never returns */
+        }
         if (rebooting || s_restart_pending) {
             ESP_LOGW(TAG, "%s — parking the renderer and restarting",
                      rebooting ? "reboot gesture completed" : "restart requested");

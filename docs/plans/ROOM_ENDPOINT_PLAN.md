@@ -5593,6 +5593,44 @@ to the pair, which was fine against a ten-second deadline and a bug against one 
 finger — a message arriving while the last exchange stood would have been hidden until somebody
 pressed exit, possibly all night. The new message takes the corner.
 
+##### The button becomes the power control (0.3.26)
+
+*"Now that we can long press to pull up the menu, let's override the button presses. Single press
+blinks the screen and stops listening. But it keeps looking for incoming messages and will light
+up if a new message comes in. But if I hold the button for say 5 seconds, it should go into the
+lowest power mode it can where it doesn't do anything but listen to that button to turn back on."*
+
+The button opened the "who?" grid until a long press on the pet could do it. One gesture per job
+is worth more than a second route to the same menu — especially for the one control on this unit
+that can turn it off, which is not something to share with a menu a four-year-old opens.
+
+**Standby is not the idle sleep wearing a different hat, and the difference is the microphone.**
+The idle stages darken a panel nobody is using and leave it *listening*, because a child walking
+back into the room says the wake phrase. This is a deliberate "be quiet now" — screen off **and**
+deaf — while the network stays up, so a message from Dad still lights the room. That combination
+is the whole point: the panel stops watching the room without stopping being reachable.
+
+**The action is on the RELEASE, and that is why this could not stay a toggle.** A five-second
+hold begins with exactly the same falling edge a tap does, so acting on the edge would mean every
+attempt to turn the panel *off* first turned the screen and microphone off — the short-press
+action — leaving the person holding it watching for the result of a gesture that had already
+half-fired. A press is only a press once it ends, and only counts as one if it ended soon enough.
+
+**Standby ends on a person or a message and on nothing else.** The existing `used` test is the
+*idle timer's* question — deliberately broad, counting a lingering `JPANEL_FAILED`, a cue still
+sounding, an accelerometer twitch. Letting that end standby would mean a child pressed the
+button, the screen went dark, and a failed fetch thirty seconds later quietly turned the panel
+back on. Two ways back were asked for — the button and an arriving message — plus a finger on the
+glass, which is a person saying the same thing.
+
+**And the power-down leaves from where the reboots do**, the one point in the render loop where
+a frame has just finished and nothing is in flight on the QSPI bus. For a reboot that ordering
+buys four seconds of colour bars; here it buys the difference between a panel that comes back and
+a panel somebody has to find and hold a button on, because a unit in deep sleep answers nothing
+else. The screen is darkened *before* the sleep rather than as a side effect: an AMOLED holds its
+last frame with no clock running, so a panel that slept mid-face would sit there showing a pet
+that is not there any more.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The
