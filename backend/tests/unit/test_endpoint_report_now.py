@@ -99,3 +99,94 @@ class TestTheRingReadsBackNamed:
         assert _heard_entry(["short", 1]) is None
         assert _heard_entry("not a tuple") is None
         assert _heard_entry(None) is None
+
+
+class TestTheVolumeCeilingWasTheBugReport:
+    """A clamp reached in normal use is not a safety limit, it is a dead control.
+
+    `VOLUME_MAX` was 85, the stored value was 85, and every further increase clamped back to it —
+    so the slider stopped at 85 and looked broken while hiding a real complaint underneath.
+    """
+
+    def test_the_owners_number_is_reachable(self) -> None:
+        from jbrain.api.endpoint import VOLUME_MAX, EndpointSettings, _clamp
+
+        assert VOLUME_MAX >= 95, "95 was asked for and must not clamp"
+        assert _clamp(EndpointSettings(volume=95)).volume == 95
+
+    def test_the_default_is_the_one_that_was_asked_for(self) -> None:
+        from jbrain.api.endpoint import EndpointSettings
+
+        assert EndpointSettings().volume == 95
+
+    def test_the_range_the_panel_accepts_is_expressible(self) -> None:
+        """`audio_set_levels` takes 0..100 and the slider should reach both ends; anything the
+        codec then refuses comes back visibly as `levels` rather than being assumed."""
+        from jbrain.api.endpoint import EndpointSettings, _clamp
+
+        assert _clamp(EndpointSettings(volume=100)).volume == 100
+        assert _clamp(EndpointSettings(volume=0)).volume == 0
+        # Still clamped rather than rejected, which is what keeps a typo safe.
+        assert _clamp(EndpointSettings(volume=140)).volume == 100
+        assert _clamp(EndpointSettings(volume=-5)).volume == 0
+
+    def test_the_panel_reports_why_its_settings_fetch_failed(self) -> None:
+        """THE FAULT THAT HID ALL OF THIS. The box's value had never reached the panel, and a
+        fetch that dies ON the panel never appears in the box's log — so the only way to see it
+        is for the panel to say so in telemetry. Pinned from both sides, like every other
+        field that crosses this boundary."""
+        import pathlib
+
+        fw = pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main"
+        assert "ota_settings_faults" in (fw / "ota.h").read_text(encoding="utf-8")
+        assert r"\"set_err\"" in (fw / "main.c").read_text(encoding="utf-8"), (
+            "the settings-fetch fault is no longer on the telemetry wire"
+        )
+        # And the box must NAME it, or `model_dump()` drops it silently — the same defect that
+        # would have 422'd every report when the fifth `heard` field arrived.
+        from jbrain.api.endpoint import TelemetryIn
+
+        got = TelemetryIn(version="0.3.15", uptime_ms=1, set_err="ESP_ERR_NO_MEM", set_fails=7)
+        assert got.set_err == "ESP_ERR_NO_MEM" and got.set_fails == 7
+
+
+class TestTheButtonGridIsWiredToRealActions:
+    """The grid is only worth having if pressing an icon reaches the same code the voice does.
+
+    These read the firmware, because that is the half of this feature no Python test can run —
+    and because every other cross-package bug in this project has been two files disagreeing
+    with nothing looking at both.
+    """
+
+    def _fw(self, name: str) -> str:
+        import pathlib
+
+        return (pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / name).read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_button_is_a_hold_not_a_press(self) -> None:
+        """A press was the wrong event twice over: the contact bounces (15 presses read as 21),
+        and the button is on the edge of something a four-year-old picks up."""
+        src = self._fw("display.c")
+        assert "#define BOOT_HOLD_MS 1000" in src, "the menu no longer needs a one-second hold"
+        assert "s_boot_fired" in src, "the once-per-hold guard is gone; leaning would re-open it"
+
+    def test_every_icon_reaches_the_same_path_the_voice_does(self) -> None:
+        src = self._fw("display.c")
+        # One helper each, so a refusal is identical however it was asked for.
+        assert "start_send_recording(who == SENDTO_DAD" in src, "the people icons do not record"
+        assert "who == SENDTO_PET" in src and "start_listening(now, speaking)" in src, (
+            "the pet icon does not start a conversation"
+        )
+
+    def test_commands_are_muted_while_a_message_is_recorded(self) -> None:
+        """The pet acting on words from inside a message is what put farts into a four-year-old's
+        message to her sister. Derived from the state every frame rather than armed at the edges,
+        because recording ends five ways and a mute left armed is a panel that stops listening."""
+        assert "void speech_mute_commands(bool muted);" in self._fw("speech.h")
+        assert "speech_mute_commands(s_talk == TALK_RECORDING);" in self._fw("display.c"), (
+            "the mute is no longer derived from the state and can leak"
+        )
+        # The ring must still fill: a recording is when what it hears is most interesting.
+        assert "note_heard(v->phrase, r->prob[0], true, r->raw_string);" in self._fw("speech.c")

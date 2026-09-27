@@ -839,10 +839,17 @@ static bool s_upside_down;
 static jpanel_to_t s_rec_to;
 static bool s_rec_heard;
 static uint32_t s_rec_hush;
-/* THE REPEAT ICON, and it is a deadline rather than a flag. The owner asked for five seconds
-   after a message plays: it is for *"what did she say?"*, not a permanent control, and a
-   button that never leaves would become another thing on the glass to poke. */
-#define REPEAT_MS 5000
+/* THE REPEAT ICON, and it is a deadline rather than a flag. It is for *"what did she say?"*,
+   not a permanent control, and a button that never leaves would become another thing on the
+   glass to poke.
+
+   TEN SECONDS, UP FROM FIVE. The owner, watching the children use it: *"the replay button
+   probably needs to stay on there for about 10 seconds after it shows."* Five was the first
+   guess and it was an adult's: deciding you missed something, finding the corner and landing a
+   four-year-old's finger on it is most of five seconds before the aiming even starts. Still a
+   deadline, and still inside `POPUP_BIG_MS`, so a waiting-message badge is only ever deferred
+   by this rather than displaced. */
+#define REPEAT_MS 10000
 static uint32_t s_repeat_until;
 /* THE POP-UP SHRINKS RATHER THAN NAGS.
  *
@@ -878,6 +885,14 @@ static uint32_t s_popup_since;
  * A DEADLINE, because a deferral that never fires is a button that did nothing. If the speaker
  * is somehow still busy after this, the action is dropped rather than firing late into silence
  * a child has stopped associating with their finger. */
+/* HOW LONG THE "WHO?" GRID STAYS UP. A menu a child walked away from must not sit on the pet's
+   face forever — the pet is the thing they came back to — and it must not be so brief that
+   opening it and then deciding is a race. Ten seconds is the pop-up's own big-badge window
+   twice over, which is the closest thing here to a measured attention span. */
+#define SENDTO_MS 10000
+/* Non-zero while the grid is up: the moment it closes itself. */
+static uint32_t s_sendto_until;
+
 #define PENDING_MS 1500
 typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY } pending_t;
 static pending_t s_pending;
@@ -1159,12 +1174,12 @@ static void draw_run(uint16_t *fb, int y0, int h, int left)
     }
 }
 
-/* THE REPEAT ICON: top-left, five seconds, then gone (`REPEAT_MS`).
+/* THE REPEAT ICON: top-left, ten seconds, then gone (`REPEAT_MS`).
  *
  * Top-left is where the owner asked for it, and it is NOT an empty corner — the panel's name
- * label lives there. It covers the label for those five seconds, deliberately: everything
+ * label lives there. It covers the label for those ten seconds, deliberately: everything
  * else on this glass is on the right (the indicator, the thinking box, the meter), and a
- * label that says what the panel is called is worth less for five seconds than a button that
+ * label that says what the panel is called is worth less for ten seconds than a button that
  * says what your sister said. It is tested before `label_hit`, so the tap goes to the replay
  * rather than flipping the name to a version number.
  *
@@ -1272,14 +1287,107 @@ static bool label_hit(int fx, int fy, int over_y0)
     return fx >= x0 && fx <= x1 && fy >= y0 && fy <= y1;
 }
 
+/* A HOLD, NOT A PRESS, AND ONE SECOND OF IT.
+ *
+ * The owner: *"press that button press if you hold it for longer than 1 second should pull up
+ * that menu."* Two reasons it has to be a hold. This switch BOUNCES — measured 2026-09-27,
+ * fifteen deliberate presses were reported as `boot_btn` 21 — so an edge is not a reliable
+ * event to open anything on. And the button is on the edge of a thing a four-year-old picks
+ * up, so a brush against it must not put a menu over the pet.
+ *
+ * A continuous second of `down` is its own debounce: contact bounce at the start only re-times
+ * the hold by a few milliseconds, and nothing brief can satisfy it at all. Fires ONCE per hold,
+ * so leaning on the button does not reopen the menu forty times.
+ *
+ * Polled once a frame, and the idle frame floor is 200 ms, so the menu appears between 1.0 and
+ * 1.2 seconds in. That is inside what a child reads as "when I held it". */
+#define BOOT_HOLD_MS 1000
+static uint32_t s_boot_down_at; /* when this press began; 0 when the button is up */
+static bool s_boot_fired;       /* this hold has already opened something */
+static bool s_boot_hold;        /* set here, consumed by the frame loop */
+
 static void boot_button_poll(void)
 {
     const bool down = gpio_get_level(BOOT_BTN) == 0; /* active low, pulled up */
-    if (down && !s_boot_was_down) {
-        s_boot_presses++;
-        ESP_LOGI(TAG, "boot button: press %d", s_boot_presses);
+    const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (!down) {
+        s_boot_down_at = 0;
+        s_boot_fired = false;
+        s_boot_was_down = false;
+        return;
     }
-    s_boot_was_down = down;
+    if (s_boot_down_at == 0) {
+        s_boot_down_at = now == 0 ? 1 : now;
+    } else if (!s_boot_fired && now - s_boot_down_at >= BOOT_HOLD_MS) {
+        s_boot_fired = true;
+        /* COUNTED HERE, so `boot_btn` in telemetry means "holds that asked for the menu"
+           rather than "edges the contact produced" — the second of which was never a number
+           anyone could act on. */
+        s_boot_presses++;
+        s_boot_hold = true;
+        ESP_LOGI(TAG, "boot button: held (%d)", s_boot_presses);
+    }
+    s_boot_was_down = true;
+}
+
+/* Has the button been held since this was last asked? Consumed, so one hold is one answer. */
+static bool boot_button_take(void)
+{
+    const bool was = s_boot_hold;
+    s_boot_hold = false;
+    return was;
+}
+
+/* START A VOICE POST FOR SOMEBODY, and there is exactly one of these because there are now two
+ * ways to ask for it: the spoken phrase, and the grid a button opens. The refusals are the
+ * interesting part and they must be identical either way — one microphone, one thing at a time —
+ * so a child who presses an icon while the pet is already talking gets the same nothing a child
+ * who said the phrase would.
+ *
+ * Returns whether a recording actually started; the caller owns the cue and the redraw, because
+ * a press already sounded for the finger and a phrase had not. */
+/* START A CONVERSATION TURN, and like `start_send_recording` there is exactly one of these
+ * because there are now two ways to ask: the wake phrase, and the pet's own icon on the grid.
+ * The refusals must be identical either way — one microphone, one thing at a time.
+ *
+ * Returns whether the turn actually opened; the caller owns the cue and the redraw. */
+static bool start_listening(uint32_t now, bool speaking)
+{
+    if (s_talk != TALK_IDLE || speaking || talk_state() == TALK_NET_BUSY) {
+        ESP_LOGI(TAG, "talk: busy — not listening");
+        return false;
+    }
+    s_talk = TALK_LISTENING;
+    s_talk_since = now;
+    s_listen_voice = true;
+    s_listen_heard = false;
+    s_listen_hush = 0;
+    s_listen_lead = LISTEN_LEAD_MS;
+    s_follow_turns = 0; /* a deliberate start is a fresh exchange */
+    audio_capture_open();
+    ESP_LOGI(TAG, "talk: listening");
+    return true;
+}
+
+static bool start_send_recording(jpanel_to_t to, uint32_t now, bool speaking)
+{
+    if (s_talk != TALK_IDLE || speaking || talk_state() == TALK_NET_BUSY ||
+        jpanel_state() == JPANEL_BUSY) {
+        ESP_LOGI(TAG, "jpanel: busy — not recording");
+        return false;
+    }
+    s_talk = TALK_RECORDING;
+    s_talk_since = now;
+    s_rec_to = to;
+    s_rec_heard = false;
+    s_rec_hush = 0;
+    /* The follow-up window is closed: a message is not a turn, and the microphone must not
+       reopen after one. */
+    s_follow_armed = false;
+    audio_capture_open();
+    ESP_LOGI(TAG, "jpanel: recording for %s",
+             s_rec_to == JPANEL_TO_DAD ? "dad" : "the other panel");
+    return true;
 }
 
 int display_boot_presses(void)
@@ -1973,6 +2081,59 @@ static void face_task(void *arg)
              * cannot tell which one they asked for.
              *
              * Against overlay coordinates, not frame ones — see `tap_to_overlay`. */
+            /* THE GRID OUTRANKS EVERYTHING WHILE IT IS UP, and it has to: a child pressed a
+             * button to put it there, so this is the one overlay on the panel that was asked
+             * for explicitly rather than offered. A waiting-message pop-up winning a press
+             * aimed at a sister's icon would answer a question nobody asked.
+             *
+             * EVERY PRESS IS CONSUMED while it is open, including the empty corner and the
+             * dead bands, which is what makes it modal: the pet cannot be poked through a
+             * menu, so a miss costs a press rather than a fart. */
+            if (s_sendto_until != 0) {
+                const sendto_hit_t who = sendto_hit(ox, oy, over_h_tap);
+                if (who == SENDTO_SISTER || who == SENDTO_DAD) {
+                    s_sendto_until = 0;
+                    /* ONE CUE, AND IT IS THE ONE THE SPOKEN PHRASE ALREADY PLAYS. A press sound
+                       followed by the listen sound would be two noises for one action and a new
+                       pattern to learn; `CUE_LISTEN` is what "start talking now" has always
+                       meant on this panel. A refusal says so instead of going quiet — a control
+                       that answers with silence is the thing the repeat icon's cue was added to
+                       stop. */
+                    if (start_send_recording(who == SENDTO_DAD ? JPANEL_TO_DAD : JPANEL_TO_PANEL,
+                                             now, speaking)) {
+                        if (sound) audio_cue(CUE_LISTEN);
+                    } else if (sound) {
+                        audio_cue(CUE_STOP);
+                    }
+                    s_flinch = 1.0f;
+                    dirty = true;
+                    goto tap_done;
+                }
+                if (who == SENDTO_PET) {
+                    s_sendto_until = 0;
+                    if (start_listening(now, speaking)) {
+                        if (sound) audio_cue(CUE_LISTEN);
+                    } else if (sound) {
+                        audio_cue(CUE_STOP);
+                    }
+                    s_flinch = 1.0f;
+                    dirty = true;
+                    goto tap_done;
+                }
+                if (who == SENDTO_CANCEL) {
+                    s_sendto_until = 0;
+                    s_flinch = 1.0f;
+                    if (sound) audio_cue(CUE_STOP);
+                    ESP_LOGI(TAG, "sendto: cancelled");
+                    dirty = true;
+                    goto tap_done;
+                }
+                /* A miss inside the menu keeps it up: closing on a stray finger would make the
+                   grid something a child has to aim at twice. */
+                s_flinch = 1.0f;
+                dirty = true;
+                goto tap_done;
+            }
             {
                 if (in_box(s_popup_box, ox, oy)) {
                     s_flinch = 1.0f;
@@ -2247,24 +2408,11 @@ static void face_task(void *arg)
                      *
                        Refused while a turn is in flight or while the pet is speaking, exactly
                        as the name is: one microphone, one thing at a time. */
-                    if (s_talk == TALK_IDLE && !speaking && talk_state() != TALK_NET_BUSY &&
-                        jpanel_state() != JPANEL_BUSY) {
-                        s_talk = TALK_RECORDING;
-                        s_talk_since = now;
-                        s_rec_to = v->arg == (int)JPANEL_TO_DAD ? JPANEL_TO_DAD
-                                                                : JPANEL_TO_PANEL;
-                        s_rec_heard = false;
-                        s_rec_hush = 0;
-                        /* The follow-up window is closed: a message is not a turn, and the
-                           microphone must not reopen after one. */
-                        s_follow_armed = false;
-                        audio_capture_open();
-                        ESP_LOGI(TAG, "jpanel: recording for %s",
-                                 s_rec_to == JPANEL_TO_DAD ? "dad" : "the other panel");
+                    if (start_send_recording(v->arg == (int)JPANEL_TO_DAD ? JPANEL_TO_DAD
+                                                                          : JPANEL_TO_PANEL,
+                                             now, speaking)) {
                         heard_cue = CUE_LISTEN;
                         dirty = true;
-                    } else {
-                        ESP_LOGI(TAG, "jpanel: busy — not recording");
                     }
                     break;
                 case VOCAB_LISTEN:
@@ -2273,18 +2421,7 @@ static void face_task(void *arg)
                        failure face — is the press-and-hold machine, and the only difference is
                        how the turn ends (`LISTEN_HUSH_MS`). Refused while a turn is in flight
                        or while we are speaking, for the same reasons the hold is. */
-                    if (s_talk == TALK_IDLE && !speaking && talk_state() != TALK_NET_BUSY) {
-                        s_talk = TALK_LISTENING;
-                        s_talk_since = now;
-                        s_listen_voice = true;
-                        s_listen_heard = false;
-                        s_listen_hush = 0;
-                        s_listen_lead = LISTEN_LEAD_MS;
-                        s_follow_turns = 0; /* a deliberate start is a fresh exchange */
-                        audio_capture_open();
-                        ESP_LOGI(TAG, "talk: listening (name)");
-                        heard_cue = CUE_LISTEN;
-                    }
+                    if (start_listening(now, speaking)) heard_cue = CUE_LISTEN;
                     break;
                 case VOCAB_ACTION:
                 default:
@@ -2372,7 +2509,44 @@ static void face_task(void *arg)
         s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
         PHASE(5);
         update_orientation();
+        /* DEAF TO COMMANDS WHILE A MESSAGE IS BEING RECORDED. A message is a sentence spoken at
+           a panel whose vocabulary is short words children say, so without this the pet acts on
+           words from inside the message — the owner watched farts and spins going off while a
+           four-year-old was talking to her sister.
+
+           DERIVED FROM THE STATE, NOT SET AT THE EDGES. Recording ends five ways — the tick, the
+           cross, going quiet, the cap, and a failure — and a mute armed on entry would be left
+           on forever by whichever exit someone forgets. This cannot be wrong for longer than a
+           frame, and `speech_mute_commands` only logs on a change, so it costs nothing to say
+           every time. */
+        speech_mute_commands(s_talk == TALK_RECORDING);
         boot_button_poll();
+        /* THE BUTTON OPENS THE GRID, AND OPENING IS ALL IT DOES. Not a toggle: this switch
+           bounces (see `boot_button_poll`), and a toggle on a bouncing contact would close what
+           the same press had just opened. Pressing again while it is up only extends it, which
+           is also the kinder reading of a child pressing twice because nothing seemed to
+           happen. The ways OUT are the cross and the timeout, both of which a child can see.
+
+           REFUSED MID-RECORDING, for the reason every other control here is: the microphone is
+           already committed to a message, and a menu over a recording offers a second recipient
+           for audio that is being captured for the first. */
+        if (boot_button_take()) {
+            if (s_talk == TALK_IDLE && !audio_playing()) {
+                s_sendto_until = now + SENDTO_MS;
+                if (sound) audio_cue(CUE_HEARD);
+                ESP_LOGI(TAG, "sendto: grid opened by button");
+                dirty = true;
+            } else {
+                ESP_LOGI(TAG, "sendto: busy — grid not opened");
+            }
+        }
+        /* Closed by its own clock. The pet is what a child came back to, so a menu nobody
+           answered gets out of the way rather than waiting forever. */
+        if (s_sendto_until != 0 && now >= s_sendto_until) {
+            s_sendto_until = 0;
+            ESP_LOGI(TAG, "sendto: grid timed out");
+            dirty = true;
+        }
         s_open = blink_open(poll_ms);
         s_flinch *= FLINCH_DECAY;
         if (s_flinch < 0.02f) s_flinch = 0.0f;
@@ -2624,7 +2798,7 @@ static void face_task(void *arg)
             break;
         case JPANEL_PLAYING:
             /* Held until the speaker stops, so the repeat window starts when the message
-               ENDS rather than when it began — five seconds measured from the wrong end
+               ENDS rather than when it began — the window measured from the wrong end
                would expire before a twenty-second message finished.
              *
                `audio_playing()` READ AGAIN HERE, not the frame's `speaking`. That flag is
@@ -2945,7 +3119,7 @@ static void face_task(void *arg)
                 const int waiting = jpanel_waiting(from, sizeof(from));
                 if (waiting > 0) {
                     /* Big for the first fifteen seconds, then a badge. The AGAIN button owns
-                       the same corner for its five seconds and wins there — it is transient
+                       the same corner for its ten seconds and wins there — it is transient
                        and it answers a question the child is asking right now ("what did she
                        say?"), where the badge answers one they have already declined. */
                     if (now - s_popup_since < POPUP_BIG_MS) {
@@ -2962,6 +3136,15 @@ static void face_task(void *arg)
                 draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0));
             } else if (s_repeat_until != 0) {
                 draw_repeat(fb, over_h);
+            }
+            /* THE GRID LAST OF ALL, over the pop-up and over the run control, because it is
+               the one overlay here that a child asked for by pressing a button. Everything
+               under it is something the panel offered; a menu that could be covered by an
+               offer would be a question answered by an interruption.
+               Drawn BEFORE the flip like every other overlay, which is what makes
+               `tap_to_overlay` the right space to hit test it in. */
+            if (s_sendto_until != 0) {
+                sendto_draw(fb, FACE_W, FACE_H, over_h);
             }
             PHASE(8);
             if (s_upside_down) flip_frame(fb);

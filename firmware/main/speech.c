@@ -141,6 +141,9 @@ typedef struct {
     uint16_t count;
     bool fired;    /* false when the decode TIMED OUT — a near miss, the interesting half */
 } decode_t;
+/* Set while a message is being recorded; see `speech_mute_commands`. */
+static volatile bool s_muted;
+
 static decode_t s_decode[DECODE_MAX];
 static int s_decode_n;
 
@@ -194,6 +197,12 @@ static void note_heard(const char *phrase, float prob, bool fired, const char *r
     s_decode[0].count = 1;
     s_decode[0].fired = fired;
     if (s_decode_n < DECODE_MAX) s_decode_n++;
+}
+
+void speech_mute_commands(bool muted)
+{
+    if (s_muted != muted) ESP_LOGI(TAG, "commands %s", muted ? "MUTED" : "live");
+    s_muted = muted;
 }
 
 bool speech_heard(int i, const char **phrase, int *prob, bool *fired, int *count,
@@ -388,8 +397,15 @@ static void detect_task(void *arg)
                     ESP_LOGI(TAG, "  also '%s' p=%.2f",
                              alt != NULL ? alt->phrase : "?", (double)r->prob[k]);
                 }
+                /* THE RING STILL GETS IT, THE PANEL DOES NOT. A decode during a recording is
+                   a real decode and belongs in the diagnostics; acting on it is what puts a
+                   fart inside a four-year-old's message to her sister. */
                 note_heard(v->phrase, r->prob[0], true, r->raw_string);
-                publish(r->command_id[0], v->phrase);
+                if (!s_muted) {
+                    publish(r->command_id[0], v->phrase);
+                } else {
+                    ESP_LOGI(TAG, "muted: '%s' recognised but not published", v->phrase);
+                }
             }
             /* MUST be cleaned after a detection or the next phrase decodes against this
                one's state. Timeout is the same: the model has to be told the phrase is over

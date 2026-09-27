@@ -33,6 +33,11 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url);
  * say it is broken is the one component whose failure this firmware cannot route around. */
 void ota_apply_faults(const char **err, int *tries);
 
+/* Why the SETTINGS fetch last failed, and how many have failed since boot. Empty and zero on a
+   panel whose knobs are arriving. A fetch that dies on the panel never reaches the box, so this
+   is the only place that failure is visible without a cable — see the comment in `ota.c`. */
+void ota_settings_faults(const char **err, int *fails);
+
 /* Tell the box what this panel looks like from the inside.
 
    The channel that neither lies nor resets what it measures. Register reads over QSPI return

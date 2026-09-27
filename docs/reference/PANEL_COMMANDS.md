@@ -1,6 +1,6 @@
 # What the panel answers to
 
-> **Status:** Living · **Last verified:** 2026-09-23
+> **Status:** Living · **Last verified:** 2026-09-27 — `tell sister` measured on 0.3.14 with hand-checked phonemes registered and **never fired once** across an afternoon, while `tell dad` fired 9/9. The recipient moves to a button-opened 2×2 icon grid in 0.3.15; both phrases stay in the vocabulary. Also measured: the microphone is **clipping** (`mic_peak` 32767 with the codec AGC off), and `raw_string` — the phoneme-decode diagnostic — comes back **empty** on this model, so it cannot answer what was heard.
 
 Every phrase the room-endpoint pet recognises, and — the part that is not in the source —
 **which ones have actually been confirmed working by a child saying them out loud.**
@@ -37,6 +37,28 @@ of what it answers to, and only one of those is useful in a bedroom.
 |---|---|
 | `dance` | registers fine; never fires. `do a dance` works, so the animation is sound |
 | `burp` | same — `do a burp` and `can you burp` reach it |
+| `tell sister` | **measured 2026-09-27 on 0.3.14: never fired once.** Registered with hand-checked phonemes (`TfL SgSTk`), `vocab_ok: 48, vocab_bad: 0`, nothing refused. Two children tried it across an afternoon; every one of the nine messages that got out went to Dad. The transcripts caught them routing around it — one message to Dad reads *"Tell Dad. It's doing it. So now you say your message."* |
+
+**`tell sister` is why the 2×2 grid exists** (0.3.15): the recipient stops being something a
+four-year-old has to pronounce. The phrase is left in the vocabulary — removing it might free
+model capacity for the phrases that do work, but that is a separate change with its own
+measurement, and `tell dad` still fires 9/9.
+
+**Two findings from the same afternoon that bear on every phrase here:**
+
+- **The microphone is clipping.** `mic_peak` came back at 32767 — dead-on int16 saturation —
+  with the codec's AGC off (`alc: 00 already-off`) and a fixed 30 dB gain. `speech.c` counts
+  clipped samples internally but the count never leaves the panel. Distortion hurts longer
+  phrases more than short ones, which fits this table better than any hypothesis below:
+  everything confirmed working is short, and `tell sister` is the longest command in the table.
+  Testable from the PWA with no flash — lower `mic_gain_db`, or turn `mic_agc` on.
+- **`raw_string` is empty on this model.** The field 0.3.10 added to tell *"the microphone never
+  carried it"* from *"it was heard as something else"* comes back blank on every decode, hit and
+  near-miss alike. The firmware reads it correctly (`get_results` straight after `DETECTED`); the
+  vendor simply does not fill it for English MultiNet7. `esp_mn_results_t` has a sibling field,
+  `string` (*"recognized string **with** commands graph"*), which has not been tried. **So the
+  question this table has asked since 2026-09-23 — heard-and-rejected, or never heard — is still
+  unanswered, and the instrument built for it does not work.**
 
 Both are in the table and both are accepted by the recogniser: the panel's own telemetry
 reports `vocab_ok: 46, vocab_bad: 0`, so this is not a registration failure. They are heard and

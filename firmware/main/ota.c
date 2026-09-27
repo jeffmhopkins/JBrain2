@@ -73,27 +73,70 @@ static esp_err_t attach_auth(esp_http_client_handle_t client)
     return esp_http_client_set_header(client, "Authorization", (const char *)value);
 }
 
+/* WHY THE SETTINGS FETCH LAST FAILED, AND HOW MANY TIMES IT HAS.
+ *
+ * MEASURED 2026-09-27: Lydian's panel reported `levels` EMPTY at 941 seconds of uptime while
+ * Elora's, on older firmware, reported `70/30`. `levels` is what the codec last ACCEPTED, so an
+ * empty one means `audio_set_levels` had never run — which means `apply_settings` had never
+ * succeeded in a quarter of an hour, on a panel that was otherwise online and carrying
+ * messages. The owner saw the same thing from the other end: *"the volume doesn't actually
+ * change the volume on the panel."*
+ *
+ * NOTHING ON THE BOX COULD SEE IT. A fetch that dies on the panel never reaches the box, so its
+ * access log shows only the requests that WORKED and the failure is invisible from the one
+ * surface the owner has (CLAUDE.md #10). Every settings knob rides this fetch — volume, the
+ * appearance, and the report-now counter — so one silent failure mode stalls all of them at
+ * once, which is exactly what it did. */
+static const char *s_set_err = "";
+static int s_set_fails;
+
+static void note_settings_fail(const char *why)
+{
+    s_set_err = why;
+    s_set_fails++;
+}
+
+void ota_settings_faults(const char **err, int *fails)
+{
+    if (err != NULL) *err = s_set_err;
+    if (fails != NULL) *fails = s_set_fails;
+}
+
 esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
 {
     char url[256];
     snprintf(url, sizeof(url), "%s/endpoint/settings", cfg->api);
 
     char *auth = bearer(cfg);
-    if (auth == NULL) return ESP_ERR_NO_MEM;
+    if (auth == NULL) {
+        note_settings_fail("no-mem-auth");
+        return ESP_ERR_NO_MEM;
+    }
 
     esp_http_client_config_t hc = {.url = url, .timeout_ms = HTTP_TIMEOUT_MS};
     trust(&hc, cfg);
     esp_http_client_handle_t client = esp_http_client_init(&hc);
     if (client == NULL) {
         free(auth);
+        note_settings_fail("client-init");
         return ESP_FAIL;
     }
     esp_http_client_set_header(client, "Authorization", auth);
 
     esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) goto done;
+    if (err != ESP_OK) {
+        /* THE ONE THAT MATTERS MOST. Everything below this line means the box answered; this
+           means the panel could not get a connection up at all, which is the shape a TLS
+           handshake starved of the internal DMA memory these units are short of takes. */
+        note_settings_fail(esp_err_to_name(err));
+        goto done;
+    }
     esp_http_client_fetch_headers(client);
-    if (esp_http_client_get_status_code(client) != 200) {
+    const int status = esp_http_client_get_status_code(client);
+    if (status != 200) {
+        static char code[12];
+        snprintf(code, sizeof(code), "http-%d", status);
+        note_settings_fail(code);
         err = ESP_FAIL;
         goto done;
     }
@@ -101,6 +144,7 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     char body[MANIFEST_MAX];
     const int len = esp_http_client_read_response(client, body, sizeof(body) - 1);
     if (len <= 0) {
+        note_settings_fail("empty-body");
         err = ESP_FAIL;
         goto done;
     }
@@ -108,6 +152,7 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
 
     cJSON *root = cJSON_Parse(body);
     if (root == NULL) {
+        note_settings_fail("bad-json");
         err = ESP_FAIL;
         goto done;
     }
@@ -155,6 +200,9 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     if (cJSON_IsString(fm) && fm->valuestring != NULL) {
         out->form = strcmp(fm->valuestring, "robot") == 0 ? 1 : 0;
     }
+    /* Cleared on success, so what is reported is the CURRENT state rather than the worst
+       thing that ever happened. */
+    s_set_err = "";
     cJSON_Delete(root);
 
 done:

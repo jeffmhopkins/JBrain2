@@ -95,3 +95,84 @@ void confirm_draw_repeat(uint16_t *fb, int w, int h, int over_h);
 
 /* Whether a finger landed on a centred single control. Same generous reach as the pair. */
 bool confirm_hit_centre(int fx, int fy, int over_h);
+
+/* --- THE "WHO?" GRID, AND WHY IT EXISTS -----------------------------------------------------
+ *
+ * MEASURED 2026-09-27, on 0.3.14, with all 48 phrases registered with hand-checked phonemes
+ * and none refused: `tell dad` fired nine times out of nine, and `tell sister` did not fire
+ * ONCE across an afternoon of two children trying it. The phoneme conversion — the thing that
+ * was supposed to fix it — did not. The transcripts caught them working around it: the message
+ * to Dad that says *"Tell Dad. It's doing it. So now you say your message."*
+ *
+ * So the recipient stops being something a four-year-old has to pronounce correctly. The owner:
+ * *"When we press the button it should bring up a menu for icons, a 2x2 grid similar to the
+ * check and cancel buttons ... top left and top right will be an icon for a sister and an icon
+ * for a dad and the bottom left will be a cancel to exit out of the menu."*
+ *
+ * SAME SIZE, SAME PLACE, SAME SPACE as the tick and the cross, and that is not laziness: those
+ * two are the only targets on this panel a child has been observed hitting reliably, their
+ * reach was tuned against a real fingertip, and they are drawn BEFORE `flip_frame` and hit
+ * tested through `tap_to_overlay` — the pairing that took a release to get right (§10.4bw).
+ * A second geometry would be a second chance to get that wrong.
+ *
+ * THE BOTTOM RIGHT IS THE PET. It was left empty when three targets were asked for, and the
+ * owner filled it deliberately: *"that blank spot should have one icon that is also the robot
+ * that would tie into the one to have a conversation with the llm."* So the grid now covers
+ * every way this panel can be spoken into — her sister, her dad, and the pet — and the wake
+ * phrase stops being the only door to the last of them.
+ *
+ * THE ROWS ARE A FULL DEAD BAND APART, the same 184 px that separates the columns, so a finger
+ * landing between rows does NOTHING rather than picking whichever circle happened to win —
+ * the rule the pair already follows, applied to the axis it just gained. */
+typedef enum {
+    SENDTO_NONE = 0, /* the gap between targets and the rest of the glass */
+    SENDTO_SISTER,
+    SENDTO_DAD,
+    SENDTO_CANCEL,
+    SENDTO_PET, /* talk to the pet itself — the same turn the wake phrase starts */
+} sendto_hit_t;
+
+/* 184 px between centres against an 82 px reach leaves a 20 px dead band — see the columns. */
+#define SENDTO_ROW_GAP 184
+
+/* The bottom row shares the tick and cross's centre line, so the control a child has already
+   learned to aim at has not moved. The top row is one dead band above it. */
+int sendto_cy_bottom(int over_h);
+int sendto_cy_top(int over_h);
+
+/* Which target a finger landed on, in the same coordinates `confirm_hit` takes. */
+sendto_hit_t sendto_hit(int fx, int fy, int over_h);
+
+/* Draw the grid. Pure, like `confirm_draw`, so the host suite can render it.
+ *
+ * FACES, NOT FIGURES. The first pass drew a small stick person and a big one, on the theory
+ * that size is the one cue a four-year-old needs no teaching for. Rendered, it was two blobs
+ * with bars through them, and the owner said what would actually work: *"an actual man face
+ * with a beard and then a little girl with long hair."* A beard and long hair are the features
+ * these particular children would name if you asked them who someone was, which is a better
+ * test than any theory about silhouettes.
+ *
+ * Neither disc is red or green: those two already mean cancel and send on this glass, and a
+ * recipient that looked like a verb would undo the only colour vocabulary these children have. */
+void sendto_draw(uint16_t *fb, int w, int h, int over_h);
+
+#define SENDTO_SISTER_COLOUR CONFIRM_SWAP(0xF81F) /* magenta */
+#define SENDTO_DAD_COLOUR CONFIRM_SWAP(0x07FF)    /* cyan */
+/* A light face against dark hair, because contrast is what survives being glanced at across a
+   bedroom on a 112 px disc. */
+#define SENDTO_SKIN CONFIRM_SWAP(0xF6D6)
+#define SENDTO_HAIR CONFIRM_SWAP(0x2124)
+/* THE GIRLS ARE BLONDE WITH BLUE EYES, which is not decoration: these two icons are pictures of
+   the two people in the house a four-year-old sends messages to, and a picture that is not of
+   them is a picture of somebody else. */
+#define SENDTO_BLONDE CONFIRM_SWAP(0xFEC0)
+#define SENDTO_BLUE_EYE CONFIRM_SWAP(0x039F)
+/* The pet's own disc. Amber, because every other colour on this glass is spoken for: red
+   cancels, green sends, blue repeats, and the two people are magenta and cyan. */
+#define SENDTO_PET_COLOUR CONFIRM_SWAP(0xFD20)
+/* A ROBOT FACE, NOT THE OSTRICH. The panel can wear either body, and the ostrich is its
+   default — but the owner asked for the robot here, and it is the better icon for the job: this
+   target means "talk to the thing that answers", and a robot says machine-that-listens in a way
+   a bird does not. Silver head, lit eyes. */
+#define SENDTO_ROBOT CONFIRM_SWAP(0xC618)
+#define SENDTO_ROBOT_EYE CONFIRM_SWAP(0x07FF)

@@ -3211,49 +3211,204 @@ static void test_phonemes_too_long_to_hold_are_refused_rather_than_truncated(voi
     (void)vocab_set_name("fish", NULL); /* leave the table as the firmware ships it */
 }
 
-static void test_the_tick_and_the_cross_cannot_both_be_hit(void)
+/* --- THE "WHO?" GRID ------------------------------------------------------------------------
+ *
+ * The recipient stops being something a four-year-old has to pronounce, because measured on
+ * 0.3.14 `tell sister` never fired ONCE while `tell dad` fired nine times out of nine. These
+ * pin the geometry that replaces it: a finger that lands between targets must do NOTHING, and
+ * the empty corner must stay empty.
+ */
+static void test_the_who_grid_has_four_distinct_answers(void)
 {
+    const int over_h = FACE_H;
+    const int top = sendto_cy_top(over_h), bottom = sendto_cy_bottom(over_h);
+
+    CHECK(sendto_hit(CONFIRM_CX_CANCEL, top, over_h) == SENDTO_SISTER, "top left is the sister");
+    CHECK(sendto_hit(CONFIRM_CX_SEND, top, over_h) == SENDTO_DAD, "top right is dad");
+    CHECK(sendto_hit(CONFIRM_CX_CANCEL, bottom, over_h) == SENDTO_CANCEL, "bottom left exits");
+
+    /* THE FOURTH CORNER IS THE PET, and pressing it starts the same conversation turn the wake
+       phrase does — which matters most for the child who cannot get a phrase recognised at all. */
+    CHECK(sendto_hit(CONFIRM_CX_SEND, bottom, over_h) == SENDTO_PET, "bottom right is the pet");
+
+    /* THE GRID IS MODAL AND THE WHOLE BAND IS LIVE, which is the opposite of the tick and
+       cross's rule and is right for the opposite reason: this menu was asked for by holding a
+       button, there is nothing underneath it that a press could mean instead, and a press that
+       resolved to nothing would just be the panel ignoring a child who aimed badly. The pet
+       IS protected — but by `confirm_hit`, in the state where it is on screen. */
+    CHECK(sendto_hit(FACE_W / 2, FACE_H / 2 - 40, over_h) != SENDTO_NONE,
+          "there is nowhere inside the menu that does nothing");
+}
+
+static void test_the_who_grid_leaves_nowhere_to_miss(void)
+{
+    /* FOUR QUADRANTS, AND EVERY POINT IN THE BAND BELONGS TO ONE. The discs were tuned against
+       a fingertip with dead bands between them; the children's aim is worse than that, and a
+       press that resolves to nothing is indistinguishable from a panel that has stopped
+       working. The menu is modal, so there is nothing underneath to poke by mistake. */
+    const int over_h = FACE_H;
+    for (int y = 0; y < over_h; y += 3) {
+        for (int x = 0; x < FACE_W; x += 7) {
+            const sendto_hit_t h = sendto_hit(x, y, over_h);
+            const bool lower = y >= over_h / 2, right = x >= FACE_W / 2;
+            const sendto_hit_t want = !lower ? (right ? SENDTO_DAD : SENDTO_SISTER)
+                                             : (right ? SENDTO_PET : SENDTO_CANCEL);
+            CHECK(h == want, "every point is its own quadrant");
+        }
+    }
+    /* Nothing outside the band, which on a side-mounted panel is most of the frame. */
+    CHECK(sendto_hit(-1, 10, over_h) == SENDTO_NONE, "off the left edge is nothing");
+    CHECK(sendto_hit(FACE_W, 10, over_h) == SENDTO_NONE, "off the right edge is nothing");
+    CHECK(sendto_hit(10, over_h, over_h) == SENDTO_NONE, "below the band is nothing");
+}
+
+static void test_the_who_grid_fits_a_side_mounted_panel(void)
+{
+    /* THE BAND, NOT THE FRAME. A side-mounted panel's overlay band is the SQUARE, so a grid
+       measured from the frame's bottom would put its top row off the glass — the bug the
+       caption and the label were both moved to avoid. Checked at the smallest band the
+       firmware ever draws into. */
+    /* `SQ` and `SQ_Y0` live in `display.c` rather than a header, so the band is spelled out
+       here: the square a quarter turn preserves is FACE_W wide, centred in the frame, so the
+       band runs from (FACE_H - FACE_W) / 2 to the bottom of that square. */
+    const int over_h = (FACE_H - FACE_W) / 2 + FACE_W;
+    CHECK(over_h == 408, "the side-mounted band is the square, 40..408");
+    CHECK(sendto_cy_top(over_h) - CONFIRM_R >= 0, "the top row is on the glass");
+    CHECK(sendto_cy_bottom(over_h) + CONFIRM_R <= over_h, "the bottom row is inside the band");
+    CHECK(sendto_cy_top(over_h) < sendto_cy_bottom(over_h), "the top row is above the bottom");
+}
+
+static void test_the_who_grid_shares_the_learned_centre_line(void)
+{
+    /* The one control a child has been observed hitting reliably must not move: cancel sits
+       exactly where the cross already was. */
+    for (int over_h = (FACE_H - FACE_W) / 2 + FACE_W; over_h <= FACE_H; over_h++) {
+        CHECK(sendto_cy_bottom(over_h) == confirm_cy(over_h), "cancel keeps the cross's line");
+    }
+}
+
+static void test_the_who_grid_draws_two_faces_told_apart_by_where_the_hair_is(void)
+{
+    /* THE BUG THIS PINS WAS FOUND BY EYE, TWICE. The owner, on the second attempt: *"it kind
+       of looks like the girl has a beard too."* She did — her hair was drawn as a mass below
+       the face, which is exactly where a beard goes. The two icons are now told apart by WHERE
+       the dark is, and that is what is checked here rather than how much of it there is. */
+    const int over_h = FACE_H;
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    sendto_draw(fb, FACE_W, FACE_H, over_h);
+
+    const int top = sendto_cy_top(over_h), bottom = sendto_cy_bottom(over_h);
+    const int gx = CONFIRM_CX_CANCEL, dx = CONFIRM_CX_SEND;
+
+    /* Both are faces: skin in the middle of each. */
+    CHECK(fb[top * FACE_W + gx] == SENDTO_SKIN, "the girl has a face");
+    CHECK(fb[top * FACE_W + dx] == SENDTO_SKIN, "the man has a face");
+
+    /* HER CHIN IS BARE, HIS IS NOT. One column, straight down the middle of each face, just
+       below the jaw: this single pair of samples is the whole of the owner's complaint. */
+    const int chin = 22 * CONFIRM_R / 32;
+    /* Neither dark hair NOR blonde: a blonde mass under her chin would read as a beard just as
+       well as a brown one, which is the whole of what the owner caught. */
+    CHECK(fb[(top + chin) * FACE_W + gx] != SENDTO_HAIR &&
+              fb[(top + chin) * FACE_W + gx] != SENDTO_BLONDE,
+          "the girl must NOT have a beard");
+    CHECK(fb[(top + chin) * FACE_W + dx] == SENDTO_HAIR, "the man must have a beard");
+
+    /* HER HAIR IS AT THE SIDES AND IT IS LONG: dark well out from the centre and well below
+       the jaw, which is the cue his beard does not have. */
+    int side = 0;
+    for (int y = top; y <= top + CONFIRM_R; y++) {
+        if (fb[y * FACE_W + gx - 13 * CONFIRM_R / 32] == SENDTO_BLONDE) side++;
+    }
+    CHECK(side > 8, "the girl's hair falls down her side");
+
+    /* HIS BEARD HANGS PAST THE FACE, so the dark continues below where hers has stopped. */
+    const int low = 27 * CONFIRM_R / 32;
+    CHECK(fb[(top + low) * FACE_W + dx] == SENDTO_HAIR, "the beard hangs past the jaw");
+
+    /* THE GLASSES. Dark on the bare band across his eyes, and nothing like it on hers. */
+    int frames = 0;
+    for (int x = dx - CONFIRM_R; x <= dx + CONFIRM_R; x++) {
+        if (fb[(top - 5 * CONFIRM_R / 32) * FACE_W + x] == SENDTO_HAIR) frames++;
+    }
+    CHECK(frames >= 4, "the man is wearing glasses");
+
+    /* SHE IS BLONDE WITH BLUE EYES, because these icons are pictures of two specific people:
+       a picture that is not of them is a picture of somebody else. */
+    int blonde = 0, blue = 0;
+    for (int y = top - CONFIRM_R; y <= top + CONFIRM_R; y++) {
+        for (int x = gx - CONFIRM_R; x <= gx + CONFIRM_R; x++) {
+            const uint16_t px = fb[y * FACE_W + x];
+            if (px == SENDTO_BLONDE) blonde++;
+            if (px == SENDTO_BLUE_EYE) blue++;
+        }
+    }
+    CHECK(blonde > 200, "her hair is blonde");
+    CHECK(blue > 8, "her eyes are blue");
+    /* And no blonde anywhere on his icon, or the two would read as the same person. */
+    int his_blonde = 0;
+    for (int y = top - CONFIRM_R; y <= top + CONFIRM_R; y++) {
+        for (int x = dx - CONFIRM_R; x <= dx + CONFIRM_R; x++) {
+            if (fb[y * FACE_W + x] == SENDTO_BLONDE) his_blonde++;
+        }
+    }
+    CHECK(his_blonde == 0, "dad is not blonde");
+
+    /* THE PET IS A ROBOT, bottom right: a silver head with lit eyes, which is what the owner
+       asked for in place of the ostrich the panel wears by default. */
+    int silver = 0, lit = 0;
+    for (int y = bottom - CONFIRM_R; y <= bottom + CONFIRM_R; y++) {
+        for (int x = dx - CONFIRM_R; x <= dx + CONFIRM_R; x++) {
+            if (fb[y * FACE_W + x] == SENDTO_ROBOT) silver++;
+            if (fb[y * FACE_W + x] == SENDTO_ROBOT_EYE) lit++;
+        }
+    }
+    CHECK(silver > 400, "the robot has a head");
+    CHECK(lit > 20, "and lit eyes");
+
+    /* And cancel is untouched by any of it. */
+    CHECK(fb[bottom * FACE_W + gx - CONFIRM_R + 4] == CONFIRM_RED, "cancel is still red");
+}
+
+static void test_the_tick_and_the_cross_split_the_bottom_half(void)
+{
+    /* QUADRANTS NOW, AND THE DEAD BAND IS GONE ON PURPOSE. It existed so a finger landing
+       between the two discs did nothing rather than guessing — but the owner watched the twins
+       use this and the real failure was the opposite one: *"the children's press accuracy is
+       not great."* A miss that does nothing reads, to a four-year-old, as the panel ignoring
+       them. Half the bottom of the glass each. */
     const int over_h = FACE_H;
     const int cy = confirm_cy(over_h);
     CHECK(confirm_hit(CONFIRM_CX_CANCEL, cy, over_h) == CONFIRM_CANCEL, "the cross cancels");
     CHECK(confirm_hit(CONFIRM_CX_SEND, cy, over_h) == CONFIRM_SEND, "the tick sends");
-    /* Walk the whole line between the two centres: every point is one thing or nothing. */
-    int gap = 0;
-    for (int x = CONFIRM_CX_CANCEL; x <= CONFIRM_CX_SEND; x++) {
-        const confirm_hit_t h = confirm_hit(x, cy, over_h);
-        CHECK(h == CONFIRM_CANCEL || h == CONFIRM_SEND || h == CONFIRM_NONE, "one of three");
-        if (h == CONFIRM_NONE) gap++;
-        /* Monotone: once past the cross you never get it back, and you cannot reach the tick
-           before leaving the cross. Both are implied by a genuine dead band. */
-        if (x > CONFIRM_CX_CANCEL + CONFIRM_HIT_R) CHECK(h != CONFIRM_CANCEL, "cross ends");
-        if (x < CONFIRM_CX_SEND - CONFIRM_HIT_R) CHECK(h != CONFIRM_SEND, "tick starts late");
+
+    /* EVERY point in the bottom half is one or the other; there is nowhere left to miss. */
+    for (int y = over_h / 2; y < over_h; y++) {
+        for (int x = 0; x < FACE_W; x += 7) {
+            const confirm_hit_t h = confirm_hit(x, y, over_h);
+            CHECK(h == (x < FACE_W / 2 ? CONFIRM_CANCEL : CONFIRM_SEND), "its own half");
+        }
     }
-    CHECK(gap > 0, "there is a dead band between them, so a miss is not a cancel");
+    /* Including the point that used to be the dead band, which is where an excited finger
+       aiming between two icons actually lands. */
+    CHECK(confirm_hit(FACE_W / 2 - 1, cy, over_h) == CONFIRM_CANCEL, "the old dead band cancels");
+    CHECK(confirm_hit(FACE_W / 2, cy, over_h) == CONFIRM_SEND, "and its other side sends");
 }
 
-/* The targets are BIGGER than the discs, on the pop-up's own lesson: "a four-year-old aiming
-   at a small target with an excited finger is a miss". */
-static void test_the_target_is_larger_than_the_icon(void)
+/* THE TOP HALF IS STILL NOTHING, and that half of the old design was right. The pet is up there
+   and a child talks to it while a recording runs; a stray palm on its face must not be able to
+   send a half-finished message or throw one away. The reach grew to a quarter of the glass and
+   stopped. */
+static void test_the_pet_is_still_not_a_button(void)
 {
     const int over_h = FACE_H;
-    const int cy = confirm_cy(over_h);
-    CHECK(CONFIRM_HIT_R > CONFIRM_R, "the reach exceeds what is drawn");
-    /* Just outside the drawn disc still sends. */
-    CHECK(confirm_hit(CONFIRM_CX_SEND + CONFIRM_R + 4, cy, over_h) == CONFIRM_SEND,
-          "a finger just past the edge of the tick still sends");
-    CHECK(confirm_hit(CONFIRM_CX_CANCEL, cy - CONFIRM_R - 4, over_h) == CONFIRM_CANCEL,
-          "and just above the cross still cancels");
-}
-
-/* THE REST OF THE GLASS DOES NOTHING, which is the behaviour change: a touch anywhere used to
-   cancel, and the pet itself must not be a cancel button while a child is talking to it. */
-static void test_everywhere_else_is_nothing(void)
-{
-    const int over_h = FACE_H;
-    CHECK(confirm_hit(FACE_W / 2, FACE_H / 2, over_h) == CONFIRM_NONE, "the pet is not a button");
+    CHECK(confirm_hit(FACE_W / 2, over_h / 2 - 1, over_h) == CONFIRM_NONE, "just above the line");
+    CHECK(confirm_hit(FACE_W / 2, FACE_H / 4, over_h) == CONFIRM_NONE, "the pet is not a button");
     CHECK(confirm_hit(0, 0, over_h) == CONFIRM_NONE, "nor the top corner");
-    CHECK(confirm_hit(FACE_W / 2, confirm_cy(over_h), over_h) == CONFIRM_NONE,
-          "nor dead centre between them");
+    /* And nothing outside the band, which on a side-mounted panel is most of the frame. */
+    CHECK(confirm_hit(-1, over_h - 1, over_h) == CONFIRM_NONE, "nor off the left edge");
+    CHECK(confirm_hit(FACE_W, over_h - 1, over_h) == CONFIRM_NONE, "nor off the right");
+    CHECK(confirm_hit(FACE_W / 4, over_h, over_h) == CONFIRM_NONE, "nor below the band");
 }
 
 /* ANCHORED TO THE BAND, NOT THE FRAME. A side-mounted panel draws its overlays in the square
@@ -3628,9 +3783,13 @@ int main(void)
     test_a_new_pronunciation_for_the_same_name_is_a_change();
     test_a_phoneme_string_outside_the_alphabet_is_refused_whole();
     test_phonemes_too_long_to_hold_are_refused_rather_than_truncated();
-    test_the_tick_and_the_cross_cannot_both_be_hit();
-    test_the_target_is_larger_than_the_icon();
-    test_everywhere_else_is_nothing();
+    test_the_tick_and_the_cross_split_the_bottom_half();
+    test_the_who_grid_has_four_distinct_answers();
+    test_the_who_grid_leaves_nowhere_to_miss();
+    test_the_who_grid_fits_a_side_mounted_panel();
+    test_the_who_grid_shares_the_learned_centre_line();
+    test_the_who_grid_draws_two_faces_told_apart_by_where_the_hair_is();
+    test_the_pet_is_still_not_a_button();
     test_the_targets_follow_a_turned_panel();
     test_a_failed_install_waits_out_its_backoff();
     test_the_backoff_survives_a_clock_rollover();
