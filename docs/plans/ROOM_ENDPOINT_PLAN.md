@@ -1959,7 +1959,7 @@ fires, slow taps never arm it, long presses do not count as taps, letting go mid
 the whole sequence rather than leaving the panel one press from rebooting, and a completed hold
 fires exactly once while the finger is still down.
 
-**One pip per counted tap** now appears along the top edge. Without it the three taps are
+**One pip per counted tap** now appears along the top edge. Without it the taps are
 invisible until the hold succeeds, and a gesture with no feedback until it works is one an
 owner cannot tell from a broken panel — which is the exact failure mode this whole section of
 the plan has spent six releases on.
@@ -5384,6 +5384,35 @@ finished letting go, so starting the recording inline would hit `JPANEL_BUSY` an
 silently, which is the one outcome a child cannot interpret. It waits for the speaker *and* the
 fetch, and says so with `CUE_OOPS` if it never settles. The recipient is captured at the press,
 because by the time it fires the message that named them is over.
+
+##### The hold belongs to the child now, so the maintenance gestures moved out of its way
+
+Two requests that are really one change. *"Make sure long press will pull up the menu even if
+it's after multiple presses"*, and *"move a gesture to restart to five presses and then a hold
+and calibration and six presses and hold."*
+
+**The menu only opened from a standing start.** The hold that opens the "who?" grid was guarded
+by `gest.taps == 0`, and children do not hold from a standing start — they poke the pet, it
+does something, they poke it again, and *then* they hold. Every one of those attempts silently
+did nothing. Worse, three taps and a hold was a **reboot**, which is a reachable accident for
+someone who has just been poking a toy.
+
+So a hold now means the grid at **any count the maintenance gestures have not claimed**, and the
+way to keep that promise is to claim as few counts as possible and put them where a child does
+not land: **5 restart, 6 calibrate, 7 swap body** (from 3/4/5). Three and four — the two most
+reachable numbers on the panel — are free.
+
+**The body swap moved although it was not asked for**, and that is worth saying plainly: leaving
+it at four would have left one hole in the middle of the range the menu now owns, and "a hold
+after four taps does something completely different from a hold after three" is a rule nobody
+can hold in their head, least of all the person it would surprise. It is a one-line revert if
+the owner disagrees.
+
+`gesture_reserved()` is the single place that answers which counts are spoken for, so the
+renderer cannot drift from `gesture.h` — the coupling that would otherwise turn any future
+renumbering into a silent bug at the other end. The host tests pin **0–4 free** and the two
+numbers the owner named **as literals** rather than through the macros, because a test written
+only in terms of the constants would follow them wherever they went and never notice.
 
 The AGAIN button owns the same corner for its five seconds and wins there: it is transient and
 answers a question the child is asking right now, where the badge answers one they have already

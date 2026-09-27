@@ -390,7 +390,7 @@ void display_set_brightness(int level)
     s_brightness_pending = true;
 }
 
-/* WHICH BODY THE PANEL COMES BACK AS. Four taps and a hold still toggles it live; this is the
+/* WHICH BODY THE PANEL COMES BACK AS. Seven taps and a hold still toggles it live; this is the
    answer it starts from, and until the box could hold one it was always the ostrich — so every
    reboot and every OTA quietly undid a child who had chosen the robot.
    Deferred to the render task like the brightness above, and for a weaker version of the same
@@ -2784,7 +2784,14 @@ static void face_task(void *arg)
          * Nothing is lost; the pet is one press further on, and the two children who could not
          * get `tell sister` recognised gain a second way to reach each other that needs no
          * button on the case at all. */
-        if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && gest.taps == 0 &&
+        /* ANY COUNT THE MAINTENANCE GESTURES HAVE NOT CLAIMED, which used to be zero alone.
+           A hold is how a child reaches the grid, and children do not hold from a standing
+           start — they poke the pet, it does something, they poke it again, and then they hold.
+           Every one of those attempts did nothing, and the owner asked for it directly: *"make
+           sure long press will pull up the menu even if it's after multiple presses"*. The
+           counts moved to five and six in the same change so that there is almost nothing left
+           for this to lose to (`gesture.h`). */
+        if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && !gesture_reserved(gest.taps) &&
             held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
             s_sendto_until = now + SENDTO_MS;
             /* The same cue the button's press makes, because it is the same event: something
@@ -2792,7 +2799,7 @@ static void face_task(void *arg)
             if (sound) audio_cue(CUE_HEARD);
             ESP_LOGI(TAG, "sendto: grid opened by hold");
             dirty = true;
-        } else if (s_talk == TALK_IDLE && down && !on_the_pet && gest.taps == 0 &&
+        } else if (s_talk == TALK_IDLE && down && !on_the_pet && !gesture_reserved(gest.taps) &&
                    held >= HOLD_TALK_MS && held < HOLD_TALK_MS + poll_ms) {
             /* Once per press, on the frame the threshold passes — the owner has no terminal
                but does have the log, and a margin that is too wide looks exactly like a
@@ -3065,7 +3072,7 @@ static void face_task(void *arg)
         if (act == GESTURE_CALIBRATE) cal_begin();
         if (act == GESTURE_FORM) {
             /* Until "change into merc" exists — the command list needs ESP-SR, which is not
-               wired up yet — four taps and a hold is how the twins get the other body. */
+               wired up yet — seven taps and a hold is how the twins get the other body. */
             st.form = st.form == FORM_OSTRICH ? FORM_ROBOT : FORM_OSTRICH;
             dirty = true;
             ESP_LOGI(TAG, "form -> %s", st.form == FORM_OSTRICH ? "ostrich" : "robot");
@@ -3387,7 +3394,7 @@ static void face_task(void *arg)
                     for (int x = 0; x < w; x++) fb[y * FACE_W + x] = CUE_COLOUR;
                 }
             } else if (gest.taps > 0) {
-                /* One pip per counted tap. Without it the three taps are invisible until the
+                /* One pip per counted tap. Without it the taps are invisible until the
                    hold succeeds, and a gesture with no feedback until it works is one an
                    owner cannot tell from a broken panel. They clear themselves half a second
                    after the rhythm lapses, so ordinary play leaves nothing on screen. */

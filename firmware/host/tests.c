@@ -2094,7 +2094,7 @@ static void test_gesture_happy_path(void)
     gesture_t g;
     gesture_reset(&g);
     CHECK(do_sequence(&g, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
-          "three taps then a hold reboots");
+          "the reboot count then a hold reboots");
 }
 
 static void test_gesture_hold_alone_does_nothing(void)
@@ -2216,7 +2216,7 @@ static void test_gesture_selects_by_tap_count(void)
     gesture_t g;
     gesture_reset(&g);
     CHECK(do_sequence_n(&g, GESTURE_TAPS_REBOOT, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
-          "three taps then hold reboots");
+          "the reboot count then hold reboots");
     gesture_reset(&g);
     CHECK(do_sequence_n(&g, GESTURE_TAPS_FORM, 200, GESTURE_HOLD_MS + 200) == GESTURE_FORM,
           "four taps then hold swaps the body");
@@ -2250,7 +2250,7 @@ static void test_gesture_five_taps_survive_the_reboot_threshold(void)
         CHECK(press_for(&g, 120) == GESTURE_NONE, "a short tap never fires anything");
         idle_for(&g, 200);
     }
-    CHECK(g.taps == GESTURE_TAPS_CALIBRATE, "all five taps counted");
+    CHECK(g.taps == GESTURE_TAPS_CALIBRATE, "every tap of the calibrate count is counted");
 }
 
 static void test_gesture_no_cue_for_a_count_that_does_nothing(void)
@@ -3374,6 +3374,55 @@ static void test_pause_reads_as_two_bars_and_play_as_one_shape(void)
     }
 }
 
+/* THE COUNTS A HOLD MAY NOT MEAN "OPEN THE MENU", stated once so the renderer and this file
+ * cannot drift. The menu is what a hold means at every other count — that is the whole point of
+ * moving reboot and calibrate up — so this test is really about what is FREE. */
+static void test_the_low_tap_counts_are_free_for_the_menu(void)
+{
+    /* Nought through four: a child poking the pet and then holding it. Every one of these must
+       reach the grid, which means none of them may be claimed here. */
+    for (int n = 0; n <= 4; n++) {
+        CHECK(!gesture_reserved(n), "a hold after 0-4 taps belongs to the menu");
+    }
+    CHECK(gesture_reserved(GESTURE_TAPS_REBOOT), "five is the restart");
+    CHECK(gesture_reserved(GESTURE_TAPS_CALIBRATE), "six is the calibration");
+    CHECK(gesture_reserved(GESTURE_TAPS_FORM), "seven is the body swap");
+
+    /* THE OWNER ASKED FOR THESE TWO NUMBERS BY NAME, so they are pinned as numbers rather than
+       through the macros: a test written only in terms of the constants would follow them
+       wherever they went and never notice they had moved. */
+    CHECK(GESTURE_TAPS_REBOOT == 5, "restart is five presses then a hold");
+    CHECK(GESTURE_TAPS_CALIBRATE == 6, "calibration is six presses then a hold");
+
+    /* And nothing beyond the counter's own ceiling can be reserved, or it would be a gesture
+       with no way to perform it — `gesture_poll` stops counting at GESTURE_TAPS_MAX. */
+    for (int n = GESTURE_TAPS_MAX + 1; n <= GESTURE_TAPS_MAX + 4; n++) {
+        CHECK(!gesture_reserved(n), "nothing above the ceiling is reachable");
+    }
+}
+
+/* AND THE SEQUENCES STILL FIRE AT THEIR NEW LENGTHS — the renumbering is only safe if a real
+ * five-tap and six-tap rhythm still reaches the action, rather than the counter topping out
+ * somewhere on the way. */
+static void test_the_moved_gestures_still_fire_end_to_end(void)
+{
+    gesture_t g;
+    gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_REBOOT, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
+          "five taps and a hold restarts");
+    gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_CALIBRATE, 200, GESTURE_HOLD_MS + 200) ==
+              GESTURE_CALIBRATE,
+          "six taps and a hold calibrates");
+    /* The counts a child actually produces reach a hold that does NOTHING here, which is what
+       lets the renderer treat that hold as the menu. */
+    for (int n = 0; n <= 4; n++) {
+        gesture_reset(&g);
+        CHECK(do_sequence_n(&g, n, 200, GESTURE_HOLD_MS + 200) == GESTURE_NONE,
+              "a hold after 0-4 taps does no maintenance");
+    }
+}
+
 static void test_the_qspi_command_word_matches_the_datasheet(void)
 {
     /* Exactly the form on p.21, spelled out rather than reusing the macro's own expression:
@@ -3963,6 +4012,8 @@ int main(void)
     test_a_face_survives_being_resized();
     test_a_face_of_nobody_draws_nothing();
     test_the_transport_discs_do_not_move_between_play_and_pause();
+    test_the_low_tap_counts_are_free_for_the_menu();
+    test_the_moved_gestures_still_fire_end_to_end();
     test_pause_reads_as_two_bars_and_play_as_one_shape();
     test_the_qspi_command_word_matches_the_datasheet();
     test_the_who_grid_has_four_distinct_answers();

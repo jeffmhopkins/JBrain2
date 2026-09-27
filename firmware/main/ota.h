@@ -82,7 +82,7 @@ typedef struct {
        EMPTY IS NORMAL, not an error: an invented name is in no dictionary, the box sends ""
        rather than a guess, and the panel converts it itself exactly as it always did. */
     char pet_name_phonemes[48];
-    /* Which body to wear: 0 ostrich, 1 robot, -1 "the box did not say". Four taps and a hold
+    /* Which body to wear: 0 ostrich, 1 robot, -1 "the box did not say". Seven taps and a hold
        still toggles it live — this is only what the panel comes back AS, which until now was
        always the ostrich because nothing wrote the choice down. */
     int form;

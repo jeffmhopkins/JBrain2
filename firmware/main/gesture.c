@@ -11,6 +11,11 @@ static gesture_action_t action_for(int taps)
     return GESTURE_NONE;
 }
 
+bool gesture_reserved(int taps)
+{
+    return action_for(taps) != GESTURE_NONE;
+}
+
 void gesture_reset(gesture_t *g)
 {
     if (g == NULL) return;
@@ -70,7 +75,9 @@ gesture_action_t gesture_poll(gesture_t *g, bool tapped, bool down, int dt_ms)
 
 float gesture_cue(const gesture_t *g)
 {
-    /* Only for a hold that will actually do something. A hold after four taps is a mistake,
+    /* Only for a hold that will actually do something. A hold after an unclaimed count is
+       the CHILD'S menu (`gesture.h`), and growing a maintenance bar over it would promise an
+       action that never comes and hide the one that does,
        and growing a bar for it would promise an action that never comes. */
     if (g == NULL || action_for(g->held) == GESTURE_NONE) return 0.0f;
     if (g->press_ms < GESTURE_CUE_MS) return 0.0f;

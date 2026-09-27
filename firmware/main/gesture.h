@@ -9,11 +9,24 @@
  * against a determined four-year-old is not much, and both units are going to the twins.
  *
  * So the guard is a RHYTHM rather than a duration, and the tap count then selects WHICH
- * maintenance action follows — three to reboot, four to swap
- * the body, five to calibrate the touchscreen. Children
- * mashing a panel produce plenty of taps and plenty of leans; what they do not produce is a
- * run of short taps in time followed by a sustained press. Measured against 20 000 simulated
- * presses including 3-9 s leans, the old gesture fires 1937 times and this one fires 12.
+ * maintenance action follows — five to reboot, six to calibrate the touchscreen, seven to swap
+ * the body. Children mashing a panel produce plenty of taps and plenty of leans; what they do
+ * not produce is a run of short taps in time followed by a sustained press. Measured against
+ * 20 000 simulated presses including 3-9 s leans, the old gesture fires 1937 times and this one
+ * fires 12.
+ *
+ * THE COUNTS MOVED UP, AND IT IS THE HOLD ITSELF THAT PAID FOR IT (0.3.19). A hold on the pet
+ * opens the "who?" grid, and that is the gesture a CHILD is meant to find — but it only fired
+ * from a standing start, so a hold after a few stray taps silently did nothing, or worse did
+ * maintenance. The owner: *"make sure long press will pull up the menu even if it's after
+ * multiple presses"*, and in the same breath *"move a gesture to restart to five presses and
+ * then a hold and calibration and six presses and hold."*
+ *
+ * Those are one change. The menu is now what a hold means at ANY count this file does not
+ * claim, so the way to keep it reachable is to claim as few counts as possible and to put them
+ * where a child does not land. Three and four were the two most reachable numbers on the panel
+ * and both are free now. `gesture_reserved` is the single place that answers which counts are
+ * spoken for, so the renderer cannot drift from this file about it.
  *
  * BOTH FAILURE DIRECTIONS COST SOMETHING, which is why this is its own file with its own
  * tests. A false positive reboots a toy in a child's hands, or drops them into a calibration
@@ -24,10 +37,14 @@
  */
 
 /* Taps that select each action. Anything else that reaches a hold does nothing. */
-#define GESTURE_TAPS_REBOOT 3
-#define GESTURE_TAPS_FORM 4
-#define GESTURE_TAPS_CALIBRATE 5
-#define GESTURE_TAPS_MAX GESTURE_TAPS_CALIBRATE
+#define GESTURE_TAPS_REBOOT 5
+#define GESTURE_TAPS_CALIBRATE 6
+/* The body swap moved too, though it was not asked for: leaving it at four would have left a
+   single hole in the middle of the range the menu now owns, and a hold after four taps doing
+   something entirely different from a hold after three is the kind of rule nobody can hold in
+   their head — least of all the person it would surprise, who is four. */
+#define GESTURE_TAPS_FORM 7
+#define GESTURE_TAPS_MAX GESTURE_TAPS_FORM
 
 /* The rhythm. Each press must begin within this long of the previous release, or the count
    starts over — the owner's "within half a second of each other". */
@@ -61,6 +78,11 @@ void gesture_reset(gesture_t *g);
 /* Advance by one poll. `tapped` is the press EDGE, `down` the level, `dt_ms` the interval.
    Returns the action on the frame its hold completes — once — and GESTURE_NONE otherwise. */
 gesture_action_t gesture_poll(gesture_t *g, bool tapped, bool down, int dt_ms);
+
+/* WHICH COUNTS THIS FILE HAS CLAIMED. The renderer asks before treating a hold as the child's
+   menu, so "which taps are maintenance" is stated once rather than spelled out at both ends —
+   the coupling that would otherwise turn every renumbering here into a silent bug there. */
+bool gesture_reserved(int taps);
 
 /* 0..1 across the hold, for the cue bar. Zero unless a hold that will DO something is in
    progress and past the cue threshold, so neither an ordinary press nor a hold after the
