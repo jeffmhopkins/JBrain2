@@ -60,10 +60,13 @@ static const char *TAG = "endpoint";
    THREE SECONDS, AND IT NOW ANSWERS THE UPDATE QUESTION TOO. `GET /endpoint/settings` carries
    `fw_version` — what this box would serve — so ONE round trip says both "here are your knobs"
    and "there is new firmware". That matters because every pass is a fresh TLS handshake
-   (`ota_fetch_settings` inits and cleans up its own client) and both panels report
-   `int_largest` — the largest free INTERNAL DMA block — at 31 KB, where internal fragmentation
-   is the fault `report()` says "has explained the fault twice". Two requests answering one
-   question each would cost twice the handshakes of one answering both.
+   (`ota_fetch_settings` inits and cleans up its own client). Two requests answering one
+   question each would cost twice the handshakes of one answering both, and a handshake is the
+   expensive thing on this board whatever the heap is doing.
+
+   THIS PARAGRAPH USED TO CITE `int_largest` AT 31 KB AS EVIDENCE OF FRAGMENTATION. It is not:
+   the number never moves, and a number that never moves is the opposite of fragmentation
+   evidence — that should have been the tell. See `nudge.h` for what 31744 actually measures.
 
    WHAT IS NOT ON THIS CADENCE, deliberately:
      - the 3.25 MB image, which is fetched only when the version actually CHANGES, never per
@@ -75,8 +78,10 @@ static const char *TAG = "endpoint";
        `ROOM_ENDPOINT_PLAN.md` §10.4bh reads a report at 6-7 s of uptime as PROOF OF A BOOT —
        a diagnostic that only works while the interval is long.
 
-   If `int_largest` sags under this rate, this is the number to raise; it is reported every
-   cycle, so the evidence arrives without anyone instrumenting anything. */
+   If memory sags under this rate, this is the number to raise. WATCH `int_free`, NOT
+   `int_largest`: the latter cannot sag, because it reports two priority-1 reserves nothing
+   allocates from, so the early warning this sentence promised was inert for as long as it
+   named the wrong field. */
 #define POLL_PERIOD_MS (3 * 1000)
 /* HOW LONG A FAILED INSTALL WAITS, and it is the old cycle on purpose: a version that genuinely
    changed is installed within a poll, while an install that failed retries no faster than it
@@ -245,6 +250,19 @@ static void report(const cfg_t *cfg)
          `int_largest` — the largest free INTERNAL DMA block, which is what `free_heap` cannot
            tell you: 60 KB free and fragmented and 60 KB free and contiguous read the same,
            and the difference is every blit failing. This number has explained the fault twice.
+           BUT IT IS NOT A MEASURE OF HOW MUCH INTERNAL RAM IS FREE, and reading it as one is
+           how the push design was argued into a corner it did not need to be in. It reads
+           31744 forever — at 7 s of uptime, at 47 minutes, across versions — because
+           31744 = 32768 - 1024 and there are TWO 32 KB regions the allocator only reaches at
+           priority 1: the DMA reserve this firmware itself asks for
+           (`SPIRAM_MALLOC_RESERVE_INTERNAL=32768`) and the leftover from a 32 KB data cache.
+           Nothing touches them at priority 0, so this is a FLOOR that cannot move, and the
+           main heap's own largest block is somewhere at or below it, unmeasured until now.
+         `int_free`    — total free INTERNAL heap, and the number that was actually missing.
+           `free_heap` is `MALLOC_CAP_DEFAULT`, which on this build includes PSRAM, so it
+           reads in the megabytes and says nothing about the 200-odd KB that matters. Every
+           argument about whether another TLS session fits needed this field and did not
+           have it.
          `ota_err`     — an update that will never install, currently silent.
          `levels`      — a volume or gain the codec REFUSED, currently indistinguishable from
            one it accepted.
@@ -277,7 +295,7 @@ static void report(const cfg_t *cfg)
                      "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,"
                      "\"alc\":\"%s\",\"blit_ok\":%d,\"blit_fail\":%d,\"boot_btn\":%d,"
                      "\"vocab_ok\":%d,\"vocab_bad\":%d,"
-                     "\"int_largest\":%u,\"levels\":\"%s\","
+                     "\"int_largest\":%u,\"int_free\":%u,\"levels\":\"%s\","
                      "\"blit_fail_total\":%d,\"blit_recov\":%d,\"meter_fail\":%d,"
                      "\"wifi_reason\":%d,\"wifi_drops\":%d,"
                      "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
@@ -295,6 +313,7 @@ static void report(const cfg_t *cfg)
                      vocab_ok, vocab_bad,
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
                                                                MALLOC_CAP_DMA),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
                      wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
                      set_err, set_fails, nudge_count(), nudge_dropped(),

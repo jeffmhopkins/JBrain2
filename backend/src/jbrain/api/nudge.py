@@ -1,10 +1,15 @@
 """Telling a panel to come and ask, instead of waiting for it to wonder.
 
 A contentless UDP datagram on the LAN. The panel answers it by doing exactly the
-authenticated HTTPS poll it would have done anyway — just now instead of in a minute. See
-``firmware/main/nudge.h`` for the other half and for why it is not a real push socket: both
-panels report a largest free internal DMA block of exactly 31744 bytes, unmoving across
-uptimes and versions, and a second concurrent mbedTLS session does not fit in it.
+authenticated HTTPS poll it would have done anyway — just now instead of in a minute.
+
+This docstring used to say a real push socket was unaffordable, because a second concurrent
+mbedTLS session would not fit in the 31744-byte largest free internal block the panels report.
+That was wrong on every step, and ``firmware/main/nudge.h`` carries the corrected reasoning:
+31744 is an untouched reserve floor rather than a ceiling, the largest contiguous demand is
+~16.6 KB rather than 32 KB, and the panels already sustain two concurrent sessions several
+times a day — because this very mechanism wakes two tasks at once. The datagram is a good
+choice here; it was never the only one available.
 
 **It carries no data and no authority, and that is the design.** The datagram says only
 "something changed"; every actual fact still arrives over the authenticated, TLS-protected

@@ -13,19 +13,43 @@
  * dropped datagram must not mean a message that never arrives. The nudge owns LATENCY; the
  * poll owns CORRECTNESS, and it can be slow precisely because it no longer owns latency.
  *
- * WHY NOT A REAL PUSH SOCKET, MEASURED RATHER THAN ASSUMED. Both panels report `int_largest`
- * — the largest free INTERNAL DMA block — at exactly 31744 bytes, and it does not move: same
- * number at 7 seconds of uptime and at 47 minutes, across two firmware versions. That is a
- * structural ceiling in the memory map rather than fragmentation drifting. A default mbedTLS
- * session wants about 32 KB of buffers, so a persistent WebSocket or MQTT connection HELD OPEN
- * while a message is also streaming means two concurrent TLS sessions against a 31 KB budget —
- * the ESP-SR-versus-radio out-of-memory fault (`ROOM_ENDPOINT_PLAN.md` §10) in new clothes.
+ * WHY A DATAGRAM AND NOT A REAL PUSH SOCKET — AND THE FIRST ANSWER HERE WAS WRONG, so it is
+ * worth having the corrected one written down rather than quietly replaced.
  *
- * A UDP socket needs no TLS, no handshake and no second session. That is the whole reason this
- * design wins here: it buys the latency without spending the one resource this board has none
- * of. If `int_largest` ever lifts — moving mbedTLS buffers to PSRAM is the obvious lever, and
- * there are megabytes of it free — a real bidirectional socket becomes affordable and this file
- * is what it would replace.
+ * THE ARGUMENT THAT BUILT THIS FILE: `int_largest` reads exactly 31744 bytes on both panels and
+ * never moves, a default mbedTLS session wants ~32 KB, therefore a second concurrent session
+ * does not fit. Every step of that is either wrong or does not follow.
+ *
+ *   - 31744 = 32768 - 1024, and it never moves because it is a FLOOR, not a ceiling. Two 32 KB
+ *     regions exist that the allocator only reaches at priority 1 — the DMA reserve this
+ *     firmware itself asks for (`SPIRAM_MALLOC_RESERVE_INTERNAL=32768`) and the leftover from a
+ *     32 KB data cache. Nothing takes from them at priority 0, so they sit pristine forever.
+ *     `largest_free_block` maxes over every heap, so 31744 tells you the reserves are untouched
+ *     and says NOTHING about the main heap, whose own largest block is somewhere at or below it.
+ *   - "~32 KB of buffers" conflates a sum with a single allocation. mbedTLS makes two separate
+ *     calloc()s: 16384+333 = 16717 for the RX record and 4096+333 = 4429 for TX (ESP-IDF
+ *     already ships the asymmetric 16384/4096 default, so that saving is banked, not available).
+ *     The largest CONTIGUOUS demand is ~16.6 KB, which 31744 houses with room to spare.
+ *   - TLS asks for `MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT`, never `MALLOC_CAP_DMA`. On this chip
+ *     those two internal pools nearly coincide, so the number was not far off — but the
+ *     conclusion drawn from it was about the wrong thing.
+ *   - And the refutation that needed no arithmetic at all: THIS FILE ALREADY DOES IT. Every
+ *     accepted datagram wakes the jpanel task and the main task in the same instant, so a nudge
+ *     fires two TLS handshakes concurrently, several times a day, and the panels are fine. The
+ *     claim that two concurrent sessions are unaffordable was refuted by its own implementation.
+ *
+ * SO THE DATAGRAM IS A CHOICE, NOT A FORCED MOVE, and it is still a good one: it costs no TLS
+ * session, no handshake, no certificate and about a kilobyte, and it degrades to the poll
+ * underneath it. What it is NOT is the only thing this board can afford. ESPHome holds five
+ * concurrent persistent push connections on a plain ESP32 — and four on an ESP8266 with 40 KB
+ * free — by using a pre-shared-key Noise handshake over plain TCP instead of X.509 TLS, at
+ * ~500-1000 bytes per connection and 32 bytes of static RAM for the crypto. That is the shape a
+ * real push socket should take here if one is built, and it would replace this file.
+ *
+ * WHAT WAS ACTUALLY MISSING WAS A MEASUREMENT, and it is in telemetry now: `int_free`, the
+ * total free INTERNAL heap. `free_heap` is `MALLOC_CAP_DEFAULT`, which on this build silently
+ * includes PSRAM and so reads in the megabytes — which is how a budget nobody had measured came
+ * to be argued about with such confidence.
  *
  * IT CARRIES NO DATA AND NO AUTHORITY, and that is the security design rather than an
  * omission. The datagram says only "something changed"; every actual fact still arrives over
