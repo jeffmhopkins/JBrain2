@@ -60,7 +60,14 @@ async def test_raising_the_counter_reaches_a_panel_and_the_ring_reads_back_named
 ) -> None:
     owner_key = await service.rotate_owner_key(SqlAuthRepo(maker))
     debug_key, _ = await service.mint_capability(SqlAuthRepo(maker), "claude", ttl_hours=1)
-    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    # `debug_access_enabled`, WITHOUT WHICH THE ROUTER IS NOT MOUNTED AT ALL and every
+    # call here is a 404 rather than the refusal or the answer it is asserting. The
+    # debug surface is opt-in per deployment (`main.py`), so a test that forgets the
+    # flag is testing an app that has no debug API — which is exactly what this file
+    # did on its first CI run.
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, debug_access_enabled=True)
+    )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
         panel = client.post(
@@ -130,7 +137,14 @@ async def test_a_second_raise_is_a_different_number(
     failure mode this whole mechanism exists to avoid, since the caller is measuring and would
     read the previous ring as the new one."""
     debug_key, _ = await service.mint_capability(SqlAuthRepo(maker), "claude", ttl_hours=1)
-    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    # `debug_access_enabled`, WITHOUT WHICH THE ROUTER IS NOT MOUNTED AT ALL and every
+    # call here is a 404 rather than the refusal or the answer it is asserting. The
+    # debug surface is opt-in per deployment (`main.py`), so a test that forgets the
+    # flag is testing an app that has no debug API — which is exactly what this file
+    # did on its first CI run.
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, debug_access_enabled=True)
+    )
     with TestClient(app) as client:
         dbg = {"Authorization": f"Bearer {debug_key}"}
         seen = [
@@ -146,7 +160,14 @@ async def test_the_debug_routes_are_not_reachable_without_the_token(
 ) -> None:
     """`report-now` WRITES, and both routes read every panel's telemetry. A capability token
     is on a physically distinct path from the owner cookie, so this gate is the only one."""
-    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    # `debug_access_enabled`, WITHOUT WHICH THE ROUTER IS NOT MOUNTED AT ALL and every
+    # call here is a 404 rather than the refusal or the answer it is asserting. The
+    # debug surface is opt-in per deployment (`main.py`), so a test that forgets the
+    # flag is testing an app that has no debug API — which is exactly what this file
+    # did on its first CI run.
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, debug_access_enabled=True)
+    )
     with TestClient(app) as client:
         assert client.get("/api/debug/endpoint/heard").status_code == 401
         assert client.post("/api/debug/endpoint/report-now").status_code == 401
