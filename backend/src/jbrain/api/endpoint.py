@@ -480,6 +480,13 @@ class TelemetryIn(BaseModel):
     # every blit fails. This reading has explained that fault twice and both times it took a
     # host toolchain to read it.
     int_largest: int = 0
+    #: Total free INTERNAL heap. The number every argument about whether another TLS session
+    #: fits actually needed, and the one nobody had: `free_heap` is MALLOC_CAP_DEFAULT, which
+    #: on the panel's build includes PSRAM and so reads in the megabytes. Added to the firmware
+    #: in 0.3.21 and — for one release — silently dropped here, because a field the panel sends
+    #: that this model does not declare is discarded without a word. That is the same shape as
+    #: `tap`, which was sent for months into a model that ignored it.
+    int_free: int = 0
     #: How many nudges this panel accepted, and how many its rate limit absorbed
     #: (`jbrain.api.nudge`). Reported because a push path that quietly stopped working looks
     #: exactly like a quiet house — the same distinction the render heartbeat exists for.
@@ -629,6 +636,7 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         vocab_ok=body.vocab_ok,
         vocab_bad=body.vocab_bad,
         int_largest=body.int_largest,
+        int_free=body.int_free,
         nudges=body.nudges,
         nudge_drop=body.nudge_drop,
         push=body.push,
