@@ -48,6 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from jbrain.api import nudge
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
@@ -479,6 +480,18 @@ class TelemetryIn(BaseModel):
     # every blit fails. This reading has explained that fault twice and both times it took a
     # host toolchain to read it.
     int_largest: int = 0
+    #: How many nudges this panel accepted, and how many its rate limit absorbed
+    #: (`jbrain.api.nudge`). Reported because a push path that quietly stopped working looks
+    #: exactly like a quiet house — the same distinction the render heartbeat exists for.
+    nudges: int = 0
+    nudge_drop: int = 0
+    #: Whether the panel is holding its push stream open right now, and what it has carried.
+    #: `push_drops` is the one to watch: a channel that reconnects all day is working in the
+    #: sense that messages arrive, and failing in the sense that it is paying a TLS handshake
+    #: for every reconnection on a board where handshakes are the expensive thing.
+    push: bool = False
+    push_events: int = 0
+    push_drops: int = 0
     # What the codec last ACCEPTED, "90/36" — or "90!/36" when it refused the volume. Both
     # setters used to run with their returns dropped under a log line asserting success, on
     # the one path the owner drives remotely.
@@ -616,6 +629,11 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         vocab_ok=body.vocab_ok,
         vocab_bad=body.vocab_bad,
         int_largest=body.int_largest,
+        nudges=body.nudges,
+        nudge_drop=body.nudge_drop,
+        push=body.push,
+        push_events=body.push_events,
+        push_drops=body.push_drops,
         levels=body.levels,
         blit_fail_total=body.blit_fail_total,
         blit_recov=body.blit_recov,
@@ -1216,6 +1234,10 @@ async def set_panel_settings(
             },
         )
         await session.commit()
+    # BEFORE THE LOG LINE IS NOT THE POINT; AFTER THE COMMIT IS. A panel woken while the row
+    # is still uncommitted reads the OLD values and goes back to sleep for a full period —
+    # a knob that visibly does nothing, which is worse than one that takes three seconds.
+    nudge.fire_all(why="settings")
     log.info(
         "endpoint.settings_set",
         volume=clamped.volume,

@@ -94,3 +94,12 @@ bool jpanel_replay(void);
 /* Make the next poll happen now rather than up to 30 s from now. Called after a send and
    after a play, so the pop-up and the badge reflect what just happened. */
 void jpanel_poll_soon(void);
+
+/* THE PUSH STREAM. `jpanel_push_live()` is what lets `main.c` relax the settings cadence: a box
+   that can say when something changed does not need to be asked every three seconds, and the
+   relaxation is what keeps the concurrent-TLS count the same as before rather than one higher.
+   The counters ride in telemetry because a push channel that silently stopped working looks
+   exactly like a quiet house. */
+bool jpanel_push_live(void);
+unsigned jpanel_push_events(void);
+unsigned jpanel_push_drops(void);

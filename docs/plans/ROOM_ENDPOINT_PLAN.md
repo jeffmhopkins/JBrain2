@@ -5414,6 +5414,107 @@ renumbering into a silent bug at the other end. The host tests pin **0–4 free*
 numbers the owner named **as literals** rather than through the macros, because a test written
 only in terms of the constants would follow them wherever they went and never notice.
 
+#### Push, at last — and why it is a datagram rather than a socket (0.3.20)
+
+The owner: *"you definitely need a push method for contacting these things. Having to wait for
+it to poll itself is absolutely ridiculous"*, and then *"I want to get rid of polling all
+together... when a message is sent it should be instantaneously available on next device. And
+if I want to send a command or request something from over API to one of the devices, it
+should respond immediately."*
+
+**The number that was supposedly in the way was not in the way, and the owner said so before
+the research did.** §10's note said to take the long-poll *"when telemetry shows `int_largest`
+holding"*. It is holding — at exactly 31744 bytes, unchanged at 7 s and at 47 minutes and
+across two versions — and the first version of this section read that as a ceiling. It is a
+**floor**:
+
+- `31744 = 32768 - 1024`. Two 32 KB regions exist that the allocator reaches only at **priority
+  1**: the DMA reserve this firmware asks for (`SPIRAM_MALLOC_RESERVE_INTERNAL=32768`) and the
+  leftover from a 32 KB data cache. Nothing allocates from them at priority 0, so they stay
+  pristine — which is exactly why the number never moves. `largest_free_block` maxes across all
+  heaps, so 31744 means *the reserves are untouched* and says nothing about the main heap.
+- **"~32 KB per session" conflated a sum with a single allocation.** mbedTLS makes two separate
+  `calloc()`s: `16384 + 333 = 16717` for RX and `4096 + 333 = 4429` for TX. ESP-IDF already
+  ships that asymmetric default, so the widely-cited "enable asymmetric, save 12 KB" is banked
+  here, not available. The largest **contiguous** demand is ~16.6 KB.
+- **The panels already do it.** Every nudge wakes the jpanel task and the main task in the same
+  instant, so it fires two concurrent TLS handshakes, several times a day, and they are fine.
+  The claim was refuted by its own implementation.
+- And **the measurement that mattered was never taken**: total free *internal* heap. `free_heap`
+  is `MALLOC_CAP_DEFAULT`, which on this build includes PSRAM and reads in the megabytes.
+  `int_free` is in telemetry now.
+
+**So the datagram is a choice rather than a forced move** — a good one, because it costs no TLS
+session, no handshake and no certificate, and it degrades to the poll underneath it. But the
+plan should not record it as the only affordable option, because that is false.
+
+##### And then the real push channel, which is a held-open stream (0.3.22)
+
+`GET /jpanel/events`, held open by the panel, written into by the box. **This is push.**
+
+**It is an ordinary authenticated request rather than a new protocol, and that is the whole
+argument for it over the Noise-over-TCP socket ESPHome uses.** The panel is identified by the
+same device key it uses for everything else, over the same TLS, against the same pinned
+certificate — so the push channel *inherits* its security instead of growing a second scheme
+that has to be got right separately. Noise would have meant new crypto on both ends, and new
+crypto is the thing you least want to be the author of. The memory argument that would have
+forced Noise turned out not to exist.
+
+**The panel comes to us, which kills the datagram's one real weakness.** A datagram has to know
+where the panel *is*; a DHCP lease moving breaks it silently. A held stream has no address to go
+stale. So the datagram stays as the fallback for exactly the window where no stream is held — a
+panel reconnecting, Wi-Fi just back, or a box that restarted and lost its registry — and
+`nudge.fire()` fires both, because a redundant nudge costs a poll that finds nothing and a
+missed one costs a child's message sitting unheard.
+
+**It replaces polling rather than adding to it, and that is what made it affordable.** While the
+stream is up, the settings cadence stretches from three seconds to sixty (`PUSH_SETTLED_MS`).
+A held connection is one more TLS session on a board where sessions are the expensive thing, and
+taking twenty asks a minute down to one buys that back several times over — so push costs *less*
+concurrency than polling did, not more. The rate is re-read every slice rather than latched, so a
+panel whose stream drops is back to a three-second ask by the next slice.
+
+**The read timeout is the liveness check.** The box writes a heartbeat comment every 20 s, so a
+read returning nothing for 45 s means the link is gone rather than that nobody sent a message —
+a TCP connection nobody writes to is indistinguishable from a dead one, and this is a channel
+whose entire job is to be idle. Reconnection backs off 2 s → 60 s, because a box that is down
+stays down for minutes and a panel retrying every two seconds against it is a TLS handshake every
+two seconds.
+
+**What it carries is still not data.** Every event means "come and ask", exactly as the datagram
+does. The stream can therefore never become a second, weaker path by which state reaches a
+child's panel, and nothing arriving on it is trusted.
+
+**`push`, `push_events` and `push_drops` ride in telemetry.** `push_drops` is the one to watch: a
+channel that reconnects all day is working in the sense that messages arrive and failing in the
+sense that it is paying a handshake every time.
+
+**A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
+bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
+was always going to make — on the task and the one TLS session it already owns. The
+integration turned out to be one line, because `jpanel.c` already had a `CMD_POLL` on the queue
+its task waits on; the settings half needed the main task's timed sleep to become a notifiable
+wait rather than a `vTaskDelay`, which is a two-line change and cuts the last three seconds off
+a knob the owner turns.
+
+**It carries no data and no authority, and that is the security design rather than an
+omission.** Every real fact still arrives over the authenticated, TLS-protected poll that
+follows, so the worst an attacker with a foothold on the LAN can do is make a panel ask the box
+a question it is already entitled to ask — which is why the **rate limit is the defence** and
+the magic word is only a filter against stray broadcast traffic. A test pins that the payload
+is the magic and nothing else, because the moment this grows a payload the panel *acts* on it
+becomes an unauthenticated control channel into a child's bedroom.
+
+**The honest caveat: polling is not gone, and should not be.** UDP may be dropped, and a
+dropped datagram must never mean a message that never arrives. So the nudge owns **latency**
+and the poll owns **correctness** — and the poll can afford to be slow precisely because it no
+longer owns latency. That is the difference between the owner's request as stated and the
+request as meant.
+
+**And it reports itself.** `nudges` and `nudge_drop` ride in telemetry, because a push path that
+silently stopped working looks exactly like a quiet house — the same distinction the render
+heartbeat was added for, learned the same way.
+
 The AGAIN button owns the same corner for its five seconds and wins there: it is transient and
 answers a question the child is asking right now, where the badge answers one they have already
 declined.
@@ -6008,6 +6109,38 @@ the flasher.
 - **mDNS from ESP-IDF.** `jbrain.local` needs the mDNS component and a `.local` resolver that
   works from the firmware; the fallback is the box's LAN IP in NVS, which costs a re-provision
   if the lease moves. A DHCP reservation is the cheap answer and needs the router, not the box.
-- **Which transport (§4.1).** Step 4 deliberately uses plain HTTPS + SSE — the endpoints the PWA
-  screen already exercises — because that is zero new server work and it produces the latency
-  number the MQTT-versus-WebSocket decision needs. Decide after step 6, with data.
+- **~~Which transport (§4.1)~~ — DECIDED 2026-09-27, and neither of the two candidates won.**
+  The choice was framed as WebSocket-versus-MQTT, and the measurement that settled it rules out
+  both for now: `int_largest`, the largest free INTERNAL DMA block, reads **exactly 31744 bytes
+  on both panels and does not move** — same number at 7 s of uptime and at 47 minutes, across
+  two firmware versions. That is a structural ceiling in the memory map, not fragmentation
+  drifting. A default mbedTLS session wants ~32 KB of buffers, so any transport that HOLDS a
+  connection open while a message is also streaming means two concurrent TLS sessions against a
+  31 KB budget — the ESP-SR-versus-radio out-of-memory fault (§10) wearing new clothes.
+
+  So the answer is **a contentless UDP nudge on the LAN** (`firmware/main/nudge.h`,
+  `backend/src/jbrain/api/nudge.py`): the box says "something changed", and the panel answers by
+  making the authenticated HTTPS poll it would have made anyway — on the task and the single TLS
+  session it already had. Zero new sessions, so the ceiling is sidestepped rather than fought.
+
+  **REOPENED 2026-09-27, the same day, because the measurement behind the decision was misread.**
+  31744 is a priority-1 reserve floor, not a ceiling; the largest contiguous demand is ~16.6 KB
+  not 32 KB; and the panels already sustain two concurrent TLS sessions, because the nudge itself
+  wakes two tasks at once. Prior art settles it further: **ESPHome holds five concurrent
+  persistent push connections on a plain ESP32, and four on an ESP8266 with 40 KB free**, using a
+  pre-shared-key Noise handshake (`Noise_NNpsk0_25519_ChaChaPoly_SHA256`) over plain TCP —
+  ~500-1000 bytes per connection, 32 bytes of static RAM for the crypto, no certificates and no
+  16 KB record buffers. Home Assistant Voice PE runs that on this exact silicon (ESP32-S3 +
+  PSRAM) *while streaming audio*, and is moving audio onto the persistent socket rather than off
+  it.
+
+  The levers if TLS is kept instead, in payoff order and with their traps:
+  `MBEDTLS_DYNAMIC_BUFFER` (42196 B → 22013 B, measured by Espressif, and it frees buffers while
+  idle — ideal for a mostly silent push channel, **but** esp-idf#19107 reports it making
+  *concurrent* sessions fail on fragmentation, so the two goals pull apart);
+  `MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=n` (~4 KB); lowering `SSL_IN_CONTENT_LEN` from 16384, which
+  is safe here because both ends are ours; and `MBEDTLS_EXTERNAL_MEM_ALLOC` to move every mbedTLS
+  allocation to PSRAM — already satisfiable in this config, **but** Espressif's own Kconfig warns
+  PSRAM is only security-equivalent when hardware flash encryption is on, and this panel's TLS
+  keys would otherwise sit in plaintext on an external bus. That caveat matters more than the
+  bytes do.

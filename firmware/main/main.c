@@ -28,6 +28,7 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "mem.h"
+#include "nudge.h"
 #include "ota.h"
 #include "vocab.h"
 #include "speech.h"
@@ -59,10 +60,13 @@ static const char *TAG = "endpoint";
    THREE SECONDS, AND IT NOW ANSWERS THE UPDATE QUESTION TOO. `GET /endpoint/settings` carries
    `fw_version` — what this box would serve — so ONE round trip says both "here are your knobs"
    and "there is new firmware". That matters because every pass is a fresh TLS handshake
-   (`ota_fetch_settings` inits and cleans up its own client) and both panels report
-   `int_largest` — the largest free INTERNAL DMA block — at 31 KB, where internal fragmentation
-   is the fault `report()` says "has explained the fault twice". Two requests answering one
-   question each would cost twice the handshakes of one answering both.
+   (`ota_fetch_settings` inits and cleans up its own client). Two requests answering one
+   question each would cost twice the handshakes of one answering both, and a handshake is the
+   expensive thing on this board whatever the heap is doing.
+
+   THIS PARAGRAPH USED TO CITE `int_largest` AT 31 KB AS EVIDENCE OF FRAGMENTATION. It is not:
+   the number never moves, and a number that never moves is the opposite of fragmentation
+   evidence — that should have been the tell. See `nudge.h` for what 31744 actually measures.
 
    WHAT IS NOT ON THIS CADENCE, deliberately:
      - the 3.25 MB image, which is fetched only when the version actually CHANGES, never per
@@ -74,9 +78,23 @@ static const char *TAG = "endpoint";
        `ROOM_ENDPOINT_PLAN.md` §10.4bh reads a report at 6-7 s of uptime as PROOF OF A BOOT —
        a diagnostic that only works while the interval is long.
 
-   If `int_largest` sags under this rate, this is the number to raise; it is reported every
-   cycle, so the evidence arrives without anyone instrumenting anything. */
+   If memory sags under this rate, this is the number to raise. WATCH `int_free`, NOT
+   `int_largest`: the latter cannot sag, because it reports two priority-1 reserves nothing
+   allocates from, so the early warning this sentence promised was inert for as long as it
+   named the wrong field. */
 #define POLL_PERIOD_MS (3 * 1000)
+
+/* AND WHAT IT BECOMES ONCE THE BOX CAN SPEAK FIRST. While the push stream is up (`jpanel.h`)
+   the three-second ask is asking a question that will be answered before it is next posed, so
+   it stretches to this — the owner's *"I want to get rid of polling all together"*, met in the
+   only sense that is true: the poll stops being how anything is LEARNED and becomes the check
+   that the push channel has not silently died.
+ *
+ * IT IS ALSO WHAT KEEPS THE TLS ARITHMETIC HONEST. A held-open stream is one more session on a
+ * board where sessions are the expensive thing; taking twenty asks a minute down to one buys
+ * that back several times over, so push costs LESS concurrency than polling did rather than
+ * more. That is the whole reason the stream was affordable to add. */
+#define PUSH_SETTLED_MS (60 * 1000)
 /* HOW LONG A FAILED INSTALL WAITS, and it is the old cycle on purpose: a version that genuinely
    changed is installed within a poll, while an install that failed retries no faster than it
    ever did. Bounds the WITHIN-SESSION rate, which is the one the fast poll created. A crash
@@ -244,6 +262,19 @@ static void report(const cfg_t *cfg)
          `int_largest` — the largest free INTERNAL DMA block, which is what `free_heap` cannot
            tell you: 60 KB free and fragmented and 60 KB free and contiguous read the same,
            and the difference is every blit failing. This number has explained the fault twice.
+           BUT IT IS NOT A MEASURE OF HOW MUCH INTERNAL RAM IS FREE, and reading it as one is
+           how the push design was argued into a corner it did not need to be in. It reads
+           31744 forever — at 7 s of uptime, at 47 minutes, across versions — because
+           31744 = 32768 - 1024 and there are TWO 32 KB regions the allocator only reaches at
+           priority 1: the DMA reserve this firmware itself asks for
+           (`SPIRAM_MALLOC_RESERVE_INTERNAL=32768`) and the leftover from a 32 KB data cache.
+           Nothing touches them at priority 0, so this is a FLOOR that cannot move, and the
+           main heap's own largest block is somewhere at or below it, unmeasured until now.
+         `int_free`    — total free INTERNAL heap, and the number that was actually missing.
+           `free_heap` is `MALLOC_CAP_DEFAULT`, which on this build includes PSRAM, so it
+           reads in the megabytes and says nothing about the 200-odd KB that matters. Every
+           argument about whether another TLS session fits needed this field and did not
+           have it.
          `ota_err`     — an update that will never install, currently silent.
          `levels`      — a volume or gain the codec REFUSED, currently indistinguishable from
            one it accepted.
@@ -276,11 +307,13 @@ static void report(const cfg_t *cfg)
                      "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,"
                      "\"alc\":\"%s\",\"blit_ok\":%d,\"blit_fail\":%d,\"boot_btn\":%d,"
                      "\"vocab_ok\":%d,\"vocab_bad\":%d,"
-                     "\"int_largest\":%u,\"levels\":\"%s\","
+                     "\"int_largest\":%u,\"int_free\":%u,\"levels\":\"%s\","
                      "\"blit_fail_total\":%d,\"blit_recov\":%d,\"meter_fail\":%d,"
                      "\"wifi_reason\":%d,\"wifi_drops\":%d,"
                      "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
                      "\"set_err\":\"%s\",\"set_fails\":%d,"
+                     "\"nudges\":%u,\"nudge_drop\":%u,"
+                     "\"push\":%s,\"push_events\":%u,\"push_drops\":%u,"
                      "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"screen\":\"%s\","
                      "\"pmu_history\":[",
                      ota_running_version(),
@@ -293,9 +326,13 @@ static void report(const cfg_t *cfg)
                      vocab_ok, vocab_bad,
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
                                                                MALLOC_CAP_DMA),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
                      wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
-                     set_err, set_fails, tap_x, tap_y, tap_zone,
+                     set_err, set_fails, nudge_count(), nudge_dropped(),
+                     jpanel_push_live() ? "true" : "false", jpanel_push_events(),
+                     jpanel_push_drops(),
+                     tap_x, tap_y, tap_zone,
                      display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
@@ -527,6 +564,12 @@ void app_main(void)
             } else if (!jpanel_start(&cfg)) {
                 ESP_LOGW(TAG, "no voice post — messages will not arrive");
             }
+            /* AFTER the poll task, because the nudge's whole job is to hurry that task along
+               and a datagram arriving before it exists would have nothing to wake. Started for
+               a display too: it takes no messages, but the owner still changes its settings and
+               the point of this is that a knob moves the moment it is turned (`nudge.h`). */
+            nudge_wake_settings_from(xTaskGetCurrentTaskHandle());
+            nudge_start();
             mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router
@@ -550,8 +593,22 @@ void app_main(void)
             /* Zero once the box stops answering, which sleeps out the remainder in one go —
                see `apply_settings`. That puts an offline panel back on exactly the single-sleep
                behaviour it had before settings got their own cadence. */
-            const uint32_t slice = cadence_slice_ms(left, box_answering ? POLL_PERIOD_MS : 0);
-            vTaskDelay(pdMS_TO_TICKS(slice));
+            /* The stream's own liveness decides the rate, re-read every slice rather than
+               latched: a panel whose push channel drops must be back to a three-second ask by
+               the next slice, not at the end of the period. */
+            const uint32_t ask_ms = jpanel_push_live() ? PUSH_SETTLED_MS : POLL_PERIOD_MS;
+            const uint32_t slice = cadence_slice_ms(left, box_answering ? ask_ms : 0);
+            /* A WAIT THAT CAN BE CUT SHORT, which is the difference between "the box tells the
+               panel" and "the panel finds out within three seconds". `vTaskDelay` cannot be
+               interrupted; this returns the instant `nudge.c` gives the notification, and
+               otherwise behaves exactly like the delay it replaces.
+
+               THE SLICE IS STILL SUBTRACTED IN FULL, deliberately. `left` is how much of the
+               PERIOD remains, and the period paces the manifest fetch — so a nudge that woke
+               this early must not also make the update check come round sooner. It buys
+               promptness for the settings, not a faster OTA cadence; the one time this panel
+               polled for updates too eagerly it pulled 65 MB a minute. */
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(slice));
             left -= slice;
             /* Not on the last slice: the manifest branch below applies settings anyway, and
                asking twice in the same instant is a handshake for nothing. */
