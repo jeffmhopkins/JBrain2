@@ -5414,6 +5414,48 @@ renumbering into a silent bug at the other end. The host tests pin **0–4 free*
 numbers the owner named **as literals** rather than through the macros, because a test written
 only in terms of the constants would follow them wherever they went and never notice.
 
+#### Push, at last — and why it is a datagram rather than a socket (0.3.20)
+
+The owner: *"you definitely need a push method for contacting these things. Having to wait for
+it to poll itself is absolutely ridiculous"*, and then *"I want to get rid of polling all
+together... when a message is sent it should be instantaneously available on next device. And
+if I want to send a command or request something from over API to one of the devices, it
+should respond immediately."*
+
+**What was actually in the way was one number, and it had already been written down.** §10's
+note said to take the long-poll *"when telemetry shows `int_largest` holding"*. It is holding —
+at **exactly 31744 bytes**, unchanged at 7 s of uptime and at 47 minutes and across two
+versions. But that stability is the bad news rather than the good: it is a ceiling in the
+memory map, not a number that will grow, and a default mbedTLS session wants about 32 KB. Any
+transport that holds a connection open **while a message is streaming** needs a second
+concurrent session, and there is no room for one.
+
+**A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
+bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
+was always going to make — on the task and the one TLS session it already owns. The
+integration turned out to be one line, because `jpanel.c` already had a `CMD_POLL` on the queue
+its task waits on; the settings half needed the main task's timed sleep to become a notifiable
+wait rather than a `vTaskDelay`, which is a two-line change and cuts the last three seconds off
+a knob the owner turns.
+
+**It carries no data and no authority, and that is the security design rather than an
+omission.** Every real fact still arrives over the authenticated, TLS-protected poll that
+follows, so the worst an attacker with a foothold on the LAN can do is make a panel ask the box
+a question it is already entitled to ask — which is why the **rate limit is the defence** and
+the magic word is only a filter against stray broadcast traffic. A test pins that the payload
+is the magic and nothing else, because the moment this grows a payload the panel *acts* on it
+becomes an unauthenticated control channel into a child's bedroom.
+
+**The honest caveat: polling is not gone, and should not be.** UDP may be dropped, and a
+dropped datagram must never mean a message that never arrives. So the nudge owns **latency**
+and the poll owns **correctness** — and the poll can afford to be slow precisely because it no
+longer owns latency. That is the difference between the owner's request as stated and the
+request as meant.
+
+**And it reports itself.** `nudges` and `nudge_drop` ride in telemetry, because a push path that
+silently stopped working looks exactly like a quiet house — the same distinction the render
+heartbeat was added for, learned the same way.
+
 The AGAIN button owns the same corner for its five seconds and wins there: it is transient and
 answers a question the child is asking right now, where the badge answers one they have already
 declined.
@@ -6008,6 +6050,20 @@ the flasher.
 - **mDNS from ESP-IDF.** `jbrain.local` needs the mDNS component and a `.local` resolver that
   works from the firmware; the fallback is the box's LAN IP in NVS, which costs a re-provision
   if the lease moves. A DHCP reservation is the cheap answer and needs the router, not the box.
-- **Which transport (§4.1).** Step 4 deliberately uses plain HTTPS + SSE — the endpoints the PWA
-  screen already exercises — because that is zero new server work and it produces the latency
-  number the MQTT-versus-WebSocket decision needs. Decide after step 6, with data.
+- **~~Which transport (§4.1)~~ — DECIDED 2026-09-27, and neither of the two candidates won.**
+  The choice was framed as WebSocket-versus-MQTT, and the measurement that settled it rules out
+  both for now: `int_largest`, the largest free INTERNAL DMA block, reads **exactly 31744 bytes
+  on both panels and does not move** — same number at 7 s of uptime and at 47 minutes, across
+  two firmware versions. That is a structural ceiling in the memory map, not fragmentation
+  drifting. A default mbedTLS session wants ~32 KB of buffers, so any transport that HOLDS a
+  connection open while a message is also streaming means two concurrent TLS sessions against a
+  31 KB budget — the ESP-SR-versus-radio out-of-memory fault (§10) wearing new clothes.
+
+  So the answer is **a contentless UDP nudge on the LAN** (`firmware/main/nudge.h`,
+  `backend/src/jbrain/api/nudge.py`): the box says "something changed", and the panel answers by
+  making the authenticated HTTPS poll it would have made anyway — on the task and the single TLS
+  session it already had. Zero new sessions, so the ceiling is sidestepped rather than fought.
+
+  **The prerequisite for revisiting this is now written down and cheap to check:** move mbedTLS
+  buffers to PSRAM (there are megabytes free) and re-measure `int_largest` under load. If it
+  lifts, a real bidirectional socket becomes affordable and `nudge.c` is what it replaces.

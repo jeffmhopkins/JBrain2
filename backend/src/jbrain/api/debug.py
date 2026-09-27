@@ -43,7 +43,7 @@ from jbrain.agent.grounding import (
 )
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api import endpoint as endpoint_api
-from jbrain.api import llm_settings
+from jbrain.api import llm_settings, nudge
 from jbrain.api import sdr as sdr_api
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
@@ -3407,7 +3407,13 @@ async def panel_report_now(request: Request, _p: DebugDep) -> ReportNowOut:
     if seq is None:
         raise HTTPException(status_code=404, detail="no endpoint settings row")
     log.info("debug.panel_report_now", telemetry_seq=int(seq))
+    # AND NOW, RATHER THAN AT THE NEXT POLL. This route's whole value is "ask and then read",
+    # and three seconds of it was the panel wondering rather than the box telling (`nudge.py`).
+    woken = nudge.fire_all(why="report-now")
     return ReportNowOut(
         telemetry_seq=int(seq),
-        detail="panels post on their next settings poll (~3 s); read /endpoint/heard after",
+        detail=(
+            f"nudged {woken} panel(s) to post now; unreachable ones post on their next "
+            "settings poll (~3 s). Read /endpoint/heard after."
+        ),
     )

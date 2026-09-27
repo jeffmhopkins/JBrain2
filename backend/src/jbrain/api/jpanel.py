@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from jbrain.api import nudge
 from jbrain.api.deps import OwnerDep, PanelDep
 from jbrain.api.endpoint import (
     PANEL_RATE,
@@ -458,6 +459,12 @@ async def send(
 
     to_name = DAD_NAME if to == "dad" else names.get(r_dev or "", "the other one")
     log.info("jpanel.sent", to=to_name, duration_ms=duration_ms, transcript=transcript[:120])
+    # AFTER THE COMMIT, NEVER BEFORE. The nudge makes the other panel ask immediately, so
+    # firing it while the row is still uncommitted is a race the panel would win: it asks, is
+    # told there is nothing, and the message then waits for the slow poll — the exact latency
+    # this exists to remove, arrived at by trying to remove it faster.
+    if r_kind == "panel" and r_dev:
+        nudge.fire(r_dev, why="message")
     return SendResult(id=str(mid), to_name=to_name)
 
 
@@ -487,7 +494,14 @@ async def _transcribe(settings: Settings, audio: bytes) -> str:
 
 @router.get("/waiting")
 async def waiting(principal: PanelDep, request: Request) -> Waiting:
-    """Is anything here for me. Polled every ~30 s per panel, so it stays small."""
+    """Is anything here for me. Polled every ~30 s per panel, so it stays small.
+
+    ALSO WHERE THE BOX LEARNS WHERE TO REACH THIS PANEL (`nudge.py`). The poll is the natural
+    place: every panel makes it, often, and it already proves who it is — so the address cache
+    refreshes itself without a heartbeat of its own, and survives a router handing out new
+    leases at the cost of one poll interval.
+    """
+    nudge.remember(principal.id, request)
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as session:
         row = (
             await session.execute(
@@ -940,6 +954,7 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
         tts_ms=int((time.monotonic() - started) * 1000),
         duration_ms=duration_ms,
     )
+    nudge.fire(body.to_device, why="owner-text")
     return _row_to_message(row, names)
 
 
@@ -1088,6 +1103,7 @@ async def send_audio(
         duration_ms=duration_ms,
         transcribed=bool(transcript),
     )
+    nudge.fire(to_device, why="owner-audio")
     return _row_to_message(row, names)
 
 

@@ -28,6 +28,7 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "mem.h"
+#include "nudge.h"
 #include "ota.h"
 #include "vocab.h"
 #include "speech.h"
@@ -281,6 +282,7 @@ static void report(const cfg_t *cfg)
                      "\"wifi_reason\":%d,\"wifi_drops\":%d,"
                      "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
                      "\"set_err\":\"%s\",\"set_fails\":%d,"
+                     "\"nudges\":%u,\"nudge_drop\":%u,"
                      "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"screen\":\"%s\","
                      "\"pmu_history\":[",
                      ota_running_version(),
@@ -295,7 +297,8 @@ static void report(const cfg_t *cfg)
                                                                MALLOC_CAP_DMA),
                      audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
                      wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
-                     set_err, set_fails, tap_x, tap_y, tap_zone,
+                     set_err, set_fails, nudge_count(), nudge_dropped(),
+                     tap_x, tap_y, tap_zone,
                      display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
@@ -527,6 +530,12 @@ void app_main(void)
             } else if (!jpanel_start(&cfg)) {
                 ESP_LOGW(TAG, "no voice post — messages will not arrive");
             }
+            /* AFTER the poll task, because the nudge's whole job is to hurry that task along
+               and a datagram arriving before it exists would have nothing to wake. Started for
+               a display too: it takes no messages, but the owner still changes its settings and
+               the point of this is that a knob moves the moment it is turned (`nudge.h`). */
+            nudge_wake_settings_from(xTaskGetCurrentTaskHandle());
+            nudge_start();
             mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router
@@ -551,7 +560,17 @@ void app_main(void)
                see `apply_settings`. That puts an offline panel back on exactly the single-sleep
                behaviour it had before settings got their own cadence. */
             const uint32_t slice = cadence_slice_ms(left, box_answering ? POLL_PERIOD_MS : 0);
-            vTaskDelay(pdMS_TO_TICKS(slice));
+            /* A WAIT THAT CAN BE CUT SHORT, which is the difference between "the box tells the
+               panel" and "the panel finds out within three seconds". `vTaskDelay` cannot be
+               interrupted; this returns the instant `nudge.c` gives the notification, and
+               otherwise behaves exactly like the delay it replaces.
+
+               THE SLICE IS STILL SUBTRACTED IN FULL, deliberately. `left` is how much of the
+               PERIOD remains, and the period paces the manifest fetch — so a nudge that woke
+               this early must not also make the update check come round sooner. It buys
+               promptness for the settings, not a faster OTA cadence; the one time this panel
+               polled for updates too eagerly it pulled 65 MB a minute. */
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(slice));
             left -= slice;
             /* Not on the last slice: the manifest branch below applies settings anyway, and
                asking twice in the same instant is a handshake for nothing. */
