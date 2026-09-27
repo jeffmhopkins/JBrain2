@@ -5547,6 +5547,90 @@ conversation. It is sized *from* the quadrant because the quadrant is also the h
 is the same rule the rest of 0.3.24 exists to enforce: **what you can see and what you can press
 must not be able to disagree.**
 
+##### Touch stops being sampled by the renderer (0.3.25)
+
+The owner, after a run of local fixes that each addressed a symptom: *"touch reactions are still
+not very great. I think maybe we need to readdress that whole system... I think maybe we've let
+it spiral into many refactored areas and it's getting a little bit lost."* He was right, and the
+fault was one level below every patch so far.
+
+**`touch_tapped()` was read once per render-loop pass.** That loop is a 40 ms delay *plus*
+composing a face *plus* pushing 322 KB over QSPI — so the real sampling interval was 80-100 ms
+and it stretched whenever there was more to draw. An edge is only visible to the poll that
+straddles it, so **a press that began and ended between two passes had not happened**. Children
+jab; that is precisely the press being lost, and losing it more often when the screen was busy
+is why it felt worst exactly when a notification was up.
+
+So the controller is sampled on **its own task at 15 ms**, and every edge is **latched with the
+point it landed on** into a four-deep FreeRTOS queue that the renderer drains. A frame that
+takes 200 ms now costs a press its latency, never its existence.
+
+Three details that are load-bearing:
+
+- **A real queue, not a hand-rolled ring.** Two tasks touch it, and `count++` against `count--`
+  is not atomic however volatile the variable. FreeRTOS already owns a correct answer; writing a
+  lock-free ring to save an allocation would have been inventing a concurrency bug.
+- **The point travels with the press.** Reading `touch_point()` in the renderer would hand every
+  queued press the coordinates of the most recent one — a press aimed at the notification acted
+  on somewhere else entirely.
+- **Sharing the bus is safe, checked rather than assumed.** ESP-IDF's
+  `s_i2c_synchronous_transaction` takes a per-bus mutex, so the sampler coexists with the render
+  task's IMU and PMU reads. The task stack is stated at 3072 for one I2C transaction and no TLS
+   — under-provisioning a stack is what crash-looped a panel in 0.3.22.
+
+**Three more faults in the same round.** The sender's face showed the *previous* message's
+sender while a new one was starting (`jpanel_in_from()` is read off the fetch's own response
+header, so it is stale until that lands — and the previous message is usually the sister, which
+made a stale value look like a fixed bug): the queue is asked instead until the fetch can
+answer. The again-and-reply pair **no longer times out** — *"no more waiting for it to time out
+and making it disappear"* — because a control that vanishes while a child is deciding is the same
+fault as one she cannot press, wearing a different face. And the exit corner is **drawn** now,
+mirroring the sender's face across the top band: it worked before this and that was the problem,
+since the owner had to be told where to press, which means no child would ever have found it.
+
+Removing the timeout had one consequence worth naming: the waiting-message badge used to defer
+to the pair, which was fine against a ten-second deadline and a bug against one that waits for a
+finger — a message arriving while the last exchange stood would have been hidden until somebody
+pressed exit, possibly all night. The new message takes the corner.
+
+##### The button becomes the power control (0.3.26)
+
+*"Now that we can long press to pull up the menu, let's override the button presses. Single press
+blinks the screen and stops listening. But it keeps looking for incoming messages and will light
+up if a new message comes in. But if I hold the button for say 5 seconds, it should go into the
+lowest power mode it can where it doesn't do anything but listen to that button to turn back on."*
+
+The button opened the "who?" grid until a long press on the pet could do it. One gesture per job
+is worth more than a second route to the same menu — especially for the one control on this unit
+that can turn it off, which is not something to share with a menu a four-year-old opens.
+
+**Standby is not the idle sleep wearing a different hat, and the difference is the microphone.**
+The idle stages darken a panel nobody is using and leave it *listening*, because a child walking
+back into the room says the wake phrase. This is a deliberate "be quiet now" — screen off **and**
+deaf — while the network stays up, so a message from Dad still lights the room. That combination
+is the whole point: the panel stops watching the room without stopping being reachable.
+
+**The action is on the RELEASE, and that is why this could not stay a toggle.** A five-second
+hold begins with exactly the same falling edge a tap does, so acting on the edge would mean every
+attempt to turn the panel *off* first turned the screen and microphone off — the short-press
+action — leaving the person holding it watching for the result of a gesture that had already
+half-fired. A press is only a press once it ends, and only counts as one if it ended soon enough.
+
+**Standby ends on a person or a message and on nothing else.** The existing `used` test is the
+*idle timer's* question — deliberately broad, counting a lingering `JPANEL_FAILED`, a cue still
+sounding, an accelerometer twitch. Letting that end standby would mean a child pressed the
+button, the screen went dark, and a failed fetch thirty seconds later quietly turned the panel
+back on. Two ways back were asked for — the button and an arriving message — plus a finger on the
+glass, which is a person saying the same thing.
+
+**And the power-down leaves from where the reboots do**, the one point in the render loop where
+a frame has just finished and nothing is in flight on the QSPI bus. For a reboot that ordering
+buys four seconds of colour bars; here it buys the difference between a panel that comes back and
+a panel somebody has to find and hold a button on, because a unit in deep sleep answers nothing
+else. The screen is darkened *before* the sleep rather than as a side effect: an AMOLED holds its
+last frame with no clock running, so a panel that slept mid-face would sit there showing a pet
+that is not there any more.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The

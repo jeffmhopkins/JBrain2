@@ -459,6 +459,22 @@ static void glyph_pause(uint16_t *fb, int w, int h, int cx, int cy)
     }
 }
 
+void confirm_draw_exit(uint16_t *fb, int w, int h, int y0, int over_h)
+{
+    /* The sender's face geometry, mirrored: `display.c` sizes that from the quadrant so the
+       picture fills what the finger may press, and this has to match or the pair looks
+       lopsided and the two targets stop meaning the same kind of thing. */
+    const int qh = (over_h - y0) / 2;
+    const int qw = w / 2;
+    const int r = (qw < qh ? qw : qh) / 3;
+    const int cx = qw + qw / 2, cy = y0 + qh / 2;
+    disc(fb, w, h, cx, cy, r, CONFIRM_RED);
+    const int a = r * 15 / 32;
+    const int th = CONFIRM_STROKE / 2;
+    stroke_r(fb, w, h, cx - a, cy - a, cx + a, cy + a, th, CONFIRM_GLYPH);
+    stroke_r(fb, w, h, cx + a, cy - a, cx - a, cy + a, th, CONFIRM_GLYPH);
+}
+
 void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing)
 {
     const int cy = confirm_cy(over_h);
