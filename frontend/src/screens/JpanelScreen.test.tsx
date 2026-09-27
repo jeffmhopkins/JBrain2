@@ -473,6 +473,55 @@ describe("JpanelScreen messages", () => {
     expect(await screen.findByText(/the box is busy/)).toBeTruthy();
     expect((input as HTMLInputElement).value).toBe("on my way home");
   });
+
+  describe("twin-to-twin post is not the owner's", () => {
+    // THE OWNER, READING HIS OWN INBOX: *"my pwa is showing messages between the girls ... make
+    // sure the pwa is correctly listing that it was lydian to elora, not kid to Dad."*
+    //
+    // The backend reported every panel-sent message as `in` — owner-relative, with no value for
+    // the case where he is neither end — so a message between the two girls was drawn with only
+    // its sender's name, exactly like one addressed to him, AND counted by the unplayed badge as
+    // something HE had failed to deal with. `to_name` was already on the wire; nothing said the
+    // message was not his, so nothing drew it.
+    const BETWEEN = {
+      id: "jp-between",
+      from_name: "Lydian",
+      to_name: "Elora",
+      direction: "between",
+      transcript: "I love you",
+      composed: "voice",
+      duration_ms: 3540,
+      created_at: new Date().toISOString(),
+      played_at: null,
+    };
+
+    it("names both girls, and is not the owner's to hear", async () => {
+      fetchMock.mockImplementation(
+        box({
+          threads: [{ device_id: "panel-ellie", name: "Ellie", unplayed: 0, messages: [BETWEEN] }],
+        }),
+      );
+      render(<JpanelScreen onClose={vi.fn()} />);
+
+      // Both ends named, in the order it happened.
+      expect(await screen.findByText("Lydian → Elora")).toBeTruthy();
+      // And not his: an unplayed message between the girls must not wear the badge that means
+      // the OWNER has something waiting.
+      expect(document.querySelector("[data-unplayed]")).toBeNull();
+    });
+
+    it("still names only the sender on a message addressed to the owner", async () => {
+      fetchMock.mockImplementation(box({}));
+      render(<JpanelScreen onClose={vi.fn()} />);
+
+      // His own inbox does not need telling that a message to him was to him. Scoped to the
+      // message header, because the panel's own tab carries the same name.
+      await screen.findByText("There is a joke. There is a joke.");
+      const senders = Array.from(document.querySelectorAll(".jp-from")).map((e) => e.textContent);
+      expect(senders).toContain("Ellie");
+      expect(senders.some((t) => t?.includes("→"))).toBe(false);
+    });
+  });
 });
 
 describe("JpanelScreen read tracking", () => {

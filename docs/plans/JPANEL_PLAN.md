@@ -1,6 +1,6 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** In progress · **Last verified:** 2026-09-24 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-09-27 · **Waves:** W1◻️ W2✅ W3✅ W4✅
 > — W2 and W4 shipped together in #1498; W3 shipped across #1504/#1508/#1511/#1513 and is
 > **confirmed working on a panel** (voice post both ways, the pop-up, the queue).
 >
@@ -105,7 +105,15 @@ minutes of AMOLED backlight.
 
 So instead: **brightness to 0 and stop blitting.** Nothing touches the controller's on/off
 state, nothing re-runs an init sequence, and waking is a brightness write plus resuming the
-render loop. On an AMOLED a black frame at zero brightness is genuinely dark and genuinely
+render loop.
+
+> **And the brightness half of that does not happen, measured 2026-09-27.** The runtime `0x51`
+> write is unframed and the controller discards it (`../reference/PANEL_COMMANDS.md`), so dim and
+> dark both reach the panel as *stop blitting* alone: a static last frame at full brightness, not
+> a dark screen. That is the owner's own observation — *"even when it times out and the robot
+> sleeps, the display never changes brightness"* — and it is why this section read as working for
+> weeks. Framing the write fixed it and hung the render task, so the framing is backed out and
+> this stays a half-feature deliberately. The animation stopping is real; the darkness is not. On an AMOLED a black frame at zero brightness is genuinely dark and genuinely
 cheap, and stopping the blits is where the real saving is anyway — a frame is ~330 KB over
 QSPI at ~25 fps, which costs far more than the panel idling.
 

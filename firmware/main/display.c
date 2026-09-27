@@ -476,7 +476,33 @@ static void sleep_wake(const char *why)
  * Verified against the datasheet before changing anything: `0x51` takes ONE byte (p.184), the
  * `0x53 = 0x20` we already write is sufficient because bit 5 (BCTRL) is what gates it and the
  * CO5300 has no backlight bit at all (p.186), and `0x63` is HBM-mode brightness which is inert
- * while `0x66`'s HBM_EN stays 0, as it does (p.196, p.199). None of those needed changing. */
+ * while `0x66`'s HBM_EN stays 0, as it does (p.196, p.199). None of those needed changing.
+ *
+ * ---------------------------------------------------------------------------------------------
+ * AND THEN IT TOOK BOTH PANELS DOWN, so the framing is BACKED OUT and this macro is kept only
+ * as the record of what the right command word is.
+ *
+ * MEASURED 2026-09-27, within minutes of deploying 0.3.16: both panels went black, and — unlike
+ * every previous black screen on this hardware — they made NO SOUND and did not answer touch.
+ * The owner spotted that distinction: *"this is not responding to screen clicks. There's no
+ * audible sound effect like there was before, so this I feel is different."* Display, cues and
+ * touch are all the render task, so losing all three at once is that ONE task dying, not three
+ * faults. The panels stayed on the network throughout — their jpanel task kept polling — and
+ * only a power cycle brought them back.
+ *
+ * THE MECHANISM, AS FAR AS IT IS ESTABLISHED: `esp_lcd_panel_draw_bitmap` QUEUES and returns
+ * (see the stripe-blit comment at the top of this file), so a colour transfer can still be in
+ * flight when it does. `reassert_panel` fires a command write into the same interface every
+ * thirty seconds. Before 0.3.16 those writes were malformed and the controller discarded them;
+ * after it they are valid and the controller ACTS on them — and it did not survive being told
+ * to do so mid-frame. That last step is inference, not proof: what is measured is that framing
+ * them correctly hangs the renderer and unframing them does not.
+ *
+ * SO BRIGHTNESS IS BROKEN AGAIN, DELIBERATELY. A panel that cannot dim is a nuisance; a black
+ * panel in a four-year-old's bedroom that answers nothing is not, and it cannot be diagnosed
+ * from the box because the part that would report it is the part that died. Re-landing this
+ * needs the writes ordered against the blit — which needs a panel on a bench with a cable, not
+ * a guess deployed to a bedroom. */
 #define QSPI_WRITE_OPCODE 0x02
 #define QSPI_CMD(c) (((QSPI_WRITE_OPCODE) << 24) | ((c) << 8))
 
@@ -486,7 +512,10 @@ static void apply_brightness(void)
 {
     if (s_io == NULL) return;
     const uint8_t level = screen_level(s_brightness, s_sleep, s_dim_percent);
-    const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, QSPI_CMD(0x51), &level, 1);
+    /* UNFRAMED ON PURPOSE, AND THIS IS A RETREAT RATHER THAN A DESIGN. See `QSPI_CMD` above:
+       framing these correctly in 0.3.16 made brightness work for the first time, and took BOTH
+       panels' renderers down with it within minutes. */
+    const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
     if (err != ESP_OK) ESP_LOGW(TAG, "brightness: %s", esp_err_to_name(err));
 }
 
@@ -1044,8 +1073,32 @@ static void draw_indicator(uint16_t *fb, int y0, uint32_t now, uint16_t colour, 
     font_draw(fb, FACE_W, FACE_H, FACE_W - 8 - w, cy + 22, LISTEN_SCALE, word, colour);
 }
 
-static void draw_listening(uint16_t *fb, int y0, uint32_t now)
+/* WHO IS ON THE OTHER END, AS A FACE, AT A QUARTER OF THE GLASS.
+ *
+ * The owner: *"up where it says listening and it's either red or blue. We should have like a
+ * 1/4 size face of who they're talking to. So it has a picture of the dad [or] the sister face
+ * or the robot up on there."*
+ *
+ * THE WORD WAS NEVER READABLE BY THE READERS. "LISTENING" and "TO DAD" are shapes a
+ * pre-literate four-year-old memorises, and the panel already has a picture of each of these
+ * three people that the child picked out of a menu themselves. The same face, in the same
+ * colour, in the place that says who is listening: no reading required, and it matches what
+ * they just pressed.
+ *
+ * TOP LEFT, opposite the pulsing dot that still says whether it is a message or a turn — the
+ * face says WHO, the dot and its colour say WHAT, and neither has to carry both. */
+static void draw_who(uint16_t *fb, int y0, int over_h, sendto_hit_t who)
 {
+    const int r = (FACE_W / 2) / 2 - 8;
+    sendto_draw_face(fb, FACE_W, FACE_H, r + 10, y0 + r + 10, r, who);
+    (void)over_h;
+}
+
+static void draw_listening(uint16_t *fb, int y0, int over_h, uint32_t now)
+{
+    /* The pet's own face: a hands-free turn is a conversation with the pet, and the icon the
+       child presses for it on the grid is this one. */
+    draw_who(fb, y0, over_h, SENDTO_PET);
     draw_indicator(fb, y0, now, SWAP16(0xF800), "LISTENING");
 }
 
@@ -1060,8 +1113,11 @@ static void draw_listening(uint16_t *fb, int y0, uint32_t now)
  * cases the box deliberately declines to answer: before the first poll, on a box with one
  * panel, and on a box with three, where "the other one" is a question rather than a name and a
  * guess would put the wrong child on the glass. */
-static void draw_recording(uint16_t *fb, int y0, uint32_t now, jpanel_to_t to)
+static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpanel_to_t to)
 {
+    /* The face first, under the word: whoever cannot read the word can read the face, and
+       whoever can read gets both. */
+    draw_who(fb, y0, over_h, to == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
     if (to == JPANEL_TO_DAD) {
         draw_indicator(fb, y0, now, SWAP16(0x001F), "TO DAD");
         return;
@@ -1098,13 +1154,26 @@ static void draw_recording(uint16_t *fb, int y0, uint32_t now, jpanel_to_t to)
  * rule the caption and the label were moved to obey. */
 #define POPUP_SCALE 3
 #define POPUP_NAME_SCALE 4
-static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count)
+static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
+                       sendto_hit_t who)
 {
-    const int bw = 296, bh = 156;
+    /* TALLER, TO MAKE ROOM FOR A FACE. The owner, twice: *"make sure that the notification pop
+       up and icon on the top left show the icons of the person instead of being generic."*
+       Both surfaces, and the big one matters most — it is what a child sees FIRST, before the
+       badge it shrinks into, and it was four lines of words to a reader who cannot read. */
+    const int bw = 296, bh = 214;
     const int bx = (FACE_W - bw) / 2;
     const int by = y0 + (h - y0 - bh) / 2;
     bubble(fb, bx, by, bw, bh, 22, SWAP16(0x001F));
     bubble(fb, bx + 5, by + 5, bw - 10, bh - 10, 18, SWAP16(0x0010));
+
+    /* WHOSE MESSAGE IT IS, as the same picture they pressed to send one. Above the name rather
+       than beside it: centred and large is what a four-year-old reads across a room, and the
+       name underneath is for the adult and for the child who is learning to. */
+    /* BIGGER THAN THE BADGE'S, because this is the notice that arrives first and the badge is
+       what it shrinks into; a primary notification with a smaller picture than its own
+       fallback had the hierarchy backwards. */
+    sendto_draw_face(fb, FACE_W, FACE_H, bx + bw / 2, by + 62, 50, who);
 
     char line[40];
     /* Uppercase because that is the alphabet the font has, and the box's names arrive in
@@ -1117,7 +1186,7 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count)
     /* A long name is shrunk rather than clipped: a name cut in half names nobody. */
     const int name_scale = w > bw - 32 ? POPUP_SCALE : POPUP_NAME_SCALE;
     w = font_text_w(line, name_scale);
-    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 34, name_scale, line, SWAP16(0xFFFF));
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 122, name_scale, line, SWAP16(0xFFFF));
 
     /* THE NUMBER, not "SOME". Five messages used to be five pop-ups and five taps, which is
        indistinguishable from the panel repeating itself — and it is the count that tells a
@@ -1129,10 +1198,10 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count)
         snprintf(sub, sizeof(sub), "SENT YOU ONE");
     }
     w = font_text_w(sub, 2);
-    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 84, 2, sub, SWAP16(0xFFFF));
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 158, 2, sub, SWAP16(0xFFFF));
     const char *act = count > 1 ? "TAP FOR ALL" : "TAP TO HEAR";
     w = font_text_w(act, POPUP_SCALE);
-    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 112, POPUP_SCALE, act,
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 186, POPUP_SCALE, act,
               SWAP16(0x07FF));
 
     s_popup_box[0] = bx;
@@ -1147,28 +1216,58 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count)
  *
  * A DOT AND A NAME, not a count. "3" is a number a four-year-old cannot act on; who it is from
  * is the thing they care about, and one glance at it is the whole content. */
-static void draw_popup_badge(uint16_t *fb, int y0, const char *from)
+/* A QUARTER OF THE GLASS, NOT A LOZENGE IN THE CORNER.
+ *
+ * This was a 44 px bubble at 14,14, sized so it would not cover the pet. The owner, watching
+ * the twins: *"waiting messages are still showing up in the top left as a small blue
+ * notification, they need to be like that 1/4 size."*
+ *
+ * TWO REASONS IT IS RIGHT. It is a TARGET, and the same aim that made the icon discs too small
+ * makes a 44 px lozenge worse — this is the control a child presses to hear their sister, and
+ * it was the smallest thing on the panel. And the badge is what is left AFTER the big pop-up
+ * has given up (`POPUP_BIG_MS`), which is precisely when nobody has noticed yet, so shrinking
+ * to a whisper at the moment of least attention had it backwards.
+ *
+ * The top-left QUADRANT, so it lines up with the grid the button opens and the halves the tick
+ * and cross take: every target on this panel is now a quarter or a half, and none of them need
+ * aiming at. Three quarters of the pet still show, which was the original objection and is
+ * still respected. */
+static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
+                             sendto_hit_t who)
 {
     char line[20];
     snprintf(line, sizeof(line), "%s", from != NULL && from[0] != '\0' ? from : "SOMEONE");
     for (char *q = line; *q != '\0'; q++) {
         if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
     }
-    const int tw = font_text_w(line, 2);
-    const int bw = tw + 46, bh = 44;
-    const int bx = 14, by = y0 + 14;
-    bubble(fb, bx, by, bw, bh, 12, SWAP16(0x001F));
-    /* The same pulsing dot the pop-up's colour carries, so the two read as one thing at two
-       sizes rather than as two different notices. */
-    const int r = 7;
+
+    const int margin = 10;
+    const int bx = margin, by = y0 + margin;
+    const int bw = FACE_W / 2 - margin * 2;
+    const int bh = (over_h - y0) / 2 - margin * 2;
+    bubble(fb, bx, by, bw, bh, 18, SWAP16(0x001F));
+
+    /* THE DOT, scaled with the box: it is the same pulsing mark the big pop-up carries, so the
+       two still read as one thing at two sizes rather than as two different notices. */
+    const int r = bh / 8;
+    const int dot_cy = by + bh / 3;
     for (int dy = -r; dy <= r; dy++) {
         for (int dx = -r; dx <= r; dx++) {
             if (dx * dx + dy * dy > r * r) continue;
-            const int px = bx + 18 + dx, py = by + bh / 2 + dy;
+            const int px = bx + bw / 2 + dx, py = dot_cy + dy;
             if (px >= 0 && px < FACE_W && py >= 0 && py < FACE_H) fb[py * FACE_W + px] = CUE_COLOUR;
         }
     }
-    font_draw(fb, FACE_W, FACE_H, bx + 32, by + 14, 2, line, SWAP16(0xFFFF));
+
+    /* THE BIGGEST SCALE THE NAME FITS AT, measured rather than assumed: the names here are the
+       owner's to choose and "SOMEONE" is the fallback, so a fixed scale would either clip a
+       long one or waste the box on a short one. */
+    int scale = 4;
+    while (scale > 1 && font_text_w(line, scale) > bw - 16) scale--;
+    const int tw = font_text_w(line, scale);
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - tw) / 2, by + bh * 3 / 5, scale, line,
+              SWAP16(0xFFFF));
+
     s_popup_box[0] = bx;
     s_popup_box[1] = by;
     s_popup_box[2] = bx + bw;
@@ -1208,28 +1307,6 @@ static void draw_run(uint16_t *fb, int y0, int h, int left)
     }
 }
 
-/* THE REPEAT ICON: top-left, ten seconds, then gone (`REPEAT_MS`).
- *
- * Top-left is where the owner asked for it, and it is NOT an empty corner — the panel's name
- * label lives there. It covers the label for those ten seconds, deliberately: everything
- * else on this glass is on the right (the indicator, the thinking box, the meter), and a
- * label that says what the panel is called is worth less for ten seconds than a button that
- * says what your sister said. It is tested before `label_hit`, so the tap goes to the replay
- * rather than flipping the name to a version number.
- *
- * A WORD RATHER THAN A GLYPH. There is no drawing library here and a hand-plotted circular
- * arrow at this size reads as a smudge; "AGAIN" is what the adult in the room needs, and the
- * twins learn a box that appears where the sound just came from by pressing it once. */
-static void draw_repeat(uint16_t *fb, int over_h)
-{
-    /* THE GLYPH, AT LAST. The word was here because "a hand-plotted circular arrow at this
-       size reads as a smudge" — true of a 52 px corner box and not of a 112 px disc. It also
-       moves from the top-left corner to the bottom third, where every other thing a finger is
-       meant to press now lives; a control whose location a child has to learn separately is a
-       control they will not find. No stored rectangle any more: it is a circle and it is
-       hit-tested as one. */
-    confirm_draw_repeat(fb, FACE_W, FACE_H, over_h);
-}
 
 /* 0 upright, 1 clockwise, 2 upside down, 3 anticlockwise — a quarter turn each. */
 static int s_quarter;
@@ -1321,54 +1398,53 @@ static bool label_hit(int fx, int fy, int over_y0)
     return fx >= x0 && fx <= x1 && fy >= y0 && fy <= y1;
 }
 
-/* A HOLD, NOT A PRESS, AND ONE SECOND OF IT.
+/* A PRESS, DEBOUNCED — AND THE DEBOUNCE IS WHAT MAKES A TOGGLE POSSIBLE AT ALL.
  *
- * The owner: *"press that button press if you hold it for longer than 1 second should pull up
- * that menu."* Two reasons it has to be a hold. This switch BOUNCES — measured 2026-09-27,
- * fifteen deliberate presses were reported as `boot_btn` 21 — so an edge is not a reliable
- * event to open anything on. And the button is on the edge of a thing a four-year-old picks
- * up, so a brush against it must not put a menu over the pet.
+ * This was a one-second hold for two releases, because the contact BOUNCES: measured
+ * 2026-09-27, fifteen deliberate presses were reported as `boot_btn` 21, about 1.4 edges per
+ * press. A hold is immune to that by construction — bounce at the start only re-times it.
  *
- * A continuous second of `down` is its own debounce: contact bounce at the start only re-times
- * the hold by a few milliseconds, and nothing brief can satisfy it at all. Fires ONCE per hold,
- * so leaning on the button does not reopen the menu forty times.
+ * The owner, after using it: *"let's change from holding the button to just the press of the
+ * button. Press the button shows it press the button hides it."* A toggle is the right feel
+ * and a hold is a thing you have to be taught. But a toggle on a bouncing contact is the worst
+ * of both: the second phantom edge arrives a few milliseconds after the first and closes what
+ * the same press just opened, so the menu would flicker and appear not to work — and that
+ * would look exactly like the panel ignoring a child, which is the failure this whole feature
+ * exists to remove.
  *
- * Polled once a frame, and the idle frame floor is 200 ms, so the menu appears between 1.0 and
- * 1.2 seconds in. That is inside what a child reads as "when I held it". */
-#define BOOT_HOLD_MS 1000
-static uint32_t s_boot_down_at; /* when this press began; 0 when the button is up */
-static bool s_boot_fired;       /* this hold has already opened something */
-static bool s_boot_hold;        /* set here, consumed by the frame loop */
+ * So the bounce is handled here instead of being designed around. A press is a falling edge
+ * that is at least `BOOT_DEBOUNCE_MS` after the last one this accepted. That window is far
+ * longer than any contact bounce and far shorter than a four-year-old's second deliberate
+ * press, so every real press counts once and no phantom one counts at all.
+ *
+ * WHAT THIS GIVES UP, deliberately: a brush against the button now opens the menu, where a
+ * hold could not be triggered by accident. That is the owner's call and it is the right one —
+ * the menu is modal, it times out on its own, and the cost of an accidental open is one press
+ * of the cross, against the cost of a control that children could not work. */
+#define BOOT_DEBOUNCE_MS 250
+static uint32_t s_boot_last_ms; /* when this last ACCEPTED a press; 0 = never */
+static bool s_boot_press;       /* set here, consumed by the frame loop */
 
 static void boot_button_poll(void)
 {
     const bool down = gpio_get_level(BOOT_BTN) == 0; /* active low, pulled up */
     const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-    if (!down) {
-        s_boot_down_at = 0;
-        s_boot_fired = false;
-        s_boot_was_down = false;
-        return;
-    }
-    if (s_boot_down_at == 0) {
-        s_boot_down_at = now == 0 ? 1 : now;
-    } else if (!s_boot_fired && now - s_boot_down_at >= BOOT_HOLD_MS) {
-        s_boot_fired = true;
-        /* COUNTED HERE, so `boot_btn` in telemetry means "holds that asked for the menu"
-           rather than "edges the contact produced" — the second of which was never a number
-           anyone could act on. */
+    if (down && !s_boot_was_down &&
+        (s_boot_last_ms == 0 || now - s_boot_last_ms >= BOOT_DEBOUNCE_MS)) {
+        s_boot_last_ms = now == 0 ? 1 : now;
         s_boot_presses++;
-        s_boot_hold = true;
-        ESP_LOGI(TAG, "boot button: held (%d)", s_boot_presses);
+        s_boot_press = true;
+        ESP_LOGI(TAG, "boot button: press %d", s_boot_presses);
     }
-    s_boot_was_down = true;
+    s_boot_was_down = down;
 }
 
-/* Has the button been held since this was last asked? Consumed, so one hold is one answer. */
+/* Has the button been pressed since this was last asked? Consumed, so one press is one
+   answer — which is what lets the caller treat it as a toggle without counting edges. */
 static bool boot_button_take(void)
 {
-    const bool was = s_boot_hold;
-    s_boot_hold = false;
+    const bool was = s_boot_press;
+    s_boot_press = false;
     return was;
 }
 
@@ -1924,7 +2000,7 @@ static void draw_meter(uint16_t *fb, int level)
 static void reassert_panel(void)
 {
     if (s_io == NULL) return;
-    const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, QSPI_CMD(0x29), NULL, 0);
+    const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0);
     if (on != ESP_OK) ESP_LOGW(TAG, "re-assert failed (0x29 %s)", esp_err_to_name(on));
     apply_brightness();
 }
@@ -2183,24 +2259,45 @@ static void face_task(void *arg)
                     dirty = true;
                     goto tap_done;
                 }
-                if (s_repeat_until != 0 && confirm_hit_centre(ox, oy, over_h_tap)) {
-                    s_flinch = 1.0f;
-                    /* IT ASKS THE BOX NOW, and that is a real change from what this comment
-                       used to promise. The message was replayed from this panel's own buffer
-                       until 0.2.96; streaming discards the audio as it plays, so "again" is a
-                       fetch (`GET /message/{id}/pcm`) and it needs the link to be up. The
-                       failure is reported through `jpanel_state()` like any other fetch rather
-                       than being silent, because a control that answers with nothing is the
-                       thing the cue below was added to stop. */
-                    /* Same shape as the pop-up: a sound for the finger, then the audio. This
-                       had NO cue at all, which made the one control a child presses when they
-                       missed something the one that answered with silence. */
-                    if (sound) audio_cue(CUE_HEARD);
-                    s_pending = PEND_REPLAY;
-                    s_pending_until = now + PENDING_MS;
-                    s_repeat_until = now + REPEAT_MS; /* they are still asking; keep it up */
-                    dirty = true;
-                    goto tap_done;
+                /* REPLAY AND REPLY, the two halves that replace a lone centred repeat icon.
+                   Hit through `confirm_hit` — the same halves the tick and cross use — rather
+                   than a third geometry: the places a child has learned are the places, and a
+                   second set of rules for the same two corners is how a press once landed
+                   289 px from the icon it was aimed at. */
+                if (s_repeat_until != 0) {
+                    const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
+                    if (half == CONFIRM_CANCEL) {
+                        s_flinch = 1.0f;
+                        /* IT ASKS THE BOX NOW. The message was replayed from this panel's own
+                           buffer until 0.2.96; streaming discards the audio as it plays, so
+                           "again" is a fetch and it needs the link to be up. Reported through
+                           `jpanel_state()` like any other fetch rather than being silent,
+                           because a control that answers with nothing is the thing the cue
+                           below was added to stop. A sound for the finger, then the audio. */
+                        if (sound) audio_cue(CUE_HEARD);
+                        s_pending = PEND_REPLAY;
+                        s_pending_until = now + PENDING_MS;
+                        s_repeat_until = now + REPEAT_MS; /* still asking; keep it up */
+                        dirty = true;
+                        goto tap_done;
+                    }
+                    if (half == CONFIRM_SEND) {
+                        /* THE REPLY, AND IT NEEDS NO CHOICE MADE. The recipient is whoever
+                           just spoke, which the panel already knows from
+                           `X-Jpanel-From-Kind` — answering a message used to mean opening the
+                           menu and picking the person who had this second finished talking.
+                           That is the difference between a message and a conversation, and it
+                           is the whole reason the owner asked for this. */
+                        s_repeat_until = 0; /* the pair is gone; the tick and cross take over */
+                        if (start_send_recording(jpanel_in_from(), now, speaking)) {
+                            if (sound) audio_cue(CUE_LISTEN);
+                        } else if (sound) {
+                            audio_cue(CUE_STOP);
+                        }
+                        s_flinch = 1.0f;
+                        dirty = true;
+                        goto tap_done;
+                    }
                 }
             }
             /* THE TICK AND THE CROSS, AND THEY REPLACE "A TOUCH ANYWHERE CANCELS".
@@ -2555,17 +2652,22 @@ static void face_task(void *arg)
            every time. */
         speech_mute_commands(s_talk == TALK_RECORDING);
         boot_button_poll();
-        /* THE BUTTON OPENS THE GRID, AND OPENING IS ALL IT DOES. Not a toggle: this switch
-           bounces (see `boot_button_poll`), and a toggle on a bouncing contact would close what
-           the same press had just opened. Pressing again while it is up only extends it, which
-           is also the kinder reading of a child pressing twice because nothing seemed to
-           happen. The ways OUT are the cross and the timeout, both of which a child can see.
+        /* THE BUTTON TOGGLES THE GRID: press to show, press to hide. Safe as a toggle only
+           because `boot_button_poll` debounces — a raw edge would close on the same press that
+           opened it. The cross and the timeout still work; this is a third way out for a child
+           who has changed their mind and is already holding the button.
 
            REFUSED MID-RECORDING, for the reason every other control here is: the microphone is
            already committed to a message, and a menu over a recording offers a second recipient
-           for audio that is being captured for the first. */
+           for audio being captured for the first. Closing is never refused — getting OUT of
+           something must not depend on the state you are in. */
         if (boot_button_take()) {
-            if (s_talk == TALK_IDLE && !audio_playing()) {
+            if (s_sendto_until != 0) {
+                s_sendto_until = 0;
+                if (sound) audio_cue(CUE_STOP);
+                ESP_LOGI(TAG, "sendto: grid closed by button");
+                dirty = true;
+            } else if (s_talk == TALK_IDLE && !audio_playing()) {
                 s_sendto_until = now + SENDTO_MS;
                 if (sound) audio_cue(CUE_HEARD);
                 ESP_LOGI(TAG, "sendto: grid opened by button");
@@ -2637,25 +2739,26 @@ static void face_task(void *arg)
            ADC, so without that the pet would transcribe itself — which means a hold taken over
            our own voice can only ever capture silence. Refusing it costs nothing and saves a
            child from being ignored by a toy that looked like it was listening. */
+        /* A HOLD ON THE PET OPENS THE MENU NOW, RATHER THAN TALKING TO IT.
+         *
+         * The owner: *"change long press on the screen to actually pull up the same thing as
+         * the menu instead of just talking to the robot."*
+         *
+         * The hold used to be the ONLY way in, so it went straight to the one destination that
+         * existed. It is not any more: the grid offers her sister, her dad and the pet, and the
+         * pet is one of its four icons — so a hold that still went straight to a conversation
+         * would be the one gesture on this panel that could not reach the other three people.
+         * Nothing is lost; the pet is one press further on, and the two children who could not
+         * get `tell sister` recognised gain a second way to reach each other that needs no
+         * button on the case at all. */
         if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && gest.taps == 0 &&
-            held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY) {
-            s_talk = TALK_LISTENING;
-            s_talk_since = now;
-            /* A finger, not the name — so this turn ends on the release, not on silence. Set
-               explicitly rather than relied upon: the two paths share one state machine, and a
-               stale flag here would leave a held turn waiting for a hush that never comes. */
-            s_listen_voice = false;
-            s_follow_turns = 0; /* a finger is a deliberate start, like the name */
-            /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
-               that the thing is now listening rather than merely being held, and a rising
-               sweep says it better than a flat tone: rising is the prosody of a question,
-               which is what an open microphone is. */
-            if (sound) audio_cue(CUE_LISTEN);
-            /* AFTER the beep, deliberately: `audio.c` goes deaf for six chunks once the
-               speaker runs (§10.4bi), so opening the recording here keeps our own tone out
-               of the front of every message. */
-            audio_capture_open();
-            ESP_LOGI(TAG, "talk: listening");
+            held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
+            s_sendto_until = now + SENDTO_MS;
+            /* The same cue the button's press makes, because it is the same event: something
+               has appeared and it is waiting to be pressed. */
+            if (sound) audio_cue(CUE_HEARD);
+            ESP_LOGI(TAG, "sendto: grid opened by hold");
+            dirty = true;
         } else if (s_talk == TALK_IDLE && down && !on_the_pet && gest.taps == 0 &&
                    held >= HOLD_TALK_MS && held < HOLD_TALK_MS + poll_ms) {
             /* Once per press, on the frame the threshold passes — the owner has no terminal
@@ -3124,8 +3227,8 @@ static void face_task(void *arg)
             }
             draw_meter(fb, level);
             caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
-            if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);
-            else if (s_talk == TALK_RECORDING) draw_recording(fb, over_y0, now, s_rec_to);
+            if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, over_h, now);
+            else if (s_talk == TALK_RECORDING) draw_recording(fb, over_y0, over_h, now, s_rec_to);
             /* ONLY WHERE THERE IS SOMETHING TO CONFIRM, and a HELD listen is not it: that turn
                ends on the release of the finger that started it, so a tick would be a second
                way to finish a gesture that already has one, and a cross would be a target the
@@ -3157,9 +3260,11 @@ static void face_task(void *arg)
                        and it answers a question the child is asking right now ("what did she
                        say?"), where the badge answers one they have already declined. */
                     if (now - s_popup_since < POPUP_BIG_MS) {
-                        draw_popup(fb, over_y0, over_h, from, waiting);
+                        draw_popup(fb, over_y0, over_h, from, waiting,
+                                   jpanel_waiting_from_dad() ? SENDTO_DAD : SENDTO_SISTER);
                     } else if (s_repeat_until == 0) {
-                        draw_popup_badge(fb, over_y0, from);
+                        draw_popup_badge(fb, over_y0, over_h, from, jpanel_waiting_from_dad() ? SENDTO_DAD
+                                                                             : SENDTO_SISTER);
                     }
                 }
             }
@@ -3169,7 +3274,7 @@ static void face_task(void *arg)
             if (jpanel_running()) {
                 draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0));
             } else if (s_repeat_until != 0) {
-                draw_repeat(fb, over_h);
+                confirm_draw_replay_reply(fb, FACE_W, FACE_H, over_h);
             }
             /* THE GRID LAST OF ALL, over the pop-up and over the run control, because it is
                the one overlay here that a child asked for by pressing a button. Everything

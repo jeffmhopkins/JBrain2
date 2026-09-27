@@ -107,6 +107,9 @@ static volatile bool s_stopped;
    header handler below. */
 static char s_in_id[48];
 static char s_in_from[32];
+/* Whether the message being streamed came from the owner rather than the other panel. See
+   `X-Jpanel-From-Kind` in `on_header`. */
+static bool s_in_from_dad;
 /* WHAT THE BOX SAYS IT SENT, hex, or "" from a box too old to say. The panel hashes the
    message as it streams it into the speaker and compares at the end — not to re-play it, which
    it cannot, but to decide whether to ACKNOWLEDGE it. A download that ends early plays a
@@ -128,6 +131,8 @@ static volatile int s_wait_count;
    is not exactly one other panel: with two siblings "the other one" is a question, not a name,
    and a guess would put the wrong child on the glass. */
 static char s_sibling[32];
+/* Whether the oldest waiting message is from the owner rather than the other panel. */
+static bool s_wait_from_dad;
 
 static void trust(esp_http_client_config_t *hc)
 {
@@ -182,6 +187,15 @@ static void on_header(const esp_http_client_event_t *e)
         strlcpy(s_in_id, e->header_value, sizeof(s_in_id));
     } else if (strcasecmp(e->header_key, "X-Jpanel-From") == 0) {
         strlcpy(s_in_from, e->header_value, sizeof(s_in_from));
+    } else if (strcasecmp(e->header_key, "X-Jpanel-From-Kind") == 0) {
+        /* WHERE A REPLY GOES, which is not the same question as who the child hears it is
+           from. `X-Jpanel-From` is a NAME the owner can change; this is the kind, and it has
+           only two answers. Matching the name against "Dad" would work until somebody was
+           renamed — the coupling migration 0211 exists to undo. Absent on a box too old to
+           send it, and the default below is the safer of the two: replying to the other panel
+           is a message to a four-year-old, where replying to the owner is not what was asked
+           for but is at least delivered to somebody who can work out what happened. */
+        s_in_from_dad = strcasecmp(e->header_value, "owner") == 0;
     } else if (strcasecmp(e->header_key, "X-Jpanel-Sha256") == 0) {
         strlcpy(s_in_sha, e->header_value, sizeof(s_in_sha));
     }
@@ -350,6 +364,13 @@ static void do_poll(void)
         if (root != NULL) {
             const cJSON *n = cJSON_GetObjectItemCaseSensitive(root, "count");
             const cJSON *f = cJSON_GetObjectItemCaseSensitive(root, "from_name");
+            /* WHOSE FACE THE BADGE DRAWS. A kind, not a name: `from_name` is the owner's to
+               change, and matching it against "Dad" here is the coupling migration 0211 undid.
+               Absent on an older box, where false means the badge falls back to the sister —
+               the more likely sender on a panel, and the wrong guess costs a picture rather
+               than a misdelivered message. */
+            const cJSON *fo = cJSON_GetObjectItemCaseSensitive(root, "from_owner");
+            s_wait_from_dad = cJSON_IsTrue(fo);
             const cJSON *sib = cJSON_GetObjectItemCaseSensitive(root, "sibling");
             const int count = cJSON_IsNumber(n) ? n->valueint : 0;
             /* Name first, then the count: see the declaration. */
@@ -537,6 +558,7 @@ static void do_fetch(bool asked)
     int got = 0;
     s_in_id[0] = '\0';
     s_in_from[0] = '\0';
+    s_in_from_dad = false;
     s_in_sha[0] = '\0';
     if (esp_http_client_open(c, 0) != ESP_OK) goto done;
     if (esp_http_client_fetch_headers(c) < 0) goto done;
@@ -792,11 +814,21 @@ const char *jpanel_last_from(void)
     return s_in_from;
 }
 
+jpanel_to_t jpanel_in_from(void)
+{
+    return s_in_from_dad ? JPANEL_TO_DAD : JPANEL_TO_PANEL;
+}
+
 int jpanel_waiting(char *from, size_t cap)
 {
     const int n = s_wait_count;
     if (from != NULL && cap > 0) strlcpy(from, s_wait_from, cap);
     return n;
+}
+
+bool jpanel_waiting_from_dad(void)
+{
+    return s_wait_from_dad;
 }
 
 int jpanel_sibling(char *out, size_t cap)

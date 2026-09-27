@@ -466,7 +466,13 @@ function MessagesTab() {
                   data-unplayed={unheard(m) ? m.id : undefined}
                 >
                   <div className="jp-msg-head">
-                    <span className="jp-from">{m.from_name}</span>
+                    {/* WHO IT WAS ACTUALLY BETWEEN. The recipient is drawn only when the
+                        owner is not one — his own inbox does not need telling that a message
+                        addressed to him was addressed to him — but a message between the two
+                        girls named only its sender, so it read as though it had come to him. */}
+                    <span className="jp-from">
+                      {m.direction === "between" ? `${m.from_name} → ${m.to_name}` : m.from_name}
+                    </span>
                     <time dateTime={m.created_at}>{whenText(m.created_at)}</time>
                     <span className="jp-dur">{durationText(m.duration_ms)}</span>
                     {/* STATUS, AND ONLY ON WHAT YOU SENT. For an inbound message `played_at`

@@ -165,12 +165,18 @@ class TestTheButtonGridIsWiredToRealActions:
             encoding="utf-8"
         )
 
-    def test_the_button_is_a_hold_not_a_press(self) -> None:
-        """A press was the wrong event twice over: the contact bounces (15 presses read as 21),
-        and the button is on the edge of something a four-year-old picks up."""
+    def test_the_button_toggles_and_is_debounced(self) -> None:
+        """A TOGGLE IS ONLY SAFE BECAUSE OF THE DEBOUNCE, and that is the whole point of this
+        test. The contact bounces — 15 deliberate presses were reported as 21 — so a raw edge
+        toggle would close the menu on the same press that opened it, and the panel would look
+        like it was ignoring a child, which is the failure the grid exists to remove."""
         src = self._fw("display.c")
-        assert "#define BOOT_HOLD_MS 1000" in src, "the menu no longer needs a one-second hold"
-        assert "s_boot_fired" in src, "the once-per-hold guard is gone; leaning would re-open it"
+        assert "#define BOOT_DEBOUNCE_MS 250" in src, "the debounce window is gone"
+        assert "s_boot_last_ms" in src, "nothing rejects a bounced edge any more"
+        # Both halves of the toggle, so a press can always get back out.
+        assert "grid opened by button" in src and "grid closed by button" in src, (
+            "the button no longer both opens and closes the grid"
+        )
 
     def test_every_icon_reaches_the_same_path_the_voice_does(self) -> None:
         src = self._fw("display.c")
@@ -192,18 +198,48 @@ class TestTheButtonGridIsWiredToRealActions:
         assert "note_heard(v->phrase, r->prob[0], true, r->raw_string);" in self._fw("speech.c")
 
 
-class TestTheBrightnessCommandIsFramedForQspi:
-    """THE BUG THAT MADE BRIGHTNESS A NO-OP FROM AUGUST UNTIL 2026-09-27.
+class TestTheBrightnessCommandIsDeliberatelyNotFramed:
+    """THE FRAMING WAS CORRECT, IT WORKED, AND IT HAD TO BE TAKEN BACK OUT THE SAME DAY.
 
-    The panel is opened in QSPI mode, where a command is a 32-bit prologue rather than a byte:
-    CO5300 datasheet V0.01 p.21 — instruction `02h`, then `AD[23:0] = {8'h00, CMD[7:0], 8'h00}`.
-    The vendor driver wraps every command it sends, which is why the init array's `0x51 = 0xFF`
-    always worked; the two calls `display.c` made directly did not, so a bare `0x51` went out as
-    instruction `0x00`, the controller discarded it, and `esp_lcd_panel_io_tx_param` returned
-    `ESP_OK` because the bytes were clocked out regardless.
-
+    The diagnosis still stands. The panel is opened in QSPI mode, where a command is a 32-bit
+    prologue rather than a byte: CO5300 datasheet V0.01 p.21 — instruction `02h`, then
+    `AD[23:0] = {8'h00, CMD[7:0], 8'h00}`. The vendor driver wraps every command it sends, which
+    is why the init array's `0x51 = 0xFF` always worked; the two calls `display.c` made directly
+    did not, so a bare `0x51` went out as instruction `0x00`, the controller discarded it, and
+    `esp_lcd_panel_io_tx_param` returned `ESP_OK` because the bytes were clocked out regardless.
     The owner found it from the one symptom that ruled out everything else: the panel's OWN
     dim-on-sleep stage, which needs no network, never dimmed either.
+
+    THEN 0.3.16 SHIPPED THE FIX AND BOTH PANELS DIED. Within minutes, in two bedrooms: black
+    screen, no audio cue, no response to touch, and — the part that makes it unrecoverable — no
+    reboot. Only a power cycle brought them back, and telemetry from both stopped too, so it was
+    not merely the renderer.
+
+    WHY THAT SHAPE OF FAILURE IS THE WORST ONE THIS FIRMWARE HAS. `sdkconfig` sets
+    `CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT` with a zero delay, so a CRASH self-heals in seconds,
+    while `CONFIG_ESP_TASK_WDT_PANIC` is NOT set — so a task merely BLOCKED prints a warning
+    every 30 s and sits there forever. And ESP-IDF's `panel_io_spi_tx_param` waits
+    `portMAX_DELAY` twice (`spi_device_acquire_bus`, then `spi_device_get_trans_result` for every
+    in-flight transfer). Framing the writes turned a discarded no-op into a real call into that
+    function, every 30 s, on a bus already carrying ~5 full frames a second.
+
+    WHAT IS MEASURED, AND WHAT IS NOT. Measured: framed hangs the panels, unframed does not.
+    NOT established: the trigger. `tx_param` drains in-flight transfers before it transmits, so
+    it is not mid-frame corruption; and `display_set_brightness` only raises a flag, so it is not
+    a cross-task call either. Both of those were guesses this class used to repeat, and the
+    ESP-IDF source refuted them. One panel also ran 956 s healthy on 0.3.16 before dying, so the
+    30-second re-assert is not sufficient on its own.
+
+    SO THE ASSERTIONS BELOW ARE INVERTED ON PURPOSE, and this is not a test being loosened to get
+    green — it is pinned just as tightly in the opposite direction, because the thing worth
+    preventing changed. Brightness being stuck at full is a nuisance; a panel in a four-year-old's
+    bedroom that answers nothing until someone walks in and pulls the cable is not, and it cannot
+    be diagnosed remotely because the part that would report it is the part that died.
+
+    RE-LANDING IT needs the command writes ordered against the frame blit AND
+    `CONFIG_ESP_TASK_WDT_PANIC` on so a hang reboots instead of persisting — worked out on a bench
+    panel with a cable, not deployed to a bedroom. Whoever does that will have to change this
+    class, which is the point of it.
     """
 
     def _display_c(self) -> str:
@@ -213,19 +249,31 @@ class TestTheBrightnessCommandIsFramedForQspi:
             pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
         ).read_text(encoding="utf-8")
 
-    def test_the_opcode_is_named_and_both_call_sites_use_it(self) -> None:
+    def test_the_opcode_stays_named_as_the_record_but_is_not_used(self) -> None:
+        """The macro survives the revert deliberately: it is the datasheet's answer, worked out
+        once, and deleting it would mean re-deriving it from p.21 next time. What must NOT come
+        back is either call site using it."""
         src = self._display_c()
         assert "#define QSPI_WRITE_OPCODE 0x02" in src, "the datasheet's write opcode is gone"
-        assert "QSPI_CMD(0x51)" in src, "the brightness write is no longer framed"
-        assert "QSPI_CMD(0x29)" in src, "the display-on re-assert is no longer framed"
+        assert "QSPI_CMD(0x51)" not in src, "the brightness write is framed again; it hangs panels"
+        assert "QSPI_CMD(0x29)" not in src, "the re-assert is framed again; it hangs panels"
 
-    def test_the_unframed_forms_do_not_come_back(self) -> None:
-        """Both call sites, pinned negatively. This is the shape the defect had, and it looked
-        entirely reasonable beside a vendor driver that hides the framing inside its own
-        wrapper — which is exactly why it survived so long."""
+    def test_both_runtime_writes_stay_unframed(self) -> None:
+        """Pinned positively, which reads backwards until you know the history: these two
+        deliberately-inert writes are what keeps the panels alive. A future reader who 'fixes'
+        them is re-creating the outage, so the failure message has to say so rather than just
+        naming a missing macro."""
         src = self._display_c()
-        assert "tx_param(s_io, 0x51" not in src, "an unframed brightness write is back"
-        assert "tx_param(s_io, 0x29" not in src, "an unframed display-on write is back"
+        hung = "0.3.16 framed these and hung both panels"
+        assert "tx_param(s_io, 0x51" in src, f"brightness is framed again; {hung}"
+        assert "tx_param(s_io, 0x29" in src, f"the re-assert is framed again; {hung}"
+
+    def test_the_retreat_is_explained_where_the_writes_are(self) -> None:
+        """The reason lives next to the code, not only here. A bare `0x51` with no comment is
+        indistinguishable from the original defect, and the next person to notice brightness is
+        broken will re-fix it exactly as I did."""
+        src = self._display_c()
+        assert "UNFRAMED ON PURPOSE" in src, "the deliberate retreat is no longer explained"
 
     def test_the_registers_the_datasheet_cleared_are_left_alone(self) -> None:
         """Three plausible-sounding suspects the datasheet acquitted, pinned so nobody 'fixes'

@@ -110,13 +110,30 @@ class Waiting(BaseModel):
     # already enforces: with two siblings "the other one" is not a name, it is a question, and
     # a label that guesses would put the wrong child on the glass.
     sibling: str = ""
+    # WHOSE FACE THE BADGE DRAWS, as a kind rather than a name. The waiting badge shows the
+    # sender's PICTURE now, because its readers are four and pre-literate and a name is a shape
+    # they have memorised at best — and the picture is the same one they press to answer.
+    #
+    # `from_name` cannot answer this. It is a name the owner chooses and can change, and
+    # matching it against "Dad" in the firmware is the coupling migration 0211 exists to undo.
+    # Two answers, and the box is the only side that knows which.
+    from_owner: bool = False
 
 
 class Message(BaseModel):
     id: str
     from_name: str
     to_name: str
-    direction: Literal["in", "out"]
+    # THREE VALUES, BECAUSE TWO WERE A LIE ABOUT A THIRD CASE. This is owner-relative — "in"
+    # means the owner received it, "out" that he sent it — and twin-to-twin post is NEITHER.
+    # It was reported as "in", so the PWA drew every message between the girls as though it
+    # had been sent to Dad, and its unplayed badge treated a message meant for one four-year-old
+    # as something the OWNER had failed to deal with.
+    #
+    # The owner: *"my pwa is showing messages between the girls ... make sure the pwa is
+    # correctly listing that it was lydian to elora, not kid to Dad."* `to_name` was already on
+    # the wire; nothing said the message was not his, so nothing drew it.
+    direction: Literal["in", "out", "between"]
     transcript: str
     composed: Literal["voice", "text"]
     duration_ms: int
@@ -298,7 +315,14 @@ def _row_to_message(row, names: dict[str, str]) -> Message:
         to_name=_name_of(names, r_kind, r_dev),
         # Relative to the OWNER, who is the only reader that needs a direction at all: a panel
         # sees nothing but its own inbox, so every row it can read is incoming by definition.
-        direction="in" if s_kind == "panel" else "out",
+        # `between` is the pair the owner is not an end of — see the field's own comment.
+        direction=(
+            "between"
+            if s_kind == "panel" and r_kind == "panel"
+            else "in"
+            if s_kind == "panel"
+            else "out"
+        ),
         transcript=transcript or "",
         composed=composed,
         duration_ms=int(dur or 0),
@@ -479,6 +503,7 @@ async def waiting(principal: PanelDep, request: Request) -> Waiting:
             )
         ).first()
         count = int(row[0]) if row else 0
+        from_owner = False
         # ONCE PER POLL, AND UNCONDITIONALLY. It used to be read only when something was
         # waiting; the indicator it now also feeds is drawn while a child is RECORDING, which
         # is precisely the case where nothing is. Two small queries twice a minute.
@@ -500,10 +525,11 @@ async def waiting(principal: PanelDep, request: Request) -> Waiting:
             ).first()
             if oldest:
                 from_name = _name_of(names, oldest[0], oldest[1])
+                from_owner = oldest[0] == "owner"
         me = _display_name(principal.label)
         others = [n for pid, n in names.items() if pid != str(principal.id) and n != me]
         sibling = others[0] if len(others) == 1 else ""
-    return Waiting(count=count, from_name=from_name, sibling=sibling)
+    return Waiting(count=count, from_name=from_name, sibling=sibling, from_owner=from_owner)
 
 
 @router.get("/next")
@@ -563,6 +589,15 @@ async def next_message(principal: PanelDep, request: Request) -> Response:
         headers={
             "X-Jpanel-Id": row[0],
             "X-Jpanel-From": _name_of(names, row[2], row[3]),
+            # WHO TO REPLY TO, AS A KIND RATHER THAN A NAME. `X-Jpanel-From` is what the child
+            # HEARS — a name the owner chooses and can change — and the panel needs to know
+            # where a reply goes, which is a different question with only two answers.
+            #
+            # Matching the name against "Dad" in the firmware would work today and break the
+            # first time anybody is renamed, which is the exact shape of the `label LIKE
+            # 'panel%'` coupling migration 0211 was written to undo. The box already knows the
+            # answer; it was simply flattening it to a name on the way out.
+            "X-Jpanel-From-Kind": "owner" if row[2] == "owner" else "panel",
             # THE OTHER HALF OF THE PROOF. The panel streams this straight into its speaker and
             # discards it as it plays, so a download that ends early is a message that stops
             # mid-sentence — and the panel would then acknowledge it and the box would never
