@@ -1245,6 +1245,22 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
  * and cross take: every target on this panel is now a quarter or a half, and none of them need
  * aiming at. Three quarters of the pet still show, which was the original objection and is
  * still respected. */
+/* THE SENDER, TOP LEFT, AT THE ONE SIZE AND THE ONE PLACE — drawn by the notification badge,
+ * by a message while it plays, and by the again-and-reply pair after it ends. Three callers and
+ * one drawing, because this quadrant means exactly one thing on this screen ("who is this
+ * about?") and a picture that moved or resized between those three states would read as three
+ * different notices rather than one conversation.
+ *
+ * Sized FROM the quadrant rather than to a constant: the quadrant is also the hit area, and a
+ * picture that did not fill what the finger may press is how a control and its target come to
+ * disagree — which is the fault this file spent 0.3.24 removing. */
+static void draw_sender_face(uint16_t *fb, int y0, int over_h, sendto_hit_t who)
+{
+    const int qh = (over_h - y0) / 2;
+    const int qw = FACE_W / 2;
+    sendto_draw_face(fb, FACE_W, FACE_H, qw / 2, y0 + qh / 2, (qw < qh ? qw : qh) / 3, who);
+}
+
 static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
                              sendto_hit_t who)
 {
@@ -1258,12 +1274,7 @@ static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
     (void)from;
     const int qh = (over_h - y0) / 2;
     const int qw = FACE_W / 2;
-
-    /* SIZED TO THE QUADRANT rather than to a constant, because that is what the hit area is:
-       the picture should fill what the finger may press, or the two disagree about where the
-       notice is. The thirds leave a margin that keeps it off both edges. */
-    const int r = (qw < qh ? qw : qh) / 3;
-    sendto_draw_face(fb, FACE_W, FACE_H, qw / 2, y0 + qh / 2, r, who);
+    draw_sender_face(fb, y0, over_h, who);
 
     /* THE WHOLE QUADRANT IS THE TARGET, not the face's own bounds. The owner, on the grid
        first and now here: *"capture everything in that top left quadrant as far as clicks to
@@ -1287,11 +1298,7 @@ static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
  * said "Dad sent you one" is the picture that says "this is Dad" while it plays. */
 static void draw_run(uint16_t *fb, int y0, int over_h, int left, sendto_hit_t who, bool playing)
 {
-    const int qh = (over_h - y0) / 2;
-    const int qw = FACE_W / 2;
-    const int r = (qw < qh ? qw : qh) / 3;
-    sendto_draw_face(fb, FACE_W, FACE_H, qw / 2, y0 + qh / 2, r, who);
-
+    draw_sender_face(fb, y0, over_h, who);
     confirm_draw_transport(fb, FACE_W, FACE_H, over_h, playing);
 
     if (left > 0) {
@@ -3424,6 +3431,18 @@ static void face_task(void *arg)
                          jpanel_in_from() == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER,
                          playing);
             } else if (s_repeat_until != 0) {
+                /* THE FACE STAYS FOR THE WHOLE EXCHANGE, and this branch used to drop it: the
+                   message ended, the pause became a play, and Dad vanished from the corner in
+                   the same frame. The owner: *"the face goes away. That is unintentional. The
+                   face should stay there the entire time."*
+                 *
+                   He is right, and the reason is stronger than consistency. The two buttons
+                   underneath are AGAIN and REPLY, and both of them are about a person — the
+                   one who just spoke. Taking their face away at exactly the moment those
+                   appear removes the answer to "reply to whom?" from the one screen that asks
+                   it. The picture and the buttons are one thing; only the glyph may change. */
+                draw_sender_face(fb, over_y0, over_h,
+                                 jpanel_in_from() == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
                 confirm_draw_transport(fb, FACE_W, FACE_H, over_h,
                                        audio_playing() && !audio_stream_paused());
             }

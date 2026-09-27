@@ -5533,6 +5533,20 @@ reaches into that corner, so a finger aimed at the exit can land on it — and l
 gesture would work or make the pet blink depending on exactly where a four-year-old put her
 finger, which is indistinguishable from it not working.
 
+**And the face stays for the whole exchange.** The ended state drew the pair without it, so the
+message finished, the pause became a play, and Dad vanished from the corner in the same frame —
+*"that is unintentional. The face should stay there the entire time."* The reason is stronger
+than consistency: the two buttons underneath are **again** and **reply**, and both are about a
+person. Taking their face away at the moment those appear removes the answer to "reply to whom?"
+from the one screen that asks it.
+
+There is now **one** `draw_sender_face` and three callers — the badge, a message playing, and
+the pair afterwards. That quadrant means exactly one thing on this screen, and a picture that
+moved or resized between the three states would read as three notices rather than one
+conversation. It is sized *from* the quadrant because the quadrant is also the hit area, which
+is the same rule the rest of 0.3.24 exists to enforce: **what you can see and what you can press
+must not be able to disagree.**
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The
