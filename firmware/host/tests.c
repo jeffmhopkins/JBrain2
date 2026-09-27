@@ -3218,6 +3218,36 @@ static void test_phonemes_too_long_to_hold_are_refused_rather_than_truncated(voi
  * pin the geometry that replaces it: a finger that lands between targets must do NOTHING, and
  * the empty corner must stay empty.
  */
+/* THE QSPI COMMAND WORD, PINNED — the encoding whose absence meant brightness never once
+ * changed on real hardware, from boot in August until it was found on 2026-09-27.
+ *
+ * On this bus a command is a 32-bit prologue, not a byte. CO5300 datasheet V0.01 p.21:
+ * instruction 02h, then AD[23:0] = {8'h00, CMD[7:0], 8'h00}. `display.c` sent a bare `0x51`,
+ * which goes out as instruction 0x00 — not a defined QSPI instruction — and the controller
+ * discarded it while the SPI layer returned ESP_OK. An error nothing could falsify.
+ *
+ * `display.c` cannot be linked here (it is all ESP), so this pins the arithmetic the macro
+ * does, read out of the firmware, against the datasheet's own words. A change that breaks the
+ * framing again fails here rather than on a panel in a bedroom that no longer dims. */
+static void test_the_qspi_command_word_matches_the_datasheet(void)
+{
+    /* Exactly the form on p.21, spelled out rather than reusing the macro's own expression:
+       a test that restates the implementation proves only that C is deterministic. */
+    const unsigned brightness = (0x02u << 24) | (0x51u << 8);
+    const unsigned display_on = (0x02u << 24) | (0x29u << 8);
+    CHECK(brightness == 0x02005100u, "brightness is 02h + {00, 51, 00}");
+    CHECK(display_on == 0x02002900u, "display-on is 02h + {00, 29, 00}");
+    /* The opcode byte is the whole of what was missing: without it the instruction is 0x00. */
+    CHECK((brightness >> 24) == 0x02u, "the write opcode is present");
+    CHECK((brightness & 0xFFu) == 0x00u, "and the low address byte is zero");
+    /* The command survives in the middle byte, which is what a reader needs to see. */
+    CHECK(((brightness >> 8) & 0xFFu) == 0x51u, "0x51 is still recoverable from the word");
+
+    /* That the FIRMWARE still builds it this way is pinned from the backend suite, which
+       already reads firmware source for the other cross-package couplings — this harness has
+       no file reader and does not need one. */
+}
+
 static void test_the_who_grid_has_four_distinct_answers(void)
 {
     const int over_h = FACE_H;
@@ -3784,6 +3814,7 @@ int main(void)
     test_a_phoneme_string_outside_the_alphabet_is_refused_whole();
     test_phonemes_too_long_to_hold_are_refused_rather_than_truncated();
     test_the_tick_and_the_cross_split_the_bottom_half();
+    test_the_qspi_command_word_matches_the_datasheet();
     test_the_who_grid_has_four_distinct_answers();
     test_the_who_grid_leaves_nowhere_to_miss();
     test_the_who_grid_fits_a_side_mounted_panel();

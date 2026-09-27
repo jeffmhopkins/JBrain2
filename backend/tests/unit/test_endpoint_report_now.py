@@ -190,3 +190,53 @@ class TestTheButtonGridIsWiredToRealActions:
         )
         # The ring must still fill: a recording is when what it hears is most interesting.
         assert "note_heard(v->phrase, r->prob[0], true, r->raw_string);" in self._fw("speech.c")
+
+
+class TestTheBrightnessCommandIsFramedForQspi:
+    """THE BUG THAT MADE BRIGHTNESS A NO-OP FROM AUGUST UNTIL 2026-09-27.
+
+    The panel is opened in QSPI mode, where a command is a 32-bit prologue rather than a byte:
+    CO5300 datasheet V0.01 p.21 — instruction `02h`, then `AD[23:0] = {8'h00, CMD[7:0], 8'h00}`.
+    The vendor driver wraps every command it sends, which is why the init array's `0x51 = 0xFF`
+    always worked; the two calls `display.c` made directly did not, so a bare `0x51` went out as
+    instruction `0x00`, the controller discarded it, and `esp_lcd_panel_io_tx_param` returned
+    `ESP_OK` because the bytes were clocked out regardless.
+
+    The owner found it from the one symptom that ruled out everything else: the panel's OWN
+    dim-on-sleep stage, which needs no network, never dimmed either.
+    """
+
+    def _display_c(self) -> str:
+        import pathlib
+
+        return (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+
+    def test_the_opcode_is_named_and_both_call_sites_use_it(self) -> None:
+        src = self._display_c()
+        assert "#define QSPI_WRITE_OPCODE 0x02" in src, "the datasheet's write opcode is gone"
+        assert "QSPI_CMD(0x51)" in src, "the brightness write is no longer framed"
+        assert "QSPI_CMD(0x29)" in src, "the display-on re-assert is no longer framed"
+
+    def test_the_unframed_forms_do_not_come_back(self) -> None:
+        """Both call sites, pinned negatively. This is the shape the defect had, and it looked
+        entirely reasonable beside a vendor driver that hides the framing inside its own
+        wrapper — which is exactly why it survived so long."""
+        src = self._display_c()
+        assert "tx_param(s_io, 0x51" not in src, "an unframed brightness write is back"
+        assert "tx_param(s_io, 0x29" not in src, "an unframed display-on write is back"
+
+    def test_the_registers_the_datasheet_cleared_are_left_alone(self) -> None:
+        """Three plausible-sounding suspects the datasheet acquitted, pinned so nobody 'fixes'
+        them later on the same reasoning: `0x53 = 0x20` is sufficient because bit 5 (BCTRL) is
+        what gates `0x51` and the CO5300 has no backlight bit (p.186); `0x51` takes one byte
+        (p.184); `0x63` is HBM brightness and is inert while `0x66`'s HBM_EN stays 0 (p.196,
+        p.199), which it does because nothing writes `0x66` at all."""
+        src = self._display_c()
+        assert "{0x53, (uint8_t[]){0x20}, 1, 0}," in src, "0x53 changed; 0x20 was correct"
+        assert "{0x51, (uint8_t[]){0xFF}, 1, 0}," in src, "0x51 init changed"
+        # A WRITE, not a mention: the comment above the fix cites 0x66 by name, and a naive
+        # substring check would fail on the explanation of why it must stay unwritten.
+        assert "{0x66," not in src, "0x66 is now in the init array; HBM would take over"
+        assert "QSPI_CMD(0x66)" not in src, "something now writes 0x66 at runtime"
