@@ -6,6 +6,7 @@
 #include <strings.h>
 
 #include "audio.h"
+#include "nudge.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -220,6 +221,115 @@ static esp_http_client_handle_t open_client(const char *path, esp_http_client_me
     esp_http_client_handle_t c = esp_http_client_init(&hc);
     if (c != NULL) esp_http_client_set_header(c, "Authorization", auth);
     return c;
+}
+
+/* --- GET /events: THE PUSH CHANNEL ------------------------------------------------------- *
+ *
+ * A held-open HTTPS stream the box writes into. This is what makes a message arrive rather
+ * than be discovered, and it is an ordinary authenticated request rather than a new protocol
+ * precisely so that it inherits the device key, the TLS and the pinned certificate the panel
+ * already uses instead of growing a second scheme to get right.
+ *
+ * WHAT IT CARRIES IS NOT DATA. Every event means "come and ask", and the panel answers by
+ * making the poll it would have made anyway. So this stream can never become a second, weaker
+ * path by which state reaches a child's panel, and nothing arriving on it is trusted.
+ *
+ * IT REPLACES POLLING RATHER THAN ADDING TO IT. While the stream is up, `main.c` stretches the
+ * settings cadence from three seconds to `PUSH_SETTLED_MS`, because the box can now say when
+ * something changed and no longer needs to be asked. That matters for more than tidiness: it
+ * keeps the number of TLS sessions this panel holds at once the SAME as before rather than one
+ * higher, which is the only real cost of a persistent connection on this board.
+ *
+ * THE READ TIMEOUT IS THE LIVENESS CHECK. The box writes a heartbeat comment every 20 s
+ * (`_HEARTBEAT_S`), so a read that returns nothing for `PUSH_IDLE_MS` means the link is gone —
+ * a router rebooted, the box restarted, the Wi-Fi dropped — rather than that nobody has sent a
+ * message. A TCP connection nobody writes to is indistinguishable from a dead one, and this is
+ * a channel whose whole job is to be idle. */
+#define PUSH_IDLE_MS 45000
+#define PUSH_RETRY_MIN_MS 2000
+#define PUSH_RETRY_MAX_MS 60000
+
+static volatile bool s_push_live;
+static volatile uint16_t s_push_events;
+static volatile uint16_t s_push_drops;
+
+bool jpanel_push_live(void)
+{
+    return s_push_live;
+}
+
+unsigned jpanel_push_events(void)
+{
+    return s_push_events;
+}
+
+unsigned jpanel_push_drops(void)
+{
+    return s_push_drops;
+}
+
+static void push_task(void *arg)
+{
+    (void)arg;
+    uint32_t backoff = PUSH_RETRY_MIN_MS;
+    while (true) {
+        char url[288];
+        char auth[256];
+        if (!endpoint(url, sizeof(url), auth, sizeof(auth), "/events")) {
+            vTaskDelay(pdMS_TO_TICKS(backoff));
+            continue;
+        }
+        esp_http_client_config_t hc = {.url = url,
+                                       /* Long, not absent: this is the liveness check above. */
+                                       .timeout_ms = PUSH_IDLE_MS,
+                                       .method = HTTP_METHOD_GET,
+                                       .event_handler = http_event};
+        trust(&hc);
+        esp_http_client_handle_t c = esp_http_client_init(&hc);
+        if (c == NULL) {
+            vTaskDelay(pdMS_TO_TICKS(backoff));
+            continue;
+        }
+        esp_http_client_set_header(c, "Authorization", auth);
+        /* Says what this is to anything in between, and makes a proxy that buffers by default
+           stop doing so. The box sets `X-Accel-Buffering: no` for the same reason. */
+        esp_http_client_set_header(c, "Accept", "text/event-stream");
+
+        bool opened = esp_http_client_open(c, 0) == ESP_OK &&
+                      esp_http_client_fetch_headers(c) >= 0 &&
+                      esp_http_client_get_status_code(c) == 200;
+        if (opened) {
+            ESP_LOGI(TAG, "push: stream open");
+            s_push_live = true;
+            backoff = PUSH_RETRY_MIN_MS; /* a connection that worked resets the patience */
+            char buf[128];
+            while (true) {
+                const int n = esp_http_client_read(c, buf, sizeof(buf) - 1);
+                if (n <= 0) break; /* timeout, close, or error — all mean reconnect */
+                buf[n] = '\0';
+                /* A HEARTBEAT IS NOT AN EVENT. The box writes ": \n\n" to keep the link
+                   provably alive; only a `data:` line means something changed. Counting
+                   heartbeats as events would make the panel poll three times a minute forever
+                   and quietly undo the cadence this stream exists to relax. */
+                if (strstr(buf, "data:") == NULL) continue;
+                if (s_push_events < 65535) s_push_events++;
+                /* THE SAME TWO HALVES THE DATAGRAM WAKES, for the same reason: the event says
+                   only that something changed, so the panel asks about everything it would
+                   have asked about anyway. */
+                jpanel_poll_soon();
+                nudge_wake_settings();
+            }
+            ESP_LOGW(TAG, "push: stream closed");
+            s_push_live = false;
+            if (s_push_drops < 65535) s_push_drops++;
+        }
+        esp_http_client_cleanup(c);
+        vTaskDelay(pdMS_TO_TICKS(backoff));
+        /* Doubling, capped. A box that is down stays down for minutes, and a panel retrying
+           every two seconds against it is a TLS handshake every two seconds on the one board
+           whose handshakes are expensive. */
+        backoff = backoff * 2 > PUSH_RETRY_MAX_MS ? PUSH_RETRY_MAX_MS : backoff * 2;
+    }
 }
 
 /* --- POST /send?to=panel|dad ------------------------------------------------------------- */
@@ -734,6 +844,13 @@ bool jpanel_start(const cfg_t *cfg)
     if (xTaskCreatePinnedToCore(jpanel_task, "jpanel", 6144, NULL, 4, NULL, 0) != pdPASS) {
         ESP_LOGE(TAG, "task failed");
         return false;
+    }
+    /* ITS OWN TASK, because it spends its life blocked in a read. Folding it into the poll
+       task would mean that task could not service a tap or the speaker-finished acknowledgement
+       while the stream was idle — which is almost always. 4096 is ample: it opens one client,
+       reads into a 128-byte buffer and calls two functions. */
+    if (xTaskCreatePinnedToCore(push_task, "push", 4096, NULL, 4, NULL, 0) != pdPASS) {
+        ESP_LOGW(TAG, "no push task — messages will arrive on the poll instead");
     }
     ESP_LOGI(TAG, "ready");
     return true;

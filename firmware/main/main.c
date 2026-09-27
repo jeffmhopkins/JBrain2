@@ -83,6 +83,18 @@ static const char *TAG = "endpoint";
    allocates from, so the early warning this sentence promised was inert for as long as it
    named the wrong field. */
 #define POLL_PERIOD_MS (3 * 1000)
+
+/* AND WHAT IT BECOMES ONCE THE BOX CAN SPEAK FIRST. While the push stream is up (`jpanel.h`)
+   the three-second ask is asking a question that will be answered before it is next posed, so
+   it stretches to this — the owner's *"I want to get rid of polling all together"*, met in the
+   only sense that is true: the poll stops being how anything is LEARNED and becomes the check
+   that the push channel has not silently died.
+ *
+ * IT IS ALSO WHAT KEEPS THE TLS ARITHMETIC HONEST. A held-open stream is one more session on a
+ * board where sessions are the expensive thing; taking twenty asks a minute down to one buys
+ * that back several times over, so push costs LESS concurrency than polling did rather than
+ * more. That is the whole reason the stream was affordable to add. */
+#define PUSH_SETTLED_MS (60 * 1000)
 /* HOW LONG A FAILED INSTALL WAITS, and it is the old cycle on purpose: a version that genuinely
    changed is installed within a poll, while an install that failed retries no faster than it
    ever did. Bounds the WITHIN-SESSION rate, which is the one the fast poll created. A crash
@@ -301,6 +313,7 @@ static void report(const cfg_t *cfg)
                      "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
                      "\"set_err\":\"%s\",\"set_fails\":%d,"
                      "\"nudges\":%u,\"nudge_drop\":%u,"
+                     "\"push\":%s,\"push_events\":%u,\"push_drops\":%u,"
                      "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"screen\":\"%s\","
                      "\"pmu_history\":[",
                      ota_running_version(),
@@ -317,6 +330,8 @@ static void report(const cfg_t *cfg)
                      audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
                      wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
                      set_err, set_fails, nudge_count(), nudge_dropped(),
+                     jpanel_push_live() ? "true" : "false", jpanel_push_events(),
+                     jpanel_push_drops(),
                      tap_x, tap_y, tap_zone,
                      display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
@@ -578,7 +593,11 @@ void app_main(void)
             /* Zero once the box stops answering, which sleeps out the remainder in one go —
                see `apply_settings`. That puts an offline panel back on exactly the single-sleep
                behaviour it had before settings got their own cadence. */
-            const uint32_t slice = cadence_slice_ms(left, box_answering ? POLL_PERIOD_MS : 0);
+            /* The stream's own liveness decides the rate, re-read every slice rather than
+               latched: a panel whose push channel drops must be back to a three-second ask by
+               the next slice, not at the end of the period. */
+            const uint32_t ask_ms = jpanel_push_live() ? PUSH_SETTLED_MS : POLL_PERIOD_MS;
+            const uint32_t slice = cadence_slice_ms(left, box_answering ? ask_ms : 0);
             /* A WAIT THAT CAN BE CUT SHORT, which is the difference between "the box tells the
                panel" and "the panel finds out within three seconds". `vTaskDelay` cannot be
                interrupted; this returns the instant `nudge.c` gives the notification, and

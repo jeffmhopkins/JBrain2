@@ -152,3 +152,84 @@ class TestBothEndsAgreeOnTheWireFormat:
             / "api"
             / "nudge.py"
         ).read_text(encoding="utf-8"), "the box started sending something other than the magic"
+
+
+class TestTheHeldOpenStream:
+    """The push channel proper. The datagram is the fallback; this is the fast path, and the
+    difference that matters is that the panel came to US — so there is no address to look up
+    and nothing to go stale."""
+
+    def setup_method(self) -> None:
+        nudge._seen.clear()
+        nudge._streams.clear()
+
+    def test_a_device_with_no_stream_is_not_connected(self) -> None:
+        assert nudge.is_connected("d") is False
+
+    def test_attach_then_detach_leaves_no_trace(self) -> None:
+        """A registry that leaked dead streams would report a panel as connected long after it
+        went — and `is_connected` is what an operator reads to tell "listening" from merely
+        "reachable"."""
+        q = nudge.attach("d")
+        assert nudge.is_connected("d") is True
+        nudge.detach("d", q)
+        assert nudge.is_connected("d") is False
+        assert "d" not in nudge._streams
+
+    def test_detaching_twice_is_harmless(self) -> None:
+        """The generator's `finally` can run more than once across cancellation paths."""
+        q = nudge.attach("d")
+        nudge.detach("d", q)
+        nudge.detach("d", q)
+        assert nudge.is_connected("d") is False
+
+    def test_a_reconnecting_panel_holds_two_streams_and_both_are_woken(self) -> None:
+        """The old connection is often not reaped when the new one registers. Waking only one
+        would be a coin flip over which — and losing that flip means the message waits for the
+        slow poll, which is the whole failure this channel exists to remove."""
+        a, b = nudge.attach("d"), nudge.attach("d")
+        assert nudge.fire("d", why="message") is True
+        assert a.get_nowait() == "message"
+        assert b.get_nowait() == "message"
+
+    def test_a_full_mailbox_still_counts_as_delivered(self) -> None:
+        """Every item in that queue means the same thing — "come and ask". A full queue has
+        therefore already delivered the message this one carries, so refusing to count it would
+        report a working channel as broken and fire a pointless datagram after it."""
+        q = nudge.attach("d")
+        for _ in range(q.maxsize):
+            q.put_nowait("x")
+        assert nudge.fire("d", why="message") is True
+
+    def test_fire_all_reaches_a_streaming_panel_with_no_remembered_address(self) -> None:
+        """The box restarts and its address book is empty, but the panels reconnect their
+        streams within seconds. Counting only `_seen` would report them unreachable while
+        actively talking to them."""
+        nudge.attach("streamer")
+        assert nudge.fire_all(why="settings") == 1
+
+
+class TestTheEndpointIsActuallyMounted:
+    """THE FAILURE THIS CATCHES IS SILENCE. A push route that is not registered does not raise
+    anything — panels just never connect, the stream count stays zero, and the symptom is
+    "push does not seem to work", which is indistinguishable from a quiet house. The same shape
+    as the debug router, which was once unmounted for a whole session before anyone noticed."""
+
+    def test_the_events_route_exists_as_a_get(self) -> None:
+        from jbrain.config import Settings
+        from jbrain.main import create_app
+
+        app = create_app(
+            Settings(
+                secure_cookies=False,
+                database_url="postgresql+asyncpg://nobody@localhost:1/none",
+            )
+        )
+        routes = {
+            (getattr(r, "path", None), tuple(sorted(getattr(r, "methods", ()) or ())))
+            for r in app.routes
+        }
+        assert any(
+            path is not None and path.endswith("/jpanel/events") and "GET" in methods
+            for path, methods in routes
+        ), "the push stream endpoint is not mounted"

@@ -5448,6 +5448,47 @@ across two versions — and the first version of this section read that as a cei
 session, no handshake and no certificate, and it degrades to the poll underneath it. But the
 plan should not record it as the only affordable option, because that is false.
 
+##### And then the real push channel, which is a held-open stream (0.3.22)
+
+`GET /jpanel/events`, held open by the panel, written into by the box. **This is push.**
+
+**It is an ordinary authenticated request rather than a new protocol, and that is the whole
+argument for it over the Noise-over-TCP socket ESPHome uses.** The panel is identified by the
+same device key it uses for everything else, over the same TLS, against the same pinned
+certificate — so the push channel *inherits* its security instead of growing a second scheme
+that has to be got right separately. Noise would have meant new crypto on both ends, and new
+crypto is the thing you least want to be the author of. The memory argument that would have
+forced Noise turned out not to exist.
+
+**The panel comes to us, which kills the datagram's one real weakness.** A datagram has to know
+where the panel *is*; a DHCP lease moving breaks it silently. A held stream has no address to go
+stale. So the datagram stays as the fallback for exactly the window where no stream is held — a
+panel reconnecting, Wi-Fi just back, or a box that restarted and lost its registry — and
+`nudge.fire()` fires both, because a redundant nudge costs a poll that finds nothing and a
+missed one costs a child's message sitting unheard.
+
+**It replaces polling rather than adding to it, and that is what made it affordable.** While the
+stream is up, the settings cadence stretches from three seconds to sixty (`PUSH_SETTLED_MS`).
+A held connection is one more TLS session on a board where sessions are the expensive thing, and
+taking twenty asks a minute down to one buys that back several times over — so push costs *less*
+concurrency than polling did, not more. The rate is re-read every slice rather than latched, so a
+panel whose stream drops is back to a three-second ask by the next slice.
+
+**The read timeout is the liveness check.** The box writes a heartbeat comment every 20 s, so a
+read returning nothing for 45 s means the link is gone rather than that nobody sent a message —
+a TCP connection nobody writes to is indistinguishable from a dead one, and this is a channel
+whose entire job is to be idle. Reconnection backs off 2 s → 60 s, because a box that is down
+stays down for minutes and a panel retrying every two seconds against it is a TLS handshake every
+two seconds.
+
+**What it carries is still not data.** Every event means "come and ask", exactly as the datagram
+does. The stream can therefore never become a second, weaker path by which state reaches a
+child's panel, and nothing arriving on it is trusted.
+
+**`push`, `push_events` and `push_drops` ride in telemetry.** `push_drops` is the one to watch: a
+channel that reconnects all day is working in the sense that messages arrive and failing in the
+sense that it is paying a handshake every time.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The

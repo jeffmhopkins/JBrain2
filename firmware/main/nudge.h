@@ -82,6 +82,10 @@
 #include "freertos/task.h"
 void nudge_wake_settings_from(TaskHandle_t t);
 
+/* Cut the main task's sleep short. Public because the push stream in `jpanel.c` wakes exactly
+   the same two halves a datagram does — they are two ways of hearing the same thing. */
+void nudge_wake_settings(void);
+
 /* Bind the socket and start listening. Safe to call before Wi-Fi is up — the socket is bound
    to INADDR_ANY and simply receives nothing until there is a network. */
 void nudge_start(void);

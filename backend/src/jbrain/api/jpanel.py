@@ -23,15 +23,18 @@ only way to find out whether they do.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import string
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import Literal, cast
 
 import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -490,6 +493,75 @@ async def _transcribe(settings: Settings, audio: bytes) -> str:
     except Exception as exc:  # noqa: BLE001 — a mute transcript never costs a delivery
         log.warning("jpanel.stt_failed", error=repr(exc))
         return ""
+
+
+#: How long the box waits before writing a keep-alive into an idle stream. Short enough that a
+#: link which died silently (a router reboot, a panel unplugged) is noticed by BOTH ends within
+#: the minute rather than sitting as a connection that exists only in this process's memory.
+_HEARTBEAT_S = 20.0
+
+
+@router.get("/events")
+async def events(principal: PanelDep, request: Request) -> StreamingResponse:
+    """The panel holds this open and the box writes into it. This is the push channel.
+
+    IT IS A STREAM RATHER THAN A SOCKET BECAUSE THE AUTHENTICATION ALREADY EXISTS. A panel is
+    identified here by exactly the device key it uses for every other call, over exactly the
+    same TLS, against exactly the same pinned certificate — so the push channel inherits its
+    security rather than growing a second scheme that has to be got right separately. That is
+    also why this beat a Noise-over-TCP socket, which is the other shape that fits: the crypto
+    would have been new code on both ends, and new crypto is the thing you least want to be
+    the author of.
+
+    THE PANEL COMES TO US, so there is no address to look up and nothing to go stale. That is
+    the half of the problem the UDP datagram in `nudge.py` cannot solve well — it has to know
+    where the panel is, and a DHCP lease moving silently breaks it. The datagram stays as the
+    fallback for the window where no stream is held.
+
+    WHAT IT CARRIES IS STILL NOT DATA. Every event is the single word "come and ask", exactly
+    as the datagram is, and the panel answers by making its ordinary authenticated poll. That
+    is deliberate: the stream can then never become a second, weaker path by which state
+    reaches a panel, and nothing here has to be re-authorised because nothing here is trusted.
+
+    HEARTBEATS ARE NOT OPTIONAL ON A CHANNEL WHOSE WHOLE JOB IS TO BE IDLE. A TCP connection
+    that nobody writes to is indistinguishable from one that died, to both ends, for as long as
+    neither speaks — and the failure this pushes against is exactly "the panel went quiet and
+    nobody noticed". The comment line costs two bytes every twenty seconds.
+    """
+    device = principal.id
+    nudge.remember(device, request)
+    queue = nudge.attach(device)
+
+    async def pump() -> AsyncIterator[bytes]:
+        try:
+            # A first byte immediately, before anything is waiting. It makes the panel's
+            # connect either succeed or fail NOW rather than at the first real event, which is
+            # the difference between a push channel that is known-good and one that is merely
+            # believed to be.
+            yield b": open\n\n"
+            while True:
+                try:
+                    why = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
+                except TimeoutError:
+                    yield b": \n\n"
+                    continue
+                # The reason rides along for the log on the other end; the panel does not act
+                # on it, and must not start to.
+                yield f"data: {why}\n\n".encode()
+        finally:
+            # ALWAYS, including on client disconnect, which arrives here as GeneratorExit or a
+            # cancellation. A registry that leaked dead streams would keep reporting a panel as
+            # connected long after it went, and `is_connected` is what the operator reads.
+            nudge.detach(device, queue)
+
+    log.info("jpanel.events_open", device=device)
+    return StreamingResponse(
+        pump(),
+        media_type="text/event-stream",
+        # The same two the agent's own SSE sets: no caching, and no proxy buffering, or the
+        # events sit in Caddy until something flushes it and the channel is silently slow.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/waiting")

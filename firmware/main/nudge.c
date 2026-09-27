@@ -23,6 +23,11 @@ void nudge_wake_settings_from(TaskHandle_t t)
     s_settings_task = t;
 }
 
+void nudge_wake_settings(void)
+{
+    if (s_settings_task != NULL) xTaskNotifyGive(s_settings_task);
+}
+
 static void nudge_task(void *arg)
 {
     (void)arg;
@@ -73,7 +78,7 @@ static void nudge_task(void *arg)
            would have asked about anyway. Messages go through the queue the poll task already
            waits on; settings cut short the main task's timed sleep. */
         jpanel_poll_soon();
-        if (s_settings_task != NULL) xTaskNotifyGive(s_settings_task);
+        nudge_wake_settings();
     }
 }
 

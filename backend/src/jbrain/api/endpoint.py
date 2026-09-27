@@ -485,6 +485,13 @@ class TelemetryIn(BaseModel):
     #: exactly like a quiet house — the same distinction the render heartbeat exists for.
     nudges: int = 0
     nudge_drop: int = 0
+    #: Whether the panel is holding its push stream open right now, and what it has carried.
+    #: `push_drops` is the one to watch: a channel that reconnects all day is working in the
+    #: sense that messages arrive, and failing in the sense that it is paying a TLS handshake
+    #: for every reconnection on a board where handshakes are the expensive thing.
+    push: bool = False
+    push_events: int = 0
+    push_drops: int = 0
     # What the codec last ACCEPTED, "90/36" — or "90!/36" when it refused the volume. Both
     # setters used to run with their returns dropped under a log line asserting success, on
     # the one path the owner drives remotely.
@@ -624,6 +631,9 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         int_largest=body.int_largest,
         nudges=body.nudges,
         nudge_drop=body.nudge_drop,
+        push=body.push,
+        push_events=body.push_events,
+        push_drops=body.push_drops,
         levels=body.levels,
         blit_fail_total=body.blit_fail_total,
         blit_recov=body.blit_recov,

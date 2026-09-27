@@ -27,6 +27,7 @@ matters (a message lands in tens of milliseconds) rather than the literal one.
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import time
 
@@ -84,8 +85,63 @@ def remember(device_id: str, request: Request) -> None:
         log.info("nudge.address", device=device_id, addr=ip, was=prev[0] if prev else None)
 
 
+#: device_id -> the live event streams that device currently holds. A set rather than a single
+#: entry because a reconnecting panel can briefly hold two: the old connection has not been
+#: reaped yet when the new one registers, and waking only one of them would be a coin flip over
+#: which. Both get set; the dead one is discarded when its generator unwinds.
+_streams: dict[str, set[asyncio.Queue[str]]] = {}
+
+
+def attach(device_id: str) -> asyncio.Queue[str]:
+    """Register a held-open event stream for a device, and hand back its mailbox."""
+    q: asyncio.Queue[str] = asyncio.Queue(maxsize=8)
+    _streams.setdefault(device_id, set()).add(q)
+    log.info("nudge.stream_open", device=device_id, streams=len(_streams[device_id]))
+    return q
+
+
+def detach(device_id: str, q: asyncio.Queue[str]) -> None:
+    """Forget a stream that has gone away. Idempotent — a generator can unwind more than once."""
+    live = _streams.get(device_id)
+    if live is None:
+        return
+    live.discard(q)
+    if not live:
+        _streams.pop(device_id, None)
+    log.info("nudge.stream_closed", device=device_id, streams=len(live))
+
+
+def is_connected(device_id: str) -> bool:
+    """Whether this device is holding a stream right now — for the operator, who otherwise
+    cannot tell a panel that is listening from one that is merely reachable."""
+    return bool(_streams.get(device_id))
+
+
 def fire(device_id: str, why: str) -> bool:
-    """Tell one device to poll now. Returns whether a datagram was actually sent."""
+    """Tell one device to poll now. Returns whether anything was actually delivered.
+
+    TWO CHANNELS, AND THE DATAGRAM IS THE FALLBACK. A held-open stream is the fast path and
+    needs no address at all — the panel came to us, so there is nothing to look up and nothing
+    to go stale. The datagram covers the window where the stream is down: a panel reconnecting,
+    a panel whose Wi-Fi just came back, a box that restarted and lost its stream registry.
+    Both are fired rather than one-or-the-other, because the cost of a redundant nudge is a
+    poll that finds nothing and the cost of a missed one is a child's message sitting unheard.
+    """
+    woke = False
+    for q in list(_streams.get(device_id, ())):
+        try:
+            q.put_nowait(why)
+            woke = True
+        except asyncio.QueueFull:
+            # The panel is not draining. Not an error and not worth growing a buffer for: every
+            # item in that queue means the same thing ("come and ask"), so a full queue has
+            # already delivered the message this one carries.
+            woke = True
+    return _fire_datagram(device_id, why) or woke
+
+
+def _fire_datagram(device_id: str, why: str) -> bool:
+    """The UDP half. Kept separate so the stream path is testable without a socket."""
     entry = _seen.get(device_id)
     if entry is None:
         return False
@@ -109,6 +165,10 @@ def fire(device_id: str, why: str) -> bool:
 
 
 def fire_all(why: str) -> int:
-    """Tell every device we have an address for. For settings and commands that are not aimed
-    at one panel in particular."""
-    return sum(1 for device_id in list(_seen) if fire(device_id, why))
+    """Tell every device we can reach. For settings and commands not aimed at one panel.
+
+    The union of both channels, not just the address book: a panel that has never been
+    remembered (the box restarted) but is holding a stream is still perfectly reachable, and
+    counting only `_seen` would report it as unreachable while talking to it."""
+    targets = set(_seen) | set(_streams)
+    return sum(1 for device_id in sorted(targets) if fire(device_id, why))
