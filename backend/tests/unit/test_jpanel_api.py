@@ -393,6 +393,30 @@ class TestTheHeardRingCrossesThePackageBoundary:
             "and nothing is sending them"
         )
 
+    def test_a_repeat_count_past_the_old_ceiling_still_validates(self) -> None:
+        """THE CEILING WAS REACHED IN THE FIELD. Elora's panel reported a run of exactly 255
+        on 2026-09-26 — a saturated `uint8_t`, not a measurement — and the count is widened to
+        16 bits precisely because "at least 255" is the reading that matters least. A count
+        the box then refused would trade a clipped number for no report at all, which is the
+        `TelemetryIn` failure this class exists for.
+        """
+        from jbrain.api.endpoint import TelemetryIn
+
+        got = TelemetryIn(version="0.3.14", uptime_ms=1, heard=[("?", 0, 0, 65535, "SgS Tk")])
+        assert list(got.heard[0])[3] == 65535, "a five-digit repeat count must survive"
+
+    def test_the_firmware_counts_repeats_in_sixteen_bits(self) -> None:
+        """The other side of the test above. A count that saturates at 255 reports a ceiling
+        dressed as a fact, and the field's whole job is to say how long a panel went on
+        mis-hearing the same thing — so read the width and the saturation out of the firmware
+        and fail here if either goes back.
+        """
+        src = self._speech_source()
+        assert re.search(r"uint16_t count;", src), (
+            "the repeat count is no longer 16-bit; it saturated at 255 in the field once"
+        )
+        assert "< 65535" in src, "the saturation guard no longer matches the widened field"
+
 
 class TestNamingAPanelWithoutACable:
     """The rename, and the two packages it is coupled to at once.

@@ -147,6 +147,10 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     if (cJSON_IsString(pp) && pp->valuestring != NULL) {
         snprintf(out->pet_name_phonemes, sizeof(out->pet_name_phonemes), "%s", pp->valuestring);
     }
+    /* Absent means 0 means "nothing asked", which is exactly right for a box that predates
+       the column: a panel must not post because an older box said nothing. */
+    const cJSON *ts = cJSON_GetObjectItemCaseSensitive(root, "telemetry_seq");
+    if (cJSON_IsNumber(ts)) out->telemetry_seq = ts->valueint;
     const cJSON *fm = cJSON_GetObjectItemCaseSensitive(root, "form");
     if (cJSON_IsString(fm) && fm->valuestring != NULL) {
         out->form = strcmp(fm->valuestring, "robot") == 0 ? 1 : 0;

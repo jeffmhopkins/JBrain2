@@ -3274,3 +3274,140 @@ async def prime_model(
         settings_store=_store(request),
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
     )
+
+
+# --- What the panels heard, and asking them to say so now -------------------
+
+
+class HeardEntry(BaseModel):
+    """One entry of a panel's decode ring, named rather than positional.
+
+    The panel sends a tuple to keep the body small; nobody reading a diagnosis should have to
+    remember that field four is the repeat count.
+    """
+
+    phrase: str
+    prob: int
+    fired: bool
+    count: int = 1
+    # The decoder's own phoneme string. Empty from a panel older than 0.3.10, which is not the
+    # same as a decode that produced none — the field simply did not exist yet.
+    raw: str = ""
+
+
+class PanelHeard(BaseModel):
+    label: str
+    version: str
+    reported_at: str
+    # Newest first, exactly as the panel keeps it.
+    heard: list[HeardEntry]
+
+
+class PanelHeardOut(BaseModel):
+    panels: list[PanelHeard]
+    # What the box would have to raise for a fresh ring; echoed so a caller can tell a stale
+    # answer from a current one without a second call.
+    telemetry_seq: int
+
+
+def _heard_entry(raw: object) -> HeardEntry | None:
+    """One ring entry from the panel's positional tuple, across all three arities it has had.
+
+    Three fields until 0.3.09, four with the repeat count, five with the raw phoneme string —
+    and a fleet upgrades one panel at a time, so all three can be in the same answer.
+    """
+    if not isinstance(raw, (list, tuple)) or len(raw) < 3:
+        return None
+    return HeardEntry(
+        phrase=str(raw[0]),
+        prob=int(raw[1]),
+        fired=bool(raw[2]),
+        count=int(raw[3]) if len(raw) > 3 else 1,
+        raw=str(raw[4]) if len(raw) > 4 else "",
+    )
+
+
+@router.get("/endpoint/heard")
+async def panel_heard(request: Request, _p: DebugDep) -> PanelHeardOut:
+    """WHAT EACH PANEL LAST HEARD — the decode ring, from here, with no cable.
+
+    This existed only as a `jsonb` column reachable by hand-written SQL, which meant the one
+    surface for the question "is she being heard?" required knowing the shape of a positional
+    tuple. `POST /endpoint/report-now` is the other half: raise the counter, wait a poll, read
+    this.
+
+    THE RING IS A SNAPSHOT AND THE LOG IS THE HISTORY. `app.endpoint_status` holds one
+    upserted row per panel, so this answers "what did it hear most recently", not "what has it
+    ever heard" — the telemetry log line carries every report and is where a question spanning
+    more than one cycle belongs.
+    """
+    async with scoped_session(_maker(request), _OWNER_CTX) as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT pr.label, s.version, s.reported_at, s.report->'heard'
+                    FROM app.endpoint_status s
+                    JOIN app.principals pr ON pr.id = s.principal_id
+                    ORDER BY s.reported_at DESC
+                    """
+                )
+            )
+        ).all()
+        seq = (
+            await session.execute(
+                text("SELECT telemetry_seq FROM app.endpoint_settings WHERE id = 1")
+            )
+        ).scalar_one_or_none()
+    panels = [
+        PanelHeard(
+            label=str(row[0]),
+            version=str(row[1] or ""),
+            reported_at=row[2].isoformat() if row[2] is not None else "",
+            heard=[e for e in (_heard_entry(x) for x in (row[3] or [])) if e is not None],
+        )
+        for row in rows
+    ]
+    log.info("debug.panel_heard", panels=len(panels))
+    return PanelHeardOut(panels=panels, telemetry_seq=int(seq or 0))
+
+
+class ReportNowOut(BaseModel):
+    telemetry_seq: int
+    detail: str
+
+
+@router.post("/endpoint/report-now")
+async def panel_report_now(request: Request, _p: DebugDep) -> ReportNowOut:
+    """Ask every panel to post its telemetry on its next settings poll, ~3 s from now.
+
+    Raises the counter the settings route serves. A panel adopts the value it sees on its
+    first poll after boot and posts whenever it CHANGES, so this reaches each panel exactly
+    once however many are listening and whatever order they poll in, and there is nothing
+    here to clear afterwards.
+
+    It does NOT shorten `CHECK_PERIOD_MS`: the fifteen-minute cycle is what makes a report at
+    6-7 s of uptime mean "this panel just booted", and that diagnostic is worth more than the
+    convenience this route provides.
+
+    A panel that is off or offline simply never sees it — there is no queue and no retry,
+    because a request to report a ring is worthless by the time the panel comes back with a
+    ring that was wiped by the reboot.
+    """
+    async with scoped_session(_maker(request), _OWNER_CTX) as session:
+        seq = (
+            await session.execute(
+                text(
+                    "UPDATE app.endpoint_settings SET telemetry_seq = telemetry_seq + 1,"
+                    " updated_at = now() WHERE id = 1 RETURNING telemetry_seq"
+                )
+            )
+        ).scalar_one_or_none()
+        await session.commit()
+    if seq is None:
+        raise HTTPException(status_code=404, detail="no endpoint settings row")
+    log.info("debug.panel_report_now", telemetry_seq=int(seq))
+    return ReportNowOut(
+        telemetry_seq=int(seq),
+        detail="panels post on their next settings poll (~3 s); read /endpoint/heard after",
+    )

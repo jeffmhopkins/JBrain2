@@ -113,13 +113,17 @@ static const char *TAG = "endpoint";
    `HTTP_TIMEOUT_MS` (15 s) of a BLOCKED main task against a 10 s slice, which would stretch the
    period to ~37 minutes and delay the manifest fetch and the telemetry post on exactly the panel
    that most needs them. One failure ends the asking for the rest of the period. */
-static bool apply_settings(const cfg_t *cfg, char *served, size_t served_cap)
+static bool apply_settings(const cfg_t *cfg, char *served, size_t served_cap, int *seq)
 {
     ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1, .dim_percent = -1};
     if (ota_fetch_settings(cfg, &st) != ESP_OK) return false;
     /* The version this box would serve, for the caller's install check. Optional, because the
        two callers that only want the knobs applied should not have to declare a buffer. */
     if (served != NULL && served_cap > 0) snprintf(served, served_cap, "%s", st.fw_version);
+    /* Reported, not acted on: whether a change means "post now" depends on what the caller
+       last saw, and only the caller knows that. Written only on a fetch that SUCCEEDED, so a
+       box that did not answer leaves the caller's baseline alone rather than resetting it. */
+    if (seq != NULL) *seq = st.telemetry_seq;
     if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
     if (st.brightness >= 0) display_set_brightness(st.brightness);
     display_set_debug_overlay(st.debug_overlay != 0);
@@ -311,10 +315,10 @@ static void report(const cfg_t *cfg)
            body that ran out mid-token is the unterminated-JSON failure the comment below is
            about. A fourth field carries how many times the same decode repeated. */
         /* NINETY-SIX, NOT SIXTY-FOUR, and the number is arithmetic rather than habit. One
-           entry is now `,["<27>",100,1,255,"<23>"]` — about 69 bytes at its worst — so a guard
-           of 64 could admit an entry it cannot finish, and a body cut mid-token is the
-           unterminated JSON the comment below is about. Reserve more than the largest entry
-           can possibly be. */
+           entry is now `,["<27>",100,1,65535,"<23>"]` — about 71 bytes at its worst, the count
+           having grown to five digits when it went 16-bit — so a guard of 64 could admit an
+           entry it cannot finish, and a body cut mid-token is the unterminated JSON the
+           comment below is about. Reserve more than the largest entry can possibly be. */
         for (int i = 0; i < 12 && w > 0 && w < (int)sizeof(body) - 96; i++) {
             const char *phrase = NULL;
             int prob = 0;
@@ -435,8 +439,17 @@ void app_main(void)
         }
     }
 
+    /* WHAT THE BOX LAST ASKED FOR, and -1 until a poll has actually answered. The panel posts
+       when this number CHANGES, so the first value it ever sees must be adopted in silence:
+       treating "I have never seen this before" as a change would make every boot — and every
+       recovery from an unreachable box — post an extra report for nothing.
+       See `ota.h`'s `telemetry_seq` for why the box counts rather than setting a flag. */
+    int telem_seq = -1;
     if (reachable) {
-        apply_settings(&cfg, NULL, 0);
+        /* ADOPTED, NOT ACTED ON. The report immediately below is this counter's answer
+           whatever it holds, so taking the value here is what stops a panel posting twice at
+           boot — once for the boot and once because it has never seen the number before. */
+        apply_settings(&cfg, NULL, 0, &telem_seq);
         report(&cfg);
         /* THE SECOND BOOT AFTER AN UPDATE — `ota.h` explains what it works around and why it
            is a workaround. Placed HERE and nowhere earlier: `ota_confirm_health` above has
@@ -537,11 +550,35 @@ void app_main(void)
                asking twice in the same instant is a handshake for nothing. */
             if (box_answering && left > 0) {
                 char served[OTA_VERSION_MAX] = "";
-                box_answering = apply_settings(&cfg, served, sizeof(served));
-                /* Same pass, no extra fetch unless something is actually waiting. Reboots on a
-                   successful install, so anything after this line runs only when there was
-                   nothing to do or the attempt failed. */
-                if (box_answering) maybe_install(&cfg, served, &ota_last_try_ms);
+                /* Seeded with the baseline so a fetch that FAILED leaves it untouched:
+                   `apply_settings` writes this only on success, and an unreachable box must
+                   not read as "the number changed". */
+                int seen = telem_seq;
+                box_answering = apply_settings(&cfg, served, sizeof(served), &seen);
+                /* THE RING, ON DEMAND. Fifteen minutes is the right cadence for telemetry and
+                   the wrong one for "say the phrase and see what the decoder made of it" —
+                   and the cadence cannot simply be shortened, because a report at 6-7 s of
+                   uptime is how §10.4bh proves a boot. So the box asks instead, and it asks by
+                   counting: adopt the first value seen, post on any change after that.
+
+                   ON THIS TASK, deliberately, like the fetch above it — `report` is a TLS
+                   handshake and a POST, and the reason this is a slice loop at all is that
+                   touching the codec from anywhere but here panicked the panel (see
+                   `audio.h`). A report that overruns its slice only delays the next one;
+                   `cadence_slice_ms` never overshoots the period. */
+                if (box_answering) {
+                    if (telem_seq < 0) {
+                        telem_seq = seen;
+                    } else if (seen != telem_seq) {
+                        telem_seq = seen;
+                        ESP_LOGI(TAG, "box asked for a report (seq %d)", seen);
+                        report(&cfg);
+                    }
+                    /* Same pass, no extra fetch unless something is actually waiting. Reboots
+                       on a successful install, so anything after this line runs only when
+                       there was nothing to do or the attempt failed. */
+                    maybe_install(&cfg, served, &ota_last_try_ms);
+                }
             }
         }
         if (!joined) {
@@ -550,7 +587,9 @@ void app_main(void)
         }
         reachable = joined && ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
         if (reachable) {
-            apply_settings(&cfg, NULL, 0);
+            /* Adopted for the same reason as at boot: the report on the next line answers
+               whatever was asked, so carrying the old baseline past it would post twice. */
+            apply_settings(&cfg, NULL, 0, &telem_seq);
             report(&cfg);
         }
     }

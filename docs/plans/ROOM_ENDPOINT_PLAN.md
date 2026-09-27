@@ -5510,6 +5510,7 @@ than a preference:**
 | the 3.25 MB image | fetched only when the version actually CHANGES, never per poll |
 | a FAILED install | backs off to the old fifteen minutes — see below |
 | the telemetry post | an upsert, so no table grows, but §10.4bh reads a report at 6-7 s of uptime as PROOF OF A BOOT, and that only works while the interval is long |
+| | **0.3.14 keeps the interval and adds a doorbell.** Measuring recognition means saying a phrase and reading the decode ring, and at fifteen minutes that loop is unusable — while rebooting to force a report WIPES `s_decode`, so the fast path returns the empty ring it was asked for. `endpoint_settings.telemetry_seq` is a counter the settings poll carries: the panel adopts what it first sees and posts when the number CHANGES. A counter rather than a flag because two panels poll independently and a flag consumed by the first is one the second never sees; adopt-before-acting because "never seen this number" must not read as a change, or every boot posts twice. `POST /api/debug/endpoint/report-now` raises it, `GET /api/debug/endpoint/heard` reads the rings back named. |
 | a second request for the version | it rides the settings response instead: every fetch is a fresh TLS handshake, and two requests answering one question each would cost twice the handshakes of one answering both |
 
 **THE BACKOFF IS THE PART THAT MAKES THREE SECONDS SAFE, and without it this change would have

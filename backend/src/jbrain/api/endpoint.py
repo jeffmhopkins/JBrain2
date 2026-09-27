@@ -721,6 +721,20 @@ class EndpointSettings(BaseModel):
     # `jbrain/g2p.py`; the panel prepends the carrier's own phonemes, because the carrier
     # ("hey ") belongs to the firmware and is spelled there.
     pet_name_phonemes: str = ""
+    # "POST YOUR DECODE RING NOW", as a number that only goes up.
+    #
+    # The ring is the only window onto what a panel actually HEARS, and it rides the telemetry
+    # post on `CHECK_PERIOD_MS` — fifteen minutes. That interval is load-bearing for a
+    # different diagnostic (a report at 6-7 s of uptime proves a boot) so it must not be
+    # shortened, and a reboot forces a report by wiping the very ring being asked for. That
+    # left "say the phrase, wait a quarter of an hour" as the measurement loop.
+    #
+    # The panel adopts whatever it sees on its first poll and posts when this CHANGES, so a
+    # raise reaches every panel exactly once and there is nothing here to clear — see
+    # `0216_endpoint_telemetry_seq.py` for why a counter rather than a flag or a timestamp.
+    #
+    # Read-only in effect, like `fw_version` above: the PUT writes six named columns.
+    telemetry_seq: int = 0
     # PER-PANEL, unlike the five above, which are one answer for the whole house. Defaulted here
     # so the model stays the shape the PUT takes: the owner's write touches only the four
     # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
@@ -746,7 +760,7 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
             await session.execute(
                 text(
                     "SELECT volume, mic_gain_db, brightness, debug_overlay, mic_agc,"
-                    " dim_percent"
+                    " dim_percent, telemetry_seq"
                     " FROM app.endpoint_settings WHERE id = 1"
                 )
             )
@@ -760,6 +774,7 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
         debug_overlay=row[3],
         mic_agc=row[4],
         dim_percent=row[5],
+        telemetry_seq=row[6],
     )
 
 
