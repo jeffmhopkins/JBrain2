@@ -1958,3 +1958,18 @@ class TestPanelFlashOverDebug:
         client, key = debug_client
         scopes = client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
         assert "endpoint.flash" in scopes
+
+
+def test_the_panel_ring_routes_require_the_debug_token(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """`report-now` WRITES to `endpoint_settings` and `heard` returns every panel's telemetry,
+    so both are gated before they reach the database. A capability token is on a physically
+    distinct path from the owner cookie, which makes this gate the only one either has."""
+    client, _ = debug_client
+
+    assert client.get("/api/debug/endpoint/heard").status_code == 401
+    assert client.post("/api/debug/endpoint/report-now").status_code == 401
+    bad = {"Authorization": "Bearer nonsense"}
+    assert client.get("/api/debug/endpoint/heard", headers=bad).status_code == 401
+    assert client.post("/api/debug/endpoint/report-now", headers=bad).status_code == 401

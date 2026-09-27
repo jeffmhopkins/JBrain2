@@ -133,7 +133,12 @@ typedef struct {
     char phrase[DECODE_CHARS];
     char raw[DECODE_RAW_CHARS]; /* the decoder's phoneme string, truncated; "" when unknown */
     uint8_t prob;  /* 0..100, because a float in a JSON body buys nothing here */
-    uint8_t count; /* consecutive identical decodes, collapsed into this one entry */
+    /* Consecutive identical decodes, collapsed into this one entry. SIXTEEN BITS, because
+       eight saturated in the field: Elora's panel reported a run of 255 on 2026-09-26, which
+       is not a count but a ceiling — and the number's whole job is to say how long a panel
+       went on mis-hearing the same thing, which is exactly the reading that gets clipped. At
+       15 minutes a cycle and ~100 ms a decode a genuine run can be thousands. */
+    uint16_t count;
     bool fired;    /* false when the decode TIMED OUT — a near miss, the interesting half */
 } decode_t;
 static decode_t s_decode[DECODE_MAX];
@@ -171,7 +176,7 @@ static void note_heard(const char *phrase, float prob, bool fired, const char *r
        wrong decode ever scores. */
     if (s_decode_n > 0 && s_decode[0].fired == fired &&
         strncmp(s_decode[0].phrase, what, DECODE_CHARS - 1) == 0) {
-        if (s_decode[0].count < 255) s_decode[0].count++;
+        if (s_decode[0].count < 65535) s_decode[0].count++;
         /* The LOUDEST of the run keeps its raw string as well as its probability, so the
            sample being explained is the same sample in both fields. */
         if ((uint8_t)p > s_decode[0].prob) {

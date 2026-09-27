@@ -85,6 +85,18 @@ typedef struct {
        are my knobs?". Empty when the box has no image in its checkout, which is not an error and
        must not be read as "you are out of date" — there is simply nothing to compare against. */
     char fw_version[OTA_VERSION_MAX];
+    /* "POST YOUR DECODE RING NOW", as a number that only ever goes up. 0 is "the box did not
+       say", which is what a box predating the column sends and must mean "nothing is being
+       asked of you" rather than a value to act on.
+
+       WHY A COUNTER AND NOT A FLAG: the ring rides the telemetry post on `CHECK_PERIOD_MS`,
+       and that fifteen minutes is load-bearing for a DIFFERENT diagnostic — a report at 6-7 s
+       of uptime is how §10.4bh proves a panel just booted — so it cannot simply be shortened
+       to make recognition measurable. A flag would have to be cleared by the box, which means
+       guessing when every panel has seen it, and two panels poll independently. This is
+       remembered by the panel instead: adopt whatever arrives on the first poll, post when it
+       CHANGES. Exactly once per raise, per panel, with nothing on the box to expire. */
+    int telemetry_seq;
 } ota_settings_t;
 
 esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out);

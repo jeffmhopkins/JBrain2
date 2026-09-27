@@ -115,6 +115,8 @@
 #      api's older build, and a compose or Dockerfile-path change still needs the full
 #      update. Recreating a container ends whatever it held, so `refresh sdr` drops any
 #      live lease.)
+#   scripts/debug-connect.sh panel-heard [--now]       # what each panel last heard
+#   scripts/debug-connect.sh panel-report-now          # make them post it now (~3 s)
 #   scripts/debug-connect.sh update                    # pull main, rebuild, restart
 #   scripts/debug-connect.sh update-status [tail]      # that update's state + log tail
 #   scripts/debug-connect.sh backup                    # full backup ("Back up everything")
@@ -590,6 +592,25 @@ PY
       esac
     done
     _call GET "/api/debug/endpoint/console?port=$cport&seconds=$csecs&reset=$creset" | _pp ;;
+
+  panel-heard) # [--now] — what each panel last HEARD, as a named table rather than a tuple
+    # The decode ring is the only window onto recognition, and it rode here as a positional
+    # `jsonb` tuple nobody could read without knowing its shape — which changed twice.
+    # --now raises the counter first and waits a poll, so the ring is this minute's rather
+    # than up to fifteen minutes old. A panel that is off never answers either way.
+    if [ "${1:-}" = "--now" ]; then
+      _call POST "/api/debug/endpoint/report-now" | _pp
+      # Two polls' worth: the panel fetches settings every 3 s and then has to POST.
+      sleep 8
+    fi
+    _call GET "/api/debug/endpoint/heard" | _pp ;;
+
+  panel-report-now) # ask every panel to post its telemetry on its next poll (~3 s)
+    # Raises a counter the settings poll carries; the panel posts when it CHANGES, so this
+    # reaches each panel exactly once and leaves nothing to clear. It does NOT shorten the
+    # fifteen-minute cycle — that interval is what makes a report at 6-7 s of uptime mean
+    # "this panel just booted".
+    _call POST "/api/debug/endpoint/report-now" | _pp ;;
 
   sdr) _call GET /api/debug/sdr | _pp ;;   # is the USB radio there, and is anything holding it?
   sdr-sessions) _call GET /api/debug/sdr/sessions | _pp ;;  # which radios are held, and which the icon shows
