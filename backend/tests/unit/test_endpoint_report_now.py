@@ -288,3 +288,46 @@ class TestTheBrightnessCommandIsDeliberatelyNotFramed:
         # substring check would fail on the explanation of why it must stay unwritten.
         assert "{0x66," not in src, "0x66 is now in the init array; HBM would take over"
         assert "QSPI_CMD(0x66)" not in src, "something now writes 0x66 at runtime"
+
+
+class TestEveryFieldThePanelSendsIsDeclaredHere:
+    """A FIELD THIS MODEL DOES NOT DECLARE IS DISCARDED WITHOUT A WORD, and that has now cost
+    this project three times: `tap` was sent for months into a model that dropped it, the
+    telemetry arity once 422'd the whole post, and `int_free` — added to the firmware in 0.3.21
+    precisely because it was the measurement a design argument had lacked — was silently thrown
+    away for a release because only half the change was made.
+
+    Pydantic's default is to ignore extras, so the panel gets a 204, the log line looks healthy,
+    and the number simply is not there. Nothing fails. That is why this has to be a test rather
+    than care."""
+
+    def _telemetry_keys(self) -> set[str]:
+        """The keys the firmware actually writes, read out of its format string rather than
+        transcribed — a list maintained by hand is a list that drifts."""
+        import pathlib
+        import re
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+        start = src.index('"{\\"version\\":')
+        end = src.index('"pmu_history\\":[', start)
+        return set(re.findall(r'\\"([a-z_0-9]+)\\":', src[start:end]))
+
+    def test_the_model_declares_all_of_them(self) -> None:
+        from jbrain.api.endpoint import TelemetryIn
+
+        sent = self._telemetry_keys()
+        declared = set(TelemetryIn.model_fields)
+        missing = sorted(sent - declared)
+        assert not missing, (
+            f"the panel sends {missing} and this model drops them silently — "
+            "add them to TelemetryIn, or the number you added them to the firmware for "
+            "will never reach a log"
+        )
+
+    def test_the_scan_found_a_realistic_number_of_fields(self) -> None:
+        """Guards the guard: if the format string is restructured and the slice above stops
+        matching, `_telemetry_keys` would return a handful of keys and the test above would
+        pass by finding nothing to check."""
+        assert len(self._telemetry_keys()) > 20

@@ -845,13 +845,32 @@ bool jpanel_start(const cfg_t *cfg)
         ESP_LOGE(TAG, "task failed");
         return false;
     }
-    /* ITS OWN TASK, because it spends its life blocked in a read. Folding it into the poll
-       task would mean that task could not service a tap or the speaker-finished acknowledgement
-       while the stream was idle — which is almost always. 4096 is ample: it opens one client,
-       reads into a 128-byte buffer and calls two functions. */
-    if (xTaskCreatePinnedToCore(push_task, "push", 4096, NULL, 4, NULL, 0) != pdPASS) {
+    /* NOT STARTED, AND THIS IS A RETREAT FROM A CRASH LOOP RATHER THAN A DESIGN.
+     *
+     * MEASURED 2026-09-27: 0.3.22 put Lydian into `reset=panic(4)` every ~13 seconds, in a
+     * child's bedroom, within minutes of the OTA. The task is the only thing 0.3.22 added that
+     * runs code, and the fault is almost certainly the number in the line below this comment:
+     * I gave it 4096 bytes of stack, while EVERY other task in this firmware that opens a TLS
+     * connection — `jpanel` and `talk` — is given 6144, and an mbedTLS handshake alone wants
+     * about 3.6 KB before `esp_http_client` has taken any. The comment that shipped with it
+     * claimed 4096 was "ample" on the grounds that the task reads into a 128-byte buffer,
+     * which measures the wrong thing entirely: the buffer is not what sits on the stack, the
+     * handshake is.
+     *
+     * "ALMOST CERTAINLY" IS WHY THIS IS A GUARD AND NOT A BIGGER NUMBER. Twice today a
+     * confident diagnosis was shipped straight to these panels and was wrong — the QSPI
+     * framing that hung both renderers, and the memory argument this whole feature was built
+     * around. A panel that crashes every thirteen seconds is not a thing to iterate on
+     * remotely. The stack goes to 8192 and the task comes back when it can be watched on a
+     * bench with a cable, and the fix is one word on the line below. Everything else about the
+     * push channel is kept and untouched, including the box's half, which is harmless with
+     * nobody connected. */
+#define PUSH_TASK_ENABLED 0
+    if (PUSH_TASK_ENABLED &&
+        xTaskCreatePinnedToCore(push_task, "push", 8192, NULL, 4, NULL, 0) != pdPASS) {
         ESP_LOGW(TAG, "no push task — messages will arrive on the poll instead");
     }
+    if (!PUSH_TASK_ENABLED) ESP_LOGW(TAG, "push: disabled (0.3.22 crash loop) — polling only");
     ESP_LOGI(TAG, "ready");
     return true;
 }
