@@ -498,9 +498,7 @@ describe("JpanelScreen messages", () => {
     it("names both girls, and is not the owner's to hear", async () => {
       fetchMock.mockImplementation(
         box({
-          threads: [
-            { device_id: "panel-ellie", name: "Ellie", unplayed: 0, messages: [BETWEEN] },
-          ],
+          threads: [{ device_id: "panel-ellie", name: "Ellie", unplayed: 0, messages: [BETWEEN] }],
         }),
       );
       render(<JpanelScreen onClose={vi.fn()} />);
