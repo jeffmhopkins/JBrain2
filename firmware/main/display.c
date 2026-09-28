@@ -1469,6 +1469,10 @@ static bool label_hit(int fx, int fy, int over_y0)
    whose outcome cannot be undone from the panel, because a unit in deep sleep answers nothing
    but its own button. */
 #define BOOT_SLEEP_MS 5000
+/* How long to wait for the finger to leave the button before sleeping anyway. Generous: a
+   deliberate five-second hold is usually released within a second of the panel acknowledging
+   it, and the cost of waiting is a panel that is awake slightly longer. */
+#define POWER_RELEASE_MAX_MS 10000
 
 static uint32_t s_boot_last_ms;  /* when this last ACCEPTED a press; 0 = never */
 static uint32_t s_boot_down_at;  /* when the current press began; 0 = not down */
@@ -2237,6 +2241,22 @@ static void face_task(void *arg)
             }
         }
         s_was_speaking = speaking;
+        /* WHERE THE FINGER LANDED, RESOLVED FOR *BOTH* DISPATCHERS.
+         *
+         * THIS LIVED INSIDE THE `!speaking` BRANCH, AND THAT IS WHY THE CONTROLS OVER A PLAYING
+         * MESSAGE DID NOTHING. There are two tap dispatchers here, chosen by whether sound is
+         * coming out: the full precedence chain when the panel is quiet, and a short one for
+         * pause and reply while a message plays. Only the first resolved the coordinates — so
+         * the second tested `s_fig_x`/`s_fig_y` from THE LAST TIME THE PANEL WAS SILENT, and on
+         * the first tap of a session `s_fig_x` is still -1 and could not match anything at all.
+         * The owner: *"nothing responds to it."*
+         *
+         * Resolved once, above the fork, so both speak the same coordinates. A press is a press
+         * wherever the panel happens to be in its own sentence. */
+        if (tapped) {
+            calib_apply(&s_cal, raw_x, raw_y, &s_tap_x, &s_tap_y);
+            panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+        }
         if (tapped && !speaking) {
             /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
              *
@@ -2245,10 +2265,8 @@ static void face_task(void *arg)
              * icon are hit-tested, and a branch that returns before the poke block would have
              * left `s_fig_x` holding the PREVIOUS tap — so the recoil ring would appear where
              * the last finger was, which is the same class of bug `s_down_x` exists to
-             * document. Corrected once here and every branch below speaks the same
-             * coordinates. */
-            calib_apply(&s_cal, raw_x, raw_y, &s_tap_x, &s_tap_y);
-            panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+             * document. Resolved above the dispatcher fork now, so the pause-and-reply branch
+             * that runs while a message plays gets the same answer rather than a stale one. */
             /* OVERLAY COORDINATES, RESOLVED ONCE BESIDE THE FRAME ONES, because every hit test
                below wants these and one of them forgot. Anything drawn BEFORE `flip_frame` —
                the pop-up, the repeat icon, the label, the caption, the tick and the cross — is
@@ -2337,7 +2355,28 @@ static void face_task(void *arg)
                so a finger aimed at the exit can land ON it. Left there, the gesture would work
                or make the pet blink depending on where exactly a four-year-old put her finger,
                which is indistinguishable from it not working. */
-            if ((jpanel_running() || audio_stream_active() || s_repeat_until != 0) && oy >= 0 &&
+            /* AND NOT WHILE A NOTICE IS OFFERING A MESSAGE, which is the whole of the owner's
+               *"playback doesn't seem to work most of the time"*.
+             *
+               THE ARITHMETIC: this region is x[184,368) y[0,224). The big pop-up is CENTRED, so
+               its rectangle is x[36,332) y[117,331) — and the sender's face a child is told to
+               press sits at cx = 36 + 296/2 = 184, which is exactly FACE_W/2. Its entire right
+               half is inside this exit region, and this branch is tested BEFORE the pop-up.
+               Since `s_repeat_until` stopped expiring, this branch has been live permanently
+               from the first message ever played. So a tap a hair right of centre on the face
+               hit the exit, which by design plays no cue and leaves no mark — and, because the
+               exit clears `s_repeat_until`, the SECOND tap in the same place worked.
+             *
+               First press dead, second press fine, once per message, and only on the big notice
+               (the badge occupies the other corner, which is why waiting fifteen seconds
+               appeared to fix it). That reads exactly as "most of the time".
+             *
+               A message being OFFERED outranks a message being ended: there is nothing to exit
+               from when nothing is playing, and the notice is the thing the child is aiming at. */
+            const bool notice_offered = s_popup_box[0] >= 0 && !audio_stream_active() &&
+                                        !jpanel_running();
+            if (!notice_offered &&
+                (jpanel_running() || audio_stream_active() || s_repeat_until != 0) && oy >= 0 &&
                 oy < over_h_tap / 2 && ox >= FACE_W / 2) {
                 jpanel_stop();
                 audio_stream_pause(false); /* never leave the ring held after a stop */
@@ -3266,7 +3305,13 @@ static void face_task(void *arg)
                to do, and the asking is the part being discounted, not the doing. */
             const bool used = tapped || down || woke_by_touch || s_moved ||
                               gest.taps > 0 || cue > 0.0f || action != ACT_NONE ||
-                              speaking || s_talk != TALK_IDLE || s_repeat_until != 0 ||
+                              speaking || s_talk != TALK_IDLE ||
+                              /* NOT `s_repeat_until` ANY MORE. It stopped expiring in 0.3.25,
+                                 and it sits in the IDLE test — so from the first message ever
+                                 played the panel counted itself as permanently in use and
+                                 could never dim or darken again. The again-and-reply pair
+                                 waiting patiently for a child is precisely the case where the
+                                 screen SHOULD be allowed to go to sleep around it. */
                               arrived || jpanel_running() ||
                               jpanel_state() != JPANEL_IDLE;
             (void)heard_voice; /* still set for the caption; no longer extends the timer */
@@ -3722,9 +3767,37 @@ static void face_task(void *arg)
             audio_stop();
             /* LOW, because the button is active-low and pulled up: it reads 0 pressed. EXT0
                rather than a timer — nothing is to wake this but a finger. */
+            /* WAIT FOR THE FINGER TO ACTUALLY LEAVE, and this is the whole bug rather than a
+               nicety. EXT0 is a LEVEL trigger: arming it on GPIO0-low while GPIO0 IS low means
+               the wake condition is already satisfied at the moment of sleeping, so the chip
+               wakes instantly and boots. The hold fires deliberately while the finger is still
+               down (see `boot_button_poll`), and 150 ms of hoping was all that stood between
+               that and `esp_deep_sleep_start()`.
+             *
+               It was not even a one-shot: `s_boot_down_at` and friends are statics that the
+               boot zeroes, so a finger still on the button when it came back started a fresh
+               five-second count. Hold the button and the panel reboots, over and over. That is
+               the owner's *"long press seems to just reset the device"* — and it is a genuine
+               reboot loop rather than a misread, which is why this is fixed before anything
+               cosmetic.
+             *
+               Bounded, because a stuck or shorted button must not strand the panel awake in a
+               loop here either: past the cap it sleeps anyway, wakes immediately, and at least
+               does so once rather than forever. */
+            const uint32_t wait_from = (uint32_t)(esp_timer_get_time() / 1000);
+            while (gpio_get_level(BOOT_BTN) == 0) {
+                if ((uint32_t)(esp_timer_get_time() / 1000) - wait_from > POWER_RELEASE_MAX_MS) {
+                    ESP_LOGW(TAG, "power: button still down after %u ms — sleeping anyway",
+                             (unsigned)POWER_RELEASE_MAX_MS);
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+            /* And a moment past the release for the contact to stop bouncing, or the bounce is
+               itself a low edge and wakes what it just put to sleep. */
+            vTaskDelay(pdMS_TO_TICKS(BOOT_DEBOUNCE_MS));
             esp_sleep_enable_ext0_wakeup(BOOT_BTN, 0);
-            vTaskDelay(pdMS_TO_TICKS(150)); /* let the log drain and the finger lift */
-            esp_deep_sleep_start();         /* never returns */
+            esp_deep_sleep_start(); /* never returns */
         }
         if (rebooting || s_restart_pending) {
             ESP_LOGW(TAG, "%s — parking the renderer and restarting",

@@ -608,13 +608,21 @@ static bool verified(const char *claimed, const char *got)
    (`JPANEL_MAX_DELIVERIES`), or listening twice would be a way to lose a message. */
 static void do_replay(void)
 {
-    if (s_in_id[0] == '\0') return;
+    /* BOTH EARLY RETURNS CLEAR IT. `jpanel_replay()` raises `s_fetching` on the RENDER task and
+       checks the id there, while `do_fetch` clears the id on THIS task — so the empty-id return
+       is genuinely reachable, not defensive, and either leak pins a pause button over a silent
+       panel forever. */
+    if (s_in_id[0] == '\0') {
+        s_fetching = false;
+        return;
+    }
     bool ok = false;
     char path[96];
     snprintf(path, sizeof(path), "/message/%s/pcm", s_in_id);
     char url[288];
     esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
     if (c == NULL) {
+        s_fetching = false;
         s_state = JPANEL_FAILED;
         return;
     }
@@ -671,6 +679,12 @@ static void do_fetch(bool asked)
     char url[288];
     esp_http_client_handle_t c = open_client("/next", HTTP_METHOD_GET, url, sizeof(url));
     if (c == NULL) {
+        /* CLEARED ON THE EARLY RETURN TOO, and the comment at `done:` promising "whatever the
+           outcome" was written one release before this path existed to contradict it. A leaked
+           `s_fetching` pins `starting` true forever, which draws a pause button and a sender's
+           face over a panel with nothing playing — the exact fault the flag was added to fix.
+           `open_client` returns NULL on no Wi-Fi and no key, so this is the ordinary case. */
+        s_fetching = false;
         s_state = JPANEL_FAILED;
         return;
     }

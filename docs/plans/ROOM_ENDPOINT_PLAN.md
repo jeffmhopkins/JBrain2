@@ -5658,6 +5658,56 @@ darkened anything either. That is the long-standing *"even when it times out and
 sleeps, the display never changes brightness"* report, fixed from the other side rather than by
 re-landing the register write that hung both renderers.
 
+##### Five faults found by reading rather than by a child (0.3.28)
+
+The owner, after a run of symptom fixes: *"I think you need to do separate researchers to go
+through and walk through logically the whole frame... I think particularly we are getting bugs
+here because you haven't done thorough local testing."* He was right on both counts. Three
+parallel reads of the code found what six releases of patching had not, and **every fault below
+was introduced tonight by a fix for a different one.**
+
+**1. The five-second hold rebooted the panel, in a loop.** `esp_sleep_enable_ext0_wakeup` is a
+LEVEL trigger, and the hold deliberately fires *while the finger is still down* — so the wake
+condition was already satisfied at the moment of sleeping and the chip woke instantly into a
+full boot. The 150 ms delay hoping for a release was all that stood between the two. And since
+the boot zeroes `s_boot_down_at`, a finger still on the button started a fresh five-second
+count: **hold the button, get a reboot loop.** It waits for release now, capped, plus a debounce
+— a bouncing contact is itself a low edge and would wake what it just put to sleep.
+
+**2. The exit corner swallowed presses aimed at the notification.** Arithmetic, not opinion: the
+exit region is `x[184,368) y[0,224)`; the big pop-up is centred at `x[36,332) y[117,331)`; the
+sender's face sits at `cx = 184`, **exactly the boundary**, so its whole right half was inside
+the exit — which is tested *first*. Since `s_repeat_until` stopped expiring in 0.3.25 that
+branch was live permanently from the first message ever played. The exit plays no cue by
+design, so the press vanished; and because it clears the flag, **the second press worked**.
+First tap dead, second fine, once per message — *"playback doesn't work most of the time"*. The
+badge occupies the other corner, which is why waiting fifteen seconds appeared to fix it.
+
+**3. The controls over a playing message tested a stale finger.** There are **two** tap
+dispatchers, chosen by whether sound is coming out, and only the quiet one resolved the touch
+coordinates. The playing one tested `s_fig_x`/`s_fig_y` from *the last time the panel was
+silent* — and on the first tap of a session that is `-1`, matching nothing. *"Nothing responds
+to it."* Resolved above the fork now, so a press is a press wherever the panel is in its own
+sentence.
+
+**4. The screen could never sleep again.** `s_repeat_until != 0` is part of the idle test, and it
+stopped expiring — so after one message the panel counted itself permanently in use, refreshed
+`active_ms` every frame, and never dimmed or darkened. A fully lit pet in a child's bedroom
+until morning, which is the exact outcome `screen.h` exists to prevent, and a better explanation
+of the long-running *"it never changes brightness"* than the missing black frame 0.3.27 fixed.
+
+**5. And a 0.3.27 regression caught before it shipped.** `s_fetching` was not cleared on three
+early returns — `open_client` returning NULL in both `do_fetch` and `do_replay` (the ordinary
+no-Wi-Fi case) and the empty-id return. A leak pins the playback controls up forever over a
+silent panel: precisely the fault the flag was added to fix, reintroduced by the returns the
+comment at `done:` claimed to cover.
+
+**What the map found that is still open:** a pause button drawn during the fetch window whose
+handler cannot act on it (a press there pokes the pet instead), and calibration `continue`ing
+above the button poll and every clock — no button, no standby, no timeout, and 48 deliberate
+taps the only way out. Both are recorded rather than fixed here, because the state machine is
+being extracted into a testable module and these belong to that work.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The
