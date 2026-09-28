@@ -298,6 +298,17 @@ static void tap_at(int x, int y)
     w.in.panel_y = y;
 }
 
+/* A PRESS ON THE NOTICE, WHEREVER THE NOTICE IS. These scenarios used to press (60,100), a
+   point in the old top-left quadrant target — which the big bubble does not cover, so hardcoding
+   it meant testing a rectangle rather than a control. Asking `ui_popup_target` for the middle of
+   what is actually drawn is what a child does with their eyes. */
+static void tap_the_notice(bool big)
+{
+    int box[4];
+    ui_popup_target(0, FACE_H, big, box);
+    tap_at((box[0] + box[2]) / 2, (box[1] + box[3]) / 2);
+}
+
 /* A finger still on the glass. The down EDGE carries the point, which is what makes the rim
    margin a fact about this press rather than about the last one. */
 static void press_down(int x, int y)
@@ -358,7 +369,7 @@ static void play_a_message(bool from_dad)
     w.in.waiting_from_dad = from_dad;
     step();                     /* it arrives */
     run_ms(400);                /* the arrival cue finishes */
-    tap_at(60, 100);            /* the notice, top-left quadrant */
+    tap_the_notice(true);       /* the notice, wherever it is drawn */
     step();
     run_ms(400);                /* the press's own cue finishes; the fetch is asked for */
     land_fetch();
@@ -386,7 +397,7 @@ static void test_the_order_is_a_list_and_ends_with_the_pet(void)
     /* THE LAST ENTRY IS LOAD-BEARING: every press must reach something, or a tap would fall out
        of the table and be silently lost. */
     CHECK(UI_TAP_ORDER[UI_TAP_ORDER_LEN - 1] == UI_TARGET_PET, "the pet catches every press");
-    CHECK(UI_TAP_ORDER_SPEAKING[UI_TAP_ORDER_SPEAKING_LEN - 1] == UI_TARGET_PET,
+    CHECK(UI_TAP_ORDER_PLAYING[UI_TAP_ORDER_PLAYING_LEN - 1] == UI_TARGET_PET,
           "and it catches them while the speaker runs too");
 }
 
@@ -417,30 +428,45 @@ static void test_the_notice_is_tappable_only_in_one_quadrant_today(void)
 {
     /* THE PICTURE AND THE TARGET ARE DIFFERENT RECTANGLES, and that is a live fault.
        `draw_popup` paints a 296x214 box centred in the frame — x 36..332, y 117..331 — while the
-       hit rectangle it arms is the top-LEFT quadrant, x 0..184, y 0..224. So more than half of
-       what a child can see is not pressable, and the part of the visible box at x > 184
-       reaches whatever is behind it instead: the exit corner if a pair is standing, otherwise
-       the pet. A control you can see is a control you can press; these two disagree. */
+       hit rectangle it armed was the top-LEFT quadrant, x 0..184, y 0..224 — and the two barely
+       overlap. More than half of what a child could see was not pressable, and the part of the
+       visible box at x > 184 reached whatever was behind it: the exit corner if a pair was
+       standing, otherwise the pet. A control you can see is a control you can press.
+     *
+       `ui_popup_target` is now the only answer to "where is the notice", and the drawing takes
+       its bounds from the same call. */
     world_reset();
     w.in.waiting = 1;
     step();      /* the notice arrives and the rectangle is armed */
-    run_ms(400); /* the arrival cue finishes, so presses are not swallowed */
+    run_ms(400); /* the arrival cue finishes */
 
     CHECK(w.ov.popup_big, "the big notice is up");
-    CHECK(w.st.popup_box[0] == 0 && w.st.popup_box[1] == 0 && w.st.popup_box[2] == FACE_W / 2 &&
-              w.st.popup_box[3] == FACE_H / 2,
-          "and its target is the top-left quadrant alone");
+    int want[4];
+    ui_popup_target(0, FACE_H, true, want);
+    CHECK(w.st.popup_box[0] == want[0] && w.st.popup_box[1] == want[1] &&
+              w.st.popup_box[2] == want[2] && w.st.popup_box[3] == want[3],
+          "and its target is the bubble a child is looking at, not a quadrant beside it");
+    CHECK(want[0] == 36 && want[1] == 117 && want[2] == 332 && want[3] == 331,
+          "the arithmetic, stated: 296x214 centred on the 368x448 frame");
 
     /* Inside the drawn box AND inside the target: plays, as it should. */
     tap_at(120, 150);
     CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_POPUP, "the left of the notice plays it");
     w.in.tapped = false;
 
-    /* Inside the drawn box, outside the target, nothing else live: the PET. A child presses the
-       notification they are looking at and the pet farts. */
+    /* The RIGHT of the drawn box, which used to reach the pet — or the exit corner — because the
+       target stopped at the centre line. */
+    w.in.tapped = false;
     tap_at(250, 150);
-    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_PET,
-          "TODAY: the right of the visible notice pokes the pet instead");
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_POPUP,
+          "and the right of the visible notice plays it too");
+
+    /* And a corner of the old quadrant that the bubble never covered is NOT the notice: the
+       target followed the picture in both directions, not just outwards. */
+    w.in.tapped = false;
+    tap_at(10, 20);
+    CHECK(ui_tap_target(&w.st, &w.in) != UI_TARGET_POPUP,
+          "while bare black above the box is not a notice press");
 
     /* AND IT IS NO LONGER EATEN BY THE EXIT. With a pair standing — which, since nothing expires
        it, is permanently true after the first message the panel ever plays — this press used to
@@ -460,12 +486,13 @@ static void test_the_notice_is_tappable_only_in_one_quadrant_today(void)
           "and it returns the moment a message is actually running");
 }
 
-static void test_a_sounding_speaker_hides_every_target_but_two_today(void)
+static void test_a_cue_no_longer_decides_what_a_press_means(void)
 {
     /* THE WHOLE DISPATCH USED TO SIT INSIDE `tapped && !speaking`, and `audio_playing()` is true
-       for the panel's OWN cues. So for the length of a notification beep — the exact moment a
-       child looks up and reaches for the glass — a notice, the exit, the pair and the tick are
-       all unreachable. The two tables make that visible instead of implicit. */
+       for the panel's OWN cues. So for the length of the 440 ms notification beep — the exact
+       moment a child looks up and reaches for the glass — a notice, the exit, the pair and the
+       tick were all unreachable. The two tables made it visible; the fix is that the fork reads
+       `stream_active`, a MESSAGE sounding, and a cue is just the panel clearing its throat. */
     world_reset();
     w.in.waiting = 1;
     w.st.popup_box[0] = 0;
@@ -479,11 +506,86 @@ static void test_a_sounding_speaker_hides_every_target_but_two_today(void)
     tap_at(120, 150);
     CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_GRID, "quiet: the table is the long one");
 
+    /* The arrival cue, sounding, with the notice on the glass. */
     w.in.speaking = true;
-    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_PET,
-          "TODAY: a sounding speaker puts the grid, the notice, the exit and the pair out of "
-          "reach");
-    CHECK(UI_TAP_ORDER_SPEAKING_LEN == 2, "only the transport and the pet remain");
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_GRID,
+          "a cue does not take the long table away — the child pressing during the beep is "
+          "pressing on what they can see");
+
+    /* And a message actually sounding does, which is the distinction that was wanted all along.
+       The grid, the notice and the pair all had a claim on this point a moment ago; now only the
+       short table's two can answer, and which of them depends on where the finger is. */
+    w.in.stream_active = true;
+    const ui_target_t narrowed = ui_tap_target(&w.st, &w.in);
+    CHECK(narrowed == UI_TARGET_TRANSPORT || narrowed == UI_TARGET_PET,
+          "a MESSAGE sounding is what narrows the table");
+    CHECK(UI_TAP_ORDER_PLAYING_LEN == 3, "only the exit, the transport and the pet remain");
+}
+
+static void test_the_exit_ends_a_message_while_it_is_audible(void)
+{
+    /* THE ONE STATE THE CORNER EXISTS FOR, and the old fork made it the one state it could not
+       reach: EXIT lives in the long table, `speaking` is true while a message plays, so the
+       press went to the short table and matched the transport or the pet. The owner asked for
+       exactly this — *"when it does play and I want to exit it, I should be able to click on the
+       top right"* — and reported that it *"doesn't happen either"*. */
+    world_reset();
+    w.in.jrunning = true;
+    w.in.stream_active = true;
+    w.in.speaking = true;
+    tap_at(276, 112); /* top-right quadrant */
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_EXIT,
+          "the corner is the exit while a message plays, not the transport that swallows "
+          "everything else");
+    CHECK(UI_TAP_ORDER_PLAYING[0] == UI_TARGET_EXIT,
+          "and it is first, because a sounding run consumes every press it is offered");
+
+    /* The transport owns the LEFT half of that band (play/pause and reply); the exit owns the
+       top-right corner. They must not both claim one point — see `confirm.h` for the geometry. */
+    ui_out_t out = {0};
+    ui_tap(&w.st, &w.in, &out);
+    bool ended = false;
+    for (int i = 0; i < out.n; i++) {
+        if (out.act[i].kind == UI_ACT_STOP) ended = true;
+    }
+    CHECK(ended, "and it ends the run rather than poking the pet");
+}
+
+static void test_the_notice_is_painted_through_its_own_arrival_cue(void)
+{
+    /* WHAT YOU CAN SEE AND WHAT YOU CAN PRESS MUST NOT DISAGREE. The paint guard had the
+       dispatcher's bug in the other half: `!speaking` blanked the notice for the first half
+       second of its life while the hit rectangle stayed armed. */
+    world_reset();
+    w.in.waiting = 1;
+    w.in.speaking = true; /* the 440 ms chirp that announced it */
+    ui_overlay_t ov = {0};
+    ui_overlay(&w.st, &w.in, &ov);
+    CHECK(ov.popup_big || ov.popup_badge, "the notice is on the glass while its own cue sounds");
+    CHECK(w.st.popup_box[0] >= 0, "and the target is armed to match the picture");
+
+    /* A message sounding still holds it back: there is something happening now. */
+    w.in.stream_active = true;
+    ui_overlay_t ov2 = {0};
+    ui_overlay(&w.st, &w.in, &ov2);
+    CHECK(!ov2.popup_big && !ov2.popup_badge, "but a playing message still owns the screen");
+}
+
+static void test_a_hold_after_a_poke_still_opens_the_menu(void)
+{
+    /* CHILDREN DO NOT HOLD FROM A STANDING START — they poke the pet, it beeps, and then they
+       hold. The hold tested `!speaking`, so the beep their own poke just made could stand in
+       front of the menu. */
+    world_reset();
+    w.in.speaking = true; /* the poke's own CUE_TOGGLE, still sounding */
+    w.in.down = true;
+    w.st.down_x = FACE_W / 2;
+    w.st.down_y = FACE_H / 2;
+    w.st.down_since = w.in.now;
+    w.in.now += HOLD_TALK_MS + 50;
+    ui_out_t out = {0};
+    ui_frame(&w.st, &w.in, &out);
+    CHECK(w.st.sendto_until != 0, "the menu opens over the panel's own beep");
 }
 
 static void test_the_draw_layers_are_a_list(void)
@@ -516,7 +618,7 @@ static void test_a_notification_arrives_and_a_tap_plays_it(void)
     run_ms(400); /* the arrival cue finishes */
     CHECK(!audio_playing(), "the speaker is free again");
 
-    tap_at(60, 100);
+    tap_the_notice(true);
     step();
     CHECK(w.st.pending == UI_PEND_PLAY, "the press is taken at once");
     CHECK(last_cue() == CUE_HEARD, "and it answers the finger before the message");
@@ -537,7 +639,7 @@ static void test_a_press_does_not_evaporate_behind_its_own_cue(void)
     step();
     run_ms(400);
 
-    tap_at(60, 100);
+    tap_the_notice(true);
     step();
     CHECK(w.st.pending == UI_PEND_PLAY, "taken");
     /* Hold the speaker busy for most of the window and the press is still alive. */
@@ -553,22 +655,24 @@ static void test_a_press_does_not_evaporate_behind_its_own_cue(void)
     CHECK(w.st.pending == UI_PEND_NONE, "and once only");
 }
 
-static void test_a_press_during_a_cue_is_discarded_today(void)
+static void test_a_press_during_the_arrival_cue_plays_the_message(void)
 {
-    /* The other half of the same complaint, and still live: the press above survived because it
-       was TAKEN before the cue started. A press that arrives WHILE the panel is making a noise
-       is dropped on the floor — including the notification beep the child is reacting to. */
+    /* The other half of the same complaint: the press in the scenario above survived because it
+       was TAKEN before the cue started. A press arriving WHILE the panel made a noise went down
+       the speaking table, matched nothing and was dropped — including during the very beep the
+       child was reacting to. The fork reads `stream_active` now, so a cue is just a cue. */
     world_reset();
     w.in.waiting = 1;
     step();
     CHECK(audio_playing(), "the arrival cue is still sounding");
 
-    tap_at(60, 100);
+    tap_the_notice(true);
     step();
-    CHECK(w.st.pending == UI_PEND_NONE,
-          "TODAY: a press landing during the notification beep is discarded");
-    CHECK(w.tap_out.flinch, "the pet twitches, so it looks answered");
-    CHECK(w.play_next == 0, "and nothing plays");
+    CHECK(w.st.pending != UI_PEND_NONE || w.play_next > 0,
+          "a press landing during the notification beep is acted on");
+    run_ms(400);
+    step();
+    CHECK(w.play_next == 1, "and the message plays once the speaker is free");
 }
 
 static void test_the_run_controls_appear_from_the_press_not_the_stream(void)
@@ -580,7 +684,7 @@ static void test_the_run_controls_appear_from_the_press_not_the_stream(void)
     w.in.waiting = 1;
     step();
     run_ms(400);
-    tap_at(60, 100);
+    tap_the_notice(true);
     step();
     CHECK(w.ov.run, "the controls are up on the frame of the press");
     CHECK(w.ov.run_playing, "showing pause, because sound is coming");
@@ -589,13 +693,13 @@ static void test_the_run_controls_appear_from_the_press_not_the_stream(void)
     CHECK(!w.ov.pair, "and the ended state is not");
 }
 
-static void test_the_top_right_corner_ends_a_message_only_once_it_is_silent_today(void)
+static void test_the_top_right_corner_ends_a_message_while_it_plays(void)
 {
-    /* The owner asked for this the other way round: *"when it does play and I want to exit it, I
-       should be able to click on the top right where there's no icon and have it exit out."*
-       It cannot, and the reason is the `!speaking` guard above: a message that is audible is a
-       speaker that is running, so the press goes down the short table and reaches the transport
-       pair instead — where the top right is neither half and does nothing but flinch. */
+    /* The owner asked for exactly this and reported it did not work: *"when it does play and I
+       want to exit it, I should be able to click on the top right where there's no icon and have
+       it exit out."* Two things were wrong. The press went down the short table because a message
+       is audible, and the exit was not IN the short table — and `target_hit(TRANSPORT)` is
+       unconditional, so it swallowed the corner. The exit is now first in that table. */
     world_reset();
     play_a_message(false);
     CHECK(w.ov.run && w.ov.exit_corner, "the exit is drawn while the message plays");
@@ -604,9 +708,8 @@ static void test_the_top_right_corner_ends_a_message_only_once_it_is_silent_toda
     const int stops = w.stop;
     tap_at(276, 112); /* squarely on the drawn exit disc */
     step();
-    CHECK(w.stop == stops, "TODAY: pressing the drawn exit mid-message does not end it");
-    CHECK(w.tap_out.flinch, "it only flinches");
-    CHECK(w.stream, "the message is still playing");
+    CHECK(w.stop > stops, "pressing the drawn exit mid-message ends it");
+    CHECK(!w.stream, "the message stops with it");
 
     /* Once it has finished, the pair comes up and the same corner works. */
     finish_message();
@@ -1069,31 +1172,27 @@ static void test_the_notice_shrinks_to_a_badge_and_a_second_one_does_not_restore
     CHECK(w.ov.popup_big, "waking to a message left overnight interrupts properly");
 }
 
-static void test_the_notice_is_unpainted_while_any_cue_sounds_today(void)
+static void test_the_notice_stays_painted_while_a_cue_sounds(void)
 {
-    /* THE TARGET SURVIVES A NOISE AND THE PICTURE DOES NOT, which is half a fix.
-     *
-     * The rectangle was moved out from behind the idle guard because tying it to the painting is
-     * what made a notice intermittently unpressable. The PAINTING is still behind that guard,
-     * and the guard includes `!speaking` — so for the length of the arrival cue the notice is
-     * armed but invisible, and it vanishes again for every burp and every button beep after
-     * that. A control that blinks off while it still works is the same fault as one that works
-     * only while it is drawn, wearing the other face. */
+    /* THE TARGET SURVIVED A NOISE AND THE PICTURE DID NOT, which was half a fix. The rectangle
+       was moved out from behind the idle guard because tying it to the painting is what made a
+       notice intermittently unpressable — but the PAINTING stayed behind a guard that included
+       `!speaking`, so for the length of the arrival cue the notice was armed and invisible, and
+       it vanished again for every burp and button beep after that. A control that blinks off
+       while it still works is the same fault wearing the other face. Both halves read
+       `stream_active` now. */
     world_reset();
     w.in.waiting = 1;
     step();
-    /* The arrival frame still paints it: `speaking` is sampled at the TOP of the pass and the
-       cue is asked for below, so the noise does not exist yet as far as this frame knows. */
     CHECK(w.ov.popup_big, "the notice is painted on the frame it arrives");
     CHECK(audio_playing(), "with the arrival cue now sounding");
 
     step();
-    CHECK(w.st.popup_box[0] >= 0, "the target is still armed a frame later");
-    CHECK(!w.ov.popup_big && !w.ov.popup_badge,
-          "TODAY: but nothing at all is painted while the cue sounds");
+    CHECK(w.ov.popup_big, "and it is still painted a frame later, mid-cue");
+    CHECK(w.st.popup_box[0] >= 0, "with its target armed to match");
 
     run_ms(400);
-    CHECK(w.ov.popup_big, "the picture comes back once the panel is quiet");
+    CHECK(w.ov.popup_big, "the picture is there when the panel goes quiet");
     CHECK(w.st.popup_box[0] >= 0, "and the target never moved");
 }
 
@@ -1214,14 +1313,17 @@ int main(void)
     test_the_order_is_a_list_and_ends_with_the_pet();
     test_the_grid_is_modal_and_outranks_everything();
     test_the_notice_is_tappable_only_in_one_quadrant_today();
-    test_a_sounding_speaker_hides_every_target_but_two_today();
+    test_a_cue_no_longer_decides_what_a_press_means();
+    test_the_exit_ends_a_message_while_it_is_audible();
+    test_the_notice_is_painted_through_its_own_arrival_cue();
+    test_a_hold_after_a_poke_still_opens_the_menu();
     test_the_draw_layers_are_a_list();
 
     test_a_notification_arrives_and_a_tap_plays_it();
     test_a_press_does_not_evaporate_behind_its_own_cue();
-    test_a_press_during_a_cue_is_discarded_today();
+    test_a_press_during_the_arrival_cue_plays_the_message();
     test_the_run_controls_appear_from_the_press_not_the_stream();
-    test_the_top_right_corner_ends_a_message_only_once_it_is_silent_today();
+    test_the_top_right_corner_ends_a_message_while_it_plays();
     test_the_pair_waits_for_a_finger_not_a_clock();
     test_reply_records_to_whoever_just_spoke();
     test_sending_does_not_raise_the_playback_controls();
@@ -1239,7 +1341,7 @@ int main(void)
     test_stop_said_out_loud_leaves_every_state();
     test_a_held_stream_resumes_rather_than_being_thrown_away();
     test_the_notice_shrinks_to_a_badge_and_a_second_one_does_not_restore_it();
-    test_the_notice_is_unpainted_while_any_cue_sounds_today();
+    test_the_notice_stays_painted_while_a_cue_sounds();
     test_the_queue_count_only_sounds_on_the_way_up();
     test_what_the_box_said_about_a_message_is_answered_in_sound();
     test_a_replay_still_reads_as_playing();

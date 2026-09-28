@@ -170,9 +170,25 @@ const ui_target_t UI_TAP_ORDER[UI_TAP_ORDER_LEN] = {
     UI_TARGET_PET,
 };
 
-const ui_target_t UI_TAP_ORDER_SPEAKING[UI_TAP_ORDER_SPEAKING_LEN] = {
-    UI_TARGET_TRANSPORT, UI_TARGET_PET,
+const ui_target_t UI_TAP_ORDER_PLAYING[UI_TAP_ORDER_PLAYING_LEN] = {
+    /* The exit before the transport, because the transport consumes every press — see `ui.h`. */
+    UI_TARGET_EXIT, UI_TARGET_TRANSPORT, UI_TARGET_PET,
 };
+
+void ui_popup_target(int y0, int over_h, bool big, int box[4])
+{
+    if (big) {
+        box[0] = (FACE_W - UI_POPUP_BIG_W) / 2;
+        box[1] = y0 + (over_h - y0 - UI_POPUP_BIG_H) / 2;
+        box[2] = box[0] + UI_POPUP_BIG_W;
+        box[3] = box[1] + UI_POPUP_BIG_H;
+        return;
+    }
+    box[0] = 0;
+    box[1] = y0;
+    box[2] = FACE_W / 2;
+    box[3] = y0 + (over_h - y0) / 2;
+}
 
 const ui_layer_t UI_DRAW_ORDER[UI_LAYER_COUNT] = {
     UI_LAYER_TALK, UI_LAYER_POPUP, UI_LAYER_TRANSPORT, UI_LAYER_GRID,
@@ -251,8 +267,9 @@ static bool target_hit(ui_target_t t, const ui_state_t *st, const ui_in_t *in)
 
 ui_target_t ui_tap_target(const ui_state_t *st, const ui_in_t *in)
 {
-    const ui_target_t *order = in->speaking ? UI_TAP_ORDER_SPEAKING : UI_TAP_ORDER;
-    const int n = in->speaking ? UI_TAP_ORDER_SPEAKING_LEN : UI_TAP_ORDER_LEN;
+    /* `stream_active`, NOT `speaking` — a cue must not change what a press means. See `ui.h`. */
+    const ui_target_t *order = in->stream_active ? UI_TAP_ORDER_PLAYING : UI_TAP_ORDER;
+    const int n = in->stream_active ? UI_TAP_ORDER_PLAYING_LEN : UI_TAP_ORDER_LEN;
     for (int i = 0; i < n; i++) {
         if (target_live(order[i], st, in) && target_hit(order[i], st, in)) return order[i];
     }
@@ -532,7 +549,9 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
         break;
     }
 
-    /* THE PET, and what that means depends on which table the press came down. */
+    /* THE PET, and this is the one branch that does care about any sound at all: cutting across
+       the pet mid-sentence with a colour change and a fresh beep is what the old whole-dispatcher
+       guard was really protecting. So `speaking` here, `stream_active` for the arbitration. */
     if (in->speaking) {
         /* Poked mid-sentence with no run to control. The flinch stays — ignoring the finger
            entirely would read as a frozen pet — but no beep, no colour change and no new action,
@@ -606,7 +625,7 @@ void ui_frame(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
        ANY COUNT THE MAINTENANCE GESTURES HAVE NOT CLAIMED, which used to be zero alone —
        children do not hold from a standing start, they poke the pet, it does something, they
        poke it again, and then they hold. */
-    if (st->talk == UI_TALK_IDLE && in->down && on_the_pet && !in->speaking &&
+    if (st->talk == UI_TALK_IDLE && in->down && on_the_pet && !in->stream_active &&
         !gesture_reserved(in->gest_taps) && held >= HOLD_TALK_MS && in->net != UI_NET_BUSY &&
         st->sendto_until == 0) {
         st->sendto_until = in->now + SENDTO_MS;
@@ -845,17 +864,22 @@ void ui_overlay(ui_state_t *st, const ui_in_t *in, ui_overlay_t *ov)
        stays behind the idle guard. */
     st->popup_box[0] = -1;
     if (in->waiting > 0 && st->talk == UI_TALK_IDLE) {
-        const int qh = (in->over_h - in->over_y0) / 2;
-        st->popup_box[0] = 0;
-        st->popup_box[1] = in->over_y0;
-        st->popup_box[2] = FACE_W / 2;
-        st->popup_box[3] = in->over_y0 + qh;
+        /* FROM THE CLOCK, NOT FROM WHETHER ANYTHING WAS PAINTED. The two drawing functions used
+           to arm this between them, each writing its own shape — which was geometrically right
+           and conditionally absent. The shape still comes from which notice this is; only the
+           decision moved here, where it depends on the queue and the clock alone. */
+        const bool big = in->now - st->popup_since < POPUP_BIG_MS;
+        ui_popup_target(in->over_y0, in->over_h, big, st->popup_box);
     }
     /* THE POP-UP OVER EVERYTHING, and only when the panel is otherwise idle. A box announcing a
        message on top of a pet that is mid-sentence, or mid-recording, would be two demands on a
        four-year-old at once — and the one it covers is the one they are already doing. It is not
        lost: the count lives on the box and the next idle frame draws it. */
-    if (st->talk == UI_TALK_IDLE && !in->speaking && in->jstate != UI_JP_BUSY && in->waiting > 0) {
+    /* THE PICTURE, and it had the dispatcher's bug in the other half: the arrival cue blanked
+       the notice for the first half-second of its life, while the target stayed armed. What you
+       can see and what you can press must not be able to disagree, so both read the same fact. */
+    if (st->talk == UI_TALK_IDLE && !in->stream_active && in->jstate != UI_JP_BUSY &&
+        in->waiting > 0) {
         /* Big for the first fifteen seconds, then a badge. OVER THE PAIR, NOT DEFERRED BEHIND
            IT: the badge used to wait for the pair to lapse, which was fine while that was a
            ten-second deadline and is a bug now that the pair waits for a finger instead — a

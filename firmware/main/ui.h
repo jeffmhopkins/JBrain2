@@ -229,6 +229,22 @@ typedef enum {
  * clock forever and never shrink. */
 #define POPUP_BIG_MS 15000
 
+/* THE BIG NOTICE'S BOX, 296x214 and CENTRED — which is the whole reason this is shared rather
+ * than a pair of locals in the drawing code. The target used to be the top-left quadrant while
+ * the picture was this box, and the two barely overlap: the bubble is x[36,332) y[117,331) on a
+ * 368-square face, so most of what a child could SEE was not pressable, and a press on its right
+ * half reached whatever was behind it. *"Playback doesn't seem to work most of the time."*
+ *
+ * `ui_popup_target` is the one answer to "where is the notice", and both the arming and the
+ * drawing take it from here. Big gives the bubble's own bounds — 62% of the screen, generous by
+ * any measure. The badge gives the whole top-left quadrant instead, because shrinking the
+ * picture must not shrink what a four-year-old has to hit: *"capture everything in that top left
+ * quadrant as far as clicks to play it."* In both cases the target IS what is drawn. */
+#define UI_POPUP_BIG_W 296
+#define UI_POPUP_BIG_H 214
+
+void ui_popup_target(int y0, int over_h, bool big, int box[4]);
+
 /* A TOUCH THAT MAKES A SOUND AND STILL PLAYS AT ONCE.
  *
  * The owner asked for a sound on these two controls and the first attempt produced none, on an
@@ -499,11 +515,27 @@ typedef struct {
  * works. Nothing in a chain of `if`s says "these two targets overlap and this one wins"; a
  * table does, and a test can walk it.
  *
- * TWO TABLES, BECAUSE THERE ARE TWO ORDERS, and that is itself worth seeing. While the speaker
- * is running, the whole first table is unreachable: `UI_TAP_ORDER_SPEAKING` is the entire set of
- * things a press can reach, which means a press cannot reach a notice, the exit, the pair or the
- * tick while ANY sound is coming out — including the panel's own 440 ms notification cue. A
- * child reacting to the beep is pressing during the beep.
+ * TWO TABLES, BECAUSE THERE ARE TWO ORDERS, and WHICH ONE A PRESS USES IS THE WHOLE QUESTION.
+ * While a message is sounding the second table is everything a press can reach: the exit, the
+ * transport, then the pet. A notice, the pair and the tick are all unreachable, which is right —
+ * they are offers about what to do next, and there is a thing happening now.
+ *
+ * THE EXIT IS IN BOTH TABLES, and leaving it out of this one is why the owner reported that
+ * pressing the corner during a message *"doesn't happen either"*. `target_hit(TRANSPORT)` is
+ * unconditional — a sounding run consumes every press so the pet cannot twitch mid-sentence —
+ * so the exit has to come FIRST or it can never be reached. The geometry does not collide: the
+ * transport pair is the bottom half (`confirm.h`), the sender's face the top left, the exit the
+ * top right. Four quadrants, each meaning one thing, which is the screen that was asked for.
+ *
+ * THE TEST IS A MESSAGE, NOT A SOUND, and the difference was three reported faults. It used to
+ * be `speaking` (`audio_playing()`), true for the panel's own cues as well — so a press could
+ * not reach a notice, the exit, the pair or the tick while ANY sound came out, including the
+ * 440 ms chirp that fires on the frame the notice appears. A child reacting to the beep is
+ * pressing during the beep, and the exit lives in the first table, so it could not end a
+ * message while the message was audible — the one state it exists for. `stream_active` is the
+ * message ring alone, so a cue no longer decides what a press means. The pet's own branch
+ * still defers to `speaking`, because a colour change and a new beep mid-sentence is the thing
+ * that guard was genuinely protecting.
  */
 typedef enum {
     UI_TARGET_GRID = 0,  /* the "who?" menu: modal, and consumes even a miss */
@@ -517,9 +549,9 @@ typedef enum {
 } ui_target_t;
 
 #define UI_TAP_ORDER_LEN 6
-#define UI_TAP_ORDER_SPEAKING_LEN 2
+#define UI_TAP_ORDER_PLAYING_LEN 3
 extern const ui_target_t UI_TAP_ORDER[UI_TAP_ORDER_LEN];
-extern const ui_target_t UI_TAP_ORDER_SPEAKING[UI_TAP_ORDER_SPEAKING_LEN];
+extern const ui_target_t UI_TAP_ORDER_PLAYING[UI_TAP_ORDER_PLAYING_LEN];
 
 /* WHICH TARGET A PRESS AT `in->ox,in->oy` REACHES, and nothing else — no state changed, no
    action emitted. Split out from `ui_tap` so the arbitration can be asserted on its own: the

@@ -38,6 +38,7 @@
 #include "calib.h"
 #include "caption.h"
 #include "confirm.h"
+#include "ui.h"
 #include "cfg.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -958,8 +959,10 @@ static uint32_t s_repeat_until;
  *
  * `s_popup_since` is when the CURRENT run of waiting messages began — reset when the count
  * goes to zero, not on every poll, or a panel that polls every thirty seconds would restart
- * the clock forever and never shrink. */
-#define POPUP_BIG_MS 15000
+ * the clock forever and never shrink.
+ *
+ * `POPUP_BIG_MS` is `ui.h`'s: the state machine decides when the notice shrinks, and one number
+ * in two headers is one number that can disagree with itself. */
 static uint32_t s_popup_since;
 
 /* A TOUCH THAT MAKES A SOUND AND STILL PLAYS AT ONCE.
@@ -1205,9 +1208,12 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
        up and icon on the top left show the icons of the person instead of being generic."*
        Both surfaces, and the big one matters most — it is what a child sees FIRST, before the
        badge it shrinks into, and it was four lines of words to a reader who cannot read. */
-    const int bw = 296, bh = 214;
-    const int bx = (FACE_W - bw) / 2;
-    const int by = y0 + (h - y0 - bh) / 2;
+    /* THE SAME RECTANGLE THE HIT TEST IS ARMED FROM — `ui.h`. It was two locals here and a
+       quadrant over there, and they did not overlap. */
+    int box[4];
+    ui_popup_target(y0, h, true, box);
+    const int bx = box[0], by = box[1];
+    const int bw = UI_POPUP_BIG_W, bh = UI_POPUP_BIG_H;
     bubble(fb, bx, by, bw, bh, 22, SWAP16(0x001F));
     bubble(fb, bx + 5, by + 5, bw - 10, bh - 10, 18, SWAP16(0x0010));
 
@@ -1247,11 +1253,6 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
     w = font_text_w(act, POPUP_SCALE);
     font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 186, POPUP_SCALE, act,
               SWAP16(0x07FF));
-
-    s_popup_box[0] = bx;
-    s_popup_box[1] = by;
-    s_popup_box[2] = bx + bw;
-    s_popup_box[3] = by + bh;
 }
 
 /* THE BADGE THE POP-UP BECOMES. Top-left, small, and still the whole tap target it was —
@@ -1303,19 +1304,7 @@ static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
        smaller — the one thing the child actually reads had been shrunk to make room for a label
        they cannot read. */
     (void)from;
-    const int qh = (over_h - y0) / 2;
-    const int qw = FACE_W / 2;
     draw_sender_face(fb, y0, over_h, who);
-
-    /* THE WHOLE QUADRANT IS THE TARGET, not the face's own bounds. The owner, on the grid
-       first and now here: *"capture everything in that top left quadrant as far as clicks to
-       play it"* — the same reason the 2x2 menu stopped hit-testing discs. These readers are
-       four; a press near the picture is a press ON the picture as far as they are concerned,
-       and a notice that ignores it is a notice that does not work. */
-    s_popup_box[0] = 0;
-    s_popup_box[1] = y0;
-    s_popup_box[2] = qw;
-    s_popup_box[3] = y0 + qh;
 }
 
 /* PLAYING, AND THE SAME PAIR THE ENDED STATE CARRIES — see `confirm.h`. A lone centred STOP
@@ -2216,6 +2205,7 @@ static void face_task(void *arg)
            the only thing on screen explaining the sound. Decided once a frame so every branch
            below agrees about it. */
         const bool speaking = audio_playing();
+        const bool msg_sounding = audio_stream_active();
         /* THE EXCHANGE CONTINUES ITSELF. Armed when a reply starts playing, fired on the edge
            where the speaker falls silent — not on a timer, because a long reply must not have
            the microphone opened underneath it. `audio.c` stays deaf for six chunks after the
@@ -2257,8 +2247,8 @@ static void face_task(void *arg)
             calib_apply(&s_cal, raw_x, raw_y, &s_tap_x, &s_tap_y);
             panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
         }
-        /* WHICH DISPATCHER A PRESS REACHES, and the test used to be `speaking` — which is
-           `audio_playing()`, true for the panel's own cues.
+        /* WHICH DISPATCHER A PRESS REACHES, AND WHETHER THE NOTICE IS PAINTED, and the test
+           used to be `speaking` — which is `audio_playing()`, true for the panel's own cues.
          *
            THREE FAULTS CAME OUT OF THAT ONE WORD. The arrival beep is 440 ms and fires on the
            frame the notice appears, so every press in the half-second a child actually reaches
@@ -2271,7 +2261,6 @@ static void face_task(void *arg)
            A MESSAGE playing is the thing that changes what the controls mean. A cue is the
            panel clearing its throat. `audio_stream_active()` is the message ring alone
            (`audio.h`), so it answers the question actually being asked. */
-        const bool msg_sounding = audio_stream_active();
         if (tapped && !msg_sounding) {
             /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
              *
@@ -2645,6 +2634,28 @@ static void face_task(void *arg)
                 int ox = -1, oy = -1;
                 tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
                 const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
+                /* THE WAY OUT FIRST, because everything below it consumes the press. The
+                   owner asked for this corner and reported it dead: *"when it does play and I
+                   want to exit it, I should be able to click on the top right where there's no
+                   icon and have it exit out... that doesn't happen either."* The branch existed
+                   — in the OTHER dispatcher, the one a press cannot reach while a message is
+                   audible, which is the only state the corner is for. So it lives in both, and
+                   in this one it comes before `confirm_hit`: the `else` below catches every
+                   press that misses both discs, so an exit tested after it is an exit that can
+                   never fire. The table in `ui.h` says the same thing and a host test walks it.
+                 *
+                   No cue, exactly as in the other copy: the silence IS the answer. */
+                if (oy >= 0 && oy < over_h_tap / 2 && ox >= FACE_W / 2) {
+                    jpanel_stop();
+                    audio_stream_pause(false); /* never leave the ring held after a stop */
+                    s_paused_since = 0;
+                    s_pending = PEND_NONE;
+                    s_repeat_until = 0;
+                    s_flinch = 1.0f;
+                    dirty = true;
+                    ESP_LOGI(TAG, "jpanel: run ended by the top-right corner");
+                    goto tap_done;
+                }
                 const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
                 if (half == CONFIRM_CANCEL) {
                     const bool hold = !audio_stream_paused();
@@ -3576,17 +3587,33 @@ static void face_task(void *arg)
              *
                So the hit test is armed here, from the queue, and only the PICTURE stays behind
                the idle guard. Pressing while busy is harmless — it becomes a pending tap, which
-               waits for the speaker exactly as the first one did. */
+               waits for the speaker exactly as the first one did.
+             *
+               AND NOTHING ELSE ARMS IT. Both drawing functions used to write this rectangle
+               too, which made the target whichever of the three ran last. The big bubble wrote
+               its own bounds — x[36,332) y[117,331) — so on a frame that painted the bubble the
+               generous quadrant the owner asked for silently shrank to the artwork, and the
+               margin around it went dead. Drawing decides what a notice LOOKS like; this decides
+               what it IS. One writer, so the two cannot drift apart again.
+             *
+               THE WHOLE QUADRANT, because the owner said so twice — on the grid first and then
+               here: *"capture everything in that top left quadrant as far as clicks to play
+               it"*, the same reason the 2x2 menu stopped hit-testing discs. These readers are
+               four; a press near the picture is a press ON the picture as far as they are
+               concerned. */
             char from[32];
             const int waiting = jpanel_waiting(from, sizeof(from));
             if (waiting > 0 && s_talk == TALK_IDLE) {
-                const int qh = (over_h - over_y0) / 2;
-                s_popup_box[0] = 0;
-                s_popup_box[1] = over_y0;
-                s_popup_box[2] = FACE_W / 2;
-                s_popup_box[3] = over_y0 + qh;
+                ui_popup_target(over_y0, over_h, now - s_popup_since < POPUP_BIG_MS, s_popup_box);
             }
-            if (s_talk == TALK_IDLE && !speaking && jpanel_state() != JPANEL_BUSY) {
+            /* AND `msg_sounding`, NOT `speaking`, FOR THE SAME REASON THE DISPATCHER USES IT.
+               The arrival cue is 440 ms and it fires on the frame the notice appears, so the
+               old test blanked the picture for the first half-second of its life — while the
+               target above stayed armed. A child looking at the panel the instant it chirped
+               saw the pet, pressed where the notice had been, and got it. That is the two
+               halves disagreeing again, one frame at a time. A tone is the panel clearing its
+               throat; only a message sounding is a reason to hold the notice back. */
+            if (s_talk == TALK_IDLE && !msg_sounding && jpanel_state() != JPANEL_BUSY) {
                 if (waiting > 0) {
                     /* Big for the first fifteen seconds, then a badge. The AGAIN button owns
                        the same corner for its ten seconds and wins there — it is transient
