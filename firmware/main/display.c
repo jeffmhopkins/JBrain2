@@ -2511,60 +2511,58 @@ static void face_task(void *arg)
                    child asks for quiet is the panel arguing with her. */
                 goto tap_done;
             }
-            {
-                if (hit == UI_TARGET_POPUP) {
+            if (hit == UI_TARGET_POPUP) {
+                s_flinch = 1.0f;
+                /* Cleared the moment it is pressed, not when the audio arrives: a box
+                   that stays up through a fetch invites a second press, and
+                   `jpanel_play_next` refuses that one — so the child would be pressing a
+                   button that had stopped working. */
+                s_popup_box[0] = -1;
+                /* The press sounds FIRST and the message follows it — see `PENDING_MS`. */
+                if (sound) audio_cue(CUE_HEARD);
+                s_pending = PEND_PLAY;
+                s_pending_until = now + PENDING_MS;
+                dirty = true;
+                goto tap_done;
+            }
+            /* REPLAY AND REPLY, the two halves that replace a lone centred repeat icon.
+               Hit through `confirm_hit` — the same halves the tick and cross use — rather
+               than a third geometry: the places a child has learned are the places, and a
+               second set of rules for the same two corners is how a press once landed
+               289 px from the icon it was aimed at. */
+            if (hit == UI_TARGET_PAIR) {
+                const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
+                if (half == CONFIRM_CANCEL) {
                     s_flinch = 1.0f;
-                    /* Cleared the moment it is pressed, not when the audio arrives: a box
-                       that stays up through a fetch invites a second press, and
-                       `jpanel_play_next` refuses that one — so the child would be pressing a
-                       button that had stopped working. */
-                    s_popup_box[0] = -1;
-                    /* The press sounds FIRST and the message follows it — see `PENDING_MS`. */
+                    /* IT ASKS THE BOX NOW. The message was replayed from this panel's own
+                       buffer until 0.2.96; streaming discards the audio as it plays, so
+                       "again" is a fetch and it needs the link to be up. Reported through
+                       `jpanel_state()` like any other fetch rather than being silent,
+                       because a control that answers with nothing is the thing the cue
+                       below was added to stop. A sound for the finger, then the audio. */
                     if (sound) audio_cue(CUE_HEARD);
-                    s_pending = PEND_PLAY;
+                    s_pending = PEND_REPLAY;
                     s_pending_until = now + PENDING_MS;
+                    s_repeat_until = now + REPEAT_MS; /* still asking; keep it up */
                     dirty = true;
                     goto tap_done;
                 }
-                /* REPLAY AND REPLY, the two halves that replace a lone centred repeat icon.
-                   Hit through `confirm_hit` — the same halves the tick and cross use — rather
-                   than a third geometry: the places a child has learned are the places, and a
-                   second set of rules for the same two corners is how a press once landed
-                   289 px from the icon it was aimed at. */
-                if (hit == UI_TARGET_PAIR) {
-                    const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
-                    if (half == CONFIRM_CANCEL) {
-                        s_flinch = 1.0f;
-                        /* IT ASKS THE BOX NOW. The message was replayed from this panel's own
-                           buffer until 0.2.96; streaming discards the audio as it plays, so
-                           "again" is a fetch and it needs the link to be up. Reported through
-                           `jpanel_state()` like any other fetch rather than being silent,
-                           because a control that answers with nothing is the thing the cue
-                           below was added to stop. A sound for the finger, then the audio. */
-                        if (sound) audio_cue(CUE_HEARD);
-                        s_pending = PEND_REPLAY;
-                        s_pending_until = now + PENDING_MS;
-                        s_repeat_until = now + REPEAT_MS; /* still asking; keep it up */
-                        dirty = true;
-                        goto tap_done;
+                if (half == CONFIRM_SEND) {
+                    /* THE REPLY, AND IT NEEDS NO CHOICE MADE. The recipient is whoever
+                       just spoke, which the panel already knows from
+                       `X-Jpanel-From-Kind` — answering a message used to mean opening the
+                       menu and picking the person who had this second finished talking.
+                       That is the difference between a message and a conversation, and it
+                       is the whole reason the owner asked for this. */
+                    s_repeat_until = 0; /* the pair is gone; the tick and cross take over */
+                    if (start_send_recording(jpanel_in_from(), now, speaking)) {
+                        if (sound) audio_cue(CUE_LISTEN);
+                    } else if (sound) {
+                        audio_cue(CUE_STOP);
                     }
-                    if (half == CONFIRM_SEND) {
-                        /* THE REPLY, AND IT NEEDS NO CHOICE MADE. The recipient is whoever
-                           just spoke, which the panel already knows from
-                           `X-Jpanel-From-Kind` — answering a message used to mean opening the
-                           menu and picking the person who had this second finished talking.
-                           That is the difference between a message and a conversation, and it
-                           is the whole reason the owner asked for this. */
-                        s_repeat_until = 0; /* the pair is gone; the tick and cross take over */
-                        if (start_send_recording(jpanel_in_from(), now, speaking)) {
-                            if (sound) audio_cue(CUE_LISTEN);
-                        } else if (sound) {
-                            audio_cue(CUE_STOP);
-                        }
-                        s_flinch = 1.0f;
-                        dirty = true;
-                        goto tap_done;
-                    }
+                    s_flinch = 1.0f;
+                    dirty = true;
+                    goto tap_done;
                 }
             }
             /* THE TICK AND THE CROSS, AND THEY REPLACE "A TOUCH ANYWHERE CANCELS".
