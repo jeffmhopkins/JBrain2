@@ -2151,10 +2151,25 @@ static void face_task(void *arg)
     int since_reassert = 0;
     int since_sample = 0;
     int level = 0;
-    /* The interval the delay below last served, which is what every accumulator in this loop
-       is measuring. Decided at the end of a pass and read at the start of the next, so a
-       stage change never mis-counts the pass that carried it. */
+    /* THE DELAY, WHICH IS NOT THE SAME THING AS THE FRAME. Decided at the end of a pass and
+       read at the start of the next, so a stage change never mis-counts the pass that carried
+       it — but it is only the sleep, and a pass that composes a face spends far longer awake
+       than asleep. */
     int poll_ms = TOUCH_POLL_MS;
+    /* HOW LONG THE LAST PASS ACTUALLY TOOK, which is what every accumulator here wants.
+     *
+       They all used to add `poll_ms`, and this loop's real period is roughly twice that when it
+       is drawing — so every duration measured in this task ran at about half speed. The one that
+       mattered is `gesture_poll`: GESTURE_HOLD_MS 5000 needed ten or twelve real seconds to
+       arrive, GESTURE_TAP_MAX_MS let a slow press still count as a tap, and GESTURE_GAP_MS held
+       a half-finished maintenance count open for twice as long as designed — on the gesture that
+       reboots the panel. A clock that is wrong by a factor is worse than a slow one, because
+       every constant tuned against it is silently wrong too.
+     *
+       Measured from `esp_timer`, so it is right whatever the frame costs, and zero on the first
+       pass because nothing has elapsed yet. */
+    uint32_t last_pass = 0;
+    int dt_ms = 0;
 
     while (true) {
         PHASE(1);
@@ -2169,6 +2184,8 @@ static void face_task(void *arg)
         /* One clock read per frame, shared by the rig, the pools and the cooldowns, so every
            part of a frame agrees about when it is. */
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        dt_ms = (last_pass == 0) ? 0 : (int)(now - last_pass);
+        last_pass = now;
         PHASE(2);
         /* DRAIN A PRESS, DO NOT SAMPLE FOR ONE. `touch.c` samples the controller on its own
            task now, so a press that began and ended while this loop was composing a frame is
@@ -2931,7 +2948,7 @@ static void face_task(void *arg)
             ESP_LOGI(TAG, "sendto: grid timed out");
             dirty = true;
         }
-        s_open = blink_open(poll_ms);
+        s_open = blink_open(dt_ms);
         s_flinch *= FLINCH_DECAY;
         if (s_flinch < 0.02f) s_flinch = 0.0f;
         /* Animating means every poll is a frame. A blink at the 200 ms idle floor would be one
@@ -2957,7 +2974,7 @@ static void face_task(void *arg)
         /* Decided before the draw, acted on after it: the frame carrying a full-width cue has
            to reach the glass first, or a reboot is indistinguishable from the fault we are
            chasing. */
-        const gesture_action_t act = gesture_poll(&gest, tapped, down, poll_ms);
+        const gesture_action_t act = gesture_poll(&gest, tapped, down, dt_ms);
 
         /* PRESS AND HOLD TO TALK. After `gesture_poll`, so `gest.taps` is this frame's count:
            the maintenance gestures are taps THEN a hold, so a hold that begins while a tap
@@ -3015,7 +3032,7 @@ static void face_task(void *arg)
             ESP_LOGI(TAG, "sendto: grid opened by hold");
             dirty = true;
         } else if (s_talk == TALK_IDLE && down && !on_the_pet && !gesture_reserved(gest.taps) &&
-                   held >= HOLD_TALK_MS && held < HOLD_TALK_MS + poll_ms) {
+                   held >= HOLD_TALK_MS && held < HOLD_TALK_MS + dt_ms) {
             /* Once per press, on the frame the threshold passes — the owner has no terminal
                but does have the log, and a margin that is too wide looks exactly like a
                microphone that stopped working unless the panel says which it is. */
@@ -3908,7 +3925,7 @@ static void face_task(void *arg)
            from the owner to find out. Anything that can stop has to say so on a timer, and
            the largest free internal block comes along because it is the number that has
            explained this fault twice. */
-        since_beat += poll_ms;
+        since_beat += dt_ms;
         if (since_beat >= BEAT_MS) {
             since_beat = 0;
             /* THE STAGE IS ON THIS LINE BECAUSE OF WHAT THE LINE IS FOR. It exists so that a
@@ -3920,9 +3937,9 @@ static void face_task(void *arg)
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
                                                                 MALLOC_CAP_DMA));
         }
-        since_draw += poll_ms;
-        since_reassert += poll_ms;
-        since_sample += poll_ms;
+        since_draw += dt_ms;
+        since_reassert += dt_ms;
+        since_sample += dt_ms;
     }
 }
 
