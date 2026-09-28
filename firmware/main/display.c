@@ -3157,8 +3157,15 @@ static void face_task(void *arg)
            sure long press will pull up the menu even if it's after multiple presses"*. The
            counts moved to five and six in the same change so that there is almost nothing left
            for this to lose to (`gesture.h`). */
-        if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && !gesture_reserved(gest.taps) &&
-            held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
+        /* `msg_sounding`, NOT `speaking`, and this is the same fault as the dispatcher's in the
+           place it hurts most. A poke plays `CUE_TOGGLE`; the sentence above says children poke
+           and then hold; and `speaking` is true while that cue sounds. So the one gesture path
+           written for how a four-year-old actually behaves was gated on the noise their own poke
+           had just made. `ui.c` was corrected first and a host test stands on it
+           (`test_a_hold_after_a_poke_still_opens_the_menu`) — this is the shipping half. */
+        if (s_talk == TALK_IDLE && down && on_the_pet && !msg_sounding &&
+            !gesture_reserved(gest.taps) && held >= HOLD_TALK_MS &&
+            talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
             s_sendto_until = now + SENDTO_MS;
             /* The same cue the button's press makes, because it is the same event: something
                has appeared and it is waiting to be pressed. */
