@@ -20,6 +20,7 @@ read both.
 from __future__ import annotations
 
 import pathlib
+import re
 
 _FW = pathlib.Path(__file__).resolve().parents[3] / "firmware"
 
@@ -168,15 +169,26 @@ class TestTheButtonGridIsWiredToRealActions:
     def test_the_button_toggles_and_is_debounced(self) -> None:
         """A TOGGLE IS ONLY SAFE BECAUSE OF THE DEBOUNCE, and that is the whole point of this
         test. The contact bounces — 15 deliberate presses were reported as 21 — so a raw edge
-        toggle would close the menu on the same press that opened it, and the panel would look
-        like it was ignoring a child, which is the failure the grid exists to remove."""
+        toggle would undo itself on the same press that made it, and the panel would look like
+        it was ignoring a child.
+
+        WHAT IT TOGGLES CHANGED IN 0.3.26 and this test did not, which is why it sat red on
+        `main` through two releases: the button opened the "who?" grid until a long press on the
+        pet could do that, and the owner then asked for it as the power control — *"single press
+        blinks the screen and stops listening... if I hold the button for say 5 seconds, it
+        should go into the lowest power mode."* One gesture per job, and the button is the only
+        control that can turn this unit off. The invariant is unchanged: both halves present, so
+        a press can always get back out of whatever the last one did."""
         src = self._fw("display.c")
         assert "#define BOOT_DEBOUNCE_MS 250" in src, "the debounce window is gone"
         assert "s_boot_last_ms" in src, "nothing rejects a bounced edge any more"
-        # Both halves of the toggle, so a press can always get back out.
-        assert "grid opened by button" in src and "grid closed by button" in src, (
-            "the button no longer both opens and closes the grid"
+        assert "if (boot_button_take()) {" in src, "the short press reaches nothing"
+        # Both halves: into standby, and back out of it.
+        assert "s_standby = true;" in src and 'sleep_wake("button")' in src, (
+            "the button no longer both enters and leaves standby"
         )
+        # And the hold is a separate edge, or the power-off would fire on every press.
+        assert "boot_button_sleep_requested()" in src, "the five-second hold reaches nothing"
 
     def test_every_icon_reaches_the_same_path_the_voice_does(self) -> None:
         src = self._fw("display.c")
@@ -191,7 +203,14 @@ class TestTheButtonGridIsWiredToRealActions:
         message to her sister. Derived from the state every frame rather than armed at the edges,
         because recording ends five ways and a mute left armed is a panel that stops listening."""
         assert "void speech_mute_commands(bool muted);" in self._fw("speech.h")
-        assert "speech_mute_commands(s_talk == TALK_RECORDING);" in self._fw("display.c"), (
+        # Matched on the DERIVATION, not on the exact condition: 0.3.26 added `|| s_standby`
+        # (a panel told to be quiet must not answer to its name either) and this pin, spelled
+        # as an equality, went red on `main` rather than noticing a deliberate widening. What
+        # must not change is that the argument is computed from `s_talk` every frame — an
+        # armed-at-the-edges mute leaks, because recording ends five ways.
+        mute = re.search(r"speech_mute_commands\(([^;]*)\);", self._fw("display.c"))
+        assert mute is not None, "nothing mutes the commands any more"
+        assert "s_talk == TALK_RECORDING" in mute.group(1), (
             "the mute is no longer derived from the state and can leak"
         )
         # The ring must still fill: a recording is when what it hears is most interesting.
