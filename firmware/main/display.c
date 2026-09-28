@@ -658,11 +658,20 @@ static bool s_cal_ok;
 #define CAL_TARGETS (CAL_KNOTS * CAL_KNOTS)
 #define CAL_NOTE_MS 1500
 
+/* HOW LONG A CROSSHAIR WAITS BEFORE GIVING UP. Long enough that an owner reading the instruction
+   for the first target is not hurried, short enough that a panel left showing one is a pet again
+   before the child who triggered it has gone to find somebody. */
+#define CAL_IDLE_MS 30000
+static uint32_t s_cal_last_tap;
+
 static void cal_begin(void)
 {
     s_cal_active = true;
     s_cal_i = 0;
     calib_sample_reset(&s_cal_s);
+    /* Zero means "not started yet" to the idle timer, which stamps it on its first pass. Cleared
+       here rather than stamped, because `esp_timer` is not read from this function. */
+    s_cal_last_tap = 0;
     ESP_LOGI(TAG, "calibration: %d targets, %d-%d taps each", CAL_TARGETS, CAL_SAMPLES_MIN,
              CAL_SAMPLES_MAX);
 }
@@ -2819,8 +2828,50 @@ static void face_task(void *arg)
            rig rather than drawing over it: a robot reacting to the taps being measured would
            move the thing the owner is aiming at. */
         if (s_cal_active || s_cal_note_ms > 0) {
+            /* AND THE BUTTON STILL WORKS, which until now it did not. The `continue` at the end
+               of this branch skips the button poll along with everything else, so the only way
+               out of calibration was to finish it: sixteen targets at three to six taps each,
+               forty-eight presses at best. That is a fine bargain for an owner who meant to
+               start it and a trap for anyone else — and this gesture lives on a panel in a
+               four-year-old's bedroom, where the person holding it may not know what the
+               crosshair is for. One press abandons the run and the previous calibration, if any,
+               is untouched. The hold still powers the panel down, because a way out that depends
+               on the touchscreen is no use in the one mode where the touchscreen is suspect. */
+            boot_button_poll();
+            if (boot_button_take() || boot_button_sleep_requested()) {
+                s_cal_active = false;
+                s_cal_note_ms = 0;
+                calib_sample_reset(&s_cal_s);
+                s_cal_last_tap = 0;
+                ESP_LOGW(TAG, "calibration abandoned by the button — keeping the old");
+                if (sound) audio_cue(CUE_OOPS);
+                /* No `dirty`: it is a local this pass is about to discard. The pet returns on
+                   the next one, within FACE_FLOOR_MS. */
+                continue;
+            }
+            /* AND IT GIVES UP ON ITS OWN. Six taps and a hold is a gesture a child can find by
+               accident, and the state it lands in draws nothing but a crosshair — no pet, no
+               notice, no messages, because this branch owns the frame. A panel that has been
+               shown a target and ignored for half a minute has not been abandoned mid-
+               calibration by its owner; it has been left like that by somebody who did not mean
+               to start it. */
+            if (s_cal_active) {
+                if (s_cal_last_tap == 0) s_cal_last_tap = now;
+                if (tapped) s_cal_last_tap = now;
+                if (now - s_cal_last_tap >= CAL_IDLE_MS) {
+                    s_cal_active = false;
+                    s_cal_note_ms = 0;
+                    calib_sample_reset(&s_cal_s);
+                    s_cal_last_tap = 0;
+                    ESP_LOGW(TAG, "calibration timed out — keeping the old");
+                    continue;
+                }
+            }
             if (s_cal_note_ms > 0) {
-                s_cal_note_ms -= TOUCH_POLL_MS;
+                /* MEASURED, like every other duration in this loop: `TOUCH_POLL_MS` is the delay
+                   and this branch's pass is longer than that, so the note outstayed its welcome
+                   by about a factor of two. */
+                s_cal_note_ms -= dt_ms;
                 cal_note(fb, s_cal_ok);
             } else {
                 const int i = s_cal_i % CAL_KNOTS, j = s_cal_i / CAL_KNOTS;
@@ -2844,6 +2895,7 @@ static void face_task(void *arg)
                                  s_cal_i, calib_sample_spread(&s_cal_s));
                     }
                     calib_sample_reset(&s_cal_s);
+                    s_cal_last_tap = now; /* a target completed is progress, not idling */
                     s_cal_i++;
                     if (s_cal_i >= CAL_TARGETS) {
                         s_cal_active = false;
