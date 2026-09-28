@@ -447,6 +447,16 @@ static screen_stage_t s_sleep = SCREEN_AWAKE;
  * ANY WAKE CLEARS IT, including a touch. A screen that came back on but stayed deaf would be a
  * pet looking straight at a child and ignoring her, which is worse than either state alone. */
 static bool s_standby;
+/* DARK HAS TO BE PAINTED, NOT SWITCHED OFF, and that is a consequence of the brightness revert
+ * rather than a choice. `0x51` is inert on these panels (`nudge.h` and `QSPI_CMD` in this file
+ * carry why), so `screen_level()` returning 0 changes nothing on the glass — and "dark" was
+ * only ever *stop blitting*. On an AMOLED the last frame then simply stays there.
+ *
+ * The owner, pressing the button: *"it still just shows a frozen robot when you press it."*
+ * Exactly right, and it is the same fault behind the idle stages never visibly dimming. A
+ * black FRAME costs one blit and needs no working brightness register, so the screen actually
+ * goes out — which is what both the standby press and the fifteen-minute dark always meant. */
+static bool s_blank_pending;
 /* The hold completed; the render loop parks and powers down at the safe point. */
 static bool s_power_off;
 /* Set in `update_orientation()` and consumed by the same task a few lines later — the IMU
@@ -2827,6 +2837,7 @@ static void face_task(void *arg)
                 jpanel_stop();
                 s_standby = true;
                 s_sleep = SCREEN_DARK;
+                s_blank_pending = true;
                 s_brightness_pending = true;
                 dirty = true;
                 ESP_LOGI(TAG, "standby: screen off, microphone off, still reachable");
@@ -3294,6 +3305,11 @@ static void face_task(void *arg)
                 const uint32_t idle = now - active_ms;
                 const screen_stage_t want = screen_stage(idle);
                 if (want != s_sleep) {
+                    /* The same black frame the standby press paints. Without it the fifteen
+                       minute stage has never actually darkened anything — it stopped drawing
+                       and left the pet sitting there, which is what the owner has been
+                       reporting as "it never changes brightness" since before it was a knob. */
+                    if (want == SCREEN_DARK) s_blank_pending = true;
                     s_sleep = want;
                     s_brightness_pending = true;
                     ESP_LOGI(TAG, "screen: %s after %u min idle",
@@ -3327,6 +3343,15 @@ static void face_task(void *arg)
         /* DARK SKIPS THE DRAW AS WELL AS THE LIGHT. Brightness 0 already hides the picture;
            composing and shipping 322 KB to a screen nobody can see is the part that actually
            costs something, and it is the part worth not doing all night. */
+        /* BEFORE THE GATE BELOW, because that gate is exactly what stops a dark screen being
+           redrawn — so a blank queued by going dark would never be painted from inside it. */
+        if (s_blank_pending) {
+            s_blank_pending = false;
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            const esp_err_t berr = blit_frame(fb);
+            if (berr != ESP_OK) ESP_LOGW(TAG, "blank: %s", esp_err_to_name(berr));
+            dirty = true; /* whatever wakes next composes a whole frame, not a delta */
+        }
         if (s_sleep != SCREEN_DARK && (dirty || since_draw >= FACE_FLOOR_MS)) {
             s_drawn_lean = s_lean;
             /* Where we are in the running action, and what face it wears. An action that has
@@ -3525,8 +3550,12 @@ static void face_task(void *arg)
                when I click the icon to when the next icons show up... as soon as I click it
                and it's registered it should show right away."* A pending tap IS the press
                being registered, so that is when they appear. */
+            /* FETCHING, NOT MERELY BUSY. `JPANEL_BUSY` covers a SEND as well, so this read
+               "the panel is doing something" and put the playback controls over an outgoing
+               message — a pause button and a sender's face for audio that did not exist, with
+               a tap handler that correctly refused to honour any of it. */
             const bool starting = s_pending == PEND_PLAY || s_pending == PEND_REPLAY ||
-                                  jpanel_state() == JPANEL_BUSY;
+                                  jpanel_fetching();
             if (jpanel_running() || starting) {
                 /* PLAYING IS AN AUDIO FACT, NOT A QUEUE FACT, which is the whole of the replay
                    bug: `do_replay` deliberately sets no `s_run` (the message was acknowledged
@@ -3687,6 +3716,8 @@ static void face_task(void *arg)
                last frame with no clock running, so a panel that slept mid-face would sit there
                showing a pet that is not there any more. */
             s_sleep = SCREEN_DARK;
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            (void)blit_frame(fb); /* painted, not switched off — see `s_blank_pending` */
             apply_brightness();
             audio_stop();
             /* LOW, because the button is active-low and pulled up: it reads 0 pressed. EXT0

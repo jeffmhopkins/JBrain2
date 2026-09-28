@@ -101,6 +101,16 @@ static volatile bool s_owed;
  * WHAT IS PLAYED IS ACKNOWLEDGED AS IT GOES, one message at a time, so stopping halfway leaves
  * the rest genuinely unheard rather than silently consumed — the pop-up comes back for them. */
 static volatile bool s_run;
+/* A MESSAGE IS ON ITS WAY TO THE SPEAKER — which `JPANEL_BUSY` does not mean. That state
+   covers SENDING too, and the renderer used it to decide when to put the playback controls up.
+   So hitting the green tick to send Dad a message raised BUSY, and the panel drew a pause
+   button and a sender's face over a message that did not exist and would never play: the tap
+   handler correctly refused to honour any of it, so the controls sat there inert. The owner:
+   *"it immediately goes to this second screen with the little girl on the top left with a
+   little play pause. But there's nothing playing and nothing responds to it."*
+   Set where a FETCH begins and cleared where it ends, so it answers the question the renderer
+   is actually asking rather than one that happens to overlap it most of the time. */
+static volatile bool s_fetching;
 /* A finger ended the last stream, rather than the network. See `jpanel_stop`. */
 static volatile bool s_stopped;
 /* The id the box gave it, held so `POST /played` can name it after the speaker finishes, and
@@ -652,6 +662,7 @@ static void do_replay(void)
 
 done:
     esp_http_client_cleanup(c);
+    s_fetching = false;
     if (!ok) s_state = JPANEL_FAILED;
 }
 
@@ -739,6 +750,11 @@ static void do_fetch(bool asked)
 
 done:
     esp_http_client_cleanup(c);
+    /* CLEARED WHERE THE FETCH ENDS, whatever the outcome. The renderer holds the playback
+       controls up on this, so a path that returned without clearing it would leave a pause
+       button over a panel with nothing playing — the exact fault this flag was added to fix,
+       reintroduced by an early return. */
+    s_fetching = false;
     /* THE BACKGROUND FETCH REPORTS NOTHING, and that is not tidiness. It runs off the poll,
        which fires on this task's own clock — so writing `s_state` here would overwrite a
        `JPANEL_SENT` or `JPANEL_NOBODY` the renderer had not shown yet, and the child would
@@ -894,6 +910,11 @@ bool jpanel_send(const int16_t *pcm, size_t bytes, jpanel_to_t to)
     return false;
 }
 
+bool jpanel_fetching(void)
+{
+    return s_fetching;
+}
+
 bool jpanel_play_next(void)
 {
     if (s_q == NULL) return false;
@@ -903,7 +924,9 @@ bool jpanel_play_next(void)
        where the stream actually begins, rather than optimistically here. */
     if (s_state == JPANEL_BUSY) return false;
     s_state = JPANEL_BUSY;
+    s_fetching = true;
     if (post(CMD_FETCH, JPANEL_TO_PANEL, true)) return true;
+    s_fetching = false;
     s_state = JPANEL_IDLE;
     return false;
 }
@@ -912,7 +935,12 @@ bool jpanel_replay(void)
 {
     if (s_in_id[0] == '\0') return false;
     if (audio_playing()) return false;
-    return post(CMD_REPLAY, JPANEL_TO_PANEL, false);
+    /* A replay is a message on its way to the speaker too, so the controls belong up for it
+       from the press rather than from the first byte. `do_replay` clears it at its own exit. */
+    s_fetching = true;
+    if (post(CMD_REPLAY, JPANEL_TO_PANEL, false)) return true;
+    s_fetching = false;
+    return false;
 }
 
 /* Stop a run. The message sounding is cut and nothing more is fetched; whatever has not been

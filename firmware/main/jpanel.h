@@ -100,6 +100,12 @@ void jpanel_poll_soon(void);
    relaxation is what keeps the concurrent-TLS count the same as before rather than one higher.
    The counters ride in telemetry because a push channel that silently stopped working looks
    exactly like a quiet house. */
+/* IS A MESSAGE ON ITS WAY TO THE SPEAKER. Distinct from `jpanel_state() == JPANEL_BUSY`, which
+   also covers SENDING — using that to decide when to show the playback controls put a pause
+   button and a sender's face over an outgoing message, where nothing was playing and nothing
+   would answer a press. */
+bool jpanel_fetching(void);
+
 bool jpanel_push_live(void);
 unsigned jpanel_push_events(void);
 unsigned jpanel_push_drops(void);
