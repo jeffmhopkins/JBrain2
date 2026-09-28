@@ -225,7 +225,12 @@ static bool target_live(ui_target_t t, const ui_state_t *st, const ui_in_t *in)
            A message being OFFERED outranks a message being ended: there is nothing to exit from
            when nothing is playing, and the notice is the thing the child is aiming at. */
         const bool notice_offered = st->popup_box[0] >= 0 && !in->stream_active && !in->jrunning;
-        return !notice_offered && (in->jrunning || in->stream_active || st->repeat_until != 0);
+        if (notice_offered) return false;
+        /* AND NOT FOR THE FIRST `EXIT_GRACE_MS` OF WHAT IT WOULD END — see `ui.h`. The corner
+           overlaps a quarter of the notice, so the press that STARTS a message lands where
+           cancelling it will be one frame later. */
+        if (st->controls_since != 0 && in->now - st->controls_since < EXIT_GRACE_MS) return false;
+        return in->jrunning || in->stream_active || st->repeat_until != 0;
     }
     case UI_TARGET_POPUP:
         return st->popup_box[0] >= 0;
@@ -579,6 +584,14 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
 
 void ui_frame(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
 {
+    /* THE EDGE THE EXIT'S GRACE IS MEASURED FROM — see `EXIT_GRACE_MS`. Sampled here rather than
+       inside `target_live`, which is deliberately side-effect-free so the arbitration can be
+       asserted without driving it. */
+    if (ui_run_controls_up(st, in)) {
+        if (st->controls_since == 0) st->controls_since = in->now == 0 ? 1 : in->now;
+    } else {
+        st->controls_since = 0;
+    }
     /* THE BUTTON IS THE POWER CONTROL, not the menu: one gesture per job is worth more than a
        second way to reach the same grid, because the button is the only control on this unit
        that can turn it off. */

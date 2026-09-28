@@ -24,7 +24,12 @@ static const char *TAG = "talk";
    gives up on a turn the box would have finished. The gap is also why the capture buffer is
    guarded on `TALK_NET_BUSY` — between the renderer giving up and this timeout firing, a
    frustrated child can hold again while the socket is still reading the last recording. */
-#define TALK_HTTP_TIMEOUT_MS 30000
+/* SHORTER THAN `TALK_TIMEOUT_MS` ON PURPOSE, and the ordering is the point. That one is the
+   renderer's backstop for a task that has stopped answering; this one is the actual wait. If the
+   backstop fired first the panel would show the failure dash while this task was still running —
+   and then speak the reply into a turn the child had already been told had failed. Letting the
+   network give up first means the failure is reported once, by the thing that knows why. */
+#define TALK_HTTP_TIMEOUT_MS 55000
 /* What the box returns at most, and THE REPLY'S OWN CEILING — `audio.c`'s buffer is bigger
    (it also holds voice-post messages), so this is the only thing bounding a reply here.
    It said six, the box never capped its audio at all, and a 261 KB reply stopped here mid-word

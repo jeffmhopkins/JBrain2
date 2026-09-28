@@ -5778,6 +5778,85 @@ against the real ones, because swapping two entries keeps the count.
 and an action executor replaces the inline bodies. It is worth doing on its own, where a
 regression in it cannot be confused with a regression in a behaviour fix.
 
+##### The exit that cancelled what the press before it started (0.3.30)
+
+The owner, on 0.3.29: *"when I try and play an incoming message, when I hit it, it just shows
+the screen with the pause icon for half a second and then goes back to the other indicator."*
+
+**That is a stop, not a failure to start**, and the box's own access log says so. `jpanel_stop()`
+acknowledges — a child who puts her finger on the screen heard it and chose to end it, so the
+message must not be redelivered forever — which means a stop looks like `GET /next` 200 followed
+by `POST /played` 204. The log held six of those pairs, and **five had zero `/waiting` polls
+between them**. The panel polls continuously; a message that played for even a few seconds would
+have several. Every attempt was being ended before one poll interval elapsed.
+
+**The cause is 0.3.29's own fix, and the arithmetic is the whole argument.** Putting the exit in
+`UI_TAP_ORDER_PLAYING` was right — the corner could not previously end an audible message, which
+is the only state it exists for. But the notice is `x[36,332) y[117,331)` and the exit corner is
+`x[184,368) y[0,224)`: they **overlap over 148x107 px, a quarter of the notice**, and it is the
+quarter a right-handed adult presses. While the notice is offered it outranks the exit, so the
+first press plays. One frame later the controls are up, the table is the playing one, and that
+same point means cancel.
+
+So any second edge there ends the message the first one started. A deliberate double tap does it
+— and so does one press, because `touch.c` reports every down edge with **no inter-tap debounce**
+and a fingertip that lightens for a single 15 ms sample is two edges. The button has had 250 ms
+of debounce since 0.3.26 for exactly this; the glass has none. `touch_take` drains one tap per
+frame, so the second arrives on the very next pass.
+
+**`EXIT_GRACE_MS`, 700 ms.** A destructive control must not arm itself under a finger that is
+already on the glass. The number is `HOLD_TALK_MS` and that is not a coincidence: it is already
+this panel's measure of *long enough to be meant rather than spilled*. Imperceptible to someone
+reaching for the corner deliberately, longer than any bounce. Pause and reply are **not** covered
+— pausing by accident is undone by pressing again, and only the control that spends the message
+needs protecting.
+
+A global touch debounce was considered and rejected: the maintenance gestures need five, six and
+seven deliberate taps, children tap at four or five a second, and a window wide enough to catch a
+bounce is wide enough to break those. The grace is narrow, it is on the one control that cannot
+be undone, and `test_a_second_press_cannot_cancel_what_the_first_one_started` stands on it —
+including that the corner still works a moment later, so the fix is a delay rather than a removal.
+
+##### The panel allowed a question it could not wait out (0.3.30)
+
+The owner, with both children talking to the pet at once: *"I'm getting the red dash."* The box
+was answering every one of those turns — `POST /endpoint/converse` 200, real audio, fourteen in a
+row — and the panel was showing the failure dash anyway. His own guess was that it was piling up,
+and the shape of that was right even though the mechanism was not: no two turns OVERLAP at the
+box, so the twins were not colliding. What piles up is LENGTH.
+
+**Measured from `endpoint.converse` on the live box, 2026-09-28:**
+
+| held (child talking) | whisper | total at box |
+|---|---|---|
+| 5.1 s | 1.8 s | 5.3 s |
+| 7.2 s | 3.4 s | 8.8 s |
+| 12.6 s | 5.2 s | 10.1 s |
+| 17.0 s | 8.0 s | 14.4 s |
+
+Transcription costs about half of what was said, so two excited four-year-olds egging each other
+on produce exactly the turns that cost the most.
+
+**And the two constants governing it contradicted each other.** `CAPTURE_MAX_MS` was 30 s;
+`TALK_TIMEOUT_MS` was 25 s, counted from the moment the recording ENDS. The panel allowed a
+recording it could never wait long enough to hear back about — before a single byte of the 1 MB
+upload. The failures were not random, they were the long questions, and they were invisible from
+the box because a turn the panel has stopped listening for still completes and still logs 200.
+
+A second sign that this drifted rather than being designed: the comment above the cap still said
+*"the cap is ten seconds now"*, three raises later.
+
+**35 s of question, 60 s of wait, at the owner's ask**, with `TALK_HTTP_TIMEOUT_MS` at 55 s so the
+NETWORK gives up first — otherwise the renderer's backstop fires while the talk task is still
+running, and the reply gets spoken into a turn the child has already been told had failed.
+`PANEL_AUDIO_MAX` moves with the cap, which a test has enforced since the ten-second raise.
+
+The new invariant is `test_the_panel_waits_longer_than_the_question_it_allows`, and the useful
+part of writing it was that the **naive version passed on the broken pair**: 25 s against 16.8 s
+of box work looks fine until the upload is remembered, which is precisely how it shipped. It
+asserts double the box estimate, because the upload and a busy box both land on top and neither
+is measured from here.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The

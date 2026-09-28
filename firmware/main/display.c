@@ -825,7 +825,22 @@ static volatile bool s_debug_overlay;
  * matters when they are slow, and a slow turn currently produces NOTHING, which is strictly
  * worse than a late answer. The actual fix for the wait is whisper — 10.7 s of a 12.8 s turn
  * is 83% of it, and no timeout value improves that. */
-#define TALK_TIMEOUT_MS 25000
+/* HOW LONG THE PET WILL WAIT FOR ITS OWN REPLY, and it has to be reasoned from the recording
+   it allows rather than picked. MEASURED ON THE BOX 2026-09-28: transcription costs about half
+   of what was said (17.0 s of child -> 8.0 s of whisper), the model another 1.7 s and the voice
+   1.0 s, so a full `CAPTURE_MAX_MS` question is roughly 20 s of box — before the upload, which
+   is 1.1 MB of PCM over TLS from an ESP32.
+ *
+   IT USED TO BE 25 s AGAINST A 30 s CAP, which is the wrong way round: the panel allowed a
+   recording it could never wait long enough to hear back about, so the longest questions — the
+   ones an excited four-year-old actually asks — always ended in the failure dash while the box
+   answered them perfectly into a socket nobody was reading. The owner saw it as *"I'm getting
+   the red dash"* on turns the box logged as 200 OK.
+ *
+   60 s at the owner's ask, against a 35 s cap. `TALK_HTTP_TIMEOUT_MS` is deliberately SHORTER
+   (`talk.c`), so the network gives up first and this stays what it was meant to be: a backstop
+   for a task that has stopped answering at all, not the thing that normally fires. */
+#define TALK_TIMEOUT_MS 60000
 #define TALK_FAILED_MS 2500
 
 /* HANDS-FREE, AND THE WHOLE PROBLEM IS KNOWING WHEN THEY STOPPED.
@@ -847,8 +862,9 @@ static volatile bool s_debug_overlay;
  *                            a sentence stops for longer than an adult does, and every one of
  *                            those pauses ended their turn for them. The old number was
  *                            reasoned from the SIX-SECOND cap rather than from a child: a
- *                            longer hush used to risk the cap eating the tail. The cap is ten
- *                            seconds now (`CAPTURE_MAX_MS`) and the box trims the silence
+ *                            longer hush used to risk the cap eating the tail. The cap is
+ *                            thirty-five seconds now (`CAPTURE_MAX_MS`) and the box trims the
+ *                            silence
  *                            before whisper sees it, so waiting longer costs nothing at all.
  *   LEAD   they said the name and nothing else -> drop it, silently, back to idle. An
  *                            accidental "hey fish" from the television must not become an
@@ -1036,6 +1052,12 @@ static uint32_t s_pending_until;
 static jpanel_to_t s_pend_reply_to;
 /* WHEN THE FINGER PUT IT ON HOLD, 0 when nothing is held. See `AUDIO_PAUSE_MAX_MS`. */
 static uint32_t s_paused_since;
+/* WHEN THE PLAYBACK CONTROLS CAME UP, 0 when they are not — `EXIT_GRACE_MS` in `ui.h`. The exit
+   corner overlaps a quarter of the notice, so the press that STARTS a message lands exactly where
+   cancelling it will be one frame later, and `jpanel_stop()` acknowledges: the message is spent.
+   The owner saw it as *"the pause icon for half a second and then goes back to the other
+   indicator"*. */
+static uint32_t s_controls_since;
 /* WHERE THE NOTICE WAS DRAWN, in the space it was drawn in — which is NOT the space
    `panel_to_frame` hands back; see `tap_to_overlay` below. -1 in the first slot means not on
    screen. Armed from `ui_popup_target`, read by `ui_tap_target`: this file no longer hit-tests it,
@@ -1166,17 +1188,29 @@ static void draw_who(uint16_t *fb, int y0, int over_h, sendto_hit_t who)
     (void)over_h;
 }
 
+/* THE MICROPHONE IS OPEN, AND THAT IS ONE FACT WITH ONE COLOUR.
+ *
+ * Listening to the pet was red and recording a message was blue, and the blue was carrying the
+ * RECIPIENT — pet or person — because for a while it was the only thing that could. It is not any
+ * more: the sender's face is drawn above the word, so who this is for is a picture now. The owner:
+ * *"now that we have icons the colour differential is not important, and blue kind of doesn't have
+ * the same effect as red as knowing when we are recording."*
+ *
+ * So the colour is freed to mean the thing every other device in a child's life uses it for. Red
+ * is recording, whoever is listening. */
+#define REC_COLOUR SWAP16(0xF800)
+
 static void draw_listening(uint16_t *fb, int y0, int over_h, uint32_t now)
 {
     /* The pet's own face: a hands-free turn is a conversation with the pet, and the icon the
        child presses for it on the grid is this one. */
     draw_who(fb, y0, over_h, SENDTO_PET);
-    draw_indicator(fb, y0, now, SWAP16(0xF800), "LISTENING");
+    draw_indicator(fb, y0, now, REC_COLOUR, "LISTENING");
 }
 
-/* RECORDING A MESSAGE. Blue, and the word names the RECIPIENT rather than the act, because
-   the act is the part a child already knows — they just asked for it — and who it is going to
-   is the part they cannot see.
+/* RECORDING A MESSAGE. Red, like every other open microphone on this panel (`REC_COLOUR`), and
+   the word names the RECIPIENT rather than the act — the act is the part a child already knows,
+   they just asked for it, and who it is going to is the part they cannot see.
  *
  * THE SIBLING'S NAME USED TO BE UNKNOWABLE HERE, and the placeholder MESSAGE was the honest
  * way to say so: a panel is flashed with its OWN name and the box mints the other one's at the
@@ -1191,7 +1225,7 @@ static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpane
        whoever can read gets both. */
     draw_who(fb, y0, over_h, to == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
     if (to == JPANEL_TO_DAD) {
-        draw_indicator(fb, y0, now, SWAP16(0x001F), "TO DAD");
+        draw_indicator(fb, y0, now, REC_COLOUR, "TO DAD");
         return;
     }
     /* "TO " plus the longest name the box will accept, uppercased: the font has no lowercase
@@ -1200,14 +1234,14 @@ static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpane
     char who[40];
     char name[32];
     if (jpanel_sibling(name, sizeof(name)) <= 0) {
-        draw_indicator(fb, y0, now, SWAP16(0x001F), "MESSAGE");
+        draw_indicator(fb, y0, now, REC_COLOUR, "MESSAGE");
         return;
     }
     snprintf(who, sizeof(who), "TO %s", name);
     for (char *q = who; *q != '\0'; q++) {
         if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
     }
-    draw_indicator(fb, y0, now, SWAP16(0x001F), who);
+    draw_indicator(fb, y0, now, REC_COLOUR, who);
 }
 
 /* THE POP-UP, AND IT IS THE ONLY THING ON THIS GLASS THAT COVERS THE PET.
@@ -2160,6 +2194,7 @@ static ui_target_t tap_target_now(int ox, int oy, int over_h_tap, bool down, uin
     st.sendto_until = s_sendto_until;
     st.repeat_until = s_repeat_until;
     st.pending = (ui_pending_t)s_pending;
+    st.controls_since = s_controls_since;
     for (int i = 0; i < 4; i++) st.popup_box[i] = s_popup_box[i];
 
     ui_in_t in = {0};
@@ -2426,6 +2461,15 @@ static void face_task(void *arg)
            centred controls are placed against it and a hit test that guessed a different
            band would miss by the difference. */
         const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
+        /* THE EDGE THE EXIT'S GRACE IS MEASURED FROM. Read by `tap_target_now` below, so it is
+           sampled BEFORE the dispatcher: the press that raises the controls is served by the
+           notice on this pass and cannot also be served by the exit, and every pass after this
+           one sees a stamp to measure from. */
+        if (run_controls_up()) {
+            if (s_controls_since == 0) s_controls_since = now == 0 ? 1 : now;
+        } else {
+            s_controls_since = 0;
+        }
         /* AND WHICH CONTROL IT REACHES IS `ui.c`'S ANSWER — see `tap_target_now`. The chain below
            does not arbitrate any more; each branch asks whether it was chosen, and the order they
            appear in is readability alone. The fork is the same question: the transport exists in
