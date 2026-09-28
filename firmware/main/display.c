@@ -2564,8 +2564,11 @@ static void face_task(void *arg)
                 s_flinch = 1.0f;
                 dirty = true;
                 ESP_LOGI(TAG, "jpanel: ended by the top-right corner");
-                /* No cue: the silence IS the answer, and a sound in the half-second after a
-                   child asks for quiet is the panel arguing with her. */
+                /* IT SAYS SO NOW. This was silent on the argument that the sound stopping IS
+                   the answer — true, and not enough: reply stops the sound too, so from a
+                   child's side the two controls were the same press. `CUE_STOP` already meant
+                   exactly this, and it falls where `CUE_PLAY` rises. */
+                if (sound) audio_cue(CUE_STOP);
                 goto tap_done;
             }
             if (hit == UI_TARGET_POPUP) {
@@ -2576,7 +2579,7 @@ static void face_task(void *arg)
                    button that had stopped working. */
                 s_popup_box[0] = -1;
                 /* The press sounds FIRST and the message follows it — see `PENDING_MS`. */
-                if (sound) audio_cue(CUE_HEARD);
+                if (sound) audio_cue(CUE_PLAY);
                 s_pending = PEND_PLAY;
                 s_pending_until = now + PENDING_MS;
                 dirty = true;
@@ -2597,7 +2600,7 @@ static void face_task(void *arg)
                        `jpanel_state()` like any other fetch rather than being silent,
                        because a control that answers with nothing is the thing the cue
                        below was added to stop. A sound for the finger, then the audio. */
-                    if (sound) audio_cue(CUE_HEARD);
+                    if (sound) audio_cue(CUE_PLAY);
                     s_pending = PEND_REPLAY;
                     s_pending_until = now + PENDING_MS;
                     s_repeat_until = now + REPEAT_MS; /* still asking; keep it up */
@@ -2612,10 +2615,15 @@ static void face_task(void *arg)
                        That is the difference between a message and a conversation, and it
                        is the whole reason the owner asked for this. */
                     s_repeat_until = 0; /* the pair is gone; the tick and cross take over */
+                    /* `CUE_REPLY` rather than `CUE_LISTEN`: the same disc in the same place
+                       must sound the same whether the message is still playing or has ended, and
+                       here the microphone opens at once, so the press and the opening are one
+                       event. The deferred path keeps `CUE_LISTEN` for the later moment the
+                       microphone really opens, which is a second event because time passed. */
                     if (start_send_recording(jpanel_in_from(), now, speaking)) {
-                        if (sound) audio_cue(CUE_LISTEN);
+                        if (sound) audio_cue(CUE_REPLY);
                     } else if (sound) {
-                        audio_cue(CUE_STOP);
+                        audio_cue(CUE_OOPS);
                     }
                     s_flinch = 1.0f;
                     dirty = true;
@@ -2808,9 +2816,17 @@ static void face_task(void *arg)
                 s_flinch = 1.0f;
                 dirty = true;
                 ESP_LOGI(TAG, "jpanel: run %s by touch", hold ? "held" : "resumed");
-                /* No cue either way: a beep on top of the sentence it is holding, or on
+                /* AND IT SAYS WHICH. These were silent on the argument below; the owner
+                   overrode it, and he is right that a four-year-old pressing a disc wants to
+                   hear that the press landed rather than infer it from what the audio does.
+                   Lower and shorter for the hold, higher and wider for starting again — see
+                   `cue.h`, where a mirrored pair was MEASURED as indistinguishable and rejected.
+                   The old argument, kept because it is still why these two are the quietest
+                   things on the screen: a beep on top of the sentence it is holding, or on
                    the first instant of the one it is resuming, is the panel talking over
-                   itself. The sound stopping IS the answer, exactly as the silence was. */
+                   itself — so these two stay short and quiet where `CUE_PLAY` and `CUE_STOP`
+                   can be open. */
+                if (sound) audio_cue(hold ? CUE_PAUSE : CUE_RESUME);
             } else if (half == CONFIRM_SEND) {
                 /* ANSWER THE PERSON TALKING, without waiting for them to finish. The
                    recipient is the message being played, so it is read BEFORE the run
@@ -2821,7 +2837,7 @@ static void face_task(void *arg)
                    it, this and the exit corner are indistinguishable at the press: both stop the
                    sound and say nothing, so answering your father and dismissing him feel
                    identical until a microphone does or does not open. */
-                if (sound) audio_cue(CUE_HEARD);
+                if (sound) audio_cue(CUE_REPLY);
                 s_pend_reply_to = jpanel_in_from();
                 audio_stream_pause(false); /* never end a run holding the ring */
                 s_paused_since = 0;

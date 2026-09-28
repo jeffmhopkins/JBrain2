@@ -5880,6 +5880,38 @@ authority and the queue is not consulted. `test_the_face_follows_the_message_tha
 builds the reported situation — two waiting, Dad first, the sister's next — and was confirmed to
 FAIL against the old expression before the fix went in.
 
+##### Every playback control gets its own voice (0.3.32)
+
+The owner asked for a scrub — *"make sure that in the playback GUI all the actions, pressing,
+play, pause, reply and stop, all have the proper sound effects attached"* — and then, on the
+answer, overrode it: *"I think play, resume, stop and reply should have their own sound effects.
+You are good to overwrite the decision from before."*
+
+**What the scrub found.** Play and reply both borrowed `CUE_HEARD`; pause, resume and stop made no
+sound at all. The silence was deliberate and documented — what they do to the audio IS the answer
+— and it was not enough, for a reason the scrub made obvious: **reply stops the sound exactly as
+the exit does**, so from a child's side answering her father and dismissing him were the same
+press, distinguishable only seconds later by whether a microphone opened. `confirm.h` is explicit
+that these are the same two discs in the same two places as the ended state, where reply had
+always acknowledged at once.
+
+**Four events, four shapes.** `CUE_PLAY` rises a fifth, an octave below the coin so the two do not
+read as one event at different volumes; `CUE_STOP` already existed and falls where play rises;
+`CUE_PAUSE` and `CUE_RESUME` are the quietest things on the screen, because the old argument still
+governs their SIZE even though it lost on their existence; `CUE_REPLY` is the only arpeggio,
+because it is the only one of the five that is not about sound stopping or starting — it is a turn
+arriving.
+
+**The first cut of pause and resume was rejected by measurement**, which is the part worth keeping.
+They were one interval in two directions — a fourth down and a fourth up, same length, same
+register — and `test_no_two_cues_are_the_same_sound` measured them 1.027 apart on rate and
+identical on length and low share. A mirror is not a contrast, because the ear is not reading the
+score. They differ on register, length and interval now. That test exists because twenty-six events
+once shared one 880 Hz blip, and it caught the same instinct coming back.
+
+`test_every_playback_control_answers_the_finger` pins the mapping: each control makes a sound, and
+none of the four borrows another's.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The
