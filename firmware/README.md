@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-09-22
+> **Status:** Living · **Last verified:** 2026-09-28
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -166,6 +166,16 @@ a host build in a *stricter* dialect tests a language the device never compiles.
 Run it before every firmware push. It found three real defects the ESP build had compiled
 cleanly — two missing includes that IDF supplied transitively, and a zero-init bug that made the
 variant pool repeat itself on the first pokes after boot (§10.4ao).
+
+**There are two suites now, and the second one drives the interface.** `main/ui.c` is the panel's
+interaction state machine — which overlay is up, and what a finger at (x, y) means given
+everything else that is happening — lifted out of `display.c`'s `face_task()` into a module that
+takes a struct and returns a struct. `run_ui_tests` steps it one frame at a time against a fake
+speaker, a fake message queue and a real framebuffer, so a notification, a press, a five-second
+hold and a deep-sleep request can all be asserted without a panel. That matters because *every*
+fault the owner reported on the evening of 2026-09-28 was an arbitration fault, and arbitration
+was the one part of this firmware with no test at all. `firmware/host/README.md` says how to add a
+scenario, and lists the behaviours the extraction preserved on purpose and believes are wrong.
 
 ## The robot stays upright, and the meter keeps up
 

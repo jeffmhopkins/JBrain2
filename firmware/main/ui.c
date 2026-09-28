@@ -57,7 +57,13 @@ ui_talk_t ui_talk(const ui_state_t *st)
 
 bool ui_busy(const ui_state_t *st)
 {
-    return st->talk != UI_TALK_IDLE || st->repeat_until != 0;
+    /* THE PAIR IS DELIBERATELY NOT IN HERE, and it used to be. `repeat_until` stopped expiring,
+       and it sat in the render loop's idle test — so from the first message ever played the panel
+       counted itself as permanently in use and could never dim or darken again. A pair waiting
+       patiently for a child is precisely the case where the screen SHOULD be allowed to sleep
+       around it; nothing about sleeping drops the offer. Anything that genuinely needs to know
+       whether the pair is standing asks `ui_pair_up` instead. */
+    return st->talk != UI_TALK_IDLE;
 }
 
 bool ui_recording(const ui_state_t *st)
@@ -179,8 +185,25 @@ static bool target_live(ui_target_t t, const ui_state_t *st, const ui_in_t *in)
     switch (t) {
     case UI_TARGET_GRID:
         return st->sendto_until != 0;
-    case UI_TARGET_EXIT:
-        return in->jrunning || in->stream_active || st->repeat_until != 0;
+    case UI_TARGET_EXIT: {
+        /* AND NOT WHILE A NOTICE IS OFFERING A MESSAGE — the owner's *"playback doesn't seem to
+           work most of the time"*.
+         *
+           THE ARITHMETIC: this region is x[184,368) y[0,224). The big pop-up is CENTRED, so its
+           rectangle is x[36,332) y[117,331), and the sender's face a child is told to press sits
+           at cx = 36 + 296/2 = 184 — exactly FACE_W/2. Its entire right half is inside the exit,
+           which comes first in the table. Since the pair stopped expiring, the exit has been
+           live permanently from the first message ever played, so a tap a hair right of centre on
+           the face hit it; the exit plays no cue by design, so the press vanished, and because it
+           clears the pair the SECOND press in the same place worked. First press dead, second
+           fine, once per message, and only on the big notice — which reads exactly as "most of
+           the time".
+         *
+           A message being OFFERED outranks a message being ended: there is nothing to exit from
+           when nothing is playing, and the notice is the thing the child is aiming at. */
+        const bool notice_offered = st->popup_box[0] >= 0 && !in->stream_active && !in->jrunning;
+        return !notice_offered && (in->jrunning || in->stream_active || st->repeat_until != 0);
+    }
     case UI_TARGET_POPUP:
         return st->popup_box[0] >= 0;
     case UI_TARGET_PAIR:

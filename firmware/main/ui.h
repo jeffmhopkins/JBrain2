@@ -43,9 +43,12 @@
 #include "confirm.h" /* the targets a finger can land on: `confirm_hit`, `sendto_hit` */
 #include "cue.h"     /* which noise a press makes */
 
-/* WHO A MESSAGE IS FOR. The same two values as `jpanel_to_t`, restated because `jpanel.h`
-   reaches `cfg.h` and therefore `esp_err.h`, and this file must stay clean of ESP-IDF. The
-   ordering is asserted against the real enum in `display.c`, where both are visible. */
+/* WHO A MESSAGE IS FOR. The same two values as `jpanel_to_t`, restated because `jpanel.h` reaches
+   `cfg.h` and therefore `esp_err.h`, and this file must stay clean of ESP-IDF.
+   TWO ENUMS THAT MUST AGREE ARE A THING TO CHECK, NOT TO HOPE FOR: the wiring step owes this one
+   and the two below a `_Static_assert` per value in `display.c`, which is the only translation
+   unit that can see both. A silent renumbering here would send a child's message to the wrong
+   person, which is the failure mode least likely to be noticed and worst to discover. */
 typedef enum {
     UI_TO_PANEL = 0, /* the other panel — the twin's unit */
     UI_TO_DAD,       /* the owner's PWA */
@@ -353,11 +356,19 @@ typedef struct {
      * measures time either takes a timestamp difference or takes this. */
     int dt_ms;
 
-    /* THE TOUCH, ALREADY RESOLVED. `ox`/`oy` are OVERLAY coordinates — everything drawn before
-       the 180 flip is hit-tested in that space, and a hit test against frame coordinates on an
-       upside-down panel misses by 289 px (measured 2026-09-25). `panel_x`/`panel_y` are the
-       glass, which is what the rim margin wants: the rim is the rim whichever way up the thing
-       is mounted. */
+    /* THE TOUCH, ALREADY RESOLVED, AND RESOLVED FOR EVERY PRESS RATHER THAN SOME.
+     *
+     * `ox`/`oy` are OVERLAY coordinates — everything drawn before the 180 flip is hit-tested in
+     * that space, and a hit test against frame coordinates on an upside-down panel misses by
+     * 289 px (measured 2026-09-25). `panel_x`/`panel_y` are the glass, which is what the rim
+     * margin wants: the rim is the rim whichever way up the thing is mounted.
+     *
+     * THIS FIELD IS WHY THE BOUNDARY IS HERE. The correction used to live INSIDE the quiet
+     * dispatcher, so the short one that runs while a message plays tested the coordinates from
+     * the last time the panel was silent — and on the first press of a session they were still
+     * -1 and could match nothing at all ("nothing responds to it"). A struct filled once, above
+     * any fork, cannot have that shape: there is one press and one answer, and both dispatchers
+     * read the same field. */
     bool tapped;
     int ox, oy;
     int panel_x, panel_y;
@@ -420,9 +431,17 @@ typedef enum {
     UI_ACT_POWER_OFF,     /* deep sleep; the button is the only way back */
 } ui_action_kind_t;
 
-/* Five is the most any one frame has ever emitted (the standby press: cue, drop, stop, standby,
-   blank). Eight leaves room without making the struct something a caller has to allocate. */
-#define UI_ACTS_MAX 8
+/* SIZED FROM THE WORST FRAME THAT CAN BE CONSTRUCTED, not from the worst one anybody has seen.
+ *
+ * An ordinary busy frame is five — the standby press is cue, drop, stop, standby, blank — and
+ * eight looked generous until the host suite built the pathological pass on purpose: a short
+ * press AND a completed hold AND a hold-to-grid AND the paused-stream deadline AND a deferred
+ * reply settling AND a send outcome AND a new message arriving is thirteen. None of those
+ * combinations is likely and every one of them is reachable, and an action list that silently
+ * drops its tail would drop a peripheral call — a microphone left open, a stream left paused.
+ * Sixteen, with `test_the_action_list_never_overflows` standing on it, so adding a branch either
+ * fits or fails loudly. */
+#define UI_ACTS_MAX 16
 
 typedef struct {
     ui_action_kind_t kind;
@@ -564,7 +583,9 @@ void ui_popup_restart(ui_state_t *st, uint32_t now);
 /* What the rest of the render loop still has to ask: the emotion the face wears, whether the
    idle timer should count this frame as used, and whether the recogniser is deaf. */
 ui_talk_t ui_talk(const ui_state_t *st);
-bool ui_busy(const ui_state_t *st); /* a turn, a recording or an unanswered pair is up */
+/* A CONVERSATION OR A RECORDING IS RUNNING — what the idle timer should count as the panel being
+   used. Deliberately NOT the again/reply pair: see the body for the night that cost. */
+bool ui_busy(const ui_state_t *st);
 bool ui_recording(const ui_state_t *st);
 bool ui_pair_up(const ui_state_t *st);
 bool ui_grid_up(const ui_state_t *st);

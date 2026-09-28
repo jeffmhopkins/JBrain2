@@ -36,3 +36,4 @@ firmware/managed_components/
 firmware/sdkconfig
 firmware/sdkconfig.old
 firmware/host/run_tests
+firmware/host/run_ui_tests
