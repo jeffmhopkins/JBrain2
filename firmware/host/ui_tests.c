@@ -734,6 +734,54 @@ static void test_the_face_follows_the_message_that_is_playing(void)
     CHECK(w.ov.pair_from_dad, "and the ended state agrees with what just played");
 }
 
+static void test_every_playback_control_answers_the_finger(void)
+{
+    /* A SCRUB OF THE PLAYBACK GUI, at the owner's ask: every control there either makes a sound
+       or changes one, and which it is has to be deliberate rather than whatever each branch
+       happened to do.
+     *
+       REPLY AND EXIT WERE THE SAME PRESS. Both stopped the sound and said nothing, so answering
+       your father and dismissing him felt identical until a microphone did or did not open
+       seconds later — and `confirm.h` is explicit that these are the same two discs in the same
+       two places as the ended state, where reply has always acknowledged at once.
+     *
+       PAUSE AND EXIT STAY SILENT, and that is the deliberate part: what they do to the sound IS
+       the answer, and a beep on top of the sentence being held, or in the half-second after a
+       child asks for quiet, is the panel arguing with her. */
+    world_reset();
+    play_a_message(false);
+    run_ms(EXIT_GRACE_MS + 100);
+
+    /* Reply, mid-message: acknowledged at the press. */
+    const int before = w.cues;
+    tap_at(CONFIRM_CX_SEND, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.st.pending == UI_PEND_REPLY, "the reply is taken");
+    CHECK(w.cues > before && last_cue() == CUE_HEARD,
+          "and it answers the finger now, not when the microphone opens");
+
+    /* Pause: silent on purpose — the sound stopping is the answer. */
+    world_reset();
+    play_a_message(false);
+    run_ms(EXIT_GRACE_MS + 100);
+    const int quiet = w.cues;
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.paused, "pause takes effect");
+    CHECK(w.cues == quiet, "and makes no sound over the sentence it is holding");
+
+    /* The exit: also silent, for the same reason from the other side. */
+    world_reset();
+    play_a_message(false);
+    run_ms(EXIT_GRACE_MS + 100);
+    const int hush = w.cues;
+    const int stops = w.stop;
+    tap_at(276, 112);
+    step();
+    CHECK(w.stop > stops, "the corner ends the run");
+    CHECK(w.cues == hush, "without arguing with the child who asked for quiet");
+}
+
 static void test_the_draw_layers_are_a_list(void)
 {
     const ui_layer_t want[UI_LAYER_COUNT] = {
@@ -1471,6 +1519,7 @@ int main(void)
     test_the_controls_are_pressable_for_as_long_as_they_are_drawn();
     test_a_second_press_cannot_cancel_what_the_first_one_started();
     test_the_face_follows_the_message_that_is_playing();
+    test_every_playback_control_answers_the_finger();
     test_the_draw_layers_are_a_list();
 
     test_a_notification_arrives_and_a_tap_plays_it();

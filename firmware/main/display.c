@@ -2817,6 +2817,11 @@ static void face_task(void *arg)
                    ends. Deferred rather than started here: the fetch is still unwinding
                    and `start_send_recording` would refuse a microphone it cannot have
                    yet — silently, which is the one outcome a child cannot interpret. */
+                /* THE PRESS SOUNDS NOW, and the microphone follows it — see `ui.c`. Without
+                   it, this and the exit corner are indistinguishable at the press: both stop the
+                   sound and say nothing, so answering your father and dismissing him feel
+                   identical until a microphone does or does not open. */
+                if (sound) audio_cue(CUE_HEARD);
                 s_pend_reply_to = jpanel_in_from();
                 audio_stream_pause(false); /* never end a run holding the ring */
                 s_paused_since = 0;

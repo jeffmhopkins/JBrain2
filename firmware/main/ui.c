@@ -360,6 +360,16 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
                 /* No cue either way: a beep on top of the sentence it is holding, or on the
                    first instant of the one it is resuming, is the panel talking over itself. */
             } else if (half == CONFIRM_SEND) {
+                /* THE PRESS SOUNDS NOW, and the microphone follows it — the same shape the
+                   notice uses (`PENDING_MS`). Without this, reply and the exit corner are
+                   INDISTINGUISHABLE at the moment of the press: both stop the sound and say
+                   nothing, so a child who answered her father gets exactly what a child who
+                   dismissed him gets, and only finds out which seconds later when a microphone
+                   does or does not open. The ended-state pair has always acknowledged
+                   immediately, and `confirm.h` is explicit that these are the same two discs in
+                   the same two places — so the one thing they must not do is behave differently
+                   depending on whether the message happens to still be playing. */
+                cue(out, CUE_HEARD);
                 /* ANSWER THE PERSON TALKING, without waiting for them to finish. The recipient
                    is the message being played, so it is read BEFORE the run ends. Deferred
                    rather than started here: the fetch is still unwinding and a recording would
