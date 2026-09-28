@@ -2118,11 +2118,14 @@ static void reassert_panel(void)
  * action executor instead of inline bodies — is the next step and is worth doing on its own,
  * where a regression in it cannot be confused with a regression in a behaviour fix.
  *
- * ONLY THE FIELDS ARBITRATION READS ARE FILLED. That is a real hazard and it is why the
- * assertions below exist: `target_live` and `target_hit` between them read exactly the members set
- * here, and a new one added there would silently read zero. The mitigation is that they are pure
- * and short, and that the host suite fails loudly when they change meaning. */
-static ui_target_t tap_target_now(int ox, int oy, int over_h_tap, uint32_t now)
+ * EVERY FIELD THIS FILE CAN HONESTLY ANSWER IS FILLED, which is most of them, because a struct
+ * populated only where arbitration happens to look today is a trap: a field added to `target_live`
+ * would silently read zero and nothing would fail. Two are deliberately left at zero rather than
+ * filled with something close, which would be the worse trap: `gest_taps`, because `gesture_poll`
+ * runs LATER in this pass and the count here is the previous frame's, and `capture_ms`, which this
+ * file does not track. Neither is read by the arbitration, and the `..._LEN` assertions plus 361
+ * host checks are what notices if that stops being true. */
+static ui_target_t tap_target_now(int ox, int oy, int over_h_tap, bool down, uint32_t now)
 {
     /* THE TWO ENUMS ARE MIRRORS AND NOTHING IN THE COMPILER KNOWS IT. `ui.h` declares its own so
        the state machine can be built and tested without a radio, a codec or a panel; that is the
@@ -2161,15 +2164,24 @@ static ui_target_t tap_target_now(int ox, int oy, int over_h_tap, uint32_t now)
 
     ui_in_t in = {0};
     in.now = now;
+    in.tapped = true; /* this is only asked about a press that happened */
     in.ox = ox;
     in.oy = oy;
+    in.over_y0 = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0;
     in.over_h = over_h_tap;
+    in.down = down;
+    in.waiting = jpanel_waiting(NULL, 0);
+    in.waiting_from_dad = jpanel_waiting_from_dad();
+    in.in_from = (ui_to_t)jpanel_in_from();
     in.jrunning = jpanel_running();
     in.jfetching = jpanel_fetching();
     in.jstate = (ui_jstate_t)jpanel_state();
     in.stream_active = audio_stream_active();
+    in.stream_paused = audio_stream_paused();
     in.speaking = audio_playing();
+    in.audio_playing = audio_playing();
     in.net = (ui_net_t)talk_state();
+    in.standby = s_standby;
     return ui_tap_target(&st, &in);
 }
 
@@ -2419,7 +2431,8 @@ static void face_task(void *arg)
            appear in is readability alone. The fork is the same question: the transport exists in
            the playing table only, so a press that resolved to it is the one this file serves in
            the second branch. */
-        const ui_target_t hit = tapped ? tap_target_now(ox, oy, over_h_tap, now) : UI_TARGET_PET;
+        const ui_target_t hit = tapped ? tap_target_now(ox, oy, over_h_tap, down, now)
+                                       : UI_TARGET_PET;
         if (tapped && hit != UI_TARGET_TRANSPORT) {
             /* THE POP-UP AND THE REPEAT ICON OUTRANK EVERYTHING, tested before the cancels
              * and the poke for exactly the reason the label is: a tap that both played a
