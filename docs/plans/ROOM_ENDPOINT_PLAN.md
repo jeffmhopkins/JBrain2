@@ -5817,6 +5817,46 @@ bounce is wide enough to break those. The grace is narrow, it is on the one cont
 be undone, and `test_a_second_press_cannot_cancel_what_the_first_one_started` stands on it —
 including that the corner still works a moment later, so the fix is a delay rather than a removal.
 
+##### The panel allowed a question it could not wait out (0.3.30)
+
+The owner, with both children talking to the pet at once: *"I'm getting the red dash."* The box
+was answering every one of those turns — `POST /endpoint/converse` 200, real audio, fourteen in a
+row — and the panel was showing the failure dash anyway. His own guess was that it was piling up,
+and the shape of that was right even though the mechanism was not: no two turns OVERLAP at the
+box, so the twins were not colliding. What piles up is LENGTH.
+
+**Measured from `endpoint.converse` on the live box, 2026-09-28:**
+
+| held (child talking) | whisper | total at box |
+|---|---|---|
+| 5.1 s | 1.8 s | 5.3 s |
+| 7.2 s | 3.4 s | 8.8 s |
+| 12.6 s | 5.2 s | 10.1 s |
+| 17.0 s | 8.0 s | 14.4 s |
+
+Transcription costs about half of what was said, so two excited four-year-olds egging each other
+on produce exactly the turns that cost the most.
+
+**And the two constants governing it contradicted each other.** `CAPTURE_MAX_MS` was 30 s;
+`TALK_TIMEOUT_MS` was 25 s, counted from the moment the recording ENDS. The panel allowed a
+recording it could never wait long enough to hear back about — before a single byte of the 1 MB
+upload. The failures were not random, they were the long questions, and they were invisible from
+the box because a turn the panel has stopped listening for still completes and still logs 200.
+
+A second sign that this drifted rather than being designed: the comment above the cap still said
+*"the cap is ten seconds now"*, three raises later.
+
+**35 s of question, 60 s of wait, at the owner's ask**, with `TALK_HTTP_TIMEOUT_MS` at 55 s so the
+NETWORK gives up first — otherwise the renderer's backstop fires while the talk task is still
+running, and the reply gets spoken into a turn the child has already been told had failed.
+`PANEL_AUDIO_MAX` moves with the cap, which a test has enforced since the ten-second raise.
+
+The new invariant is `test_the_panel_waits_longer_than_the_question_it_allows`, and the useful
+part of writing it was that the **naive version passed on the broken pair**: 25 s against 16.8 s
+of box work looks fine until the upload is remembered, which is precisely how it shipped. It
+asserts double the box estimate, because the upload and a busy box both land on top and neither
+is measured from here.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The

@@ -1606,6 +1606,60 @@ class TestReplyCeiling:
         assert cap - lead - hush >= 4000, (lead, hush, cap)
         assert endpoint_api.PANEL_RATE * 2 * cap // 1000 <= endpoint_api.PANEL_AUDIO_MAX
 
+    def test_the_panel_waits_longer_than_the_question_it_allows(self) -> None:
+        """THE PANEL MUST NOT ALLOW A RECORDING IT CANNOT WAIT OUT, which it did for three
+        releases: `CAPTURE_MAX_MS` was 30 s and `TALK_TIMEOUT_MS` was 25 s, counted from the
+        moment the recording ENDS. So the longest questions — the ones an excited four-year-old
+        actually asks — always ended in the failure dash while the box answered them perfectly
+        into a socket nobody was reading. The owner: *"I'm getting the red dash"*, on turns this
+        box logged as 200 OK.
+
+        MEASURED ON THE BOX 2026-09-28, from `endpoint.converse`: transcription costs about half
+        of what was said (17.0 s of child produced 8.0 s of whisper), the model ~1.7 s and the
+        voice ~1.0 s. The upload is on top of that and is the panel's own problem — 16 kHz stereo
+        of nothing, over TLS, from a microcontroller.
+
+        So the wait has to cover half the cap, plus the model and the voice, plus an upload, plus
+        room for a box that is busy. Half again over the raw estimate is the margin this asserts;
+        what matters is that the relationship is CHECKED, because the two numbers live in
+        different files and drifted apart silently once already.
+        """
+        main = Path(__file__).resolve().parents[3] / "firmware" / "main"
+
+        def const(path: str, name: str) -> int:
+            m = re.search(rf"^#define {name} (\d+)$", (main / path).read_text(), re.M)
+            assert m is not None, f"{name} not found in {path}"
+            return int(m.group(1))
+
+        cap = const("audio.c", "CAPTURE_MAX_MS")
+        wait = const("display.c", "TALK_TIMEOUT_MS")
+        http = const("talk.c", "TALK_HTTP_TIMEOUT_MS")
+
+        # Whisper at ~0.47x realtime, the model and the voice from the same measurement.
+        box = int(cap * 0.47) + 1700 + 1000
+        # DOUBLED, and the factor is the honest part of this test. The upload is not measured
+        # here and cannot be from the box's side — a full cap is 1.1 MB of PCM over TLS from a
+        # microcontroller, and it lands on a box that may already be answering the other twin.
+        # Both come on top of `box`, so anything less than a factor of two is a budget with no
+        # room in it. Checked rather than assumed, because the old pair PASSED a naive version
+        # of this assertion: 25 s against a 30 s cap is 16.8 s of box, which looks fine until
+        # the upload is remembered, and that is exactly how it shipped.
+        needed = box * 2
+        assert wait >= needed, (
+            f"a full {cap} ms question is about {box} ms of box, and the upload lands on top — "
+            f"the panel gives up after {wait} ms, which leaves nothing for it"
+        )
+
+        # THE NETWORK GIVES UP FIRST. `TALK_TIMEOUT_MS` is the renderer's backstop for a task
+        # that has stopped answering; if it fired first the panel would show the failure dash
+        # and then speak the reply into a turn the child had been told had failed.
+        assert http < wait, (http, wait)
+
+        # And the state machine's copy is the same number, or the tested model is not the
+        # shipped one.
+        ui = re.search(r"^#define TALK_TIMEOUT_MS (\d+)$", (main / "ui.h").read_text(), re.M)
+        assert ui is not None and int(ui.group(1)) == wait, "ui.h disagrees with display.c"
+
     def test_the_reply_does_not_start_with_a_beat_of_nothing(
         self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
     ) -> None:

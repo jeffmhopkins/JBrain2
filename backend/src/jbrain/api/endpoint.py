@@ -1440,13 +1440,14 @@ PANEL_RATE = 16000
 # MIDDLE of a breath, and the panel's silence window has to be able to wait that out
 # (`LISTEN_HUSH_MS`) inside the same cap.
 #
-# Thirty at the owner's ask (0.2.95), and the ask was about MESSAGES — but the panel has one
-# capture buffer and it feeds both, so a thirty-second question to the pet arrives here too.
+# Thirty at the owner's ask (0.2.95), thirty-five at 0.3.30 — and the ask was about MESSAGES,
+# but the panel has one capture buffer and it feeds both, so the longest question to the pet
+# arrives here too.
 # Truncating it at ten would have cut the tail off a child's question with nothing said about
 # it; the test caught that, which is what it is for. Still short enough that a pocketed panel
 # cannot upload a minute of a room, and the extra length is free because `_trim_to_speech`
 # takes the silence back out before whisper ever sees it.
-PANEL_AUDIO_MAX = PANEL_RATE * 2 * 30
+PANEL_AUDIO_MAX = PANEL_RATE * 2 * 35
 
 # WHAT THE PANEL CAN ACTUALLY PLAY, which the box has to know because it is the box that
 # overruns it. `firmware/main/talk.c` reads the reply into a fixed PSRAM buffer and

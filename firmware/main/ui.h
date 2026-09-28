@@ -126,7 +126,7 @@ typedef enum {
  * matters when they are slow, and a slow turn currently produces NOTHING, which is strictly
  * worse than a late answer. The actual fix for the wait is whisper — 10.7 s of a 12.8 s turn
  * is 83% of it, and no timeout value improves that. */
-#define TALK_TIMEOUT_MS 25000
+#define TALK_TIMEOUT_MS 60000
 #define TALK_FAILED_MS 2500
 
 /* HANDS-FREE, AND THE WHOLE PROBLEM IS KNOWING WHEN THEY STOPPED.

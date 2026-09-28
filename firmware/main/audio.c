@@ -145,7 +145,7 @@ static const audio_codec_ctrl_if_t *s_ctrl;
    three come to about 1.4 MB — 960 KB here, 320 KB of playback, 128 KB of ring — beside a
    322 KB framebuffer. The number to watch is `free_psram` in telemetry rather than this
    comment. */
-#define CAPTURE_MAX_MS 30000
+#define CAPTURE_MAX_MS 35000
 #define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
 static int16_t *s_cap;          /* PSRAM, claimed at start-up */
 static volatile int s_cap_used; /* samples written this recording */

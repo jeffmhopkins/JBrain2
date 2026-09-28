@@ -825,7 +825,22 @@ static volatile bool s_debug_overlay;
  * matters when they are slow, and a slow turn currently produces NOTHING, which is strictly
  * worse than a late answer. The actual fix for the wait is whisper — 10.7 s of a 12.8 s turn
  * is 83% of it, and no timeout value improves that. */
-#define TALK_TIMEOUT_MS 25000
+/* HOW LONG THE PET WILL WAIT FOR ITS OWN REPLY, and it has to be reasoned from the recording
+   it allows rather than picked. MEASURED ON THE BOX 2026-09-28: transcription costs about half
+   of what was said (17.0 s of child -> 8.0 s of whisper), the model another 1.7 s and the voice
+   1.0 s, so a full `CAPTURE_MAX_MS` question is roughly 20 s of box — before the upload, which
+   is 1.1 MB of PCM over TLS from an ESP32.
+ *
+   IT USED TO BE 25 s AGAINST A 30 s CAP, which is the wrong way round: the panel allowed a
+   recording it could never wait long enough to hear back about, so the longest questions — the
+   ones an excited four-year-old actually asks — always ended in the failure dash while the box
+   answered them perfectly into a socket nobody was reading. The owner saw it as *"I'm getting
+   the red dash"* on turns the box logged as 200 OK.
+ *
+   60 s at the owner's ask, against a 35 s cap. `TALK_HTTP_TIMEOUT_MS` is deliberately SHORTER
+   (`talk.c`), so the network gives up first and this stays what it was meant to be: a backstop
+   for a task that has stopped answering at all, not the thing that normally fires. */
+#define TALK_TIMEOUT_MS 60000
 #define TALK_FAILED_MS 2500
 
 /* HANDS-FREE, AND THE WHOLE PROBLEM IS KNOWING WHEN THEY STOPPED.
@@ -847,8 +862,9 @@ static volatile bool s_debug_overlay;
  *                            a sentence stops for longer than an adult does, and every one of
  *                            those pauses ended their turn for them. The old number was
  *                            reasoned from the SIX-SECOND cap rather than from a child: a
- *                            longer hush used to risk the cap eating the tail. The cap is ten
- *                            seconds now (`CAPTURE_MAX_MS`) and the box trims the silence
+ *                            longer hush used to risk the cap eating the tail. The cap is
+ *                            thirty-five seconds now (`CAPTURE_MAX_MS`) and the box trims the
+ *                            silence
  *                            before whisper sees it, so waiting longer costs nothing at all.
  *   LEAD   they said the name and nothing else -> drop it, silently, back to idle. An
  *                            accidental "hey fish" from the television must not become an
