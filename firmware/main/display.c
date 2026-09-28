@@ -2741,9 +2741,7 @@ static void face_task(void *arg)
                resolved it to these two discs — which is why there is no guard and no `else` on
                this branch any more. The menu and the exit are offered before it and are served by
                the chain above; a poke at the pet mid-sentence is served there too, by the branch
-               that still defers to `speaking`. Everything left is a press on a sounding run, and a
-               press that missed both discs is consumed rather than acted on: this is where a tap
-               used to end the run, and the one thing it must not do now is end it by accident. */
+               that still defers to `speaking`. Everything left is a press on a sounding run. */
             /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
                of controls — see `confirm.h`. A tap anywhere used to end the run, and the
                owner replaced that with a hold and an answer: stopping is what pausing does
