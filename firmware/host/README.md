@@ -33,11 +33,13 @@ Two shapes in it are deliberate and load-bearing:
 - **The tap order is a table** (`UI_TAP_ORDER`), not a chain of `if`s. Every arbitration bug found
   so far was a target sitting in the wrong place in that chain, and a chain does not let you read
   its own order. `ui_tap_target()` answers "what does this press reach" with no side effects at
-  all, so the order can be asserted without driving its consequences.
+  all, so the order can be asserted without driving its consequences. **`display.c` calls it**
+  (`tap_target_now`) rather than keeping a second opinion: its branches ask only whether they were
+  chosen, so a fault found here is a fault fixed there, once.
 - **`dt_ms` is measured, never assumed.** A 40 ms delay followed by a frame's work is not a 40 ms
-  frame; a real pass is 80–100 ms. `display.c` still hands `gesture_poll` the nominal constant,
-  which stretches every gesture threshold by 2–2.5x — the "five second" reboot hold is really
-  twelve. Nothing on this side of the boundary may inherit that.
+  frame; a real pass is 80–100 ms. `display.c` used to hand `gesture_poll` the nominal constant,
+  which stretched every gesture threshold by 2–2.5x — the "five second" reboot hold was really
+  twelve. It measures now, from `esp_timer`; this side of the boundary never had the choice.
 
 ## Adding a scenario
 
@@ -95,50 +97,44 @@ Conventions worth keeping:
 - **A test that pins known-wrong behaviour is named `..._today`** and carries the reason. See
   below.
 
-## Behaviour preserved on purpose, and believed wrong
+## What the extraction found
 
-The extraction was a move, not a fix: a refactor that also changes behaviour is a refactor nobody
-can check. These came across intact and are pinned by tests so that fixing them is a visible,
-deliberate diff rather than a silent drift.
+The extraction was a move, not a fix — a refactor that also changes behaviour is a refactor nobody
+can check — so the faults it exposed came across intact, pinned by tests named `..._today` that
+asserted the wrong behaviour on purpose. All six are fixed, and each `..._today` test was replaced
+by one asserting the behaviour that was wanted. The list is kept because it is the argument for the
+module: none of these was found by a child, and none of them was visible in a chain of `if`s.
 
-1. **A press landing while *any* sound comes out of the panel is discarded.**
-   `test_a_press_during_a_cue_is_discarded_today`. The whole dispatch is chosen by `speaking`,
-   which is `audio_playing()` — true for the panel's own cues, including the ~440 ms notification
-   beep. That is the exact half-second in which a child looks up and reaches for the notice.
-   *Shape of the fix:* the short table should be reserved for "a message is audibly playing"
-   (`stream_active`), not for "the panel is making a noise".
+1. **A press landing while *any* sound came out of the panel was discarded.** The dispatch forked
+   on `speaking` — `audio_playing()`, true for the panel's own cues, including the ~440 ms
+   notification beep, which is the exact half-second a child looks up and reaches for the notice.
+   It forks on a *message* sounding now. Only the poke branch still defers to any sound.
 
-2. **The top-right exit cannot end a message while the message is audible** — which is the state
-   the owner asked for it in.
-   `test_the_top_right_corner_ends_a_message_only_once_it_is_silent_today`. Same root cause as 1:
-   a playing message means `speaking`, so the press goes down the short table, where the top-right
-   corner is neither transport half and does nothing but flinch. The exit is *drawn* the whole
-   time. It only works once the message has ended and the pair is standing.
+2. **The top-right exit could not end a message while the message was audible** — the one state
+   the owner asked for it in. It was in the idle table only, and an audible message routes the
+   press to the playing table. It is in both, and first in the playing one, because
+   `target_hit(TRANSPORT)` is unconditional.
 
-3. **The big notice's picture and its tap target are different rectangles.**
-   `test_the_notice_is_tappable_only_in_one_quadrant_today`. `draw_popup` paints x[36,332)
-   y[117,331); the armed rectangle is the top-left quadrant, x[0,184) y[0,224). Most of what a
-   child can see is not pressable. 0.3.28 stopped the right half being *swallowed* by the exit
-   corner; a press there now pokes the pet instead, which is better but still not the notice.
-   *Shape of the fix:* arm the rectangle from the same geometry the painting uses, or make the
-   whole band the target while the big notice is up.
+3. **The big notice's picture and its tap target were different rectangles.** `draw_popup` painted
+   `x[36,332) y[117,331)`; the armed rectangle was the top-left quadrant, `x[0,184) y[0,224)`.
+   `ui_popup_target` is the one answer, used by both.
 
-4. **The notice is unpainted for the length of every cue, while its hit rectangle stays armed.**
-   `test_the_notice_is_unpainted_while_any_cue_sounds_today`. Moving the rectangle out from behind
-   the idle guard was right and is only half the job — the *painting* is still behind it, and the
-   guard includes `!speaking`. A control that blinks off while it still works is the same fault as
-   one that works only while it is drawn, wearing the other face.
+4. **The notice was unpainted for the length of every cue while its hit rectangle stayed armed.** A
+   control that blinks off while it still works is the same fault as one that works only while it is
+   drawn, wearing the other face. One `notice_up` now decides the picture and the target together.
 
-5. **`draw_popup_badge()` writes `s_popup_box` itself** — a second owner of the hit rectangle,
-   inside a drawing function. Harmless today because it writes the same quadrant `display.c` has
-   already armed. **It must be deleted in the wiring step:** once `ui_overlay()` owns the
-   rectangle, that write lands on a variable nothing reads, and the two owners can disagree
-   without anything failing.
+5. **`draw_popup_badge()` wrote `s_popup_box` itself** — a second owner of the hit rectangle,
+   inside a drawing function, and `draw_popup` a third with a different shape. Both writes are
+   gone; the arming site is the only writer.
 
 6. **`ui_busy()` excludes the again/reply pair, and the idle timer must keep it that way.** The
    pair stopped expiring, and while it was in the idle test the panel counted itself permanently
    in use and could never dim again after the first message. A pair waiting patiently for a child
    is precisely the case where the screen *should* be allowed to sleep around it.
+
+Plus two the tests found that no release had reported: the transport was drawn through the fetch
+window while its handler could not act on it (a press there poked the pet), and the modal menu was
+missing from the playing table, so a message starting under an open menu took the menu's presses.
 
 ## Still inside `display.c`
 
@@ -148,6 +144,12 @@ Named so the next slice is obvious, not as an apology:
   and `btn_hold` as facts, so `test_a_five_second_hold_requests_deep_sleep_exactly_once` proves
   the *consequence* of a hold and not the five seconds. Extracting this makes the timing testable
   too, and it is the smallest remaining piece.
-- **`gesture_poll`'s caller** — including the nominal-`dt` fault above.
+- **`gesture_poll`'s caller** — the measured `dt` is `display.c`'s to get right, and the only thing
+  that proves it does is reading the call.
+- **The action bodies.** `ui_tap_target` decides *which* control a press reached; starting a
+  microphone, holding a ring, posting a reply and ending a run are still inline in `face_task`.
+  The cutover — `ui_frame` and `ui_overlay` driving a pass, with an executor over `ui_action_t` —
+  is the next slice, and worth doing alone so a regression in it is not mistaken for one in a
+  behaviour fix.
 - The sleep/idle timer, the calibration routine, orientation, the face animation and emotion
   tweening, and every blit. Those are either hardware or drawing, and they belong where they are.
