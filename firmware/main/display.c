@@ -3861,8 +3861,14 @@ static void face_task(void *arg)
                    the PREVIOUS message's sender — and the previous message is usually the
                    sister, which is why it looked like a fixed bug rather than a stale value.
                    The queue already knows who is waiting; ask it until the fetch can answer. */
-                const bool from_dad =
-                    starting ? jpanel_waiting_from_dad() : jpanel_in_from() == JPANEL_TO_DAD;
+                /* ONCE ANYTHING IS SOUNDING, THE MESSAGE ITSELF IS THE AUTHORITY — see
+                   `ui.c`. `jpanel_fetching()` stays true for the whole download and the download
+                   is the playback, so the press-to-play fallback covered the entire message and
+                   answered with the NEXT sender in the queue rather than this one's. */
+                const bool sounding = jpanel_running() || audio_stream_active();
+                const bool from_dad = sounding ? (jpanel_in_from() == JPANEL_TO_DAD)
+                                     : (starting ? jpanel_waiting_from_dad()
+                                                 : jpanel_in_from() == JPANEL_TO_DAD);
                 draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0),
                          from_dad ? SENDTO_DAD : SENDTO_SISTER, playing);
                 confirm_draw_exit(fb, FACE_W, FACE_H, over_y0, over_h);

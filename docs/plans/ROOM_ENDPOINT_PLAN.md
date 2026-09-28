@@ -5857,6 +5857,29 @@ of box work looks fine until the upload is remembered, which is precisely how it
 asserts double the box estimate, because the upload and a busy box both land on top and neither
 is measured from here.
 
+##### The face that followed the queue instead of the message (0.3.31)
+
+The owner, on 0.3.30: *"the icon on the top left when playing back a message went to the blonde
+haired girl icon while playing a message from Dad, but only when the actual message is playing —
+when it's finished it goes back to the dad icon."*
+
+**A half-fixed bug, and the half that was missing is instructive.** `jpanel_in_from()` is read off
+the fetch's OWN response header, so before that fetch lands it still holds the PREVIOUS message's
+sender — which is why 0.3.28 made the press-to-play window ask the QUEUE instead, and why the
+owner stopped seeing a little girl for the seconds before a message from Dad began.
+
+But `jpanel_fetching()` stays true for the whole download, **and the download is the playback** —
+the audio streams into the ring as it arrives. So the fallback did not cover a brief starting
+window at all; it covered the entire message. And the queue's answer is about the OLDEST WAITING
+message, which by then is the NEXT one. With two queued and Dad's playing first, the face shown
+throughout Dad's message was the sister's, correcting itself the instant it ended — which is
+exactly the shape the owner described, and why the ended state looked right.
+
+The header has landed before anything is audible, so once a run is live the message itself is the
+authority and the queue is not consulted. `test_the_face_follows_the_message_that_is_playing`
+builds the reported situation — two waiting, Dad first, the sister's next — and was confirmed to
+FAIL against the old expression before the fix went in.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The

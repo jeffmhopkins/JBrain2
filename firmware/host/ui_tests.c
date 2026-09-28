@@ -693,6 +693,47 @@ static void test_a_second_press_cannot_cancel_what_the_first_one_started(void)
           "and a press in the first moments of a run is not the way out");
 }
 
+static void test_the_face_follows_the_message_that_is_playing(void)
+{
+    /* THE OWNER, on 0.3.30: *"the icon on the top left when playing back a message went to the
+       blonde haired girl icon while playing a message from Dad, but only when the actual message
+       is playing — when it's finished it goes back to the dad icon."*
+     *
+       `in_from` comes off the fetch's own response header, so before that fetch lands it still
+       holds the PREVIOUS message's sender; that is why the press-to-play window asks the queue
+       instead. But `jfetching` stays true for the WHOLE download and the download IS the
+       playback, so the fallback covered the entire message — and the queue answers about the
+       OLDEST WAITING one, which by then is the NEXT message. Two waiting, Dad first: the face
+       shown while Dad played was the sister's, and it corrected itself the instant it ended. */
+    world_reset();
+    w.in.waiting = 2;
+    w.in.waiting_from_dad = true;  /* Dad's is the one about to play */
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    CHECK(w.ov.run, "the controls are up");
+    CHECK(w.ov.run_from_dad, "and the press-to-play window shows Dad, from the queue");
+
+    /* The fetch lands: the header names Dad, and the NEXT waiting message is the sister's. */
+    w.in.in_from = UI_TO_DAD;
+    w.in.waiting_from_dad = false;
+    w.in.jrunning = true;
+    w.in.stream_active = true;
+    w.in.jfetching = true; /* the download IS the playback — this stays true throughout */
+    step();
+    CHECK(w.ov.run_from_dad,
+          "and it is still Dad while the message actually plays, not the next sender");
+
+    /* Ended: the pair carries the same face, which is the half that was always right. */
+    w.in.jrunning = false;
+    w.in.stream_active = false;
+    w.in.jfetching = false;
+    finish_message();
+    step();
+    CHECK(w.ov.pair_from_dad, "and the ended state agrees with what just played");
+}
+
 static void test_the_draw_layers_are_a_list(void)
 {
     const ui_layer_t want[UI_LAYER_COUNT] = {
@@ -1429,6 +1470,7 @@ int main(void)
     test_a_hold_after_a_poke_still_opens_the_menu();
     test_the_controls_are_pressable_for_as_long_as_they_are_drawn();
     test_a_second_press_cannot_cancel_what_the_first_one_started();
+    test_the_face_follows_the_message_that_is_playing();
     test_the_draw_layers_are_a_list();
 
     test_a_notification_arrives_and_a_tap_plays_it();

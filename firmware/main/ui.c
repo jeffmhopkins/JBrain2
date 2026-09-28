@@ -936,7 +936,22 @@ void ui_overlay(ui_state_t *st, const ui_in_t *in, ui_overlay_t *ov)
            seconds is worse than showing none: the in-from kind is read off the fetch's OWN
            response header, so until that fetch lands it still holds the PREVIOUS message's
            sender. The queue already knows who is waiting; ask it until the fetch can answer. */
-        ov->run_from_dad = starting ? in->waiting_from_dad : (in->in_from == UI_TO_DAD);
+        /* WHOSE FACE, AND THE QUEUE IS ONLY ASKED WHILE NOTHING IS SOUNDING YET.
+         *
+           `in_from` is read off the fetch's OWN response header, so until that fetch lands it
+           still holds the PREVIOUS message's sender — which is why the press-to-play window asks
+           the queue instead. But `jfetching` stays true for the WHOLE download, and the download
+           IS the playback, so that fallback covered the entire message: the owner opened one from
+           Dad and watched a little girl for as long as it played, then saw Dad again the moment
+           it ended. *"The icon on the top left needs to follow the sender."*
+         *
+           And the queue's answer is about the OLDEST WAITING message, which by then is the NEXT
+           one — usually the sister, which is exactly the face he saw. The header has landed by
+           the time anything is audible, so once a run is live the message itself is the authority
+           and the queue is not consulted at all. */
+        const bool sounding = in->jrunning || in->stream_active;
+        ov->run_from_dad = sounding ? (in->in_from == UI_TO_DAD)
+                                    : (starting ? in->waiting_from_dad : (in->in_from == UI_TO_DAD));
         ov->run_count = in->waiting;
         ov->exit_corner = true;
     } else if (st->repeat_until != 0) {
