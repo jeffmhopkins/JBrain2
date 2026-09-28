@@ -2736,70 +2736,57 @@ static void face_task(void *arg)
             dirty = true;
         tap_done:;
         } else if (tapped) {
-            /* A FINGER STOPS A RUN OF MESSAGES, and this is the third place that rule applies —
-               it already ends a listen and abandons a recording. A child who has heard enough
-               of their sister must be able to get out without waiting for the last one, and the
-               gesture they would reach for is the one they already know.
-             *
-               Only a RUN. A poke during the pet's own reply still just flinches: that is one
-               sustained utterance the panel is making, not a queue the child is sitting
-               through, and cutting it off was never asked for. */
-            /* A MESSAGE, NOT A QUEUE, and asked of the speaker rather than of `jpanel.c`.
-               `do_replay` sets none of the queue's flags on purpose, so `jpanel_running()` is
-               false through an entire replay — which left a replay with no working controls at
-               all. The ring belongs to messages alone (`audio.h`), so this covers both and
-               still leaves a poke at the pet mid-sentence as nothing but a flinch. */
-            if (hit == UI_TARGET_TRANSPORT) {
-                /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
-                   of controls — see `confirm.h`. A tap anywhere used to end the run, and the
-                   owner replaced that with a hold and an answer: stopping is what pausing does
-                   to the sound, and the queue waits rather than being thrown away.
+            /* THE TRANSPORT, AND NOTHING ELSE REACHES HERE. `UI_TARGET_TRANSPORT` appears in one
+               table (`ui.h`), so the fork above sends a press this way only when the state machine
+               resolved it to these two discs — which is why there is no guard and no `else` on
+               this branch any more. The menu and the exit are offered before it and are served by
+               the chain above; a poke at the pet mid-sentence is served there too, by the branch
+               that still defers to `speaking`. Everything left is a press on a sounding run, and a
+               press that missed both discs is consumed rather than acted on: this is where a tap
+               used to end the run, and the one thing it must not do now is end it by accident. */
+            /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
+               of controls — see `confirm.h`. A tap anywhere used to end the run, and the
+               owner replaced that with a hold and an answer: stopping is what pausing does
+               to the sound, and the queue waits rather than being thrown away.
 
-                   The coordinates are the pass's, resolved once above the fork: these targets
-                   can only be tested in overlay ones, and a hit test against frame ones on an
-                   upside-down panel misses by 289 px (`tap_to_overlay`).
+               The coordinates are the pass's, resolved once above the fork: these targets
+               can only be tested in overlay ones, and a hit test against frame ones on an
+               upside-down panel misses by 289 px (`tap_to_overlay`).
 
-                   AND THE EXIT IS NOT TESTED HERE, although the corner works while a message
-                   plays — it is *"the top right where there's no icon"* the owner asked for, and
-                   the reason it now works is that `UI_TAP_ORDER_PLAYING` offers EXIT before
-                   TRANSPORT. Reaching this branch at all means the exit was already considered
-                   and missed, so a second test for it would be a second opinion. */
-                const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
-                if (half == CONFIRM_CANCEL) {
-                    const bool hold = !audio_stream_paused();
-                    audio_stream_pause(hold);
-                    s_paused_since = hold ? now : 0;
-                    s_flinch = 1.0f;
-                    dirty = true;
-                    ESP_LOGI(TAG, "jpanel: run %s by touch", hold ? "held" : "resumed");
-                    /* No cue either way: a beep on top of the sentence it is holding, or on
-                       the first instant of the one it is resuming, is the panel talking over
-                       itself. The sound stopping IS the answer, exactly as the silence was. */
-                } else if (half == CONFIRM_SEND) {
-                    /* ANSWER THE PERSON TALKING, without waiting for them to finish. The
-                       recipient is the message being played, so it is read BEFORE the run
-                       ends. Deferred rather than started here: the fetch is still unwinding
-                       and `start_send_recording` would refuse a microphone it cannot have
-                       yet — silently, which is the one outcome a child cannot interpret. */
-                    s_pend_reply_to = jpanel_in_from();
-                    audio_stream_pause(false); /* never end a run holding the ring */
-                    s_paused_since = 0;
-                    jpanel_stop();
-                    s_pending = PEND_REPLY;
-                    s_pending_until = now + PENDING_MS;
-                    s_flinch = 1.0f;
-                    dirty = true;
-                } else {
-                    /* Off both targets: the flinch alone, and deliberately nothing else. This
-                       is where a tap used to end the run, so the one thing it must not do now
-                       is end it by accident. */
-                    s_flinch = 1.0f;
-                    dirty = true;
-                }
+               AND THE EXIT IS NOT TESTED HERE, although the corner works while a message
+               plays — it is *"the top right where there's no icon"* the owner asked for, and
+               the reason it now works is that `UI_TAP_ORDER_PLAYING` offers EXIT before
+               TRANSPORT. Reaching this branch at all means the exit was already considered
+               and missed, so a second test for it would be a second opinion. */
+            const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
+            if (half == CONFIRM_CANCEL) {
+                const bool hold = !audio_stream_paused();
+                audio_stream_pause(hold);
+                s_paused_since = hold ? now : 0;
+                s_flinch = 1.0f;
+                dirty = true;
+                ESP_LOGI(TAG, "jpanel: run %s by touch", hold ? "held" : "resumed");
+                /* No cue either way: a beep on top of the sentence it is holding, or on
+                   the first instant of the one it is resuming, is the panel talking over
+                   itself. The sound stopping IS the answer, exactly as the silence was. */
+            } else if (half == CONFIRM_SEND) {
+                /* ANSWER THE PERSON TALKING, without waiting for them to finish. The
+                   recipient is the message being played, so it is read BEFORE the run
+                   ends. Deferred rather than started here: the fetch is still unwinding
+                   and `start_send_recording` would refuse a microphone it cannot have
+                   yet — silently, which is the one outcome a child cannot interpret. */
+                s_pend_reply_to = jpanel_in_from();
+                audio_stream_pause(false); /* never end a run holding the ring */
+                s_paused_since = 0;
+                jpanel_stop();
+                s_pending = PEND_REPLY;
+                s_pending_until = now + PENDING_MS;
+                s_flinch = 1.0f;
+                dirty = true;
             } else {
-                /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would
-                   read as a frozen pet — but no beep, no colour change and no new action, so
-                   the reply finishes with the mouth still moving. */
+                /* Off both targets: the flinch alone, and deliberately nothing else. This
+                   is where a tap used to end the run, so the one thing it must not do now
+                   is end it by accident. */
                 s_flinch = 1.0f;
                 dirty = true;
             }
