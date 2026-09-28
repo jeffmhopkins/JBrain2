@@ -1036,15 +1036,11 @@ static uint32_t s_pending_until;
 static jpanel_to_t s_pend_reply_to;
 /* WHEN THE FINGER PUT IT ON HOLD, 0 when nothing is held. See `AUDIO_PAUSE_MAX_MS`. */
 static uint32_t s_paused_since;
-/* Where the pop-up and the repeat icon were drawn, in the space they were drawn in — which
-   is NOT the space `panel_to_frame` hands back; see `tap_to_overlay` immediately below. Both
-   are rectangles; -1 in the first slot means not on screen. */
+/* WHERE THE NOTICE WAS DRAWN, in the space it was drawn in — which is NOT the space
+   `panel_to_frame` hands back; see `tap_to_overlay` below. -1 in the first slot means not on
+   screen. Armed from `ui_popup_target`, read by `ui_tap_target`: this file no longer hit-tests it,
+   it only carries the rectangle between the drawing and the state machine. */
 static int s_popup_box[4] = {-1, -1, -1, -1};
-
-static bool in_box(const int box[4], int x, int y)
-{
-    return box[0] >= 0 && x >= box[0] && x < box[2] && y >= box[1] && y < box[3];
-}
 
 /* THE OVERLAYS ARE DRAWN BEFORE THE 180 FLIP AND THE TAP MARKER IS DRAWN AFTER IT, so the two
  * live in different coordinate spaces and a hit test has to say which one it means.
@@ -2101,6 +2097,82 @@ static void reassert_panel(void)
     apply_brightness();
 }
 
+/* THE ARBITRATION IS `ui.c`'S, AND ONLY THE ARBITRATION — for now.
+ *
+ * WHY THIS EXISTS AT ALL. Which control a press reaches is a question about overlapping
+ * rectangles and which overlay outranks which, and every touch fault the owner reported was an
+ * answer to it: a notice armed over a quadrant it was not drawn in; an exit that could not end a
+ * message while the message was audible; a pause button painted through a fetch that dispatched
+ * to the pet; a menu that stopped being modal when a message started under it. Each was found
+ * twice — once in a chain of `if`s here, once in a table over there — and fixed twice, which is
+ * the arrangement that produced them.
+ *
+ * So the chain below no longer decides. `ui_tap_target` does, from `UI_TAP_ORDER` and
+ * `UI_TAP_ORDER_PLAYING`, and 361 host checks walk those tables against every overlay combination
+ * that can be constructed. Each branch here now asks one question — "did it pick me" — and the
+ * order they appear in is nothing but readability.
+ *
+ * WHAT IS NOT DELEGATED: the bodies. Starting a microphone, holding a ring, posting a reply and
+ * ending a run are this file's, because they touch peripherals the state machine deliberately
+ * cannot see (`ui.h`). The full cutover — `ui_frame` and `ui_overlay` driving a pass, with an
+ * action executor instead of inline bodies — is the next step and is worth doing on its own,
+ * where a regression in it cannot be confused with a regression in a behaviour fix.
+ *
+ * ONLY THE FIELDS ARBITRATION READS ARE FILLED. That is a real hazard and it is why the
+ * assertions below exist: `target_live` and `target_hit` between them read exactly the members set
+ * here, and a new one added there would silently read zero. The mitigation is that they are pure
+ * and short, and that the host suite fails loudly when they change meaning. */
+static ui_target_t tap_target_now(int ox, int oy, int over_h_tap, uint32_t now)
+{
+    /* THE TWO ENUMS ARE MIRRORS AND NOTHING IN THE COMPILER KNOWS IT. `ui.h` declares its own so
+       the state machine can be built and tested without a radio, a codec or a panel; that is the
+       point of it, and it also means a value reordered on either side would go unnoticed until a
+       press did the wrong thing in a bedroom. Pinned per value rather than by count, because
+       swapping two entries keeps the count. */
+    _Static_assert((int)UI_TO_PANEL == (int)JPANEL_TO_PANEL, "UI_TO_PANEL mirrors jpanel");
+    _Static_assert((int)UI_TO_DAD == (int)JPANEL_TO_DAD, "UI_TO_DAD mirrors jpanel");
+    _Static_assert((int)UI_JP_IDLE == (int)JPANEL_IDLE, "UI_JP_IDLE mirrors jpanel");
+    _Static_assert((int)UI_JP_BUSY == (int)JPANEL_BUSY, "UI_JP_BUSY mirrors jpanel");
+    _Static_assert((int)UI_JP_SENT == (int)JPANEL_SENT, "UI_JP_SENT mirrors jpanel");
+    _Static_assert((int)UI_JP_PLAYING == (int)JPANEL_PLAYING, "UI_JP_PLAYING mirrors jpanel");
+    _Static_assert((int)UI_JP_NOBODY == (int)JPANEL_NOBODY, "UI_JP_NOBODY mirrors jpanel");
+    _Static_assert((int)UI_JP_FAILED == (int)JPANEL_FAILED, "UI_JP_FAILED mirrors jpanel");
+    _Static_assert((int)UI_NET_IDLE == (int)TALK_NET_IDLE, "UI_NET_IDLE mirrors talk");
+    _Static_assert((int)UI_NET_BUSY == (int)TALK_NET_BUSY, "UI_NET_BUSY mirrors talk");
+    _Static_assert((int)UI_NET_SPOKE == (int)TALK_NET_SPOKE, "UI_NET_SPOKE mirrors talk");
+    _Static_assert((int)UI_NET_FAILED == (int)TALK_NET_FAILED, "UI_NET_FAILED mirrors talk");
+    _Static_assert((int)UI_TALK_IDLE == (int)TALK_IDLE, "UI_TALK_IDLE mirrors this file's");
+    _Static_assert((int)UI_TALK_LISTENING == (int)TALK_LISTENING, "UI_TALK_LISTENING mirrors");
+    _Static_assert((int)UI_TALK_RECORDING == (int)TALK_RECORDING, "UI_TALK_RECORDING mirrors");
+    _Static_assert((int)UI_TALK_THINKING == (int)TALK_THINKING, "UI_TALK_THINKING mirrors");
+    _Static_assert((int)UI_TALK_FAILED == (int)TALK_FAILED, "UI_TALK_FAILED mirrors");
+    _Static_assert((int)UI_PEND_NONE == (int)PEND_NONE, "UI_PEND_NONE mirrors this file's");
+    _Static_assert((int)UI_PEND_PLAY == (int)PEND_PLAY, "UI_PEND_PLAY mirrors");
+    _Static_assert((int)UI_PEND_REPLAY == (int)PEND_REPLAY, "UI_PEND_REPLAY mirrors");
+    _Static_assert((int)UI_PEND_REPLY == (int)PEND_REPLY, "UI_PEND_REPLY mirrors");
+
+    ui_state_t st = {0};
+    st.talk = (ui_talk_t)s_talk;
+    st.listen_voice = s_listen_voice;
+    st.sendto_until = s_sendto_until;
+    st.repeat_until = s_repeat_until;
+    st.pending = (ui_pending_t)s_pending;
+    for (int i = 0; i < 4; i++) st.popup_box[i] = s_popup_box[i];
+
+    ui_in_t in = {0};
+    in.now = now;
+    in.ox = ox;
+    in.oy = oy;
+    in.over_h = over_h_tap;
+    in.jrunning = jpanel_running();
+    in.jfetching = jpanel_fetching();
+    in.jstate = (ui_jstate_t)jpanel_state();
+    in.stream_active = audio_stream_active();
+    in.speaking = audio_playing();
+    in.net = (ui_net_t)talk_state();
+    return ui_tap_target(&st, &in);
+}
+
 static void face_task(void *arg)
 {
     (void)arg;
@@ -2317,32 +2389,38 @@ static void face_task(void *arg)
            lives below, so a message starting under an open menu would otherwise hand the menu's
            presses to the transport covering nothing. `ui.h`'s two tables begin the same way for
            the same reason, and a host test walks them. */
-        if (tapped && (s_sendto_until != 0 || !run_controls_up())) {
-            /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
-             *
-             * It used to be resolved down in the poke block, which was fine while the poke
-             * was the only branch that cared. It is not any more: the pop-up and the repeat
-             * icon are hit-tested, and a branch that returns before the poke block would have
-             * left `s_fig_x` holding the PREVIOUS tap — so the recoil ring would appear where
-             * the last finger was, which is the same class of bug `s_down_x` exists to
-             * document. Resolved above the dispatcher fork now, so the pause-and-reply branch
-             * that runs while a message plays gets the same answer rather than a stale one. */
-            /* OVERLAY COORDINATES, RESOLVED ONCE BESIDE THE FRAME ONES, because every hit test
-               below wants these and one of them forgot. Anything drawn BEFORE `flip_frame` —
-               the pop-up, the repeat icon, the label, the caption, the tick and the cross — is
-               written in frame order and then reversed, so its rectangle has to be compared
-               against a touch reversed the same way. The tap MARKER is the exception and the
-               reason this is easy to get wrong: it is drawn AFTER the flip, so it sits under
-               the finger using `s_fig` directly, which makes a panel look like it is tracking
-               touch correctly while every pre-flip target on it is 180 degrees away.
-               MEASURED 2026-09-25, upside down: a press on the tick at frame (276,368) arrives
-               here as (91,79) and missed by 289 px. */
-            int ox = -1, oy = -1;
-            tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
-            /* The overlay BAND, resolved here for the same reason the coordinates are: the
-               centred controls are placed against it and a hit test that guessed a different
-               band would miss by the difference. */
-            const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
+        /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
+         *
+         * It used to be resolved down in the poke block, which was fine while the poke
+         * was the only branch that cared. It is not any more: the pop-up and the repeat
+         * icon are hit-tested, and a branch that returns before the poke block would have
+         * left `s_fig_x` holding the PREVIOUS tap — so the recoil ring would appear where
+         * the last finger was, which is the same class of bug `s_down_x` exists to
+         * document. Resolved above the dispatcher fork now, so the pause-and-reply branch
+         * that runs while a message plays gets the same answer rather than a stale one. */
+        /* OVERLAY COORDINATES, RESOLVED ONCE BESIDE THE FRAME ONES, because every hit test
+           below wants these and one of them forgot. Anything drawn BEFORE `flip_frame` —
+           the pop-up, the repeat icon, the label, the caption, the tick and the cross — is
+           written in frame order and then reversed, so its rectangle has to be compared
+           against a touch reversed the same way. The tap MARKER is the exception and the
+           reason this is easy to get wrong: it is drawn AFTER the flip, so it sits under
+           the finger using `s_fig` directly, which makes a panel look like it is tracking
+           touch correctly while every pre-flip target on it is 180 degrees away.
+           MEASURED 2026-09-25, upside down: a press on the tick at frame (276,368) arrives
+           here as (91,79) and missed by 289 px. */
+        int ox = -1, oy = -1;
+        tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
+        /* The overlay BAND, resolved here for the same reason the coordinates are: the
+           centred controls are placed against it and a hit test that guessed a different
+           band would miss by the difference. */
+        const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
+        /* AND WHICH CONTROL IT REACHES IS `ui.c`'S ANSWER — see `tap_target_now`. The chain below
+           does not arbitrate any more; each branch asks whether it was chosen, and the order they
+           appear in is readability alone. The fork is the same question: the transport exists in
+           the playing table only, so a press that resolved to it is the one this file serves in
+           the second branch. */
+        const ui_target_t hit = tapped ? tap_target_now(ox, oy, over_h_tap, now) : UI_TARGET_PET;
+        if (tapped && hit != UI_TARGET_TRANSPORT) {
             /* THE POP-UP AND THE REPEAT ICON OUTRANK EVERYTHING, tested before the cancels
              * and the poke for exactly the reason the label is: a tap that both played a
              * message and made the pet fart reads as two things happening, and the child
@@ -2357,7 +2435,7 @@ static void face_task(void *arg)
              * EVERY PRESS IS CONSUMED while it is open, including the empty corner and the
              * dead bands, which is what makes it modal: the pet cannot be poked through a
              * menu, so a miss costs a press rather than a fart. */
-            if (s_sendto_until != 0) {
+            if (hit == UI_TARGET_GRID) {
                 const sendto_hit_t who = sendto_hit(ox, oy, over_h_tap);
                 if (who == SENDTO_SISTER || who == SENDTO_DAD) {
                     s_sendto_until = 0;
@@ -2415,29 +2493,12 @@ static void face_task(void *arg)
                so a finger aimed at the exit can land ON it. Left there, the gesture would work
                or make the pet blink depending on where exactly a four-year-old put her finger,
                which is indistinguishable from it not working. */
-            /* AND NOT WHILE A NOTICE IS OFFERING A MESSAGE, which is the whole of the owner's
-               *"playback doesn't seem to work most of the time"*.
-             *
-               THE ARITHMETIC: this region is x[184,368) y[0,224). The big pop-up is CENTRED, so
-               its rectangle is x[36,332) y[117,331) — and the sender's face a child is told to
-               press sits at cx = 36 + 296/2 = 184, which is exactly FACE_W/2. Its entire right
-               half is inside this exit region, and this branch is tested BEFORE the pop-up.
-               Since `s_repeat_until` stopped expiring, this branch has been live permanently
-               from the first message ever played. So a tap a hair right of centre on the face
-               hit the exit, which by design plays no cue and leaves no mark — and, because the
-               exit clears `s_repeat_until`, the SECOND tap in the same place worked.
-             *
-               First press dead, second press fine, once per message, and only on the big notice
-               (the badge occupies the other corner, which is why waiting fifteen seconds
-               appeared to fix it). That reads exactly as "most of the time".
-             *
-               A message being OFFERED outranks a message being ended: there is nothing to exit
-               from when nothing is playing, and the notice is the thing the child is aiming at. */
-            const bool notice_offered = s_popup_box[0] >= 0 && !audio_stream_active() &&
-                                        !jpanel_running();
-            if (!notice_offered &&
-                (jpanel_running() || audio_stream_active() || s_repeat_until != 0) && oy >= 0 &&
-                oy < over_h_tap / 2 && ox >= FACE_W / 2) {
+            /* WHEN IT IS LIVE, AND THAT IT DOES NOT EAT THE NOTICE, is `ui.c`'s — `UI_TARGET_EXIT`
+               in `ui.h` carries the arithmetic and the reasoning: the exit region and the centred
+               notice OVERLAP, exactly at the sender's face a child is told to press, which is the
+               whole of *"playback doesn't seem to work most of the time"*. A message being offered
+               outranks a message being ended, and a host test walks the pair. */
+            if (hit == UI_TARGET_EXIT) {
                 jpanel_stop();
                 audio_stream_pause(false); /* never leave the ring held after a stop */
                 s_paused_since = 0;
@@ -2451,7 +2512,7 @@ static void face_task(void *arg)
                 goto tap_done;
             }
             {
-                if (in_box(s_popup_box, ox, oy)) {
+                if (hit == UI_TARGET_POPUP) {
                     s_flinch = 1.0f;
                     /* Cleared the moment it is pressed, not when the audio arrives: a box
                        that stays up through a fetch invites a second press, and
@@ -2470,7 +2531,7 @@ static void face_task(void *arg)
                    than a third geometry: the places a child has learned are the places, and a
                    second set of rules for the same two corners is how a press once landed
                    289 px from the icon it was aimed at. */
-                if (s_repeat_until != 0) {
+                if (hit == UI_TARGET_PAIR) {
                     const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
                     if (half == CONFIRM_CANCEL) {
                         s_flinch = 1.0f;
@@ -2521,7 +2582,7 @@ static void face_task(void *arg)
              *
              * ONLY THE HANDS-FREE TURNS. A held listen ends on the release of the finger that
              * started it, so it never reaches here and keeps its gesture intact. */
-            if ((s_talk == TALK_LISTENING && s_listen_voice) || s_talk == TALK_RECORDING) {
+            if (hit == UI_TARGET_CONFIRM) {
                 const confirm_hit_t pressed = confirm_hit(ox, oy, over_h_tap);
                 const bool recording = (s_talk == TALK_RECORDING);
                 const char *who = recording ? "jpanel" : "talk";
@@ -2677,41 +2738,21 @@ static void face_task(void *arg)
                false through an entire replay — which left a replay with no working controls at
                all. The ring belongs to messages alone (`audio.h`), so this covers both and
                still leaves a poke at the pet mid-sentence as nothing but a flinch. */
-            if (run_controls_up()) {
+            if (hit == UI_TARGET_TRANSPORT) {
                 /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
                    of controls — see `confirm.h`. A tap anywhere used to end the run, and the
                    owner replaced that with a hold and an answer: stopping is what pausing does
                    to the sound, and the queue waits rather than being thrown away.
 
-                   Resolved here rather than shared with the pet-tap branch above: that is a
-                   different scope, and these targets can only be tested in overlay
-                   coordinates — a hit test against frame ones on an upside-down panel misses
-                   by 289 px (`tap_to_overlay`). */
-                int ox = -1, oy = -1;
-                tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
-                const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
-                /* THE WAY OUT FIRST, because everything below it consumes the press. The
-                   owner asked for this corner and reported it dead: *"when it does play and I
-                   want to exit it, I should be able to click on the top right where there's no
-                   icon and have it exit out... that doesn't happen either."* The branch existed
-                   — in the OTHER dispatcher, the one a press cannot reach while a message is
-                   audible, which is the only state the corner is for. So it lives in both, and
-                   in this one it comes before `confirm_hit`: the `else` below catches every
-                   press that misses both discs, so an exit tested after it is an exit that can
-                   never fire. The table in `ui.h` says the same thing and a host test walks it.
-                 *
-                   No cue, exactly as in the other copy: the silence IS the answer. */
-                if (oy >= 0 && oy < over_h_tap / 2 && ox >= FACE_W / 2) {
-                    jpanel_stop();
-                    audio_stream_pause(false); /* never leave the ring held after a stop */
-                    s_paused_since = 0;
-                    s_pending = PEND_NONE;
-                    s_repeat_until = 0;
-                    s_flinch = 1.0f;
-                    dirty = true;
-                    ESP_LOGI(TAG, "jpanel: run ended by the top-right corner");
-                    goto tap_done;
-                }
+                   The coordinates are the pass's, resolved once above the fork: these targets
+                   can only be tested in overlay ones, and a hit test against frame ones on an
+                   upside-down panel misses by 289 px (`tap_to_overlay`).
+
+                   AND THE EXIT IS NOT TESTED HERE, although the corner works while a message
+                   plays — it is *"the top right where there's no icon"* the owner asked for, and
+                   the reason it now works is that `UI_TAP_ORDER_PLAYING` offers EXIT before
+                   TRANSPORT. Reaching this branch at all means the exit was already considered
+                   and missed, so a second test for it would be a second opinion. */
                 const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
                 if (half == CONFIRM_CANCEL) {
                     const bool hold = !audio_stream_paused();
