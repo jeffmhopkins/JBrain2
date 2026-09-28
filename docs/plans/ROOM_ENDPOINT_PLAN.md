@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-27 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-28 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -5630,6 +5630,153 @@ a panel somebody has to find and hold a button on, because a unit in deep sleep 
 else. The screen is darkened *before* the sleep rather than as a side effect: an AMOLED holds its
 last frame with no clock running, so a panel that slept mid-face would sit there showing a pet
 that is not there any more.
+
+##### Two faults the owner photographed (0.3.27)
+
+**A pause button over a message that did not exist.** After sending to Dad and pressing the
+tick, the panel showed the playback screen — sender's face, pause, reply — with nothing playing
+and nothing answering a press. 0.3.24 made those controls appear from the moment a press was
+registered, which was right, and asked the wrong question to decide it:
+`jpanel_state() == JPANEL_BUSY` covers **sending** as well as fetching, so the upload raised
+BUSY and the renderer read it as "a message is starting". The tap handler was correct
+throughout — it requires a real message — so the controls drew and then refused to work, which
+is the worst of both.
+
+`jpanel_fetching()` answers the question actually being asked, and is cleared at **every** exit
+of both `do_fetch` and `do_replay`, because an early return that skipped it would put the fault
+straight back.
+
+**And dark was never dark.** *"It still just shows a frozen robot when you press it."* The
+standby press sets `SCREEN_DARK`, which means *stop blitting* — and `screen_level()` returning 0
+does nothing, because `0x51` is inert on these panels since the brightness revert. An AMOLED
+holds its last frame, so the pet simply froze there.
+
+A black **frame** costs one blit and needs no working brightness register. It is painted
+*before* the draw gate, since that gate is precisely what stops a dark screen being redrawn —
+and the same blank now covers the fifteen-minute idle stage, which has therefore never actually
+darkened anything either. That is the long-standing *"even when it times out and the robot
+sleeps, the display never changes brightness"* report, fixed from the other side rather than by
+re-landing the register write that hung both renderers.
+
+##### Five faults found by reading rather than by a child (0.3.28)
+
+The owner, after a run of symptom fixes: *"I think you need to do separate researchers to go
+through and walk through logically the whole frame... I think particularly we are getting bugs
+here because you haven't done thorough local testing."* He was right on both counts. Three
+parallel reads of the code found what six releases of patching had not, and **every fault below
+was introduced tonight by a fix for a different one.**
+
+**1. The five-second hold rebooted the panel, in a loop.** `esp_sleep_enable_ext0_wakeup` is a
+LEVEL trigger, and the hold deliberately fires *while the finger is still down* — so the wake
+condition was already satisfied at the moment of sleeping and the chip woke instantly into a
+full boot. The 150 ms delay hoping for a release was all that stood between the two. And since
+the boot zeroes `s_boot_down_at`, a finger still on the button started a fresh five-second
+count: **hold the button, get a reboot loop.** It waits for release now, capped, plus a debounce
+— a bouncing contact is itself a low edge and would wake what it just put to sleep.
+
+**2. The exit corner swallowed presses aimed at the notification.** Arithmetic, not opinion: the
+exit region is `x[184,368) y[0,224)`; the big pop-up is centred at `x[36,332) y[117,331)`; the
+sender's face sits at `cx = 184`, **exactly the boundary**, so its whole right half was inside
+the exit — which is tested *first*. Since `s_repeat_until` stopped expiring in 0.3.25 that
+branch was live permanently from the first message ever played. The exit plays no cue by
+design, so the press vanished; and because it clears the flag, **the second press worked**.
+First tap dead, second fine, once per message — *"playback doesn't work most of the time"*. The
+badge occupies the other corner, which is why waiting fifteen seconds appeared to fix it.
+
+**3. The controls over a playing message tested a stale finger.** There are **two** tap
+dispatchers, chosen by whether sound is coming out, and only the quiet one resolved the touch
+coordinates. The playing one tested `s_fig_x`/`s_fig_y` from *the last time the panel was
+silent* — and on the first tap of a session that is `-1`, matching nothing. *"Nothing responds
+to it."* Resolved above the fork now, so a press is a press wherever the panel is in its own
+sentence.
+
+**4. The screen could never sleep again.** `s_repeat_until != 0` is part of the idle test, and it
+stopped expiring — so after one message the panel counted itself permanently in use, refreshed
+`active_ms` every frame, and never dimmed or darkened. A fully lit pet in a child's bedroom
+until morning, which is the exact outcome `screen.h` exists to prevent, and a better explanation
+of the long-running *"it never changes brightness"* than the missing black frame 0.3.27 fixed.
+
+**5. And a 0.3.27 regression caught before it shipped.** `s_fetching` was not cleared on three
+early returns — `open_client` returning NULL in both `do_fetch` and `do_replay` (the ordinary
+no-Wi-Fi case) and the empty-id return. A leak pins the playback controls up forever over a
+silent panel: precisely the fault the flag was added to fix, reintroduced by the returns the
+comment at `done:` claimed to cover.
+
+**What the map found that was still open then:** a pause button drawn during the fetch window
+whose handler cannot act on it, and calibration `continue`ing above the button poll and every
+clock. Both were recorded rather than fixed there, because the state machine was being extracted
+into a testable module and they belonged to that work. Both are fixed below.
+
+##### The state machine, and what it found (0.3.29)
+
+The owner: *"You can probably break that state machine into its own class and do this
+properly."* `ui.c`/`ui.h` is that class — the whole of the panel's UI logic as pure functions
+over an explicit input struct, with no peripheral, no clock of its own and no frame buffer. It
+builds on a laptop. `firmware/host/ui_tests.c` walks it: **361 checks over 35 scenarios**, every
+overlay combination that can be constructed, each tap target against each other one, and the
+whole arrival-to-reply round trip with a monkey-patched touch surface and a fake speaker.
+
+Extraction was the diagnostic. Transcribing behaviour into something that can be *asked*
+questions produced five faults in a morning, all of them in the shipping path and all of them
+things the owner had already reported.
+
+**1. Presses vanished during the panel's own beep.** The tap dispatcher forked on `speaking`,
+which is `audio_playing()` — true for cues. The arrival cue is 440 ms and fires on the frame the
+notice appears, so a press in the half-second a child actually reaches for it went down the
+playing table, matched nothing and was dropped. *"When a message comes in, when I click on the
+blue notification... it doesn't really play every single time."* A cue is the panel clearing its
+throat; `audio_stream_active()` is a message sounding. Only the poke branch still defers to
+`speaking`, which is the one thing that guard was genuinely protecting.
+
+**2. The exit could not end a message while the message was audible** — the one state it exists
+for. *"When it does play and I want to exit it, I should be able to click on the top right where
+there's no icon and have it exit out... that doesn't happen either."* The corner was in the idle
+table only, and an audible message routes the press to the playing table. It is in both now, and
+*first* in the playing one: `target_hit(TRANSPORT)` is unconditional so that a sounding run
+consumes every press rather than letting the pet twitch mid-sentence, which means an exit tested
+after it can never fire.
+
+**3. The notice's picture and its target were different rectangles.** The big notice is 296x214
+centred on a 368x448 frame — `x[36,332) y[117,331)` — and the armed rectangle was the top-left
+quadrant, `x[0,184) y[0,224)`. They barely overlap. More than half of what a child could see was
+not pressable, and a press on the bubble's right half reached whatever was behind it. Both
+drawing functions used to arm the rectangle, each with its own shape, which made the target
+whichever of them ran last and absent on any frame that painted neither. `ui_popup_target` is
+now the single answer to "where is the notice", used by the drawing and by the arming: the
+bubble's own bounds while it is big, the whole top-left quadrant once it is a badge, because
+shrinking the picture must not shrink what a four-year-old has to hit.
+
+**4. The transport was drawn in states where pressing it poked the pet.** The drawing asked
+`running || pending || fetching`; the dispatcher asked `running || sounding`. Through the whole
+fetch window the pause button was on the glass and live nowhere. And the reverse on a replay:
+`do_replay` sets no run, so an audibly playing message drew the *ended*-state pair over itself.
+`run_controls_up()` is one predicate over four facts, in both files.
+
+**5. The render loop's sense of time ran at half speed.** Every accumulator added `poll_ms` — the
+`vTaskDelay`, not the period — and a pass that composes a face spends longer awake than asleep.
+`GESTURE_HOLD_MS` 5000 needed ten or twelve real seconds; `GESTURE_TAP_MAX_MS` let a slow press
+still count as a tap; `GESTURE_GAP_MS` held a half-finished count open for twice as long as
+designed, on the gesture that **reboots the panel**. A clock wrong by a factor is worse than a
+slow one, because every constant tuned against it is wrong too. `dt_ms` is measured from
+`esp_timer` now, which also makes the render heartbeat a real ten seconds and the QSPI re-assert
+a real thirty.
+
+**And the two the map had already found.** Calibration is escapable: the button is polled inside
+the branch, so one press abandons the run and a hold still powers the panel down — a way out that
+depends on the touchscreen is no use in the one mode where the touchscreen is suspect — and it
+gives up on its own after thirty seconds without a tap. The previous calibration is untouched
+either way.
+
+**The arbitration is now the state machine's.** `display.c`'s chain of `if`s does not decide
+which control a press reaches; `tap_target_now` asks `ui_tap_target`, and each branch asks only
+whether it was chosen. The bodies stay — starting a microphone, holding a ring, posting a reply
+touch peripherals `ui.c` deliberately cannot see. `ui.h` declares its own copies of four enums so
+it can build without a radio or a codec, and twenty-one `_Static_assert`s pin them value by value
+against the real ones, because swapping two entries keeps the count.
+
+**Still open, deliberately:** the full cutover, where `ui_frame` and `ui_overlay` drive a pass
+and an action executor replaces the inline bodies. It is worth doing on its own, where a
+regression in it cannot be confused with a regression in a behaviour fix.
 
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it

@@ -1,6 +1,6 @@
 # Recovering a room-endpoint panel
 
-> **Status:** Living · **Last verified:** 2026-09-19
+> **Status:** Living · **Last verified:** 2026-09-28
 
 What to do when a panel stops working, in the order to try it. Plan:
 `../plans/ROOM_ENDPOINT_PLAN.md`; firmware: `../../firmware/README.md`.
@@ -21,6 +21,25 @@ caution the first attempt deserves: the answer is "some, but not paralysis."
 
 Try these in order. The first two need nobody to touch the panel, which is the point —
 both units end up in bedrooms.
+
+### 0. It is not broken, it is showing a crosshair
+
+**A thin cross on black, a counter, and no pet.** That is the touch calibration routine, and
+a child can reach it: six taps and a hold. It owns the whole frame on purpose — a robot
+reacting to the taps being measured would move the thing you are aiming at — so no pet, no
+notice and no messages is what it is supposed to look like.
+
+Two ways out, neither of them a terminal:
+
+- **Press the boot button once.** The run is abandoned and the previous calibration is
+  untouched. Holding it still powers the panel down, which is deliberate: a way out that
+  depends on the touchscreen is no use in the one mode where the touchscreen is suspect.
+- **Leave it.** It gives up on its own after thirty seconds with no tap.
+
+Before 0.3.29 neither worked — the routine skipped the button poll and every clock, so the
+only exit was to finish it: sixteen targets, forty-eight taps at best. If a panel is stuck
+like this and pressing the button does nothing, it is running something older, and the fix is
+to get it onto current firmware (**Ops → Update** in the PWA).
 
 ### 1. OTA rollback — automatic
 
