@@ -2257,7 +2257,22 @@ static void face_task(void *arg)
             calib_apply(&s_cal, raw_x, raw_y, &s_tap_x, &s_tap_y);
             panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
         }
-        if (tapped && !speaking) {
+        /* WHICH DISPATCHER A PRESS REACHES, and the test used to be `speaking` — which is
+           `audio_playing()`, true for the panel's own cues.
+         *
+           THREE FAULTS CAME OUT OF THAT ONE WORD. The arrival beep is 440 ms and fires on the
+           frame the notice appears, so every press in the half-second a child actually reaches
+           for it went to the short table, matched nothing, and vanished. The top-right exit
+           lives in the LONG table, so it could not end a message while the message was audible
+           — the only state it was ever asked for. And a poke at the pet and a press on a
+           transport control were being separated by the same flag that separates a cue from
+           silence, which is not the distinction either of them cares about.
+         *
+           A MESSAGE playing is the thing that changes what the controls mean. A cue is the
+           panel clearing its throat. `audio_stream_active()` is the message ring alone
+           (`audio.h`), so it answers the question actually being asked. */
+        const bool msg_sounding = audio_stream_active();
+        if (tapped && !msg_sounding) {
             /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
              *
              * It used to be resolved down in the poke block, which was fine while the poke
@@ -2550,6 +2565,16 @@ static void face_task(void *arg)
                          confirm_cy(over_h_tap));
                 goto tap_done;
             }
+            /* AND THE POKE ALONE STILL DEFERS TO THE PET'S OWN VOICE. The dispatcher no
+               longer forks on `speaking`, but this branch is the one that always did care:
+               cutting across the pet mid-sentence with a colour change and a new sound is the
+               one thing the old guard was genuinely protecting. The flinch stays, because
+               ignoring a finger entirely reads as a frozen pet. */
+            if (speaking) {
+                s_flinch = 1.0f;
+                dirty = true;
+                goto tap_done;
+            }
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
             /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
@@ -2607,7 +2632,7 @@ static void face_task(void *arg)
                false through an entire replay — which left a replay with no working controls at
                all. The ring belongs to messages alone (`audio.h`), so this covers both and
                still leaves a poke at the pet mid-sentence as nothing but a flinch. */
-            if (jpanel_running() || audio_stream_active()) {
+            if (jpanel_running() || msg_sounding) {
                 /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
                    of controls — see `confirm.h`. A tap anywhere used to end the run, and the
                    owner replaced that with a hold and an answer: stopping is what pausing does
