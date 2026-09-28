@@ -5631,6 +5631,33 @@ else. The screen is darkened *before* the sleep rather than as a side effect: an
 last frame with no clock running, so a panel that slept mid-face would sit there showing a pet
 that is not there any more.
 
+##### Two faults the owner photographed (0.3.27)
+
+**A pause button over a message that did not exist.** After sending to Dad and pressing the
+tick, the panel showed the playback screen — sender's face, pause, reply — with nothing playing
+and nothing answering a press. 0.3.24 made those controls appear from the moment a press was
+registered, which was right, and asked the wrong question to decide it:
+`jpanel_state() == JPANEL_BUSY` covers **sending** as well as fetching, so the upload raised
+BUSY and the renderer read it as "a message is starting". The tap handler was correct
+throughout — it requires a real message — so the controls drew and then refused to work, which
+is the worst of both.
+
+`jpanel_fetching()` answers the question actually being asked, and is cleared at **every** exit
+of both `do_fetch` and `do_replay`, because an early return that skipped it would put the fault
+straight back.
+
+**And dark was never dark.** *"It still just shows a frozen robot when you press it."* The
+standby press sets `SCREEN_DARK`, which means *stop blitting* — and `screen_level()` returning 0
+does nothing, because `0x51` is inert on these panels since the brightness revert. An AMOLED
+holds its last frame, so the pet simply froze there.
+
+A black **frame** costs one blit and needs no working brightness register. It is painted
+*before* the draw gate, since that gate is precisely what stops a dark screen being redrawn —
+and the same blank now covers the fifteen-minute idle stage, which has therefore never actually
+darkened anything either. That is the long-standing *"even when it times out and the robot
+sleeps, the display never changes brightness"* report, fixed from the other side rather than by
+re-landing the register write that hung both renderers.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The
