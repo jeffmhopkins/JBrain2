@@ -240,6 +240,27 @@ typedef enum {
  * any measure. The badge gives the whole top-left quadrant instead, because shrinking the
  * picture must not shrink what a four-year-old has to hit: *"capture everything in that top left
  * quadrant as far as clicks to play it."* In both cases the target IS what is drawn. */
+/* HOW LONG THE EXIT STAYS UNARMED AFTER THE CONTROLS APPEAR.
+ *
+ * A DESTRUCTIVE CONTROL MUST NOT ARM ITSELF UNDER A FINGER THAT IS ALREADY THERE. The notice and
+ * the exit corner overlap over a quarter of the notice — x[184,332) y[117,224) against the
+ * notice's x[36,332) y[117,331) — and that is the part an adult presses. The notice outranks the
+ * exit while it is offered, so the first press plays; one frame later the controls are up and
+ * that same point means cancel. Any second edge there ends the message the first one started,
+ * and `jpanel_stop()` acknowledges, so the message is spent: *"it just shows the screen with the
+ * pause icon for half a second and then goes back to the other indicator."*
+ *
+ * A deliberate double tap does it. So does one press — `touch.c` reports every down edge with no
+ * inter-tap debounce, and a fingertip that lightens for a single 15 ms sample is two edges. The
+ * button has had 250 ms of debounce since 0.3.26 for precisely this; the glass has none.
+ *
+ * 700 ms, which is HOLD_TALK_MS and not a coincidence: it is already this panel's measure of
+ * "long enough to be meant rather than spilled". Imperceptible to someone reaching for the
+ * corner deliberately, and longer than any bounce or double tap. The pause and reply halves are
+ * NOT covered, because pausing something by accident is undone by pressing it again — only the
+ * control that spends the message needs protecting. */
+#define EXIT_GRACE_MS 700
+
 #define UI_POPUP_BIG_W 296
 #define UI_POPUP_BIG_H 214
 
@@ -332,6 +353,12 @@ typedef struct {
     uint32_t repeat_until;
     /* When the CURRENT run of waiting messages began (`POPUP_BIG_MS`). */
     uint32_t popup_since;
+    /* WHEN THE PLAYBACK CONTROLS CAME UP, 0 when they are not. Only the exit reads it, and only
+       to refuse for `EXIT_GRACE_MS` — a destructive control must not arm itself under a finger
+       that is already on the glass. Stamped on the rise and cleared on the fall, so a pause and
+       resume does not re-arm the grace: it is about the finger that started this, not about the
+       sound. */
+    uint32_t controls_since;
     /* Non-zero while the "who?" grid is up: the moment it closes itself. */
     uint32_t sendto_until;
     ui_pending_t pending;

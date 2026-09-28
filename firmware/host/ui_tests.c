@@ -636,6 +636,63 @@ static void test_the_controls_are_pressable_for_as_long_as_they_are_drawn(void)
     CHECK(ui_run_controls_up(&w.st, &w.in), "and the speaker is asked instead");
 }
 
+static void test_a_second_press_cannot_cancel_what_the_first_one_started(void)
+{
+    /* THE OWNER, on 0.3.29: *"when I try and play an incoming message when I hit it, it just
+       shows the screen with the pause icon for half a second and then goes back to the other
+       indicator."* That is a stop, not a failure to start — `jpanel_stop()` acknowledges, which
+       is why the box saw GET /next 200 followed by POST /played 204 half a second apart.
+     *
+       THE ARITHMETIC. The notice is x[36,332) y[117,331); the exit corner is x[184,368) y[0,224).
+       They overlap over x[184,332) y[117,224) — 148x107 px, a QUARTER of the notice, and the part
+       a right-handed adult presses. While the notice is offered it outranks the exit, so the
+       first press plays. One frame later the controls are up, the table is the playing one, and
+       that same point is the exit.
+     *
+       So any second edge there cancels the message the first one started. A deliberate double
+       tap does it; so does a finger that lightens for one 15 ms sample, because `touch.c` reports
+       edges with no inter-tap debounce — the button has 250 ms of it for exactly this reason and
+       the glass has none. I introduced this in 0.3.29 by putting the exit in the playing table,
+       which was right; what was missing is that a destructive control must not arm itself under
+       a finger that is already on the glass. */
+    world_reset();
+    w.in.waiting = 1;
+    step();
+    run_ms(400);
+
+    /* Press the notice inside the overlap — visibly the notice, geometrically the exit. */
+    tap_at(250, 150);
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_POPUP, "the notice wins the first press");
+    step();
+    CHECK(w.st.pending == UI_PEND_PLAY, "and the play is taken");
+    CHECK(ui_run_controls_up(&w.st, &w.in), "so the controls come up");
+
+    /* The same point, one frame later. */
+    w.in.tapped = false;
+    tap_at(250, 150);
+    CHECK(ui_tap_target(&w.st, &w.in) != UI_TARGET_EXIT,
+          "a press in the same place cannot cancel the message it just started");
+
+    /* And it is a grace period, not a dead corner: with the message actually running, the same
+       press works once the moment the finger was in has passed. */
+    world_reset();
+    play_a_message(false);
+    run_ms(EXIT_GRACE_MS + 100);
+    w.in.tapped = false;
+    tap_at(276, 112);
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_EXIT,
+          "but it is a grace period, not a dead corner");
+
+    /* And inside it, the same press is refused — the grace is measured from the controls, not
+       from the notice. */
+    world_reset();
+    play_a_message(false);
+    w.in.tapped = false;
+    tap_at(276, 112);
+    CHECK(ui_tap_target(&w.st, &w.in) != UI_TARGET_EXIT,
+          "and a press in the first moments of a run is not the way out");
+}
+
 static void test_the_draw_layers_are_a_list(void)
 {
     const ui_layer_t want[UI_LAYER_COUNT] = {
@@ -752,6 +809,11 @@ static void test_the_top_right_corner_ends_a_message_while_it_plays(void)
     play_a_message(false);
     CHECK(w.ov.run && w.ov.exit_corner, "the exit is drawn while the message plays");
     CHECK(drawn_near(276, 112, 40), "and a finger has something to aim at");
+    /* Past the grace first: the corner is drawn from the start but refuses for `EXIT_GRACE_MS`,
+       because the press that STARTS a message lands where cancelling it will be — see
+       `test_a_second_press_cannot_cancel_what_the_first_one_started`. This test is about the
+       deliberate press that follows. */
+    run_ms(EXIT_GRACE_MS + 100);
 
     const int stops = w.stop;
     tap_at(276, 112); /* squarely on the drawn exit disc */
@@ -1366,6 +1428,7 @@ int main(void)
     test_the_notice_is_painted_through_its_own_arrival_cue();
     test_a_hold_after_a_poke_still_opens_the_menu();
     test_the_controls_are_pressable_for_as_long_as_they_are_drawn();
+    test_a_second_press_cannot_cancel_what_the_first_one_started();
     test_the_draw_layers_are_a_list();
 
     test_a_notification_arrives_and_a_tap_plays_it();

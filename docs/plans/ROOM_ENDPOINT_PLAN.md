@@ -5778,6 +5778,45 @@ against the real ones, because swapping two entries keeps the count.
 and an action executor replaces the inline bodies. It is worth doing on its own, where a
 regression in it cannot be confused with a regression in a behaviour fix.
 
+##### The exit that cancelled what the press before it started (0.3.30)
+
+The owner, on 0.3.29: *"when I try and play an incoming message, when I hit it, it just shows
+the screen with the pause icon for half a second and then goes back to the other indicator."*
+
+**That is a stop, not a failure to start**, and the box's own access log says so. `jpanel_stop()`
+acknowledges — a child who puts her finger on the screen heard it and chose to end it, so the
+message must not be redelivered forever — which means a stop looks like `GET /next` 200 followed
+by `POST /played` 204. The log held six of those pairs, and **five had zero `/waiting` polls
+between them**. The panel polls continuously; a message that played for even a few seconds would
+have several. Every attempt was being ended before one poll interval elapsed.
+
+**The cause is 0.3.29's own fix, and the arithmetic is the whole argument.** Putting the exit in
+`UI_TAP_ORDER_PLAYING` was right — the corner could not previously end an audible message, which
+is the only state it exists for. But the notice is `x[36,332) y[117,331)` and the exit corner is
+`x[184,368) y[0,224)`: they **overlap over 148x107 px, a quarter of the notice**, and it is the
+quarter a right-handed adult presses. While the notice is offered it outranks the exit, so the
+first press plays. One frame later the controls are up, the table is the playing one, and that
+same point means cancel.
+
+So any second edge there ends the message the first one started. A deliberate double tap does it
+— and so does one press, because `touch.c` reports every down edge with **no inter-tap debounce**
+and a fingertip that lightens for a single 15 ms sample is two edges. The button has had 250 ms
+of debounce since 0.3.26 for exactly this; the glass has none. `touch_take` drains one tap per
+frame, so the second arrives on the very next pass.
+
+**`EXIT_GRACE_MS`, 700 ms.** A destructive control must not arm itself under a finger that is
+already on the glass. The number is `HOLD_TALK_MS` and that is not a coincidence: it is already
+this panel's measure of *long enough to be meant rather than spilled*. Imperceptible to someone
+reaching for the corner deliberately, longer than any bounce. Pause and reply are **not** covered
+— pausing by accident is undone by pressing again, and only the control that spends the message
+needs protecting.
+
+A global touch debounce was considered and rejected: the maintenance gestures need five, six and
+seven deliberate taps, children tap at four or five a second, and a window wide enough to catch a
+bounce is wide enough to break those. The grace is narrow, it is on the one control that cannot
+be undone, and `test_a_second_press_cannot_cancel_what_the_first_one_started` stands on it —
+including that the corner still works a moment later, so the fix is a delay rather than a removal.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The

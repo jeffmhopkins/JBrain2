@@ -1036,6 +1036,12 @@ static uint32_t s_pending_until;
 static jpanel_to_t s_pend_reply_to;
 /* WHEN THE FINGER PUT IT ON HOLD, 0 when nothing is held. See `AUDIO_PAUSE_MAX_MS`. */
 static uint32_t s_paused_since;
+/* WHEN THE PLAYBACK CONTROLS CAME UP, 0 when they are not — `EXIT_GRACE_MS` in `ui.h`. The exit
+   corner overlaps a quarter of the notice, so the press that STARTS a message lands exactly where
+   cancelling it will be one frame later, and `jpanel_stop()` acknowledges: the message is spent.
+   The owner saw it as *"the pause icon for half a second and then goes back to the other
+   indicator"*. */
+static uint32_t s_controls_since;
 /* WHERE THE NOTICE WAS DRAWN, in the space it was drawn in — which is NOT the space
    `panel_to_frame` hands back; see `tap_to_overlay` below. -1 in the first slot means not on
    screen. Armed from `ui_popup_target`, read by `ui_tap_target`: this file no longer hit-tests it,
@@ -2160,6 +2166,7 @@ static ui_target_t tap_target_now(int ox, int oy, int over_h_tap, bool down, uin
     st.sendto_until = s_sendto_until;
     st.repeat_until = s_repeat_until;
     st.pending = (ui_pending_t)s_pending;
+    st.controls_since = s_controls_since;
     for (int i = 0; i < 4; i++) st.popup_box[i] = s_popup_box[i];
 
     ui_in_t in = {0};
@@ -2426,6 +2433,15 @@ static void face_task(void *arg)
            centred controls are placed against it and a hit test that guessed a different
            band would miss by the difference. */
         const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
+        /* THE EDGE THE EXIT'S GRACE IS MEASURED FROM. Read by `tap_target_now` below, so it is
+           sampled BEFORE the dispatcher: the press that raises the controls is served by the
+           notice on this pass and cannot also be served by the exit, and every pass after this
+           one sees a stamp to measure from. */
+        if (run_controls_up()) {
+            if (s_controls_since == 0) s_controls_since = now == 0 ? 1 : now;
+        } else {
+            s_controls_since = 0;
+        }
         /* AND WHICH CONTROL IT REACHES IS `ui.c`'S ANSWER — see `tap_target_now`. The chain below
            does not arbitrate any more; each branch asks whether it was chosen, and the order they
            appear in is readability alone. The fork is the same question: the transport exists in
