@@ -327,6 +327,25 @@ static const cue_def_t DEF[CUE_COUNT] = {
        question the panel cannot answer. Apart from the nod (the same shape two octaves
        down, and a smaller interval) by register. */
     [CUE_MESSAGE] = {SH_STEPS, 440, 880.0f, 0.0f, 0, 0, {0, -4, END}, 9, 0},
+
+    /* -- the playback controls -------------------------------------------------------- */
+    /* A rising fifth, short into long: the arriving shape, an octave below `CUE_HEARD` so the
+       two do not read as the same event at different volumes. This is "it is starting", where
+       the coin is "you were understood". */
+    [CUE_PLAY] = {SH_STEPS, 240, 523.25f, 0.5f, 0, 0, {0, 7, END}, 2, 5},
+    /* Pause and resume are one button, and the first cut of these made them one interval in two
+       directions — a fourth down and a fourth up, same length, same register. Elegant, and
+       `test_no_two_cues_are_the_same_sound` measured them 1.027 apart on rate and identical on
+       length and low share: a mirror is not a contrast, because the ear is not reading the
+       score. They differ on register AND length AND interval now.
+       Pause is the lower, shorter one — it sits under a sentence it is interrupting rather than
+       over it; resume is higher and opens wider, because starting again is the bigger event. */
+    [CUE_PAUSE] = {SH_STEPS, 140, 440.0f, 0.5f, 0, 0, {0, -5, END}, 2, 0},
+    [CUE_RESUME] = {SH_STEPS, 200, 587.33f, 0.5f, 0, 0, {0, 7, END}, 2, 5},
+    /* The only arpeggio in the set, because reply is the only one of these that is not about
+       the sound stopping or starting: it is a turn arriving. Major, open, and it does not
+       resolve downward — a question, not a full stop. */
+    [CUE_REPLY] = {SH_STEPS, 260, 587.33f, 0.5f, 0, 0, {0, 4, 7, END}, 2, 5},
 };
 
 /* The longest any variant stretches a cue. Kept beside `variant_stretch` in spirit; declared

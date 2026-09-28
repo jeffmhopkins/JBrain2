@@ -357,9 +357,26 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
                 const bool hold = !in->stream_paused;
                 act(out, UI_ACT_PAUSE, hold ? 1 : 0);
                 st->paused_since = hold ? in->now : 0;
-                /* No cue either way: a beep on top of the sentence it is holding, or on the
-                   first instant of the one it is resuming, is the panel talking over itself. */
+                /* AND IT SAYS WHICH, at the owner's ask. These were silent on the argument
+                   below, and he overrode it: a four-year-old pressing a disc wants to hear that
+                   the press landed rather than infer it from what the audio does. `cue.h` has
+                   why they are not a mirrored pair — that version measured as one sound.
+                   The old argument still holds for their SIZE, which is why these two are the
+                   shortest and quietest on the screen: a beep on top of the sentence it is
+                   holding, or on the first instant of the one it is resuming, is the panel
+                   talking over itself. */
+                cue(out, hold ? CUE_PAUSE : CUE_RESUME);
             } else if (half == CONFIRM_SEND) {
+                /* THE PRESS SOUNDS NOW, and the microphone follows it — the same shape the
+                   notice uses (`PENDING_MS`). Without this, reply and the exit corner are
+                   INDISTINGUISHABLE at the moment of the press: both stop the sound and say
+                   nothing, so a child who answered her father gets exactly what a child who
+                   dismissed him gets, and only finds out which seconds later when a microphone
+                   does or does not open. The ended-state pair has always acknowledged
+                   immediately, and `confirm.h` is explicit that these are the same two discs in
+                   the same two places — so the one thing they must not do is behave differently
+                   depending on whether the message happens to still be playing. */
+                cue(out, CUE_REPLY);
                 /* ANSWER THE PERSON TALKING, without waiting for them to finish. The recipient
                    is the message being played, so it is read BEFORE the run ends. Deferred
                    rather than started here: the fetch is still unwinding and a recording would
@@ -432,6 +449,10 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
            `firmware/host/README.md` rather than fixed inside a move. */
         act(out, UI_ACT_STOP, 0);
         act(out, UI_ACT_PAUSE, 0); /* never leave the ring held after a stop */
+        /* IT SAYS SO NOW. Silent until 0.3.32, on the argument that the sound stopping IS the
+           answer — true, and not enough: reply stops the sound too, so the two controls were
+           the same press from a child's side. */
+        cue(out, CUE_STOP);
         st->paused_since = 0;
         st->pending = UI_PEND_NONE; /* a deferred play must not resurrect what she ended */
         st->repeat_until = 0;
@@ -449,7 +470,7 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
            would be pressing a button that had stopped working. */
         st->popup_box[0] = -1;
         /* The press sounds FIRST and the message follows it — see `PENDING_MS`. */
-        cue(out, CUE_HEARD);
+        cue(out, CUE_PLAY);
         st->pending = UI_PEND_PLAY;
         st->pending_until = in->now + PENDING_MS;
         out->dirty = true;
@@ -469,7 +490,7 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
             out->flinch = true;
             /* IT ASKS THE BOX NOW. Streaming discards the audio as it plays, so "again" is a
                fetch and it needs the link to be up. A sound for the finger, then the audio. */
-            cue(out, CUE_HEARD);
+            cue(out, CUE_PLAY);
             st->pending = UI_PEND_REPLAY;
             st->pending_until = in->now + PENDING_MS;
             st->repeat_until = in->now + REPEAT_MS; /* still asking; keep it up */
@@ -482,10 +503,14 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
                and picking the person who had this second finished talking. That is the
                difference between a message and a conversation. */
             st->repeat_until = 0; /* the pair is gone; the tick and cross take over */
+            /* `CUE_REPLY`, not `CUE_LISTEN`: the same disc in the same place must sound the
+               same whether the message is still playing or has ended. Here the microphone opens
+               at once, so the press and the opening are one event; the deferred path keeps
+               `CUE_LISTEN` for the later moment it really opens. */
             if (ui_start_record(st, in, out, in->in_from)) {
-                cue(out, CUE_LISTEN);
+                cue(out, CUE_REPLY);
             } else {
-                cue(out, CUE_STOP);
+                cue(out, CUE_OOPS);
             }
             out->flinch = true;
             out->dirty = true;
@@ -936,7 +961,22 @@ void ui_overlay(ui_state_t *st, const ui_in_t *in, ui_overlay_t *ov)
            seconds is worse than showing none: the in-from kind is read off the fetch's OWN
            response header, so until that fetch lands it still holds the PREVIOUS message's
            sender. The queue already knows who is waiting; ask it until the fetch can answer. */
-        ov->run_from_dad = starting ? in->waiting_from_dad : (in->in_from == UI_TO_DAD);
+        /* WHOSE FACE, AND THE QUEUE IS ONLY ASKED WHILE NOTHING IS SOUNDING YET.
+         *
+           `in_from` is read off the fetch's OWN response header, so until that fetch lands it
+           still holds the PREVIOUS message's sender — which is why the press-to-play window asks
+           the queue instead. But `jfetching` stays true for the WHOLE download, and the download
+           IS the playback, so that fallback covered the entire message: the owner opened one from
+           Dad and watched a little girl for as long as it played, then saw Dad again the moment
+           it ended. *"The icon on the top left needs to follow the sender."*
+         *
+           And the queue's answer is about the OLDEST WAITING message, which by then is the NEXT
+           one — usually the sister, which is exactly the face he saw. The header has landed by
+           the time anything is audible, so once a run is live the message itself is the authority
+           and the queue is not consulted at all. */
+        const bool sounding = in->jrunning || in->stream_active;
+        ov->run_from_dad = sounding ? (in->in_from == UI_TO_DAD)
+                                    : (starting ? in->waiting_from_dad : (in->in_from == UI_TO_DAD));
         ov->run_count = in->waiting;
         ov->exit_corner = true;
     } else if (st->repeat_until != 0) {

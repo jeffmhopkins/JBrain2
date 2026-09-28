@@ -693,6 +693,118 @@ static void test_a_second_press_cannot_cancel_what_the_first_one_started(void)
           "and a press in the first moments of a run is not the way out");
 }
 
+static void test_the_face_follows_the_message_that_is_playing(void)
+{
+    /* THE OWNER, on 0.3.30: *"the icon on the top left when playing back a message went to the
+       blonde haired girl icon while playing a message from Dad, but only when the actual message
+       is playing — when it's finished it goes back to the dad icon."*
+     *
+       `in_from` comes off the fetch's own response header, so before that fetch lands it still
+       holds the PREVIOUS message's sender; that is why the press-to-play window asks the queue
+       instead. But `jfetching` stays true for the WHOLE download and the download IS the
+       playback, so the fallback covered the entire message — and the queue answers about the
+       OLDEST WAITING one, which by then is the NEXT message. Two waiting, Dad first: the face
+       shown while Dad played was the sister's, and it corrected itself the instant it ended. */
+    world_reset();
+    w.in.waiting = 2;
+    w.in.waiting_from_dad = true;  /* Dad's is the one about to play */
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    CHECK(w.ov.run, "the controls are up");
+    CHECK(w.ov.run_from_dad, "and the press-to-play window shows Dad, from the queue");
+
+    /* The fetch lands: the header names Dad, and the NEXT waiting message is the sister's. */
+    w.in.in_from = UI_TO_DAD;
+    w.in.waiting_from_dad = false;
+    w.in.jrunning = true;
+    w.in.stream_active = true;
+    w.in.jfetching = true; /* the download IS the playback — this stays true throughout */
+    step();
+    CHECK(w.ov.run_from_dad,
+          "and it is still Dad while the message actually plays, not the next sender");
+
+    /* Ended: the pair carries the same face, which is the half that was always right. */
+    w.in.jrunning = false;
+    w.in.stream_active = false;
+    w.in.jfetching = false;
+    finish_message();
+    step();
+    CHECK(w.ov.pair_from_dad, "and the ended state agrees with what just played");
+}
+
+static void test_every_playback_control_answers_the_finger(void)
+{
+    /* THE SCRUB, at the owner's ask, and then his override of what it found. *"I think play,
+       resume, stop and reply should have their own sound effects. You are good to overwrite
+       the decision from before."*
+     *
+       Before this, play and reply both borrowed `CUE_HEARD` while pause, resume and stop made
+       no sound at all — on the argument that what they do to the audio IS the answer. The
+       argument is true and was not enough: reply stops the sound exactly as the exit does, so
+       from a child's side answering her father and dismissing him were the same press.
+     *
+       Four events, four shapes, and `cue.h` carries why each is what it is. What this test
+       pins is that they are DIFFERENT from each other and that every control makes one. */
+    world_reset();
+    play_a_message(false);
+    run_ms(EXIT_GRACE_MS + 100);
+
+    /* Pause, then resume: the same disc, and it must not sound the same both ways. */
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.paused, "pause takes effect");
+    CHECK(last_cue() == CUE_PAUSE, "and says so");
+    w.in.tapped = false;
+    w.in.stream_paused = true;
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(!w.paused, "resume takes effect");
+    CHECK(last_cue() == CUE_RESUME, "with its own sound, not the pause played backwards");
+
+    /* Reply, mid-message. */
+    world_reset();
+    play_a_message(false);
+    run_ms(EXIT_GRACE_MS + 100);
+    tap_at(CONFIRM_CX_SEND, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.st.pending == UI_PEND_REPLY, "the reply is taken");
+    CHECK(last_cue() == CUE_REPLY, "and answers the finger now, not when the microphone opens");
+
+    /* The exit corner, which was the silent one that made reply ambiguous. */
+    world_reset();
+    play_a_message(false);
+    run_ms(EXIT_GRACE_MS + 100);
+    const int stops = w.stop;
+    tap_at(276, 112);
+    step();
+    CHECK(w.stop > stops, "the corner ends the run");
+    CHECK(last_cue() == CUE_STOP, "and no longer leaves the child guessing which she pressed");
+
+    /* Play, from the notice. */
+    world_reset();
+    w.in.waiting = 1;
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    CHECK(w.st.pending == UI_PEND_PLAY, "the play is taken");
+    CHECK(last_cue() == CUE_PLAY, "with the arriving shape rather than the coin");
+
+    /* And the four are genuinely four. `cue.c` measures them apart as waveforms
+       (`test_no_two_cues_are_the_same_sound`); this is the weaker, structural half — that the
+       controls do not share a cue between them. */
+    const cue_t used[4] = {CUE_PLAY, CUE_PAUSE, CUE_RESUME, CUE_REPLY};
+    for (int i = 0; i < 4; i++) {
+        for (int j = i + 1; j < 4; j++) {
+            CHECK(used[i] != used[j], "no two playback controls share a cue");
+        }
+        CHECK(used[i] != CUE_STOP && used[i] != CUE_HEARD,
+              "and none of them borrows the stop or the coin");
+    }
+}
+
 static void test_the_draw_layers_are_a_list(void)
 {
     const ui_layer_t want[UI_LAYER_COUNT] = {
@@ -726,7 +838,7 @@ static void test_a_notification_arrives_and_a_tap_plays_it(void)
     tap_the_notice(true);
     step();
     CHECK(w.st.pending == UI_PEND_PLAY, "the press is taken at once");
-    CHECK(last_cue() == CUE_HEARD, "and it answers the finger before the message");
+    CHECK(last_cue() == CUE_PLAY, "and it answers the finger before the message");
     CHECK(w.play_next == 0, "the fetch waits for the cue to finish — see PENDING_MS");
     CHECK(w.st.popup_box[0] < 0 || w.ov.popup_big, "the notice does not invite a second press");
 
@@ -821,8 +933,11 @@ static void test_the_top_right_corner_ends_a_message_while_it_plays(void)
     CHECK(w.stop > stops, "pressing the drawn exit mid-message ends it");
     CHECK(!w.stream, "the message stops with it");
 
-    /* Once it has finished, the pair comes up and the same corner works. */
+    /* Once it has finished, the pair comes up and the same corner works. The wait is not
+       padding: since 0.3.32 the exit plays `CUE_STOP`, and the pair arms on a speaker that is
+       free — so the corner's own acknowledgement holds it off for the length of that tone. */
     finish_message();
+    run_ms(400);
     step();
     CHECK(ui_pair_up(&w.st), "the message ended, so again-and-reply stands");
     run_ms(400);
@@ -874,7 +989,11 @@ static void test_reply_records_to_whoever_just_spoke(void)
     CHECK(w.st.talk == UI_TALK_RECORDING, "reply opens a recording");
     CHECK(w.st.rec_to == UI_TO_DAD, "addressed to the person who just spoke");
     CHECK(w.opened == opened + 1, "the microphone was opened once");
-    CHECK(last_cue() == CUE_LISTEN, "and it says so in the one sound that means start talking");
+    /* `CUE_REPLY` since 0.3.32, not `CUE_LISTEN`: the same disc must sound the same whether the
+       message is still playing or has ended, and here the microphone opens at once so the press
+       and the opening are one event. The deferred path keeps `CUE_LISTEN` for the later moment
+       it really opens. */
+    CHECK(last_cue() == CUE_REPLY, "and it says so in the sound that means your turn");
     CHECK(!ui_pair_up(&w.st), "the pair steps aside for the tick and cross");
     CHECK(w.muted, "commands are deaf: a message must not also be a command");
 
@@ -1429,6 +1548,8 @@ int main(void)
     test_a_hold_after_a_poke_still_opens_the_menu();
     test_the_controls_are_pressable_for_as_long_as_they_are_drawn();
     test_a_second_press_cannot_cancel_what_the_first_one_started();
+    test_the_face_follows_the_message_that_is_playing();
+    test_every_playback_control_answers_the_finger();
     test_the_draw_layers_are_a_list();
 
     test_a_notification_arrives_and_a_tap_plays_it();

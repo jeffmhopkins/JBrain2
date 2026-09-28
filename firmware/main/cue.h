@@ -78,6 +78,27 @@ typedef enum {
        back, one event at a time. */
     CUE_SENT,   /* the message went — three notes climbing away */
     CUE_MESSAGE,/* one arrived — a soft falling pair, because this rings in a bedroom */
+    /* --- the playback controls, at the owner's ask -------------------------------------
+     *
+     * *"I think play, resume, stop and reply should have their own sound effects."* They did
+     * not: play and reply both borrowed `CUE_HEARD`, and pause, resume and stop made no sound
+     * at all on the argument that what they do to the audio IS the answer. That argument is
+     * true and was not enough — it makes reply and stop the same press from a child's side,
+     * since both simply stop the sound.
+     *
+     * FOUR EVENTS, FOUR SHAPES, and the shapes are opposites where the actions are:
+     * play rises a fifth, stop falls (`CUE_STOP`, which already meant exactly this);
+     * pause falls a fourth and resume rises one, the same interval mirrored, because they are
+     * the same button doing opposite things and a child presses it without reading anything.
+     * Reply is the only one that is not about the sound at all — it is about a turn coming to
+     * you — so it is the only arpeggio.
+     *
+     * Kept apart from the `CUE_HEARD` family on purpose: that one means "the panel understood
+     * you", which is a different claim from "the thing you pressed is happening". */
+    CUE_PLAY,   /* a message begins, or is played again — a rising fifth, short into long */
+    CUE_PAUSE,  /* held, not ended — a quick falling fourth */
+    CUE_RESUME, /* and its mirror, the same fourth rising */
+    CUE_REPLY,  /* your turn is coming — the only arpeggio here */
     CUE_COUNT,
 } cue_t;
 
