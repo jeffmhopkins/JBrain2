@@ -1172,17 +1172,29 @@ static void draw_who(uint16_t *fb, int y0, int over_h, sendto_hit_t who)
     (void)over_h;
 }
 
+/* THE MICROPHONE IS OPEN, AND THAT IS ONE FACT WITH ONE COLOUR.
+ *
+ * Listening to the pet was red and recording a message was blue, and the blue was carrying the
+ * RECIPIENT — pet or person — because for a while it was the only thing that could. It is not any
+ * more: the sender's face is drawn above the word, so who this is for is a picture now. The owner:
+ * *"now that we have icons the colour differential is not important, and blue kind of doesn't have
+ * the same effect as red as knowing when we are recording."*
+ *
+ * So the colour is freed to mean the thing every other device in a child's life uses it for. Red
+ * is recording, whoever is listening. */
+#define REC_COLOUR SWAP16(0xF800)
+
 static void draw_listening(uint16_t *fb, int y0, int over_h, uint32_t now)
 {
     /* The pet's own face: a hands-free turn is a conversation with the pet, and the icon the
        child presses for it on the grid is this one. */
     draw_who(fb, y0, over_h, SENDTO_PET);
-    draw_indicator(fb, y0, now, SWAP16(0xF800), "LISTENING");
+    draw_indicator(fb, y0, now, REC_COLOUR, "LISTENING");
 }
 
-/* RECORDING A MESSAGE. Blue, and the word names the RECIPIENT rather than the act, because
-   the act is the part a child already knows — they just asked for it — and who it is going to
-   is the part they cannot see.
+/* RECORDING A MESSAGE. Red, like every other open microphone on this panel (`REC_COLOUR`), and
+   the word names the RECIPIENT rather than the act — the act is the part a child already knows,
+   they just asked for it, and who it is going to is the part they cannot see.
  *
  * THE SIBLING'S NAME USED TO BE UNKNOWABLE HERE, and the placeholder MESSAGE was the honest
  * way to say so: a panel is flashed with its OWN name and the box mints the other one's at the
@@ -1197,7 +1209,7 @@ static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpane
        whoever can read gets both. */
     draw_who(fb, y0, over_h, to == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
     if (to == JPANEL_TO_DAD) {
-        draw_indicator(fb, y0, now, SWAP16(0x001F), "TO DAD");
+        draw_indicator(fb, y0, now, REC_COLOUR, "TO DAD");
         return;
     }
     /* "TO " plus the longest name the box will accept, uppercased: the font has no lowercase
@@ -1206,14 +1218,14 @@ static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpane
     char who[40];
     char name[32];
     if (jpanel_sibling(name, sizeof(name)) <= 0) {
-        draw_indicator(fb, y0, now, SWAP16(0x001F), "MESSAGE");
+        draw_indicator(fb, y0, now, REC_COLOUR, "MESSAGE");
         return;
     }
     snprintf(who, sizeof(who), "TO %s", name);
     for (char *q = who; *q != '\0'; q++) {
         if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
     }
-    draw_indicator(fb, y0, now, SWAP16(0x001F), who);
+    draw_indicator(fb, y0, now, REC_COLOUR, who);
 }
 
 /* THE POP-UP, AND IT IS THE ONLY THING ON THIS GLASS THAT COVERS THE PET.
