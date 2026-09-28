@@ -529,16 +529,26 @@ class TestNamingAPanelWithoutACable:
         font_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.h").read_text(
             encoding="utf-8"
         )
-        # Sliced to `draw_popup` first: the smaller badge drawn after fifteen seconds has its
-        # own `bw`, and a search over the whole file finds whichever comes first rather than
-        # the box the name is actually centred in.
+        # THE BOX'S WIDTH IS IN `ui.h` NOW, not in a local in `draw_popup`, and that is the
+        # fix rather than a complication: the notice's picture and its tap target used to be
+        # different rectangles, so 0.3.29 gave the geometry one home and both read it from
+        # there. This pin follows it — reading the literal out of `draw_popup` would go stale
+        # the moment the drawing stops owning the number, which is exactly what happened.
         start = display.index("static void draw_popup(")
         popup = display[start : display.index("\n}", start)]
+        ui_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "ui.h").read_text(
+            encoding="utf-8"
+        )
         scale = re.search(r"#define POPUP_SCALE (\d+)", display)
-        box = re.search(r"const int bw = (\d+), bh = \d+;", popup)
+        box = re.search(r"#define UI_POPUP_BIG_W (\d+)", ui_h)
         pad = re.search(r"w > bw - (\d+) \?", popup)
         width = re.search(r"#define FONT_W (\d+)", font_h)
         assert scale and box and pad and width, "the pop-up's geometry moved; re-pin this test"
+        # And the drawing really does take its width from there, or the number above is just a
+        # constant nothing uses.
+        assert "const int bw = UI_POPUP_BIG_W" in popup, (
+            "draw_popup stopped taking its width from ui.h; the picture can drift from the target"
+        )
         n = jpanel.MAX_PANEL_NAME
         drawn = (n * int(width.group(1)) + (n - 1)) * int(scale.group(1))
         assert drawn <= int(box.group(1)) - int(pad.group(1)), (

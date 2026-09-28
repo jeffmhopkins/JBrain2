@@ -65,6 +65,21 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              # THE BACKEND SUITE READS FIRMWARE SOURCE, and without this a firmware-only PR
+              # ran none of the tests that do. `test_endpoint_report_now.py` and
+              # `test_jpanel_api.py` pin the panel's behaviour by scanning `display.c` and its
+              # neighbours — the telemetry fields the box parses, the mute that keeps a child's
+              # message out of the command recogniser, the bubble the longest accepted name has
+              # to fit inside. Those are contracts BETWEEN the two halves, which is why they
+              # live with the half that would be lied to.
+              #
+              # MEASURED TWICE. 0.3.26 moved the button from the menu to the power control and
+              # widened the mute with `|| s_standby`; 0.3.29 gave the notice's geometry one home
+              # in `ui.h`. Both were correct changes, both were invisible to their own PR, and
+              # both landed on a `main` that was already red from the one before — the second
+              # author had no green `main` to tell them apart from. A contract test that only
+              # runs after the merge is a contract test that reports history.
+              - 'firmware/main/**'
               # The pysandbox sidecar lives under deploy/ but is TESTED by the BACKEND
               # suite, which loads deploy/pysandbox/*.py by path and runs the real runner
               # in real subprocesses — exactly the arrangement the sdr note below records
