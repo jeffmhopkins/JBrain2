@@ -512,14 +512,22 @@ static void test_a_cue_no_longer_decides_what_a_press_means(void)
           "a cue does not take the long table away — the child pressing during the beep is "
           "pressing on what they can see");
 
-    /* And a message actually sounding does, which is the distinction that was wanted all along.
-       The grid, the notice and the pair all had a claim on this point a moment ago; now only the
-       short table's two can answer, and which of them depends on where the finger is. */
+    /* A message actually sounding does. The menu keeps its claim either way — it is modal and it
+       is drawn on top of the transport — so this asks with the menu closed, where the notice and
+       the pair were the things that had a claim on this point a moment ago. */
     w.in.stream_active = true;
+    w.st.sendto_until = 0;
     const ui_target_t narrowed = ui_tap_target(&w.st, &w.in);
     CHECK(narrowed == UI_TARGET_TRANSPORT || narrowed == UI_TARGET_PET,
           "a MESSAGE sounding is what narrows the table");
-    CHECK(UI_TAP_ORDER_PLAYING_LEN == 3, "only the exit, the transport and the pet remain");
+    CHECK(UI_TAP_ORDER_PLAYING_LEN == 4,
+          "only the menu, the exit, the transport and the pet remain");
+
+    /* AND THE MENU STILL CONSUMES EVERYTHING WHILE IT IS UP, message or no message: it is drawn
+       above the transport, so it has to be offered the press first. */
+    w.st.sendto_until = w.in.now + SENDTO_MS;
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_GRID,
+          "and an open menu outranks a playing message, because it covers it");
 }
 
 static void test_the_exit_ends_a_message_while_it_is_audible(void)
@@ -537,8 +545,11 @@ static void test_the_exit_ends_a_message_while_it_is_audible(void)
     CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_EXIT,
           "the corner is the exit while a message plays, not the transport that swallows "
           "everything else");
-    CHECK(UI_TAP_ORDER_PLAYING[0] == UI_TARGET_EXIT,
-          "and it is first, because a sounding run consumes every press it is offered");
+    CHECK(UI_TAP_ORDER_PLAYING[1] == UI_TARGET_EXIT,
+          "and it comes before the transport, which consumes every press it is offered");
+    CHECK(UI_TAP_ORDER_PLAYING[0] == UI_TARGET_GRID, "behind only the modal menu, in both tables");
+    CHECK(UI_TAP_ORDER[0] == UI_TARGET_GRID && UI_TAP_ORDER[1] == UI_TARGET_EXIT,
+          "which is the same way the long table begins");
 
     /* The transport owns the LEFT half of that band (play/pause and reply); the exit owns the
        top-right corner. They must not both claim one point — see `confirm.h` for the geometry. */
@@ -586,6 +597,43 @@ static void test_a_hold_after_a_poke_still_opens_the_menu(void)
     ui_out_t out = {0};
     ui_frame(&w.st, &w.in, &out);
     CHECK(w.st.sendto_until != 0, "the menu opens over the panel's own beep");
+}
+
+static void test_the_controls_are_pressable_for_as_long_as_they_are_drawn(void)
+{
+    /* THE DRAWING AND THE ARBITRATION USED TO ASK DIFFERENT QUESTIONS. The controls appear on the
+       frame of the press, which is what the owner asked for — *"as soon as I click it and it's
+       registered it should show right away"* — but liveness was `jrunning || stream_active`, and
+       through the whole fetch window neither is true. So the pause button was painted and a press
+       on it went down the IDLE table and poked the pet: the one response a child can be certain
+       they did not ask for. `ui_run_controls_up` is now the single answer to both. */
+    world_reset();
+    w.in.waiting = 1;
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    CHECK(w.st.pending == UI_PEND_PLAY, "the press is taken");
+    CHECK(w.ov.run, "and the controls are drawn at once");
+    CHECK(!w.in.jrunning && !w.in.stream_active, "with nothing running and nothing audible yet");
+    CHECK(ui_run_controls_up(&w.st, &w.in), "so they are live, because they are visible");
+
+    w.in.tapped = false;
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10); /* the pause disc */
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_TRANSPORT,
+          "a press on the drawn pause button reaches the transport, not the pet");
+
+    /* The fetch alone keeps them live once the pending flag has been served. */
+    world_reset();
+    w.in.jfetching = true;
+    CHECK(ui_run_controls_up(&w.st, &w.in), "a fetch in flight is controls up");
+
+    /* And a REPLAY, which sets no run at all: an audible message is a message however it started,
+       which is what left the ended-state pair drawn over one that was playing. */
+    world_reset();
+    w.in.stream_active = true;
+    CHECK(!w.in.jrunning, "a replay leaves no run behind it");
+    CHECK(ui_run_controls_up(&w.st, &w.in), "and the speaker is asked instead");
 }
 
 static void test_the_draw_layers_are_a_list(void)
@@ -1317,6 +1365,7 @@ int main(void)
     test_the_exit_ends_a_message_while_it_is_audible();
     test_the_notice_is_painted_through_its_own_arrival_cue();
     test_a_hold_after_a_poke_still_opens_the_menu();
+    test_the_controls_are_pressable_for_as_long_as_they_are_drawn();
     test_the_draw_layers_are_a_list();
 
     test_a_notification_arrives_and_a_tap_plays_it();

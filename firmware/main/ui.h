@@ -516,8 +516,13 @@ typedef struct {
  * table does, and a test can walk it.
  *
  * TWO TABLES, BECAUSE THERE ARE TWO ORDERS, and WHICH ONE A PRESS USES IS THE WHOLE QUESTION.
- * While a message is sounding the second table is everything a press can reach: the exit, the
- * transport, then the pet. A notice, the pair and the tick are all unreachable, which is right —
+ * While a message is sounding the second table is everything a press can reach: the menu, the
+ * exit, the transport, then the pet.
+ *
+ * BOTH TABLES BEGIN THE SAME WAY — the modal menu, then the way out — and that is the rule, not a
+ * coincidence. The grid is drawn last of all (`UI_DRAW_ORDER`) precisely because a child asked for
+ * it, so it is on top of the transport and has to be offered the press first; leaving it out of
+ * this table let a message starting under an open menu take presses from the menu covering it. A notice, the pair and the tick are all unreachable, which is right —
  * they are offers about what to do next, and there is a thing happening now.
  *
  * THE EXIT IS IN BOTH TABLES, and leaving it out of this one is why the owner reported that
@@ -549,9 +554,17 @@ typedef enum {
 } ui_target_t;
 
 #define UI_TAP_ORDER_LEN 6
-#define UI_TAP_ORDER_PLAYING_LEN 3
+#define UI_TAP_ORDER_PLAYING_LEN 4
 extern const ui_target_t UI_TAP_ORDER[UI_TAP_ORDER_LEN];
 extern const ui_target_t UI_TAP_ORDER_PLAYING[UI_TAP_ORDER_PLAYING_LEN];
+
+/* ARE THE PLAYBACK CONTROLS ON THE GLASS. Asked by the drawing and by the arbitration, from one
+ * place, because they used to ask different questions and disagree for seconds at a time: through
+ * the fetch window the controls were painted and a press on the pause button went down the IDLE
+ * table and poked the pet, and on a replay — which sets no run — an audibly playing message drew
+ * the ended-state pair over itself. Four facts, one answer: a run in progress, a message sounding
+ * however it started, a press taken and not yet served, or a fetch in flight. */
+bool ui_run_controls_up(const ui_state_t *st, const ui_in_t *in);
 
 /* WHICH TARGET A PRESS AT `in->ox,in->oy` REACHES, and nothing else — no state changed, no
    action emitted. Split out from `ui_tap` so the arbitration can be asserted on its own: the

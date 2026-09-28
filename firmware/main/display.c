@@ -1009,6 +1009,26 @@ static uint32_t s_sendto_until;
 #define PENDING_MS 8000
 typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY, PEND_REPLY } pending_t;
 static pending_t s_pending;
+
+/* ARE THE PLAYBACK CONTROLS ON THE GLASS — asked by the drawing AND by the tap dispatcher, from
+ * one place, because they used to ask two different questions and disagree for seconds at a time.
+ *
+ * The drawing said `jpanel_running() || starting`; the dispatcher said `jpanel_running() ||
+ * audio_stream_active()`. So through the whole fetch window — the press taken, the controls
+ * painted, nothing audible yet — a press on the pause button went down the IDLE table and poked
+ * the pet, which is the one thing a child can be certain they did not ask for. And the other way
+ * round on a replay: `do_replay` sets no `s_run`, so once the pending flag cleared and the fetch
+ * closed, an audibly playing message left this false and the ended-state pair was drawn over it —
+ * *"on a replay of a message it doesn't go back to the pause button."* Asking the speaker fixed
+ * the icon inside that branch while the branch itself was never entered.
+ *
+ * Four facts, one answer: a run in progress, a message sounding however it started, a press taken
+ * and not yet served, or a fetch in flight. What is drawn is what is pressable. */
+static bool run_controls_up(void)
+{
+    return jpanel_running() || audio_stream_active() || jpanel_fetching() ||
+           s_pending == PEND_PLAY || s_pending == PEND_REPLAY;
+}
 static uint32_t s_pending_until;
 /* WHO THE DEFERRED REPLY IS FOR, captured at the press rather than read when it fires: ending
    the run is what frees the speaker, and `jpanel_in_from()` is about the message that was
@@ -2286,8 +2306,18 @@ static void face_task(void *arg)
          *
            A MESSAGE playing is the thing that changes what the controls mean. A cue is the
            panel clearing its throat. `audio_stream_active()` is the message ring alone
-           (`audio.h`), so it answers the question actually being asked. */
-        if (tapped && !msg_sounding) {
+           (`audio.h`), so it answers the question actually being asked — but it is not quite the
+           question either. `run_controls_up()` is: the transport exists in the second table
+           ALONE, so a press has to reach that table for as long as the transport is on the
+           glass, which is from the moment the press is taken and through the whole fetch. Audible
+           is a subset of drawn.
+         *
+           AND AN OPEN MENU COMES BEFORE BOTH OF THEM. The grid is modal and it is drawn last of
+           all, on top of the transport, because a child asked for it; the branch that serves it
+           lives below, so a message starting under an open menu would otherwise hand the menu's
+           presses to the transport covering nothing. `ui.h`'s two tables begin the same way for
+           the same reason, and a host test walks them. */
+        if (tapped && (s_sendto_until != 0 || !run_controls_up())) {
             /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
              *
              * It used to be resolved down in the poke block, which was fine while the poke
@@ -2647,7 +2677,7 @@ static void face_task(void *arg)
                false through an entire replay — which left a replay with no working controls at
                all. The ring belongs to messages alone (`audio.h`), so this covers both and
                still leaves a poke at the pet mid-sentence as nothing but a flinch. */
-            if (jpanel_running() || msg_sounding) {
+            if (run_controls_up()) {
                 /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
                    of controls — see `confirm.h`. A tap anywhere used to end the run, and the
                    owner replaced that with a hold and an answer: stopping is what pausing does
@@ -3672,38 +3702,41 @@ static void face_task(void *arg)
                concerned. */
             char from[32];
             const int waiting = jpanel_waiting(from, sizeof(from));
-            if (waiting > 0 && s_talk == TALK_IDLE) {
-                ui_popup_target(over_y0, over_h, now - s_popup_since < POPUP_BIG_MS, s_popup_box);
-            }
-            /* AND `msg_sounding`, NOT `speaking`, FOR THE SAME REASON THE DISPATCHER USES IT.
-               The arrival cue is 440 ms and it fires on the frame the notice appears, so the
-               old test blanked the picture for the first half-second of its life — while the
-               target above stayed armed. A child looking at the panel the instant it chirped
-               saw the pet, pressed where the notice had been, and got it. That is the two
-               halves disagreeing again, one frame at a time. A tone is the panel clearing its
-               throat; only a message sounding is a reason to hold the notice back. */
-            if (s_talk == TALK_IDLE && !msg_sounding && jpanel_state() != JPANEL_BUSY) {
-                if (waiting > 0) {
-                    /* Big for the first fifteen seconds, then a badge. The AGAIN button owns
-                       the same corner for its ten seconds and wins there — it is transient
-                       and it answers a question the child is asking right now ("what did she
-                       say?"), where the badge answers one they have already declined. */
-                    if (now - s_popup_since < POPUP_BIG_MS) {
-                        draw_popup(fb, over_y0, over_h, from, waiting,
-                                   jpanel_waiting_from_dad() ? SENDTO_DAD : SENDTO_SISTER);
-                    } else {
-                        /* OVER THE PAIR, NOT DEFERRED BEHIND IT. This used to wait for
-                           `s_repeat_until` to lapse, which was fine while that was a ten-second
-                           deadline and is a bug now that the pair waits for a finger instead:
-                           a message arriving while the last one's again-and-reply stood would
-                           have been hidden for as long as nobody pressed the exit — which
-                           could be all night. The new message outranks the finished one, and
-                           taking the corner from the old sender's face is the right way round:
-                           it is the same quadrant meaning the same thing, updated to whoever
-                           is waiting now. */
-                        draw_popup_badge(fb, over_y0, over_h, from, jpanel_waiting_from_dad() ? SENDTO_DAD
-                                                                             : SENDTO_SISTER);
-                    }
+            /* ONE CONDITION FOR THE PICTURE AND THE TARGET. Arming it from the queue while the
+               painting sat behind a fuller guard left the notice armed and invisible; arming it
+               INSIDE the painting, as it was before that, left it visible and dead. Neither is
+               fixed by moving the arming somewhere better — it is fixed by there being one answer
+               to "is there a notice", used twice. `ui.c` says the same thing and is tested. */
+            const bool notice_up = waiting > 0 && s_talk == TALK_IDLE && !msg_sounding &&
+                                   jpanel_state() != JPANEL_BUSY;
+            const bool notice_big = now - s_popup_since < POPUP_BIG_MS;
+            if (notice_up) ui_popup_target(over_y0, over_h, notice_big, s_popup_box);
+            /* `msg_sounding`, NOT `speaking`, IS IN `notice_up` ABOVE, and that is the other
+               half of the same fault: the arrival cue is 440 ms and fires on the frame the notice
+               appears, so the old guard blanked the picture for the first half-second of its life.
+               A tone is the panel clearing its throat; only a message sounding is a reason to hold
+               the notice back. */
+            if (notice_up) {
+                /* Big for the first fifteen seconds, then a badge — `notice_big`, the same
+                   answer the target above was armed from. The AGAIN button owns the same
+                   corner for its ten seconds and wins there: it is transient and it answers a
+                   question the child is asking right now ("what did she say?"), where the
+                   badge answers one they have already declined. */
+                if (notice_big) {
+                    draw_popup(fb, over_y0, over_h, from, waiting,
+                               jpanel_waiting_from_dad() ? SENDTO_DAD : SENDTO_SISTER);
+                } else {
+                    /* OVER THE PAIR, NOT DEFERRED BEHIND IT. This used to wait for
+                       `s_repeat_until` to lapse, which was fine while that was a ten-second
+                       deadline and is a bug now that the pair waits for a finger instead:
+                       a message arriving while the last one's again-and-reply stood would
+                       have been hidden for as long as nobody pressed the exit — which
+                       could be all night. The new message outranks the finished one, and
+                       taking the corner from the old sender's face is the right way round:
+                       it is the same quadrant meaning the same thing, updated to whoever
+                       is waiting now. */
+                    draw_popup_badge(fb, over_y0, over_h, from,
+                                     jpanel_waiting_from_dad() ? SENDTO_DAD : SENDTO_SISTER);
                 }
             }
             /* Drawn over everything else while a run is sounding, including the caption: a
@@ -3722,7 +3755,7 @@ static void face_task(void *arg)
                a tap handler that correctly refused to honour any of it. */
             const bool starting = s_pending == PEND_PLAY || s_pending == PEND_REPLAY ||
                                   jpanel_fetching();
-            if (jpanel_running() || starting) {
+            if (run_controls_up()) {
                 /* PLAYING IS AN AUDIO FACT, NOT A QUEUE FACT, which is the whole of the replay
                    bug: `do_replay` deliberately sets no `s_run` (the message was acknowledged
                    the first time), so a replay left `jpanel_running()` false and the pair fell

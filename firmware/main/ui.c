@@ -171,9 +171,16 @@ const ui_target_t UI_TAP_ORDER[UI_TAP_ORDER_LEN] = {
 };
 
 const ui_target_t UI_TAP_ORDER_PLAYING[UI_TAP_ORDER_PLAYING_LEN] = {
-    /* The exit before the transport, because the transport consumes every press — see `ui.h`. */
-    UI_TARGET_EXIT, UI_TARGET_TRANSPORT, UI_TARGET_PET,
+    /* The menu and the exit before the transport, because the transport consumes every press it is
+       offered and both of those are drawn above it — see `ui.h`. */
+    UI_TARGET_GRID, UI_TARGET_EXIT, UI_TARGET_TRANSPORT, UI_TARGET_PET,
 };
+
+bool ui_run_controls_up(const ui_state_t *st, const ui_in_t *in)
+{
+    return in->jrunning || in->stream_active || in->jfetching || st->pending == UI_PEND_PLAY ||
+           st->pending == UI_PEND_REPLAY;
+}
 
 void ui_popup_target(int y0, int over_h, bool big, int box[4])
 {
@@ -228,7 +235,7 @@ static bool target_live(ui_target_t t, const ui_state_t *st, const ui_in_t *in)
         return (st->talk == UI_TALK_LISTENING && st->listen_voice) ||
                st->talk == UI_TALK_RECORDING;
     case UI_TARGET_TRANSPORT:
-        return in->jrunning || in->stream_active;
+        return ui_run_controls_up(st, in);
     case UI_TARGET_PET:
         return true;
     case UI_TARGET_COUNT:
@@ -267,9 +274,13 @@ static bool target_hit(ui_target_t t, const ui_state_t *st, const ui_in_t *in)
 
 ui_target_t ui_tap_target(const ui_state_t *st, const ui_in_t *in)
 {
-    /* `stream_active`, NOT `speaking` — a cue must not change what a press means. See `ui.h`. */
-    const ui_target_t *order = in->stream_active ? UI_TAP_ORDER_PLAYING : UI_TAP_ORDER;
-    const int n = in->stream_active ? UI_TAP_ORDER_PLAYING_LEN : UI_TAP_ORDER_LEN;
+    /* THE TABLE FOLLOWS WHAT IS DRAWN. Not `speaking`, which is true for the panel's own cues;
+       and not `stream_active` alone either, because the transport lives in the second table ONLY
+       and is painted from the moment the press is taken — through the fetch, before a sound. See
+       `ui.h`. */
+    const bool playing = ui_run_controls_up(st, in);
+    const ui_target_t *order = playing ? UI_TAP_ORDER_PLAYING : UI_TAP_ORDER;
+    const int n = playing ? UI_TAP_ORDER_PLAYING_LEN : UI_TAP_ORDER_LEN;
     for (int i = 0; i < n; i++) {
         if (target_live(order[i], st, in) && target_hit(order[i], st, in)) return order[i];
     }
@@ -862,30 +873,28 @@ void ui_overlay(ui_state_t *st, const ui_in_t *in, ui_overlay_t *ov)
        the previous frame. A control you can see is a control you can press; the two must not be
        able to disagree. So the hit test is armed here, from the queue, and only the PICTURE
        stays behind the idle guard. */
+    /* ONE CONDITION FOR THE PICTURE AND THE TARGET, so they cannot disagree — which is the fault
+       underneath *"it doesn't really play every single time"*, in both directions. The rectangle
+       used to be armed from the queue alone while the painting sat behind a fuller guard, so the
+       notice could be armed and invisible; before that the arming lived INSIDE the painting, so it
+       could be visible and dead. Neither is fixable by moving the arming somewhere better. It is
+       fixable by there being one answer to "is there a notice", used twice. */
+    const bool notice_up = in->waiting > 0 && st->talk == UI_TALK_IDLE && !in->stream_active &&
+                           in->jstate != UI_JP_BUSY;
+    const bool notice_big = in->now - st->popup_since < POPUP_BIG_MS;
     st->popup_box[0] = -1;
-    if (in->waiting > 0 && st->talk == UI_TALK_IDLE) {
-        /* FROM THE CLOCK, NOT FROM WHETHER ANYTHING WAS PAINTED. The two drawing functions used
-           to arm this between them, each writing its own shape — which was geometrically right
-           and conditionally absent. The shape still comes from which notice this is; only the
-           decision moved here, where it depends on the queue and the clock alone. */
-        const bool big = in->now - st->popup_since < POPUP_BIG_MS;
-        ui_popup_target(in->over_y0, in->over_h, big, st->popup_box);
-    }
+    if (notice_up) ui_popup_target(in->over_y0, in->over_h, notice_big, st->popup_box);
     /* THE POP-UP OVER EVERYTHING, and only when the panel is otherwise idle. A box announcing a
        message on top of a pet that is mid-sentence, or mid-recording, would be two demands on a
        four-year-old at once — and the one it covers is the one they are already doing. It is not
        lost: the count lives on the box and the next idle frame draws it. */
-    /* THE PICTURE, and it had the dispatcher's bug in the other half: the arrival cue blanked
-       the notice for the first half-second of its life, while the target stayed armed. What you
-       can see and what you can press must not be able to disagree, so both read the same fact. */
-    if (st->talk == UI_TALK_IDLE && !in->stream_active && in->jstate != UI_JP_BUSY &&
-        in->waiting > 0) {
-        /* Big for the first fifteen seconds, then a badge. OVER THE PAIR, NOT DEFERRED BEHIND
-           IT: the badge used to wait for the pair to lapse, which was fine while that was a
-           ten-second deadline and is a bug now that the pair waits for a finger instead — a
-           message arriving while the last one's again-and-reply stood would have been hidden for
-           as long as nobody pressed the exit, which could be all night. */
-        if (in->now - st->popup_since < POPUP_BIG_MS) {
+    /* AND THE PICTURE, FROM THE SAME TWO FACTS. Big for the first fifteen seconds, then a badge.
+       OVER THE PAIR, NOT DEFERRED BEHIND IT: the badge used to wait for the pair to lapse, which
+       was fine while that was a ten-second deadline and is a bug now that the pair waits for a
+       finger instead — a message arriving while the last one's again-and-reply stood would have
+       been hidden for as long as nobody pressed the exit, which could be all night. */
+    if (notice_up) {
+        if (notice_big) {
             ov->popup_big = true;
         } else {
             ov->popup_badge = true;
