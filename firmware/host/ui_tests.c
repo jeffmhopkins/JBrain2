@@ -1641,6 +1641,59 @@ static void test_a_failed_turn_says_so_rather_than_going_quiet(void)
     CHECK(w.st.talk == UI_TALK_IDLE, "then the pet goes back to being a pet");
 }
 
+static void test_every_dash_is_counted_and_its_two_causes_told_apart(void)
+{
+    /* THE OWNER: *"anytime we get a red – I want you to make sure that it's logged, so we can
+       make sure and resolve it in the future."*
+
+       The dash is the one failure a child sees from across the room, and it had two causes of
+       which only one left a record. A failed request is recorded by `talk.c` and arrives as
+       `talk_err`. The other is the panel giving up: the wait expires, the dash is drawn, and the
+       request may still be in flight and may still succeed — nothing failed, so nothing was
+       recorded anywhere, and the commonest shape of "it didn't work" was the invisible one.
+
+       That is why the reason is kept here rather than inferred from `talk_err` on the box: when
+       this says `"timeout"` there IS no talk row to read. */
+    world_reset();
+    CHECK(w.st.dashes == 0, "nothing has gone wrong yet");
+
+    /* One of each cause, from the same state. */
+    w.st.talk = UI_TALK_THINKING;
+    w.st.talk_since = w.in.now;
+    w.in.net = UI_NET_FAILED;
+    step();
+    CHECK(w.st.talk == UI_TALK_FAILED, "the request failed");
+    CHECK(w.st.dashes == 1, "and the dash was counted");
+    CHECK(strcmp(w.st.dash_why, "net") == 0, "named as the request failing");
+    const uint32_t first_at = w.st.dash_at;
+    CHECK(first_at != 0, "and stamped, so the box can say how long ago");
+
+    run_ms(TALK_FAILED_MS + 400);
+    w.st.talk = UI_TALK_THINKING;
+    w.st.talk_since = w.in.now;
+    /* BUSY, not IDLE: `talk.c` is still working. IDLE from THINKING is the box having heard
+       silence, which returns to the pet without a dash — so the timeout branch is only ever
+       reached with a request still in flight, which is exactly the live case. The owner, of the
+       one that started this: *"it didn't time out so I'm a little curious on what caused it."* */
+    w.in.net = UI_NET_BUSY;
+    run_ms(TALK_TIMEOUT_MS + 400);
+    CHECK(w.st.talk == UI_TALK_FAILED, "the panel gave up waiting");
+    CHECK(w.st.dashes == 2, "which is just as much a dash as the other one");
+    CHECK(strcmp(w.st.dash_why, "timeout") == 0, "and is NOT reported as a network failure");
+    CHECK(w.st.dash_at > first_at, "the stamp is the latest dash, not the first");
+
+    /* NOT CLEARED BY A GOOD TURN, which is the whole point of the count: the owner asked for
+       every dash, and a counter that a later success resets answers "none" for a panel that
+       drew six of them this afternoon. `dash_at` is what says whether it is current. */
+    run_ms(TALK_FAILED_MS + 400);
+    w.st.talk = UI_TALK_THINKING;
+    w.st.talk_since = w.in.now;
+    w.in.net = UI_NET_SPOKE;
+    step();
+    CHECK(w.st.talk == UI_TALK_IDLE, "a reply arrived");
+    CHECK(w.st.dashes == 2, "and the afternoon's failures are still on the record");
+}
+
 static void test_a_reply_arms_a_follow_up_and_the_cap_ends_it(void)
 {
     /* The exchange continues itself, fired on the EDGE where the speaker falls silent — and
@@ -2034,6 +2087,7 @@ int main(void)
     test_the_cross_discards_and_the_pet_is_not_poked();
     test_a_named_turn_with_nobody_speaking_costs_nothing();
     test_a_failed_turn_says_so_rather_than_going_quiet();
+    test_every_dash_is_counted_and_its_two_causes_told_apart();
     test_a_reply_arms_a_follow_up_and_the_cap_ends_it();
     test_stop_said_out_loud_leaves_every_state();
     test_pressing_the_face_cycles_through_the_waiting_messages();

@@ -940,6 +940,13 @@ void ui_frame(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
            you" and "it is broken" must not look identical — and not to a child either: to a
            four-year-old who has just spoken to a toy, silence IS the failure. A low falling
            pair says try again, and is deliberately gentle. */
+        /* COUNTED AND NAMED HERE, at the one place the dash is raised — see `ui_state_t`. The
+           two causes are told apart because they need opposite fixes: `net` means the request
+           failed and `reach.c` has the reason; `timeout` means it did not fail, it just never
+           answered, and nothing else on this panel would have recorded that at all. */
+        st->dash_why = in->net == UI_NET_FAILED ? "net" : "timeout";
+        st->dashes++;
+        st->dash_at = in->now == 0 ? 1 : in->now;
         st->talk = UI_TALK_FAILED;
         st->talk_since = in->now;
         cue(out, CUE_OOPS);

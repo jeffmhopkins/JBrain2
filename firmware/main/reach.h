@@ -41,6 +41,16 @@ typedef enum {
     REACH_POLL,
     /* `POST /endpoint/converse`, the conversation. The one the child is waiting on. */
     REACH_TALK,
+    /* `POST /jpanel/send`, a child's recorded message to her father or her sister.
+
+       THE ONE WHERE FAILING SILENTLY COSTS THE MOST. The other three fail and something is
+       merely late or unanswered; this one fails and a message a four-year-old recorded for
+       somebody is gone, with no row on the box and nothing to look at. The owner: *"sometimes
+       when we're in the menu for playback and they hit the green reply button and record a
+       message, it doesn't actually get sent and doesn't show up in my inbox on the pwa."*
+       Every send that REACHED the box in that window succeeded — so the failures never arrived,
+       which means the only possible record of them is this one. */
+    REACH_SEND,
     REACH_PATHS,
 } reach_path_t;
 

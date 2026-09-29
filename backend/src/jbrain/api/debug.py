@@ -3431,6 +3431,17 @@ class PanelReach(BaseModel):
     # report. -1 means it had never reached us at all.
     box_quiet_s: int
     paths: list[PanelPath]
+    # EVERY RED DASH THIS PANEL HAS DRAWN, and what caused the last one.
+    #
+    # The dash is the one failure a child actually SEES, and it is counted separately from the
+    # paths above because one of its two causes is not a path failure at all. `dash_err` is:
+    #   `net`     — the request failed, and the `talk` row above holds the reason.
+    #   `timeout` — nothing failed. The answer just did not come back inside the panel's patience,
+    #               so there is no row anywhere else, and the request may yet succeed. This is the
+    #               case that used to leave no trace at all.
+    dashes: int = 0
+    dash_err: str = ""
+    dash_ago_s: int = 0
     # WAS THE LAST MESSAGE ACTUALLY HEARD — computed here rather than left as two numbers,
     # because the finding is the RATIO and nobody reads a ratio off a page by dividing.
     #
@@ -3540,6 +3551,9 @@ async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
                 # into "never reached it", because 0 is falsy. That is precisely the confusion
                 # `-1` was chosen to prevent, reintroduced in the reader rather than the writer.
                 box_quiet_s=_int_or(report.get("box_quiet_s"), -1),
+                dashes=_int_or(report.get("dashes"), 0),
+                dash_err=str(report.get("dash_err", "") or ""),
+                dash_ago_s=_int_or(report.get("dash_ago_s"), 0),
                 last_message=_panel_message(report),
                 paths=[
                     PanelPath(
@@ -3549,10 +3563,12 @@ async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
                         ago_s=_int_or(report.get(f"{name}_ago_s"), 0),
                     )
                     # `set` is every knob and the waiting count, `poll` is the message check on
-                    # the panel's other task, `talk` is the conversation. Listed even at zero:
+                    # the panel's other task, `talk` is the conversation, and `send` is a child's
+                    # recorded message going out — the one where a silent failure loses something
+                    # that cannot be recovered. Listed even at zero:
                     # "the conversation has never failed" is an answer, and a route that omitted
                     # the healthy paths would make absence mean two things.
-                    for name in ("set", "poll", "talk")
+                    for name in ("set", "poll", "talk", "send")
                 ],
             )
         )

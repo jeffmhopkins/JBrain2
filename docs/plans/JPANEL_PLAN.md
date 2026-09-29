@@ -356,6 +356,20 @@ plausible-sounding change, passes one and breaks the other.
 until the owner clears it**, with no expiry and no sweep, because a transcript that vanishes on a
 timer is not a record a parent can rely on — and the Clear button asks twice.
 
+**A REPLY THAT DOES NOT GO NOW SAYS SO (0.3.38).** The owner: *"sometimes when we're in the menu
+for playback and they hit the green reply button and record a message, it doesn't actually get sent
+and doesn't show up in my inbox on the pwa."*
+
+**The box could not see it at all.** Every `POST /jpanel/send` that reached it in the reported
+window returned 200 and produced a `jpanel.sent` event — the failures are exactly the ones that
+never arrived. `do_send_once` fails six ways and logged all of them to a serial console that does
+not exist in a bedroom (CLAUDE.md #10). Each branch now names itself and the send path reports as
+`REACH_SEND`, so the reason survives the outage and lands on `GET /api/debug/endpoint/reach` with
+the others. **`JPANEL_NOBODY` is not a fault** — the box answered; there is simply no second panel
+to address — and counting it would bury the failures that LOSE a message under a condition a
+one-panel house produces on every attempt. Reasoning in `ROOM_ENDPOINT_PLAN.md`, "The two failures
+that left no record at all (0.3.38)".
+
 **PRESS THE SENDER'S FACE TO CHANGE MESSAGE (0.3.37).** The owner: *"instead of swiping if we
 just press the icon on the top left it should cycle through the numbers of messages that we have"*,
 and on where: *"it should be the top left icon after that playback menu is up"*.

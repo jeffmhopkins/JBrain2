@@ -433,7 +433,10 @@ static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
     char path[32];
     snprintf(path, sizeof(path), "/send?to=%s", to == JPANEL_TO_DAD ? "dad" : "panel");
     esp_http_client_handle_t c = open_client(path, HTTP_METHOD_POST, url, sizeof(url));
-    if (c == NULL) return JPANEL_FAILED;
+    if (c == NULL) {
+        reach_fail(REACH_SEND, "no-client", now_ms());
+        return JPANEL_FAILED;
+    }
     esp_http_client_set_header(c, "Content-Type", "application/octet-stream");
 
     /* WHAT THE BOX SHOULD END UP WITH, SAID BEFORE THE BYTES GO.
@@ -467,9 +470,13 @@ static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
 
     const int64_t t0 = esp_timer_get_time();
     jpanel_state_t out = JPANEL_FAILED;
+    /* Set at each `goto done`, because the label cannot tell which branch reached it — and "her
+       message did not go" without which half is exactly the report that had nowhere to land. */
+    const char *why = "unknown";
 
     if (esp_http_client_open(c, (int)s_bytes) != ESP_OK) {
         ESP_LOGW(TAG, "connect failed");
+        why = "connect";
         goto done;
     }
     const uint8_t *p = (const uint8_t *)s_pcm;
@@ -478,12 +485,16 @@ static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
         const int n = esp_http_client_write(c, (const char *)p, left > 4096 ? 4096 : (int)left);
         if (n <= 0) {
             ESP_LOGW(TAG, "upload stalled with %u bytes left", (unsigned)left);
+            why = "upload-stall";
             goto done;
         }
         p += n;
         left -= (size_t)n;
     }
-    if (esp_http_client_fetch_headers(c) < 0) goto done;
+    if (esp_http_client_fetch_headers(c) < 0) {
+        why = "no-headers";
+        goto done;
+    }
     const int status = esp_http_client_get_status_code(c);
     if (status == 409) {
         /* THE REFUSAL THE PLAN REFUSED TO GUESS AT. "The other panel" is only obvious with
@@ -498,10 +509,17 @@ static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
         /* The box hashed what arrived and got something else. Recoverable, and the only
            status this panel retries. */
         *corrupt = true;
+        why = "corrupt";
         goto done;
     }
     if (status != 200) {
         ESP_LOGW(TAG, "box said %d", status);
+        /* STATIC because `reach_fail` keeps the pointer rather than copying — the whole design
+           is that a reason outlives the moment it was produced. A stack buffer here would be
+           read back long after this frame was gone. One task sends, so one buffer is enough. */
+        static char code[12];
+        snprintf(code, sizeof(code), "http-%d", status);
+        why = code;
         goto done;
     }
     out = JPANEL_SENT;
@@ -511,6 +529,13 @@ done:
              to == JPANEL_TO_DAD ? "dad" : "panel",
              (int)((esp_timer_get_time() - t0) / 1000), (int)out);
     esp_http_client_cleanup(c);
+    /* NOBODY-TO-SEND-TO IS NOT A FAULT: the box is answering, there is simply no one to address.
+       Counting it would bury the failures that LOSE a message under a house with one panel. */
+    if (out == JPANEL_SENT) {
+        reach_ok(REACH_SEND, now_ms());
+    } else if (out != JPANEL_NOBODY) {
+        reach_fail(REACH_SEND, why, now_ms());
+    }
     return out;
 }
 

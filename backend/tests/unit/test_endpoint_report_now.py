@@ -637,3 +637,97 @@ class TestEveryFieldThePanelSendsIsDeclaredHere:
         matching, `_telemetry_keys` would return a handful of keys and the test above would
         pass by finding nothing to check."""
         assert len(self._telemetry_keys()) > 20
+
+
+class TestTheTwoFailuresThatUsedToLeaveNoRecord:
+    """A CHILD'S MESSAGE THAT DID NOT GO, AND THE RED DASH — the two failures the owner can see
+    from across the room and this box could not see at all.
+
+    Both were reported live on 2026-09-29. *"Sometimes when we're in the menu for playback and
+    they hit the green reply button and record a message, it doesn't actually get sent and
+    doesn't show up in my inbox on the pwa."* Every `POST /jpanel/send` that REACHED this box in
+    that window returned 200 and every one of them produced a `jpanel.sent` event — so the
+    failures are precisely the ones that never arrived, and the box's log is a record of what
+    worked. And: *"anytime we get a red – I want you to make sure that it's logged, so we can
+    make sure and resolve it in the future."*
+
+    The panel knew both. It logged them to a serial console that does not exist in a
+    four-year-old's bedroom (CLAUDE.md #10). These tests hold the wiring that carries them out.
+    """
+
+    def _do_send_once(self) -> str:
+        """The DEFINITION, not the forward declaration above `do_send`, which shares its opening
+        line and whose body is the retry loop. Matching the wrong one silently hands these tests
+        a function with no reach calls in it at all — as it did on the first run."""
+        src = _fw("jpanel.c")
+        start = src.index("static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)\n{")
+        return src[start : src.index("\n}\n", start)]
+
+    def test_every_failing_exit_from_a_send_names_itself(self) -> None:
+        """`do_send_once` funnels six failure branches through one `goto done`, so the label
+        cannot tell which one arrived — `why` is how it says. A branch that jumps without
+        setting it reports the previous branch's reason or `"unknown"`, which is worse than no
+        field at all: a wrong reason is one somebody will act on."""
+        body = self._do_send_once()
+
+        lines = body.split("\n")
+        for n, line in enumerate(lines):
+            if "goto done;" not in line:
+                continue
+            # The two lines above it, which is where `why` (or `out`, for the one non-fault)
+            # is set in every branch as written.
+            above = " ".join(lines[max(0, n - 3) : n])
+            assert "why = " in above or "out = JPANEL_NOBODY" in above, (
+                f"a branch jumps to done without naming itself:\n{above}\n{line}"
+            )
+
+        assert body.count("goto done;") >= 5, "the branches were restructured; re-read this test"
+
+    def test_a_send_that_failed_is_counted_and_a_house_with_one_panel_is_not(self) -> None:
+        """NOBODY-TO-SEND-TO IS NOT A FAULT. The box answered; there is simply no second panel
+        to address. Counting it would bury the failures that LOSE a message under a condition
+        that is about the house rather than the network — and it would do so constantly, because
+        a one-panel house produces it on every attempt."""
+        body = self._do_send_once()
+
+        assert "reach_ok(REACH_SEND" in body, "a successful send no longer clears the streak"
+        assert "reach_fail(REACH_SEND, why" in body, "the reason no longer reaches the report"
+        assert "out != JPANEL_NOBODY" in body, (
+            "JPANEL_NOBODY is being counted as a send failure — a one-panel house would report "
+            "a permanent fault on the path that matters most"
+        )
+
+    def test_both_halves_of_the_dash_are_counted_and_told_apart(self) -> None:
+        """THE DASH HAD TWO CAUSES AND ONLY ONE LEFT A TRACE. `talk.c` records the branch where
+        the request failed, so `talk_err` covered it. The other is the panel giving up:
+        `TALK_TIMEOUT_MS` passes, the dash is drawn, and the request may still be in flight and
+        may still succeed. Nothing failed, so nothing was recorded, and the commonest shape of
+        "it didn't work" was the one with no evidence.
+
+        Both halves of the firmware raise this dash — `ui.c` is the tested model, `display.c`
+        the shipping mirror — and a counter in only one of them is a counter that reports zero
+        from the panel on the wall."""
+        for name, why in (("ui.c", "in->net == UI_NET_FAILED"), ("display.c", "talk_state() ==")):
+            src = _fw(name)
+            assert '"timeout"' in src and '"net"' in src, f"{name} no longer tells them apart"
+            assert why in src, f"{name} no longer decides the reason from the live state"
+        assert "st->dashes++" in _fw("ui.c"), "the model stopped counting"
+        assert "s_dashes++" in _fw("display.c"), "the shipping half stopped counting"
+
+    def test_the_route_surfaces_both(self) -> None:
+        """A number the firmware reports into a model that declares it and a route that never
+        shows it is a number nobody will ever read. `/endpoint/reach` is where the owner looks
+        (it exists because answering this question once took two thousand lines of access log),
+        so it is where both have to appear."""
+        from jbrain.api.debug import PanelReach, panel_reach
+
+        assert {"dashes", "dash_err", "dash_ago_s"} <= set(PanelReach.model_fields)
+        src = (
+            pathlib.Path(panel_reach.__code__.co_filename)
+            .read_text(encoding="utf-8")
+            .split("async def panel_reach")[1]
+        )
+        assert '"set", "poll", "talk", "send"' in src, (
+            "the send path is not listed — the one where a silent failure loses something that "
+            "cannot be recovered is the one missing from the page that shows the failures"
+        )

@@ -379,10 +379,22 @@ static bool report(const cfg_t *cfg)
     const char *talk_err = "";
     int talk_fails = 0;
     uint32_t talk_ago = 0;
+    const char *send_err = "";
+    int send_fails = 0;
+    uint32_t send_ago = 0;
     const uint32_t reach_now = (uint32_t)(esp_timer_get_time() / 1000);
     reach_faults(REACH_SETTINGS, &set_fails, &set_err, &set_ago, reach_now);
     reach_faults(REACH_POLL, &poll_fails, &poll_err, &poll_ago, reach_now);
     reach_faults(REACH_TALK, &talk_fails, &talk_err, &talk_ago, reach_now);
+    reach_faults(REACH_SEND, &send_fails, &send_err, &send_ago, reach_now);
+    /* EVERY RED DASH, at the owner's ask: *"anytime we get a red – I want you to make sure that
+       it's logged, so we can make sure and resolve it in the future."* `dash_err` is which of the
+       two causes — `net`, whose reason is in the talk row above, or `timeout`, which has no row
+       anywhere else because nothing failed, it just never answered. */
+    unsigned dashes = 0;
+    const char *dash_err = "";
+    uint32_t dash_ago = 0;
+    display_dashes(&dashes, &dash_err, &dash_ago);
     /* THE ONE NUMBER THAT WOULD HAVE ANSWERED THE WHOLE EVENING. -1 means the box has never
        answered this panel at all, which is a different fault from having gone quiet and must not
        arrive as a zero that reads like "just now". */
@@ -430,6 +442,8 @@ static bool report(const cfg_t *cfg)
                      "\"set_err\":\"%s\",\"set_fails\":%d,\"set_ago_s\":%u,"
                      "\"poll_err\":\"%s\",\"poll_fails\":%d,\"poll_ago_s\":%u,"
                      "\"talk_err\":\"%s\",\"talk_fails\":%d,\"talk_ago_s\":%u,"
+                     "\"send_err\":\"%s\",\"send_fails\":%d,\"send_ago_s\":%u,"
+                     "\"dashes\":%u,\"dash_err\":\"%s\",\"dash_ago_s\":%u,"
                      "\"box_quiet_s\":%d,\"relinks\":%u,"
                      "\"msg_bytes\":%d,\"msg_ms\":%d,\"msg_ok\":%u,\"msg_bad\":%u,"
                      "\"msg_err\":\"%s\",\"msg_waited_ms\":%d,"
@@ -454,6 +468,8 @@ static bool report(const cfg_t *cfg)
                      set_err, set_fails, (unsigned)(set_ago / 1000),
                      poll_err, poll_fails, (unsigned)(poll_ago / 1000),
                      talk_err, talk_fails, (unsigned)(talk_ago / 1000),
+                     send_err, send_fails, (unsigned)(send_ago / 1000),
+                     dashes, dash_err, (unsigned)(dash_ago / 1000),
                      quiet_s, s_relinks, msg_bytes, msg_ms, msg_ok, msg_bad, msg_err, msg_waited,
                      nudge_count(), nudge_dropped(),
                      jpanel_push_live() ? "true" : "false", jpanel_push_events(),

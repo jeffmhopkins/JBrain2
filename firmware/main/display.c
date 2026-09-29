@@ -948,6 +948,24 @@ static int s_sel;
    only reports edges, and `swipe_dx` says how far it thought the finger got. */
 static uint16_t s_swipes;
 static int s_swipe_dx;
+/* HOW MANY RED DASHES THIS PANEL HAS DRAWN, and which cause the last one had. Reported, because
+   the dash is the one failure a child actually sees and it was the one with no record: see the
+   comment where it is raised. */
+static unsigned s_dashes;
+static const char *s_dash_why = "";
+static uint32_t s_dash_at;
+
+void display_dashes(unsigned *n, const char **why, uint32_t *ago_ms)
+{
+    if (n != NULL) *n = s_dashes;
+    if (why != NULL) *why = s_dash_why;
+    /* Unsigned, so this stays right across the ~49-day rollover of the millisecond clock — the
+       same argument as `reach.c`, and it matters for the same reason: a panel that has been up
+       seven weeks is exactly the one whose faults nobody has looked at. */
+    if (ago_ms != NULL) {
+        *ago_ms = s_dash_at == 0 ? 0 : (uint32_t)((uint32_t)(esp_timer_get_time() / 1000) - s_dash_at);
+    }
+}
 
 void display_swipes(unsigned *n, int *last_dx, int *sel)
 {
@@ -3572,10 +3590,22 @@ static void face_task(void *arg)
                arrived with no sound at all, and to a four-year-old who has just spoken to a
                toy, silence IS the failure — it is what a broken one does. A low falling pair
                says try again. It is deliberately gentle; it must not read as being told off. */
+            /* COUNTED AND NAMED, at the owner's ask: *"anytime we get a red – I want you to
+               make sure that it's logged, so we can make sure and resolve it in the future."*
+
+               THE TWO CAUSES ARE TOLD APART BECAUSE THEY NEED OPPOSITE FIXES. `net` means the
+               request failed and `reach.c` already holds the reason (`talk_err`). `timeout`
+               means it did not fail — it simply never answered inside `TALK_TIMEOUT_MS`, while
+               `talk.c` may still be on a socket that succeeds later. Nothing on this panel
+               recorded that, so the commonest shape of "it didn't work" was the one with no
+               evidence anywhere. `ui.c` holds the rule and is tested on it. */
+            s_dash_why = talk_state() == TALK_NET_FAILED ? "net" : "timeout";
+            s_dashes++;
+            s_dash_at = now == 0 ? 1 : now;
             s_talk = TALK_FAILED;
             s_talk_since = now;
             if (sound) audio_cue(CUE_OOPS);
-            ESP_LOGW(TAG, "talk: no reply");
+            ESP_LOGW(TAG, "talk: no reply (%s)", s_dash_why);
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
         }

@@ -353,6 +353,24 @@ typedef enum { UI_PEND_NONE = 0, UI_PEND_PLAY, UI_PEND_REPLAY, UI_PEND_REPLY } u
 typedef struct {
     ui_talk_t talk;
     uint32_t talk_since;
+    /* ── EVERY RED DASH IS COUNTED AND NAMED ──────────────────────────────────────────────
+     *
+       The owner: *"anytime we get a red – I want you to make sure that it's logged, so we can
+       make sure and resolve it in the future."*
+
+       THE DASH IS THE USER-VISIBLE EVENT AND IT HAD TWO CAUSES, only one of which left a trace.
+       `reach.c` names what happened on the WIRE — `talk_fails`, `talk_err` — and covers the
+       branch where `talk.c` came back failed. The other branch is the renderer giving up:
+       `TALK_TIMEOUT_MS` passes with no answer, the panel draws the dash, and `talk.c` may still
+       be waiting on a socket that eventually succeeds. Nothing recorded that anywhere, so the
+       commonest shape of "it didn't work" was the one with no evidence.
+
+       `dash_why` is which of the two, not a duplicate of `talk_err`: when it is `"net"` the
+       reason is already in the reach row, and when it is `"timeout"` there IS no reach row —
+       that is the whole point of counting it here. */
+    unsigned dashes;
+    const char *dash_why;
+    uint32_t dash_at;
     /* WHEN the finger landed, not HOW MANY passes ago. The first cut counted `+= TOUCH_POLL_MS`
        per iteration, which silently assumes the render loop runs every 40 ms — it does not. The
        delay is 40 ms and then the frame's work happens, so a tally of nominal ticks always lags
