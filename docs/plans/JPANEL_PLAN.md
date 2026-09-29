@@ -329,6 +329,33 @@ paths that were supposed to make it a backstop failed on a freshly-woken panel; 
 inside, naming who it is from — and wakes the screen if it is asleep. It does not auto-play; an
 unplayed message survives a reboot because the state lives on the box.
 
+**WHAT THE CHILDREN SAY TO THE PET IS A RECORD NOW, NOT A LOG LINE (0.3.33).** The owner: *"I
+think we need some way of logging [what] the kids say to the large language model ... another tab
+in the jpanel side that is llm conversations that are stored that I can clear and read through
+sorted by panel."*
+
+The words already existed — every turn writes an `endpoint.converse` line carrying `heard` and
+`reply` — truncated to 120 characters, interleaved with every other event on the box, rotated away
+on a schedule nobody chose for this, and reachable only by reading an access log. The most
+interesting thing this box produces was a debug field.
+
+Migration **0219 `pet_turn`**, a **Chats** tab beside Messages/Panels/Flash, and
+`GET`/`DELETE /api/jpanel/chats` grouped by panel because the question is about a child and the
+panel is how this box names one.
+
+**THE PANEL MAY WRITE THESE AND MAY NEVER READ THEM**, which is the whole of the policy. For
+messages there is a delivery reason to let a panel read a row addressed to it; here there is none —
+the pet's memory of a conversation is four minutes of process RAM in the API, deliberately not this
+table. So a panel cannot read back its sibling's transcripts, and cannot read back its own, and the
+insert policy pins `device_id` to its own principal because an impersonated row here is not a
+forged message but a forged account of what a child said. Six tests assert it against real
+Postgres, self and sibling separately — a later `device_id = principal_id` policy, the
+plausible-sounding change, passes one and breaks the other.
+
+**No audio.** Storing text is a diary; storing every clip is a wire in a child's bedroom. **Kept
+until the owner clears it**, with no expiry and no sweep, because a transcript that vanishes on a
+timer is not a record a parent can rely on — and the Clear button asks twice.
+
 **A MESSAGE WAITS FOR THE SPEAKER RATHER THAN BEING DROPPED (0.3.33).** The owner: *"[it looks]
 like it's going to play and only stays about one second before it disappears again ... Seems that
 sometime if I long press on the notification it seems to work a little bit better. Like maybe the

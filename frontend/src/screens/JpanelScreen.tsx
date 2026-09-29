@@ -22,6 +22,7 @@ import {
   ApiError,
   type EndpointSettings,
   type JpanelMessage,
+  type JpanelPetChat,
   type JpanelThread,
   PANEL_NAME_CHARS,
   PANEL_NAME_MAX,
@@ -40,7 +41,7 @@ import { MAX_MESSAGE_MS, type Recorder, startRecording } from "../voiceMessage";
 import { EndpointsScreen } from "./EndpointsScreen";
 import "./jpanel.css";
 
-export type JpanelTab = "messages" | "panels" | "flash";
+export type JpanelTab = "messages" | "panels" | "chats" | "flash";
 
 interface JpanelScreenProps {
   onClose: () => void;
@@ -1130,6 +1131,125 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
   );
 }
 
+/* ── WHAT THE CHILDREN HAVE BEEN TELLING THE PET ───────────────────────────────────────────
+ *
+ * The owner: *"I think we need some way of logging [what] the kids say to the large language
+ * model ... another tab in the jpanel side that is llm conversations that are stored that I can
+ * clear and read through sorted by panel."*
+ *
+ * READ-ONLY AND NOT LIVE, which is the difference from `MessagesTab` and is deliberate. Messages
+ * polls because a message arriving while you watch is the point; this is a thing you sit down
+ * with. A poll here would re-render a long transcript under the reader's thumb every few seconds
+ * and buy nothing — a conversation that happened at breakfast is not more true at 4pm.
+ *
+ * GROUPED BY PANEL BECAUSE THE QUESTION IS ABOUT A CHILD. "What has she been asking it?" is the
+ * sentence this exists to answer, and the panel is how this box names a child.
+ */
+function ChatsTab() {
+  const [panels, setPanels] = useState<JpanelPetChat[] | null>(null);
+  const [error, setError] = useState("");
+  /* Which panel's clear is being confirmed. A destructive button on a record of a child's
+     conversations does not get to fire on one press. */
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const out = await api.jpanelChats();
+      setPanels(out.panels);
+      setError("");
+    } catch (e) {
+      // What is on screen stays: a failed fetch on a train is not evidence the child said
+      // nothing, and blanking it would be the one lie this surface must not tell.
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const clear = useCallback(
+    async (device: string | undefined) => {
+      setBusy(true);
+      try {
+        await api.jpanelClearChats(device);
+        setConfirming(null);
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
+  if (error && panels === null) return <p className="jp-empty">{error}</p>;
+  if (panels === null) return <p className="jp-empty">Loading…</p>;
+
+  const total = panels.reduce((n, p) => n + p.turns.length, 0);
+  if (total === 0) {
+    return (
+      <p className="jp-empty">
+        Nothing yet. Conversations with the pet show up here once a panel has had one.
+      </p>
+    );
+  }
+
+  return (
+    <div className="jp-chats">
+      {error && <p className="jp-error">{error}</p>}
+      {panels.map((panel) => (
+        <section key={panel.device_id} className="jp-chat-panel">
+          <header className="jp-chat-head">
+            <h2>{panel.label}</h2>
+            <span className="jp-chat-count">
+              {panel.turns.length === 1 ? "1 exchange" : `${panel.turns.length} exchanges`}
+            </span>
+            {panel.turns.length > 0 &&
+              (confirming === panel.device_id ? (
+                <span className="jp-chat-confirm">
+                  <button type="button" disabled={busy} onClick={() => void clear(panel.device_id)}>
+                    {busy ? "Clearing…" : "Really clear"}
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => setConfirming(null)}>
+                    Keep
+                  </button>
+                </span>
+              ) : (
+                <button type="button" onClick={() => setConfirming(panel.device_id)}>
+                  Clear
+                </button>
+              ))}
+          </header>
+          {panel.turns.length === 0 ? (
+            <p className="jp-empty">Nothing from this panel yet.</p>
+          ) : (
+            <ol className="jp-turns">
+              {panel.turns.map((turn) => (
+                <li key={turn.id}>
+                  {/* THE CHILD'S WORDS FIRST AND LARGER. The pet's reply is the machine's half
+                      and is worth reading; hers is the reason this screen exists. */}
+                  <p className="jp-heard">{turn.heard || "(nothing heard)"}</p>
+                  <p className="jp-reply">{turn.reply}</p>
+                  <p className="jp-turn-meta">
+                    <time dateTime={turn.created_at}>
+                      {new Date(turn.created_at).toLocaleString()}
+                    </time>
+                    {/* The one number worth surfacing: how long she waited for an answer. */}
+                    <span>{(turn.total_ms / 1000).toFixed(1)}s</span>
+                  </p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenProps) {
   const [tab, setTab] = useState<JpanelTab>(initialTab);
 
@@ -1142,7 +1262,7 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         <h1>jpanel</h1>
       </header>
 
-      <div className="jp-seg" role="tablist" aria-label="Messages, Panels or Flash">
+      <div className="jp-seg" role="tablist" aria-label="Messages, Panels, Chats or Flash">
         <button
           type="button"
           role="tab"
@@ -1164,6 +1284,15 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         <button
           type="button"
           role="tab"
+          aria-selected={tab === "chats"}
+          className={tab === "chats" ? "on" : ""}
+          onClick={() => setTab("chats")}
+        >
+          Chats
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === "flash"}
           className={tab === "flash" ? "on" : ""}
           onClick={() => setTab("flash")}
@@ -1176,6 +1305,7 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
           stream open, and Messages polls — neither should run behind a tab nobody is on. */}
       {tab === "messages" && <MessagesTab />}
       {tab === "panels" && <PanelsTab />}
+      {tab === "chats" && <ChatsTab />}
       {tab === "flash" && <EndpointsScreen />}
     </div>
   );

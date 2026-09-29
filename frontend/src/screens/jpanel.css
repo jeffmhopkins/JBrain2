@@ -644,3 +644,88 @@
   margin-top: 4px;
   line-height: 1.45;
 }
+
+/* ── Chats: what the children have been telling the pet ──────────────────────────────────────
+ *
+ * A READING SURFACE, not a messaging one. The Messages tab is a live thing you act in; this is
+ * a thing you sit down with, so it is quieter, wider-leaded and has no controls in the flow of
+ * the text — the only button is the one that destroys it, and that one is up in the header
+ * where a thumb scrolling a transcript cannot reach it.
+ */
+.jp-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 4px 0 24px;
+}
+.jp-chat-panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px 4px;
+}
+.jp-chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.jp-chat-head h2 {
+  font-size: var(--fs-body);
+  margin: 0;
+  flex: 0 0 auto;
+}
+.jp-chat-count {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  /* Pushes the clear button to the far edge: a destructive control belongs as far from the
+     thing it destroys as the row allows. */
+  flex: 1 1 auto;
+}
+.jp-chat-head button {
+  font-size: var(--fs-micro);
+}
+.jp-chat-confirm {
+  display: flex;
+  gap: 8px;
+}
+/* The confirm reads as the dangerous one; "Keep" does not. */
+.jp-chat-confirm button:first-child {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.jp-turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.jp-turns li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jp-turns li:last-child {
+  border-bottom: 0;
+}
+/* HER WORDS FIRST AND FULL SIZE. The reply is the machine's half and is worth reading; hers is
+   the reason this screen exists, so it gets the weight and the pet's answer is indented under
+   it the way a reply is. */
+.jp-heard {
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  margin: 0 0 6px;
+}
+.jp-reply {
+  font-size: var(--fs-secondary);
+  line-height: 1.5;
+  color: var(--text-2);
+  margin: 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--border);
+}
+.jp-turn-meta {
+  display: flex;
+  gap: 10px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 8px 0 0;
+}

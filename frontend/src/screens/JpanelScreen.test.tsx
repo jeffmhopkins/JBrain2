@@ -96,6 +96,31 @@ const SENT = {
 };
 
 /** The requests each case cares about; everything else 404s, as a real box would. */
+/** Two panels' conversations with the pet, as `GET /jpanel/chats` serves them. */
+const CHATS = [
+  {
+    device_id: "dev-elora",
+    label: "panel Elora",
+    turns: [
+      {
+        id: "t1",
+        heard: "why is the sky blue",
+        reply: "Because the air scatters the blue light!",
+        stt_ms: 900,
+        llm_ms: 1200,
+        tts_ms: 500,
+        total_ms: 2600,
+        created_at: "2026-09-29T14:00:00Z",
+      },
+    ],
+  },
+  {
+    device_id: "dev-lydian",
+    label: "panel Lydian",
+    turns: [],
+  },
+];
+
 function box(
   opts: {
     threads?: unknown[];
@@ -107,11 +132,19 @@ function box(
     appearancePut?: (init?: RequestInit) => Response;
     settings?: unknown;
     settingsPut?: (sent: Record<string, unknown>) => Response;
+    chats?: unknown[];
+    clearChats?: (path: string) => Response;
   } = {},
 ) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
+    if (path.startsWith("/api/jpanel/chats") && method === "GET") {
+      return json({ panels: opts.chats ?? CHATS });
+    }
+    if (path.startsWith("/api/jpanel/chats") && method === "DELETE") {
+      return opts.clearChats ? opts.clearChats(path) : json({ deleted: 2, kept: 0 });
+    }
     if (path.startsWith("/api/jpanel/messages") && method === "GET") {
       return json({ panels: opts.threads ?? THREADS });
     }
@@ -1111,5 +1144,94 @@ describe("how dim dim is", () => {
 
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]?.dim_percent).toBe(10);
+  });
+});
+
+describe("the Chats tab", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(box());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows what a child said and what the pet answered, under her panel", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
+
+    expect(await screen.findByText("why is the sky blue")).toBeTruthy();
+    expect(screen.getByText("Because the air scatters the blue light!")).toBeTruthy();
+    // GROUPED BY PANEL, because the question this answers is about a child rather than a house.
+    expect(screen.getByText("panel Elora")).toBeTruthy();
+  });
+
+  it("lists a panel that has said nothing, so quiet reads as quiet and not as missing", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
+
+    expect(await screen.findByText("panel Lydian")).toBeTruthy();
+    expect(screen.getByText("Nothing from this panel yet.")).toBeTruthy();
+  });
+
+  it("does not clear a child's conversations on one press", async () => {
+    const cleared: string[] = [];
+    fetchMock.mockImplementation(
+      box({
+        clearChats: (path) => {
+          cleared.push(path);
+          return json({ deleted: 1, kept: 0 });
+        },
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
+    await screen.findByText("why is the sky blue");
+
+    // THE FIRST PRESS ONLY ASKS. This button destroys the record of a child's conversations
+    // and there is no undo anywhere behind it.
+    // Unique: only the panel with turns shows a Clear, so this cannot silently pick the wrong one.
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(cleared).toEqual([]);
+    expect(screen.getByRole("button", { name: "Keep" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Really clear" }));
+    await screen.findByText("why is the sky blue");
+    // Scoped to the panel whose button it was, never the whole house.
+    expect(cleared).toEqual(["/api/jpanel/chats?device=dev-elora"]);
+  });
+
+  it("backs out of a clear without destroying anything", async () => {
+    const cleared: string[] = [];
+    fetchMock.mockImplementation(
+      box({
+        clearChats: (path) => {
+          cleared.push(path);
+          return json({ deleted: 1, kept: 0 });
+        },
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
+    await screen.findByText("why is the sky blue");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(cleared).toEqual([]);
+    expect(screen.getByText("why is the sky blue")).toBeTruthy();
+  });
+
+  it("keeps the transcript on screen when a refresh fails", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
+    await screen.findByText("why is the sky blue");
+
+    // A failed fetch on a train is not evidence the child said nothing, and blanking the
+    // screen would be the one lie this surface must not tell.
+    fetchMock.mockImplementation(async () => new Response("nope", { status: 500 }));
+    expect(screen.getByText("why is the sky blue")).toBeTruthy();
   });
 });

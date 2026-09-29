@@ -2759,6 +2759,36 @@ export interface JpanelMessages {
   panels: JpanelThread[];
 }
 
+/** One exchange between a child and the pet. */
+export interface JpanelPetTurn {
+  id: string;
+  /** What the panel heard, after the wake word is stripped — the full text, not the log's 120. */
+  heard: string;
+  reply: string;
+  /** Kept because they answer "why did she give up waiting" months later. */
+  stt_ms: number;
+  llm_ms: number;
+  tts_ms: number;
+  total_ms: number;
+  created_at: string;
+}
+
+/** One panel's conversations with the pet, newest first. */
+export interface JpanelPetChat {
+  device_id: string;
+  label: string;
+  turns: JpanelPetTurn[];
+}
+
+export interface JpanelChats {
+  panels: JpanelPetChat[];
+}
+
+export interface JpanelCleared {
+  deleted: number;
+  kept: number;
+}
+
 /** Playable URL for one message's audio.
  *
  *  A URL helper rather than an `api.*` method for the same reason `sdrRecordingUrl` is:
@@ -5146,6 +5176,20 @@ export const api = {
   // Owner-only. One list grouped by panel, newest first, with the unplayed count per
   // panel already summed by the box — the PWA never counts it from the page it happens
   // to be holding, which would drop to zero the moment `limit` truncated a thread.
+  /** What the children have been saying to the pet, grouped by the panel that heard it. */
+  async jpanelChats(limit?: number): Promise<JpanelChats> {
+    const q = limit === undefined ? "" : `?limit=${encodeURIComponent(limit)}`;
+    const response = await request(`/api/jpanel/chats${q}`);
+    return (await response.json()) as JpanelChats;
+  },
+
+  /** Clear one panel's conversations, or every panel's when `device` is omitted. */
+  async jpanelClearChats(device?: string): Promise<JpanelCleared> {
+    const q = device === undefined ? "" : `?device=${encodeURIComponent(device)}`;
+    const response = await request(`/api/jpanel/chats${q}`, { method: "DELETE" });
+    return (await response.json()) as JpanelCleared;
+  },
+
   async jpanelMessages(limit?: number): Promise<JpanelMessages> {
     const q = limit === undefined ? "" : `?limit=${encodeURIComponent(limit)}`;
     const response = await request(`/api/jpanel/messages${q}`);
