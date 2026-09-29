@@ -2,11 +2,13 @@
 
 #include "jpanel.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 
 #include "audio.h"
 #include "nudge.h"
+#include "reach.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -20,6 +22,12 @@
 #include "freertos/task.h"
 
 static const char *TAG = "jpanel";
+
+/* Local for `ota.c`'s reason: `reach.c` is on the host suite and takes its clock as an argument. */
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
 
 /* Shorter than `talk.c`'s 30 s. A turn waits on whisper AND a language model AND a voice; a
    send waits on whisper alone and a fetch on a blob read, so a request still running after
@@ -89,6 +97,35 @@ static uint8_t s_chunk[JPANEL_READ_CHUNK];
  * A flag set synchronously at the moment the audio starts cannot be missed by a reader that
  * runs later, which is the property the polled version did not have. */
 static volatile bool s_owed;
+
+/* ── WHETHER A MESSAGE WAS ACTUALLY HEARD, WHICH NOTHING HAS EVER REPORTED ────────────────────
+ *
+ * The owner, on 0.3.32: *"the notification shows up and I click the notification and then playback
+ * menu pulls up. But then [it] only stay[s] for about a half second before going back to the big
+ * blue notification and it doesn't play."*
+ *
+ * THE BOX'S LOG SAID THE OPPOSITE AND WAS NOT WRONG: `GET /next` 200, then `POST /played` 204.
+ * The bytes were served, the digest matched — `verified()` would have refused otherwise — and the
+ * panel acknowledged. Every server-side record of that message says it was delivered and heard.
+ *
+ * Because the acknowledgement watches `audio_playing()`, not the SPEAKER. That is the right
+ * design — a panel that loses power mid-message must keep the message — but it makes "the ring
+ * drained" and "a child heard it" the same event, and they are not. A ring that drains in forty
+ * milliseconds has played nothing, and the box cannot tell that from three seconds of a father's
+ * voice.
+ *
+ * SO MEASURE THE WALL CLOCK, which is the one number that separates them: how long from
+ * `audio_stream_begin` to the ring going quiet, against how long the bytes should have taken.
+ * 98 KB of 16-bit mono at 16 kHz is 3.06 seconds; if `msg_ms` comes back as 40 then the bytes went
+ * somewhere that was not a speaker, and that is a different fault from the ones this file already
+ * reports. Cheap, cumulative, and it survives to the next telemetry post like everything in
+ * `reach.c` — for the same reason, which is that nobody is holding a serial cable. */
+static volatile int s_msg_bytes;   /* of the last message streamed */
+static volatile int s_msg_ms;      /* how long its ring actually sounded */
+static volatile unsigned s_msg_ok; /* messages that streamed, verified and drained */
+static volatile unsigned s_msg_bad;
+static const char *s_msg_err = "";
+static uint32_t s_msg_began_ms;
 /* A RUN: press once, hear everything waiting, oldest first.
  *
  * The owner: *"when multiple messages stack up it doesn't have a good way to show them."* One
@@ -479,7 +516,11 @@ static void do_poll(void)
 {
     char url[288];
     esp_http_client_handle_t c = open_client("/waiting", HTTP_METHOD_GET, url, sizeof(url));
-    if (c == NULL) return;
+    if (c == NULL) {
+        reach_fail(REACH_POLL, "no-client", now_ms());
+        return;
+    }
+    const char *why = "unknown";
 
     /* STATIC, AND BIGGER THAN IT WAS, because the response grew a list.
      *
@@ -499,9 +540,26 @@ static void do_poll(void)
        0.3.22. */
     static char body[1024];
     int got = 0;
-    if (esp_http_client_open(c, 0) != ESP_OK) goto done;
-    if (esp_http_client_fetch_headers(c) < 0) goto done;
-    if (esp_http_client_get_status_code(c) != 200) goto done;
+    /* NAMED, LIKE THE SETTINGS FETCH AND THE CONVERSATION, and this path is the reason the other
+       two were diagnosable at all on 2026-09-29: it kept succeeding for an hour after the settings
+       poll stopped, and "one task can reach the box and the other cannot" is what ruled out the
+       network and pointed at the panel. A path that can only be inferred from the box's access log
+       is a path that says nothing while the panel is silent, which is precisely when it is asked. */
+    if (esp_http_client_open(c, 0) != ESP_OK) {
+        why = "connect";
+        goto done;
+    }
+    if (esp_http_client_fetch_headers(c) < 0) {
+        why = "no-headers";
+        goto done;
+    }
+    const int status = esp_http_client_get_status_code(c);
+    if (status != 200) {
+        static char code[12];
+        snprintf(code, sizeof(code), "http-%d", status);
+        why = code;
+        goto done;
+    }
     while (got < (int)sizeof(body) - 1) {
         const int n = esp_http_client_read(c, body + got, (int)sizeof(body) - 1 - got);
         if (n <= 0) break;
@@ -567,11 +625,21 @@ static void do_poll(void)
                 s_wait[0].from[0] = '\0';
             }
             cJSON_Delete(root);
+            why = NULL;
+        } else {
+            why = "bad-json";
         }
+    } else {
+        why = "empty-body";
     }
 
 done:
     esp_http_client_cleanup(c);
+    if (why != NULL) {
+        reach_fail(REACH_POLL, why, now_ms());
+    } else {
+        reach_ok(REACH_POLL, now_ms());
+    }
 }
 
 /* --- GET /next: collect a message, do NOT play it ------------------------------------------ */
@@ -815,6 +883,8 @@ static void do_fetch(bool asked, int at)
        message's id standing. */
     if (!audio_stream_begin()) {
         ESP_LOGW(TAG, "speaker busy — not starting this message");
+        s_msg_err = "speaker-busy";
+        s_msg_bad++;
         goto done;
     }
     s_stopped = false;
@@ -825,6 +895,7 @@ static void do_fetch(bool asked, int at)
     s_owed = true;
     s_run = true;
     s_state = JPANEL_PLAYING;
+    s_msg_began_ms = now_ms();
     /* THE LOCAL VIEW LOSES THE ENTRY THAT WAS JUST TAKEN, not merely a number off the total.
        The count has been decremented here since the queue existed — a poll is up to thirty
        seconds away and a notice for a message already playing would be wrong for all of it — and
@@ -852,6 +923,8 @@ static void do_fetch(bool asked, int at)
     audio_stream_end();
     if (got < 2) {
         ESP_LOGW(TAG, "empty message");
+        s_msg_err = "empty";
+        s_msg_bad++;
         audio_stream_abort();
         s_owed = false;
         s_run = false;
@@ -874,12 +947,15 @@ static void do_fetch(bool asked, int at)
            giving up loudly rather than a message quietly lost. */
         ESP_LOGE(TAG, "message arrived incomplete (%d B) — not acknowledging, id %s", got,
                  s_in_id[0] ? s_in_id : "(none)");
+        s_msg_err = "short";
+        s_msg_bad++;
         s_owed = false;
         s_run = false;
         out = JPANEL_PLAYING;
         goto done;
     }
     out = JPANEL_PLAYING;
+    s_msg_bytes = got;
     ESP_LOGI(TAG, "streamed %d B from %s, id %s", got, s_in_from[0] ? s_in_from : "?",
              s_in_id[0] ? s_in_id : "(none)");
 
@@ -953,6 +1029,14 @@ static void jpanel_task(void *arg)
            that taught us not to watch for a state instead. */
         if (s_owed && !audio_playing() && s_state != JPANEL_BUSY) {
             s_owed = false;
+            /* HOW LONG IT ACTUALLY SOUNDED, measured here because this is the moment the ring is
+               observed to be quiet — the same moment the message is retired, so the two numbers
+               describe one event and cannot drift apart. Against `msg_bytes` it says whether a
+               child heard anything: 16-bit mono at 16 kHz is 32 bytes a millisecond, so a report
+               whose `msg_ms` is a small fraction of `msg_bytes / 32` is a message the box believes
+               was delivered and nobody heard. */
+            s_msg_ms = (int)(now_ms() - s_msg_began_ms);
+            s_msg_ok++;
             do_played();
             next_poll = 0;
             /* STRAIGHT ON TO THE NEXT, if the child has not stopped the run. The one just
@@ -1170,4 +1254,13 @@ jpanel_state_t jpanel_state(void)
 void jpanel_clear(void)
 {
     if (s_state != JPANEL_BUSY) s_state = JPANEL_IDLE;
+}
+
+void jpanel_message_stats(int *bytes, int *ms, unsigned *ok, unsigned *bad, const char **err)
+{
+    if (bytes != NULL) *bytes = s_msg_bytes;
+    if (ms != NULL) *ms = s_msg_ms;
+    if (ok != NULL) *ok = s_msg_ok;
+    if (bad != NULL) *bad = s_msg_bad;
+    if (err != NULL) *err = s_msg_err;
 }

@@ -533,6 +533,68 @@ class TelemetryIn(BaseModel):
     # would make the diagnostic invisible in precisely the way it was added to prevent.
     set_err: str = ""
     set_fails: int = 0
+    # HOW LONG AGO THAT LAST FAILURE WAS, and it is what makes a reason worth keeping.
+    #
+    # The panel used to CLEAR `set_err` on every success, so that what arrived described the
+    # current state rather than the worst thing that ever happened. Sound reasoning, and it made
+    # the field useless: a report only goes out at the end of a cycle, right after a fetch that
+    # succeeded, so the string was empty in every report any panel has ever sent. On 2026-09-29,
+    # with the fetch failing for an hour, Lydian's panel reported `set_fails: 3, set_err: ""`.
+    #
+    # So the name survives now and the AGE says whether it is current — the question clearing was
+    # trying to answer, asked the one way that does not destroy the answer.
+    set_ago_s: int = 0
+    # THE SAME THREE FOR THE OTHER TWO PATHS THAT TALK TO THIS BOX, because the interesting part is
+    # the DIFFERENCE between them. `poll` is `GET /jpanel/waiting` on the panel's jpanel task;
+    # `talk` is `POST /endpoint/converse`, the one a child is standing in front of.
+    #
+    # On 2026-09-29 the settings fetch failed for an hour while the poll, on a different task, kept
+    # succeeding against this same box — and that split is what ruled out the network and pointed
+    # at the panel. One row says something is wrong; three rows say where.
+    poll_err: str = ""
+    poll_fails: int = 0
+    poll_ago_s: int = 0
+    talk_err: str = ""
+    talk_fails: int = 0
+    talk_ago_s: int = 0
+    # SECONDS SINCE THE PANEL LAST REACHED THIS BOX BY ANY PATH — the single number that would have
+    # answered the whole of 2026-09-29 at a glance, where the access log needed line-by-line
+    # reading to show the same thing.
+    #
+    # -1 MEANS NEVER, not "just now". A panel that has never once reached its box is a different
+    # fault from one that has gone quiet, and a zero would read as the healthiest possible answer.
+    box_quiet_s: int = -1
+    # HOW MANY TIMES THE PANEL HAS STOPPED BELIEVING ITS OWN RADIO AND RE-JOINED.
+    #
+    # `joined` was set once at boot and never cleared, so the firmware's Wi-Fi retry could only
+    # ever run on a panel that failed to join in the FIRST place — not on one whose link went
+    # half-open later, which is the case that happens. Lydian's panel was silent from 04:24 on
+    # 2026-09-29 for eight and a half hours having reported `wifi_drops: 0`: not one disconnect
+    # event the whole time, because the radio's own view was that everything was fine.
+    #
+    # Reported because a recovery that fires silently cannot be told from one that never fires.
+    # A panel showing a handful an hour has a link problem that wants a router, not firmware.
+    relinks: int = 0
+    # WHETHER THE LAST MESSAGE WAS ACTUALLY HEARD, which this box cannot otherwise tell.
+    #
+    # The owner, on 0.3.32: *"I click the notification and then playback menu pulls up. But then
+    # [it] only stay[s] for about a half second before going back to the big blue notification and
+    # it doesn't play."* This box's record of that message was `GET /next` 200 followed by
+    # `POST /played` 204 — the bytes served, the digest verified by the panel, the message
+    # acknowledged. Which is also exactly what a message that played perfectly looks like.
+    #
+    # The acknowledgement watches the panel's audio ring rather than its speaker, and that is the
+    # right design — a panel that loses power mid-message must keep the message — but it makes
+    # "the ring drained" and "a child heard it" one event when they are two.
+    #
+    # `msg_bytes` AND `msg_ms` ARE A PAIR AND NEITHER MEANS ANYTHING ALONE. The ring is 16-bit
+    # mono at 16 kHz — 32 bytes to the millisecond — so a report whose `msg_ms` is a small
+    # fraction of `msg_bytes / 32` is a message this box believes was delivered and nobody heard.
+    msg_bytes: int = 0
+    msg_ms: int = 0
+    msg_ok: int = 0
+    msg_bad: int = 0
+    msg_err: str = ""
     # Where the last touch landed and which zone it resolved to: [x, y, zone].
     #
     # THE PANEL HAS BEEN SENDING THIS ALL ALONG and nothing declared it, so pydantic dropped
@@ -681,7 +743,52 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),
         # Only when something has actually failed; a zero on every healthy report is how a log
         # stops being read.
-        **({"set_err": body.set_err, "set_fails": body.set_fails} if body.set_fails else {}),
+        # WHAT THE PANEL COULD NOT REACH, logged only when it could not reach something. A healthy
+        # panel's report carries none of these keys; a report that carries one is a fault nothing
+        # in this box's access log can show, because the request never arrived.
+        **(
+            {"set_err": body.set_err, "set_fails": body.set_fails, "set_ago_s": body.set_ago_s}
+            if body.set_fails
+            else {}
+        ),
+        **(
+            {
+                "poll_err": body.poll_err,
+                "poll_fails": body.poll_fails,
+                "poll_ago_s": body.poll_ago_s,
+            }
+            if body.poll_fails
+            else {}
+        ),
+        **(
+            {
+                "talk_err": body.talk_err,
+                "talk_fails": body.talk_fails,
+                "talk_ago_s": body.talk_ago_s,
+            }
+            if body.talk_fails
+            else {}
+        ),
+        # Always, and never suppressed: the healthy value is a small number and it is the one field
+        # that says the panel is talking to this box at all. Suppressing it when it looks fine would
+        # mean its absence carried the bad news, which is the shape every other key here avoids.
+        box_quiet_s=body.box_quiet_s,
+        # Only when it has actually happened: on a healthy panel this is 0 forever, and a key
+        # that is 0 on every report for a year is how a log stops being read.
+        **({"relinks": body.relinks} if body.relinks else {}),
+        # Only once a message has been streamed at all, and then always — including the healthy
+        # case, because the FINDING here is a ratio and a `msg_ms` that looks fine is half of it.
+        **(
+            {
+                "msg_bytes": body.msg_bytes,
+                "msg_ms": body.msg_ms,
+                "msg_ok": body.msg_ok,
+                "msg_bad": body.msg_bad,
+                **({"msg_err": body.msg_err} if body.msg_err else {}),
+            }
+            if body.msg_ok or body.msg_bad
+            else {}
+        ),
         **({"heard": body.heard} if body.heard else {}),
         # Only when there are any: an empty list on every report is noise in a log a human
         # reads, and the counts already say when to look.

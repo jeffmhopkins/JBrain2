@@ -131,24 +131,126 @@ class TestTheVolumeCeilingWasTheBugReport:
         assert _clamp(EndpointSettings(volume=140)).volume == 100
         assert _clamp(EndpointSettings(volume=-5)).volume == 0
 
-    def test_the_panel_reports_why_its_settings_fetch_failed(self) -> None:
-        """THE FAULT THAT HID ALL OF THIS. The box's value had never reached the panel, and a
-        fetch that dies ON the panel never appears in the box's log — so the only way to see it
-        is for the panel to say so in telemetry. Pinned from both sides, like every other
-        field that crosses this boundary."""
+    def test_the_panel_reports_why_it_could_not_reach_the_box(self) -> None:
+        """THE FAULT THAT HID ALL OF THIS, AND THE TWO SIBLINGS ADDED AFTER IT HID ANOTHER.
+
+        A request that dies ON the panel never appears in this box's log — the log is a record of
+        what arrived, so the failures are exactly what is not in it. The only way to see one is
+        for the panel to say so in telemetry.
+
+        THREE PATHS, NOT ONE, because the interesting part is the difference between them. On
+        2026-09-29 the settings fetch failed for an hour while the jpanel poll, on the panel's
+        other task, kept succeeding against this same box — and that split is what ruled out the
+        network. A single counter would have said "some requests fail", which is not a finding.
+
+        Pinned from both sides, like every other field that crosses this boundary: the firmware
+        must put it on the wire and the box must NAME it, or `model_dump()` drops it without a
+        word — the defect that would have made the diagnostic invisible in precisely the way it
+        was added to prevent."""
         import pathlib
 
         fw = pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main"
-        assert "ota_settings_faults" in (fw / "ota.h").read_text(encoding="utf-8")
-        assert r"\"set_err\"" in (fw / "main.c").read_text(encoding="utf-8"), (
-            "the settings-fetch fault is no longer on the telemetry wire"
-        )
-        # And the box must NAME it, or `model_dump()` drops it silently — the same defect that
-        # would have 422'd every report when the fifth `heard` field arrived.
+        main_c = (fw / "main.c").read_text(encoding="utf-8")
+        for field in ("set_err", "poll_err", "talk_err", "box_quiet_s"):
+            assert f'\\"{field}\\"' in main_c, f"{field} is no longer on the telemetry wire"
+
         from jbrain.api.endpoint import TelemetryIn
 
-        got = TelemetryIn(version="0.3.15", uptime_ms=1, set_err="ESP_ERR_NO_MEM", set_fails=7)
-        assert got.set_err == "ESP_ERR_NO_MEM" and got.set_fails == 7
+        got = TelemetryIn(
+            version="0.3.33",
+            uptime_ms=1,
+            set_err="ESP_ERR_NO_MEM",
+            set_fails=7,
+            set_ago_s=12,
+            poll_err="connect",
+            poll_fails=2,
+            poll_ago_s=340,
+            talk_err="http-503",
+            talk_fails=1,
+            talk_ago_s=5,
+            box_quiet_s=1800,
+        )
+        assert got.set_err == "ESP_ERR_NO_MEM" and got.set_fails == 7 and got.set_ago_s == 12
+        assert got.poll_err == "connect" and got.poll_fails == 2 and got.poll_ago_s == 340
+        assert got.talk_err == "http-503" and got.talk_fails == 1 and got.talk_ago_s == 5
+        assert got.box_quiet_s == 1800
+
+    def test_a_panel_that_has_never_reached_the_box_does_not_report_zero(self) -> None:
+        """-1 MEANS NEVER AND 0 MEANS JUST NOW, and they are the opposite findings.
+
+        A panel that has never once reached its box — a wrong key, a wrong URL, a box that was
+        never up — would otherwise show the healthiest-looking number on the page. The default
+        matters as much as the value: a panel too old to send the field must not be recorded as
+        having just spoken to us."""
+        from jbrain.api.endpoint import TelemetryIn
+
+        assert TelemetryIn(version="0.3.32", uptime_ms=1).box_quiet_s == -1
+
+    def test_the_panel_can_stop_believing_its_own_radio(self) -> None:
+        """THE RECOVERY PATH THAT EXISTED AND COULD NEVER RUN.
+
+        `main.c` set `joined` once at boot and nothing ever cleared it, so `net_retry` was
+        reachable only on a panel that failed to join in the FIRST place. The case that actually
+        happens is the half-open link — still associated, still holding an IP, no route to
+        anything — and ESP-IDF fires no disconnect event for it, so the event handler's own
+        reconnect never ran either. Both recovery paths idle while every request failed.
+
+        Lydian's panel, 2026-09-29: silent from 04:24 for eight and a half hours, last report
+        `wifi_drops: 0`. Not one disconnect the whole time.
+
+        So the BOX is the link test now — `reach_quiet_ms`, which already existed for the
+        telemetry — and the never-reached case is excluded, because a panel that has not once
+        reached its box has a problem a re-join cannot fix and thrashing the radio would make a
+        second one."""
+        import pathlib
+
+        main_c = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+        # THE CONDITION, NOT A WORD THAT APPEARS NEARBY. The first version of this asserted
+        # `"REACH_NEVER" in main_c` and passed with the guard deleted, because the comment
+        # explaining the guard also says `REACH_NEVER` — a test that reads prose rather than code.
+        guard = re.search(
+            r"if \(joined && quiet_ms != REACH_NEVER && quiet_ms > LINK_SUSPECT_MS\)", main_c
+        )
+        assert guard, (
+            "the link watchdog's condition changed. All three clauses carry weight: `joined` "
+            "keeps it off a panel already retrying, `!= REACH_NEVER` keeps a panel that has "
+            "NEVER found its box from dropping its association every period over a "
+            "configuration problem a re-join cannot fix, and the threshold is what separates a "
+            "broken link from a slow one"
+        )
+        # The counter, or a recovery that fires cannot be told from one that never does.
+        from jbrain.api.endpoint import TelemetryIn
+
+        assert TelemetryIn(version="0.3.33", uptime_ms=1, relinks=3).relinks == 3
+        assert TelemetryIn(version="0.3.32", uptime_ms=1).relinks == 0
+
+    def test_every_talk_failure_the_firmware_can_hit_carries_a_name(self) -> None:
+        """THE RED DASH THE OWNER SAW, AND WHY IT SAID NOTHING. `talk.c` had six ways to fail and
+        one of them — `esp_http_client_open` returning non-OK, the FAST one, the one behind *"it
+        didn't time out"* — reported itself only to a serial console that does not exist in a
+        bedroom (CLAUDE.md #10).
+
+        Asserted as "no `goto done` is unnamed" rather than by listing the reasons, because a
+        seventh failure path added later is exactly the one that would go unnamed, and a test
+        that enumerates today's six would not notice."""
+        import pathlib
+        import re
+
+        talk = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "talk.c"
+        ).read_text(encoding="utf-8")
+        turn = talk[talk.index("static void turn(") : talk.index("static void talk_task(")]
+        # Each `goto done` must be preceded, within its own branch, by a `why = ...`.
+        for m in re.finditer(r"goto done;", turn):
+            before = turn[max(0, m.start() - 400) : m.start()]
+            assert "why =" in before, (
+                "a failure path in talk.c reaches `done:` without naming itself, so the box would "
+                "record the conversation as failed with no reason — the exact gap that made the "
+                "red dash of 2026-09-29 unanswerable"
+            )
+        assert turn.count("goto done;") >= 5, "the failure paths moved; re-pin this test"
 
 
 class TestTheButtonGridIsWiredToRealActions:

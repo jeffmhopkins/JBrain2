@@ -140,3 +140,12 @@ bool jpanel_fetching(void);
 bool jpanel_push_live(void);
 unsigned jpanel_push_events(void);
 unsigned jpanel_push_drops(void);
+
+/* WHETHER THE LAST MESSAGE WAS ACTUALLY HEARD — see the counters' declaration in `jpanel.c`.
+ *
+ * `bytes` and `ms` are the pair that matters and neither means anything alone: the ring holds
+ * 16-bit mono at 16 kHz, so 32 bytes to the millisecond, and a message whose `ms` is a small
+ * fraction of `bytes / 32` drained without sounding. The box cannot see that on its own — its
+ * record is `GET /next` 200 followed by `POST /played` 204, which is what a message that played
+ * perfectly also looks like. */
+void jpanel_message_stats(int *bytes, int *ms, unsigned *ok, unsigned *bad, const char **err);

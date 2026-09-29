@@ -6660,3 +6660,44 @@ the flasher.
   PSRAM is only security-equivalent when hardware flash encryption is on, and this panel's TLS
   keys would otherwise sit in plaintext on an external bus. That caveat matters more than the
   bytes do.
+
+## The panel that went quiet, and the three reasons nobody could see (0.3.33)
+
+**The owner:** *"I also just had a red – show up on lydian's ... This is when I was trying to talk
+to the large language model. It didn't time out so I'm a little curious on what caused it."*
+
+**The box could barely answer.** `POST /endpoint/converse` had not been called since 02:52; the
+panel's last contact of ANY kind was 04:24:51 and then nothing. All true, and all of it
+reconstructed by paging through two thousand access-log lines looking for requests that had
+**stopped** — the hardest thing to find in a log, because a request that never happened leaves no
+line. A request that dies on the panel never reaches the box, so the access log is a record of what
+worked and the failures are exactly what is not in it.
+
+**Three things were wrong, and each one hid the next.**
+
+1. **`set_err` was cleared on every success.** The reasoning was sound — report the current state,
+   not the worst thing that ever happened — and the effect was that the field was empty in every
+   report any panel has ever sent, because a report only goes out at the end of a cycle, right
+   after a fetch that succeeded. Lydian's 03:27 report: `set_fails: 3, set_err: ""`. The count
+   survived; the name did not. Reasons now survive, and `*_ago_s` says whether they are current,
+   which is the question clearing was trying to answer.
+
+2. **One failed settings fetch cost fifteen minutes.** `main.c` latched `box_answering` false and
+   slept out the remainder of the period — right for a panel with no network, wrong here, where
+   the jpanel task went on reaching the SAME BOX every thirty seconds throughout. It also
+   neutered the three-second path the waiting count rides. Replaced by `cadence_backoff_ms`:
+   3 s, 6, 12, 24, 48, then a minute, and one success goes straight back to three seconds.
+
+3. **`joined` was set once at boot and never cleared,** so `net_retry` could only ever run on a
+   panel that failed to join in the first place. The case that happens is the half-open link —
+   associated, holding an IP, no route to anything — for which ESP-IDF fires no disconnect event,
+   so the handler's own reconnect never ran either. Lydian's panel was silent for **eight and a
+   half hours** having reported `wifi_drops: 0`: not one disconnect the whole time. The box is the
+   link test now (`reach_quiet_ms`), and a panel that cannot reach it for ten minutes stops
+   believing its radio and re-joins.
+
+**`reach.c` is the shared half:** three named paths (`set`, `poll`, `talk`), cumulative counts, the
+last reason, its age, and seconds since the panel last reached the box by any route — held ACROSS
+the outage, because the one moment worth reporting is the one moment the panel cannot report.
+`GET /api/debug/endpoint/reach` is where they land, and `stale_s` is its headline: a panel that has
+gone silent shows a healthy row with an old timestamp, so the staleness is the finding.
