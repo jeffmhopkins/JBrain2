@@ -3372,6 +3372,177 @@ async def panel_heard(request: Request, _p: DebugDep) -> PanelHeardOut:
     return PanelHeardOut(panels=panels, telemetry_seq=int(seq or 0))
 
 
+class PanelPath(BaseModel):
+    """One of the panel's three ways of reaching this box."""
+
+    name: str
+    # The panel's own last reason — `connect`, `http-401`, an `esp_err_to_name` string. Empty
+    # when this path has never failed, which `fails == 0` says independently.
+    err: str = ""
+    fails: int = 0
+    # Seconds between that failure and the report carrying it. Read with `stale_s` below: a
+    # small `ago_s` on a report that is itself an hour old describes an hour-old moment.
+    ago_s: int = 0
+
+
+#: The panel plays messages as 16-bit mono at 16 kHz — 32 bytes to the millisecond.
+_MSG_BYTES_PER_MS = 32
+
+
+class PanelMessage(BaseModel):
+    """The last message this panel streamed, and whether it sounded for as long as it should."""
+
+    bytes: int
+    # How long the ring actually sounded.
+    ms: int
+    # How long that many bytes SHOULD have taken.
+    expected_ms: int
+    ok: int
+    bad: int
+    err: str = ""
+    # How long the longest fetch waited for the speaker before it could start. Non-zero means this
+    # panel raced its own press cue and the wait saved the message.
+    waited_ms: int = 0
+    # THE ANSWER, NOT THE INPUTS. `false` means the box served a message, the panel verified its
+    # digest and acknowledged it played, and the speaker was quiet for nearly all of it — which is
+    # indistinguishable, in every server-side record, from a message that played perfectly.
+    #
+    # A fifth of the expected time is the line: real playback overshoots slightly (the ring is
+    # observed after it drains, not as the last sample leaves), and the failure this catches is
+    # not a near miss — it is forty milliseconds against three thousand.
+    heard: bool
+
+
+class PanelReach(BaseModel):
+    label: str
+    version: str
+    reported_at: str
+    # HOW OLD THIS ANSWER IS, and on this route it is the headline rather than a footnote.
+    #
+    # Everything below arrived BY telemetry, which is a POST to this box — so a panel that cannot
+    # reach us cannot tell us that, and its row goes stale instead of going red. On 2026-09-29 the
+    # panel's last report was healthy and 90 minutes old while the panel sat silent; the report
+    # said nothing was wrong because it predated everything that was.
+    #
+    # So a large `stale_s` IS the finding, and the fields under it describe the last moment the
+    # panel could still speak, not the present.
+    stale_s: int
+    # The panel's own count of seconds since it last reached this box by any path, as of that
+    # report. -1 means it had never reached us at all.
+    box_quiet_s: int
+    paths: list[PanelPath]
+    # WAS THE LAST MESSAGE ACTUALLY HEARD — computed here rather than left as two numbers,
+    # because the finding is the RATIO and nobody reads a ratio off a page by dividing.
+    #
+    # The panel's ring is 16-bit mono at 16 kHz, so 32 bytes to the millisecond: the bytes say how
+    # long the message SHOULD have taken and `msg_ms` says how long it did. `null` when the panel
+    # has not streamed a message since boot, or is too old to say.
+    last_message: PanelMessage | None = None
+
+
+class PanelReachOut(BaseModel):
+    panels: list[PanelReach]
+    # Echoed for the same reason `/endpoint/heard` echoes it: raise it, wait a poll, read again.
+    telemetry_seq: int
+
+
+def _panel_message(report: dict) -> "PanelMessage | None":
+    """The last message's playback, or None from a panel that has not streamed one."""
+    if not (report.get("msg_ok") or report.get("msg_bad")):
+        return None
+    got = int(report.get("msg_bytes", 0) or 0)
+    ms = int(report.get("msg_ms", 0) or 0)
+    expected = got // _MSG_BYTES_PER_MS
+    return PanelMessage(
+        bytes=got,
+        ms=ms,
+        expected_ms=expected,
+        ok=int(report.get("msg_ok", 0) or 0),
+        bad=int(report.get("msg_bad", 0) or 0),
+        err=str(report.get("msg_err", "") or ""),
+        waited_ms=int(report.get("msg_waited_ms", 0) or 0),
+        # A panel that has only ever FAILED to stream one has no duration to judge, and calling
+        # that "heard" would be the wrong way round.
+        heard=bool(got) and ms * 5 >= expected,
+    )
+
+
+@router.get("/endpoint/reach")
+async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
+    """WHETHER EACH PANEL CAN REACH THIS BOX, AND WHY NOT — without a cable and without reading
+    the access log by hand.
+
+    THIS ROUTE EXISTS BECAUSE ANSWERING IT ONCE TOOK TWO THOUSAND LINES OF `GET /logs/api`. On
+    2026-09-29 the owner pressed the pet on Lydian's panel, got the failure dash immediately, and
+    asked why. The box's own evidence was entirely negative: no `POST /endpoint/converse` had
+    arrived, no `GET /endpoint/settings` for an hour before that, nothing at all for the last
+    thirty minutes. All true, all invisible except by paging back through the log and noticing
+    which requests had STOPPED — the hardest thing to see in a log, because a request that never
+    happened leaves no line to find.
+
+    A REQUEST THAT DIES ON THE PANEL NEVER REACHES THIS BOX. That is the whole difficulty: the
+    access log is a record of what worked, so the failures are exactly what is not in it. The
+    panel knows the reason — `talk.c` logs `"connect failed"` — on a serial console that does not
+    exist in a four-year-old's bedroom (CLAUDE.md #10). `reach.c` on the panel keeps those reasons
+    across the outage and reports them when it can speak again; this route is where they land.
+
+    READ `stale_s` FIRST. It is the only field here that does not depend on the panel being able
+    to talk to us, and a panel that has gone silent shows a healthy row with an old timestamp
+    rather than an unhealthy one.
+    """
+    async with scoped_session(_maker(request), _OWNER_CTX) as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT pr.label, s.version, s.reported_at, s.report
+                    FROM app.endpoint_status s
+                    JOIN app.principals pr ON pr.id = s.principal_id
+                    ORDER BY s.reported_at DESC
+                    """
+                )
+            )
+        ).all()
+        seq = (
+            await session.execute(
+                text("SELECT telemetry_seq FROM app.endpoint_settings WHERE id = 1")
+            )
+        ).scalar_one_or_none()
+
+    now = dt.datetime.now(dt.UTC)
+    panels: list[PanelReach] = []
+    for row in rows:
+        report = row[3] if isinstance(row[3], dict) else {}
+        at = row[2]
+        panels.append(
+            PanelReach(
+                label=str(row[0]),
+                version=str(row[1] or ""),
+                reported_at=at.isoformat() if at is not None else "",
+                stale_s=int((now - at).total_seconds()) if at is not None else -1,
+                # Absent on a panel older than 0.3.33, where -1 already means "never" and is the
+                # honest answer for a box that was never told.
+                box_quiet_s=int(report.get("box_quiet_s", -1) or -1),
+                last_message=_panel_message(report),
+                paths=[
+                    PanelPath(
+                        name=name,
+                        err=str(report.get(f"{name}_err", "") or ""),
+                        fails=int(report.get(f"{name}_fails", 0) or 0),
+                        ago_s=int(report.get(f"{name}_ago_s", 0) or 0),
+                    )
+                    # `set` is every knob and the waiting count, `poll` is the message check on
+                    # the panel's other task, `talk` is the conversation. Listed even at zero:
+                    # "the conversation has never failed" is an answer, and a route that omitted
+                    # the healthy paths would make absence mean two things.
+                    for name in ("set", "poll", "talk")
+                ],
+            )
+        )
+    log.info("debug.panel_reach", panels=len(panels))
+    return PanelReachOut(panels=panels, telemetry_seq=int(seq or 0))
+
+
 class ReportNowOut(BaseModel):
     telemetry_seq: int
     detail: str

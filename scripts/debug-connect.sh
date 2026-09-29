@@ -116,6 +116,7 @@
 #      update. Recreating a container ends whatever it held, so `refresh sdr` drops any
 #      live lease.)
 #   scripts/debug-connect.sh panel-heard [--now]       # what each panel last heard
+#   scripts/debug-connect.sh panel-reach [--now]       # can each panel reach the box, and why not
 #   scripts/debug-connect.sh panel-report-now          # make them post it now (~3 s)
 #   scripts/debug-connect.sh update                    # pull main, rebuild, restart
 #   scripts/debug-connect.sh update-status [tail]      # that update's state + log tail
@@ -604,6 +605,21 @@ PY
       sleep 8
     fi
     _call GET "/api/debug/endpoint/heard" | _pp ;;
+
+  panel-reach) # [--now] — can each panel reach this box, and if not, why not
+    # THE ROUTE THAT ANSWERS "WHY DID THE PET NOT ANSWER HER?". A request that dies on the
+    # panel never arrives here, so the access log — a record of what WORKED — cannot show it;
+    # the failures are exactly what is not in it. The panel keeps the reasons across the
+    # outage and hands them over when it can speak again.
+    # READ `stale_s` FIRST: a panel that has gone silent shows a HEALTHY row with an old
+    # timestamp, because everything under it arrived by telemetry and telemetry is a POST.
+    # --now is best-effort for the same reason: a panel that cannot reach the box cannot be
+    # made to report, and then the stale row IS the answer.
+    if [ "${1:-}" = "--now" ]; then
+      _call POST "/api/debug/endpoint/report-now" | _pp
+      sleep 8
+    fi
+    _call GET "/api/debug/endpoint/reach" | _pp ;;
 
   panel-report-now) # ask every panel to post its telemetry on its next poll (~3 s)
     # Raises a counter the settings poll carries; the panel posts when it CHANGES, so this

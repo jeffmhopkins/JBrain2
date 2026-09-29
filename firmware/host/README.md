@@ -6,7 +6,7 @@ ESP-IDF toolchain, or a network.
 | binary | source | what it is for |
 |---|---|---|
 | `run_tests` | `tests.c` | **Pure functions.** Given these numbers, what comes out: cue contours, face geometry, the rig's cooldowns, calibration fits, the tick-and-cross hit tests. ~4.1M checks, most of them swept over every input. |
-| `run_ui_tests` | `ui_tests.c` | **The interaction state machine** (`main/ui.c`), driven one frame at a time: a press, a clock advanced, an overlay arbitrated, a peripheral call recorded. |
+| `run_ui_tests` | `ui_tests.c` | **The interaction state machine** (`main/ui.c`), driven one frame at a time: a press, a clock advanced, an overlay arbitrated, a peripheral call recorded. ~440 checks. |
 
 They are separate because they need different things. The first wants to be a tight loop over
 inputs; the second needs a world — a fake speaker whose cues take time, a fake message queue
@@ -135,6 +135,26 @@ module: none of these was found by a child, and none of them was visible in a ch
 Plus two the tests found that no release had reported: the transport was drawn through the fetch
 window while its handler could not act on it (a press there poked the pet), and the modal menu was
 missing from the playing table, so a message starting under an open menu took the menu's presses.
+
+## The sender's face, three times
+
+Worth its own section because it is the clearest lesson the module has taught: **two of the three
+fixes corrected a reading of a value that was itself wrong, and both were provably right about the
+case they were written for.**
+
+`jpanel_in_from()` is read off a fetch's own response header, and `do_fetch` used to CLEAR it before
+the request — so through the whole window before those headers landed it said "the sister", because
+that is what cleared means. 0.3.28 made the press-to-play window ask the queue instead; 0.3.31
+narrowed that to "the queue only while nothing is sounding yet", after the owner watched a little
+girl for the length of a message from Dad. Both are correct with one message queued. With two, the
+panel finishes the first, chains into the second with `jpanel_running()` still true, and the clear
+lands in plain sight — and the owner reported the same symptom a third time.
+
+The third fix seeds the value from the queue entry the fetch is about to take, so the header only
+confirms it, and the overlay reads one fact. `test_the_face_follows_the_message_that_is_playing`
+drives the chain rather than a single message, and the harness's fake box seeds `in_from` at the
+press exactly as `jpanel_play_at` does — **which is the part that matters**: a test whose fake is
+more forgiving than the firmware is a test that will pass through this bug a fourth time.
 
 ## Still inside `display.c`
 

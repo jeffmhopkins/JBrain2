@@ -30,12 +30,18 @@
 #include "mem.h"
 #include "nudge.h"
 #include "ota.h"
+#include "reach.h"
 #include "vocab.h"
 #include "speech.h"
 #include "talk.h"
 #include "pmu.h"
 
 static const char *TAG = "endpoint";
+
+/* HOW MANY TIMES THIS PANEL HAS STOPPED BELIEVING ITS OWN RADIO. Reported because a recovery that
+   fires silently is indistinguishable from one that never fires, and this one is meant to be rare:
+   a panel showing a handful an hour has a link problem worth a router, not a firmware, fix. */
+static unsigned s_relinks;
 
 #define WIFI_TIMEOUT_MS 30000
 /* The probation window. A pending image gets several minutes and several tries to reach the
@@ -95,6 +101,27 @@ static const char *TAG = "endpoint";
  * that back several times over, so push costs LESS concurrency than polling did rather than
  * more. That is the whole reason the stream was affordable to add. */
 #define PUSH_SETTLED_MS (60 * 1000)
+/* THE WIDEST THE SETTINGS ASK GETS WHILE THE BOX IS NOT ANSWERING, doubling from `POLL_PERIOD_MS`.
+ * The old behaviour was to stop asking for the rest of the fifteen-minute period, which is
+ * `cadence_backoff_ms`'s whole story; this is the other end of the trade.
+ *
+ * A minute, because the thing being protected is the BOX and not the panel. Fifteen minutes of
+ * three-second polling is 300 asks; a panel whose box is genuinely gone should not spend them, and
+ * with this cap it spends about seventeen — 3, 6, 12, 24, 48, then a minute apart. That is more
+ * than the one ask the latch allowed and far less than a panel that ignores the failure, and it
+ * matches `OFFLINE_RETRY_MS`: a box that has been quiet for a minute is worth one request, which
+ * is exactly the rate at which a panel with no network at all retries its Wi-Fi. */
+#define SETTINGS_BACKOFF_MAX_MS (60 * 1000)
+/* HOW LONG THE BOX MAY BE UNREACHABLE BEFORE THE PANEL STOPS BELIEVING ITS OWN RADIO — see the
+ * re-join in the update loop, which is where the argument is.
+ *
+ * Ten minutes, and the margin is what matters rather than the number. A healthy panel reaches the
+ * box at least every thirty seconds (`/jpanel/waiting`), and at most every sixty even with the
+ * settings ask settled onto the push stream — so ten minutes is twenty times the longest gap a
+ * working panel can produce. It has to be, because the cost of being wrong is dropping a live
+ * association: generous enough that only a genuinely broken link reaches it, short enough that a
+ * bedroom is quiet for minutes rather than for an evening. */
+#define LINK_SUSPECT_MS (10 * 60 * 1000)
 /* HOW LONG A FAILED INSTALL WAITS, and it is the old cycle on purpose: a version that genuinely
    changed is installed within a poll, while an install that failed retries no faster than it
    ever did. Bounds the WITHIN-SESSION rate, which is the one the fast poll created. A crash
@@ -133,8 +160,41 @@ static const char *TAG = "endpoint";
    that most needs them. One failure ends the asking for the rest of the period. */
 static bool apply_settings(const cfg_t *cfg, char *served, size_t served_cap, int *seq)
 {
-    ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1, .dim_percent = -1};
+    ota_settings_t st = {.volume = -1,
+                         .mic_gain_db = -1,
+                         .brightness = -1,
+                         .form = -1,
+                         .dim_percent = -1,
+                         .waiting = -1};
     if (ota_fetch_settings(cfg, &st) != ESP_OK) return false;
+    /* A MESSAGE LANDS IN THREE SECONDS RATHER THAN THIRTY, over the poll that was happening anyway.
+     *
+       `jpanel.c` asks the box what is waiting every `POLL_EVERY_MS` — thirty seconds — and the fast
+       paths that were supposed to make that a backstop are both unreliable: the nudge datagram
+       needs an address the box only learns FROM that poll, and the push stream is disabled after
+       the 0.3.22 crash loop. So a freshly-booted panel had no fast path at all, and the owner
+       watched it: *"When sending messages still took a long time for it to show up on the panel."*
+     *
+       This poll already runs every three seconds and the box already knows the number, so a change
+       in it is all the signal needed — `jpanel_poll_soon()` is exactly what a nudge does, over a
+       channel that cannot be dropped. ON A CHANGE, NOT ON A NON-ZERO VALUE: a panel with something
+       unheard would otherwise re-ask twenty times a minute forever, which is the handshake cost
+       this whole design exists to avoid.
+     *
+       -1 MEANS THE BOX DID NOT SAY, and is skipped entirely: a box too old to send the field leaves
+       the panel exactly as it was, on its own thirty-second cycle. */
+    static int s_waiting_seen = -1;
+    if (st.waiting >= 0 && st.waiting != s_waiting_seen) {
+        /* The FIRST value is adopted without asking. A panel that has just booted has nothing on
+           the glass yet and `jpanel.c`'s own first poll is moments away, so a nudge here would be a
+           second handshake for a fact already in flight. */
+        const bool news = s_waiting_seen >= 0;
+        s_waiting_seen = st.waiting;
+        if (news) {
+            ESP_LOGI(TAG, "box says %d waiting — asking now", st.waiting);
+            jpanel_poll_soon();
+        }
+    }
     /* The version this box would serve, for the caller's install check. Optional, because the
        two callers that only want the knobs applied should not have to declare a buffer. */
     if (served != NULL && served_cap > 0) snprintf(served, served_cap, "%s", st.fw_version);
@@ -235,6 +295,11 @@ static void report(const cfg_t *cfg)
        orientation has never been measured; this is how it gets measured. */
     int tap_x = -1, tap_y = -1, tap_zone = 0;
     display_last_tap(&tap_x, &tap_y, &tap_zone);
+    /* Whether the swipe gesture exists on this hardware at all — see `display_swipes`. Reported
+       beside the tap point because it answers the same class of question about the same part. */
+    unsigned swipes = 0;
+    int swipe_dx = 0, msg_sel = 0;
+    display_swipes(&swipes, &swipe_dx, &msg_sel);
 
     char hist[8][PMU_SAMPLE_CHARS];
     const int n = pmu_history_hex(hist, 8);
@@ -289,18 +354,66 @@ static void report(const cfg_t *cfg)
     const char *ota_err = "";
     int ota_tries = 0;
     ota_apply_faults(&ota_err, &ota_tries);
-    /* WHY THE KNOBS ARE NOT ARRIVING, if they are not. Every setting rides one fetch — volume,
-       the appearance, the report-now counter — so a single silent failure stalls all of them,
-       and it fails ON THE PANEL where the box cannot see it. */
+    /* WHY THE PANEL COULD NOT REACH ITS BOX, for each of the three paths that try — the settings
+       fetch every knob rides, the jpanel poll that carries messages, and the conversation itself.
+       All three fail ON THE PANEL, so the box's access log holds only the requests that WORKED
+       and every one of these failures is invisible from the one surface the owner has
+       (CLAUDE.md #10).
+
+       REPORTED TOGETHER BECAUSE THE INTERESTING PART IS THE DIFFERENCE BETWEEN THEM. On
+       2026-09-29 the settings fetch failed for an hour while the poll, on another task, kept
+       working against the same box — which is what ruled out the network. One row would have
+       said "something is wrong"; three rows say where.
+
+       `_ago` in SECONDS, and it is what makes a reason that survives a success readable: the
+       string alone cannot say whether it is happening now or happened once at breakfast. */
     const char *set_err = "";
     int set_fails = 0;
-    ota_settings_faults(&set_err, &set_fails);
+    uint32_t set_ago = 0;
+    const char *poll_err = "";
+    int poll_fails = 0;
+    uint32_t poll_ago = 0;
+    const char *talk_err = "";
+    int talk_fails = 0;
+    uint32_t talk_ago = 0;
+    const uint32_t reach_now = (uint32_t)(esp_timer_get_time() / 1000);
+    reach_faults(REACH_SETTINGS, &set_fails, &set_err, &set_ago, reach_now);
+    reach_faults(REACH_POLL, &poll_fails, &poll_err, &poll_ago, reach_now);
+    reach_faults(REACH_TALK, &talk_fails, &talk_err, &talk_ago, reach_now);
+    /* THE ONE NUMBER THAT WOULD HAVE ANSWERED THE WHOLE EVENING. -1 means the box has never
+       answered this panel at all, which is a different fault from having gone quiet and must not
+       arrive as a zero that reads like "just now". */
+    /* WHETHER THE LAST MESSAGE WAS HEARD, which `GET /next` 200 + `POST /played` 204 cannot say —
+       that is also what a message that played perfectly looks like. See `jpanel.h`: `msg_ms`
+       against `msg_bytes / 32` is the test, and the owner's *"it doesn't play"* of 2026-09-29 is
+       the report it was added for. */
+    int msg_bytes = 0;
+    int msg_ms = 0;
+    unsigned msg_ok = 0;
+    unsigned msg_bad = 0;
+    const char *msg_err = "";
+    int msg_waited = 0;
+    jpanel_message_stats(&msg_bytes, &msg_ms, &msg_ok, &msg_bad, &msg_err, &msg_waited);
+    const uint32_t quiet = reach_quiet_ms(reach_now);
+    const int quiet_s = quiet == REACH_NEVER ? -1 : (int)(quiet / 1000);
 
     /* 2048, up from 1536: the heard ring is twelve variable-length entries now and the loop
        below stops on room rather than on a count, so a small body silently costs the OLDEST
        decodes — which is the right end to lose, but only after the buffer has actually been
-       sized for the job rather than left at what three entries needed. */
-    char body[2048];
+       sized for the job rather than left at what three entries needed.
+     *
+       AND STATIC IN 0.3.33, WHICH IS A STACK FIX AND NOT A SIZE ONE. The three reach rows added
+       here are three more `esp_err_to_name` strings — `ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT` is 34
+       characters — plus their names and ages, about 200 bytes of worst case. That comes out of
+       the same budget the ring is spending, and the ring loses entries QUIETLY: it stops on room,
+       so the cost of the new fields would have been two decodes nobody knew were missing.
+     *
+       Static rather than a bigger automatic because this is `report`, which is two kilobytes of
+       stack while a TLS handshake is also in flight, on a board where stacks are what crash-looped
+       0.3.22. All three callers are inside `app_main` — the file has no other task — so there is
+       one caller in the only sense that matters here, and moving it out of the frame buys the
+       headroom and 2 KB of stack at the same time. */
+    static char body[2048];
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
@@ -311,10 +424,16 @@ static void report(const cfg_t *cfg)
                      "\"blit_fail_total\":%d,\"blit_recov\":%d,\"meter_fail\":%d,"
                      "\"wifi_reason\":%d,\"wifi_drops\":%d,"
                      "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
-                     "\"set_err\":\"%s\",\"set_fails\":%d,"
+                     "\"set_err\":\"%s\",\"set_fails\":%d,\"set_ago_s\":%u,"
+                     "\"poll_err\":\"%s\",\"poll_fails\":%d,\"poll_ago_s\":%u,"
+                     "\"talk_err\":\"%s\",\"talk_fails\":%d,\"talk_ago_s\":%u,"
+                     "\"box_quiet_s\":%d,\"relinks\":%u,"
+                     "\"msg_bytes\":%d,\"msg_ms\":%d,\"msg_ok\":%u,\"msg_bad\":%u,"
+                     "\"msg_err\":\"%s\",\"msg_waited_ms\":%d,"
                      "\"nudges\":%u,\"nudge_drop\":%u,"
                      "\"push\":%s,\"push_events\":%u,\"push_drops\":%u,"
-                     "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"screen\":\"%s\","
+                     "\"tap\":[%d,%d,%d],\"swipes\":%u,\"swipe_dx\":%d,\"msg_sel\":%d,"
+                     "\"panel_reset\":%s,\"screen\":\"%s\","
                      "\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
@@ -329,10 +448,14 @@ static void report(const cfg_t *cfg)
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
                      wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
-                     set_err, set_fails, nudge_count(), nudge_dropped(),
+                     set_err, set_fails, (unsigned)(set_ago / 1000),
+                     poll_err, poll_fails, (unsigned)(poll_ago / 1000),
+                     talk_err, talk_fails, (unsigned)(talk_ago / 1000),
+                     quiet_s, s_relinks, msg_bytes, msg_ms, msg_ok, msg_bad, msg_err, msg_waited,
+                     nudge_count(), nudge_dropped(),
                      jpanel_push_live() ? "true" : "false", jpanel_push_events(),
                      jpanel_push_drops(),
-                     tap_x, tap_y, tap_zone,
+                     tap_x, tap_y, tap_zone, swipes, swipe_dx, msg_sel,
                      display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
@@ -588,16 +711,21 @@ void app_main(void)
 
            Only while joined: offline there is nobody to ask, and the retry below is what
            matters. */
-        bool box_answering = joined;
         for (uint32_t left = period; left > 0;) {
-            /* Zero once the box stops answering, which sleeps out the remainder in one go —
-               see `apply_settings`. That puts an offline panel back on exactly the single-sleep
-               behaviour it had before settings got their own cadence. */
             /* The stream's own liveness decides the rate, re-read every slice rather than
                latched: a panel whose push channel drops must be back to a three-second ask by
                the next slice, not at the end of the period. */
-            const uint32_t ask_ms = jpanel_push_live() ? PUSH_SETTLED_MS : POLL_PERIOD_MS;
-            const uint32_t slice = cadence_slice_ms(left, box_answering ? ask_ms : 0);
+            const uint32_t base_ms = jpanel_push_live() ? PUSH_SETTLED_MS : POLL_PERIOD_MS;
+            /* BACKED OFF, NOT ABANDONED — see `cadence_backoff_ms`, which carries the argument.
+               This used to latch a `box_answering` flag false on the first failure and then sleep
+               out the entire remainder of the period; on 2026-09-29 that cost an hour of the
+               three-second cadence on a box that was answering the other task throughout. A
+               streak of failures widens the ask to at most `SETTINGS_BACKOFF_MAX_MS`; one
+               success puts it straight back to `base_ms`. */
+            const uint32_t ask_ms = joined ? cadence_backoff_ms(base_ms, reach_streak(REACH_SETTINGS),
+                                                                SETTINGS_BACKOFF_MAX_MS)
+                                           : 0;
+            const uint32_t slice = cadence_slice_ms(left, ask_ms);
             /* A WAIT THAT CAN BE CUT SHORT, which is the difference between "the box tells the
                panel" and "the panel finds out within three seconds". `vTaskDelay` cannot be
                interrupted; this returns the instant `nudge.c` gives the notification, and
@@ -612,13 +740,13 @@ void app_main(void)
             left -= slice;
             /* Not on the last slice: the manifest branch below applies settings anyway, and
                asking twice in the same instant is a handshake for nothing. */
-            if (box_answering && left > 0) {
+            if (joined && left > 0) {
                 char served[OTA_VERSION_MAX] = "";
                 /* Seeded with the baseline so a fetch that FAILED leaves it untouched:
                    `apply_settings` writes this only on success, and an unreachable box must
                    not read as "the number changed". */
                 int seen = telem_seq;
-                box_answering = apply_settings(&cfg, served, sizeof(served), &seen);
+                const bool got_settings = apply_settings(&cfg, served, sizeof(served), &seen);
                 /* THE RING, ON DEMAND. Fifteen minutes is the right cadence for telemetry and
                    the wrong one for "say the phrase and see what the decoder made of it" —
                    and the cadence cannot simply be shortened, because a report at 6-7 s of
@@ -630,7 +758,7 @@ void app_main(void)
                    touching the codec from anywhere but here panicked the panel (see
                    `audio.h`). A report that overruns its slice only delays the next one;
                    `cadence_slice_ms` never overshoots the period. */
-                if (box_answering) {
+                if (got_settings) {
                     if (telem_seq < 0) {
                         telem_seq = seen;
                     } else if (seen != telem_seq) {
@@ -644,6 +772,43 @@ void app_main(void)
                     maybe_install(&cfg, served, &ota_last_try_ms);
                 }
             }
+        }
+        /* ── THE LINK CAN BE DEAD WHILE THE RADIO INSISTS IT IS FINE ────────────────────
+         *
+         * `joined` was set once, at boot, and NOTHING EVER CLEARED IT — so `net_retry` below
+         * could only ever run on a panel that failed to join in the first place. The recovery
+         * path existed and was unreachable for the case that actually happens.
+         *
+         * What happens is the half-open link: still associated, still holding an IP, and no
+         * route to anything. An expired lease, an access point that stopped bridging, a
+         * duplicate address. ESP-IDF fires no `WIFI_EVENT_STA_DISCONNECTED` for any of them —
+         * the radio's own view is correct and useless — so `on_event`'s reconnect never runs
+         * either, and BOTH recovery paths sit idle while every request fails.
+         *
+         * MEASURED, NOT ARGUED: Lydian's panel went silent at 04:24 on 2026-09-29 and was still
+         * silent eight and a half hours later, having reported `wifi_drops: 0` — not one
+         * disconnect the whole time. A panel in a four-year-old's bedroom that needs an adult to
+         * unplug it is the failure this whole file is written against.
+         *
+         * SO THE BOX IS THE LINK TEST, which is the one thing that actually matters: the panel
+         * does not care whether it is associated, it cares whether it can reach its box.
+         * `reach_quiet_ms` is that measurement and it already exists for the telemetry.
+         *
+         * NEVER-REACHED IS EXCLUDED on purpose (`REACH_NEVER` is larger than any threshold and
+         * would trip this immediately). A panel that has not once reached its box since boot has
+         * a problem a re-join will not fix — a wrong key, a wrong URL, a box that is down — and
+         * thrashing the radio at it would swap a silent panel for a silent panel that also
+         * cannot hold an association.
+         *
+         * AT MOST ONCE PER PERIOD, by where it sits: the slice loop above has already run its
+         * full fifteen minutes. So a box that is genuinely down for maintenance costs one
+         * re-join a quarter of an hour, not one every time a request fails. */
+        const uint32_t quiet_ms = reach_quiet_ms((uint32_t)(esp_timer_get_time() / 1000));
+        if (joined && quiet_ms != REACH_NEVER && quiet_ms > LINK_SUSPECT_MS) {
+            ESP_LOGW(TAG, "box unreachable for %u s with the link up — re-joining",
+                     (unsigned)(quiet_ms / 1000));
+            s_relinks++;
+            joined = false;
         }
         if (!joined) {
             joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;

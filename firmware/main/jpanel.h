@@ -46,9 +46,31 @@ bool jpanel_start(const cfg_t *cfg);
    False when something is already in flight. */
 bool jpanel_send(const int16_t *pcm, size_t bytes, jpanel_to_t to);
 
-/* Fetch the oldest waiting message and play it. False when nothing is in flight-able state.
-   The box is told it was played only once the speaker has actually finished, which is what
-   makes a message survive a reboot mid-playback rather than being lost by being handed over. */
+/* HOW MANY OF THE WAITING MESSAGES THIS PANEL KNOWS THE SENDER OF, one by one, as opposed to
+   merely counting. `JPANEL_QUEUE_MAX` in `backend/src/jbrain/api/jpanel.py` is the same number and
+   a test pins that the two agree — a contract written down twice, like the nudge port.
+
+   EIGHT, AND THE COST IS THE POINT: eight names at 32 bytes is 256 bytes of static RAM on a
+   board whose internal heap is the scarce thing, and `jpanel_waiting()` still reports the true
+   total. A child swiping past the eighth unheard message is not a case worth more. */
+#define JPANEL_QUEUE_MAX 8
+
+/* Fetch a waiting message and play it. `at` is a POSITION IN THE QUEUE — 0 is the oldest, which
+   is what this route always served and what every automatic path still asks for. False when
+   nothing is in a flight-able state.
+
+   A POSITION, NOT AN ID, because the panel does not learn a message's id until it plays one:
+   `X-Jpanel-Id` arrives with the audio. The queue is ordered identically on both sides by the same
+   predicate, so the index the poll handed back is the index the box resolves. It is only as fresh
+   as that poll — a message acknowledged in between shifts the queue under the finger — and the
+   box answers an index past the end with "nothing here" rather than an error, so the worst case is
+   a neighbouring message rather than a dead press.
+
+   The box is told it was played only once the speaker has actually finished, which is what makes a
+   message survive a reboot mid-playback rather than being lost by being handed over. */
+bool jpanel_play_at(int at);
+
+/* The oldest one — `jpanel_play_at(0)`, kept because most callers mean exactly that. */
 bool jpanel_play_next(void);
 
 /* How many messages are waiting, and who the oldest is from. `from` may be NULL. The name is
@@ -65,6 +87,15 @@ jpanel_to_t jpanel_in_from(void);
    the poll's `from_owner`, for the same reason `jpanel_in_from` exists: the name is the owner's
    to change and the kind is not. False on a box too old to say. */
 bool jpanel_waiting_from_dad(void);
+
+/* ONE ENTRY OF THE QUEUE, so the glass can draw the message a finger has SELECTED rather than
+   only the one it would play next. `at` is the same index `jpanel_play_at` takes. False when the
+   queue is shorter than that, or when the box is too old to send a queue at all — in which case
+   only index 0 answers, from the two fields above, because those are all such a box sends.
+
+   `from` may be NULL. Same snapshot rule as `jpanel_waiting`: the poll writes the entries before
+   it raises the count, so a reader that sees a count sees entries that go with it. */
+bool jpanel_waiting_at(int at, char *from, size_t cap, bool *from_dad);
 
 /* THE OTHER PANEL'S NAME, learned from the poll, "" when the box did not name one. Written
    into `out` (up to `cap`), returns its length — so a caller can fall back in one test.
@@ -109,3 +140,22 @@ bool jpanel_fetching(void);
 bool jpanel_push_live(void);
 unsigned jpanel_push_events(void);
 unsigned jpanel_push_drops(void);
+
+/* WHETHER THE LAST MESSAGE WAS ACTUALLY HEARD — see the counters' declaration in `jpanel.c`.
+ *
+ * `bytes` and `ms` are the pair that matters and neither means anything alone: the ring holds
+ * 16-bit mono at 16 kHz, so 32 bytes to the millisecond, and a message whose `ms` is a small
+ * fraction of `bytes / 32` drained without sounding. The box cannot see that on its own — its
+ * record is `GET /next` 200 followed by `POST /played` 204, which is what a message that played
+ * perfectly also looks like. */
+void jpanel_message_stats(int *bytes, int *ms, unsigned *ok, unsigned *bad, const char **err,
+                          int *waited_ms);
+
+/* HOW LONG A FETCH WILL WAIT FOR THE SPEAKER before giving up on a message, and the step it waits
+   in. A press on the notice plays a cue first, and the fetch that follows crosses a task boundary
+   — so the speaker can still be busy when it arrives. Cues are a few hundred milliseconds, so this
+   covers one comfortably; bounded because the same check also means "a message is already
+   playing", and blocking the jpanel task forever on that would stop the poll and the
+   acknowledgements with it. */
+#define STREAM_WAIT_MAX_MS 600
+#define STREAM_WAIT_STEP_MS 20

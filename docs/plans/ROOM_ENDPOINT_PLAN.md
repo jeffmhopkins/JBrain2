@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-28 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-29 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -5912,6 +5912,99 @@ once shared one 880 Hz blip, and it caught the same instinct coming back.
 `test_every_playback_control_answers_the_finger` pins the mapping: each control makes a sound, and
 none of the four borrows another's.
 
+##### The queue stops being a number (0.3.33)
+
+The owner, with Lydian's panel awake and two messages sitting on it, reported four things at once.
+They are one story: **the panel had a queue and a user interface that only understood its head.**
+
+**1. A message took a long time to appear.** Measured from the box's own log: the message was
+created at 02:48:37 and the panel's `GET /jpanel/waiting` landed at 02:48:45. Eight seconds is the
+good case, and the bad case is thirty — because that poll is the only channel that always works.
+The two fast paths both failed, for reasons that compound:
+
+- The nudge datagram needs a remembered address, and `nudge.remember` was called **only from
+  `GET /jpanel/waiting`** — the thirty-second poll the nudge exists to preempt. The same log line
+  proves it: `nudge.address … "was": null` at 02:48:45, eight seconds *after* the message existed.
+  A freshly-woken panel cannot be nudged until it has already asked.
+- The push stream, which needs no address at all, is `PUSH_TASK_ENABLED 0` — disabled in firmware
+  after the 0.3.22 crash loop and honestly documented as a retreat.
+
+So: two fast paths, both unavailable on exactly the panel the owner had just switched on. Fixed
+from both ends. The settings poll — three seconds, already happening, already a TLS session —
+**carries the waiting count**, and a change in it makes the panel ask; that is what a nudge does,
+over a channel that cannot be dropped. And that same poll now remembers the address, so the
+datagram works from the first three seconds of uptime rather than the first thirty.
+
+**2. Two messages appeared at once.** A consequence of 1, and the thing that made 3 and 4 visible.
+
+**3. A notification showed through the playback screen.** *"When playing back the first message,
+the second message notification showed in the background of the menu."* The top-left quadrant means
+exactly one thing on this glass — who this is from — and it had **two writers**: the notice drew
+the NEXT sender's face there, and the run drew THIS message's. The run paints second so it usually
+won, and "usually" is the tell. `msg_sounding` is false in two windows where a message is plainly
+in flight: between a press and the first byte, and in the gap where one message has drained and the
+jpanel task is chaining into the next. The notice painted straight through in both.
+
+The tap table was already right — `UI_TAP_ORDER_PLAYING` contains no notice — so the notice was
+also **unpressable for as long as it was visible**, which is the fault class the pop-up's own
+arming was rewritten to kill. Drawing now agrees with arbitration, and the quadrant has one writer.
+
+**4. The little girl, for the third time.** *"it still ended up having the little girl icon on the
+top left versus the dad icon."* 0.3.28 and 0.3.31 both fixed this and both fixed a READING of a
+value that was itself wrong: **`s_in_from_dad` was cleared at the top of every fetch, and cleared
+means the sister.** Every downstream reader then had to guess when to trust it, and 0.3.31's guess
+— the queue while nothing is sounding, the message once something is — is correct for one message
+and wrong for two. The panel finishes the first, chains into the second with `jpanel_running()`
+still true, and for the whole of that second fetch the corner shows a little girl. Both of the
+owner's queued messages were from Dad.
+
+So the third fix went after the source. `do_fetch` **seeds** the sender from the queue entry it is
+about to fetch — the box already described that exact message, and `/next?at=` resolves the same
+index off the same ordered list — and `jpanel_play_at` seeds it again on the render task so the
+frame after the press is right too. The response header now only ever *confirms*. With no window
+left in which the value is wrong, there is nothing left to arbitrate: one fact, one reader. A
+choice that cannot be made wrongly beats one made correctly in three cases.
+
+**And then the gesture he asked for.** *"maybe we can add a new gesture which is swipe left and
+swipe right to change between the messages … we again need to make sure that the icon on the top
+left updates, as well as the number in the middle. And that we handle stopping the current playing
+message if it's playing."*
+
+- `GET /jpanel/waiting` returns a `queue` — `from_name` and `from_owner` per message, oldest first,
+  capped at `JPANEL_QUEUE_MAX` (8, pinned equal on all three sides). `count` stays authoritative
+  for how many.
+- `GET /jpanel/next?at=N` plays the Nth. **A position, not an id**, because the panel never learns
+  an id until it has played something — `X-Jpanel-Id` arrives with the audio. The cost is that the
+  index is only as fresh as the last poll; out of range answers 204, so the worst case is a
+  neighbouring message rather than a dead press.
+- **Both routes now honour `deliveries < JPANEL_MAX_DELIVERIES`.** `/waiting` never did, so a panel
+  could draw a notice for a message `/next` refuses to serve — visible and dead, again. It is also
+  what makes the index mean anything: one filtered list against one unfiltered one shifts it.
+- `touch.c` gained `touch_drag()`: the press edge still latches its origin, and a second pair of
+  values tracks the live point. Both go through `panel_to_frame`, so "left" is left as the child
+  sees it on a panel mounted sideways.
+- `SWIPE_MIN_PX 60` — 4.7 mm at 322 ppi, far enough that no jab crosses it — and `|dx| > |dy|`.
+  One step per press. It **clamps rather than wraps**: with three messages, three swipes right
+  landing back at the start reads as the panel ignoring you.
+- **It stops what is playing**, which the owner asked for and which is also what makes the gesture
+  safe to leave live. Every press on this panel fires on the DOWN edge — the rule that came out of
+  measuring how four-year-olds jab — so a swipe that started on the notice or the pause button has
+  already triggered it by the time the travel is visible. Stopping is how that unwinds.
+- **It is not also a hold.** A swipe is a finger down as long as a hold and travelling; without the
+  per-press latch, dragging across the pet for 700 ms would hand a child the recipient grid.
+- The numeral between the two discs said *how many are left*; it says **which of how many** now,
+  and so does the notice's own line (`2/3` in place of `SENT YOU 2`). `font.c` gained a `/` — its
+  45th glyph — because `-` reads as a range. The selection goes home to the oldest whenever the
+  queue changes shape, and is clamped every frame because it shortens on another task.
+
+**Whether the gesture exists at all is a measurement, not an assumption.** It rests on the CST820
+reporting a live coordinate while a finger moves, which this firmware reads through five bytes of
+one register with no datasheet-verified answer. If the part only latches per touch, every drag
+measures zero and the gesture silently does not exist — indistinguishable, from a desk, from a
+child not swiping far enough. So `swipes`, `swipe_dx` and `msg_sel` ride telemetry, the same answer
+`tap` gives about the same part: a count stuck at 0 while the owner says he swiped means the
+controller does not track.
+
 **A UDP datagram needs no TLS, no handshake and no session at all.** So the box sends four
 bytes that mean "come and ask", and the panel answers by making the authenticated HTTPS poll it
 was always going to make — on the task and the one TLS session it already owns. The
@@ -6567,3 +6660,44 @@ the flasher.
   PSRAM is only security-equivalent when hardware flash encryption is on, and this panel's TLS
   keys would otherwise sit in plaintext on an external bus. That caveat matters more than the
   bytes do.
+
+## The panel that went quiet, and the three reasons nobody could see (0.3.33)
+
+**The owner:** *"I also just had a red – show up on lydian's ... This is when I was trying to talk
+to the large language model. It didn't time out so I'm a little curious on what caused it."*
+
+**The box could barely answer.** `POST /endpoint/converse` had not been called since 02:52; the
+panel's last contact of ANY kind was 04:24:51 and then nothing. All true, and all of it
+reconstructed by paging through two thousand access-log lines looking for requests that had
+**stopped** — the hardest thing to find in a log, because a request that never happened leaves no
+line. A request that dies on the panel never reaches the box, so the access log is a record of what
+worked and the failures are exactly what is not in it.
+
+**Three things were wrong, and each one hid the next.**
+
+1. **`set_err` was cleared on every success.** The reasoning was sound — report the current state,
+   not the worst thing that ever happened — and the effect was that the field was empty in every
+   report any panel has ever sent, because a report only goes out at the end of a cycle, right
+   after a fetch that succeeded. Lydian's 03:27 report: `set_fails: 3, set_err: ""`. The count
+   survived; the name did not. Reasons now survive, and `*_ago_s` says whether they are current,
+   which is the question clearing was trying to answer.
+
+2. **One failed settings fetch cost fifteen minutes.** `main.c` latched `box_answering` false and
+   slept out the remainder of the period — right for a panel with no network, wrong here, where
+   the jpanel task went on reaching the SAME BOX every thirty seconds throughout. It also
+   neutered the three-second path the waiting count rides. Replaced by `cadence_backoff_ms`:
+   3 s, 6, 12, 24, 48, then a minute, and one success goes straight back to three seconds.
+
+3. **`joined` was set once at boot and never cleared,** so `net_retry` could only ever run on a
+   panel that failed to join in the first place. The case that happens is the half-open link —
+   associated, holding an IP, no route to anything — for which ESP-IDF fires no disconnect event,
+   so the handler's own reconnect never ran either. Lydian's panel was silent for **eight and a
+   half hours** having reported `wifi_drops: 0`: not one disconnect the whole time. The box is the
+   link test now (`reach_quiet_ms`), and a panel that cannot reach it for ten minutes stops
+   believing its radio and re-joins.
+
+**`reach.c` is the shared half:** three named paths (`set`, `poll`, `talk`), cumulative counts, the
+last reason, its age, and seconds since the panel last reached the box by any route — held ACROSS
+the outage, because the one moment worth reporting is the one moment the panel cannot report.
+`GET /api/debug/endpoint/reach` is where they land, and `stale_s` is its headline: a panel that has
+gone silent shows a healthy row with an old timestamp, so the staleness is the finding.

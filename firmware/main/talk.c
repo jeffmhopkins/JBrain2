@@ -2,6 +2,7 @@
 
 #include "talk.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "audio.h"
@@ -14,7 +15,15 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "reach.h"
+
 static const char *TAG = "talk";
+
+/* Local for `ota.c`'s reason: `reach.c` is on the host suite and takes its clock as an argument. */
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
 
 /* Generous, because the box may be transcribing on a shared GPU behind a chat model. The
    renderer gives up sooner than this and shows the failure face; that is deliberate — a child
@@ -67,6 +76,7 @@ static void turn(void)
     const int an = snprintf(auth, sizeof(auth), "Bearer %s", s_cfg->token);
     if (un < 0 || un >= (int)sizeof(url) || an < 0 || an >= (int)sizeof(auth)) {
         ESP_LOGE(TAG, "api url or token too long (%d, %d) — not sending", un, an);
+        reach_fail(REACH_TALK, "url-too-long", now_ms());
         s_state = TALK_NET_FAILED;
         return;
     }
@@ -76,6 +86,7 @@ static void turn(void)
     trust(&hc);
     esp_http_client_handle_t c = esp_http_client_init(&hc);
     if (c == NULL) {
+        reach_fail(REACH_TALK, "client-init", now_ms());
         s_state = TALK_NET_FAILED;
         return;
     }
@@ -89,9 +100,19 @@ static void turn(void)
     int64_t sent = t0;
     talk_net_t out = TALK_NET_FAILED;
     int got = 0;
+    /* Set at each `goto done` rather than at the label, because the label cannot tell which
+       branch reached it — and "the conversation failed" without which half is the report the box
+       has always been able to make for itself. */
+    const char *why = "unknown";
 
     if (esp_http_client_open(c, (int)s_bytes) != ESP_OK) {
+        /* THE ONE THAT ACTUALLY HAPPENS, AND THE ONE NOBODY COULD SEE. This is the whole of the
+           red dash on 2026-09-29: it fails before a single byte leaves the panel, so the box's
+           access log has no row for it, and the only account of it was this `ESP_LOGW` on a
+           serial console that does not exist in a bedroom. It is also the fast failure — the
+           owner's *"it didn't time out"* is this branch and not the sixty-second one. */
         ESP_LOGW(TAG, "connect failed");
+        why = "connect";
         goto done;
     }
     /* Written in chunks so a stall shows up as a short write rather than a long block. */
@@ -101,6 +122,7 @@ static void turn(void)
         const int n = esp_http_client_write(c, (const char *)p, left > 4096 ? 4096 : (int)left);
         if (n <= 0) {
             ESP_LOGW(TAG, "upload stalled with %u bytes left", (unsigned)left);
+            why = "upload-stall";
             goto done;
         }
         p += n;
@@ -108,7 +130,10 @@ static void turn(void)
     }
     sent = esp_timer_get_time();
 
-    if (esp_http_client_fetch_headers(c) < 0) goto done;
+    if (esp_http_client_fetch_headers(c) < 0) {
+        why = "no-headers";
+        goto done;
+    }
     const int status = esp_http_client_get_status_code(c);
     if (status == 204) {
         /* Silence. Not a failure: an accidental hold on a quiet room is the most common
@@ -119,6 +144,12 @@ static void turn(void)
     }
     if (status != 200) {
         ESP_LOGW(TAG, "box said %d", status);
+        /* The STATUS, not just "the box refused": 401 is a key the box no longer knows and 503 is
+           a box still starting, and those are different evenings. Static because `reach.c` keeps
+           the pointer rather than a copy — see `reach_fail`. */
+        static char code[12];
+        snprintf(code, sizeof(code), "http-%d", status);
+        why = code;
         goto done;
     }
     while (got < REPLY_MAX_BYTES) {
@@ -128,9 +159,11 @@ static void turn(void)
     }
     if (got < 2) {
         ESP_LOGW(TAG, "empty reply");
+        why = "empty-reply";
         goto done;
     }
     out = audio_play((const int16_t *)s_reply, (size_t)got) ? TALK_NET_SPOKE : TALK_NET_FAILED;
+    if (out == TALK_NET_FAILED) why = "no-playback";
 
 done:
     /* THE THREE NUMBERS A SLOW TURN IS DIAGNOSED WITH, and they are separable on purpose:
@@ -141,6 +174,14 @@ done:
              (unsigned)s_bytes, (int)((sent - t0) / 1000), got,
              (int)((esp_timer_get_time() - t0) / 1000));
     esp_http_client_cleanup(c);
+    /* IDLE IS NOT A FAULT. A 204 is the box hearing silence, which is the commonest recording a
+       panel on a wall will ever make: counting it would bury the failures that matter under an
+       accidental lean on the pet. */
+    if (out == TALK_NET_FAILED) {
+        reach_fail(REACH_TALK, why, now_ms());
+    } else {
+        reach_ok(REACH_TALK, now_ms());
+    }
     s_state = out;
 }
 

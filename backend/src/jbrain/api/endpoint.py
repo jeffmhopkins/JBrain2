@@ -533,6 +533,80 @@ class TelemetryIn(BaseModel):
     # would make the diagnostic invisible in precisely the way it was added to prevent.
     set_err: str = ""
     set_fails: int = 0
+    # HOW LONG AGO THAT LAST FAILURE WAS, and it is what makes a reason worth keeping.
+    #
+    # The panel used to CLEAR `set_err` on every success, so that what arrived described the
+    # current state rather than the worst thing that ever happened. Sound reasoning, and it made
+    # the field useless: a report only goes out at the end of a cycle, right after a fetch that
+    # succeeded, so the string was empty in every report any panel has ever sent. On 2026-09-29,
+    # with the fetch failing for an hour, Lydian's panel reported `set_fails: 3, set_err: ""`.
+    #
+    # So the name survives now and the AGE says whether it is current — the question clearing was
+    # trying to answer, asked the one way that does not destroy the answer.
+    set_ago_s: int = 0
+    # THE SAME THREE FOR THE OTHER TWO PATHS THAT TALK TO THIS BOX, because the interesting part is
+    # the DIFFERENCE between them. `poll` is `GET /jpanel/waiting` on the panel's jpanel task;
+    # `talk` is `POST /endpoint/converse`, the one a child is standing in front of.
+    #
+    # On 2026-09-29 the settings fetch failed for an hour while the poll, on a different task, kept
+    # succeeding against this same box — and that split is what ruled out the network and pointed
+    # at the panel. One row says something is wrong; three rows say where.
+    poll_err: str = ""
+    poll_fails: int = 0
+    poll_ago_s: int = 0
+    talk_err: str = ""
+    talk_fails: int = 0
+    talk_ago_s: int = 0
+    # SECONDS SINCE THE PANEL LAST REACHED THIS BOX BY ANY PATH — the single number that would have
+    # answered the whole of 2026-09-29 at a glance, where the access log needed line-by-line
+    # reading to show the same thing.
+    #
+    # -1 MEANS NEVER, not "just now". A panel that has never once reached its box is a different
+    # fault from one that has gone quiet, and a zero would read as the healthiest possible answer.
+    box_quiet_s: int = -1
+    # HOW MANY TIMES THE PANEL HAS STOPPED BELIEVING ITS OWN RADIO AND RE-JOINED.
+    #
+    # `joined` was set once at boot and never cleared, so the firmware's Wi-Fi retry could only
+    # ever run on a panel that failed to join in the FIRST place — not on one whose link went
+    # half-open later, which is the case that happens. Lydian's panel was silent from 04:24 on
+    # 2026-09-29 for eight and a half hours having reported `wifi_drops: 0`: not one disconnect
+    # event the whole time, because the radio's own view was that everything was fine.
+    #
+    # Reported because a recovery that fires silently cannot be told from one that never fires.
+    # A panel showing a handful an hour has a link problem that wants a router, not firmware.
+    relinks: int = 0
+    # WHETHER THE LAST MESSAGE WAS ACTUALLY HEARD, which this box cannot otherwise tell.
+    #
+    # The owner, on 0.3.32: *"I click the notification and then playback menu pulls up. But then
+    # [it] only stay[s] for about a half second before going back to the big blue notification and
+    # it doesn't play."* This box's record of that message was `GET /next` 200 followed by
+    # `POST /played` 204 — the bytes served, the digest verified by the panel, the message
+    # acknowledged. Which is also exactly what a message that played perfectly looks like.
+    #
+    # The acknowledgement watches the panel's audio ring rather than its speaker, and that is the
+    # right design — a panel that loses power mid-message must keep the message — but it makes
+    # "the ring drained" and "a child heard it" one event when they are two.
+    #
+    # `msg_bytes` AND `msg_ms` ARE A PAIR AND NEITHER MEANS ANYTHING ALONE. The ring is 16-bit
+    # mono at 16 kHz — 32 bytes to the millisecond — so a report whose `msg_ms` is a small
+    # fraction of `msg_bytes / 32` is a message this box believes was delivered and nobody heard.
+    msg_bytes: int = 0
+    msg_ms: int = 0
+    msg_ok: int = 0
+    msg_bad: int = 0
+    msg_err: str = ""
+    # THE LONGEST A FETCH HAS HAD TO WAIT FOR THE SPEAKER TO GO QUIET.
+    #
+    # A press on the notice plays a cue first — the finger gets an answer before the message
+    # arrives — and the fetch that follows crosses a task boundary, so the speaker can still be
+    # busy when it lands. That used to abandon the message with one log line to a console nobody
+    # has, and the owner saw it as *"[it looks] like it's going to play and only stays about one
+    # second before it disappears again ... if I long press it seems to work a little bit
+    # better."* A message should not depend on how long a four-year-old holds their finger.
+    #
+    # Reported because "it works now" and "it works now BECAUSE we wait" are different facts, and
+    # only the second one says the wait is load-bearing. Zero means this panel never raced a cue.
+    msg_waited_ms: int = 0
     # Where the last touch landed and which zone it resolved to: [x, y, zone].
     #
     # THE PANEL HAS BEEN SENDING THIS ALL ALONG and nothing declared it, so pydantic dropped
@@ -541,6 +615,24 @@ class TelemetryIn(BaseModel):
     # from "the glass works and the rotation maths puts the finger somewhere else", which is a
     # fault this panel has actually had.
     tap: list[int] = Field(default_factory=list)
+    # WHETHER THE SWIPE GESTURE EXISTS ON THIS HARDWARE AT ALL, which is the same class of question
+    # as `tap` above and has the same answer: measure it rather than reason about it.
+    #
+    # A child can swipe left and right to change which waiting message the panel is about, and the
+    # gesture rests on the CST820 reporting a LIVE coordinate while a finger MOVES. The firmware
+    # reads that controller through five bytes of one register and has no datasheet-verified answer
+    # to whether it tracks or only latches a point per touch. If it only latches, every drag
+    # measures zero, the gesture silently does not exist, and from a desk that is indistinguishable
+    # from a child not swiping far enough.
+    #
+    # `swipes` stuck at 0 while the owner says he swiped means the controller does not track.
+    # `swipe_dx` is how far the last recognised one travelled, so a count that rises says the
+    # threshold is the only thing left to tune. `msg_sel` is which queued message is selected right
+    # now — the state the gesture exists to move, and the one thing a photo of the glass cannot
+    # distinguish from a redraw.
+    swipes: int = 0
+    swipe_dx: int = 0
+    msg_sel: int = 0
     # Which of the three callers of `esp_restart()` it was — "blit-heal" (a real fault),
     # "gesture" (a four-year-old), "ota-park" (routine). All three arrive as
     # `reset_reason: "sw(3)"` and two of them also share `crash_phase: 9`.
@@ -650,6 +742,12 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         wifi_drops=body.wifi_drops,
         restart_why=body.restart_why,
         tap=body.tap,
+        # WHICH MESSAGE IS SELECTED, ALWAYS; THE SWIPE COUNTERS ONLY ONCE THERE ARE ANY. A zero on
+        # every healthy report is how a log stops being read — and the first non-zero `swipes` is
+        # the answer to whether this hardware reports a moving finger at all, which is worth
+        # noticing on the report that carries it.
+        msg_sel=body.msg_sel,
+        **({"swipes": body.swipes, "swipe_dx": body.swipe_dx} if body.swipes else {}),
         panel_reset=body.panel_reset,
         screen=body.screen,
         # Only when there is something to say. An empty key on every report for fifteen
@@ -657,7 +755,53 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),
         # Only when something has actually failed; a zero on every healthy report is how a log
         # stops being read.
-        **({"set_err": body.set_err, "set_fails": body.set_fails} if body.set_fails else {}),
+        # WHAT THE PANEL COULD NOT REACH, logged only when it could not reach something. A healthy
+        # panel's report carries none of these keys; a report that carries one is a fault nothing
+        # in this box's access log can show, because the request never arrived.
+        **(
+            {"set_err": body.set_err, "set_fails": body.set_fails, "set_ago_s": body.set_ago_s}
+            if body.set_fails
+            else {}
+        ),
+        **(
+            {
+                "poll_err": body.poll_err,
+                "poll_fails": body.poll_fails,
+                "poll_ago_s": body.poll_ago_s,
+            }
+            if body.poll_fails
+            else {}
+        ),
+        **(
+            {
+                "talk_err": body.talk_err,
+                "talk_fails": body.talk_fails,
+                "talk_ago_s": body.talk_ago_s,
+            }
+            if body.talk_fails
+            else {}
+        ),
+        # Always, and never suppressed: the healthy value is a small number and it is the one field
+        # that says the panel is talking to this box at all. Suppressing it when it looks fine would
+        # mean its absence carried the bad news, which is the shape every other key here avoids.
+        box_quiet_s=body.box_quiet_s,
+        # Only when it has actually happened: on a healthy panel this is 0 forever, and a key
+        # that is 0 on every report for a year is how a log stops being read.
+        **({"relinks": body.relinks} if body.relinks else {}),
+        # Only once a message has been streamed at all, and then always — including the healthy
+        # case, because the FINDING here is a ratio and a `msg_ms` that looks fine is half of it.
+        **(
+            {
+                "msg_bytes": body.msg_bytes,
+                "msg_ms": body.msg_ms,
+                "msg_ok": body.msg_ok,
+                "msg_bad": body.msg_bad,
+                **({"msg_err": body.msg_err} if body.msg_err else {}),
+                **({"msg_waited_ms": body.msg_waited_ms} if body.msg_waited_ms else {}),
+            }
+            if body.msg_ok or body.msg_bad
+            else {}
+        ),
         **({"heard": body.heard} if body.heard else {}),
         # Only when there are any: an empty list on every report is noise in a log a human
         # reads, and the counts already say when to look.
@@ -793,6 +937,30 @@ class EndpointSettings(BaseModel):
     # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
     pet_name: str = ""
     form: PanelForm = "ostrich"
+    # HOW MANY VOICE POSTS ARE WAITING FOR THIS PANEL, and it is here for latency rather than for
+    # display: `GET /jpanel/waiting` is the route that actually describes the queue, and the panel
+    # still calls it.
+    #
+    # THE PROBLEM THIS SOLVES. A message reaches a panel one of two ways — the box nudges it
+    # (`nudge.py`) and it polls straight away, or it finds out on its own thirty-second
+    # `/jpanel/waiting` cycle. The nudge is the fast path and it is also the fragile one: it is a
+    # UDP datagram to a remembered address, the push stream it shares a code path with is disabled
+    # on the firmware side after the 0.3.22 crash loop, and a panel that has just booted has no
+    # remembered address at all. Every one of those failures degrades to the same thing — up to
+    # thirty seconds of a child not being told — which the owner met head-on, on a freshly-woken
+    # unit: *"When sending messages still took a long time for it to show up on the panel."*
+    #
+    # This poll runs every THREE seconds and the box already knows the answer, so carrying the
+    # number here makes the slow path ten times faster and removes the dependency on a datagram
+    # arriving at all. The panel compares it against what it last saw and asks `/jpanel/waiting`
+    # on a change — the same thing a nudge makes it do, over a channel already in its hand.
+    #
+    # IT COSTS NO HANDSHAKE, which is the only reason it belongs on this response rather than on
+    # one of its own: `fw_version` and `telemetry_seq` above are here for exactly the same reason,
+    # and the handshake arithmetic in `fw_version`'s comment is the argument.
+    #
+    # Per-panel, like `pet_name`, and read-only in effect: the PUT writes six named columns.
+    waiting: int = 0
 
 
 def _clamp(v: EndpointSettings) -> EndpointSettings:
@@ -846,6 +1014,51 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
 # the job they were always good at: carrying a name a four-year-old can be told out loud.
 # `jpanel` imports them; it does not restate them.
 UNNAMED_PANEL_LABEL = "room endpoint panel"
+
+
+# HOW MANY TIMES THE BOX WILL HAND THE SAME MESSAGE TO THE SAME PANEL BEFORE GIVING UP.
+#
+# A panel that cannot acknowledge must not be able to loop audio in a child's bedroom, and that
+# is the box's job because the box is the half that can be fixed without an OTA — §10.4cw is
+# the afternoon this was learned the hard way.
+#
+# Five, because the honest failures are all ONE: a dropped POST, a crash mid-playback, a power
+# cut between hearing and acknowledging. Retrying a handful of times covers every one of them
+# with room to spare, and the sixth identical delivery is not a flaky link, it is a panel that
+# cannot tell us it heard.
+#
+# IT LIVES HERE RATHER THAN IN `jpanel` BECAUSE TWO ROUTES IN TWO MODULES NOW SHARE IT. The
+# settings poll reports how many messages are waiting so a panel learns about one in three seconds
+# instead of thirty, and "waiting" has to mean the same thing there as it does in `GET
+# /jpanel/waiting` and `GET /jpanel/next` — a count that included messages the box has stopped
+# serving would have a panel drawing a notice it cannot play. Same rule as the two names above:
+# `jpanel` imports it, it does not restate it.
+JPANEL_MAX_DELIVERIES = 5
+
+
+async def _waiting_count(request: Request, ctx: SessionContext, device_id: str) -> int:
+    """How many voice posts this panel has not played yet.
+
+    Under the PANEL'S OWN context, like everything else on the settings route: `jpanel_message`'s
+    policy opens a row only to the panel that sent it or was sent it (migration 0208), so the
+    isolation is the table's and this handler does not get to be the thing that enforces it. The
+    owner reaching the settings route by cookie passes their own id, matches no recipient, and gets
+    0 — which is the right answer for a caller that has no inbox.
+    """
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
+        n = (
+            await session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM app.jpanel_message
+                    WHERE recipient_device = :me AND played_at IS NULL
+                      AND deliveries < :cap
+                    """
+                ),
+                {"me": device_id, "cap": JPANEL_MAX_DELIVERIES},
+            )
+        ).scalar_one_or_none()
+    return int(n or 0)
 
 
 def panel_label(name: str) -> str:
@@ -1190,6 +1403,18 @@ async def panel_settings(
     # panel's to obey, so there has to be a way for a change to reach a unit on a wall. Read
     # under the panel's own context, where `endpoint_panel_own` shows it exactly one row — its
     # own — so this route cannot be talked into describing a sibling.
+    # WHERE TO NUDGE THIS PANEL, LEARNED FROM THE FAST POLL RATHER THAN THE SLOW ONE.
+    #
+    # `GET /jpanel/waiting` was the only place the address cache was refreshed, and it runs every
+    # thirty seconds — so between a power-on and that panel's first waiting-poll the box knew of
+    # nowhere to send a datagram, and a message arriving in that window waited the whole interval
+    # instead of milliseconds. This route runs every three seconds and proves who it is by the
+    # same key, so it is the better place; the other one stays as the refresh that survives a
+    # router handing out new leases.
+    #
+    # The owner reaching this by cookie has no address worth remembering — nothing nudges the PWA
+    # — and `remember` ignores a caller it cannot name anyway, so this is unconditional.
+    nudge.remember(principal.id, request)
     ctx = ctx_for(principal)
     knobs = await _read_settings(request, ctx)
     # THE APPEARANCE NEEDS THE SUBJECT PIN, and `ctx_for` does not carry one — see
@@ -1209,6 +1434,7 @@ async def panel_settings(
             "form": look.form,
             "fw_version": _firmware_version(settings) or "",
             "pet_name_phonemes": phonemes_for(look.pet_name) or "",
+            "waiting": await _waiting_count(request, ctx, principal.id),
         }
     )
 

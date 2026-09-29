@@ -689,6 +689,34 @@ static void audio_task(void *arg)
                    task's clock and skipping it would stall everything. */
                 s_deaf--;
                 s_level = 0;
+                /* ── BUT A RECORDING KEEPS ITS TIMELINE ──────────────────────────────────
+                 *
+                 * The owner: *"I think the sound effects prohibit the microphone from properly
+                 * recording during that time since they shared the same SPI or whatever?"* Right
+                 * about the effect. The cause is not a shared bus — it was this `continue`, which
+                 * skipped the capture copy below along with everything else.
+                 *
+                 * The codec routes the DAC into the ADC by design, so a cue is genuinely heard by
+                 * the microphone and the deafness above is correct: it is what stops the pet
+                 * answering its own beep. But `s_deaf` is re-armed on EVERY written chunk, so a
+                 * 300 ms cue deafens for the cue plus `DEAF_CHUNKS` — about 540 ms — and dropping
+                 * those samples did not silence half a second of a recording, it DELETED it and
+                 * spliced the ends together. A child saying "I went to the park today" through a
+                 * cue came out as "I went to— today", shorter than she spoke and with the join
+                 * inaudible, so the transcript read as though she had said that.
+                 *
+                 * Silence keeps the length honest. What was said during the cue is lost either
+                 * way — the microphone really was full of the panel's own noise — but a gap sounds
+                 * like a gap, transcribes as a pause, and does not invent a sentence she never
+                 * said. */
+                if (s_cap_on && s_cap != NULL) {
+                    const int room = CAPTURE_MAX_SAMPLES - s_cap_used;
+                    const int take = room < AUDIO_CHUNK ? room : AUDIO_CHUNK;
+                    if (take > 0) {
+                        memset(&s_cap[s_cap_used], 0, (size_t)take * sizeof(int16_t));
+                        s_cap_used += take;
+                    }
+                }
                 continue;
             }
             s_level = audio_peak(s_chunk, AUDIO_CHUNK);

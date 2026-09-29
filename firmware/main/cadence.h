@@ -37,3 +37,27 @@ uint32_t cadence_slice_ms(uint32_t remaining_ms, uint32_t period_ms);
  * millisecond clock that has rolled over (about 49 days) still yields a sane elapsed time
  * instead of blocking retries until it rolls again. */
 bool cadence_retry_due(uint32_t now_ms, uint32_t last_ms, uint32_t backoff_ms);
+
+/* HOW LONG TO WAIT BEFORE ASKING A BOX THAT IS NOT ANSWERING, and it exists because the previous
+ * answer was "until the end of the period".
+ *
+ * `main.c` used to LATCH: one failed `apply_settings` set `box_answering = false`, and
+ * `cadence_slice_ms(left, 0)` then slept out the whole remainder of the fifteen-minute cycle. The
+ * defence was that this "puts an offline panel back on exactly the single-sleep behaviour it had
+ * before settings got their own cadence" — true, and right for a panel with no network. It is
+ * wrong for a panel whose box is up, which is what 2026-09-29 was: the settings fetch failed at
+ * 03:27 while the jpanel task went on polling the SAME BOX every thirty seconds, and the panel
+ * spent the next hour asking three times a quarter of an hour instead of once every three seconds.
+ *
+ * The cost of that latch is not abstract — it disables the three-second path the waiting count now
+ * rides, so one transient failure turns a message that should land in three seconds into one that
+ * lands in fifteen minutes. A retry is what was wanted; "stop trying" was a proxy for it.
+ *
+ * DOUBLING FROM THE NORMAL ASK, CAPPED. The first retry is one ordinary slice later, so a blip
+ * costs three seconds; a box that is genuinely gone is asked about once a minute rather than three
+ * hundred times a period. `fails` is the CONSECUTIVE count (`reach_streak`), so a success returns
+ * to the base rate immediately rather than climbing back down.
+ *
+ * Saturating on purpose: `fails` is unbounded and an unguarded shift by 32 or more is undefined
+ * behaviour, not a large number. */
+uint32_t cadence_backoff_ms(uint32_t base_ms, int fails, uint32_t cap_ms);

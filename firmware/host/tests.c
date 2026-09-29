@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "cadence.h"
+#include "reach.h"
 #include "calib.h"
 #include "caption.h"
 #include "confirm.h"
@@ -3725,6 +3726,196 @@ static void test_no_short_cadence_sleeps_the_whole_remainder(void)
     CHECK(cadence_slice_ms(0, 10000) == 0, "and nothing left is nothing to wait for");
 }
 
+/* --- the backoff, and the fifteen minutes it replaces ------------------------------------- */
+
+static void test_a_failing_box_is_asked_less_often_but_is_still_asked(void)
+{
+    /* THE BUG THIS REPLACES COST AN HOUR OF A THREE-SECOND CADENCE. `main.c` latched
+       `box_answering = false` on the first failed settings fetch and then slept out the rest of
+       the fifteen-minute period. On 2026-09-29 that fired on a box that was answering the panel's
+       OTHER task every thirty seconds throughout, so the panel asked three times in an hour for
+       settings it could have had — and the waiting count rides that same fetch, so a message that
+       should land in three seconds would have landed in fifteen minutes. */
+    const uint32_t base = 3u * 1000u;
+    const uint32_t cap = 60u * 1000u;
+    CHECK(cadence_backoff_ms(base, 0, cap) == base, "a box that answers is asked at the base rate");
+    CHECK(cadence_backoff_ms(base, 1, cap) == 2 * base, "the first retry is one ordinary slice on");
+    CHECK(cadence_backoff_ms(base, 2, cap) == 4 * base, "and it doubles from there");
+    CHECK(cadence_backoff_ms(base, 3, cap) == 8 * base, "and again");
+    CHECK(cadence_backoff_ms(base, 4, cap) == 16 * base, "and again, 48 s");
+    CHECK(cadence_backoff_ms(base, 5, cap) == cap, "until the cap, which 32 s would overshoot");
+    CHECK(cadence_backoff_ms(base, 9, cap) == cap, "and it stays there");
+
+    /* THE PROPERTY THAT MATTERS, stated as the trade it is: a panel whose box is genuinely gone
+       must not spend a period hammering it, and a panel whose box blinked must not lose the
+       period. Counted over a real fifteen-minute cycle. */
+    uint32_t spent = 0;
+    int asks = 0;
+    for (int fails = 0; spent < 15u * 60u * 1000u; fails++) {
+        spent += cadence_backoff_ms(base, fails, cap);
+        asks++;
+    }
+    CHECK(asks > 10 && asks < 25, "about seventeen asks a period, not three hundred and not one");
+
+    /* Unbounded `fails` is the input here — a panel offline for a week climbs as high as its int
+       goes — and an unguarded `1 << 32` is undefined behaviour, not a big number. */
+    CHECK(cadence_backoff_ms(base, 31, cap) == cap, "a long outage saturates rather than shifting");
+    CHECK(cadence_backoff_ms(base, 1000000, cap) == cap, "and stays saturated however long it is");
+    CHECK(cadence_backoff_ms(base, -1, cap) == base, "a negative streak is no streak");
+}
+
+static void test_one_success_ends_the_backoff_immediately(void)
+{
+    /* The streak is CONSECUTIVE failures, so recovery is a step and not a climb back down: the
+       panel that just heard from its box is a panel that should be asking every three seconds
+       again, not in fifty. `reach_ok` is what resets it; this pins the arithmetic's half. */
+    const uint32_t base = 3u * 1000u;
+    CHECK(cadence_backoff_ms(base, 5, 60000) == 60000, "deep in a backoff");
+    CHECK(cadence_backoff_ms(base, 0, 60000) == base, "one success and it is back to the base");
+}
+
+/* --- reach: what the panel could not get to, kept until it can say so --------------------- */
+
+static void test_a_reason_survives_the_success_that_follows_it(void)
+{
+    /* THE WHOLE POINT, AND THE BUG IT FIXES. `s_set_err` was cleared on success so that reports
+       described the CURRENT state — but a report only goes out at the end of a cycle, right
+       after a fetch that succeeded, so the string was empty in every report ever sent. Lydian's
+       panel, with the fetch failing for an hour: `set_fails: 3, set_err: ""`. */
+    reach_reset_for_test();
+    reach_fail(REACH_SETTINGS, "connect", 1000);
+    reach_ok(REACH_SETTINGS, 2000);
+
+    int fails = 0;
+    const char *err = "";
+    uint32_t ago = 0;
+    reach_faults(REACH_SETTINGS, &fails, &err, &ago, 5000);
+    CHECK(fails == 1, "the count survives, as it always did");
+    CHECK(strcmp(err, "connect") == 0, "and so does the reason, which is what was missing");
+    CHECK(ago == 4000, "with its age, which is how a caller tells current from historical");
+}
+
+static void test_the_three_paths_are_counted_apart(void)
+{
+    /* THE SPLIT IS THE DIAGNOSIS. On 2026-09-29 the settings fetch failed for an hour while the
+       jpanel poll, on another task, kept succeeding against the same box — and that is what ruled
+       out the network and pointed at the panel. Merged into one counter it would have read as
+       "some requests fail sometimes", which is not a finding. */
+    reach_reset_for_test();
+    reach_fail(REACH_SETTINGS, "connect", 1000);
+    reach_fail(REACH_SETTINGS, "connect", 2000);
+    reach_ok(REACH_POLL, 2500);
+    reach_fail(REACH_TALK, "http-503", 3000);
+
+    int sf = 0, pf = 0, tf = 0;
+    const char *se = "", *pe = "", *te = "";
+    reach_faults(REACH_SETTINGS, &sf, &se, NULL, 3000);
+    reach_faults(REACH_POLL, &pf, &pe, NULL, 3000);
+    reach_faults(REACH_TALK, &tf, &te, NULL, 3000);
+    CHECK(sf == 2 && strcmp(se, "connect") == 0, "settings failed twice, with a reason");
+    CHECK(pf == 0 && pe[0] == '\0', "the poll was fine, and says so with an empty reason");
+    CHECK(tf == 1 && strcmp(te, "http-503") == 0, "and the conversation carries the status");
+}
+
+static void test_never_having_reached_the_box_is_not_zero_seconds_ago(void)
+{
+    /* A panel that has NEVER reached its box is a different fault from one that has gone quiet —
+       a wrong key, a wrong URL, a box that has never been up — and reporting it as 0 would make
+       it the healthiest-looking row on the page. */
+    reach_reset_for_test();
+    CHECK(reach_quiet_ms(50000) == REACH_NEVER, "never reached is never, not just now");
+    reach_ok(REACH_POLL, 10000);
+    CHECK(reach_quiet_ms(50000) == 40000, "and once it has, the clock is since the last success");
+
+    /* ANY path counts, because the question is whether the panel can talk to the box at all. */
+    reach_ok(REACH_TALK, 45000);
+    CHECK(reach_quiet_ms(50000) == 5000, "a success on any path is a success");
+
+    /* A failure does not make the box quieter or louder — only a success moves this. */
+    reach_fail(REACH_SETTINGS, "connect", 49000);
+    CHECK(reach_quiet_ms(50000) == 5000, "a failure is not a contact");
+}
+
+static void test_a_never_failed_path_reports_an_age_of_zero_and_says_so(void)
+{
+    /* `ago_ms` has no sentinel and does not need one: `fails == 0` is the unambiguous reading of
+       "there has never been a failure", and a caller that reports the age without the count is
+       the one making the mistake. Pinned so the pair is not split later. */
+    reach_reset_for_test();
+    int fails = 1;
+    uint32_t ago = 999;
+    const char *err = "x";
+    reach_faults(REACH_TALK, &fails, &err, &ago, 60000);
+    CHECK(fails == 0, "no failures");
+    CHECK(ago == 0, "so no age");
+    CHECK(err[0] == '\0', "and no reason, rather than a stale one");
+}
+
+static void test_the_fault_clocks_survive_a_rollover(void)
+{
+    /* A millisecond clock wraps at about 49 days, and a panel up seven weeks is exactly the one
+       whose faults nobody has looked at. Unsigned subtraction throughout, like
+       `cadence_retry_due` — a signed one would report a negative age as an enormous one. */
+    reach_reset_for_test();
+    const uint32_t before = 0xFFFFFF00u;
+    reach_fail(REACH_POLL, "connect", before);
+    reach_ok(REACH_POLL, before);
+    const uint32_t after = before + 5000u; /* wraps */
+    uint32_t ago = 0;
+    reach_faults(REACH_POLL, NULL, NULL, &ago, after);
+    CHECK(ago == 5000, "the failure was five seconds ago, across the wrap");
+    CHECK(reach_quiet_ms(after) == 5000, "and so was the last contact");
+}
+
+static void test_a_failure_with_nothing_to_say_keeps_the_last_real_reason(void)
+{
+    /* A caller that passes NULL or "" must not blank a name an earlier failure gave: the reason
+       is the scarce thing here, and a later failure that cannot describe itself is not evidence
+       that the earlier one did not happen. */
+    reach_reset_for_test();
+    reach_fail(REACH_TALK, "connect", 1000);
+    reach_fail(REACH_TALK, NULL, 2000);
+    reach_fail(REACH_TALK, "", 3000);
+    int fails = 0;
+    const char *err = "";
+    uint32_t ago = 0;
+    reach_faults(REACH_TALK, &fails, &err, &ago, 3000);
+    CHECK(fails == 3, "all three are counted");
+    CHECK(strcmp(err, "connect") == 0, "and the one reason anybody gave is kept");
+    CHECK(ago == 0, "with the age of the most recent failure, not of the named one");
+}
+
+static void test_the_streak_is_consecutive_and_the_total_is_not(void)
+{
+    /* Two different jobs: the STREAK drives the backoff and must forget, the TOTAL is the report
+       and must not. Conflating them would either report a wrong count or back off from a box
+       that recovered hours ago. */
+    reach_reset_for_test();
+    for (int i = 0; i < 4; i++) reach_fail(REACH_SETTINGS, "connect", (uint32_t)(i * 1000));
+    CHECK(reach_streak(REACH_SETTINGS) == 4, "four in a row");
+    reach_ok(REACH_SETTINGS, 5000);
+    CHECK(reach_streak(REACH_SETTINGS) == 0, "and a success ends the run");
+    int fails = 0;
+    reach_faults(REACH_SETTINGS, &fails, NULL, NULL, 5000);
+    CHECK(fails == 4, "but the total remembers every one of them");
+}
+
+static void test_a_bad_path_is_ignored_rather_than_scribbling(void)
+{
+    /* The enum comes from calling code, and an out-of-range index would write past a four-entry
+       array of pointers. Cheap to bound, and the alternative is a corruption whose symptom is a
+       garbage reason string in a telemetry report. */
+    reach_reset_for_test();
+    reach_fail((reach_path_t)REACH_PATHS, "nope", 1000);
+    reach_fail((reach_path_t)-1, "nope", 1000);
+    reach_ok((reach_path_t)99, 1000);
+    CHECK(reach_streak((reach_path_t)REACH_PATHS) == 0, "an unknown path has no streak");
+    CHECK(reach_quiet_ms(2000) == REACH_NEVER, "and a bad success is not a contact");
+    int fails = 0;
+    reach_faults(REACH_SETTINGS, &fails, NULL, NULL, 2000);
+    CHECK(fails == 0, "and no real path was touched");
+}
+
 static void test_the_dim_fraction_is_the_boxs_to_choose(void)
 {
     CHECK(screen_level(200, SCREEN_DIM, 25) == 50, "a quarter is what it always was");
@@ -3866,11 +4057,43 @@ static void test_the_font_can_spell_the_vocabulary(void)
     }
 }
 
+static void test_the_font_can_spell_what_the_screen_says(void)
+{
+    /* THE SAME ARGUMENT AS THE VOCABULARY ABOVE, FOR THE OTHER HALF OF THE GLASS, and it earns its
+       own test because it has already caught a change: the waiting count became a POSITION —
+       `2/3` — and the font had 44 glyphs and no `/`. An unknown character draws a blank cell of the
+       right width, so `2/3` would have rendered as `2 3` and read as two numbers.
+     *
+       Every string `display.c` hands to `font_draw` is listed here, including the format
+       characters, because a literal that only appears in a `snprintf` is exactly the one nobody
+       remembers to check. `vocab` covers what the panel HEARS; this covers what it SAYS. */
+    static const char *SAID[] = {
+        /* The notice, the badge and the playback numeral. */
+        "- SWIPE -", "TAP TO HEAR", "SENT YOU ONE", "0123456789/",
+        /* The recording indicator and the grid. */
+        "TO DAD", "MESSAGE", "SOMEONE",
+        /* The sleeping animal, the version label's separators, and the failure words. */
+        "ZZZ", "0.3.33", "v", "-",
+    };
+    for (unsigned i = 0; i < sizeof(SAID) / sizeof(SAID[0]); i++) {
+        for (const char *p = SAID[i]; *p; p++) {
+            if (*p == ' ') continue;
+            char one[2] = {*p, '\0'};
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            font_draw(fb, FACE_W, FACE_H, 10, 10, 2, one, 0xFFFF);
+            CHECK(non_black() > 0, "every character the screen draws has a glyph");
+        }
+    }
+}
+
 static void test_the_font_glyphs_are_distinct(void)
 {
     /* Copy-paste is the failure mode of a hand-entered bitmap table, and two letters sharing
        a shape is invisible until someone reads a word on the glass. */
-    static const char *SET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    /* THE PUNCTUATION IS IN HERE TOO, and `/` is why: it was added for `2/3` and the nearest
+       shapes in the table are `-` and `1`, either of which it could plausibly have been typed as.
+       `v` is the font's one lowercase letter and is deliberately not `V`. */
+    static const char *SET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/-.,'?!v";
     uint16_t *seen = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
     CHECK(seen != NULL, "scratch frame allocated");
     for (const char *a = SET; *a; a++) {
@@ -4028,6 +4251,16 @@ int main(void)
     test_slicing_a_period_does_not_move_its_end();
     test_the_tail_of_a_period_is_short();
     test_no_short_cadence_sleeps_the_whole_remainder();
+    test_a_failing_box_is_asked_less_often_but_is_still_asked();
+    test_one_success_ends_the_backoff_immediately();
+    test_a_reason_survives_the_success_that_follows_it();
+    test_the_three_paths_are_counted_apart();
+    test_never_having_reached_the_box_is_not_zero_seconds_ago();
+    test_a_never_failed_path_reports_an_age_of_zero_and_says_so();
+    test_the_fault_clocks_survive_a_rollover();
+    test_a_failure_with_nothing_to_say_keeps_the_last_real_reason();
+    test_the_streak_is_consecutive_and_the_total_is_not();
+    test_a_bad_path_is_ignored_rather_than_scribbling();
     test_the_dim_fraction_is_the_boxs_to_choose();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();
@@ -4036,6 +4269,7 @@ int main(void)
     test_caption_survives_a_stalled_clock();
     test_caption_ignores_nonsense();
     test_the_font_can_spell_the_vocabulary();
+    test_the_font_can_spell_what_the_screen_says();
     test_the_font_glyphs_are_distinct();
 
     free(fb);

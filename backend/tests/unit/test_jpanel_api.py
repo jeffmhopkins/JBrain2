@@ -7,6 +7,7 @@ principal's LABEL into the name a four-year-old hears, because panels are ordina
 principals and that label is the only thing marking one.
 """
 
+import inspect
 import re
 from pathlib import Path
 
@@ -198,8 +199,10 @@ class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
             "firmware/main/jpanel.c no longer builds <api>/jpanel/<path>; "
             "the routes above moved with it or the panel is about to 404"
         )
-        # And the four suffixes it passes to that helper.
-        for suffix in ('"/send?to=%s"', '"/waiting"', '"/next"', '"/played"'):
+        # And the four suffixes it passes to that helper. `/next` carries a query string now —
+        # `?at=` names which queued message to play — so it is pinned as a prefix, which is what
+        # the route actually depends on: FastAPI matches the path and reads `at` as a parameter.
+        for suffix in ('"/send?to=%s"', '"/waiting"', '"/next?at=%d"', '"/played"'):
             assert suffix in src, f"the firmware stopped asking for {suffix}"
 
 
@@ -504,14 +507,18 @@ class TestNamingAPanelWithoutACable:
         )
 
     def test_the_cap_fits_the_buffer_the_panel_receives_it_in(self) -> None:
-        """`X-Jpanel-From` lands in a fixed `char s_wait_from[N]` and is drawn from there.
-        A name that overruns it arrives truncated — a name cut in half names nobody, which is
-        the same reason `draw_popup` shrinks rather than clips."""
+        """`from_name` lands in a fixed `char from[N]` — one per queued message, since the panel
+        holds the whole queue rather than only its head — and is drawn from there. A name that
+        overruns it arrives truncated, and a name cut in half names nobody, which is the same reason
+        `draw_popup` shrinks rather than clips."""
         src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
             encoding="utf-8"
         )
-        match = re.search(r"static char s_wait_from\[(\d+)\];", src)
-        assert match is not None, "the panel's from-name buffer moved; re-pin this test"
+        # Inside `wait_one_t`, the queue entry: the single `s_wait_from[N]` this used to read became
+        # an array of these when the panel started holding a sender per message.
+        entry = re.search(r"typedef struct \{\s*char from\[(\d+)\];", src)
+        assert entry is not None, "the panel's per-message from-name buffer moved; re-pin this test"
+        match = entry
         assert int(match.group(1)) > jpanel.MAX_PANEL_NAME, (
             f"names up to {jpanel.MAX_PANEL_NAME} characters are accepted into a "
             f"{match.group(1)}-byte buffer"
@@ -619,3 +626,164 @@ class TestNamingAPanelWithoutACable:
             if method != "HEAD"
         }
         assert ("/jpanel/panels/{device_id}/name", "POST") in paths
+
+    def test_the_queue_cap_is_the_same_number_on_both_sides(self) -> None:
+        """A CONTRACT SPELLED TWICE, which is the shape this route has already got wrong twice —
+        the path prefix for a release, and `tap` for months. The panel indexes into the list this
+        route serves (`GET /next?at=`) and stores it in a fixed array; a box that described nine
+        entries to a panel with room for eight would hand out an index the panel cannot draw a face
+        for, and a panel that clamped to a smaller number would make the last messages unreachable
+        by swipe with nothing to say so."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.h").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"#define JPANEL_QUEUE_MAX\s+(\d+)", src)
+        assert m, "firmware/main/jpanel.h no longer defines JPANEL_QUEUE_MAX"
+        assert int(m.group(1)) == jpanel.JPANEL_QUEUE_MAX, (
+            f"the panel holds {m.group(1)} queue entries and the box describes "
+            f"{jpanel.JPANEL_QUEUE_MAX}"
+        )
+        ui = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "ui.h").read_text(
+            encoding="utf-8"
+        )
+        u = re.search(r"#define UI_QUEUE_MAX\s+(\d+)", ui)
+        assert u, "firmware/main/ui.h no longer defines UI_QUEUE_MAX"
+        assert int(u.group(1)) == jpanel.JPANEL_QUEUE_MAX, (
+            "the interaction module and the box disagree about how long the queue can be"
+        )
+
+    def test_the_panel_reads_the_queue_this_poll_serves(self) -> None:
+        """A field the box spends bytes on that the firmware never reads is exactly the fault `tap`
+        shipped with for months, and this one is worse than a wasted field: the whole swipe gesture
+        is the panel drawing a face per queued message, so a panel that only read `from_owner`
+        would show the oldest sender's face whichever message the finger was pointing at — which is
+        the bug the queue exists to fix, reintroduced by not reading it."""
+        assert "queue" in jpanel.Waiting.model_fields
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"queue"' in src, "the panel stopped reading the queue off the poll"
+        assert '"from_owner"' in src, "and it still needs each entry's sender kind"
+        display = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+        assert "jpanel_waiting_at(" in display, (
+            "the drawing no longer asks who the SELECTED message is from"
+        )
+
+    def test_the_panel_asks_for_a_position_the_way_this_route_reads_one(self) -> None:
+        """`at` is a query parameter here and a query string there, and a panel that spelled it
+        differently would silently always play the oldest — the box defaults `at` to 0, so the
+        failure is a gesture that appears to do nothing rather than an error anybody sees."""
+        sig = inspect.signature(jpanel.next_message)
+        assert "at" in sig.parameters, "GET /next no longer takes a position"
+        assert sig.parameters["at"].default == 0, "the oldest must stay the default"
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        assert "/next?at=%d" in src, "the panel no longer asks for a position"
+
+    def test_what_the_box_offers_is_what_the_box_will_serve(self) -> None:
+        """THE COUNT AND THE QUEUE AND `/next` MUST ALL MEAN THE SAME LIST.
+
+        `GET /next` has always refused a message past `JPANEL_MAX_DELIVERIES` — five attempts and
+        the box stops trying, because a panel that cannot acknowledge must not be able to loop audio
+        in a child's bedroom. `GET /waiting` did not apply that predicate, so a panel drew a notice
+        for a message the other route would answer 204 to: a control that is visible and dead.
+
+        It also makes the position meaningful. `?at=1` only names a message while both routes are
+        looking at the same list in the same order, and one filtered list against one unfiltered one
+        would shift the index by however many the box had given up on."""
+        src = (
+            Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api" / "jpanel.py"
+        ).read_text()
+        waiting = src[src.index("async def waiting(") : src.index("async def next_message(")]
+        # The two SELECTs, not the prose around them: this handler runs exactly two queries — the
+        # count and the queue — and both must carry the predicate.
+        selects = [q for q in waiting.split("SELECT ")[1:]]
+        assert len(selects) == 2, f"GET /waiting runs {len(selects)} queries, not two; re-pin this"
+        for q in selects:
+            assert "deliveries < :" in q.split('"""')[0], (
+                "the waiting count and the queue it serves must both honour the give-up cap"
+            )
+
+    def test_the_settings_poll_carries_the_waiting_count(self) -> None:
+        """WHY A MESSAGE TOOK SO LONG TO APPEAR. A panel learns about one either from a nudge —
+        a UDP datagram to an address the box only ever learned FROM the thirty-second waiting poll,
+        so a freshly-booted panel had none — or from that poll itself. The push stream that was the
+        third way is disabled in firmware after the 0.3.22 crash loop. So on a panel just switched
+        on, every fast path was unavailable and the owner watched the slow one: *"When sending
+        messages still took a long time for it to show up on the panel."*
+
+        The settings poll runs every three seconds and the box already knows the number, so it
+        carries it and the panel asks on a change. Pinned on both sides because a number the
+        firmware does not read buys nothing, and a field the box stops sending puts the latency
+        back with no symptom but a slow panel."""
+        assert "waiting" in endpoint_api.EndpointSettings.model_fields
+        ota = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "ota.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"waiting"' in ota, "the panel no longer reads the count off the settings poll"
+        main_c = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text(
+            encoding="utf-8"
+        )
+        assert "jpanel_poll_soon()" in main_c, (
+            "the panel no longer asks what is waiting when the count changes"
+        )
+
+    def test_the_fast_poll_is_where_the_box_learns_where_to_nudge(self) -> None:
+        """The other half of the same latency bug, and the one that cannot be fixed in firmware.
+        `nudge.remember` was called only from `GET /jpanel/waiting` — the thirty-second poll the
+        nudge exists to PREEMPT — so between a power-on and that panel's first waiting-poll the box
+        knew of nowhere to send a datagram. The three-second settings poll proves who it is by the
+        same key."""
+        src = (
+            Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api" / "endpoint.py"
+        ).read_text()
+        body = src[src.index("async def panel_settings(") :]
+        body = body[: body.index("async def set_panel_settings(")]
+        assert "nudge.remember(" in body, (
+            "the fast poll no longer tells the box where to reach this panel"
+        )
+
+    def test_the_panel_can_hold_the_longest_poll_the_box_will_send(self) -> None:
+        """A TRUNCATED POLL RESPONSE READS AS AN EMPTY HOUSE, which is why this is a test and not a
+        generous constant.
+
+        `do_poll` reads `GET /waiting` into a fixed `static char body[N]` and hands it to cJSON. A
+        body cut off mid-object parses as NOTHING — not as a partial answer — so the panel would
+        report zero waiting messages on every poll forever, and the symptom is a quiet panel. That
+        is indistinguishable from the box having nothing to say, which is exactly the failure this
+        route's own history is made of.
+
+        The response grew a list, so the size now depends on three numbers the box owns:
+        `JPANEL_QUEUE_MAX`, `MAX_PANEL_NAME`, and the field names themselves. Recomputed here from
+        the model rather than asserted as a magic number, so raising any of them fails HERE, where
+        somebody is reading, rather than on a panel in a bedroom."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"static char body\[(\d+)\];", src)
+        assert m, "the panel's poll buffer moved; re-pin this test"
+        held = int(m.group(1))
+
+        # The worst case the box can actually produce: a full queue, every name at the cap, and
+        # both scalar name fields filled. Serialised by pydantic itself — the field names are part
+        # of the length and transcribing them here would be the second place they are written down.
+        name = "N" * jpanel.MAX_PANEL_NAME
+        worst = jpanel.Waiting(
+            count=jpanel.JPANEL_QUEUE_MAX,
+            from_name=name,
+            sibling=name,
+            from_owner=True,
+            queue=[
+                jpanel.WaitingOne(from_name=name, from_owner=True)
+                for _ in range(jpanel.JPANEL_QUEUE_MAX)
+            ],
+        )
+        wire = len(worst.model_dump_json())
+        # Strictly greater: `do_poll` reads at most `sizeof(body) - 1` bytes and NUL-terminates.
+        assert held > wire, (
+            f"the box can send {wire} bytes and the panel reads at most {held - 1} — a poll that "
+            "overruns parses as nothing at all, so the panel would report an empty queue forever"
+        )

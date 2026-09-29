@@ -131,24 +131,225 @@ class TestTheVolumeCeilingWasTheBugReport:
         assert _clamp(EndpointSettings(volume=140)).volume == 100
         assert _clamp(EndpointSettings(volume=-5)).volume == 0
 
-    def test_the_panel_reports_why_its_settings_fetch_failed(self) -> None:
-        """THE FAULT THAT HID ALL OF THIS. The box's value had never reached the panel, and a
-        fetch that dies ON the panel never appears in the box's log — so the only way to see it
-        is for the panel to say so in telemetry. Pinned from both sides, like every other
-        field that crosses this boundary."""
+    def test_the_panel_reports_why_it_could_not_reach_the_box(self) -> None:
+        """THE FAULT THAT HID ALL OF THIS, AND THE TWO SIBLINGS ADDED AFTER IT HID ANOTHER.
+
+        A request that dies ON the panel never appears in this box's log — the log is a record of
+        what arrived, so the failures are exactly what is not in it. The only way to see one is
+        for the panel to say so in telemetry.
+
+        THREE PATHS, NOT ONE, because the interesting part is the difference between them. On
+        2026-09-29 the settings fetch failed for an hour while the jpanel poll, on the panel's
+        other task, kept succeeding against this same box — and that split is what ruled out the
+        network. A single counter would have said "some requests fail", which is not a finding.
+
+        Pinned from both sides, like every other field that crosses this boundary: the firmware
+        must put it on the wire and the box must NAME it, or `model_dump()` drops it without a
+        word — the defect that would have made the diagnostic invisible in precisely the way it
+        was added to prevent."""
         import pathlib
 
         fw = pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main"
-        assert "ota_settings_faults" in (fw / "ota.h").read_text(encoding="utf-8")
-        assert r"\"set_err\"" in (fw / "main.c").read_text(encoding="utf-8"), (
-            "the settings-fetch fault is no longer on the telemetry wire"
-        )
-        # And the box must NAME it, or `model_dump()` drops it silently — the same defect that
-        # would have 422'd every report when the fifth `heard` field arrived.
+        main_c = (fw / "main.c").read_text(encoding="utf-8")
+        for field in ("set_err", "poll_err", "talk_err", "box_quiet_s"):
+            assert f'\\"{field}\\"' in main_c, f"{field} is no longer on the telemetry wire"
+
         from jbrain.api.endpoint import TelemetryIn
 
-        got = TelemetryIn(version="0.3.15", uptime_ms=1, set_err="ESP_ERR_NO_MEM", set_fails=7)
-        assert got.set_err == "ESP_ERR_NO_MEM" and got.set_fails == 7
+        got = TelemetryIn(
+            version="0.3.33",
+            uptime_ms=1,
+            set_err="ESP_ERR_NO_MEM",
+            set_fails=7,
+            set_ago_s=12,
+            poll_err="connect",
+            poll_fails=2,
+            poll_ago_s=340,
+            talk_err="http-503",
+            talk_fails=1,
+            talk_ago_s=5,
+            box_quiet_s=1800,
+        )
+        assert got.set_err == "ESP_ERR_NO_MEM" and got.set_fails == 7 and got.set_ago_s == 12
+        assert got.poll_err == "connect" and got.poll_fails == 2 and got.poll_ago_s == 340
+        assert got.talk_err == "http-503" and got.talk_fails == 1 and got.talk_ago_s == 5
+        assert got.box_quiet_s == 1800
+
+    def test_a_panel_that_has_never_reached_the_box_does_not_report_zero(self) -> None:
+        """-1 MEANS NEVER AND 0 MEANS JUST NOW, and they are the opposite findings.
+
+        A panel that has never once reached its box — a wrong key, a wrong URL, a box that was
+        never up — would otherwise show the healthiest-looking number on the page. The default
+        matters as much as the value: a panel too old to send the field must not be recorded as
+        having just spoken to us."""
+        from jbrain.api.endpoint import TelemetryIn
+
+        assert TelemetryIn(version="0.3.32", uptime_ms=1).box_quiet_s == -1
+
+    def test_the_panel_can_stop_believing_its_own_radio(self) -> None:
+        """THE RECOVERY PATH THAT EXISTED AND COULD NEVER RUN.
+
+        `main.c` set `joined` once at boot and nothing ever cleared it, so `net_retry` was
+        reachable only on a panel that failed to join in the FIRST place. The case that actually
+        happens is the half-open link — still associated, still holding an IP, no route to
+        anything — and ESP-IDF fires no disconnect event for it, so the event handler's own
+        reconnect never ran either. Both recovery paths idle while every request failed.
+
+        Lydian's panel, 2026-09-29: silent from 04:24 for eight and a half hours, last report
+        `wifi_drops: 0`. Not one disconnect the whole time.
+
+        So the BOX is the link test now — `reach_quiet_ms`, which already existed for the
+        telemetry — and the never-reached case is excluded, because a panel that has not once
+        reached its box has a problem a re-join cannot fix and thrashing the radio would make a
+        second one."""
+        import pathlib
+
+        main_c = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+        # THE CONDITION, NOT A WORD THAT APPEARS NEARBY. The first version of this asserted
+        # `"REACH_NEVER" in main_c` and passed with the guard deleted, because the comment
+        # explaining the guard also says `REACH_NEVER` — a test that reads prose rather than code.
+        guard = re.search(
+            r"if \(joined && quiet_ms != REACH_NEVER && quiet_ms > LINK_SUSPECT_MS\)", main_c
+        )
+        assert guard, (
+            "the link watchdog's condition changed. All three clauses carry weight: `joined` "
+            "keeps it off a panel already retrying, `!= REACH_NEVER` keeps a panel that has "
+            "NEVER found its box from dropping its association every period over a "
+            "configuration problem a re-join cannot fix, and the threshold is what separates a "
+            "broken link from a slow one"
+        )
+        # The counter, or a recovery that fires cannot be told from one that never does.
+        from jbrain.api.endpoint import TelemetryIn
+
+        assert TelemetryIn(version="0.3.33", uptime_ms=1, relinks=3).relinks == 3
+        assert TelemetryIn(version="0.3.32", uptime_ms=1).relinks == 0
+
+    def test_an_open_microphone_is_deaf_to_commands(self) -> None:
+        """ONE UTTERANCE, ONE READER. The owner: *"there are still occasional times when we are
+        talking and recording a message that commands get recognized and sound effects come
+        through."*
+
+        Only `TALK_RECORDING` — a message to a sibling — was muted. `TALK_LISTENING`, the pet
+        conversation, left the whole command graph live for the entire turn, so a child telling
+        the robot about her day and using one of the nineteen action words got the action fired
+        mid-sentence while the same words went to the box. "Occasional" is the shape of a
+        vocabulary collision: it needs the sentence to contain one of the words, which is why it
+        survived deliberate testing and only appeared in a four-year-old's real talking.
+
+        Pinned as the CONDITION, because the bug was a missing term in it rather than a missing
+        call — a test that only checked `speech_mute_commands` is called would have passed
+        throughout."""
+        import pathlib
+        import re
+
+        display = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+        call = re.search(r"speech_mute_commands\(([^;]+)\);", display)
+        assert call, "the command mute is gone"
+        cond = call.group(1)
+        for state in ("TALK_RECORDING", "TALK_LISTENING", "s_standby"):
+            assert state in cond, (
+                f"{state} is no longer muted. Every one of these is a microphone open for "
+                "something other than commands: a message to a sibling, a conversation turn, and "
+                "a child who asked the panel to stop listening"
+            )
+
+    def test_a_cue_does_not_shorten_a_recording(self) -> None:
+        """THE OWNER'S OTHER HALF, AND HE WAS RIGHT ABOUT THE EFFECT: *"I think the sound effects
+        prohibit the microphone from properly recording during that time since they shared the
+        same SPI or whatever?"*
+
+        Not a shared bus — the codec routes its DAC into its ADC by design, so the panel genuinely
+        hears its own cues, and `s_deaf` exists to stop it answering its own beep. The defect was
+        that the deaf path `continue`d past the capture copy, so those samples were not silenced
+        but DELETED and the ends spliced. `s_deaf` is re-armed on every written chunk, so a 300 ms
+        cue cost the cue plus `DEAF_CHUNKS` — about 540 ms — out of the middle of a recording,
+        with the join inaudible. A child saying "I went to the park today" through a cue came back
+        shorter than she spoke, and the transcript read as though she had said the shorter thing.
+
+        A gap sounds like a gap and transcribes as a pause. What was said during the cue is lost
+        either way; inventing a sentence she never said is the part that is fixable."""
+        import pathlib
+        import re
+
+        audio = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "audio.c"
+        ).read_text(encoding="utf-8")
+        deaf = re.search(r"if \(s_deaf > 0\) \{(.+?)\n            \}", audio, re.S)
+        assert deaf, "the self-deafening block moved; re-pin this test"
+        body = deaf.group(1)
+        assert "s_cap_on" in body and "memset" in body, (
+            "the deaf branch no longer writes silence into the capture buffer, so a cue during a "
+            "recording deletes that span instead of silencing it and the message comes back "
+            "shorter than the child spoke"
+        )
+        assert "s_cap_used +=" in body, "the capture cursor is not advanced, so nothing is kept"
+
+    def test_a_message_waits_for_the_speaker_rather_than_being_dropped(self) -> None:
+        """A MESSAGE MUST NOT DEPEND ON HOW LONG A FOUR-YEAR-OLD HOLDS THEIR FINGER.
+
+        The owner: *"[it looks] like it's going to play and only stays about one second before it
+        disappears again ... Seems that sometime if I long press on the notification it seems to
+        work a little bit better. Like maybe the initial click isn't passing to the correct place
+        unless I'm holding the button longer."*
+
+        A press on the notice plays `CUE_PLAY` first, so the finger gets an answer before the
+        message arrives, and `audio_stream_begin` refuses while anything is on the speaker. The
+        renderer defers the fetch until the cue is done, but the fetch then crosses a task
+        boundary — `jpanel_play_at` queues a command that the jpanel task picks up milliseconds
+        later — and a cue starting in that window takes the speaker back. Whether one does depends
+        on what the finger did next, which is exactly why holding behaves differently from
+        tapping.
+
+        The old answer was `goto done`: no stream, one `ESP_LOGW` to a console that does not exist
+        in a bedroom, and a menu that vanishes a second after it appeared.
+
+        Pinned as the LOOP, because the bug was that there wasn't one."""
+        import pathlib
+        import re
+
+        jpanel = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
+        ).read_text(encoding="utf-8")
+        assert re.search(r"while \(!audio_stream_begin\(\)\)", jpanel), (
+            "the fetch no longer waits for the speaker, so a message is dropped whenever the "
+            "press cue is still playing when the jpanel task picks the command up"
+        )
+        # Bounded, or the same check ("a message is already playing") would block the jpanel task
+        # forever and stop the poll and the acknowledgements with it.
+        assert "STREAM_WAIT_MAX_MS" in jpanel, "the wait is unbounded"
+        from jbrain.api.endpoint import TelemetryIn
+
+        assert TelemetryIn(version="0.3.33", uptime_ms=1, msg_waited_ms=120).msg_waited_ms == 120
+
+    def test_every_talk_failure_the_firmware_can_hit_carries_a_name(self) -> None:
+        """THE RED DASH THE OWNER SAW, AND WHY IT SAID NOTHING. `talk.c` had six ways to fail and
+        one of them — `esp_http_client_open` returning non-OK, the FAST one, the one behind *"it
+        didn't time out"* — reported itself only to a serial console that does not exist in a
+        bedroom (CLAUDE.md #10).
+
+        Asserted as "no `goto done` is unnamed" rather than by listing the reasons, because a
+        seventh failure path added later is exactly the one that would go unnamed, and a test
+        that enumerates today's six would not notice."""
+        import pathlib
+        import re
+
+        talk = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "talk.c"
+        ).read_text(encoding="utf-8")
+        turn = talk[talk.index("static void turn(") : talk.index("static void talk_task(")]
+        # Each `goto done` must be preceded, within its own branch, by a `why = ...`.
+        for m in re.finditer(r"goto done;", turn):
+            before = turn[max(0, m.start() - 400) : m.start()]
+            assert "why =" in before, (
+                "a failure path in talk.c reaches `done:` without naming itself, so the box would "
+                "record the conversation as failed with no reason — the exact gap that made the "
+                "red dash of 2026-09-29 unanswerable"
+            )
+        assert turn.count("goto done;") >= 5, "the failure paths moved; re-pin this test"
 
 
 class TestTheButtonGridIsWiredToRealActions:

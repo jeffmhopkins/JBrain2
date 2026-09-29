@@ -1,6 +1,6 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** In progress · **Last verified:** 2026-09-27 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-09-29 · **Waves:** W1◻️ W2✅ W3✅ W4✅
 > — W2 and W4 shipped together in #1498; W3 shipped across #1504/#1508/#1511/#1513 and is
 > **confirmed working on a panel** (voice post both ways, the pop-up, the queue).
 >
@@ -320,9 +320,50 @@ the audio goes, what is drawn, and what ends them.
 
 **Being told there is one.** The manifest poll is ~15 minutes, far too slow for *"my sister just
 sent me something"*, so a small `GET /jpanel/waiting` runs on a ~30 s cadence returning a count
-and a sender name. A waiting message draws a **pop-up over the face** — big, tappable anywhere
+and a sender name — **and, since 0.3.33, one name and sender-kind per queued message**, because a
+child can now swipe between them and a face that is per-message cannot come from a field that is
+per-queue. Thirty seconds was also the WHOLE latency budget in practice, because both of the fast
+paths that were supposed to make it a backstop failed on a freshly-woken panel; `GET
+/endpoint/settings` carries the count every three seconds now. See `ROOM_ENDPOINT_PLAN.md`
+"The queue stops being a number (0.3.33)". A waiting message draws a **pop-up over the face** — big, tappable anywhere
 inside, naming who it is from — and wakes the screen if it is asleep. It does not auto-play; an
 unplayed message survives a reboot because the state lives on the box.
+
+**A MESSAGE WAITS FOR THE SPEAKER RATHER THAN BEING DROPPED (0.3.33).** The owner: *"[it looks]
+like it's going to play and only stays about one second before it disappears again ... Seems that
+sometime if I long press on the notification it seems to work a little bit better. Like maybe the
+initial click isn't passing to the correct place unless I'm holding the button longer."*
+
+A press on the notice plays `CUE_PLAY` first, so the finger gets an answer before the message
+arrives, and `audio_stream_begin` refuses while anything is on the speaker. The renderer defers the
+fetch until the cue is done — but the fetch then crosses a task boundary, and a cue starting in
+that window takes the speaker back. Whether one does depends on what the finger did next, which is
+exactly why holding behaved differently from tapping. **A child's message must not depend on how
+long they press.** The old answer was `goto done`: no stream, one log line to a console that does
+not exist in a bedroom, and a menu that vanished a second after it appeared. It waits out the cue
+now, bounded, and reports the longest wait — because "it works" and "it works BECAUSE we wait" are
+different facts.
+
+**AN OPEN MICROPHONE IS DEAF TO COMMANDS, AND A CUE NO LONGER EATS THE RECORDING (0.3.33).**
+The owner: *"there are still occasional times when we are talking and recording a message that
+commands get recognized and sound effects come through."* Two faults behind one symptom.
+
+The mute covered `TALK_RECORDING` — a message to a sibling — and not `TALK_LISTENING`, the pet
+conversation, so a child telling the robot about her day and using one of the nineteen action
+words got the action fired mid-sentence while the same words went to the box. One utterance, two
+readers, neither told about the other. "Occasional" is the shape of a vocabulary collision: it
+needs the sentence to contain one of the words, which is why it survived deliberate testing.
+
+And the owner's own hypothesis — *"the sound effects prohibit the microphone from properly
+recording during that time since they shared the same SPI or whatever?"* — was right about the
+effect. Not a shared bus: the codec routes its DAC into its ADC by design, so the panel genuinely
+hears its own cues, and `s_deaf` is what stops it answering its own beep. The defect was that the
+deaf path `continue`d past the capture copy, so those samples were **deleted and the ends spliced**
+rather than silenced. `s_deaf` re-arms on every written chunk, so a 300 ms cue cost about 540 ms
+out of the middle of a recording with the join inaudible — a child saying "I went to the park
+today" came back shorter than she spoke, and the transcript read as though she had said the
+shorter thing. It writes silence now: what was said during the cue is lost either way, but a gap
+transcribes as a pause instead of inventing a sentence.
 
 **MULTIPLE MESSAGES ARE ONE PRESS, and a finger gets out.** The owner: *"when multiple messages
 stack up it doesn't have a good way to show them."* One pop-up per message meant five messages
@@ -336,12 +377,20 @@ than something new to teach. A bar along the bottom says how many are left and t
 stops it, because a run whose end you cannot see needs a way out you can see.
 
 Each message is **acknowledged as it plays**, one at a time, so stopping halfway leaves the rest
-genuinely unheard and the pop-up comes back for them. The pop-up itself now names the count
-(`SENT YOU 4` / `TAP FOR ALL`) rather than saying "some": the number is what tells a child
-whether one press costs them ten seconds or a minute.
+genuinely unheard and the pop-up comes back for them. The pop-up itself now names the count rather
+than saying "some": the number is what tells a child whether one press costs them ten seconds or a
+minute.
+
+**AND THE COUNT BECAME A POSITION IN 0.3.33.** `SENT YOU 4` was right while the oldest was the only
+thing a press could reach; once a finger can point at one of them, a bare total says nothing about
+WHICH — and a child looking at the sister's face under "SENT YOU 2" has no way to tell that the 2 is
+not about her. The line reads `2/4` now, the numeral between the two playback discs says the same,
+and the pop-up's action line says `- SWIPE -`. One press still plays the chosen message and walks on
+through the rest; the swipe is the addition, not a replacement.
 
 Deliberately NOT announcing each sender between messages — the voices are recognisable, and a
-child sitting through four messages wants them, not an index.
+child sitting through four messages wants them, not an index. The FACE answers that instead, which
+is the half a swipe needs: it is the one thing on the glass that changes as the finger moves.
 
 **The pop-up stands down after 15 s** to a small badge in the top-left, carrying the sender's
 name and the same tap target. Big is right while it must interrupt; big for an hour holds a

@@ -54,6 +54,22 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
     await engine.dispose()
 
 
+async def _panel_and_debug(
+    maker: async_sessionmaker[AsyncSession], client: TestClient
+) -> tuple[dict[str, str], dict[str, str]]:
+    """One registered panel and an owner debug token, as the two header dicts the routes want.
+
+    The app must already be built with `debug_access_enabled` — without it the debug router is
+    not mounted at all and every call is a 404 rather than the answer or the refusal it is
+    asserting, which is exactly what this file did on its first CI run.
+    """
+    owner_key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    debug_key, _ = await service.mint_capability(SqlAuthRepo(maker), "claude", ttl_hours=1)
+    client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
+    panel = client.post("/api/devices", json={"label": "panel Elora", "device_role": "jpet"}).json()
+    return {"Authorization": f"Bearer {panel['key']}"}, {"Authorization": f"Bearer {debug_key}"}
+
+
 async def test_raising_the_counter_reaches_a_panel_and_the_ring_reads_back_named(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker[AsyncSession],
@@ -126,6 +142,175 @@ async def test_raising_the_counter_reaches_a_panel_and_the_ring_reads_back_named
         # Past the old `uint8_t` ceiling, which saturated at 255 on a real panel.
         assert missed["count"] == 1200
         assert ring["heard"][1]["fired"] is True
+
+
+async def test_the_box_can_say_why_a_panel_cannot_reach_it(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """ANSWERING "WHY DID THE PET NOT ANSWER HER?" WITHOUT READING THE ACCESS LOG BY HAND.
+
+    On 2026-09-29 the owner pressed the pet on Lydian's panel, got the failure dash immediately,
+    and asked why. The box's evidence was entirely NEGATIVE — no `POST /endpoint/converse` had
+    arrived, no `GET /endpoint/settings` for the hour before, nothing at all for the last thirty
+    minutes. All true, and all of it invisible except by paging back through two thousand log
+    lines and noticing which requests had STOPPED, which is the hardest thing to find in a log
+    because a request that never happened leaves no line.
+
+    So the panel keeps the reasons across the outage and hands them over when it can speak again,
+    and this route is where they land. Driven end to end against real Postgres because the value
+    goes in as a `jsonb` column under a device key and comes back out under the owner's debug
+    token — two principals, two routes, and every previous bug in this area was two halves
+    disagreeing with nothing looking at both.
+    """
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, debug_access_enabled=True)
+    )
+    with TestClient(app) as client:
+        pk, dbg = await _panel_and_debug(maker, client)
+
+        # A panel reporting the evening of 2026-09-29: settings failing, the poll on the other
+        # task fine, the conversation refused, and half an hour since it last reached the box.
+        client.cookies.clear()
+        posted = client.post(
+            "/api/endpoint/telemetry",
+            headers=pk,
+            json={
+                "version": "0.3.33",
+                "uptime_ms": 2_513_000,
+                "set_err": "connect",
+                "set_fails": 3,
+                "set_ago_s": 47,
+                "talk_err": "connect",
+                "talk_fails": 1,
+                "talk_ago_s": 12,
+                "box_quiet_s": 1860,
+            },
+        )
+        assert posted.status_code == 204, posted.text
+
+        got = client.get("/api/debug/endpoint/reach", headers=dbg)
+        assert got.status_code == 200, got.text
+        panel = got.json()["panels"][0]
+        assert panel["label"] == "panel Elora"
+        assert panel["box_quiet_s"] == 1860, (
+            "the one number that says the panel is not talking to this box at all"
+        )
+        # Freshly posted, so the answer describes now rather than an hour ago — the distinction
+        # `stale_s` exists to make, and the one that would have been the finding that evening.
+        assert panel["stale_s"] < 60
+
+        paths = {p["name"]: p for p in panel["paths"]}
+        assert set(paths) == {"set", "poll", "talk"}, "all three, named"
+        assert paths["set"]["err"] == "connect" and paths["set"]["fails"] == 3
+        assert paths["set"]["ago_s"] == 47
+        assert paths["talk"]["err"] == "connect" and paths["talk"]["fails"] == 1
+        # THE HEALTHY PATH IS LISTED TOO, and this is the assertion that carries the diagnosis:
+        # one task reaching the box while another cannot is what rules out the network. A route
+        # that omitted the working paths would make an absent row mean two different things.
+        assert paths["poll"]["fails"] == 0 and paths["poll"]["err"] == ""
+
+
+async def test_the_box_can_tell_a_message_nobody_heard_from_one_that_played(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """THE TWO CASES THIS BOX CANNOT TELL APART ON ITS OWN, which is why the panel now measures it.
+
+    The owner, 2026-09-29 on 0.3.32: *"I click the notification and then playback menu pulls up.
+    But then [it] only stay[s] for about a half second before going back to the big blue
+    notification and it doesn't play."* This box's record of that message was `GET /next` 200
+    followed by `POST /played` 204 — served, digest verified by the panel, acknowledged. Which is
+    also precisely what a message that played perfectly looks like.
+
+    So the panel times its own ring, and the ratio is the finding: 32 bytes to the millisecond at
+    16-bit mono 16 kHz. Asserted with both cases side by side, because a test that only pinned the
+    broken one would pass against a route that always answered `heard: false`.
+    """
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, debug_access_enabled=True)
+    )
+    with TestClient(app) as client:
+        pk, dbg = await _panel_and_debug(maker, client)
+
+        # 98 KB is 3.06 s of audio, and the ring was quiet after 40 ms. Nobody heard this.
+        client.cookies.clear()
+        assert (
+            client.post(
+                "/api/endpoint/telemetry",
+                headers=pk,
+                json={
+                    "version": "0.3.33",
+                    "uptime_ms": 441_000,
+                    "msg_bytes": 97_920,
+                    "msg_ms": 40,
+                    "msg_ok": 1,
+                    "msg_bad": 0,
+                },
+            ).status_code
+            == 204
+        )
+        msg = client.get("/api/debug/endpoint/reach", headers=dbg).json()["panels"][0][
+            "last_message"
+        ]
+        assert msg["expected_ms"] == 3060, "98 KB of 16 kHz mono is three seconds of a voice"
+        assert msg["heard"] is False, (
+            "a ring that went quiet in 40 ms played nothing, and every server-side record of this "
+            "message says it was delivered and heard"
+        )
+
+        # The same message, played. Slightly OVER the expected time, because the ring is observed
+        # after it drains rather than as the last sample leaves.
+        client.cookies.clear()
+        assert (
+            client.post(
+                "/api/endpoint/telemetry",
+                headers=pk,
+                json={
+                    "version": "0.3.33",
+                    "uptime_ms": 500_000,
+                    "msg_bytes": 97_920,
+                    "msg_ms": 3_180,
+                    "msg_ok": 2,
+                    "msg_bad": 0,
+                },
+            ).status_code
+            == 204
+        )
+        msg = client.get("/api/debug/endpoint/reach", headers=dbg).json()["panels"][0][
+            "last_message"
+        ]
+        assert msg["heard"] is True, "a message that sounded for its full length was heard"
+        assert msg["ok"] == 2
+
+
+async def test_a_panel_too_old_to_report_its_reach_is_not_reported_as_healthy(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A FLEET UPGRADES ONE PANEL AT A TIME, so this route will be read against panels that
+    predate every field on it. Saying "0 seconds since it last reached the box" about a panel
+    that has told us nothing of the kind is the one answer worse than saying nothing."""
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, debug_access_enabled=True)
+    )
+    with TestClient(app) as client:
+        pk, dbg = await _panel_and_debug(maker, client)
+        client.cookies.clear()
+        assert (
+            client.post(
+                "/api/endpoint/telemetry",
+                headers=pk,
+                json={"version": "0.3.32", "uptime_ms": 1000},
+            ).status_code
+            == 204
+        )
+
+        panel = client.get("/api/debug/endpoint/reach", headers=dbg).json()["panels"][0]
+        assert panel["box_quiet_s"] == -1, "never told is never, not just now"
+        assert all(p["fails"] == 0 and p["err"] == "" for p in panel["paths"]), (
+            "an older panel has no faults to report, which is not the same as having none"
+        )
 
 
 async def test_a_second_raise_is_a_different_number(

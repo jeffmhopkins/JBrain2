@@ -11,12 +11,21 @@
 #include "esp_https_ota.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #include "display.h"
+#include "reach.h"
 
 static const char *TAG = "ota";
+
+/* The repo's millisecond idiom, local because `reach.c` takes the clock as a parameter: it is on
+   the host suite, where `esp_timer` does not exist. */
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
 
 bool ota_boot_is_new_image(void)
 {
@@ -85,21 +94,19 @@ static esp_err_t attach_auth(esp_http_client_handle_t client)
  * NOTHING ON THE BOX COULD SEE IT. A fetch that dies on the panel never reaches the box, so its
  * access log shows only the requests that WORKED and the failure is invisible from the one
  * surface the owner has (CLAUDE.md #10). Every settings knob rides this fetch — volume, the
- * appearance, and the report-now counter — so one silent failure mode stalls all of them at
- * once, which is exactly what it did. */
-static const char *s_set_err = "";
-static int s_set_fails;
-
+ * appearance, the report-now counter, and the waiting count — so one silent failure mode stalls
+ * all of them at once, which is exactly what it did.
+ *
+ * THE BOOKKEEPING MOVED TO `reach.c` IN 0.3.33 and the reason is worth keeping here, because the
+ * version of it that lived in this file was reasonable and did not work. It cleared the reason on
+ * success, "so what is reported is the CURRENT state rather than the worst thing that ever
+ * happened" — but a report only ever goes out at the end of a cycle, immediately after a fetch
+ * that succeeded, so the string was empty in every report that has ever been sent. On 2026-09-29,
+ * with the fetch failing for an hour, the panel reported `set_fails: 3, set_err: ""`. The count
+ * survived; the name did not. `reach.c` keeps the name and reports its AGE instead. */
 static void note_settings_fail(const char *why)
 {
-    s_set_err = why;
-    s_set_fails++;
-}
-
-void ota_settings_faults(const char **err, int *fails)
-{
-    if (err != NULL) *err = s_set_err;
-    if (fails != NULL) *fails = s_set_fails;
+    reach_fail(REACH_SETTINGS, why, now_ms());
 }
 
 esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
@@ -196,13 +203,15 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
        the column: a panel must not post because an older box said nothing. */
     const cJSON *ts = cJSON_GetObjectItemCaseSensitive(root, "telemetry_seq");
     if (cJSON_IsNumber(ts)) out->telemetry_seq = ts->valueint;
+    /* Left at the caller's -1 when the box does not send it — see `ota.h`: absent must not read
+       as "nothing is waiting". */
+    const cJSON *wt = cJSON_GetObjectItemCaseSensitive(root, "waiting");
+    if (cJSON_IsNumber(wt)) out->waiting = wt->valueint;
     const cJSON *fm = cJSON_GetObjectItemCaseSensitive(root, "form");
     if (cJSON_IsString(fm) && fm->valuestring != NULL) {
         out->form = strcmp(fm->valuestring, "robot") == 0 ? 1 : 0;
     }
-    /* Cleared on success, so what is reported is the CURRENT state rather than the worst
-       thing that ever happened. */
-    s_set_err = "";
+    reach_ok(REACH_SETTINGS, now_ms());
     cJSON_Delete(root);
 
 done:
