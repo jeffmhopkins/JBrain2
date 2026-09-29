@@ -81,6 +81,14 @@ bool ui_grid_up(const ui_state_t *st)
     return st->sendto_until != 0;
 }
 
+bool ui_menu_up(const ui_state_t *st, const ui_in_t *in)
+{
+    /* Every overlay a press means something to. `UI_TARGET_PET` is excluded on purpose: the pet
+       IS the bare screen, and a hold on it is the gesture this predicate exists to protect. */
+    return ui_grid_up(st) || ui_pair_up(st) || st->popup_box[0] >= 0 ||
+           ui_run_controls_up(st, in);
+}
+
 void ui_popup_restart(ui_state_t *st, uint32_t now)
 {
     st->popup_since = now;
@@ -736,9 +744,30 @@ void ui_frame(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
        ANY COUNT THE MAINTENANCE GESTURES HAVE NOT CLAIMED, which used to be zero alone —
        children do not hold from a standing start, they poke the pet, it does something, they
        poke it again, and then they hold. */
+    /* ── A LONG PRESS ON A MENU IS JUST A PRESS ──────────────────────────────────────────
+     *
+     * The owner: *"in the menu we need to disable the long press and have long press treated as
+     * a normal press of menu items. I think this is the cause of the girl icon showing up on the
+     * top left."*
+     *
+     * HE IS RIGHT, AND THE REASON IS `TALK_MARGIN_PX`. "On the pet" is everything more than 72 px
+     * from an edge — a 224x224 square in the middle of a 368x368 face — which is where the
+     * notice, the again/reply pair and the grid's own icons are all drawn. So a press on a menu
+     * item was BOTH: the target fired on the down edge, and then at 700 ms the same unmoved
+     * finger opened the sendto grid over the top of it. A child who held the reply button armed a
+     * reply AND opened a "who to send to?" menu, and both of those put a person's face on the
+     * glass. That is the girl icon he is seeing.
+     *
+     * `stream_active` and `sendto_until` were already excluded here, which is why this only shows
+     * up on the two menus that can be up while nothing is playing. `ui_menu_up` is the whole set,
+     * so a fifth overlay added later cannot reintroduce it.
+     *
+     * NOTHING IS LOST. The hold opens the grid from the BARE PET, which is where a child reaching
+     * for "I want to send something" starts — and the grid has its own button on the same screen.
+     * What goes away is a second, invisible meaning for a press that already did something. */
     if (st->talk == UI_TALK_IDLE && in->down && on_the_pet && !in->stream_active &&
-        !gesture_reserved(in->gest_taps) && !st->swiped && held >= HOLD_TALK_MS &&
-        in->net != UI_NET_BUSY && st->sendto_until == 0) {
+        !ui_menu_up(st, in) && !gesture_reserved(in->gest_taps) && !st->swiped &&
+        held >= HOLD_TALK_MS && in->net != UI_NET_BUSY && st->sendto_until == 0) {
         st->sendto_until = in->now + SENDTO_MS;
         /* The same cue the button's press makes, because it is the same event: something has
            appeared and it is waiting to be pressed. */

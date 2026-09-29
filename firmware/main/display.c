@@ -3356,7 +3356,30 @@ static void face_task(void *arg)
            written for how a four-year-old actually behaves was gated on the noise their own poke
            had just made. `ui.c` was corrected first and a host test stands on it
            (`test_a_hold_after_a_poke_still_opens_the_menu`) — this is the shipping half. */
-        if (s_talk == TALK_IDLE && down && on_the_pet && !msg_sounding &&
+        /* ── AND NOT WHILE A MENU IS UP: A LONG PRESS ON ONE IS JUST A PRESS ─────────────
+         *
+         * The owner: *"in the menu we need to disable the long press and have long press treated
+         * as a normal press of menu items. I think this is the cause of the girl icon showing up
+         * on the top left."*
+         *
+         * HE IS RIGHT, AND THE REASON IS `TALK_MARGIN_PX`. `on_the_pet` is everything more than
+         * 72 px from an edge — a 224x224 square in the middle of a 368x368 face — which is where
+         * the notice, the again/reply pair and the grid's own icons are all drawn. So a press on
+         * a menu item was BOTH: the target fired on the down edge, and then the same unmoved
+         * finger opened the sendto grid over the top of it. A child who held the reply button
+         * armed a reply AND opened a "who to send to?" menu, and both of those put a person's
+         * face on the glass.
+         *
+         * `msg_sounding` and `s_sendto_until` were already excluded, which is why this only ever
+         * showed up on the two menus that can be up while nothing is playing. `ui.c` holds the
+         * whole set (`ui_menu_up`) and is tested on it; this is the shipping half.
+         *
+         * NOTHING IS LOST: the hold opens the grid from the BARE PET, which is where a child
+         * reaching for "I want to send something" starts. What goes away is a second, invisible
+         * meaning for a press that had already done something. */
+        const bool menu_up = s_sendto_until != 0 || s_repeat_until != 0 || s_popup_box[0] >= 0 ||
+                             run_controls_up();
+        if (s_talk == TALK_IDLE && down && on_the_pet && !msg_sounding && !menu_up &&
             !gesture_reserved(gest.taps) && !s_swiped && held >= HOLD_TALK_MS &&
             talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
             s_sendto_until = now + SENDTO_MS;

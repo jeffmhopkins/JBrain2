@@ -729,3 +729,9 @@ bool ui_busy(const ui_state_t *st);
 bool ui_recording(const ui_state_t *st);
 bool ui_pair_up(const ui_state_t *st);
 bool ui_grid_up(const ui_state_t *st);
+
+/* IS ANY OVERLAY A PRESS WOULD MEAN SOMETHING TO ON THE GLASS — the notice, the again/reply pair,
+   the playback controls or the grid. Used to keep a HOLD from opening the grid on top of a menu:
+   "on the pet" is a 224x224 square in the middle of the face, so it covers every one of them, and
+   without this a long press on a menu item did the item AND opened a second menu over it. */
+bool ui_menu_up(const ui_state_t *st, const ui_in_t *in);
