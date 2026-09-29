@@ -949,12 +949,58 @@ static void test_a_swipe_is_not_also_a_hold(void)
     run_ms(HOLD_TALK_MS + 200); /* and stays down well past the hold */
     CHECK(w.st.sendto_until == 0, "and the same press does not also open the grid");
 
-    /* The latch is per press: lift, press again, hold, and the menu is still there to be had. */
+    /* The latch is per press: lift, press again, hold, and the menu is still there to be had.
+       ON A BARE PET, because a hold no longer opens the grid while a menu is up and the queue
+       above leaves the notice on the glass — see `test_a_long_press_on_a_menu_is_just_a_press`.
+       The property under test here is the LATCH resetting, which needs a hold that is allowed at
+       all; asserting it through a notice would be asserting two rules and naming one. */
+    queue_is(0, NULL);
     w.in.down = false;
     step();
     press_down(FACE_W / 2, FACE_H / 2);
     run_ms(HOLD_TALK_MS + 200);
     CHECK(w.st.sendto_until != 0, "a fresh press with no travel still opens it");
+}
+
+static void test_a_long_press_on_a_menu_is_just_a_press(void)
+{
+    /* The owner: *"in the menu we need to disable the long press and have long press treated as a
+       normal press of menu items. I think this is the cause of the girl icon showing up on the top
+       left."*
+
+       "On the pet" is everything more than `TALK_MARGIN_PX` from an edge — a 224x224 square in the
+       middle of a 368x368 face — which is where the notice, the again/reply pair and the grid's
+       own icons are all drawn. So a press on a menu item was BOTH: the target fired on the down
+       edge, and the same unmoved finger opened the sendto grid over the top of it 700 ms later. A
+       child holding the reply button armed a reply AND got a "who to send to?" menu, and both put
+       a person's face on the glass. */
+    world_reset();
+    const bool one[1] = {true};
+    queue_is(1, one);
+    step();
+    run_ms(400);
+
+    /* A notice is up. Hold on it, dead centre, where the grid would otherwise open. */
+    press_down(FACE_W / 2, FACE_H / 2);
+    run_ms(HOLD_TALK_MS + 300);
+    CHECK(w.st.sendto_until == 0, "a hold on the notice must not also open the grid");
+
+    /* The again/reply pair, the other menu that can be up with nothing playing. */
+    world_reset();
+    step();
+    w.st.repeat_until = w.in.now + 10000;
+    press_down(FACE_W / 2, FACE_H / 2);
+    run_ms(HOLD_TALK_MS + 300);
+    CHECK(w.st.sendto_until == 0, "nor a hold on the again/reply pair");
+
+    /* AND THE GESTURE STILL EXISTS. This is the half that matters — the hold is how a child
+       reaches "I want to send something", and suppressing it everywhere would be a worse bug
+       than the one being fixed. On a bare pet it opens exactly as it always did. */
+    world_reset();
+    step();
+    press_down(FACE_W / 2, FACE_H / 2);
+    run_ms(HOLD_TALK_MS + 300);
+    CHECK(w.st.sendto_until != 0, "a hold on the bare pet still opens the grid");
 }
 
 static void test_the_selected_message_is_the_one_that_plays(void)
@@ -1847,6 +1893,7 @@ int main(void)
     test_one_waiting_message_cannot_be_swiped_away();
     test_a_swipe_stops_the_message_it_moves_off();
     test_a_swipe_is_not_also_a_hold();
+    test_a_long_press_on_a_menu_is_just_a_press();
     test_the_selected_message_is_the_one_that_plays();
     test_the_numeral_says_which_of_how_many();
     test_a_new_message_sends_the_selection_home();

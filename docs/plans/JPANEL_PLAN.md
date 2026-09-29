@@ -356,6 +356,24 @@ plausible-sounding change, passes one and breaks the other.
 until the owner clears it**, with no expiry and no sweep, because a transcript that vanishes on a
 timer is not a record a parent can rely on — and the Clear button asks twice.
 
+**A LONG PRESS ON A MENU IS JUST A PRESS (0.3.35).** The owner: *"in the menu we need to disable
+the long press and have long press treated as a normal press of menu items. I think this is the
+cause of the girl icon showing up on the top left."*
+
+He is right, and the reason is `TALK_MARGIN_PX`. "On the pet" — the region where a hold opens the
+send-to grid — is everything more than 72 px from an edge, **a 224×224 square in the middle of a
+368×368 face**, which is exactly where the notice, the again/reply pair and the grid's own icons
+are drawn. So a press on a menu item was **both**: the target fired on the down edge, and the same
+unmoved finger opened the grid over the top of it 700 ms later. A child holding the reply button
+armed a reply **and** opened a "who do you want to send to?" menu, and both of those put a person's
+face on the glass.
+
+`stream_active` and `sendto_until` were already excluded, which is why this only ever showed on the
+two menus that can be up while nothing is playing. `ui_menu_up` is now the whole set, so a fifth
+overlay cannot reintroduce it. **The gesture still works on the bare pet**, which is where a child
+reaching for "I want to send something" starts — asserted explicitly, because suppressing it
+everywhere would be a worse bug than the one being fixed.
+
 **AND SO DOES A REPLAY — THE SAME BUG, THE SECOND CALL SITE.** The owner, a release later:
 *"the replay seems to sometimes not work where I hit it and it just kind of goes to a pause button
 for a second and then stops and other times it plays."* `do_fetch` was fixed and `do_replay` was
