@@ -1697,6 +1697,61 @@ static void test_stop_said_out_loud_leaves_every_state(void)
     CHECK(w.talk_clear >= 1, "telling the network half to let go");
 }
 
+static void test_pressing_replay_twice_does_not_pause_what_never_started(void)
+{
+    /* The owner, on 0.3.35: *"it played through once and has stopped and has the play button
+       again, but when we click the play button sometimes it just pauses ... usually just on the
+       first time."*
+
+       WHAT THE FINGER IS ON CHANGES UNDER IT. When a message ends the pair comes up and the
+       arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` — replay.
+       Pressing it arms `UI_PEND_REPLAY`, which makes `ui_run_controls_up` true, which swaps the
+       table to `UI_TAP_ORDER_PLAYING` — where the same disc in the same place is now the
+       TRANSPORT. A replay waits out its own cue before any sound, so for those few hundred
+       milliseconds nothing has happened; a child presses again and the second press pauses a
+       message that never started. "Usually just the first time" is the press that flips the
+       table. */
+    world_reset();
+    play_a_message(true);
+    /* The message ends and the pair comes up. Set directly, as every other test here does: the
+       `JPANEL_PLAYING` -> ended transition that arms it lives in `display.c`, not in this half. */
+    /* Through the world's own fields: `step()` re-derives `in` from them every frame, so setting
+       `w.in.*` here would be undone before the arbitration ever sees it. */
+    w.stream = false;
+    w.fetching = false;
+    w.in.jrunning = false;
+    w.st.pending = UI_PEND_NONE;
+    w.st.repeat_until = w.in.now + REPEAT_MS;
+    step();
+    CHECK(w.st.repeat_until != 0, "the again/reply pair is up");
+    CHECK(!ui_run_controls_up(&w.st, &w.in), "with nothing running, so the IDLE table arbitrates");
+
+    /* First press on the left disc: replay. */
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.st.pending == UI_PEND_REPLAY, "the first press asks for a replay");
+
+    /* THE TABLE HAS NOW FLIPPED. The same disc is the transport, and an impatient second press
+       lands on it before a single byte has been fetched. */
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_TRANSPORT,
+          "the same disc is the transport once a replay is pending — this is the trap");
+    const int paused_before = w.pause_on;
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.pause_on == paused_before,
+          "and the second press must not pause a replay that has not started");
+    CHECK(w.st.pending == UI_PEND_REPLAY, "the replay is still on its way");
+
+    /* AND THE BUTTON IS NOT DEAD — the refusal lasts exactly as long as the pending, not a
+       clock. Once the audio is actually sounding, pause works on the very next press. */
+    w.st.pending = UI_PEND_NONE;
+    w.stream = true; /* through the world, for the reason above */
+    step();
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.pause_on > paused_before, "a press once it IS sounding still pauses");
+}
+
 static void test_a_held_stream_resumes_rather_than_being_thrown_away(void)
 {
     /* A paused stream is an HTTP response held open on the box, and a four-year-old who put the
@@ -1920,6 +1975,7 @@ int main(void)
     test_a_failed_turn_says_so_rather_than_going_quiet();
     test_a_reply_arms_a_follow_up_and_the_cap_ends_it();
     test_stop_said_out_loud_leaves_every_state();
+    test_pressing_replay_twice_does_not_pause_what_never_started();
     test_a_held_stream_resumes_rather_than_being_thrown_away();
     test_the_notice_shrinks_to_a_badge_and_a_second_one_does_not_restore_it();
     test_the_notice_stays_painted_while_a_cue_sounds();

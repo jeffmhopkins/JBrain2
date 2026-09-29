@@ -372,6 +372,38 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
            Asked of the speaker rather than of the queue, because a replay sets none of the
            queue's flags and would otherwise have no working controls at all. */
         {
+            /* ── AND NOT FOR THE FIRST `EXIT_GRACE_MS`, WHICH IS THE EXIT'S RULE ONE DISC ALONG
+             *
+               The owner, on 0.3.35: *"it played through once and has stopped and has the play
+               button again, but when we click the play button sometimes it just pauses ...
+               usually just on the first time."*
+
+               WHAT THE FINGER IS ON CHANGES UNDER IT. When a message ends the pair comes up and
+               the arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` —
+               replay. Pressing it arms `UI_PEND_REPLAY`, which makes `ui_run_controls_up` true,
+               which swaps the table to `UI_TAP_ORDER_PLAYING` — where the same disc in the same
+               place is now the TRANSPORT. A replay waits out its own cue before any sound, so for
+               those few hundred milliseconds nothing has happened yet; a child presses again and
+               the second press pauses a message that never started. "Usually just the first time"
+               is exactly that: the first press is the one that flips the table.
+
+               HERE AND NOT IN `target_live`, which is where this was tried first and was wrong:
+               a transport that is not live does not stop the press, it lets it fall through the
+               playing table to `UI_TARGET_PET` — so the child gets a poked pet instead, which is
+               the fault `test_a_press_on_the_drawn_pause_button_reaches_the_transport` exists to
+               prevent. The press must be CLAIMED and then ignored. Swallowed in silence on
+               purpose: a cue here would be the panel answering a press it is deliberately not
+               acting on.
+
+               AND BOUNDED BY THE PENDING, NOT BY A CLOCK. `EXIT_GRACE_MS` was tried and is the
+               wrong shape here: 700 ms of dead pause button is a real cost — a child who wants
+               the message to stop the moment it starts presses and gets nothing — and it broke
+               `test_a_held_stream_resumes_rather_than_being_thrown_away` for exactly that reason.
+               The hazard is not "recently" but "a press has been taken and not yet served", which
+               the pending flag already states exactly. While one is set there is nothing sounding
+               to pause, so refusing costs nothing and needs no number; the instant the audio
+               starts, the pending clears and the button works normally. */
+            if (st->pending == UI_PEND_PLAY || st->pending == UI_PEND_REPLAY) return;
             const confirm_hit_t half = confirm_hit(ox, oy, in->over_h);
             if (half == CONFIRM_CANCEL) {
                 const bool hold = !in->stream_paused;

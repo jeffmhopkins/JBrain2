@@ -356,6 +356,25 @@ plausible-sounding change, passes one and breaks the other.
 until the owner clears it**, with no expiry and no sweep, because a transcript that vanishes on a
 timer is not a record a parent can rely on — and the Clear button asks twice.
 
+**AND PRESSING REPLAY TWICE NO LONGER PAUSES WHAT NEVER STARTED (0.3.36).** The owner: *"it
+played through once and has stopped and has the play button again, but when we click the play
+button sometimes it just pauses ... usually just on the first time."*
+
+**What the finger is on changes under it.** When a message ends the pair comes up and the
+arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` — replay. Pressing it
+arms `PEND_REPLAY`, which makes `run_controls_up()` true, which swaps the table to
+`UI_TAP_ORDER_PLAYING` — where the **same disc in the same place** is now the TRANSPORT. A replay
+waits out its own cue before any sound, so for those few hundred milliseconds nothing has happened;
+a child presses again and the second press pauses a message that never started. *"Usually just the
+first time"* is the press that flips the table.
+
+The press is **claimed and ignored**, not refused: a transport that stopped being live would let
+the press fall through to the pet, which is a poke nobody asked for. Bounded by the **pending**
+rather than a clock — `EXIT_GRACE_MS` was tried first and 700 ms of dead pause button is a real
+cost to a child who wants the sound to stop the moment it starts, and it broke
+`test_a_held_stream_resumes_rather_than_being_thrown_away` for exactly that reason. While a play is
+pending there is nothing sounding to pause, so refusing costs nothing and needs no number.
+
 **A LONG PRESS ON A MENU IS JUST A PRESS (0.3.35).** The owner: *"in the menu we need to disable
 the long press and have long press treated as a normal press of menu items. I think this is the
 cause of the girl icon showing up on the top left."*

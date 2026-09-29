@@ -2850,7 +2850,35 @@ static void face_task(void *arg)
                the reason it now works is that `UI_TAP_ORDER_PLAYING` offers EXIT before
                TRANSPORT. Reaching this branch at all means the exit was already considered
                and missed, so a second test for it would be a second opinion. */
-            const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
+            /* ── BUT NOT WHILE A PLAY OR REPLAY IS STILL PENDING ─────────────────────────
+             *
+               The owner, on 0.3.35: *"it played through once and has stopped and has the play
+               button again, but when we click the play button sometimes it just pauses ...
+               usually just on the first time."*
+
+               WHAT THE FINGER IS ON CHANGES UNDER IT. When a message ends the pair comes up and
+               the arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` —
+               replay. Pressing it arms `PEND_REPLAY`, which makes `run_controls_up()` true, which
+               swaps the table to `UI_TAP_ORDER_PLAYING` — where the same disc in the same place
+               is now the TRANSPORT. A replay waits out its own cue before any sound, so for those
+               few hundred milliseconds nothing has happened; a child presses again and the second
+               press pauses a message that never started. "Usually just the first time" is the
+               press that flips the table.
+
+               THE PRESS IS CLAIMED AND IGNORED, not refused: a transport that stopped being live
+               would let the press fall through the playing table to the pet, which is a poke the
+               child certainly did not ask for. Bounded by the PENDING rather than by a clock —
+               `EXIT_GRACE_MS` was tried and 700 ms of dead pause button is a real cost to a child
+               who wants the sound to stop the moment it starts. While a play is pending there is
+               nothing sounding to pause, so refusing costs nothing; the instant the audio starts
+               the pending clears and the button works. `ui.c` holds the rule and is tested on it
+               (`test_pressing_replay_twice_does_not_pause_what_never_started`).
+
+               SPELLED AS `CONFIRM_NONE` rather than an early exit, because that is what the value
+               already means — *"not on either target: consumed, and nothing happens"* — and a
+               `goto` out of this branch would jump into the one above it to reach its label. */
+            const bool unserved = s_pending == PEND_PLAY || s_pending == PEND_REPLAY;
+            const confirm_hit_t half = unserved ? CONFIRM_NONE : confirm_hit(ox, oy, over_h_tap);
             if (half == CONFIRM_CANCEL) {
                 const bool hold = !audio_stream_paused();
                 audio_stream_pause(hold);
