@@ -148,4 +148,14 @@ unsigned jpanel_push_drops(void);
  * fraction of `bytes / 32` drained without sounding. The box cannot see that on its own — its
  * record is `GET /next` 200 followed by `POST /played` 204, which is what a message that played
  * perfectly also looks like. */
-void jpanel_message_stats(int *bytes, int *ms, unsigned *ok, unsigned *bad, const char **err);
+void jpanel_message_stats(int *bytes, int *ms, unsigned *ok, unsigned *bad, const char **err,
+                          int *waited_ms);
+
+/* HOW LONG A FETCH WILL WAIT FOR THE SPEAKER before giving up on a message, and the step it waits
+   in. A press on the notice plays a cue first, and the fetch that follows crosses a task boundary
+   — so the speaker can still be busy when it arrives. Cues are a few hundred milliseconds, so this
+   covers one comfortably; bounded because the same check also means "a message is already
+   playing", and blocking the jpanel task forever on that would stop the poll and the
+   acknowledgements with it. */
+#define STREAM_WAIT_MAX_MS 600
+#define STREAM_WAIT_STEP_MS 20

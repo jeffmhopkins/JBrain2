@@ -595,6 +595,18 @@ class TelemetryIn(BaseModel):
     msg_ok: int = 0
     msg_bad: int = 0
     msg_err: str = ""
+    # THE LONGEST A FETCH HAS HAD TO WAIT FOR THE SPEAKER TO GO QUIET.
+    #
+    # A press on the notice plays a cue first — the finger gets an answer before the message
+    # arrives — and the fetch that follows crosses a task boundary, so the speaker can still be
+    # busy when it lands. That used to abandon the message with one log line to a console nobody
+    # has, and the owner saw it as *"[it looks] like it's going to play and only stays about one
+    # second before it disappears again ... if I long press it seems to work a little bit
+    # better."* A message should not depend on how long a four-year-old holds their finger.
+    #
+    # Reported because "it works now" and "it works now BECAUSE we wait" are different facts, and
+    # only the second one says the wait is load-bearing. Zero means this panel never raced a cue.
+    msg_waited_ms: int = 0
     # Where the last touch landed and which zone it resolved to: [x, y, zone].
     #
     # THE PANEL HAS BEEN SENDING THIS ALL ALONG and nothing declared it, so pydantic dropped
@@ -785,6 +797,7 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
                 "msg_ok": body.msg_ok,
                 "msg_bad": body.msg_bad,
                 **({"msg_err": body.msg_err} if body.msg_err else {}),
+                **({"msg_waited_ms": body.msg_waited_ms} if body.msg_waited_ms else {}),
             }
             if body.msg_ok or body.msg_bad
             else {}

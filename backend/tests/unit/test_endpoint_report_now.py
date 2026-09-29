@@ -226,6 +226,105 @@ class TestTheVolumeCeilingWasTheBugReport:
         assert TelemetryIn(version="0.3.33", uptime_ms=1, relinks=3).relinks == 3
         assert TelemetryIn(version="0.3.32", uptime_ms=1).relinks == 0
 
+    def test_an_open_microphone_is_deaf_to_commands(self) -> None:
+        """ONE UTTERANCE, ONE READER. The owner: *"there are still occasional times when we are
+        talking and recording a message that commands get recognized and sound effects come
+        through."*
+
+        Only `TALK_RECORDING` — a message to a sibling — was muted. `TALK_LISTENING`, the pet
+        conversation, left the whole command graph live for the entire turn, so a child telling
+        the robot about her day and using one of the nineteen action words got the action fired
+        mid-sentence while the same words went to the box. "Occasional" is the shape of a
+        vocabulary collision: it needs the sentence to contain one of the words, which is why it
+        survived deliberate testing and only appeared in a four-year-old's real talking.
+
+        Pinned as the CONDITION, because the bug was a missing term in it rather than a missing
+        call — a test that only checked `speech_mute_commands` is called would have passed
+        throughout."""
+        import pathlib
+        import re
+
+        display = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+        call = re.search(r"speech_mute_commands\(([^;]+)\);", display)
+        assert call, "the command mute is gone"
+        cond = call.group(1)
+        for state in ("TALK_RECORDING", "TALK_LISTENING", "s_standby"):
+            assert state in cond, (
+                f"{state} is no longer muted. Every one of these is a microphone open for "
+                "something other than commands: a message to a sibling, a conversation turn, and "
+                "a child who asked the panel to stop listening"
+            )
+
+    def test_a_cue_does_not_shorten_a_recording(self) -> None:
+        """THE OWNER'S OTHER HALF, AND HE WAS RIGHT ABOUT THE EFFECT: *"I think the sound effects
+        prohibit the microphone from properly recording during that time since they shared the
+        same SPI or whatever?"*
+
+        Not a shared bus — the codec routes its DAC into its ADC by design, so the panel genuinely
+        hears its own cues, and `s_deaf` exists to stop it answering its own beep. The defect was
+        that the deaf path `continue`d past the capture copy, so those samples were not silenced
+        but DELETED and the ends spliced. `s_deaf` is re-armed on every written chunk, so a 300 ms
+        cue cost the cue plus `DEAF_CHUNKS` — about 540 ms — out of the middle of a recording,
+        with the join inaudible. A child saying "I went to the park today" through a cue came back
+        shorter than she spoke, and the transcript read as though she had said the shorter thing.
+
+        A gap sounds like a gap and transcribes as a pause. What was said during the cue is lost
+        either way; inventing a sentence she never said is the part that is fixable."""
+        import pathlib
+        import re
+
+        audio = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "audio.c"
+        ).read_text(encoding="utf-8")
+        deaf = re.search(r"if \(s_deaf > 0\) \{(.+?)\n            \}", audio, re.S)
+        assert deaf, "the self-deafening block moved; re-pin this test"
+        body = deaf.group(1)
+        assert "s_cap_on" in body and "memset" in body, (
+            "the deaf branch no longer writes silence into the capture buffer, so a cue during a "
+            "recording deletes that span instead of silencing it and the message comes back "
+            "shorter than the child spoke"
+        )
+        assert "s_cap_used +=" in body, "the capture cursor is not advanced, so nothing is kept"
+
+    def test_a_message_waits_for_the_speaker_rather_than_being_dropped(self) -> None:
+        """A MESSAGE MUST NOT DEPEND ON HOW LONG A FOUR-YEAR-OLD HOLDS THEIR FINGER.
+
+        The owner: *"[it looks] like it's going to play and only stays about one second before it
+        disappears again ... Seems that sometime if I long press on the notification it seems to
+        work a little bit better. Like maybe the initial click isn't passing to the correct place
+        unless I'm holding the button longer."*
+
+        A press on the notice plays `CUE_PLAY` first, so the finger gets an answer before the
+        message arrives, and `audio_stream_begin` refuses while anything is on the speaker. The
+        renderer defers the fetch until the cue is done, but the fetch then crosses a task
+        boundary — `jpanel_play_at` queues a command that the jpanel task picks up milliseconds
+        later — and a cue starting in that window takes the speaker back. Whether one does depends
+        on what the finger did next, which is exactly why holding behaves differently from
+        tapping.
+
+        The old answer was `goto done`: no stream, one `ESP_LOGW` to a console that does not exist
+        in a bedroom, and a menu that vanishes a second after it appeared.
+
+        Pinned as the LOOP, because the bug was that there wasn't one."""
+        import pathlib
+        import re
+
+        jpanel = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
+        ).read_text(encoding="utf-8")
+        assert re.search(r"while \(!audio_stream_begin\(\)\)", jpanel), (
+            "the fetch no longer waits for the speaker, so a message is dropped whenever the "
+            "press cue is still playing when the jpanel task picks the command up"
+        )
+        # Bounded, or the same check ("a message is already playing") would block the jpanel task
+        # forever and stop the poll and the acknowledgements with it.
+        assert "STREAM_WAIT_MAX_MS" in jpanel, "the wait is unbounded"
+        from jbrain.api.endpoint import TelemetryIn
+
+        assert TelemetryIn(version="0.3.33", uptime_ms=1, msg_waited_ms=120).msg_waited_ms == 120
+
     def test_every_talk_failure_the_firmware_can_hit_carries_a_name(self) -> None:
         """THE RED DASH THE OWNER SAW, AND WHY IT SAID NOTHING. `talk.c` had six ways to fail and
         one of them — `esp_http_client_open` returning non-OK, the FAST one, the one behind *"it

@@ -3400,6 +3400,9 @@ class PanelMessage(BaseModel):
     ok: int
     bad: int
     err: str = ""
+    # How long the longest fetch waited for the speaker before it could start. Non-zero means this
+    # panel raced its own press cue and the wait saved the message.
+    waited_ms: int = 0
     # THE ANSWER, NOT THE INPUTS. `false` means the box served a message, the panel verified its
     # digest and acknowledged it played, and the speaker was quiet for nearly all of it — which is
     # indistinguishable, in every server-side record, from a message that played perfectly.
@@ -3457,6 +3460,7 @@ def _panel_message(report: dict) -> "PanelMessage | None":
         ok=int(report.get("msg_ok", 0) or 0),
         bad=int(report.get("msg_bad", 0) or 0),
         err=str(report.get("msg_err", "") or ""),
+        waited_ms=int(report.get("msg_waited_ms", 0) or 0),
         # A panel that has only ever FAILED to stream one has no duration to judge, and calling
         # that "heard" would be the wrong way round.
         heard=bool(got) and ms * 5 >= expected,

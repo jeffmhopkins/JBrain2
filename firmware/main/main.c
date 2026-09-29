@@ -392,7 +392,8 @@ static void report(const cfg_t *cfg)
     unsigned msg_ok = 0;
     unsigned msg_bad = 0;
     const char *msg_err = "";
-    jpanel_message_stats(&msg_bytes, &msg_ms, &msg_ok, &msg_bad, &msg_err);
+    int msg_waited = 0;
+    jpanel_message_stats(&msg_bytes, &msg_ms, &msg_ok, &msg_bad, &msg_err, &msg_waited);
     const uint32_t quiet = reach_quiet_ms(reach_now);
     const int quiet_s = quiet == REACH_NEVER ? -1 : (int)(quiet / 1000);
 
@@ -428,7 +429,7 @@ static void report(const cfg_t *cfg)
                      "\"talk_err\":\"%s\",\"talk_fails\":%d,\"talk_ago_s\":%u,"
                      "\"box_quiet_s\":%d,\"relinks\":%u,"
                      "\"msg_bytes\":%d,\"msg_ms\":%d,\"msg_ok\":%u,\"msg_bad\":%u,"
-                     "\"msg_err\":\"%s\","
+                     "\"msg_err\":\"%s\",\"msg_waited_ms\":%d,"
                      "\"nudges\":%u,\"nudge_drop\":%u,"
                      "\"push\":%s,\"push_events\":%u,\"push_drops\":%u,"
                      "\"tap\":[%d,%d,%d],\"swipes\":%u,\"swipe_dx\":%d,\"msg_sel\":%d,"
@@ -450,7 +451,7 @@ static void report(const cfg_t *cfg)
                      set_err, set_fails, (unsigned)(set_ago / 1000),
                      poll_err, poll_fails, (unsigned)(poll_ago / 1000),
                      talk_err, talk_fails, (unsigned)(talk_ago / 1000),
-                     quiet_s, s_relinks, msg_bytes, msg_ms, msg_ok, msg_bad, msg_err,
+                     quiet_s, s_relinks, msg_bytes, msg_ms, msg_ok, msg_bad, msg_err, msg_waited,
                      nudge_count(), nudge_dropped(),
                      jpanel_push_live() ? "true" : "false", jpanel_push_events(),
                      jpanel_push_drops(),

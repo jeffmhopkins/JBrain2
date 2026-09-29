@@ -329,6 +329,42 @@ paths that were supposed to make it a backstop failed on a freshly-woken panel; 
 inside, naming who it is from — and wakes the screen if it is asleep. It does not auto-play; an
 unplayed message survives a reboot because the state lives on the box.
 
+**A MESSAGE WAITS FOR THE SPEAKER RATHER THAN BEING DROPPED (0.3.33).** The owner: *"[it looks]
+like it's going to play and only stays about one second before it disappears again ... Seems that
+sometime if I long press on the notification it seems to work a little bit better. Like maybe the
+initial click isn't passing to the correct place unless I'm holding the button longer."*
+
+A press on the notice plays `CUE_PLAY` first, so the finger gets an answer before the message
+arrives, and `audio_stream_begin` refuses while anything is on the speaker. The renderer defers the
+fetch until the cue is done — but the fetch then crosses a task boundary, and a cue starting in
+that window takes the speaker back. Whether one does depends on what the finger did next, which is
+exactly why holding behaved differently from tapping. **A child's message must not depend on how
+long they press.** The old answer was `goto done`: no stream, one log line to a console that does
+not exist in a bedroom, and a menu that vanished a second after it appeared. It waits out the cue
+now, bounded, and reports the longest wait — because "it works" and "it works BECAUSE we wait" are
+different facts.
+
+**AN OPEN MICROPHONE IS DEAF TO COMMANDS, AND A CUE NO LONGER EATS THE RECORDING (0.3.33).**
+The owner: *"there are still occasional times when we are talking and recording a message that
+commands get recognized and sound effects come through."* Two faults behind one symptom.
+
+The mute covered `TALK_RECORDING` — a message to a sibling — and not `TALK_LISTENING`, the pet
+conversation, so a child telling the robot about her day and using one of the nineteen action
+words got the action fired mid-sentence while the same words went to the box. One utterance, two
+readers, neither told about the other. "Occasional" is the shape of a vocabulary collision: it
+needs the sentence to contain one of the words, which is why it survived deliberate testing.
+
+And the owner's own hypothesis — *"the sound effects prohibit the microphone from properly
+recording during that time since they shared the same SPI or whatever?"* — was right about the
+effect. Not a shared bus: the codec routes its DAC into its ADC by design, so the panel genuinely
+hears its own cues, and `s_deaf` is what stops it answering its own beep. The defect was that the
+deaf path `continue`d past the capture copy, so those samples were **deleted and the ends spliced**
+rather than silenced. `s_deaf` re-arms on every written chunk, so a 300 ms cue cost about 540 ms
+out of the middle of a recording with the join inaudible — a child saying "I went to the park
+today" came back shorter than she spoke, and the transcript read as though she had said the
+shorter thing. It writes silence now: what was said during the cue is lost either way, but a gap
+transcribes as a pause instead of inventing a sentence.
+
 **MULTIPLE MESSAGES ARE ONE PRESS, and a finger gets out.** The owner: *"when multiple messages
 stack up it doesn't have a good way to show them."* One pop-up per message meant five messages
 were five pop-ups and five taps — tedious, and indistinguishable from the panel repeating itself

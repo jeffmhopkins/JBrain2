@@ -126,6 +126,10 @@ static volatile unsigned s_msg_ok; /* messages that streamed, verified and drain
 static volatile unsigned s_msg_bad;
 static const char *s_msg_err = "";
 static uint32_t s_msg_began_ms;
+/* The longest a fetch has had to wait for the speaker to go quiet — see `do_fetch`. A panel
+   reporting zero here never raced a cue; one reporting hundreds was losing messages before the
+   wait existed, and that is the difference between a fix and a coincidence. */
+static volatile int s_msg_waited_ms;
 /* A RUN: press once, hear everything waiting, oldest first.
  *
  * The owner: *"when multiple messages stack up it doesn't have a good way to show them."* One
@@ -881,11 +885,45 @@ static void do_fetch(bool asked, int at)
     /* `s_in_id` and `s_in_from` were filled by `on_header` while `fetch_headers` ran, and
        both were cleared before the request so a box that sends neither cannot leave the last
        message's id standing. */
-    if (!audio_stream_begin()) {
-        ESP_LOGW(TAG, "speaker busy — not starting this message");
-        s_msg_err = "speaker-busy";
-        s_msg_bad++;
-        goto done;
+    /* ── WAIT FOR THE SPEAKER, DO NOT ABANDON THE MESSAGE ────────────────────────────────
+     *
+     * The owner: *"When I press the head it pulls up the menu. [It looks] like it's going to play
+     * and only stays about one second before it disappears again ... if I long press on the
+     * notification it seems to work a little bit better. Like maybe the initial click isn't
+     * passing to the correct place unless I'm holding the button longer."*
+     *
+     * A PRESS ON THE NOTICE PLAYS A CUE FIRST — `CUE_PLAY`, so the finger gets an answer before
+     * the message arrives — and `audio_stream_begin` refuses while anything is on the speaker.
+     * The renderer defers the fetch until `!audio_playing()`, but the fetch then crosses a task
+     * boundary: `jpanel_play_at` queues a command and THIS task picks it up some milliseconds
+     * later, and any cue that starts in that window takes the speaker back. Whether one does
+     * depends on what the finger did next, which is why holding it down behaves differently from
+     * tapping. A child's message should not depend on how long they press.
+     *
+     * The old answer was to give up — one `ESP_LOGW` to a console that does not exist in a
+     * bedroom, no stream, and a menu that vanishes about a second after it appeared, which is
+     * exactly the report. Cues are at most a few hundred milliseconds, so waiting one out costs
+     * nothing and saves the message.
+     *
+     * BOUNDED, because "the speaker is busy" also covers a message already playing, and blocking
+     * this task forever on that would stop the poll and the acknowledgements with it. A timeout
+     * still gives up — it just gives up after trying, and says so in telemetry either way. */
+    int waited_ms = 0;
+    while (!audio_stream_begin()) {
+        if (waited_ms >= STREAM_WAIT_MAX_MS) {
+            ESP_LOGW(TAG, "speaker still busy after %d ms — not starting this message", waited_ms);
+            s_msg_err = "speaker-busy";
+            s_msg_bad++;
+            goto done;
+        }
+        vTaskDelay(pdMS_TO_TICKS(STREAM_WAIT_STEP_MS));
+        waited_ms += STREAM_WAIT_STEP_MS;
+    }
+    if (waited_ms > 0) {
+        /* Reported, because "it works now" and "it works now because we wait" are different
+           facts, and only the second one says the wait is load-bearing. */
+        ESP_LOGI(TAG, "speaker freed after %d ms", waited_ms);
+        if (waited_ms > s_msg_waited_ms) s_msg_waited_ms = waited_ms;
     }
     s_stopped = false;
     /* CLAIMED BEFORE THE FIRST BYTE, and that ordering is the whole safety of this path.
@@ -1256,11 +1294,13 @@ void jpanel_clear(void)
     if (s_state != JPANEL_BUSY) s_state = JPANEL_IDLE;
 }
 
-void jpanel_message_stats(int *bytes, int *ms, unsigned *ok, unsigned *bad, const char **err)
+void jpanel_message_stats(int *bytes, int *ms, unsigned *ok, unsigned *bad, const char **err,
+                          int *waited_ms)
 {
     if (bytes != NULL) *bytes = s_msg_bytes;
     if (ms != NULL) *ms = s_msg_ms;
     if (ok != NULL) *ok = s_msg_ok;
     if (bad != NULL) *bad = s_msg_bad;
     if (err != NULL) *err = s_msg_err;
+    if (waited_ms != NULL) *waited_ms = s_msg_waited_ms;
 }

@@ -3117,10 +3117,23 @@ static void face_task(void *arg)
            on forever by whichever exit someone forgets. This cannot be wrong for longer than a
            frame, and `speech_mute_commands` only logs on a change, so it costs nothing to say
            every time. */
-        /* Deaf while recording (a message must not also be a command) and deaf in standby
-           (the child asked it to stop listening). Derived per frame rather than armed at the
-           edges, so neither state can leave the microphone muted after it ends. */
-        speech_mute_commands(s_talk == TALK_RECORDING || s_standby);
+        /* Deaf while recording (a message must not also be a command), deaf while LISTENING to
+           a conversation turn, and deaf in standby (the child asked it to stop listening).
+           Derived per frame rather than armed at the edges, so no state can leave the microphone
+           muted after it ends.
+
+           LISTENING WAS MISSING AND IT IS THE HALF THAT HAPPENS MOST. The owner: *"there are
+           still occasional times when we are talking and recording a message that commands get
+           recognized and sound effects come through."* Only `TALK_RECORDING` was muted — a
+           message to a sibling — while `TALK_LISTENING`, the pet conversation, left the whole
+           command graph live for the entire turn. So a child telling the robot about her day and
+           using one of the nineteen action words got the action fired mid-sentence, and the word
+           went to the box as well: one utterance, two readers, neither told about the other.
+
+           "Occasional" is exactly the shape a vocabulary collision has — it needs the sentence to
+           contain one of the words, which is why this survived every deliberate test and only
+           showed up in a four-year-old's actual talking. */
+        speech_mute_commands(s_talk == TALK_RECORDING || s_talk == TALK_LISTENING || s_standby);
         boot_button_poll();
         /* THE BUTTON TOGGLES THE GRID: press to show, press to hide. Safe as a toggle only
            because `boot_button_poll` debounces — a raw edge would close on the same press that
