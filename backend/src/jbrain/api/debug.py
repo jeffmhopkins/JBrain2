@@ -3446,21 +3446,35 @@ class PanelReachOut(BaseModel):
     telemetry_seq: int
 
 
+def _int_or(value: object, absent: int) -> int:
+    """An integer from a telemetry report, distinguishing ABSENT from a legitimate zero.
+
+    `x or default` is the obvious spelling and it is wrong for every field whose healthy value
+    is 0 — which, on this route, is most of them. Written once here rather than remembered at
+    each call site."""
+    if value is None:
+        return absent
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return absent
+
+
 def _panel_message(report: dict) -> "PanelMessage | None":
     """The last message's playback, or None from a panel that has not streamed one."""
     if not (report.get("msg_ok") or report.get("msg_bad")):
         return None
-    got = int(report.get("msg_bytes", 0) or 0)
-    ms = int(report.get("msg_ms", 0) or 0)
+    got = _int_or(report.get("msg_bytes"), 0)
+    ms = _int_or(report.get("msg_ms"), 0)
     expected = got // _MSG_BYTES_PER_MS
     return PanelMessage(
         bytes=got,
         ms=ms,
         expected_ms=expected,
-        ok=int(report.get("msg_ok", 0) or 0),
-        bad=int(report.get("msg_bad", 0) or 0),
+        ok=_int_or(report.get("msg_ok"), 0),
+        bad=_int_or(report.get("msg_bad"), 0),
         err=str(report.get("msg_err", "") or ""),
-        waited_ms=int(report.get("msg_waited_ms", 0) or 0),
+        waited_ms=_int_or(report.get("msg_waited_ms"), 0),
         # A panel that has only ever FAILED to stream one has no duration to judge, and calling
         # that "heard" would be the wrong way round.
         heard=bool(got) and ms * 5 >= expected,
@@ -3520,16 +3534,19 @@ async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
                 version=str(row[1] or ""),
                 reported_at=at.isoformat() if at is not None else "",
                 stale_s=int((now - at).total_seconds()) if at is not None else -1,
-                # Absent on a panel older than 0.3.33, where -1 already means "never" and is the
-                # honest answer for a box that was never told.
-                box_quiet_s=int(report.get("box_quiet_s", -1) or -1),
+                # ABSENT IS -1; PRESENT AND ZERO IS ZERO, and the difference is the whole point
+                # of the field. Written first as `report.get(..., -1) or -1`, which turns a
+                # panel that reached the box THIS INSTANT — the healthiest possible answer, 0 —
+                # into "never reached it", because 0 is falsy. That is precisely the confusion
+                # `-1` was chosen to prevent, reintroduced in the reader rather than the writer.
+                box_quiet_s=_int_or(report.get("box_quiet_s"), -1),
                 last_message=_panel_message(report),
                 paths=[
                     PanelPath(
                         name=name,
                         err=str(report.get(f"{name}_err", "") or ""),
-                        fails=int(report.get(f"{name}_fails", 0) or 0),
-                        ago_s=int(report.get(f"{name}_ago_s", 0) or 0),
+                        fails=_int_or(report.get(f"{name}_fails"), 0),
+                        ago_s=_int_or(report.get(f"{name}_ago_s"), 0),
                     )
                     # `set` is every knob and the waiting count, `poll` is the message check on
                     # the panel's other task, `talk` is the conversation. Listed even at zero:

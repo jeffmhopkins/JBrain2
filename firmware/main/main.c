@@ -250,7 +250,10 @@ static void maybe_install(const cfg_t *cfg, const char *served, uint32_t *last_t
     ota_apply(cfg, m.url);               /* reboots on success */
 }
 
-static void report(const cfg_t *cfg)
+/* Returns whether the report actually LEFT THE PANEL. It always knew — `ota_report` returns an
+   `esp_err_t` and this discarded it — and the caller that asks for a report on demand needs the
+   answer, because a request it cannot satisfy must not be recorded as satisfied. */
+static bool report(const cfg_t *cfg)
 {
     /* ALL SIXTEEN, AND THE NUMBER TOO. This table stopped at `sdio` (10) while ESP-IDF's
        enum runs to 15, so every reason above it printed "other" — and "other" is what the
@@ -509,9 +512,11 @@ static void report(const cfg_t *cfg)
     if (w < 0 || w > (int)sizeof(body) - 2) w = (int)sizeof(body) - 2;
     body[w] = '}';
     body[w + 1] = '\0';
+    const bool sent = ota_report(cfg, body) == ESP_OK;
     /* Cleared only once it has left the box. Clearing at boot is what made every report say
        `pmu_history: []` while the ring had in fact survived. */
-    if (ota_report(cfg, body) == ESP_OK && n > 0) pmu_history_clear();
+    if (sent && n > 0) pmu_history_clear();
+    return sent;
 }
 
 static bool reach_box(const cfg_t *cfg, ota_manifest_t *manifest)
@@ -762,9 +767,33 @@ void app_main(void)
                     if (telem_seq < 0) {
                         telem_seq = seen;
                     } else if (seen != telem_seq) {
-                        telem_seq = seen;
+                        /* ── ADOPTED ONLY ONCE THE REPORT HAS ACTUALLY LEFT ─────────────────
+                         *
+                         * `telem_seq = seen` used to run BEFORE the post, so a report that
+                         * failed to send was never retried: the panel had already recorded
+                         * that it had seen the request, the next poll compared equal, and the
+                         * box's ask was lost for good.
+                         *
+                         * MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine.
+                         * Lydian's had made 122 successful settings polls in the window, the
+                         * box had asked twice (`telemetry_seq` 15 → 16 → 17), and its last
+                         * stored report was 23 minutes old — because each ask was adopted and
+                         * then dropped on a `POST` that could not connect, the same
+                         * `ESP_ERR_HTTP_CONNECT` the settings path was reporting. The one
+                         * surface the owner has for a panel's insides went blind on a panel
+                         * that was talking to the box the whole time.
+                         *
+                         * Adopting on success means a failed report is simply not adopted, so
+                         * the next poll still sees a changed number and tries again — the
+                         * retry falls out of the protocol instead of needing one. No hammering
+                         * either: the retry rides the settings poll, which is already backing
+                         * off whenever the box is hard to reach. */
                         ESP_LOGI(TAG, "box asked for a report (seq %d)", seen);
-                        report(&cfg);
+                        if (report(&cfg)) {
+                            telem_seq = seen;
+                        } else {
+                            ESP_LOGW(TAG, "report did not send — not adopting seq %d", seen);
+                        }
                     }
                     /* Same pass, no extra fetch unless something is actually waiting. Reboots
                        on a successful install, so anything after this line runs only when

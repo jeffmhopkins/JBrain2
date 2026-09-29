@@ -284,6 +284,39 @@ async def test_the_box_can_tell_a_message_nobody_heard_from_one_that_played(
         assert msg["ok"] == 2
 
 
+async def test_a_panel_that_just_reached_the_box_is_not_reported_as_never_having(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """ZERO IS THE HEALTHIEST ANSWER AND -1 IS THE WORST, so a reader that confuses them inverts
+    the field.
+
+    `box_quiet_s` is seconds since the panel last reached this box, with -1 for never. The first
+    version of this route read it as `report.get("box_quiet_s", -1) or -1` — the obvious
+    spelling, and wrong, because 0 is falsy: a panel that reached the box THIS INSTANT was
+    reported as one that never had. That is exactly the confusion -1 was chosen to prevent,
+    reintroduced in the reader rather than the writer, and it would have shown a perfectly
+    healthy panel as the most broken thing on the page."""
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, debug_access_enabled=True)
+    )
+    with TestClient(app) as client:
+        pk, dbg = await _panel_and_debug(maker, client)
+        client.cookies.clear()
+        assert (
+            client.post(
+                "/api/endpoint/telemetry",
+                headers=pk,
+                json={"version": "0.3.33", "uptime_ms": 5_000, "box_quiet_s": 0},
+            ).status_code
+            == 204
+        )
+        panel = client.get("/api/debug/endpoint/reach", headers=dbg).json()["panels"][0]
+        assert panel["box_quiet_s"] == 0, (
+            "a panel that reached the box a moment ago is being reported as one that never has"
+        )
+
+
 async def test_a_panel_too_old_to_report_its_reach_is_not_reported_as_healthy(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker[AsyncSession],

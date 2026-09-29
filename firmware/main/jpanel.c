@@ -738,6 +738,51 @@ static bool verified(const char *claimed, const char *got)
    icon re-asks the box for that id. It is a different route from `/next` on purpose: replaying
    must not spend one of the five delivery attempts that exist to stop the box trying forever
    (`JPANEL_MAX_DELIVERIES`), or listening twice would be a way to lose a message. */
+/* ── WAIT FOR THE SPEAKER, DO NOT ABANDON THE MESSAGE ────────────────────────────────────────
+ *
+ * The owner, on the notice: *"[it looks] like it's going to play and only stays about one second
+ * before it disappears again ... if I long press it seems to work a little bit better."* And, a
+ * release later, on replay: *"the replay seems to sometimes not work where I hit it and it just
+ * kind of goes to a pause button for a second and then stops and other times it plays."*
+ *
+ * SAME BUG, SECOND CALL SITE, AND THE SECOND REPORT IS MY FAULT. Both controls play `CUE_PLAY`
+ * on the press so the finger gets an answer before the audio arrives, and `audio_stream_begin`
+ * refuses while anything is on the speaker. The renderer defers the fetch until the cue is done,
+ * but the fetch crosses a task boundary — `jpanel_play_at`/`jpanel_replay` queue a command that
+ * THIS task picks up milliseconds later — and a cue starting in that window takes the speaker
+ * back. Whether one does depends on what the finger did next, which is exactly why both controls
+ * are intermittent and why holding behaves differently from tapping.
+ *
+ * 0.3.33 fixed `do_fetch` and left `do_replay` with the bare call, because the fix was written
+ * where the failure had been seen rather than everywhere the mechanism applies. Hence one
+ * helper: there is no longer a version of this to get right twice, and
+ * `test_every_way_of_starting_a_message_waits_for_the_speaker` walks every call site so a third
+ * one cannot be added without it.
+ *
+ * BOUNDED, because "the speaker is busy" also covers a message already playing, and blocking
+ * this task forever on that would stop the poll and the acknowledgements with it. */
+static bool stream_begin_waiting(const char *what)
+{
+    int waited = 0;
+    while (!audio_stream_begin()) {
+        if (waited >= STREAM_WAIT_MAX_MS) {
+            ESP_LOGW(TAG, "%s: speaker still busy after %d ms", what, waited);
+            s_msg_err = "speaker-busy";
+            s_msg_bad++;
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(STREAM_WAIT_STEP_MS));
+        waited += STREAM_WAIT_STEP_MS;
+    }
+    if (waited > 0) {
+        /* Reported, because "it works now" and "it works now BECAUSE we wait" are different
+           facts, and only the second one says the wait is load-bearing. */
+        ESP_LOGI(TAG, "%s: speaker freed after %d ms", what, waited);
+        if (waited > s_msg_waited_ms) s_msg_waited_ms = waited;
+    }
+    return true;
+}
+
 static void do_replay(void)
 {
     /* BOTH EARLY RETURNS CLEAR IT. `jpanel_replay()` raises `s_fetching` on the RENDER task and
@@ -778,14 +823,22 @@ static void do_replay(void)
         ESP_LOGW(TAG, "replay: box said %d", esp_http_client_get_status_code(c));
         goto done;
     }
-    if (!audio_stream_begin()) {
-        ESP_LOGW(TAG, "replay: speaker busy");
-        goto done;
-    }
+    if (!stream_begin_waiting("replay")) goto done;
     ok = true;
     /* NO `s_owed` AND NO `s_run`. This message was already acknowledged the first time it
        played; telling the box again would be a second `POST /played` for one listen, and
-       joining the run would make "again" walk on into the next unheard message. */
+       joining the run would make "again" walk on into the next unheard message.
+     *
+       BUT `JPANEL_PLAYING`, WHICH WAS MISSING, AND IT IS THE STATE THAT ENDS A PLAYBACK.
+       `display.c`'s `case JPANEL_PLAYING` is the only place that notices a message has
+       finished: when `audio_playing()` goes false it clears the state and re-arms
+       `s_repeat_until`, which is what puts the "again" and "reply" pair back on the glass.
+       Without it a replay was audible and then simply over — the pair kept counting down from
+       the END OF THE FIRST PLAY, so a replay longer than what was left of that window took the
+       buttons away mid-sentence, and a child who wanted to hear it once more had nothing to
+       press. The two lines above say what replay deliberately does not join; this one is not in
+       that list, it was just missed. */
+    s_state = JPANEL_PLAYING;
     char heard[72];
     const int got = pump(c, heard, sizeof(heard));
     audio_stream_end();
@@ -885,46 +938,7 @@ static void do_fetch(bool asked, int at)
     /* `s_in_id` and `s_in_from` were filled by `on_header` while `fetch_headers` ran, and
        both were cleared before the request so a box that sends neither cannot leave the last
        message's id standing. */
-    /* ── WAIT FOR THE SPEAKER, DO NOT ABANDON THE MESSAGE ────────────────────────────────
-     *
-     * The owner: *"When I press the head it pulls up the menu. [It looks] like it's going to play
-     * and only stays about one second before it disappears again ... if I long press on the
-     * notification it seems to work a little bit better. Like maybe the initial click isn't
-     * passing to the correct place unless I'm holding the button longer."*
-     *
-     * A PRESS ON THE NOTICE PLAYS A CUE FIRST — `CUE_PLAY`, so the finger gets an answer before
-     * the message arrives — and `audio_stream_begin` refuses while anything is on the speaker.
-     * The renderer defers the fetch until `!audio_playing()`, but the fetch then crosses a task
-     * boundary: `jpanel_play_at` queues a command and THIS task picks it up some milliseconds
-     * later, and any cue that starts in that window takes the speaker back. Whether one does
-     * depends on what the finger did next, which is why holding it down behaves differently from
-     * tapping. A child's message should not depend on how long they press.
-     *
-     * The old answer was to give up — one `ESP_LOGW` to a console that does not exist in a
-     * bedroom, no stream, and a menu that vanishes about a second after it appeared, which is
-     * exactly the report. Cues are at most a few hundred milliseconds, so waiting one out costs
-     * nothing and saves the message.
-     *
-     * BOUNDED, because "the speaker is busy" also covers a message already playing, and blocking
-     * this task forever on that would stop the poll and the acknowledgements with it. A timeout
-     * still gives up — it just gives up after trying, and says so in telemetry either way. */
-    int waited_ms = 0;
-    while (!audio_stream_begin()) {
-        if (waited_ms >= STREAM_WAIT_MAX_MS) {
-            ESP_LOGW(TAG, "speaker still busy after %d ms — not starting this message", waited_ms);
-            s_msg_err = "speaker-busy";
-            s_msg_bad++;
-            goto done;
-        }
-        vTaskDelay(pdMS_TO_TICKS(STREAM_WAIT_STEP_MS));
-        waited_ms += STREAM_WAIT_STEP_MS;
-    }
-    if (waited_ms > 0) {
-        /* Reported, because "it works now" and "it works now because we wait" are different
-           facts, and only the second one says the wait is load-bearing. */
-        ESP_LOGI(TAG, "speaker freed after %d ms", waited_ms);
-        if (waited_ms > s_msg_waited_ms) s_msg_waited_ms = waited_ms;
-    }
+    if (!stream_begin_waiting("message")) goto done;
     s_stopped = false;
     /* CLAIMED BEFORE THE FIRST BYTE, and that ordering is the whole safety of this path.
        `audio_playing()` is true from here until the ring drains, so the renderer, the pop-up
