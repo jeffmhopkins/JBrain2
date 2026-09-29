@@ -1112,6 +1112,132 @@ class Cleared(BaseModel):
     kept: int
 
 
+# --- what the children said to the pet (migration 0219) ---------------------------------------
+
+
+class PetTurn(BaseModel):
+    """One exchange: what a child said, and what the pet said back."""
+
+    id: str
+    heard: str
+    reply: str
+    # Kept because they answer "why did she give up waiting" months later, which no amount of
+    # re-reading the words can. `llm_ms` is the one that moves when a model is swapped.
+    stt_ms: int
+    llm_ms: int
+    tts_ms: int
+    total_ms: int
+    created_at: str
+
+
+class PetChat(BaseModel):
+    """One panel's conversations, newest first."""
+
+    device_id: str
+    label: str
+    turns: list[PetTurn]
+
+
+class PetChats(BaseModel):
+    panels: list[PetChat]
+
+
+@router.get("/chats")
+async def pet_chats(owner: OwnerDep, request: Request, limit: int = 200) -> PetChats:
+    """WHAT THE CHILDREN HAVE BEEN TELLING THE PET, grouped by the panel that heard it.
+
+    The owner: *"I think we need some way of logging [what] the kids say to the large language
+    model ... stored that I can clear and read through sorted by panel."*
+
+    This existed only as an `endpoint.converse` log line — truncated to 120 characters,
+    interleaved with every other event on the box, and rotated away on a schedule nobody chose
+    for it. The words a four-year-old says to a toy that answers back are the most interesting
+    thing this box produces and they were a debug field.
+
+    GROUPED BY PANEL FOR THE SAME REASON `GET /messages` IS: the question is about a child, not
+    about the house, and the panel is how this box names a child. Every enrolled panel is listed
+    even with nothing to show, so a quiet one reads as quiet rather than as missing.
+
+    `limit` bounds the rows read across all panels; the newest are what a parent wants.
+    """
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        names = await _panel_names(request.app.state.session_maker)
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id::text, device_id, heard, reply,
+                           stt_ms, llm_ms, tts_ms, total_ms, created_at
+                    FROM app.pet_turn
+                    ORDER BY created_at DESC
+                    LIMIT :lim
+                    """
+                ),
+                {"lim": max(1, min(limit, 2000))},
+            )
+        ).all()
+
+    by_panel: dict[str, list[PetTurn]] = {dev: [] for dev in names}
+    for row in rows:
+        by_panel.setdefault(row[1], []).append(
+            PetTurn(
+                id=row[0],
+                heard=row[2],
+                reply=row[3],
+                stt_ms=int(row[4]),
+                llm_ms=int(row[5]),
+                tts_ms=int(row[6]),
+                total_ms=int(row[7]),
+                created_at=row[8].isoformat() if row[8] is not None else "",
+            )
+        )
+    # A RE-FLASHED PANEL KEEPS ITS CONVERSATIONS. Its principal changed, so `_panel_names` has no
+    # label for the old id — and dropping those rows would delete the record of a real
+    # conversation to tidy a name. Shown under the id, which is what the box actually knows.
+    panels = [
+        PetChat(device_id=dev, label=names.get(dev) or f"panel {dev[:8]}", turns=turns)
+        for dev, turns in by_panel.items()
+    ]
+    panels.sort(key=lambda p: p.label.lower())
+    log.info("jpanel.pet_chats", panels=len(panels), turns=len(rows))
+    return PetChats(panels=panels)
+
+
+@router.delete("/chats")
+async def clear_pet_chats(
+    owner: OwnerDep, request: Request, device: str | None = Query(default=None)
+) -> Cleared:
+    """Clear one panel's conversations, or every panel's.
+
+    NOTHING IS KEPT BACK, and that is the difference from `DELETE /messages`. There the
+    exception is load-bearing: an unplayed message is a message a child has not heard yet, and
+    the owner tidying his own view is not a decision about her post. Nothing here is pending —
+    every row is an exchange that already happened and that both sides have finished with — so
+    clear means clear, and a button that silently kept some would be worse than one that kept
+    none.
+
+    Omitting `device` clears every panel, because "read through and clear" is a sitting-down
+    job and making him do it once per child is a worse answer than one button with a plain name.
+    """
+    # COUNTED WITH `RETURNING`, like `clear_history` above: `rowcount` is a DBAPI attribute
+    # SQLAlchemy does not promise on every result, and a delete that reported 0 while removing
+    # a child's conversations would be the worst possible lie for this particular button.
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        if device:
+            rows = (
+                await session.execute(
+                    text("DELETE FROM app.pet_turn WHERE device_id = :dev RETURNING 1"),
+                    {"dev": device},
+                )
+            ).all()
+        else:
+            rows = (await session.execute(text("DELETE FROM app.pet_turn RETURNING 1"))).all()
+        await session.commit()
+    deleted = len(rows)
+    log.info("jpanel.pet_chats_cleared", device=device or "(all)", deleted=deleted)
+    return Cleared(deleted=deleted, kept=0)
+
+
 @router.delete("/messages")
 async def clear_history(owner: OwnerDep, request: Request, device: str = Query(...)) -> Cleared:
     """Clear one panel's conversation.

@@ -2135,4 +2135,38 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         total_ms=int((time.monotonic() - started) * 1000),
         reply_bytes=len(out),
     )
+    # KEPT, NOT JUST LOGGED (migration 0219). The line above has carried `heard` and `reply`
+    # all along — truncated to 120 characters, interleaved with every other event on the box,
+    # and rotated away on a schedule nobody chose for this. A parent asking what their child
+    # has been telling the toy is not going to grep an access log.
+    #
+    # AFTER THE REPLY IS MADE AND NEVER IN FRONT OF IT. The child is standing at the panel
+    # waiting for an answer, so a slow or broken write must cost her nothing: this runs once
+    # everything that produces sound is done, and a failure is logged and swallowed. A turn
+    # that happened but went unrecorded is a gap in a diary; a turn that failed because the
+    # diary was full is a pet that stopped talking to her.
+    try:
+        async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as session:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO app.pet_turn
+                        (device_id, heard, reply, stt_ms, llm_ms, tts_ms, total_ms)
+                    VALUES (:dev, :heard, :reply, :stt, :llm, :tts, :total)
+                    """
+                ),
+                {
+                    "dev": principal.id,
+                    # The FULL text, not the log line's 120 characters. This is the record.
+                    "heard": heard,
+                    "reply": reply,
+                    "stt": stt_ms,
+                    "llm": llm_ms,
+                    "tts": tts_ms,
+                    "total": int((time.monotonic() - started) * 1000),
+                },
+            )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — see above: the reply already happened
+        log.warning("endpoint.converse_log_failed", error=repr(exc))
     return Response(content=out, media_type="application/octet-stream")
