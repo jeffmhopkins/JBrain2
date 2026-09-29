@@ -505,8 +505,12 @@ function ConversationTab() {
     <div className="jp-convo">
       {/* WHICH CHILD, and it is the first thing under the tabs because it is the first
           decision: everything below answers a question about one of them. The unplayed count
-          rides the chip so "who is waiting on me?" is answered without opening either. */}
-      <div className="jp-who" role="tablist" aria-label="Which panel">
+          rides the chip so "who is waiting on me?" is answered without opening either.
+
+          `jp-seg` AS WELL AS `jp-who`, so this is the same control as the tabs above rather than
+          something that resembles them. The owner, on the row of pills this first shipped as:
+          *"it should be in the same kind of radio selection as the top selector."* */}
+      <div className="jp-seg jp-who" role="tablist" aria-label="Which panel">
         {panels.map((p) => (
           <button
             type="button"
@@ -516,7 +520,9 @@ function ConversationTab() {
             className={p.device_id === active.device_id ? "on" : ""}
             onClick={() => setPicked(p.device_id)}
           >
-            {p.name}
+            {/* Wrapped, so a long name truncates inside its own share of the row instead of
+                shoving the count off the end of it. */}
+            <span>{p.name}</span>
             {p.unplayed > 0 && <span className="jp-who-badge">{p.unplayed}</span>}
           </button>
         ))}
