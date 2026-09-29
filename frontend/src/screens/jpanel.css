@@ -572,44 +572,37 @@
 }
 
 /* WHICH CHILD. Under the tabs because it is the next decision down: the tabs choose the kind of
-   thing, this chooses whose. Same segmented vocabulary as the tabs above it, one step quieter —
-   it is a filter within a tab, not a tab. */
+   thing, this chooses whose.
+
+   IT IS THE SAME CONTROL AS THE TABS, so it SHARES their rules rather than copying their look:
+   the element carries `jp-seg jp-who` and this block only moves it. The first cut styled it as
+   its own row of pills — the owner: *"kid conversations are currently in some kind of pill, but
+   it should be in the same kind of radio selection as the top selector."* Two controls that
+   answer the same kind of question ("which one of these?") and look like two different kinds of
+   thing is one decision the eye has to make twice, and a copied look is a look that drifts.
+
+   Only the margin differs: `.jp-seg` carries its own 16px side margin for sitting directly in
+   the wrap, and this one sits inside `.jp-convo`, which already has that padding. */
 .jp-who {
-  display: flex;
-  gap: 6px;
-  margin: 12px 0 0;
-  overflow-x: auto;
-  /* Four panels one day; the row scrolls rather than squeezing every name to initials. */
-  scrollbar-width: none;
+  margin-left: 0;
+  margin-right: 0;
 }
-.jp-who::-webkit-scrollbar {
-  display: none;
-}
+/* The seg buttons centre their label as plain button text; this one has a count beside the name,
+   so the box has to lay two things out. */
 .jp-who button {
-  flex: none;
-  /* 44, not the 40 this shipped as at first: `docs/reference/DESIGN.md` is binding on touch
-     targets and this row is tapped more than anything else on the screen. */
-  min-height: 44px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
-  padding: 0 14px;
-  font: inherit;
-  font-size: var(--fs-secondary);
-  font-weight: 600;
-  color: var(--text-2);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  min-width: 0; /* a long name truncates rather than pushing its neighbour off the row */
 }
-.jp-who button.on {
-  color: var(--steel);
-  background: var(--steel-tint);
-  border-color: var(--steel);
+.jp-who button > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* The count, not a dot: "how many have I not heard from her" is the question this row is read
-   to answer, and a dot answers a different, smaller one. */
 .jp-who-badge {
+  flex: none;
   font-size: var(--fs-micro);
   font-weight: 600;
   color: var(--bg);

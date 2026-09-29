@@ -288,6 +288,28 @@ describe("JpanelScreen messages", () => {
     expect(screen.queryByText("why is the sky blue")).toBeTruthy();
   });
 
+  it("is the same control as the tabs, not something that resembles one", async () => {
+    /* THE OWNER, on the row of pills this first shipped as: *"kid conversations are currently in
+       some kind of pill, but it should be in the same kind of radio selection as the top
+       selector."*
+
+       Two controls answering the same kind of question — "which one of these?" — that look like
+       two different kinds of thing is one decision the eye has to make twice. So the picker
+       carries the tabs' own class rather than a copy of their appearance, and this asserts the
+       SHARING rather than the result: a copied look passes a screenshot and then drifts the
+       first time either one is touched. */
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const picker = (await screen.findByRole("tab", { name: /Ellie/ })).parentElement;
+    expect(picker?.classList.contains("jp-seg")).toBe(true);
+    // And it is still its own row, so it can be moved without moving the tabs.
+    expect(picker?.classList.contains("jp-who")).toBe(true);
+    // The two are separate tablists: the tabs choose the kind of thing, this chooses whose.
+    const tabs = screen.getByRole("tab", { name: "Panels" }).parentElement;
+    expect(tabs).not.toBe(picker);
+  });
+
   it("switches child, and a twin who has sent nothing is still someone you can message", async () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);

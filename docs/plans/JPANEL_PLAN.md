@@ -371,7 +371,11 @@ on a tab of its own, holding the OTHER half of the same child's afternoon, with 
 either in the order things happened. A child does not experience those as two things: she asks the
 pet why fish sleep and then records something for her father about it.
 
-So the tab bar is **Messages / Panels / Flash** again, a **panel-name picker** sits under it, and
+So the tab bar is **Messages / Panels / Flash** again, a **panel-name picker** sits under it —
+**the same segmented control as the tabs, sharing their rules rather than copying their look**
+(the owner, on the row of pills it first shipped as: *"it should be in the same kind of radio
+selection as the top selector"* — two controls answering "which one of these?" that look like two
+different kinds of thing is one decision the eye makes twice, and a copied look drifts) — and
 the thread is everything that happened on that panel, **merged by time** (`jpanelThread.ts`): a
 message lands between the question she asked the pet and the answer it gave her, because that is
 where it happened. `pet_turn` is written once the reply has been MADE, so its timestamp is the
