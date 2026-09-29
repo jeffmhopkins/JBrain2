@@ -6661,6 +6661,35 @@ the flasher.
   keys would otherwise sit in plaintext on an external bus. That caveat matters more than the
   bytes do.
 
+## A report the box asked for, adopted and then dropped (0.3.34)
+
+**Found by the instrumentation from 0.3.33, twenty minutes after it shipped.** `GET
+/endpoint/reach` showed Lydian's panel with a `stale_s` of 1412 — a healthy-looking row that was
+23 minutes old — while the access log showed **122 successful settings polls** in the same window
+and the box had asked for a report twice (`telemetry_seq` 15 → 16 → 17). A panel that was talking
+to the box the whole time, and the one surface the owner has for its insides had gone blind.
+
+`POST /endpoint/report-now` raises a counter; the panel posts when the number it polls differs
+from the one it holds. `main.c` adopted the new number **before** posting:
+
+```c
+telem_seq = seen;   /* recorded as seen */
+report(&cfg);       /* then attempted, and discarded its result */
+```
+
+So a report that failed to send was never retried. The panel had already recorded the request as
+seen, the next poll compared equal, and the ask was lost for good — dropped on the same
+`ESP_ERR_HTTP_CONNECT` the settings path was reporting beside it. `report()` had known all along:
+`ota_report` returns an `esp_err_t` and it was thrown away.
+
+Adopting **on success** makes the retry fall out of the protocol rather than needing one: a number
+that was not adopted still differs on the next poll. No hammering either — the retry rides the
+settings poll, which is already backing off whenever the box is hard to reach.
+
+**`stale_s` is what found this**, and it is the field that exists because everything under it
+arrives *by* telemetry: a panel that cannot report shows a healthy row with an old timestamp
+rather than an unhealthy one, so the staleness is the finding.
+
 ## The panel that went quiet, and the three reasons nobody could see (0.3.33)
 
 **The owner:** *"I also just had a red – show up on lydian's ... This is when I was trying to talk

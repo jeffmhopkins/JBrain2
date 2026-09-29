@@ -226,6 +226,42 @@ class TestTheVolumeCeilingWasTheBugReport:
         assert TelemetryIn(version="0.3.33", uptime_ms=1, relinks=3).relinks == 3
         assert TelemetryIn(version="0.3.32", uptime_ms=1).relinks == 0
 
+    def test_a_report_the_box_asked_for_is_retried_until_it_sends(self) -> None:
+        """AN ASK THE PANEL CANNOT ANSWER MUST NOT BE RECORDED AS ANSWERED.
+
+        `POST /endpoint/report-now` raises `telemetry_seq`; the panel posts when the number it
+        polls differs from the one it holds. `main.c` adopted the new number BEFORE posting, so
+        a report that failed to send was never retried — the panel had already recorded that it
+        had seen the request, the next poll compared equal, and the box's ask was lost for good.
+
+        MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine. Lydian's had made 122
+        successful settings polls in the window, the box had asked twice (seq 15 → 16 → 17), and
+        its last stored report was 23 minutes old — each ask adopted and then dropped on a POST
+        that could not connect. The one surface the owner has for a panel's insides went blind
+        on a panel that was talking to the box the whole time.
+
+        Adopting on success makes the retry fall out of the protocol: an unadopted number still
+        differs on the next poll. Pinned as the ORDERING, because both spellings contain the
+        same two statements and only one of them works."""
+        import pathlib
+        import re
+
+        main_c = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+
+        # `report` has to be able to say whether it sent — it always knew and used to discard it.
+        assert re.search(r"static bool report\(const cfg_t \*cfg\)", main_c), (
+            "report() no longer reports whether the post left the panel, so the caller cannot "
+            "tell an answered request from a dropped one"
+        )
+        # And the adopt must be INSIDE the success branch.
+        guarded = re.search(r"if \(report\(&cfg\)\) \{\s*telem_seq = seen;", main_c)
+        assert guarded, (
+            "the telemetry sequence is adopted outside a successful report, so a report that "
+            "fails to send is never retried and the box's request is lost silently"
+        )
+
     def test_every_way_of_starting_a_message_waits_for_the_speaker(self) -> None:
         """A MESSAGE MUST NOT DEPEND ON HOW LONG A FOUR-YEAR-OLD HOLDS THEIR FINGER — and this is
         written as a SWEEP because the first version was not, and missed the second half of the
