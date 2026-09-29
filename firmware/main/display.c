@@ -2613,6 +2613,36 @@ static void face_task(void *arg)
                 if (sound) audio_cue(CUE_STOP);
                 goto tap_done;
             }
+            /* ── PRESS THE SENDER'S FACE TO CHANGE MESSAGE ──────────────────────────────
+             *
+               The owner: *"instead of swiping if we just press the icon on the top left it should
+               cycle through the numbers of messages that we have"*, and on where: *"it should be
+               the top left icon after that playback menu is up"*.
+
+               A SWIPE IS THE WRONG GESTURE FOR THIS AUDIENCE, which is why `swipes` and
+               `swipe_dx` ride telemetry at all: a four-year-old jabs. The face is the one thing on
+               this screen that already answers "which message is this?", so pressing it to change
+               the answer is the shortest possible explanation of the control.
+
+               SAME EFFECT AS A SWIPE, and it goes through the same lines for that reason: stop
+               what is sounding, drop a deferred play aimed at the message she just left, sound the
+               acknowledgement. `ui.c` holds the rule (`select_step`) and is tested on it. */
+            if (hit == UI_TARGET_FACE) {
+                const int have = jpanel_waiting(NULL, 0);
+                const int n = have < JPANEL_QUEUE_MAX ? have : JPANEL_QUEUE_MAX;
+                if (n > 1) {
+                    s_sel = (s_sel + 1) % n;
+                    audio_stream_pause(false);
+                    s_paused_since = 0;
+                    jpanel_stop();
+                    s_pending = PEND_NONE;
+                    if (sound) audio_cue(CUE_HEARD);
+                    ESP_LOGI(TAG, "face: message %d of %d", s_sel + 1, n);
+                }
+                s_flinch = 1.0f;
+                dirty = true;
+                goto tap_done;
+            }
             if (hit == UI_TARGET_POPUP) {
                 s_flinch = 1.0f;
                 /* Cleared the moment it is pressed, not when the audio arrives: a box

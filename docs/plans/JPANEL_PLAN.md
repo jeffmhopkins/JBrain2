@@ -356,6 +356,24 @@ plausible-sounding change, passes one and breaks the other.
 until the owner clears it**, with no expiry and no sweep, because a transcript that vanishes on a
 timer is not a record a parent can rely on — and the Clear button asks twice.
 
+**PRESS THE SENDER'S FACE TO CHANGE MESSAGE (0.3.37).** The owner: *"instead of swiping if we
+just press the icon on the top left it should cycle through the numbers of messages that we have"*,
+and on where: *"it should be the top left icon after that playback menu is up"*.
+
+**A swipe is the wrong gesture for this audience** — which is why `swipes` and `swipe_dx` ride
+telemetry at all: a four-year-old jabs. The face is the one thing on this screen that already
+answers "which message is this?", so pressing it to change the answer explains itself, and a press
+is the only gesture on this panel that has never needed teaching. Same effect as the swipe and
+through the same code (`select_step`): stop what is sounding, drop a deferred play aimed at the
+message she left, sound the acknowledgement.
+
+**ONE PRESS PER MENU, AND THE REST IS AN OPEN QUESTION.** Stopping takes the playback menu down,
+and the face is only offered while that menu is up — so cycling twice needs the face live in the
+again/reply state, where **its rectangle is the waiting badge's** and the badge already means
+"press to hear this". Two opposite meanings on one pixel, and the badge is already the selector's
+display (it shows the *selected* message's sender). That collision is the owner's to settle; it is
+stated here rather than resolved by a guess.
+
 **AND PRESSING REPLAY TWICE NO LONGER PAUSES WHAT NEVER STARTED (0.3.36).** The owner: *"it
 played through once and has stopped and has the play button again, but when we click the play
 button sometimes it just pauses ... usually just on the first time."*

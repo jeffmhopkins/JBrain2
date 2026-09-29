@@ -566,8 +566,8 @@ static void test_a_cue_no_longer_decides_what_a_press_means(void)
     const ui_target_t narrowed = ui_tap_target(&w.st, &w.in);
     CHECK(narrowed == UI_TARGET_TRANSPORT || narrowed == UI_TARGET_PET,
           "a MESSAGE sounding is what narrows the table");
-    CHECK(UI_TAP_ORDER_PLAYING_LEN == 4,
-          "only the menu, the exit, the transport and the pet remain");
+    CHECK(UI_TAP_ORDER_PLAYING_LEN == 5,
+          "only the menu, the exit, the face, the transport and the pet remain");
 
     /* AND THE MENU STILL CONSUMES EVERYTHING WHILE IT IS UP, message or no message: it is drawn
        above the transport, so it has to be offered the press first. */
@@ -1697,6 +1697,67 @@ static void test_stop_said_out_loud_leaves_every_state(void)
     CHECK(w.talk_clear >= 1, "telling the network half to let go");
 }
 
+static void test_pressing_the_face_cycles_through_the_waiting_messages(void)
+{
+    /* The owner: *"instead of swiping if we just press the icon on the top left it should cycle
+       through the numbers of messages that we have"*, and on where: *"it should be the top left
+       icon after that playback menu is up"*.
+
+       A swipe is the wrong gesture for this audience — a four-year-old jabs, which is why
+       `swipes` and `swipe_dx` ride telemetry at all. The face already answers "which message is
+       this?", so pressing it to change the answer explains itself. */
+    world_reset();
+    const bool three[3] = {true, false, true};
+    queue_is(3, three);
+    step();
+    run_ms(400);
+    tap_the_notice(true); /* the playback menu is up, which is where he asked for this */
+    step();
+    CHECK(ui_run_controls_up(&w.st, &w.in), "the menu is up");
+    CHECK(w.st.sel == 0, "starting on the oldest");
+
+    const int face_x = FACE_W / 4;
+    const int face_y = w.in.over_y0 + (w.in.over_h - w.in.over_y0) / 4;
+    tap_at(face_x, face_y);
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_FACE,
+          "a press on the sender's face reaches the face, not the pet");
+
+    tap_at(face_x, face_y);
+    step();
+    CHECK(w.st.sel == 1, "and moves to the next message");
+
+    /* AND IT STOPS WHAT WAS SOUNDING, the same rule the swipe follows: a child who has moved on
+       to another message is not still listening to this one. */
+    CHECK(w.stop >= 1, "the message that was playing is ended");
+    CHECK(w.st.pending == UI_PEND_NONE, "and no deferred play survives for the one she left");
+
+    /* ONE PRESS PER MENU, AND THAT IS THE LIMIT OF THIS CONTROL AS IT STANDS. Stopping takes the
+       playback menu down, and the face is only offered while that menu is up — so cycling twice
+       needs the face to stay live into the again/reply state, where its rectangle is the waiting
+       badge's and the badge already means "press to hear this". That collision is the owner's to
+       settle, and is stated here rather than resolved by a guess. */
+    CHECK(!ui_run_controls_up(&w.st, &w.in), "the menu is down, so the face is no longer offered");
+}
+
+static void test_the_face_is_not_a_control_with_one_message(void)
+{
+    /* A live target that does nothing is worse than no target. With one message there is nothing
+       to change to, so the press must fall through to the pet — which pokes it, and a poke is an
+       answer a child can see. */
+    world_reset();
+    const bool one[1] = {true};
+    queue_is(1, one);
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    const int face_x = FACE_W / 4;
+    const int face_y = w.in.over_y0 + (w.in.over_h - w.in.over_y0) / 4;
+    tap_at(face_x, face_y);
+    CHECK(ui_tap_target(&w.st, &w.in) != UI_TARGET_FACE,
+          "with nothing to cycle to, the face is not a control");
+}
+
 static void test_pressing_replay_twice_does_not_pause_what_never_started(void)
 {
     /* The owner, on 0.3.35: *"it played through once and has stopped and has the play button
@@ -1975,6 +2036,8 @@ int main(void)
     test_a_failed_turn_says_so_rather_than_going_quiet();
     test_a_reply_arms_a_follow_up_and_the_cap_ends_it();
     test_stop_said_out_loud_leaves_every_state();
+    test_pressing_the_face_cycles_through_the_waiting_messages();
+    test_the_face_is_not_a_control_with_one_message();
     test_pressing_replay_twice_does_not_pause_what_never_started();
     test_a_held_stream_resumes_rather_than_being_thrown_away();
     test_the_notice_shrinks_to_a_badge_and_a_second_one_does_not_restore_it();

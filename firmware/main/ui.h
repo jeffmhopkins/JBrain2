@@ -644,12 +644,13 @@ typedef enum {
     UI_TARGET_PAIR,      /* again and reply */
     UI_TARGET_CONFIRM,   /* the tick and the cross: also consumes a miss */
     UI_TARGET_TRANSPORT, /* pause and reply, while a run is sounding */
+    UI_TARGET_FACE,      /* the sender's face, top left: press it to change message */
     UI_TARGET_PET,       /* whatever is left: the poke, the label, the colour */
     UI_TARGET_COUNT,
 } ui_target_t;
 
 #define UI_TAP_ORDER_LEN 6
-#define UI_TAP_ORDER_PLAYING_LEN 4
+#define UI_TAP_ORDER_PLAYING_LEN 5
 extern const ui_target_t UI_TAP_ORDER[UI_TAP_ORDER_LEN];
 extern const ui_target_t UI_TAP_ORDER_PLAYING[UI_TAP_ORDER_PLAYING_LEN];
 
