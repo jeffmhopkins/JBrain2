@@ -63,95 +63,9 @@
   background: var(--steel-tint);
   color: var(--steel);
 }
-
-.jp-threads {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-width: 640px;
-  width: 100%;
-  box-sizing: border-box;
-}
-.jp-panel {
-  border: 1px solid var(--border);
-  border-radius: var(--r-card);
-  padding: 14px;
-  background: var(--surface);
-}
-.jp-panel-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-}
-.jp-panel-name {
-  font-size: var(--fs-title);
-  font-weight: 500;
-}
-/* The count, not a dot: "how many have I not heard from her" is the question this
-   screen is opened to answer, and a dot answers a different, smaller one. */
-.jp-unplayed {
-  font-size: var(--fs-micro);
-  font-weight: 500;
-  color: var(--steel);
-  background: var(--steel-tint);
-  border-radius: 999px;
-  padding: 3px 9px;
-}
-
-.jp-msgs {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.jp-msg {
-  background: var(--surface-2);
-  border-radius: var(--r-input);
-  padding: 10px 12px;
-}
-/* Unheard: a hairline down the edge rather than a border, so nothing reflows when a
-   message is played and the marker leaves. */
-.jp-msg-new {
-  box-shadow: inset 2px 0 0 var(--steel);
-}
-.jp-msg-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: var(--fs-micro);
-  color: var(--text-2);
-  margin-bottom: 4px;
-}
-.jp-from {
-  color: var(--text);
-  font-weight: 500;
-}
 .jp-dur {
   margin-left: auto;
   color: var(--text-3);
-}
-
-/* The transcript leads and the player sits beside it — never under it. The text is what
-   gets read at work; the audio is the fallback for when it makes no sense. The row is
-   top-aligned so a long garbled transcript keeps the play button in the same place
-   instead of pushing it down the screen. */
-.jp-msg-body {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-.jp-transcript {
-  flex: 1;
-  margin: 0;
-  font-size: var(--fs-body);
-  line-height: 1.4;
-  color: var(--text);
-  /* Four-year-old speech comes back as one unbroken run; it wraps rather than scrolls. */
-  overflow-wrap: anywhere;
 }
 .jp-no-words {
   color: var(--text-3);
@@ -169,11 +83,14 @@
   border-radius: 999px;
 }
 
+/* Pinned under the thread rather than following it down the page: the composer is the thing
+   the app was opened to use, so it does not move. */
 .jp-compose {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 .jp-compose input {
   flex: 1;
@@ -279,19 +196,6 @@
 
 .jp-status-heard {
   color: var(--ok);
-}
-
-/* THE CONVERSATION SCROLLS RATHER THAN PUSHING EVERYTHING ELSE OFF THE PAGE.
-   Two panels each with a long history made the screen a single column metres long, and the
-   compose box — the thing you opened the app to use — ended up below the fold of a list you
-   had to scroll past to reach. Capping each thread keeps every panel's compose row on screen
-   at once, which is the layout a parent with two children actually needs.
-   `svh`, not `vh`: on a phone `vh` ignores the browser chrome and the cap comes out taller
-   than the visible area, which is the whole bug wearing a different hat. */
-.jp-msgs {
-  max-height: min(46svh, 420px);
-  overflow-y: auto;
-  overscroll-behavior: contain; /* scrolling to the end must not drag the page behind it */
 }
 
 /* Destructive, so it does not sit at button weight beside the panel's name — it is reachable,
@@ -644,88 +548,191 @@
   margin-top: 4px;
   line-height: 1.45;
 }
-
-/* ── Chats: what the children have been telling the pet ──────────────────────────────────────
+/* ── The conversation: one child, one thread ──────────────────────────────────────────────────
  *
- * A READING SURFACE, not a messaging one. The Messages tab is a live thing you act in; this is
- * a thing you sit down with, so it is quieter, wider-leaded and has no controls in the flow of
- * the text — the only button is the one that destroys it, and that one is up in the header
- * where a thumb scrolling a transcript cannot reach it.
+ * The owner: *"the conversations should show kind of like a normal conversation does with jerv
+ * or the other ones in the pwa where there's an omnibox at the bottom and a left and right
+ * conversation bubble."*
+ *
+ * A COLUMN THAT OWNS THE SCREEN, because that is what a chat is. The tabs and the picker are
+ * fixed at the top, the composer is fixed at the bottom, and only the thread between them
+ * moves — so the box you opened the app to type in is never below the fold of a transcript you
+ * have to scroll past to reach. That was the old shape's actual failure, and capping each
+ * thread's height only moved it.
  */
-.jp-chats {
+.jp-convo {
+  flex: 1;
+  min-height: 0; /* without this a flex child refuses to shrink and the scroller never scrolls */
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  padding: 4px 0 24px;
+  padding: 0 16px 12px;
+  max-width: 640px;
+  width: 100%;
+  box-sizing: border-box;
 }
-.jp-chat-panel {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 14px 4px;
-}
-.jp-chat-head {
+
+/* WHICH CHILD. Under the tabs because it is the next decision down: the tabs choose the kind of
+   thing, this chooses whose. Same segmented vocabulary as the tabs above it, one step quieter —
+   it is a filter within a tab, not a tab. */
+.jp-who {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  margin: 12px 0 0;
+  overflow-x: auto;
+  /* Four panels one day; the row scrolls rather than squeezing every name to initials. */
+  scrollbar-width: none;
 }
-.jp-chat-head h2 {
-  font-size: var(--fs-body);
-  margin: 0;
-  flex: 0 0 auto;
+.jp-who::-webkit-scrollbar {
+  display: none;
 }
-.jp-chat-count {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  /* Pushes the clear button to the far edge: a destructive control belongs as far from the
-     thing it destroys as the row allows. */
-  flex: 1 1 auto;
-}
-.jp-chat-head button {
-  font-size: var(--fs-micro);
-}
-.jp-chat-confirm {
-  display: flex;
-  gap: 8px;
-}
-/* The confirm reads as the dangerous one; "Keep" does not. */
-.jp-chat-confirm button:first-child {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-.jp-turns {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.jp-turns li {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-}
-.jp-turns li:last-child {
-  border-bottom: 0;
-}
-/* HER WORDS FIRST AND FULL SIZE. The reply is the machine's half and is worth reading; hers is
-   the reason this screen exists, so it gets the weight and the pet's answer is indented under
-   it the way a reply is. */
-.jp-heard {
-  font-size: var(--fs-body);
-  line-height: 1.5;
-  margin: 0 0 6px;
-}
-.jp-reply {
+.jp-who button {
+  flex: none;
+  /* 44, not the 40 this shipped as at first: `docs/reference/DESIGN.md` is binding on touch
+     targets and this row is tapped more than anything else on the screen. */
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  font: inherit;
   font-size: var(--fs-secondary);
-  line-height: 1.5;
+  font-weight: 600;
   color: var(--text-2);
-  margin: 0;
-  padding-left: 14px;
-  border-left: 2px solid var(--border);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
 }
-.jp-turn-meta {
+.jp-who button.on {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: var(--steel);
+}
+/* The count, not a dot: "how many have I not heard from her" is the question this row is read
+   to answer, and a dot answers a different, smaller one. */
+.jp-who-badge {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--steel);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+/* Rename and the two clears. Quiet, right-aligned and above the thread — they are reachable,
+   not prominent, and a thumb scrolling a transcript must not be able to reach them. */
+.jp-convo-head {
   display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 8px;
+}
+/* THE WORDS STAY QUIET, THE BOX DOES NOT. Three controls now sit in one row where each used to
+   have a card header to itself, and two of them destroy a child's words with no undo.
+   `docs/reference/DESIGN.md` is binding at 44px, and it matters most exactly here. The
+   `margin-left` undoes `.jp-clear`'s `auto`, which was pushing the others to the far edge of a
+   row that is already right-aligned. */
+.jp-convo-head button {
+  min-height: 44px;
+  margin-left: 0;
+  padding: 0 8px;
+}
+
+/* THE SCROLLER. `min-height: 0` again because this is the flex child that has to give. */
+.jp-stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain; /* reaching the end must not drag the page behind it */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+/* ── Bubbles ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * LEFT IS THE PANEL, RIGHT IS THE OWNER, which is the arrangement every chat on this phone
+ * already uses, so it needs no teaching. The pet's replies are on the LEFT as well: the pet is
+ * not him, it is the other voice in her room, and a machine's answer sitting where his own
+ * words go would read as something he said.
+ *
+ * 82%, not 100%: a bubble that reaches both edges stops reading as a bubble, and the gutter it
+ * leaves is what tells the eye which side a line is on before any of it is read. */
+.jp-b {
+  max-width: 82%;
+  border-radius: var(--r-card);
+  padding: 9px 12px;
+  background: var(--surface-2);
+}
+.jp-b-them {
+  align-self: flex-start;
+  border-bottom-left-radius: 5px;
+}
+.jp-b-me {
+  align-self: flex-end;
+  background: var(--steel-tint);
+  border-bottom-right-radius: 5px;
+}
+/* Unheard: a hairline down the edge rather than a border, so nothing reflows when a message is
+   read and the marker leaves. */
+.jp-b-new {
+  box-shadow: inset 2px 0 0 var(--steel);
+}
+
+/* THE PET'S HALF OF HER AFTERNOON, and it has to be legible as not-a-message at a glance:
+   these are words she said to a machine on her wall, not to her father, and a parent scrolling
+   quickly must never read the first as the second. A rail down the left side marks the whole
+   exchange as an aside within the thread; the tint is the same steel, one step back. */
+.jp-b-ask {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--steel);
+}
+/* Written out rather than grouped-then-overridden: one selector, one block. Two blocks under
+   one name is exactly the shape `cssTokens.test.ts` gates against, and the few repeated
+   properties cost less than an exemption would. */
+.jp-b-reply {
+  align-self: flex-start;
+  margin-left: 18px;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+/* Who it was actually between — the label on a pet turn, and both names on twin-to-twin post. */
+.jp-b-who {
+  margin: 0 0 3px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: lowercase;
+}
+
+/* The transcript leads and the player sits beside it, never under it: the text is what gets
+   read at work, the audio is the fallback for when it makes no sense. Top-aligned so a long
+   garbled transcript keeps the play button in the same place instead of pushing it down. */
+.jp-b-row {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
+}
+.jp-b-text {
+  flex: 1;
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.4;
+  color: var(--text);
+  /* Four-year-old speech comes back as one unbroken run; it wraps rather than scrolls. */
+  overflow-wrap: anywhere;
+}
+.jp-b-reply .jp-b-text {
+  color: inherit;
+}
+.jp-b-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
   font-size: var(--fs-micro);
   color: var(--text-3);
-  margin: 8px 0 0;
 }

@@ -948,6 +948,24 @@ static int s_sel;
    only reports edges, and `swipe_dx` says how far it thought the finger got. */
 static uint16_t s_swipes;
 static int s_swipe_dx;
+/* HOW MANY RED DASHES THIS PANEL HAS DRAWN, and which cause the last one had. Reported, because
+   the dash is the one failure a child actually sees and it was the one with no record: see the
+   comment where it is raised. */
+static unsigned s_dashes;
+static const char *s_dash_why = "";
+static uint32_t s_dash_at;
+
+void display_dashes(unsigned *n, const char **why, uint32_t *ago_ms)
+{
+    if (n != NULL) *n = s_dashes;
+    if (why != NULL) *why = s_dash_why;
+    /* Unsigned, so this stays right across the ~49-day rollover of the millisecond clock — the
+       same argument as `reach.c`, and it matters for the same reason: a panel that has been up
+       seven weeks is exactly the one whose faults nobody has looked at. */
+    if (ago_ms != NULL) {
+        *ago_ms = s_dash_at == 0 ? 0 : (uint32_t)((uint32_t)(esp_timer_get_time() / 1000) - s_dash_at);
+    }
+}
 
 void display_swipes(unsigned *n, int *last_dx, int *sel)
 {
@@ -2613,6 +2631,36 @@ static void face_task(void *arg)
                 if (sound) audio_cue(CUE_STOP);
                 goto tap_done;
             }
+            /* ── PRESS THE SENDER'S FACE TO CHANGE MESSAGE ──────────────────────────────
+             *
+               The owner: *"instead of swiping if we just press the icon on the top left it should
+               cycle through the numbers of messages that we have"*, and on where: *"it should be
+               the top left icon after that playback menu is up"*.
+
+               A SWIPE IS THE WRONG GESTURE FOR THIS AUDIENCE, which is why `swipes` and
+               `swipe_dx` ride telemetry at all: a four-year-old jabs. The face is the one thing on
+               this screen that already answers "which message is this?", so pressing it to change
+               the answer is the shortest possible explanation of the control.
+
+               SAME EFFECT AS A SWIPE, and it goes through the same lines for that reason: stop
+               what is sounding, drop a deferred play aimed at the message she just left, sound the
+               acknowledgement. `ui.c` holds the rule (`select_step`) and is tested on it. */
+            if (hit == UI_TARGET_FACE) {
+                const int have = jpanel_waiting(NULL, 0);
+                const int n = have < JPANEL_QUEUE_MAX ? have : JPANEL_QUEUE_MAX;
+                if (n > 1) {
+                    s_sel = (s_sel + 1) % n;
+                    audio_stream_pause(false);
+                    s_paused_since = 0;
+                    jpanel_stop();
+                    s_pending = PEND_NONE;
+                    if (sound) audio_cue(CUE_HEARD);
+                    ESP_LOGI(TAG, "face: message %d of %d", s_sel + 1, n);
+                }
+                s_flinch = 1.0f;
+                dirty = true;
+                goto tap_done;
+            }
             if (hit == UI_TARGET_POPUP) {
                 s_flinch = 1.0f;
                 /* Cleared the moment it is pressed, not when the audio arrives: a box
@@ -2850,7 +2898,35 @@ static void face_task(void *arg)
                the reason it now works is that `UI_TAP_ORDER_PLAYING` offers EXIT before
                TRANSPORT. Reaching this branch at all means the exit was already considered
                and missed, so a second test for it would be a second opinion. */
-            const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
+            /* ── BUT NOT WHILE A PLAY OR REPLAY IS STILL PENDING ─────────────────────────
+             *
+               The owner, on 0.3.35: *"it played through once and has stopped and has the play
+               button again, but when we click the play button sometimes it just pauses ...
+               usually just on the first time."*
+
+               WHAT THE FINGER IS ON CHANGES UNDER IT. When a message ends the pair comes up and
+               the arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` —
+               replay. Pressing it arms `PEND_REPLAY`, which makes `run_controls_up()` true, which
+               swaps the table to `UI_TAP_ORDER_PLAYING` — where the same disc in the same place
+               is now the TRANSPORT. A replay waits out its own cue before any sound, so for those
+               few hundred milliseconds nothing has happened; a child presses again and the second
+               press pauses a message that never started. "Usually just the first time" is the
+               press that flips the table.
+
+               THE PRESS IS CLAIMED AND IGNORED, not refused: a transport that stopped being live
+               would let the press fall through the playing table to the pet, which is a poke the
+               child certainly did not ask for. Bounded by the PENDING rather than by a clock —
+               `EXIT_GRACE_MS` was tried and 700 ms of dead pause button is a real cost to a child
+               who wants the sound to stop the moment it starts. While a play is pending there is
+               nothing sounding to pause, so refusing costs nothing; the instant the audio starts
+               the pending clears and the button works. `ui.c` holds the rule and is tested on it
+               (`test_pressing_replay_twice_does_not_pause_what_never_started`).
+
+               SPELLED AS `CONFIRM_NONE` rather than an early exit, because that is what the value
+               already means — *"not on either target: consumed, and nothing happens"* — and a
+               `goto` out of this branch would jump into the one above it to reach its label. */
+            const bool unserved = s_pending == PEND_PLAY || s_pending == PEND_REPLAY;
+            const confirm_hit_t half = unserved ? CONFIRM_NONE : confirm_hit(ox, oy, over_h_tap);
             if (half == CONFIRM_CANCEL) {
                 const bool hold = !audio_stream_paused();
                 audio_stream_pause(hold);
@@ -3514,10 +3590,22 @@ static void face_task(void *arg)
                arrived with no sound at all, and to a four-year-old who has just spoken to a
                toy, silence IS the failure — it is what a broken one does. A low falling pair
                says try again. It is deliberately gentle; it must not read as being told off. */
+            /* COUNTED AND NAMED, at the owner's ask: *"anytime we get a red – I want you to
+               make sure that it's logged, so we can make sure and resolve it in the future."*
+
+               THE TWO CAUSES ARE TOLD APART BECAUSE THEY NEED OPPOSITE FIXES. `net` means the
+               request failed and `reach.c` already holds the reason (`talk_err`). `timeout`
+               means it did not fail — it simply never answered inside `TALK_TIMEOUT_MS`, while
+               `talk.c` may still be on a socket that succeeds later. Nothing on this panel
+               recorded that, so the commonest shape of "it didn't work" was the one with no
+               evidence anywhere. `ui.c` holds the rule and is tested on it. */
+            s_dash_why = talk_state() == TALK_NET_FAILED ? "net" : "timeout";
+            s_dashes++;
+            s_dash_at = now == 0 ? 1 : now;
             s_talk = TALK_FAILED;
             s_talk_since = now;
             if (sound) audio_cue(CUE_OOPS);
-            ESP_LOGW(TAG, "talk: no reply");
+            ESP_LOGW(TAG, "talk: no reply (%s)", s_dash_why);
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
         }

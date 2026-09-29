@@ -6690,6 +6690,42 @@ settings poll, which is already backing off whenever the box is hard to reach.
 arrives *by* telemetry: a panel that cannot report shows a healthy row with an old timestamp
 rather than an unhealthy one, so the staleness is the finding.
 
+## The two failures that left no record at all (0.3.38)
+
+**The owner, twice in one afternoon:** *"anytime we get a red – I want you to make sure that it's
+logged, so we can make sure and resolve it in the future"*, and *"sometimes when we're in the menu
+for playback and they hit the green reply button and record a message, it doesn't actually get sent
+and doesn't show up in my inbox on the pwa."*
+
+Both are failures the owner can see from across the room. Neither was visible from the box, for the
+same reason as 0.3.33 above: **what fails on the panel never arrives here.** Checking the second
+one made that concrete — every `POST /jpanel/send` that reached this box in the reported window
+returned 200 and produced a `jpanel.sent` event. The box's record was perfect and described only
+the sends that worked.
+
+**A child's recorded message is the worst thing to lose silently.** The other paths fail and
+something is late or unanswered; this one fails and a message a four-year-old recorded for her
+father or her sister is simply gone, while the panel has already taken the menu down.
+`do_send_once` had six ways to fail — no client, connect, a stalled upload, no headers, a hash the
+box rejected, any other status — each of which logged to a serial console that does not exist in a
+bedroom (CLAUDE.md #10). They funnel through one `goto done`, so each branch names itself in `why`
+before jumping; the funnel reports it as `REACH_SEND`. **`JPANEL_NOBODY` is deliberately not
+counted:** the box answered, there is simply no second panel to address, and counting it would
+report a permanent fault on the most important path in any house with one panel.
+
+**The red dash had two causes and only one of them was recorded.** `talk.c` notes the branch where
+the request failed, which arrives as `talk_err`. The other is the panel giving up — `TALK_TIMEOUT_MS`
+passes, the dash is drawn, and the request may still be in flight and may still succeed. *Nothing
+failed*, so nothing was written down anywhere, and the commonest shape of "it didn't work" was the
+one with no evidence. It is counted at the single point where the dash is raised, in both halves
+(`ui.c` is the tested model, `display.c` the shipping mirror), and `dash_err` says which cause:
+`net` — whose reason is in the `talk` row — or `timeout`, which has no row anywhere else.
+
+`dashes` is cumulative and **a later success does not reset it**, because the owner asked for every
+dash: a counter a good turn clears answers "none" for a panel that drew six of them that
+afternoon. `dash_ago_s` is what says whether the last one is current. All of it rides telemetry and
+lands on `GET /api/debug/endpoint/reach` beside the other paths.
+
 ## The panel that went quiet, and the three reasons nobody could see (0.3.33)
 
 **The owner:** *"I also just had a red – show up on lydian's ... This is when I was trying to talk
@@ -6725,7 +6761,8 @@ worked and the failures are exactly what is not in it.
    link test now (`reach_quiet_ms`), and a panel that cannot reach it for ten minutes stops
    believing its radio and re-joins.
 
-**`reach.c` is the shared half:** three named paths (`set`, `poll`, `talk`), cumulative counts, the
+**`reach.c` is the shared half:** four named paths (`set`, `poll`, `talk`, `send` — the last added
+in 0.3.38, below), cumulative counts, the
 last reason, its age, and seconds since the panel last reached the box by any route — held ACROSS
 the outage, because the one moment worth reporting is the one moment the panel cannot report.
 `GET /api/debug/endpoint/reach` is where they land, and `stale_s` is its headline: a panel that has

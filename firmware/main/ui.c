@@ -181,7 +181,10 @@ const ui_target_t UI_TAP_ORDER[UI_TAP_ORDER_LEN] = {
 const ui_target_t UI_TAP_ORDER_PLAYING[UI_TAP_ORDER_PLAYING_LEN] = {
     /* The menu and the exit before the transport, because the transport consumes every press it is
        offered and both of those are drawn above it — see `ui.h`. */
-    UI_TARGET_GRID, UI_TARGET_EXIT, UI_TARGET_TRANSPORT, UI_TARGET_PET,
+    /* THE FACE BEFORE THE TRANSPORT. They do not overlap — the face is the top-left quadrant and
+       the discs are lower — but the order is where "which control owns this pixel" is settled, and
+       leaving it to geometry is what this table exists to stop. */
+    UI_TARGET_GRID, UI_TARGET_EXIT, UI_TARGET_FACE, UI_TARGET_TRANSPORT, UI_TARGET_PET,
 };
 
 /* WHO THE SELECTED MESSAGE IS FROM, from the list where there is one and from the box's one-field
@@ -194,6 +197,58 @@ static bool ui_sel_from_dad(const ui_state_t *st, const ui_in_t *in)
         return in->from_dad[st->sel];
     }
     return in->waiting_from_dad;
+}
+
+/* MOVE THE SELECTION, WHICHEVER GESTURE ASKED. The swipe and the press on the sender's face are
+ * the same decision — "not this one, the next one" — and everything that has to happen alongside
+ * it (stop the sound, drop a pending play, sound the acknowledgement) is the same too. One place,
+ * so the two cannot drift apart.
+ *
+ * `wrap` is the difference between them, and it is the honest one. A swipe has a direction and
+ * therefore has ends: dragging further left at the first message means nothing, and wrapping there
+ * would move the selection the opposite way to the finger. A press has no direction, so an end is
+ * just a dead button — the owner asked for it to CYCLE, which is the only thing a single control
+ * can do with a list.
+ *
+ * Returns whether it actually moved, so the caller can leave the ends silent. */
+static bool select_step(ui_state_t *st, const ui_in_t *in, ui_out_t *out, int delta, bool wrap)
+{
+    /* CLAMPED TO WHAT IS DESCRIBED, NOT TO WHAT IS COUNTED. Past `UI_QUEUE_MAX` the box sends a
+       total and no sender, so there is nothing to draw a face from and nothing the index could
+       mean — the ninth message is reachable by listening to the eight in front of it. */
+    const int n = in->waiting < UI_QUEUE_MAX ? in->waiting : UI_QUEUE_MAX;
+    if (n <= 1) return false;
+    const int was = st->sel;
+    int want = st->sel + delta;
+    if (wrap) {
+        want = ((want % n) + n) % n; /* negative-safe, so this stays right for a backwards step */
+    } else {
+        if (want < 0) want = 0;
+        if (want > n - 1) want = n - 1;
+    }
+    st->sel = want;
+    if (want == was) return false;
+
+    /* STOP WHAT IS SOUNDING, which the owner asked for and which is also what makes these safe to
+       leave live during playback. Every press on this panel fires on the DOWN edge — the rule that
+       came out of measuring how four-year-olds jab — so a gesture that STARTED on a control has
+       already triggered it by the time this runs. Stopping is how that unwinds, and it is the
+       honest reading besides: a child who has moved on to another message is not still listening
+       to this one.
+
+       UN-PAUSED FIRST, like every other stop here: a run ended while the ring is held never
+       drains, and the next message would find the speaker busy. */
+    act(out, UI_ACT_PAUSE, 0);
+    st->paused_since = 0;
+    act(out, UI_ACT_STOP, 0);
+    /* A DEFERRED PLAY MUST NOT FIRE FOR THE MESSAGE THEY JUST LEFT. `pending` carries a press that
+       has been taken and not yet served, and its index was the old one. */
+    st->pending = UI_PEND_NONE;
+    /* The acknowledgement cue, the same one the grid and the button make: something on the glass
+       has changed in answer to a finger. */
+    cue(out, CUE_HEARD);
+    out->dirty = true;
+    return true;
 }
 
 bool ui_run_controls_up(const ui_state_t *st, const ui_in_t *in)
@@ -259,6 +314,23 @@ static bool target_live(ui_target_t t, const ui_state_t *st, const ui_in_t *in)
     case UI_TARGET_CONFIRM:
         return (st->talk == UI_TALK_LISTENING && st->listen_voice) ||
                st->talk == UI_TALK_RECORDING;
+    case UI_TARGET_FACE:
+        /* ── PRESS THE FACE TO CHANGE MESSAGE ─────────────────────────────────────────────
+         *
+           The owner: *"instead of swiping if we just press the icon on the top left it should
+           cycle through the numbers of messages that we have"*, and on where: *"it should be the
+           top left icon after that playback menu is up"*.
+
+           A SWIPE IS THE WRONG GESTURE FOR THIS AUDIENCE, which is why `swipes` and `swipe_dx`
+           ride telemetry at all: a four-year-old jabs. The face is the one thing on this screen
+           that already answers "which message is this?", so pressing it to change the answer is
+           the shortest possible explanation of the control — and it is a press, the only gesture
+           on this panel that has never needed teaching.
+
+           ONLY WITH SOMETHING TO CHANGE TO. With one message waiting there is no other message,
+           and a live target that does nothing is worse than none: the press falls through to the
+           pet instead, which pokes it, and a poke is an answer a child can see. */
+        return ui_run_controls_up(st, in) && in->waiting > 1;
     case UI_TARGET_TRANSPORT:
         return ui_run_controls_up(st, in);
     case UI_TARGET_PET:
@@ -287,6 +359,13 @@ static bool target_hit(ui_target_t t, const ui_state_t *st, const ui_in_t *in)
         return confirm_hit(in->ox, in->oy, in->over_h) != CONFIRM_NONE;
     case UI_TARGET_CONFIRM:
         return true;
+    case UI_TARGET_FACE: {
+        /* The overlay's top-left quadrant, where `draw_sender_face` centres it — the same
+           rectangle `ui_popup_target` gives the badge. */
+        const int qh = (in->over_h - in->over_y0) / 2;
+        return in->ox >= 0 && in->ox < FACE_W / 2 && in->oy >= in->over_y0 &&
+               in->oy < in->over_y0 + qh;
+    }
     case UI_TARGET_TRANSPORT:
         return true;
     case UI_TARGET_PET:
@@ -363,6 +442,11 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
        nothing below re-litigates it; what each target DOES is here and nowhere else. */
     switch (ui_tap_target(st, in)) {
 
+    case UI_TARGET_FACE:
+        /* CYCLES, because a single control with an end is a dead button — see `select_step`. */
+        out->flinch = true;
+        (void)select_step(st, in, out, 1, true);
+        return;
     case UI_TARGET_TRANSPORT: {
         /* A FINGER STOPS A RUN OF MESSAGES, and this is the third place that rule applies — it
            already ends a listen and abandons a recording.
@@ -372,6 +456,38 @@ void ui_tap(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
            Asked of the speaker rather than of the queue, because a replay sets none of the
            queue's flags and would otherwise have no working controls at all. */
         {
+            /* ── AND NOT FOR THE FIRST `EXIT_GRACE_MS`, WHICH IS THE EXIT'S RULE ONE DISC ALONG
+             *
+               The owner, on 0.3.35: *"it played through once and has stopped and has the play
+               button again, but when we click the play button sometimes it just pauses ...
+               usually just on the first time."*
+
+               WHAT THE FINGER IS ON CHANGES UNDER IT. When a message ends the pair comes up and
+               the arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` —
+               replay. Pressing it arms `UI_PEND_REPLAY`, which makes `ui_run_controls_up` true,
+               which swaps the table to `UI_TAP_ORDER_PLAYING` — where the same disc in the same
+               place is now the TRANSPORT. A replay waits out its own cue before any sound, so for
+               those few hundred milliseconds nothing has happened yet; a child presses again and
+               the second press pauses a message that never started. "Usually just the first time"
+               is exactly that: the first press is the one that flips the table.
+
+               HERE AND NOT IN `target_live`, which is where this was tried first and was wrong:
+               a transport that is not live does not stop the press, it lets it fall through the
+               playing table to `UI_TARGET_PET` — so the child gets a poked pet instead, which is
+               the fault `test_a_press_on_the_drawn_pause_button_reaches_the_transport` exists to
+               prevent. The press must be CLAIMED and then ignored. Swallowed in silence on
+               purpose: a cue here would be the panel answering a press it is deliberately not
+               acting on.
+
+               AND BOUNDED BY THE PENDING, NOT BY A CLOCK. `EXIT_GRACE_MS` was tried and is the
+               wrong shape here: 700 ms of dead pause button is a real cost — a child who wants
+               the message to stop the moment it starts presses and gets nothing — and it broke
+               `test_a_held_stream_resumes_rather_than_being_thrown_away` for exactly that reason.
+               The hazard is not "recently" but "a press has been taken and not yet served", which
+               the pending flag already states exactly. While one is set there is nothing sounding
+               to pause, so refusing costs nothing and needs no number; the instant the audio
+               starts, the pending clears and the button works normally. */
+            if (st->pending == UI_PEND_PLAY || st->pending == UI_PEND_REPLAY) return;
             const confirm_hit_t half = confirm_hit(ox, oy, in->over_h);
             if (half == CONFIRM_CANCEL) {
                 const bool hold = !in->stream_paused;
@@ -704,38 +820,9 @@ void ui_frame(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
      * gesture that rewrote it would let one long drag open the menu on its second 700 ms. */
     if (in->swipe != 0 && in->waiting > 1) {
         st->swiped = true;
-        const int was = st->sel;
-        int want = st->sel + in->swipe;
-        /* CLAMPED TO WHAT IS DESCRIBED, NOT TO WHAT IS COUNTED. Past `UI_QUEUE_MAX` the box sends
-           a total and no sender, so there is nothing to draw a face from and nothing the index
-           could mean — the ninth message is reachable by listening to the eight in front of it. */
-        const int last = (in->waiting < UI_QUEUE_MAX ? in->waiting : UI_QUEUE_MAX) - 1;
-        if (want < 0) want = 0;
-        if (want > last) want = last;
-        st->sel = want;
-        if (want != was) {
-            /* STOP WHAT IS SOUNDING, which the owner asked for and which is also what makes this
-               gesture safe to leave live during playback. Every press on this panel fires on the
-               DOWN edge — the rule that came out of measuring how four-year-olds jab — so a swipe
-               that STARTED on the notice or on the pause button has already triggered it by the
-               time the travel is visible. Stopping is how that unwinds, and it is the honest
-               reading of the gesture besides: a child who has moved on to another message is not
-               still listening to this one.
-             *
-               UN-PAUSED FIRST, like every other stop here: a run ended while the ring is held
-               never drains, and the next message would find the speaker busy. */
-            act(out, UI_ACT_PAUSE, 0);
-            st->paused_since = 0;
-            act(out, UI_ACT_STOP, 0);
-            /* A DEFERRED PLAY MUST NOT FIRE FOR THE MESSAGE THEY JUST LEFT. `pending` carries a
-               press that has been taken and not yet served, and its index was the old one. */
-            st->pending = UI_PEND_NONE;
-            /* The acknowledgement cue, the same one the grid and the button make: something on
-               the glass has changed in answer to a finger. Nothing at the ends of the queue —
-               `want == was` — because an end is an end and a sound would claim otherwise. */
-            cue(out, CUE_HEARD);
-            out->dirty = true;
-        }
+        /* CLAMPED, NOT WRAPPED: a swipe has a direction, so an end is an end and wrapping there
+           would move the selection the opposite way to the finger. */
+        (void)select_step(st, in, out, in->swipe, false);
     }
 
     /* A HOLD ON THE PET OPENS THE MENU, rather than talking to it: the grid offers her sister,
@@ -853,6 +940,13 @@ void ui_frame(ui_state_t *st, const ui_in_t *in, ui_out_t *out)
            you" and "it is broken" must not look identical — and not to a child either: to a
            four-year-old who has just spoken to a toy, silence IS the failure. A low falling
            pair says try again, and is deliberately gentle. */
+        /* COUNTED AND NAMED HERE, at the one place the dash is raised — see `ui_state_t`. The
+           two causes are told apart because they need opposite fixes: `net` means the request
+           failed and `reach.c` has the reason; `timeout` means it did not fail, it just never
+           answered, and nothing else on this panel would have recorded that at all. */
+        st->dash_why = in->net == UI_NET_FAILED ? "net" : "timeout";
+        st->dashes++;
+        st->dash_at = in->now == 0 ? 1 : in->now;
         st->talk = UI_TALK_FAILED;
         st->talk_since = in->now;
         cue(out, CUE_OOPS);

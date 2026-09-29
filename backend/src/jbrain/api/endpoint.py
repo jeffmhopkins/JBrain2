@@ -557,6 +557,31 @@ class TelemetryIn(BaseModel):
     talk_err: str = ""
     talk_fails: int = 0
     talk_ago_s: int = 0
+    # `POST /jpanel/send` — a child's recorded message to her father or her sister, and THE ONE
+    # WHERE FAILING SILENTLY COSTS THE MOST. The other paths fail and something is late or
+    # unanswered; this one fails and a message a four-year-old recorded for somebody is gone.
+    #
+    # The owner: *"sometimes when we're in the menu for playback and they hit the green reply
+    # button and record a message, it doesn't actually get sent and doesn't show up in my inbox
+    # on the pwa."* Every send that REACHED this box in that window succeeded, so the failures
+    # never arrived — which means the panel's own count is the only possible record of them.
+    send_err: str = ""
+    send_fails: int = 0
+    send_ago_s: int = 0
+    # EVERY RED DASH. The owner: *"anytime we get a red – I want you to make sure that it's
+    # logged, so we can make sure and resolve it in the future."*
+    #
+    # The dash is the one failure a child actually SEES, and it had two causes of which only one
+    # left a trace. `talk_err` above covers the branch where the request failed. The other is the
+    # panel giving up: `TALK_TIMEOUT_MS` passes with no answer, the dash is drawn, and the request
+    # may still be in flight and eventually succeed. Nothing recorded that anywhere, so the
+    # commonest shape of "it didn't work" was the one with no evidence.
+    #
+    # `dash_err` is which of the two — `net` (the reason is in the talk row) or `timeout` (there
+    # is no talk row, which is exactly why this is counted separately).
+    dashes: int = 0
+    dash_err: str = ""
+    dash_ago_s: int = 0
     # SECONDS SINCE THE PANEL LAST REACHED THIS BOX BY ANY PATH — the single number that would have
     # answered the whole of 2026-09-29 at a glance, where the access log needed line-by-line
     # reading to show the same thing.
@@ -779,6 +804,22 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
                 "talk_ago_s": body.talk_ago_s,
             }
             if body.talk_fails
+            else {}
+        ),
+        **(
+            {
+                "send_err": body.send_err,
+                "send_fails": body.send_fails,
+                "send_ago_s": body.send_ago_s,
+            }
+            if body.send_fails
+            else {}
+        ),
+        # ALWAYS ONCE THERE HAS BEEN ONE, because the owner asked for every dash to be logged and
+        # a key that appears only sometimes is a key nobody trusts to mean anything.
+        **(
+            {"dashes": body.dashes, "dash_err": body.dash_err, "dash_ago_s": body.dash_ago_s}
+            if body.dashes
             else {}
         ),
         # Always, and never suppressed: the healthy value is a small number and it is the one field

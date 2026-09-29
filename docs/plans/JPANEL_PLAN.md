@@ -339,9 +339,11 @@ The words already existed — every turn writes an `endpoint.converse` line carr
 on a schedule nobody chose for this, and reachable only by reading an access log. The most
 interesting thing this box produces was a debug field.
 
-Migration **0219 `pet_turn`**, a **Chats** tab beside Messages/Panels/Flash, and
-`GET`/`DELETE /api/jpanel/chats` grouped by panel because the question is about a child and the
-panel is how this box names one.
+Migration **0219 `pet_turn`** and `GET`/`DELETE /api/jpanel/chats`, grouped by panel because the
+question is about a child and the panel is how this box names one. It shipped as a fourth tab
+beside Messages/Panels/Flash and that tab is gone again — see "One child, one conversation"
+below, which folded it into the thread rather than leaving half of a child's afternoon in each
+of two places.
 
 **THE PANEL MAY WRITE THESE AND MAY NEVER READ THEM**, which is the whole of the policy. For
 messages there is a delivery reason to let a panel read a row addressed to it; here there is none —
@@ -354,7 +356,94 @@ plausible-sounding change, passes one and breaks the other.
 
 **No audio.** Storing text is a diary; storing every clip is a wire in a child's bedroom. **Kept
 until the owner clears it**, with no expiry and no sweep, because a transcript that vanishes on a
-timer is not a record a parent can rely on — and the Clear button asks twice.
+timer is not a record a parent can rely on — and the Clear button asks before it destroys anything.
+
+**ONE CHILD, ONE CONVERSATION (PWA).** The owner: *"I want there to be a separate selection
+underneath the top ... that'll be the panel's names. So if I select lydian or Elora up there it
+should show those two as conversations ... kind of like a normal conversation does with jerv or
+the other ones in the pwa where there's an omnibox at the bottom and a left and right conversation
+bubble."*
+
+Two things were wrong with the shape this replaced, and they were the same thing twice. Messages
+stacked every panel down one page, each with its own list and its own composer — which gets worse
+with each panel added and reads as a report rather than a conversation. And the pet transcript sat
+on a tab of its own, holding the OTHER half of the same child's afternoon, with no way to read
+either in the order things happened. A child does not experience those as two things: she asks the
+pet why fish sleep and then records something for her father about it.
+
+So the tab bar is **Messages / Panels / Flash** again, a **panel-name picker** sits under it, and
+the thread is everything that happened on that panel, **merged by time** (`jpanelThread.ts`): a
+message lands between the question she asked the pet and the answer it gave her, because that is
+where it happened. `pet_turn` is written once the reply has been MADE, so its timestamp is the
+answer's and her question is placed `total_ms` earlier — without which the interleaving is a
+plausible-looking lie.
+
+**Left is the panel, right is the owner**, and the pet's replies are on the left as well: the pet
+is not him, it is the other voice in her room, and a machine's answer sitting where his own words
+go would read as something he said. Her words to the pet carry a `to the pet` label for the same
+reason — unlabelled, they are her words arriving in his conversation and a parent scrolling
+quickly would read them as addressed to him.
+
+**Two clears, not one**, although they now clear two halves of one visible thread: the messages
+are post between two people and the box refuses to destroy one a child has not heard, while the
+pet transcript is a record of what she said to a machine. One button would mean one press
+destroying both.
+
+The unplayed count rides the **picker chip**, because "who is waiting on me?" has to be answerable
+without opening either child. A panel that has only ever talked to its pet still gets a chip: the
+picker is the union of the two routes, and one built from message threads alone would leave such a
+child off this screen entirely.
+
+**A REPLY THAT DOES NOT GO NOW SAYS SO (0.3.38).** The owner: *"sometimes when we're in the menu
+for playback and they hit the green reply button and record a message, it doesn't actually get sent
+and doesn't show up in my inbox on the pwa."*
+
+**The box could not see it at all.** Every `POST /jpanel/send` that reached it in the reported
+window returned 200 and produced a `jpanel.sent` event — the failures are exactly the ones that
+never arrived. `do_send_once` fails six ways and logged all of them to a serial console that does
+not exist in a bedroom (CLAUDE.md #10). Each branch now names itself and the send path reports as
+`REACH_SEND`, so the reason survives the outage and lands on `GET /api/debug/endpoint/reach` with
+the others. **`JPANEL_NOBODY` is not a fault** — the box answered; there is simply no second panel
+to address — and counting it would bury the failures that LOSE a message under a condition a
+one-panel house produces on every attempt. Reasoning in `ROOM_ENDPOINT_PLAN.md`, "The two failures
+that left no record at all (0.3.38)".
+
+**PRESS THE SENDER'S FACE TO CHANGE MESSAGE (0.3.37).** The owner: *"instead of swiping if we
+just press the icon on the top left it should cycle through the numbers of messages that we have"*,
+and on where: *"it should be the top left icon after that playback menu is up"*.
+
+**A swipe is the wrong gesture for this audience** — which is why `swipes` and `swipe_dx` ride
+telemetry at all: a four-year-old jabs. The face is the one thing on this screen that already
+answers "which message is this?", so pressing it to change the answer explains itself, and a press
+is the only gesture on this panel that has never needed teaching. Same effect as the swipe and
+through the same code (`select_step`): stop what is sounding, drop a deferred play aimed at the
+message she left, sound the acknowledgement.
+
+**ONE PRESS PER MENU, AND THE REST IS AN OPEN QUESTION.** Stopping takes the playback menu down,
+and the face is only offered while that menu is up — so cycling twice needs the face live in the
+again/reply state, where **its rectangle is the waiting badge's** and the badge already means
+"press to hear this". Two opposite meanings on one pixel, and the badge is already the selector's
+display (it shows the *selected* message's sender). That collision is the owner's to settle; it is
+stated here rather than resolved by a guess.
+
+**AND PRESSING REPLAY TWICE NO LONGER PAUSES WHAT NEVER STARTED (0.3.36).** The owner: *"it
+played through once and has stopped and has the play button again, but when we click the play
+button sometimes it just pauses ... usually just on the first time."*
+
+**What the finger is on changes under it.** When a message ends the pair comes up and the
+arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` — replay. Pressing it
+arms `PEND_REPLAY`, which makes `run_controls_up()` true, which swaps the table to
+`UI_TAP_ORDER_PLAYING` — where the **same disc in the same place** is now the TRANSPORT. A replay
+waits out its own cue before any sound, so for those few hundred milliseconds nothing has happened;
+a child presses again and the second press pauses a message that never started. *"Usually just the
+first time"* is the press that flips the table.
+
+The press is **claimed and ignored**, not refused: a transport that stopped being live would let
+the press fall through to the pet, which is a poke nobody asked for. Bounded by the **pending**
+rather than a clock — `EXIT_GRACE_MS` was tried first and 700 ms of dead pause button is a real
+cost to a child who wants the sound to stop the moment it starts, and it broke
+`test_a_held_stream_resumes_rather_than_being_thrown_away` for exactly that reason. While a play is
+pending there is nothing sounding to pause, so refusing costs nothing and needs no number.
 
 **A LONG PRESS ON A MENU IS JUST A PRESS (0.3.35).** The owner: *"in the menu we need to disable
 the long press and have long press treated as a normal press of menu items. I think this is the
@@ -470,13 +559,15 @@ clears. Deliberately short: it is for *"what did she say?"*, not a permanent con
 
 Three tabs:
 
-- **Messages** — one list grouped by panel, newest first. An unplayed badge per panel, because
-  that is the question being asked at work. Each message shows sender, time, duration, and **the
-  transcript as the primary content**, with a play button beside it: the text is what gets read,
-  the audio is the fallback for when the transcript does not make sense — which, given how the
-  transcriber handles four-year-olds, it often will not. A compose box per panel: type, send;
-  TTS speaks it, the audio is stored, and the typed text is kept as the transcript so both ends
-  agree about what was said.
+- **Messages** — **one child at a time**, picked by name under the tabs, as one conversation
+  read downwards: her messages and his, and what she said to the pet, merged by time. An unplayed
+  count on each picker chip, because that is the question being asked at work. Each message shows
+  sender, time, duration, and **the transcript as the primary content**, with a play button beside
+  it: the text is what gets read, the audio is the fallback for when the transcript does not make
+  sense — which, given how the transcriber handles four-year-olds, it often will not. One composer
+  pinned at the bottom: type, send; TTS speaks it, the audio is stored, and the typed text is kept
+  as the transcript so both ends agree about what was said. Reasoning in "One child, one
+  conversation" above.
 - **Panels** — the units themselves, one row per unit (the fleet route already collapses a
   panel's flashes, so this reads that rather than deriving it a second time): name, role,
   firmware, last seen, and what the owner can do to one — **rename**, **its pet** (the

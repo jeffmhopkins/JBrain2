@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Bring up the AMOLED and draw the test pattern. NEVER fails fatally: a display fault must
    not stop this unit reaching the box, because reaching the box is how the fault gets
@@ -150,3 +151,12 @@ void display_last_tap(int *x, int *y, int *zone);
  * stays 0 while the owner says he swiped means the controller does not track; a count that rises
  * with a plausible `swipe_dx` means it does and the threshold is the only thing left to tune. */
 void display_swipes(unsigned *n, int *last_dx, int *sel);
+
+/* HOW MANY RED DASHES THIS PANEL HAS DRAWN, why the last one, and how long ago.
+ *
+ * The dash is the one failure a child actually sees, and until 0.3.38 it was the one with no
+ * record: `reach.c` names what happened on the wire, which covers the branch where the request
+ * FAILED — and not the branch where it simply never answered inside `TALK_TIMEOUT_MS`. `why` is
+ * `"net"` (the reason is in the reach row) or `"timeout"` (there is no reach row, which is the
+ * point of counting it here). */
+void display_dashes(unsigned *n, const char **why, uint32_t *ago_ms);

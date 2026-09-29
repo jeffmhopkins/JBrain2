@@ -1,9 +1,14 @@
 // jpanel — the panels in the house as one surface (docs/plans/JPANEL_PLAN.md).
 //
 // Three tabs, because one door for "the panels in my house" beats several that each do half:
-// Messages (what the twins posted, and what Dad types back), Panels (the units themselves —
-// name them, retire them) and Flash (the panel flasher, MOVED here rather than rebuilt — it
-// was already its own surface, so it slots in whole).
+// Messages (one child's whole conversation — see `ConversationTab`), Panels (the units
+// themselves — name them, retire them) and Flash (the panel flasher, MOVED here rather than
+// rebuilt — it was already its own surface, so it slots in whole).
+//
+// THERE WAS A FOURTH, and folding it back in is the point of the current shape. `Chats` held
+// what the children said to the pet, which is half of a child's afternoon; `Messages` held the
+// other half. Two tabs, one child, and no way to read either in the order it happened. They are
+// one thread now, picked by the panel's name.
 //
 // Panels exists because managing a panel used to mean the LOCATION screen: panels are the same
 // `Subject(kind='device')` substrate as an OwnTracks phone, so every one ever flashed was listed
@@ -16,7 +21,7 @@
 // panels send audio and are read to; the PWA sends TEXT and reads a transcript. A
 // four-year-old cannot type, and a parent at work cannot play audio out loud.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   ApiError,
@@ -39,9 +44,10 @@ import { agoLabel, panelHealth, panelStateWords } from "../panelStatus";
 import { useForeground } from "../visibility";
 import { MAX_MESSAGE_MS, type Recorder, startRecording } from "../voiceMessage";
 import { EndpointsScreen } from "./EndpointsScreen";
+import { atLiveEnd, threadItems, threadPanels } from "./jpanelThread";
 import "./jpanel.css";
 
-export type JpanelTab = "messages" | "panels" | "chats" | "flash";
+export type JpanelTab = "messages" | "panels" | "flash";
 
 interface JpanelScreenProps {
   onClose: () => void;
@@ -81,24 +87,50 @@ function unheard(m: JpanelMessage): boolean {
   return m.direction === "in" && m.played_at === null;
 }
 
-function MessagesTab() {
+/* ── ONE CHILD, ONE CONVERSATION ───────────────────────────────────────────────────────────
+ *
+ * The owner: *"I want there to be a separate selection underneath the top where you can select
+ * ... that'll be the panel's names. So if I select lydian or Elora up there it should show
+ * those two as conversations ... kind of like a normal conversation does with jerv or the other
+ * ones in the pwa where there's an omnibox at the bottom and a left and right conversation
+ * bubble."*
+ *
+ * WHAT THIS REPLACED was every panel stacked down one page, each with its own list and its own
+ * composer — a shape that gets worse with every panel added, and reads as a report rather than
+ * as a conversation. Beside it sat a second tab holding the OTHER half of the same child's
+ * afternoon: what she had been saying to the pet on her wall. She does not experience those as
+ * two things. She asks the pet why fish sleep and then records something for her father about
+ * it; split across two tabs, the second sentence has no first half.
+ *
+ * So the picker is the panel's name and the thread is everything that happened on it, merged by
+ * time (`jpanelThread.ts`) — a message lands BETWEEN the question she asked the pet and the
+ * answer it gave her, because that is where it happened.
+ *
+ * LEFT IS THE PANEL, RIGHT IS THE OWNER. The pet's replies are on the left too, tinted rather
+ * than sided differently: the pet is not him, it is the other voice in her room, and putting a
+ * machine's answer where his own words go would make it read as something he said.
+ */
+function ConversationTab() {
   const [threads, setThreads] = useState<JpanelThread[] | null>(null);
+  const [chats, setChats] = useState<JpanelPetChat[] | null>(null);
   const [error, setError] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState<string | null>(null);
   const [sendError, setSendError] = useState("");
   const [playing, setPlaying] = useState<string | null>(null);
   const [playError, setPlayError] = useState("");
-  /* Which panel is being recorded FOR, not a bare boolean: the screen shows every panel at
-     once, and a flag would light the microphone on all of them. */
+  /* Which panel is being recorded FOR, not a bare boolean: a flag would light the microphone
+     on a panel the owner had since switched away from. */
   const [recording, setRecording] = useState<string | null>(null);
+  /** Which chip is chosen. `null` means "whichever is first" rather than a panel — a real
+   *  device id here would go stale the moment a panel is renamed or retired. */
+  const [picked, setPicked] = useState<string | null>(null);
   const recorder = useRef<Recorder | null>(null);
-  /* The cap is enforced here as well as on the box, so a long message is stopped and SENT
-     rather than truncated on arrival — the failure `audio_play` had on the panel, which must
-     not be reintroduced from this end. */
   const recordTimer = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  /** Whether to follow the conversation down when a new line arrives — see `atLiveEnd`. */
+  const stick = useRef(true);
   /** Ids already reported, so a poll that re-renders the same row does not re-POST it. */
   const seenRef = useRef<Set<string>>(new Set());
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -106,13 +138,16 @@ function MessagesTab() {
 
   const refresh = useCallback(async () => {
     try {
-      const out = await api.jpanelMessages();
-      setThreads(out.panels);
+      /* BOTH, TOGETHER. Two awaits in series would paint a thread whose pet half was one
+         round trip older than its message half — and the merge is by time, so the seam would
+         show as lines appearing above ones already on screen. */
+      const [msgs, pet] = await Promise.all([api.jpanelMessages(), api.jpanelChats()]);
+      setThreads(msgs.panels);
+      setChats(pet.panels);
       setError("");
     } catch (e) {
-      // The messages already on screen stay there: a poll that failed on a train is not
-      // evidence the inbox is empty, and blanking it would be the one lie this surface
-      // must not tell.
+      // What is on screen stays: a poll that failed on a train is not evidence the inbox is
+      // empty, and blanking it would be the one lie this surface must not tell.
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
@@ -132,6 +167,40 @@ function MessagesTab() {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
   }, []);
+
+  const panels = useMemo(() => threadPanels(threads ?? [], chats ?? []), [threads, chats]);
+  /* Resolved on every render rather than synced into state by an effect: a `picked` that no
+     longer names a live panel falls back to the first one instead of rendering nothing. */
+  const active = panels.find((p) => p.device_id === picked) ?? panels[0];
+  const items = useMemo(
+    () =>
+      active
+        ? threadItems(
+            threads?.find((t) => t.device_id === active.device_id),
+            chats?.find((c) => c.device_id === active.device_id),
+          )
+        : [],
+    [active, threads, chats],
+  );
+
+  /* THE NEWEST LINE IS THE ONE ABOVE THE COMPOSER, so the thread opens at its live end —
+     and stays there as messages arrive, unless the owner has scrolled up to read back
+     through this morning, in which case a poll every twenty seconds must not take the page
+     away from him. */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `items` is the TRIGGER, not a read — the effect measures the DOM the new items just produced.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [items]);
+
+  /* Switching child is always a jump to the live end: the last thing said is what the chip
+     was pressed to see. */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the point is the panel change, not the items.
+  useLayoutEffect(() => {
+    stick.current = true;
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [active?.device_id]);
 
   /** One refetch for a burst of marks: scrolling past four unheard messages is one
    *  answer to "how many are waiting", not four. The badge always comes back from the
@@ -160,13 +229,13 @@ function MessagesTab() {
     [refreshSoon],
   );
 
-  // What counts as seen is the row having actually been ON SCREEN: a message below the
-  // fold of a long thread has not been read, and clearing it on arrival would throw away
-  // the one number this screen exists to answer. Gated on the foreground so a phone left
-  // open in a pocket does not read his messages for him, and skipped entirely where there
-  // is no IntersectionObserver — "cannot tell" has to mean "leave the badge alone", with
-  // playing the message the other way it clears.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run per fetched list; the effect reads the DOM, not the threads.
+  // What counts as seen is the row having actually been ON SCREEN: a message above the fold of
+  // a long thread has not been read, and clearing it on arrival would throw away the one number
+  // this screen exists to answer. Gated on the foreground so a phone left open in a pocket does
+  // not read his messages for him, and skipped entirely where there is no IntersectionObserver
+  // — "cannot tell" has to mean "leave the badge alone", with playing the message the other way
+  // it clears.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run per rendered list; the effect reads the DOM, not the items.
   useEffect(() => {
     const root = listRef.current;
     if (!foreground || !root || typeof IntersectionObserver === "undefined") return;
@@ -177,12 +246,12 @@ function MessagesTab() {
           if (entry.isIntersecting && id) markSeen(id);
         }
       },
-      // Most of the row, so a transcript half off the bottom edge does not count.
+      // Most of the bubble, so a transcript half off the edge does not count.
       { threshold: 0.6 },
     );
     for (const row of root.querySelectorAll("[data-unplayed]")) observer.observe(row);
     return () => observer.disconnect();
-  }, [foreground, markSeen, threads]);
+  }, [foreground, markSeen, items]);
 
   function stop() {
     audioRef.current?.pause();
@@ -242,6 +311,8 @@ function MessagesTab() {
             t.device_id === deviceId ? { ...t, messages: [sent, ...t.messages] } : t,
           ) ?? cur,
       );
+      // Saying something is always a jump to the bottom, wherever he had scrolled to.
+      stick.current = true;
     } catch (e) {
       setSendError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -337,7 +408,7 @@ function MessagesTab() {
     if (clearing !== null) return;
     /* CONFIRMED, BECAUSE IT CANNOT BE UNDONE. Everything else on this surface is recoverable
        by waiting; this is the one control that destroys a child's words. */
-    if (!window.confirm(`Delete the conversation with ${name}? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete the messages with ${name}? This cannot be undone.`)) return;
     setClearing(deviceId);
     setSendError("");
     try {
@@ -354,6 +425,30 @@ function MessagesTab() {
           ? `Cleared ${deleted}. Kept ${kept} ${name} hasn't heard yet — they'll stay until played.`
           : `Cleared ${deleted}.`,
       }));
+      await refresh();
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearing(null);
+    }
+  }
+
+  /* A SEPARATE CONTROL FROM THE ONE ABOVE, and deliberately so although they now clear two
+     halves of one visible thread. The messages are post between two people and the box refuses
+     to destroy one a child has not heard; the pet transcript is a record of what she said to a
+     machine. Merging the buttons would mean one press deleting both, and the owner asked for
+     the transcript to be clearable precisely so it could be cleared on its own. */
+  async function clearPetChat(deviceId: string, name: string) {
+    if (clearing !== null) return;
+    if (!window.confirm(`Delete what ${name} said to the pet? This cannot be undone.`)) return;
+    setClearing(deviceId);
+    setSendError("");
+    try {
+      const { deleted } = await api.jpanelClearChats(deviceId);
+      setChats(
+        (cur) => cur?.map((c) => (c.device_id === deviceId ? { ...c, turns: [] } : c)) ?? cur,
+      );
+      setCleared((c) => ({ ...c, [deviceId]: `Cleared ${deleted} pet conversations.` }));
       await refresh();
     } catch (e) {
       setSendError(e instanceof Error ? e.message : String(e));
@@ -379,6 +474,7 @@ function MessagesTab() {
             t.device_id === deviceId ? { ...t, messages: [sent, ...t.messages] } : t,
           ) ?? cur,
       );
+      stick.current = true;
     } catch (e) {
       // The draft is deliberately kept: retyping what you wanted to say to your child
       // because the network blipped is the worst outcome this form has.
@@ -388,7 +484,7 @@ function MessagesTab() {
     }
   }
 
-  if (threads === null) {
+  if (threads === null || chats === null) {
     return (
       <p className="jp-empty">
         {error ? `Couldn't reach the box — ${error}` : "Loading messages…"}
@@ -396,8 +492,63 @@ function MessagesTab() {
     );
   }
 
+  if (active === undefined) {
+    return (
+      <p className="jp-empty">No panels yet. Flash one on the Flash tab and it shows up here.</p>
+    );
+  }
+
+  const draft = drafts[active.device_id] ?? "";
+  const isRecording = recording === active.device_id;
+
   return (
-    <div className="jp-threads" ref={listRef}>
+    <div className="jp-convo">
+      {/* WHICH CHILD, and it is the first thing under the tabs because it is the first
+          decision: everything below answers a question about one of them. The unplayed count
+          rides the chip so "who is waiting on me?" is answered without opening either. */}
+      <div className="jp-who" role="tablist" aria-label="Which panel">
+        {panels.map((p) => (
+          <button
+            type="button"
+            role="tab"
+            key={p.device_id}
+            aria-selected={p.device_id === active.device_id}
+            className={p.device_id === active.device_id ? "on" : ""}
+            onClick={() => setPicked(p.device_id)}
+          >
+            {p.name}
+            {p.unplayed > 0 && <span className="jp-who-badge">{p.unplayed}</span>}
+          </button>
+        ))}
+      </div>
+
+      <div className="jp-convo-head">
+        <button
+          type="button"
+          className="jp-rename"
+          disabled={renaming !== null}
+          onClick={() => void renamePanel(active.device_id, active.name)}
+        >
+          {renaming === active.device_id ? "Renaming…" : "Rename"}
+        </button>
+        <button
+          type="button"
+          className="jp-clear"
+          disabled={clearing !== null}
+          onClick={() => void clearHistory(active.device_id, active.name)}
+        >
+          Clear messages
+        </button>
+        <button
+          type="button"
+          className="jp-clear"
+          disabled={clearing !== null}
+          onClick={() => void clearPetChat(active.device_id, active.name)}
+        >
+          Clear pet chat
+        </button>
+      </div>
+
       {error && (
         <p className="jp-warn" role="alert">
           Showing what was last fetched — {error}
@@ -413,180 +564,193 @@ function MessagesTab() {
           Not sent — {sendError}. Your words are still in the box below.
         </p>
       )}
-
-      {threads.length === 0 && (
-        <p className="jp-empty">No panels yet. Flash one on the Flash tab and it shows up here.</p>
+      {renamed[active.device_id] && (
+        <output className="jp-cleared">{renamed[active.device_id]}</output>
+      )}
+      {cleared[active.device_id] && (
+        /* `<output>`, not a `<p role="status">`: it carries the same implicit role and is the
+           element the rule asks for — and a screen reader should announce what a destructive
+           button just did without the owner having to go looking. */
+        <output className="jp-cleared">{cleared[active.device_id]}</output>
       )}
 
-      {threads.map((thread) => (
-        <section className="jp-panel" key={thread.device_id} aria-label={thread.name}>
-          <h2 className="jp-panel-head">
-            <span className="jp-panel-name">{thread.name}</span>
-            {thread.unplayed > 0 && <span className="jp-unplayed">{thread.unplayed} unplayed</span>}
-            <button
-              type="button"
-              className="jp-rename"
-              aria-label={`Rename ${thread.name}`}
-              disabled={renaming !== null}
-              onClick={() => void renamePanel(thread.device_id, thread.name)}
-            >
-              {renaming === thread.device_id ? "Renaming…" : "Rename"}
-            </button>
-            {thread.messages.length > 0 && (
-              <button
-                type="button"
-                className="jp-clear"
-                aria-label={`Clear the conversation with ${thread.name}`}
-                disabled={clearing !== null}
-                onClick={() => void clearHistory(thread.device_id, thread.name)}
-              >
-                {clearing === thread.device_id ? "Clearing…" : "Clear history"}
-              </button>
-            )}
-          </h2>
-          {renamed[thread.device_id] && (
-            <output className="jp-cleared">{renamed[thread.device_id]}</output>
-          )}
-          {cleared[thread.device_id] && (
-            /* `<output>`, not a `<p role="status">`: it carries the same implicit role and is
-               the element the rule asks for — and a screen reader should announce what a
-               destructive button just did without the owner having to go looking. */
-            <output className="jp-cleared">{cleared[thread.device_id]}</output>
-          )}
+      <div
+        className="jp-stream"
+        ref={listRef}
+        onScroll={() => {
+          const el = listRef.current;
+          if (el) stick.current = atLiveEnd(el);
+        }}
+      >
+        {items.length === 0 ? (
+          <p className="jp-empty">
+            Nothing from {active.name} yet — say something and it plays out on her panel.
+          </p>
+        ) : (
+          items.map((item) =>
+            item.kind === "message" ? (
+              <MessageBubble
+                key={item.key}
+                message={item.message}
+                playing={playing === item.message.id}
+                onPlay={() => play(item.message)}
+              />
+            ) : item.kind === "asked" ? (
+              <div className="jp-b jp-b-ask" key={item.key}>
+                {/* SAID TO THE PET, NOT TO HIM, and the thread has to say which: without the
+                    label these are her words arriving in his conversation, and a parent would
+                    reasonably read them as addressed to him. */}
+                <p className="jp-b-who">to the pet</p>
+                <p className="jp-b-text">{item.turn.heard || "(nothing heard)"}</p>
+                <p className="jp-b-meta">
+                  <time dateTime={item.turn.created_at}>{whenText(item.turn.created_at)}</time>
+                </p>
+              </div>
+            ) : (
+              <div className="jp-b jp-b-reply" key={item.key}>
+                <p className="jp-b-text">{item.turn.reply}</p>
+                {/* The one number worth surfacing: how long she waited for an answer. */}
+                <p className="jp-b-meta">{(item.turn.total_ms / 1000).toFixed(1)}s</p>
+              </div>
+            ),
+          )
+        )}
+      </div>
 
-          {thread.messages.length === 0 ? (
-            <p className="jp-empty">Nothing from {thread.name} yet.</p>
-          ) : (
-            <ul className="jp-msgs">
-              {thread.messages.map((m) => (
-                <li
-                  className={`jp-msg${unheard(m) ? " jp-msg-new" : ""}`}
-                  key={m.id}
-                  // Only a panel's own unheard message is the owner's to clear: his sent
-                  // text is not his to read, and twin-to-twin post was never his at all.
-                  data-unplayed={unheard(m) ? m.id : undefined}
-                >
-                  <div className="jp-msg-head">
-                    {/* WHO IT WAS ACTUALLY BETWEEN. The recipient is drawn only when the
-                        owner is not one — his own inbox does not need telling that a message
-                        addressed to him was addressed to him — but a message between the two
-                        girls named only its sender, so it read as though it had come to him. */}
-                    <span className="jp-from">
-                      {m.direction === "between" ? `${m.from_name} → ${m.to_name}` : m.from_name}
-                    </span>
-                    <time dateTime={m.created_at}>{whenText(m.created_at)}</time>
-                    <span className="jp-dur">{durationText(m.duration_ms)}</span>
-                    {/* STATUS, AND ONLY ON WHAT YOU SENT. For an inbound message `played_at`
-                        means "the owner has dealt with it", which is the unplayed badge's job
-                        and would read as nonsense here. For an outbound one it is the only
-                        live question: has the child actually heard it. */}
-                    {m.direction === "out" && (
-                      <span
-                        className={`jp-status${
-                          m.played_at ? " jp-status-heard" : m.undelivered ? " jp-status-stuck" : ""
-                        }`}
-                      >
-                        {m.played_at
-                          ? `Heard ${whenText(m.played_at)}`
-                          : m.undelivered
-                            ? // THE BOX GAVE UP, which is not the same as nobody having come to
-                              // it yet — and `played_at` cannot tell those apart. Said plainly,
-                              // because the alternative is a parent believing their child chose
-                              // not to listen when the panel never managed to play it.
-                              "Couldn't be delivered"
-                            : "Not heard yet"}
-                      </span>
-                    )}
-                  </div>
-                  <div className="jp-msg-body">
-                    {/* The transcript is the content, not a caption under a player: it is
-                        what gets read at work. The audio sits beside it as the fallback
-                        for when it does not make sense — which, with a four-year-old on
-                        the other end, it often will not. */}
-                    {m.transcript.trim() ? (
-                      <p className="jp-transcript">{m.transcript}</p>
-                    ) : (
-                      <p className="jp-transcript jp-no-words">
-                        No words came through — play it to hear what they said.
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      className="jp-play"
-                      aria-label={
-                        playing === m.id ? "Stop playing" : `Play ${m.from_name}'s message`
-                      }
-                      onClick={() => play(m)}
-                    >
-                      {playing === m.id ? <StopIcon size={18} /> : <PlayIcon size={18} />}
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {/* TWO WAYS TO SAY IT, and the microphone is the one that matters most.
-              The owner: *"PWA should also be able to actually send audio, a voice message,
-              that have the option to send text that gets rendered."*
-              Type and the box reads it out in a voice of its own (never the pet's); or hold
-              the microphone and the panel plays Dad's ACTUAL voice — which, for a child who
-              cannot read, is the only version that carries who it is from. */}
-          <form
-            className="jp-compose"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void send(thread.device_id);
+      {/* TWO WAYS TO SAY IT, and the microphone is the one that matters most.
+          The owner: *"PWA should also be able to actually send audio, a voice message,
+          that have the option to send text that gets rendered."*
+          Type and the box reads it out in a voice of its own (never the pet's); or hold
+          the microphone and the panel plays Dad's ACTUAL voice — which, for a child who
+          cannot read, is the only version that carries who it is from. */}
+      <form
+        className="jp-compose"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send(active.device_id);
+        }}
+      >
+        <input
+          value={draft}
+          onChange={(e) => setDrafts((d) => ({ ...d, [active.device_id]: e.target.value }))}
+          placeholder={`Say something to ${active.name}`}
+          aria-label={`Message ${active.name}`}
+          enterKeyHint="send"
+        />
+        {/* The microphone yields to a typed draft rather than sitting beside it armed:
+            with words in the box the obvious action is to send them, and two live buttons
+            is the moment a parent taps the wrong one. */}
+        {draft.trim() ? (
+          <button
+            type="submit"
+            className="jp-send"
+            aria-label={`Send to ${active.name}`}
+            disabled={sending !== null}
+          >
+            <SendIcon size={18} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`jp-mic${isRecording ? " jp-mic-live" : ""}`}
+            aria-label={
+              isRecording
+                ? `Stop and send to ${active.name}`
+                : `Record a message for ${active.name}`
+            }
+            aria-pressed={isRecording}
+            disabled={sending !== null || (recording !== null && !isRecording)}
+            onClick={() => {
+              if (isRecording) void stopRecording(active.device_id);
+              else void beginRecording(active.device_id);
             }}
           >
-            <input
-              value={drafts[thread.device_id] ?? ""}
-              onChange={(e) => setDrafts((d) => ({ ...d, [thread.device_id]: e.target.value }))}
-              placeholder={`Say something to ${thread.name}`}
-              aria-label={`Message ${thread.name}`}
-              enterKeyHint="send"
-            />
-            {/* The microphone yields to a typed draft rather than sitting beside it armed:
-                with words in the box the obvious action is to send them, and two live buttons
-                is the moment a parent taps the wrong one. */}
-            {(drafts[thread.device_id] ?? "").trim() ? (
-              <button
-                type="submit"
-                className="jp-send"
-                aria-label={`Send to ${thread.name}`}
-                disabled={sending !== null}
-              >
-                <SendIcon size={18} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className={`jp-mic${recording === thread.device_id ? " jp-mic-live" : ""}`}
-                aria-label={
-                  recording === thread.device_id
-                    ? `Stop and send to ${thread.name}`
-                    : `Record a message for ${thread.name}`
-                }
-                aria-pressed={recording === thread.device_id}
-                disabled={
-                  sending !== null || (recording !== null && recording !== thread.device_id)
-                }
-                onClick={() => {
-                  if (recording === thread.device_id) void stopRecording(thread.device_id);
-                  else void beginRecording(thread.device_id);
-                }}
-              >
-                {recording === thread.device_id ? <StopIcon size={18} /> : <MicIcon size={18} />}
-              </button>
-            )}
-          </form>
-          <p className="jp-hint">
-            {recording === thread.device_id
-              ? "Recording — press again to send."
-              : "They hear it read out on their panel — they never read it."}
+            {isRecording ? <StopIcon size={18} /> : <MicIcon size={18} />}
+          </button>
+        )}
+      </form>
+      <p className="jp-hint">
+        {isRecording
+          ? "Recording — press again to send."
+          : "They hear it read out on their panel — they never read it."}
+      </p>
+    </div>
+  );
+}
+
+/** One message, as a bubble. His own on the right, hers on the left, and twin-to-twin post on
+ *  the left with both names — it was never addressed to him and must not read as though it
+ *  was. */
+function MessageBubble({
+  message,
+  playing,
+  onPlay,
+}: {
+  message: JpanelMessage;
+  playing: boolean;
+  onPlay: () => void;
+}) {
+  const mine = message.direction === "out";
+  return (
+    <div
+      className={`jp-b ${mine ? "jp-b-me" : "jp-b-them"}${unheard(message) ? " jp-b-new" : ""}`}
+      // Only a panel's own unheard message is the owner's to clear: his sent text is not his
+      // to read, and twin-to-twin post was never his at all.
+      data-unplayed={unheard(message) ? message.id : undefined}
+    >
+      {/* WHO IT WAS ACTUALLY BETWEEN. Drawn only when the owner is not one end of it — his own
+          thread does not need telling that a message to him was to him — but a message between
+          the two girls named only its sender, so it read as though it had come to him. */}
+      {message.direction === "between" && (
+        <p className="jp-b-who">
+          {message.from_name} → {message.to_name}
+        </p>
+      )}
+      <div className="jp-b-row">
+        {/* The transcript is the content, not a caption under a player: it is what gets read
+            at work. The audio sits beside it as the fallback for when it does not make sense
+            — which, with a four-year-old on the other end, it often will not. */}
+        {message.transcript.trim() ? (
+          <p className="jp-b-text">{message.transcript}</p>
+        ) : (
+          <p className="jp-b-text jp-no-words">
+            No words came through — play it to hear what they said.
           </p>
-        </section>
-      ))}
+        )}
+        <button
+          type="button"
+          className="jp-play"
+          aria-label={playing ? "Stop playing" : `Play ${message.from_name}'s message`}
+          onClick={onPlay}
+        >
+          {playing ? <StopIcon size={18} /> : <PlayIcon size={18} />}
+        </button>
+      </div>
+      <p className="jp-b-meta">
+        <time dateTime={message.created_at}>{whenText(message.created_at)}</time>
+        <span className="jp-dur">{durationText(message.duration_ms)}</span>
+        {/* STATUS, AND ONLY ON WHAT YOU SENT. For an inbound message `played_at` means "the
+            owner has dealt with it", which is the unplayed badge's job and would read as
+            nonsense here. For an outbound one it is the only live question: has the child
+            actually heard it. */}
+        {mine && (
+          <span
+            className={`jp-status${
+              message.played_at ? " jp-status-heard" : message.undelivered ? " jp-status-stuck" : ""
+            }`}
+          >
+            {message.played_at
+              ? `Heard ${whenText(message.played_at)}`
+              : message.undelivered
+                ? // THE BOX GAVE UP, which is not the same as nobody having come to it yet —
+                  // and `played_at` cannot tell those apart. Said plainly, because the
+                  // alternative is a parent believing their child chose not to listen when the
+                  // panel never managed to play it.
+                  "Couldn't be delivered"
+                : "Not heard yet"}
+          </span>
+        )}
+      </p>
     </div>
   );
 }
@@ -625,7 +789,7 @@ function PanelsTab() {
     // phone that has been asleep disagrees with the box by minutes, and a locally-ticked clock
     // would drift back into "last seen 4 minutes in the future".
     //
-    // Foreground-gated and immediate-on-resume, the same shape `MessagesTab` above uses and for
+    // Foreground-gated and immediate-on-resume, the same shape `ConversationTab` above uses and for
     // the same reason: a backgrounded phone polling a box on a home network is battery spent to
     // refresh a screen nobody is looking at.
     if (!foreground) return;
@@ -1131,125 +1295,6 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
   );
 }
 
-/* ── WHAT THE CHILDREN HAVE BEEN TELLING THE PET ───────────────────────────────────────────
- *
- * The owner: *"I think we need some way of logging [what] the kids say to the large language
- * model ... another tab in the jpanel side that is llm conversations that are stored that I can
- * clear and read through sorted by panel."*
- *
- * READ-ONLY AND NOT LIVE, which is the difference from `MessagesTab` and is deliberate. Messages
- * polls because a message arriving while you watch is the point; this is a thing you sit down
- * with. A poll here would re-render a long transcript under the reader's thumb every few seconds
- * and buy nothing — a conversation that happened at breakfast is not more true at 4pm.
- *
- * GROUPED BY PANEL BECAUSE THE QUESTION IS ABOUT A CHILD. "What has she been asking it?" is the
- * sentence this exists to answer, and the panel is how this box names a child.
- */
-function ChatsTab() {
-  const [panels, setPanels] = useState<JpanelPetChat[] | null>(null);
-  const [error, setError] = useState("");
-  /* Which panel's clear is being confirmed. A destructive button on a record of a child's
-     conversations does not get to fire on one press. */
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const out = await api.jpanelChats();
-      setPanels(out.panels);
-      setError("");
-    } catch (e) {
-      // What is on screen stays: a failed fetch on a train is not evidence the child said
-      // nothing, and blanking it would be the one lie this surface must not tell.
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const clear = useCallback(
-    async (device: string | undefined) => {
-      setBusy(true);
-      try {
-        await api.jpanelClearChats(device);
-        setConfirming(null);
-        await refresh();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [refresh],
-  );
-
-  if (error && panels === null) return <p className="jp-empty">{error}</p>;
-  if (panels === null) return <p className="jp-empty">Loading…</p>;
-
-  const total = panels.reduce((n, p) => n + p.turns.length, 0);
-  if (total === 0) {
-    return (
-      <p className="jp-empty">
-        Nothing yet. Conversations with the pet show up here once a panel has had one.
-      </p>
-    );
-  }
-
-  return (
-    <div className="jp-chats">
-      {error && <p className="jp-error">{error}</p>}
-      {panels.map((panel) => (
-        <section key={panel.device_id} className="jp-chat-panel">
-          <header className="jp-chat-head">
-            <h2>{panel.label}</h2>
-            <span className="jp-chat-count">
-              {panel.turns.length === 1 ? "1 exchange" : `${panel.turns.length} exchanges`}
-            </span>
-            {panel.turns.length > 0 &&
-              (confirming === panel.device_id ? (
-                <span className="jp-chat-confirm">
-                  <button type="button" disabled={busy} onClick={() => void clear(panel.device_id)}>
-                    {busy ? "Clearing…" : "Really clear"}
-                  </button>
-                  <button type="button" disabled={busy} onClick={() => setConfirming(null)}>
-                    Keep
-                  </button>
-                </span>
-              ) : (
-                <button type="button" onClick={() => setConfirming(panel.device_id)}>
-                  Clear
-                </button>
-              ))}
-          </header>
-          {panel.turns.length === 0 ? (
-            <p className="jp-empty">Nothing from this panel yet.</p>
-          ) : (
-            <ol className="jp-turns">
-              {panel.turns.map((turn) => (
-                <li key={turn.id}>
-                  {/* THE CHILD'S WORDS FIRST AND LARGER. The pet's reply is the machine's half
-                      and is worth reading; hers is the reason this screen exists. */}
-                  <p className="jp-heard">{turn.heard || "(nothing heard)"}</p>
-                  <p className="jp-reply">{turn.reply}</p>
-                  <p className="jp-turn-meta">
-                    <time dateTime={turn.created_at}>
-                      {new Date(turn.created_at).toLocaleString()}
-                    </time>
-                    {/* The one number worth surfacing: how long she waited for an answer. */}
-                    <span>{(turn.total_ms / 1000).toFixed(1)}s</span>
-                  </p>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-      ))}
-    </div>
-  );
-}
-
 export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenProps) {
   const [tab, setTab] = useState<JpanelTab>(initialTab);
 
@@ -1262,7 +1307,7 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         <h1>jpanel</h1>
       </header>
 
-      <div className="jp-seg" role="tablist" aria-label="Messages, Panels, Chats or Flash">
+      <div className="jp-seg" role="tablist" aria-label="Messages, Panels or Flash">
         <button
           type="button"
           role="tab"
@@ -1284,15 +1329,6 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         <button
           type="button"
           role="tab"
-          aria-selected={tab === "chats"}
-          className={tab === "chats" ? "on" : ""}
-          onClick={() => setTab("chats")}
-        >
-          Chats
-        </button>
-        <button
-          type="button"
-          role="tab"
           aria-selected={tab === "flash"}
           className={tab === "flash" ? "on" : ""}
           onClick={() => setTab("flash")}
@@ -1303,9 +1339,8 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
 
       {/* Unmounted rather than hidden when another tab is up: Flash holds a USB console
           stream open, and Messages polls — neither should run behind a tab nobody is on. */}
-      {tab === "messages" && <MessagesTab />}
+      {tab === "messages" && <ConversationTab />}
       {tab === "panels" && <PanelsTab />}
-      {tab === "chats" && <ChatsTab />}
       {tab === "flash" && <EndpointsScreen />}
     </div>
   );

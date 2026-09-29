@@ -95,12 +95,14 @@ const SENT = {
   played_at: null,
 };
 
-/** The requests each case cares about; everything else 404s, as a real box would. */
-/** Two panels' conversations with the pet, as `GET /jpanel/chats` serves them. */
+/** What the children said to the pet, as `GET /jpanel/chats` serves it — KEYED TO THE SAME
+ *  PANELS as the messages above, because that is the whole point of the merge: one child's
+ *  afternoon, not two lists that happen to be about her. Timed between the messages so the
+ *  order the thread comes out in is a real assertion rather than a coincidence. */
 const CHATS = [
   {
-    device_id: "dev-elora",
-    label: "panel Elora",
+    device_id: "panel-ellie",
+    label: "Ellie",
     turns: [
       {
         id: "t1",
@@ -110,16 +112,14 @@ const CHATS = [
         llm_ms: 1200,
         tts_ms: 500,
         total_ms: 2600,
-        created_at: "2026-09-29T14:00:00Z",
+        created_at: new Date(Date.now() - 12 * 60_000).toISOString(),
       },
     ],
   },
-  {
-    device_id: "dev-lydian",
-    label: "panel Lydian",
-    turns: [],
-  },
+  { device_id: "panel-mabel", label: "Mabel", turns: [] },
 ];
+
+/** The requests each case cares about; everything else 404s, as a real box would. */
 
 function box(
   opts: {
@@ -237,13 +237,19 @@ class FakeObserver {
   }
 }
 
-/** The row a given transcript sits in. Every twin's messages share one accessible name,
+/** The bubble a given transcript sits in. Every twin's messages share one accessible name,
  *  so indexing a list of play buttons would silently follow a different message the
  *  moment the thread grows; the transcript is what identifies a message here anyway. */
 function rowFor(transcript: HTMLElement): HTMLElement {
-  const row = transcript.closest("li");
-  if (!row) throw new Error("transcript is not inside a message row");
-  return row;
+  const row = transcript.closest(".jp-b");
+  if (!row) throw new Error("transcript is not inside a message bubble");
+  return row as HTMLElement;
+}
+
+/** Every line in the thread, in the order it is drawn. The ORDER is the assertion: a merge
+ *  that sorted wrongly still renders a perfectly plausible-looking conversation. */
+function threadText(): (string | null)[] {
+  return Array.from(document.querySelectorAll(".jp-b-text")).map((e) => e.textContent);
 }
 
 describe("JpanelScreen messages", () => {
@@ -260,27 +266,71 @@ describe("JpanelScreen messages", () => {
     vi.restoreAllMocks();
   });
 
-  it("groups by panel and badges each panel's unplayed count", async () => {
+  it("shows one child at a time, and says on the chip which of them is waiting", async () => {
+    /* THE OWNER: *"a separate selection underneath the top ... that'll be the panel's names.
+       So if I select lydian or Elora up there it should show those two as conversations."*
+
+       What this replaced was every panel stacked down one page. The count rides the CHIP
+       because "who is waiting on me?" has to be answerable without opening either of them —
+       and it is the box's count, not one recounted from the rows on this page: a `limit` that
+       truncated the thread must not quietly deflate the badge. */
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    const ellie = await screen.findByRole("region", { name: "Ellie" });
-    expect(within(ellie).getByText("2 unplayed")).toBeTruthy();
-    // The count is the box's, not one recounted from the rows on this page: a `limit`
-    // that truncated the thread must not quietly deflate the badge.
-    const mabel = screen.getByRole("region", { name: "Mabel" });
-    expect(within(mabel).queryByText(/unplayed/)).toBeNull();
+    const ellie = await screen.findByRole("tab", { name: /Ellie/ });
+    expect(within(ellie).getByText("2")).toBeTruthy();
+    expect(ellie.getAttribute("aria-selected")).toBe("true");
+
+    const mabel = screen.getByRole("tab", { name: /Mabel/ });
+    expect(within(mabel).queryByText(/\d/)).toBeNull();
+    expect(mabel.getAttribute("aria-selected")).toBe("false");
+    // One conversation is on screen, not both.
+    expect(screen.queryByText("why is the sky blue")).toBeTruthy();
   });
 
-  it("still offers a panel that has sent nothing — an empty thread is normal", async () => {
+  it("switches child, and a twin who has sent nothing is still someone you can message", async () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    const mabel = await screen.findByRole("region", { name: "Mabel" });
-    expect(within(mabel).getByText("Nothing from Mabel yet.")).toBeTruthy();
-    // A silent twin is still someone you can message; the compose box is not conditional
-    // on there being a conversation already.
-    expect(within(mabel).getByLabelText("Message Mabel")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("tab", { name: /Mabel/ }));
+    expect(screen.getByText(/Nothing from Mabel yet/)).toBeTruthy();
+    // The composer is not conditional on there being a conversation already.
+    expect(screen.getByLabelText("Message Mabel")).toBeTruthy();
+    // And Ellie's thread went with her, rather than both being on screen at once.
+    expect(screen.queryByText("There is a joke. There is a joke.")).toBeNull();
+  });
+
+  it("reads as one afternoon, in the order it happened", async () => {
+    /* THE REASON THE TWO TABS BECAME ONE. What she asked the pet and what she sent her father
+       are the same child's day, and they only mean anything in sequence. Both routes serve
+       newest first; a conversation reads downwards. */
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+    await screen.findByText("There is a joke. There is a joke.");
+
+    expect(threadText()).toEqual([
+      GARBLED,
+      "No words came through — play it to hear what they said.",
+      "why is the sky blue",
+      "Because the air scatters the blue light!",
+      "There is a joke. There is a joke.",
+    ]);
+  });
+
+  it("says which of her words were said to the pet rather than to him", async () => {
+    /* Without the label these are her words arriving in his conversation, and a parent
+       scrolling quickly would reasonably read them as addressed to him. */
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const asked = rowFor(await screen.findByText("why is the sky blue"));
+    expect(asked.className).toContain("jp-b-ask");
+    expect(within(asked).getByText("to the pet")).toBeTruthy();
+    // The pet's answer is on HER side of the thread, not his: it is the other voice in her
+    // room, and a machine's reply where his own words go would read as something he said.
+    const answered = rowFor(screen.getByText("Because the air scatters the blue light!"));
+    expect(answered.className).toContain("jp-b-reply");
+    expect(answered.className).not.toContain("jp-b-me");
   });
 
   it("leads with the transcript and puts the player beside it, not over it", async () => {
@@ -292,7 +342,7 @@ describe("JpanelScreen messages", () => {
     const row = rowFor(await screen.findByText(GARBLED));
     // Beside, not below: the play control shares the body row with the words.
     const body = within(row).getByText(GARBLED).parentElement;
-    expect(body?.className).toContain("jp-msg-body");
+    expect(body?.className).toContain("jp-b-row");
     expect(within(row).getByRole("button", { name: "Play Ellie's message" })).toBeTruthy();
   });
 
@@ -356,9 +406,7 @@ describe("JpanelScreen messages", () => {
     });
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Clear the conversation with Ellie/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Clear messages" }));
     expect(await screen.findByText(/Kept 1 Ellie hasn't heard yet/)).toBeTruthy();
     const del = fetchMock.mock.calls.find((c) => (c[1]?.method ?? "") === "DELETE");
     expect(String(del?.[0])).toBe("/api/jpanel/messages?device=panel-ellie");
@@ -383,7 +431,7 @@ describe("JpanelScreen messages", () => {
     });
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Rename Ellie/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rename" }));
     expect(await screen.findByText(/3 device keys moved/)).toBeTruthy();
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/panels/"));
     expect(String(call?.[0])).toBe("/api/jpanel/panels/panel-ellie/name");
@@ -395,7 +443,7 @@ describe("JpanelScreen messages", () => {
        thinks better of it. Neither is a request to rename anything. */
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
-    const button = await screen.findByRole("button", { name: /Rename Ellie/ });
+    const button = await screen.findByRole("button", { name: "Rename" });
 
     vi.spyOn(window, "prompt").mockReturnValue(null);
     fireEvent.click(button);
@@ -411,9 +459,7 @@ describe("JpanelScreen messages", () => {
     vi.spyOn(window, "confirm").mockReturnValue(false);
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Clear the conversation with Ellie/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Clear messages" }));
     expect(fetchMock.mock.calls.some((c) => (c[1]?.method ?? "") === "DELETE")).toBe(false);
   });
 
@@ -550,9 +596,8 @@ describe("JpanelScreen messages", () => {
       // His own inbox does not need telling that a message to him was to him. Scoped to the
       // message header, because the panel's own tab carries the same name.
       await screen.findByText("There is a joke. There is a joke.");
-      const senders = Array.from(document.querySelectorAll(".jp-from")).map((e) => e.textContent);
-      expect(senders).toContain("Ellie");
-      expect(senders.some((t) => t?.includes("→"))).toBe(false);
+      const labels = Array.from(document.querySelectorAll(".jp-b-who")).map((e) => e.textContent);
+      expect(labels.some((t) => t?.includes("→"))).toBe(false);
     });
   });
 });
@@ -591,9 +636,12 @@ describe("JpanelScreen read tracking", () => {
     await act(async () => observer?.showAll());
 
     await waitFor(() =>
+      // Oldest first, because the thread reads downwards now: `jp-2` is 24 minutes old and
+      // `jp-1` is six. The set is what matters, but the order is asserted rather than sorted
+      // away — it is the one cheap check that the conversation is not being drawn backwards.
       expect(played()).toEqual([
-        "/api/jpanel/messages/jp-1/played",
         "/api/jpanel/messages/jp-2/played",
+        "/api/jpanel/messages/jp-1/played",
       ]),
     );
   });
@@ -1147,7 +1195,13 @@ describe("how dim dim is", () => {
   });
 });
 
-describe("the Chats tab", () => {
+describe("the pet's half of the conversation", () => {
+  /* THERE USED TO BE A TAB FOR THIS. `Chats` held what the children said to the pet — half of
+     a child's afternoon — while `Messages` held the other half, and neither could be read in
+     the order things happened. The owner asked for one conversation per child, so the tab is
+     gone and its content is in the thread. What still has to hold is everything that tab was
+     built for: the words are kept, they are attributed to the right child, and the owner can
+     destroy them. */
   const fetchMock = vi.fn<typeof fetch>();
 
   beforeEach(() => {
@@ -1159,26 +1213,59 @@ describe("the Chats tab", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows what a child said and what the pet answered, under her panel", async () => {
+  it("no longer has a tab of its own", async () => {
     render(<JpanelScreen onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
+    await screen.findByText("why is the sky blue");
+    expect(screen.queryByRole("tab", { name: "Chats" })).toBeNull();
+  });
 
+  it("shows what a child said and what the pet answered", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
     expect(await screen.findByText("why is the sky blue")).toBeTruthy();
     expect(screen.getByText("Because the air scatters the blue light!")).toBeTruthy();
-    // GROUPED BY PANEL, because the question this answers is about a child rather than a house.
-    expect(screen.getByText("panel Elora")).toBeTruthy();
   });
 
-  it("lists a panel that has said nothing, so quiet reads as quiet and not as missing", async () => {
+  it("gives a panel a chip even when the pet is all it has ever talked to", async () => {
+    /* SHE WOULD NOT EXIST ON THIS SCREEN otherwise. A child who has never recorded a message
+       for her father has no message thread at all, and a picker built from message threads
+       alone would simply leave her off it. */
+    fetchMock.mockImplementation(
+      box({
+        threads: [{ device_id: "panel-ellie", name: "Ellie", unplayed: 0, messages: [] }],
+        chats: [
+          { device_id: "panel-ellie", label: "Ellie", turns: [] },
+          {
+            device_id: "panel-quiet",
+            label: "Wren",
+            turns: [
+              {
+                id: "t9",
+                heard: "do worms have ears",
+                reply: "They feel the ground shaking instead!",
+                stt_ms: 0,
+                llm_ms: 0,
+                tts_ms: 0,
+                total_ms: 1200,
+                created_at: new Date().toISOString(),
+              },
+            ],
+          },
+        ],
+      }),
+    );
     render(<JpanelScreen onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
 
-    expect(await screen.findByText("panel Lydian")).toBeTruthy();
-    expect(screen.getByText("Nothing from this panel yet.")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("tab", { name: /Wren/ }));
+    expect(screen.getByText("do worms have ears")).toBeTruthy();
   });
 
-  it("does not clear a child's conversations on one press", async () => {
+  it("clears the pet transcript on its own, and only for the child whose it is", async () => {
+    /* A SEPARATE CONTROL FROM "Clear messages", although they now clear two halves of one
+       visible thread. The messages are post between two people and the box refuses to destroy
+       one a child has not heard; this is a record of what she said to a machine. One button
+       for both would mean one press destroying both. */
     const cleared: string[] = [];
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     fetchMock.mockImplementation(
       box({
         clearChats: (path) => {
@@ -1188,24 +1275,18 @@ describe("the Chats tab", () => {
       }),
     );
     render(<JpanelScreen onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
     await screen.findByText("why is the sky blue");
 
-    // THE FIRST PRESS ONLY ASKS. This button destroys the record of a child's conversations
-    // and there is no undo anywhere behind it.
-    // Unique: only the panel with turns shows a Clear, so this cannot silently pick the wrong one.
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    expect(cleared).toEqual([]);
-    expect(screen.getByRole("button", { name: "Keep" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Really clear" }));
-    await screen.findByText("why is the sky blue");
-    // Scoped to the panel whose button it was, never the whole house.
-    expect(cleared).toEqual(["/api/jpanel/chats?device=dev-elora"]);
+    fireEvent.click(screen.getByRole("button", { name: "Clear pet chat" }));
+    await waitFor(() => expect(cleared).toEqual(["/api/jpanel/chats?device=panel-ellie"]));
+    // Scoped to the child whose button it was, never the whole house — the route clears every
+    // panel when `device` is omitted, so a missing query string is a silent disaster.
+    expect(cleared[0]).toContain("device=");
   });
 
-  it("backs out of a clear without destroying anything", async () => {
+  it("does not clear it when the confirm is declined", async () => {
     const cleared: string[] = [];
+    vi.spyOn(window, "confirm").mockReturnValue(false);
     fetchMock.mockImplementation(
       box({
         clearChats: (path) => {
@@ -1215,18 +1296,15 @@ describe("the Chats tab", () => {
       }),
     );
     render(<JpanelScreen onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
     await screen.findByText("why is the sky blue");
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear pet chat" }));
     expect(cleared).toEqual([]);
     expect(screen.getByText("why is the sky blue")).toBeTruthy();
   });
 
   it("keeps the transcript on screen when a refresh fails", async () => {
     render(<JpanelScreen onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
     await screen.findByText("why is the sky blue");
 
     // A failed fetch on a train is not evidence the child said nothing, and blanking the

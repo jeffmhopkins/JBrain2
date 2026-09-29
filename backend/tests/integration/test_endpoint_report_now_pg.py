@@ -184,6 +184,15 @@ async def test_the_box_can_say_why_a_panel_cannot_reach_it(
                 "talk_err": "connect",
                 "talk_fails": 1,
                 "talk_ago_s": 12,
+                # A child's reply that did not go, and the dashes she watched appear. Both were
+                # invisible to this box until 0.3.38 — the failing sends never arrived, so its
+                # own record held only the ones that worked.
+                "send_err": "upload-stall",
+                "send_fails": 2,
+                "send_ago_s": 90,
+                "dashes": 4,
+                "dash_err": "timeout",
+                "dash_ago_s": 30,
                 "box_quiet_s": 1860,
             },
         )
@@ -201,7 +210,7 @@ async def test_the_box_can_say_why_a_panel_cannot_reach_it(
         assert panel["stale_s"] < 60
 
         paths = {p["name"]: p for p in panel["paths"]}
-        assert set(paths) == {"set", "poll", "talk"}, "all three, named"
+        assert set(paths) == {"set", "poll", "talk", "send"}, "all four, named"
         assert paths["set"]["err"] == "connect" and paths["set"]["fails"] == 3
         assert paths["set"]["ago_s"] == 47
         assert paths["talk"]["err"] == "connect" and paths["talk"]["fails"] == 1
@@ -209,6 +218,17 @@ async def test_the_box_can_say_why_a_panel_cannot_reach_it(
         # one task reaching the box while another cannot is what rules out the network. A route
         # that omitted the working paths would make an absent row mean two different things.
         assert paths["poll"]["fails"] == 0 and paths["poll"]["err"] == ""
+        # THE PATH WHERE A SILENT FAILURE COSTS THE MOST: the others fail and something is late,
+        # this one fails and a message a four-year-old recorded for somebody is gone.
+        assert paths["send"]["err"] == "upload-stall" and paths["send"]["fails"] == 2
+        assert paths["send"]["ago_s"] == 90
+
+        # AND THE DASH, which is counted beside the paths rather than inside them because one of
+        # its two causes is not a path failure at all: `timeout` means nothing failed, the answer
+        # just never came back in time — so there is no row above to read it off.
+        assert panel["dashes"] == 4
+        assert panel["dash_err"] == "timeout"
+        assert panel["dash_ago_s"] == 30
 
 
 async def test_the_box_can_tell_a_message_nobody_heard_from_one_that_played(

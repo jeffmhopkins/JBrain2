@@ -566,8 +566,8 @@ static void test_a_cue_no_longer_decides_what_a_press_means(void)
     const ui_target_t narrowed = ui_tap_target(&w.st, &w.in);
     CHECK(narrowed == UI_TARGET_TRANSPORT || narrowed == UI_TARGET_PET,
           "a MESSAGE sounding is what narrows the table");
-    CHECK(UI_TAP_ORDER_PLAYING_LEN == 4,
-          "only the menu, the exit, the transport and the pet remain");
+    CHECK(UI_TAP_ORDER_PLAYING_LEN == 5,
+          "only the menu, the exit, the face, the transport and the pet remain");
 
     /* AND THE MENU STILL CONSUMES EVERYTHING WHILE IT IS UP, message or no message: it is drawn
        above the transport, so it has to be offered the press first. */
@@ -1641,6 +1641,59 @@ static void test_a_failed_turn_says_so_rather_than_going_quiet(void)
     CHECK(w.st.talk == UI_TALK_IDLE, "then the pet goes back to being a pet");
 }
 
+static void test_every_dash_is_counted_and_its_two_causes_told_apart(void)
+{
+    /* THE OWNER: *"anytime we get a red – I want you to make sure that it's logged, so we can
+       make sure and resolve it in the future."*
+
+       The dash is the one failure a child sees from across the room, and it had two causes of
+       which only one left a record. A failed request is recorded by `talk.c` and arrives as
+       `talk_err`. The other is the panel giving up: the wait expires, the dash is drawn, and the
+       request may still be in flight and may still succeed — nothing failed, so nothing was
+       recorded anywhere, and the commonest shape of "it didn't work" was the invisible one.
+
+       That is why the reason is kept here rather than inferred from `talk_err` on the box: when
+       this says `"timeout"` there IS no talk row to read. */
+    world_reset();
+    CHECK(w.st.dashes == 0, "nothing has gone wrong yet");
+
+    /* One of each cause, from the same state. */
+    w.st.talk = UI_TALK_THINKING;
+    w.st.talk_since = w.in.now;
+    w.in.net = UI_NET_FAILED;
+    step();
+    CHECK(w.st.talk == UI_TALK_FAILED, "the request failed");
+    CHECK(w.st.dashes == 1, "and the dash was counted");
+    CHECK(strcmp(w.st.dash_why, "net") == 0, "named as the request failing");
+    const uint32_t first_at = w.st.dash_at;
+    CHECK(first_at != 0, "and stamped, so the box can say how long ago");
+
+    run_ms(TALK_FAILED_MS + 400);
+    w.st.talk = UI_TALK_THINKING;
+    w.st.talk_since = w.in.now;
+    /* BUSY, not IDLE: `talk.c` is still working. IDLE from THINKING is the box having heard
+       silence, which returns to the pet without a dash — so the timeout branch is only ever
+       reached with a request still in flight, which is exactly the live case. The owner, of the
+       one that started this: *"it didn't time out so I'm a little curious on what caused it."* */
+    w.in.net = UI_NET_BUSY;
+    run_ms(TALK_TIMEOUT_MS + 400);
+    CHECK(w.st.talk == UI_TALK_FAILED, "the panel gave up waiting");
+    CHECK(w.st.dashes == 2, "which is just as much a dash as the other one");
+    CHECK(strcmp(w.st.dash_why, "timeout") == 0, "and is NOT reported as a network failure");
+    CHECK(w.st.dash_at > first_at, "the stamp is the latest dash, not the first");
+
+    /* NOT CLEARED BY A GOOD TURN, which is the whole point of the count: the owner asked for
+       every dash, and a counter that a later success resets answers "none" for a panel that
+       drew six of them this afternoon. `dash_at` is what says whether it is current. */
+    run_ms(TALK_FAILED_MS + 400);
+    w.st.talk = UI_TALK_THINKING;
+    w.st.talk_since = w.in.now;
+    w.in.net = UI_NET_SPOKE;
+    step();
+    CHECK(w.st.talk == UI_TALK_IDLE, "a reply arrived");
+    CHECK(w.st.dashes == 2, "and the afternoon's failures are still on the record");
+}
+
 static void test_a_reply_arms_a_follow_up_and_the_cap_ends_it(void)
 {
     /* The exchange continues itself, fired on the EDGE where the speaker falls silent — and
@@ -1695,6 +1748,122 @@ static void test_stop_said_out_loud_leaves_every_state(void)
     perform(&w.tap_out);
     CHECK(w.st.talk == UI_TALK_IDLE, "stop abandons a reply in flight");
     CHECK(w.talk_clear >= 1, "telling the network half to let go");
+}
+
+static void test_pressing_the_face_cycles_through_the_waiting_messages(void)
+{
+    /* The owner: *"instead of swiping if we just press the icon on the top left it should cycle
+       through the numbers of messages that we have"*, and on where: *"it should be the top left
+       icon after that playback menu is up"*.
+
+       A swipe is the wrong gesture for this audience — a four-year-old jabs, which is why
+       `swipes` and `swipe_dx` ride telemetry at all. The face already answers "which message is
+       this?", so pressing it to change the answer explains itself. */
+    world_reset();
+    const bool three[3] = {true, false, true};
+    queue_is(3, three);
+    step();
+    run_ms(400);
+    tap_the_notice(true); /* the playback menu is up, which is where he asked for this */
+    step();
+    CHECK(ui_run_controls_up(&w.st, &w.in), "the menu is up");
+    CHECK(w.st.sel == 0, "starting on the oldest");
+
+    const int face_x = FACE_W / 4;
+    const int face_y = w.in.over_y0 + (w.in.over_h - w.in.over_y0) / 4;
+    tap_at(face_x, face_y);
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_FACE,
+          "a press on the sender's face reaches the face, not the pet");
+
+    tap_at(face_x, face_y);
+    step();
+    CHECK(w.st.sel == 1, "and moves to the next message");
+
+    /* AND IT STOPS WHAT WAS SOUNDING, the same rule the swipe follows: a child who has moved on
+       to another message is not still listening to this one. */
+    CHECK(w.stop >= 1, "the message that was playing is ended");
+    CHECK(w.st.pending == UI_PEND_NONE, "and no deferred play survives for the one she left");
+
+    /* ONE PRESS PER MENU, AND THAT IS THE LIMIT OF THIS CONTROL AS IT STANDS. Stopping takes the
+       playback menu down, and the face is only offered while that menu is up — so cycling twice
+       needs the face to stay live into the again/reply state, where its rectangle is the waiting
+       badge's and the badge already means "press to hear this". That collision is the owner's to
+       settle, and is stated here rather than resolved by a guess. */
+    CHECK(!ui_run_controls_up(&w.st, &w.in), "the menu is down, so the face is no longer offered");
+}
+
+static void test_the_face_is_not_a_control_with_one_message(void)
+{
+    /* A live target that does nothing is worse than no target. With one message there is nothing
+       to change to, so the press must fall through to the pet — which pokes it, and a poke is an
+       answer a child can see. */
+    world_reset();
+    const bool one[1] = {true};
+    queue_is(1, one);
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    const int face_x = FACE_W / 4;
+    const int face_y = w.in.over_y0 + (w.in.over_h - w.in.over_y0) / 4;
+    tap_at(face_x, face_y);
+    CHECK(ui_tap_target(&w.st, &w.in) != UI_TARGET_FACE,
+          "with nothing to cycle to, the face is not a control");
+}
+
+static void test_pressing_replay_twice_does_not_pause_what_never_started(void)
+{
+    /* The owner, on 0.3.35: *"it played through once and has stopped and has the play button
+       again, but when we click the play button sometimes it just pauses ... usually just on the
+       first time."*
+
+       WHAT THE FINGER IS ON CHANGES UNDER IT. When a message ends the pair comes up and the
+       arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` — replay.
+       Pressing it arms `UI_PEND_REPLAY`, which makes `ui_run_controls_up` true, which swaps the
+       table to `UI_TAP_ORDER_PLAYING` — where the same disc in the same place is now the
+       TRANSPORT. A replay waits out its own cue before any sound, so for those few hundred
+       milliseconds nothing has happened; a child presses again and the second press pauses a
+       message that never started. "Usually just the first time" is the press that flips the
+       table. */
+    world_reset();
+    play_a_message(true);
+    /* The message ends and the pair comes up. Set directly, as every other test here does: the
+       `JPANEL_PLAYING` -> ended transition that arms it lives in `display.c`, not in this half. */
+    /* Through the world's own fields: `step()` re-derives `in` from them every frame, so setting
+       `w.in.*` here would be undone before the arbitration ever sees it. */
+    w.stream = false;
+    w.fetching = false;
+    w.in.jrunning = false;
+    w.st.pending = UI_PEND_NONE;
+    w.st.repeat_until = w.in.now + REPEAT_MS;
+    step();
+    CHECK(w.st.repeat_until != 0, "the again/reply pair is up");
+    CHECK(!ui_run_controls_up(&w.st, &w.in), "with nothing running, so the IDLE table arbitrates");
+
+    /* First press on the left disc: replay. */
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.st.pending == UI_PEND_REPLAY, "the first press asks for a replay");
+
+    /* THE TABLE HAS NOW FLIPPED. The same disc is the transport, and an impatient second press
+       lands on it before a single byte has been fetched. */
+    CHECK(ui_tap_target(&w.st, &w.in) == UI_TARGET_TRANSPORT,
+          "the same disc is the transport once a replay is pending — this is the trap");
+    const int paused_before = w.pause_on;
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.pause_on == paused_before,
+          "and the second press must not pause a replay that has not started");
+    CHECK(w.st.pending == UI_PEND_REPLAY, "the replay is still on its way");
+
+    /* AND THE BUTTON IS NOT DEAD — the refusal lasts exactly as long as the pending, not a
+       clock. Once the audio is actually sounding, pause works on the very next press. */
+    w.st.pending = UI_PEND_NONE;
+    w.stream = true; /* through the world, for the reason above */
+    step();
+    tap_at(CONFIRM_CX_CANCEL, confirm_cy(FACE_H) + 10);
+    step();
+    CHECK(w.pause_on > paused_before, "a press once it IS sounding still pauses");
 }
 
 static void test_a_held_stream_resumes_rather_than_being_thrown_away(void)
@@ -1918,8 +2087,12 @@ int main(void)
     test_the_cross_discards_and_the_pet_is_not_poked();
     test_a_named_turn_with_nobody_speaking_costs_nothing();
     test_a_failed_turn_says_so_rather_than_going_quiet();
+    test_every_dash_is_counted_and_its_two_causes_told_apart();
     test_a_reply_arms_a_follow_up_and_the_cap_ends_it();
     test_stop_said_out_loud_leaves_every_state();
+    test_pressing_the_face_cycles_through_the_waiting_messages();
+    test_the_face_is_not_a_control_with_one_message();
+    test_pressing_replay_twice_does_not_pause_what_never_started();
     test_a_held_stream_resumes_rather_than_being_thrown_away();
     test_the_notice_shrinks_to_a_badge_and_a_second_one_does_not_restore_it();
     test_the_notice_stays_painted_while_a_cue_sounds();
