@@ -356,6 +356,23 @@ plausible-sounding change, passes one and breaks the other.
 until the owner clears it**, with no expiry and no sweep, because a transcript that vanishes on a
 timer is not a record a parent can rely on — and the Clear button asks twice.
 
+**AND SO DOES A REPLAY — THE SAME BUG, THE SECOND CALL SITE.** The owner, a release later:
+*"the replay seems to sometimes not work where I hit it and it just kind of goes to a pause button
+for a second and then stops and other times it plays."* `do_fetch` was fixed and `do_replay` was
+not, because the fix was written where the failure had been **seen** rather than everywhere the
+mechanism applies. One `stream_begin_waiting` helper now owns the retry, and the test walks every
+`audio_stream_begin` call site — the first version asserted the wait existed *somewhere* in the
+file, which it did, in the one function that had it.
+
+**AND A REPLAY NOW REACHES THE STATE THAT ENDS A PLAYBACK.** `case JPANEL_PLAYING` is the only
+place that notices a message has finished: it clears the state and re-arms `s_repeat_until`, which
+is what puts the "again" and "reply" pair back on the glass. `do_fetch` set it; `do_replay` did
+not. A replay was audible and then simply over — the pair kept counting down from the end of the
+**first** play, so a replay longer than what was left of that window took the buttons away
+mid-sentence and a child who wanted to hear it once more had nothing to press. The two states
+replay deliberately does not join (`s_owed`, `s_run`) are argued in its own comment; this one was
+not on that list, it was missed.
+
 **A MESSAGE WAITS FOR THE SPEAKER RATHER THAN BEING DROPPED (0.3.33).** The owner: *"[it looks]
 like it's going to play and only stays about one second before it disappears again ... Seems that
 sometime if I long press on the notification it seems to work a little bit better. Like maybe the

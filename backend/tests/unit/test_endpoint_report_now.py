@@ -226,6 +226,93 @@ class TestTheVolumeCeilingWasTheBugReport:
         assert TelemetryIn(version="0.3.33", uptime_ms=1, relinks=3).relinks == 3
         assert TelemetryIn(version="0.3.32", uptime_ms=1).relinks == 0
 
+    def test_every_way_of_starting_a_message_waits_for_the_speaker(self) -> None:
+        """A MESSAGE MUST NOT DEPEND ON HOW LONG A FOUR-YEAR-OLD HOLDS THEIR FINGER — and this is
+        written as a SWEEP because the first version was not, and missed the second half of the
+        bug it was added for.
+
+        The owner, on the notice: *"[it looks] like it's going to play and only stays about one
+        second before it disappears again ... if I long press it seems to work a little bit
+        better."* Then, a release later, on replay: *"the replay seems to sometimes not work
+        where I hit it and it just kind of goes to a pause button for a second and then stops
+        and other times it plays."*
+
+        The same bug twice. Both controls play `CUE_PLAY` on the press, `audio_stream_begin`
+        refuses while anything is on the speaker, and the fetch crosses a task boundary — so a
+        cue starting in that window takes the speaker back. `do_fetch` was fixed and `do_replay`
+        was not, because the fix was written where the failure had been SEEN rather than
+        everywhere the mechanism applies.
+
+        THE FIRST VERSION OF THIS TEST PASSED THROUGHOUT, because it asserted that a
+        `while (!audio_stream_begin())` existed somewhere in the file. It did — in the one
+        function that had been fixed. So this walks every call site instead: any bare
+        `audio_stream_begin()` outside the single waiting helper is the bug coming back."""
+        import pathlib
+        import re
+
+        jpanel = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
+        ).read_text(encoding="utf-8")
+
+        helper = re.search(r"static bool stream_begin_waiting\(.*?\n\}", jpanel, re.S)
+        assert helper, "the shared speaker wait is gone"
+        assert "STREAM_WAIT_MAX_MS" in helper.group(0), (
+            "the wait is unbounded — the same check means 'a message is already playing', and "
+            "blocking the jpanel task on that would stop the poll and the acknowledgements too"
+        )
+
+        callers = [
+            line.strip()
+            for line in jpanel.splitlines()
+            if "audio_stream_begin()" in line and not line.strip().startswith("*")
+        ]
+        outside = [c for c in callers if c not in helper.group(0)]
+        assert not outside, (
+            f"a bare audio_stream_begin() outside the waiting helper: {outside}. Every way of "
+            "starting a message has to wait out the press cue, or that one is intermittent in "
+            "exactly the way the notice and replay both were"
+        )
+        assert jpanel.count("stream_begin_waiting(") >= 3, (
+            "the definition plus a call from each of do_fetch and do_replay"
+        )
+        # And the wait is REPORTED: "it works now" and "it works now BECAUSE we wait" are
+        # different facts, and only the second says the wait is load-bearing.
+        from jbrain.api.endpoint import TelemetryIn
+
+        assert TelemetryIn(version="0.3.33", uptime_ms=1, msg_waited_ms=120).msg_waited_ms == 120
+
+    def test_a_replay_that_ends_re_arms_the_buttons(self) -> None:
+        """PLAYBACK ENDED IS A STATE, AND REPLAY WAS NOT REACHING IT.
+
+        `display.c`'s `case JPANEL_PLAYING` is the only place that notices a message has
+        finished: when `audio_playing()` goes false it clears the state and re-arms
+        `s_repeat_until`, which is what puts the "again" and "reply" pair back on the glass.
+
+        `do_fetch` set `JPANEL_PLAYING`; `do_replay` did not. So a replay was audible and then
+        simply over — the pair kept counting down from the end of the FIRST play, and a replay
+        longer than what was left of that window took the buttons away mid-sentence, leaving a
+        child who wanted to hear it once more with nothing to press.
+
+        The two states replay deliberately does NOT join are argued in its own comment
+        (`s_owed`, `s_run`); this one was not on that list, it was missed."""
+        import pathlib
+        import re
+
+        jpanel = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
+        ).read_text(encoding="utf-8")
+        replay = re.search(r"static void do_replay\(void\)\n\{.*?\n\}", jpanel, re.S)
+        assert replay, "do_replay moved; re-pin this test"
+        body = replay.group(0)
+        assert "s_state = JPANEL_PLAYING;" in body, (
+            "a replay no longer reaches the state that ends a playback, so the again/reply pair "
+            "is never re-armed after one"
+        )
+        # The two it must still NOT join, or "again" would acknowledge a second listen and walk
+        # on into the next unheard message.
+        assert "s_owed = true" not in body, "a replay must not re-acknowledge the message"
+        assert "s_run = true" not in body, "a replay must not join the run"
+
     def test_an_open_microphone_is_deaf_to_commands(self) -> None:
         """ONE UTTERANCE, ONE READER. The owner: *"there are still occasional times when we are
         talking and recording a message that commands get recognized and sound effects come
@@ -287,43 +374,6 @@ class TestTheVolumeCeilingWasTheBugReport:
             "shorter than the child spoke"
         )
         assert "s_cap_used +=" in body, "the capture cursor is not advanced, so nothing is kept"
-
-    def test_a_message_waits_for_the_speaker_rather_than_being_dropped(self) -> None:
-        """A MESSAGE MUST NOT DEPEND ON HOW LONG A FOUR-YEAR-OLD HOLDS THEIR FINGER.
-
-        The owner: *"[it looks] like it's going to play and only stays about one second before it
-        disappears again ... Seems that sometime if I long press on the notification it seems to
-        work a little bit better. Like maybe the initial click isn't passing to the correct place
-        unless I'm holding the button longer."*
-
-        A press on the notice plays `CUE_PLAY` first, so the finger gets an answer before the
-        message arrives, and `audio_stream_begin` refuses while anything is on the speaker. The
-        renderer defers the fetch until the cue is done, but the fetch then crosses a task
-        boundary — `jpanel_play_at` queues a command that the jpanel task picks up milliseconds
-        later — and a cue starting in that window takes the speaker back. Whether one does depends
-        on what the finger did next, which is exactly why holding behaves differently from
-        tapping.
-
-        The old answer was `goto done`: no stream, one `ESP_LOGW` to a console that does not exist
-        in a bedroom, and a menu that vanishes a second after it appeared.
-
-        Pinned as the LOOP, because the bug was that there wasn't one."""
-        import pathlib
-        import re
-
-        jpanel = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
-        ).read_text(encoding="utf-8")
-        assert re.search(r"while \(!audio_stream_begin\(\)\)", jpanel), (
-            "the fetch no longer waits for the speaker, so a message is dropped whenever the "
-            "press cue is still playing when the jpanel task picks the command up"
-        )
-        # Bounded, or the same check ("a message is already playing") would block the jpanel task
-        # forever and stop the poll and the acknowledgements with it.
-        assert "STREAM_WAIT_MAX_MS" in jpanel, "the wait is unbounded"
-        from jbrain.api.endpoint import TelemetryIn
-
-        assert TelemetryIn(version="0.3.33", uptime_ms=1, msg_waited_ms=120).msg_waited_ms == 120
 
     def test_every_talk_failure_the_firmware_can_hit_carries_a_name(self) -> None:
         """THE RED DASH THE OWNER SAW, AND WHY IT SAID NOTHING. `talk.c` had six ways to fail and
