@@ -133,8 +133,41 @@ static const char *TAG = "endpoint";
    that most needs them. One failure ends the asking for the rest of the period. */
 static bool apply_settings(const cfg_t *cfg, char *served, size_t served_cap, int *seq)
 {
-    ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1, .form = -1, .dim_percent = -1};
+    ota_settings_t st = {.volume = -1,
+                         .mic_gain_db = -1,
+                         .brightness = -1,
+                         .form = -1,
+                         .dim_percent = -1,
+                         .waiting = -1};
     if (ota_fetch_settings(cfg, &st) != ESP_OK) return false;
+    /* A MESSAGE LANDS IN THREE SECONDS RATHER THAN THIRTY, over the poll that was happening anyway.
+     *
+       `jpanel.c` asks the box what is waiting every `POLL_EVERY_MS` — thirty seconds — and the fast
+       paths that were supposed to make that a backstop are both unreliable: the nudge datagram
+       needs an address the box only learns FROM that poll, and the push stream is disabled after
+       the 0.3.22 crash loop. So a freshly-booted panel had no fast path at all, and the owner
+       watched it: *"When sending messages still took a long time for it to show up on the panel."*
+     *
+       This poll already runs every three seconds and the box already knows the number, so a change
+       in it is all the signal needed — `jpanel_poll_soon()` is exactly what a nudge does, over a
+       channel that cannot be dropped. ON A CHANGE, NOT ON A NON-ZERO VALUE: a panel with something
+       unheard would otherwise re-ask twenty times a minute forever, which is the handshake cost
+       this whole design exists to avoid.
+     *
+       -1 MEANS THE BOX DID NOT SAY, and is skipped entirely: a box too old to send the field leaves
+       the panel exactly as it was, on its own thirty-second cycle. */
+    static int s_waiting_seen = -1;
+    if (st.waiting >= 0 && st.waiting != s_waiting_seen) {
+        /* The FIRST value is adopted without asking. A panel that has just booted has nothing on
+           the glass yet and `jpanel.c`'s own first poll is moments away, so a nudge here would be a
+           second handshake for a fact already in flight. */
+        const bool news = s_waiting_seen >= 0;
+        s_waiting_seen = st.waiting;
+        if (news) {
+            ESP_LOGI(TAG, "box says %d waiting — asking now", st.waiting);
+            jpanel_poll_soon();
+        }
+    }
     /* The version this box would serve, for the caller's install check. Optional, because the
        two callers that only want the knobs applied should not have to declare a buffer. */
     if (served != NULL && served_cap > 0) snprintf(served, served_cap, "%s", st.fw_version);
@@ -235,6 +268,11 @@ static void report(const cfg_t *cfg)
        orientation has never been measured; this is how it gets measured. */
     int tap_x = -1, tap_y = -1, tap_zone = 0;
     display_last_tap(&tap_x, &tap_y, &tap_zone);
+    /* Whether the swipe gesture exists on this hardware at all — see `display_swipes`. Reported
+       beside the tap point because it answers the same class of question about the same part. */
+    unsigned swipes = 0;
+    int swipe_dx = 0, msg_sel = 0;
+    display_swipes(&swipes, &swipe_dx, &msg_sel);
 
     char hist[8][PMU_SAMPLE_CHARS];
     const int n = pmu_history_hex(hist, 8);
@@ -314,7 +352,8 @@ static void report(const cfg_t *cfg)
                      "\"set_err\":\"%s\",\"set_fails\":%d,"
                      "\"nudges\":%u,\"nudge_drop\":%u,"
                      "\"push\":%s,\"push_events\":%u,\"push_drops\":%u,"
-                     "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"screen\":\"%s\","
+                     "\"tap\":[%d,%d,%d],\"swipes\":%u,\"swipe_dx\":%d,\"msg_sel\":%d,"
+                     "\"panel_reset\":%s,\"screen\":\"%s\","
                      "\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
@@ -332,7 +371,7 @@ static void report(const cfg_t *cfg)
                      set_err, set_fails, nudge_count(), nudge_dropped(),
                      jpanel_push_live() ? "true" : "false", jpanel_push_events(),
                      jpanel_push_drops(),
-                     tap_x, tap_y, tap_zone,
+                     tap_x, tap_y, tap_zone, swipes, swipe_dx, msg_sel,
                      display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);

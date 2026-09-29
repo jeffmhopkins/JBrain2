@@ -35,6 +35,13 @@ static i2c_master_dev_handle_t s_dev;
 static volatile bool s_down;
 static volatile int s_x = -1;
 static volatile int s_y = -1;
+/* WHERE THE FINGER IS NOW, as opposed to where it landed. Two values rather than one because the
+   two questions are different and both are wanted: a hit test wants the point the press was AIMED
+   at, and a swipe wants how far it has since travelled. Updated on every read while the finger is
+   down, at `TOUCH_SAMPLE_MS` — so a 200 ms drag is sampled a dozen times whatever the renderer is
+   doing, which is the same reason the press edge is latched here rather than polled. */
+static volatile int s_cur_x = -1;
+static volatile int s_cur_y = -1;
 
 /* THE PRESSES THE RENDERER HAS NOT COLLECTED YET.
  *
@@ -109,9 +116,18 @@ static bool sample(void)
     const bool down = buf[0] > 0;
     const bool edge = down && !s_down;
     s_down = down;
-    if (edge) {
-        s_x = ((buf[1] & 0x0F) << 8) | buf[2];
-        s_y = ((buf[3] & 0x0F) << 8) | buf[4];
+    if (down) {
+        const int x = ((buf[1] & 0x0F) << 8) | buf[2];
+        const int y = ((buf[3] & 0x0F) << 8) | buf[4];
+        /* THE EDGE LATCHES, THE LEVEL TRACKS. `s_x`/`s_y` are this press's origin and must not
+           move under a hit test that asks after the finger has wandered; `s_cur_*` is the live
+           point and is the only thing a swipe can be measured from. */
+        if (edge) {
+            s_x = x;
+            s_y = y;
+        }
+        s_cur_x = x;
+        s_cur_y = y;
     }
     return edge;
 }
@@ -149,4 +165,16 @@ void touch_point(int *x, int *y)
 {
     if (x != NULL) *x = s_x;
     if (y != NULL) *y = s_y;
+}
+
+bool touch_drag(int *x, int *y)
+{
+    /* THE LEVEL IS READ FIRST AND IS THE GUARD: a point from a finger that has already lifted is
+       the last place it was, which would make every lift look like a swipe back to wherever the
+       press ended. */
+    if (!s_down) return false;
+    if (s_cur_x < 0 || s_cur_y < 0) return false;
+    if (x != NULL) *x = s_cur_x;
+    if (y != NULL) *y = s_cur_y;
+    return true;
 }

@@ -102,6 +102,22 @@ typedef struct {
        remembered by the panel instead: adopt whatever arrives on the first poll, post when it
        CHANGES. Exactly once per raise, per panel, with nothing on the box to expire. */
     int telemetry_seq;
+    /* HOW MANY VOICE POSTS ARE WAITING FOR THIS PANEL, and it rides here for LATENCY rather than
+       for display: `GET /jpanel/waiting` is what actually describes the queue and the panel still
+       calls it. This poll runs every three seconds where that one runs every thirty, so a change
+       here is how the panel learns to ask.
+     *
+       IT IS THE THIRD WAY A MESSAGE CAN REACH A PANEL AND THE FIRST RELIABLE ONE. A nudge datagram
+       is fast and fragile — it needs a remembered address, and a panel that has just booted has
+       none — and the push stream it shares a path with is disabled after the 0.3.22 crash loop. Both
+       failures degrade to the thirty-second poll, which is what the owner saw: *"When sending
+       messages still took a long time for it to show up on the panel."* A number on a poll that was
+       already happening cannot be dropped and costs no handshake.
+     *
+       -1, NOT 0, FOR "THE BOX DID NOT SAY". A box too old to send it must not read as "nothing is
+       waiting", because a panel comparing against a baseline would then poll on every single pass
+       the moment something arrived and stopped arriving. */
+    int waiting;
 } ota_settings_t;
 
 esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out);

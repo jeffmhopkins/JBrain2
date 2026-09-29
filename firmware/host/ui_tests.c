@@ -74,6 +74,7 @@ typedef struct {
     int cue[128];
     int cues;
     int play_next, replay, stop, drop, opened, talk_clear, jpanel_clear, poll_soon;
+    int play_at; /* which queued message the last PLAY_NEXT asked for */
     int send_talk, send_jpanel;
     ui_to_t send_jpanel_to;
     int standby_n, wake_n, blank_n, power_off_n, pause_on, pause_off;
@@ -141,6 +142,15 @@ static void perform(ui_out_t *out)
             break;
         case UI_ACT_PLAY_NEXT:
             w.play_next++;
+            w.play_at = arg;
+            /* THE SENDER IS KNOWN FROM THE PRESS, because `jpanel_play_at` seeds it from the queue
+               entry it is about to fetch — the box already described that exact message, and
+               `/next?at=` resolves the same index off the same ordered list. Modelled here because
+               the overlay's one-reader rule depends on it: the module trusts `in_from` about a
+               message's own sender, which is only safe while this is true of the real thing. */
+            if (arg >= 0 && arg < w.in.known) {
+                w.in.in_from = w.in.from_dad[arg] ? UI_TO_DAD : UI_TO_PANEL;
+            }
             /* A FETCH, NOT A SOUND. It does not land on this frame — `jpanel.c` is an HTTPS
                round trip away — and the gap is exactly where the run controls have to appear
                from the press rather than from the stream. */
@@ -344,6 +354,33 @@ static bool drawn_near(int cx, int cy, int r)
     return false;
 }
 
+/* WHAT THE BOX SAYS IS WAITING, oldest first: `true` for a message from Dad, `false` for one from
+   the sister. One helper because three fields have to agree — the count, how many of them the box
+   described one by one, and each one's sender — and a test that set two of them by hand was how
+   the face and the count could be asserted against different queues. */
+static void queue_is(int n, const bool *from_dad)
+{
+    w.in.waiting = n;
+    w.in.known = n < UI_QUEUE_MAX ? n : UI_QUEUE_MAX;
+    for (int i = 0; i < UI_QUEUE_MAX; i++) {
+        w.in.from_dad[i] = i < w.in.known ? from_dad[i] : false;
+    }
+    /* THE HEAD, SAID TWICE, exactly as the box says it twice: `from_owner` is `queue[0].from_owner`
+       on any box new enough to send a list, and the only answer on one that is not. */
+    w.in.waiting_from_dad = n > 0 ? from_dad[0] : false;
+}
+
+/* A finger that lands, travels and lifts. `dx` is the travel in panel pixels; `display.c` resolves
+   it to a direction, so what reaches the module is the direction alone. */
+static void swipe(int dx)
+{
+    w.in.swipe = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+    w.in.down = true;
+    step();
+    w.in.swipe = 0;
+    w.in.down = false;
+}
+
 /* The fetch arrives: the queue drops one, the stream opens, the run is live. */
 static void land_fetch(void)
 {
@@ -351,7 +388,15 @@ static void land_fetch(void)
     w.stream = true;
     w.in.jrunning = true;
     w.in.jstate = UI_JP_PLAYING;
+    /* THE ENTRY GOES, NOT JUST THE NUMBER — `do_fetch` shifts the local list for the same reason:
+       a count and a list describing different queues is how a selection resolves against a stale
+       name. The one that was taken is `play_at`. */
     if (w.in.waiting > 0) w.in.waiting--;
+    if (w.in.known > 0) {
+        const int taken = w.play_at >= 0 && w.play_at < w.in.known ? w.play_at : 0;
+        w.in.known--;
+        for (int i = taken; i < w.in.known; i++) w.in.from_dad[i] = w.in.from_dad[i + 1];
+    }
 }
 
 /* The message finishes: the speaker falls silent and the box is told it was played. */
@@ -365,18 +410,19 @@ static void finish_message(void)
 /* Drive a message all the way through: notice, press, fetch, play. Leaves the run sounding. */
 static void play_a_message(bool from_dad)
 {
-    w.in.waiting = 1;
-    w.in.waiting_from_dad = from_dad;
+    const bool q[1] = {from_dad};
+    queue_is(1, q);
     step();                     /* it arrives */
     run_ms(400);                /* the arrival cue finishes */
     tap_the_notice(true);       /* the notice, wherever it is drawn */
     step();
     run_ms(400);                /* the press's own cue finishes; the fetch is asked for */
     land_fetch();
-    /* WHO IT IS FROM IS ONLY KNOWN ONCE THE FETCH LANDS: `jpanel_in_from()` reads the fetch's own
-       response header, which is exactly why the run overlay asks the QUEUE while it is still
-       starting — until this moment the value belongs to the PREVIOUS message. */
-    w.in.in_from = from_dad ? UI_TO_DAD : UI_TO_PANEL;
+    /* NOTHING TO SET HERE ANY MORE, and that is the fix rather than a tidy-up. This used to assign
+       `in_from` at exactly this line, with a comment explaining that the sender was unknowable
+       until the response header landed — which was true of the firmware and was the bug: the value
+       in the meantime was a CLEARED one, and cleared means the sister. `perform` seeds it from the
+       queue at the press now, like `jpanel_play_at`, so the header confirms rather than reveals. */
     step();
 }
 
@@ -695,43 +741,290 @@ static void test_a_second_press_cannot_cancel_what_the_first_one_started(void)
 
 static void test_the_face_follows_the_message_that_is_playing(void)
 {
-    /* THE OWNER, on 0.3.30: *"the icon on the top left when playing back a message went to the
-       blonde haired girl icon while playing a message from Dad, but only when the actual message
-       is playing — when it's finished it goes back to the dad icon."*
+    /* THE OWNER, THREE TIMES, ACROSS 0.3.30 AND 0.3.32: *"it still ended up having the little girl
+       icon on the top left versus the dad icon."* Two fixes had already been shipped for this and
+       the panel still did it, so the third one went after the SOURCE rather than the reading.
      *
-       `in_from` comes off the fetch's own response header, so before that fetch lands it still
-       holds the PREVIOUS message's sender; that is why the press-to-play window asks the queue
-       instead. But `jfetching` stays true for the WHOLE download and the download IS the
-       playback, so the fallback covered the entire message — and the queue answers about the
-       OLDEST WAITING one, which by then is the NEXT message. Two waiting, Dad first: the face
-       shown while Dad played was the sister's, and it corrected itself the instant it ended. */
+       `in_from` was CLEARED at the top of every fetch and cleared means the sister. Every reader
+       downstream then had to guess when to trust it: the overlay asked the queue while nothing was
+       sounding and `in_from` once something was, which is correct for a single message and wrong
+       the moment there are two. With two queued the panel finishes one, chains straight into the
+       next with `jrunning` still true, and for the whole of that second fetch the corner shows a
+       little girl — for a message from Dad, on a panel where both queued messages were from Dad.
+     *
+       So `jpanel.c` SEEDS the sender from the queue entry it is fetching, the overlay has one
+       reader, and this drives the exact scenario that kept reproducing. */
     world_reset();
-    w.in.waiting = 2;
-    w.in.waiting_from_dad = true;  /* Dad's is the one about to play */
+    const bool both_from_dad[2] = {true, true};
+    queue_is(2, both_from_dad);
     step();
     run_ms(400);
     tap_the_notice(true);
     step();
     CHECK(w.ov.run, "the controls are up");
-    CHECK(w.ov.run_from_dad, "and the press-to-play window shows Dad, from the queue");
+    CHECK(w.ov.run_from_dad, "and the press-to-play window shows Dad");
 
-    /* The fetch lands: the header names Dad, and the NEXT waiting message is the sister's. */
-    w.in.in_from = UI_TO_DAD;
-    w.in.waiting_from_dad = false;
-    w.in.jrunning = true;
-    w.in.stream_active = true;
-    w.in.jfetching = true; /* the download IS the playback — this stays true throughout */
+    /* The fetch lands. The header names Dad and so did the seed, which is the point: they agree.
+       `jfetching` stays true — the download IS the playback. */
+    land_fetch();
+    w.fetching = true;
     step();
-    CHECK(w.ov.run_from_dad,
-          "and it is still Dad while the message actually plays, not the next sender");
+    CHECK(w.ov.run_from_dad, "and it is still Dad while the message actually plays");
+
+    /* THE CHAIN, WHICH IS WHERE IT BROKE. The first message drains, the jpanel task acknowledges
+       it and fetches the next one WITHOUT a finger — `jrunning` never falls, the stream does.
+       Under the old code this frame read `in_from`, freshly cleared by the new fetch, and drew the
+       sister over a second message from Dad. */
+    w.stream = false;
+    w.fetching = true;
+    /* The chain always takes the head, and seeds from it exactly as a press would. */
+    w.play_at = 0;
+    w.in.in_from = w.in.from_dad[0] ? UI_TO_DAD : UI_TO_PANEL;
+    step();
+    CHECK(w.ov.run, "the controls stay up across the chain into the second message");
+    CHECK(w.ov.run_from_dad, "and the second message from Dad shows Dad, not the sister");
 
     /* Ended: the pair carries the same face, which is the half that was always right. */
-    w.in.jrunning = false;
-    w.in.stream_active = false;
-    w.in.jfetching = false;
+    w.fetching = false;
     finish_message();
     step();
     CHECK(w.ov.pair_from_dad, "and the ended state agrees with what just played");
+}
+
+static void test_a_notice_does_not_show_through_the_playback_screen(void)
+{
+    /* THE OWNER, with two messages waiting: *"When playing back the first message, the second
+       message notification showed in the background of the menu."*
+     *
+       The top-left quadrant means one thing — who this is from — and it had two writers. The run
+       is painted after the notice so it usually won; the exceptions are the windows where
+       `stream_active` is false but a message is plainly in flight: between a press and the first
+       byte, and in the gap where one message has drained and the panel is chaining into the next.
+       The notice painted straight through the playback screen in both.
+     *
+       The tap table was already right about this — `UI_TAP_ORDER_PLAYING` has no notice in it — so
+       the notice was also UNPRESSABLE for as long as it was visible, which is the fault class the
+       pop-up's own arming was rewritten to kill. Drawing now agrees with arbitration. */
+    world_reset();
+    const bool two_from_dad[2] = {true, true};
+    queue_is(2, two_from_dad);
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    CHECK(w.ov.run, "the press raised the playback controls");
+    CHECK(!w.ov.popup_big && !w.ov.popup_badge,
+          "and the notice for the one behind it is not painted over them");
+    CHECK(ui_tap_target(&w.st, &w.in) != UI_TARGET_POPUP,
+          "which is what the tap table already said");
+
+    /* And in the chain gap, where nothing is sounding and a message is still plainly in flight. */
+    land_fetch();
+    step();
+    w.stream = false;
+    w.fetching = true;
+    step();
+    CHECK(w.ov.run, "the controls stay up through the gap between two messages");
+    CHECK(!w.ov.popup_big && !w.ov.popup_badge, "and still nothing shows through them");
+
+    /* It is not lost. The run ends and the frame after it draws what is still waiting. */
+    w.in.jrunning = false;
+    w.fetching = false;
+    w.st.repeat_until = 0;
+    step();
+    CHECK(w.ov.popup_big || w.ov.popup_badge, "and the notice returns the moment the run is over");
+}
+
+/* ── SWIPING BETWEEN WHAT IS WAITING ──────────────────────────────────────────────────────── */
+
+static void test_a_swipe_changes_which_waiting_message_is_offered(void)
+{
+    /* THE OWNER: *"maybe we can add a new gesture which is swipe left and swipe right to change
+       between the messages. When changing between messages, we again need to make sure that the
+       icon on the top left updates, as well as the number in the middle."* */
+    world_reset();
+    const bool dad_then_sister[2] = {true, false};
+    queue_is(2, dad_then_sister);
+    step();
+    run_ms(400);
+    CHECK(w.ov.popup_big, "the notice is up for two messages");
+    CHECK(w.ov.popup_from_dad, "and it opens on the oldest, which is Dad's");
+    CHECK(w.ov.sel == 0, "the selection starts at the oldest");
+
+    swipe(+1);
+    CHECK(w.st.sel == 1, "a swipe right moves on to the next one");
+    CHECK(w.ov.sel == 1, "and the drawing is told which one");
+    CHECK(!w.ov.popup_from_dad, "and the face follows it: the sister's");
+    CHECK(last_cue() == CUE_HEARD, "and the panel acknowledges the finger");
+
+    swipe(-1);
+    CHECK(w.st.sel == 0, "a swipe left comes back");
+    CHECK(w.ov.popup_from_dad, "and Dad's face with it");
+
+    /* CLAMPED, NOT WRAPPED: with three messages a wrap means three swipes right land back where
+       you started, which reads as the panel ignoring you. */
+    w.cues = 0;
+    swipe(-1);
+    CHECK(w.st.sel == 0, "and the oldest is where it stops going back");
+    CHECK(w.cues == 0, "silently, because an end is an end and a sound would claim otherwise");
+    swipe(+1);
+    swipe(+1);
+    CHECK(w.st.sel == 1, "the newest is where it stops going forward");
+}
+
+static void test_one_waiting_message_cannot_be_swiped_away(void)
+{
+    /* A lone message must not be losable to a smear — and the 700 ms hold that opens the "who?"
+       menu starts with a finger on the same glass, so the gesture is off entirely where there is
+       nothing to choose between. */
+    world_reset();
+    const bool one[1] = {true};
+    queue_is(1, one);
+    step();
+    run_ms(400);
+    swipe(+1);
+    CHECK(w.st.sel == 0, "one message: a swipe changes nothing");
+    CHECK(w.ov.popup_from_dad, "and the face is still his");
+    CHECK(w.stop == 0, "and nothing was stopped");
+
+    world_reset();
+    step();
+    swipe(+1);
+    CHECK(w.st.sel == 0, "an empty queue: likewise");
+    CHECK(w.stop == 0, "and still nothing stopped");
+}
+
+static void test_a_swipe_stops_the_message_it_moves_off(void)
+{
+    /* THE OWNER: *"And that we handle stopping the current playing message if it's playing."*
+     *
+       It is also what makes the gesture safe to leave live during playback. Every press on this
+       panel fires on the DOWN edge — the rule that came out of measuring how four-year-olds jab —
+       so a swipe that STARTED on the notice or on the pause button has already triggered it by the
+       time the travel is visible. Stopping is how that unwinds. */
+    world_reset();
+    const bool two[2] = {true, false};
+    queue_is(2, two);
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    run_ms(400);
+    land_fetch();
+    step();
+    CHECK(w.stream, "a message is playing");
+    CHECK(w.stop == 0, "and nothing has stopped it");
+
+    /* One is playing, so one is left — enough to swipe between the playing one and that one. */
+    queue_is(2, two);
+    step();
+    swipe(+1);
+    CHECK(w.st.sel == 1, "the swipe moves the selection");
+    CHECK(w.stop == 1, "and stops what was playing");
+    CHECK(w.pause_off == 1, "un-paused first, so the ring is never left held");
+    CHECK(w.st.pending == UI_PEND_NONE, "and no deferred play survives for the one she left");
+
+    /* A swipe that hits the end stops nothing: it did not move, so nothing was left. */
+    w.stop = 0;
+    swipe(+1);
+    CHECK(w.stop == 0, "a swipe at the end of the queue stops nothing");
+}
+
+static void test_a_swipe_is_not_also_a_hold(void)
+{
+    /* A swipe is a finger down for as long as a hold and travelling. Without the latch, dragging
+       across the pet for 700 ms would ALSO open the "who?" grid — a child would be handed a
+       recipient menu for having changed message. */
+    world_reset();
+    const bool two[2] = {true, false};
+    queue_is(2, two);
+    step();
+    run_ms(400);
+
+    press_down(FACE_W / 2, FACE_H / 2); /* on the pet, where a hold opens the grid */
+    w.in.swipe = 1;
+    step();
+    w.in.swipe = 0;
+    CHECK(w.st.sel == 1, "the drag changed message");
+    run_ms(HOLD_TALK_MS + 200); /* and stays down well past the hold */
+    CHECK(w.st.sendto_until == 0, "and the same press does not also open the grid");
+
+    /* The latch is per press: lift, press again, hold, and the menu is still there to be had. */
+    w.in.down = false;
+    step();
+    press_down(FACE_W / 2, FACE_H / 2);
+    run_ms(HOLD_TALK_MS + 200);
+    CHECK(w.st.sendto_until != 0, "a fresh press with no travel still opens it");
+}
+
+static void test_the_selected_message_is_the_one_that_plays(void)
+{
+    /* The whole point of the gesture. The index rides the action, and it is read where the fetch
+       goes out rather than captured at the press — a pending play can wait out a cue, and the
+       child may have swiped in the meantime. */
+    world_reset();
+    const bool two[2] = {true, false};
+    queue_is(2, two);
+    step();
+    run_ms(400);
+    swipe(+1);
+    tap_the_notice(w.ov.popup_big); /* whichever of the two is actually on the glass */
+    step();
+    CHECK(w.st.pending == UI_PEND_PLAY, "the press was taken");
+    run_ms(400);
+    CHECK(w.play_next == 1, "and the fetch went out");
+    CHECK(w.play_at == 1, "for the message the finger was pointing at, not the oldest");
+    CHECK(w.in.in_from == UI_TO_PANEL, "and the sender is the sister's from the press onward");
+}
+
+static void test_the_numeral_says_which_of_how_many(void)
+{
+    /* The numeral between the two discs used to count what was still to come. A finger can point
+       at one of them now, so it says WHERE THAT FINGER IS — a position is only legible next to its
+       total. */
+    world_reset();
+    const bool three[3] = {true, false, true};
+    queue_is(3, three);
+    step();
+    run_ms(400);
+    tap_the_notice(true);
+    step();
+    CHECK(w.ov.run_count == 3, "the total is what is waiting");
+    CHECK(w.ov.sel_shown == 1, "and the position is one-based, for a reader who counts from one");
+
+    queue_is(3, three);
+    step();
+    swipe(+1);
+    swipe(+1);
+    CHECK(w.ov.sel_shown == 3, "and it follows the swipe");
+}
+
+static void test_a_new_message_sends_the_selection_home(void)
+{
+    /* A finger pointing at "the second one" is pointing at a POSITION, and the thing at that
+       position is different the moment anything is added or played. Holding the index would
+       silently re-aim it at a message the child never chose. */
+    world_reset();
+    const bool two[2] = {true, false};
+    queue_is(2, two);
+    step();
+    run_ms(400);
+    swipe(+1);
+    CHECK(w.st.sel == 1, "pointing at the second one");
+
+    const bool three[3] = {true, false, true};
+    queue_is(3, three);
+    step();
+    CHECK(w.st.sel == 0, "a third arrives and the selection goes back to the oldest");
+
+    /* And it is clamped, not merely reset, because the queue also shrinks on another task. */
+    swipe(+1);
+    swipe(+1);
+    CHECK(w.st.sel == 2, "pointing at the newest");
+    w.in.waiting = 1;
+    w.in.known = 1;
+    step();
+    CHECK(w.st.sel == 0, "and a queue that shrank under the finger cannot leave it past the end");
 }
 
 static void test_every_playback_control_answers_the_finger(void)
@@ -1549,6 +1842,14 @@ int main(void)
     test_the_controls_are_pressable_for_as_long_as_they_are_drawn();
     test_a_second_press_cannot_cancel_what_the_first_one_started();
     test_the_face_follows_the_message_that_is_playing();
+    test_a_notice_does_not_show_through_the_playback_screen();
+    test_a_swipe_changes_which_waiting_message_is_offered();
+    test_one_waiting_message_cannot_be_swiped_away();
+    test_a_swipe_stops_the_message_it_moves_off();
+    test_a_swipe_is_not_also_a_hold();
+    test_the_selected_message_is_the_one_that_plays();
+    test_the_numeral_says_which_of_how_many();
+    test_a_new_message_sends_the_selection_home();
     test_every_playback_control_answers_the_finger();
     test_the_draw_layers_are_a_list();
 

@@ -15,6 +15,11 @@ static const glyph_t GLYPHS[] = {
     {'8', {0x36, 0x49, 0x49, 0x49, 0x36}}, {'9', {0x06, 0x49, 0x49, 0x29, 0x1E}},
     {'.', {0x00, 0x60, 0x60, 0x00, 0x00}}, {'v', {0x1C, 0x20, 0x40, 0x20, 0x1C}},
     {'-', {0x08, 0x08, 0x08, 0x08, 0x08}}, {' ', {0x00, 0x00, 0x00, 0x00, 0x00}},
+    /* A SLASH, FOR "WHICH OF HOW MANY". The waiting-message count became a position the moment a
+       finger could point at one of them, and a position needs a separator a reader already knows.
+       `-` was available and reads as a range or a minus sign; `2-3` is not "the second of three".
+       Two rows per column so the diagonal is continuous rather than a dotted line at scale 3. */
+    {'/', {0x60, 0x30, 0x1C, 0x06, 0x03}},
     /* THE ALPHABET ARRIVED WITH THE CAPTION LINE, not before it. The version string needed
        digits; what the panel HEARS needs words, and a word rendered as blanks of the right
        width would read as the microphone being broken. Uppercase only: at 5x7 a lowercase

@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.api.jpanel import JPANEL_MAX_DELIVERIES
+from jbrain.api.jpanel import JPANEL_MAX_DELIVERIES, JPANEL_QUEUE_MAX
 from jbrain.db.session import SessionContext, scoped_session
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -648,3 +648,99 @@ async def test_a_panel_cannot_touch_its_siblings_delivery_count(
             )
         ).scalar_one()
     assert left == 4, "the sibling reset another panel's delivery count"
+
+
+async def test_the_queue_the_poll_describes_is_the_queue_at_indexes(
+    maker: async_sessionmaker,
+) -> None:
+    """A POSITION ONLY NAMES A MESSAGE WHILE BOTH ROUTES SEE THE SAME LIST.
+
+    A child can swipe between what is waiting and play the one they are pointing at: the panel gets
+    a `queue` from `GET /waiting` and hands the index back as `GET /next?at=N`. Two routes, two
+    queries, one ordering — and the index is the whole contract between them. If `/waiting` were
+    unfiltered while `/next` skips messages past `JPANEL_MAX_DELIVERIES`, `?at=1` would mean
+    different rows on each side and a child would get a message they did not choose. That is
+    exactly how they differed before the gesture existed: `/waiting` counted rows `/next` refuses to
+    serve, so a panel drew a notice that answered nothing when pressed.
+
+    Asserted in Postgres, under the panel's own context, with a gave-up row deliberately sitting in
+    the middle — the one arrangement where an ordering agreement and a PREDICATE agreement are
+    different claims. Inferring it from the handlers is the code-review convention CLAUDE.md rule 3
+    exists to replace."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("DELETE FROM app.jpanel_message"))
+        # Three for panel-one, oldest first, with the MIDDLE one given up on. `created_at` is
+        # stated rather than left to `now()`: three inserts in one transaction can share a
+        # timestamp, and an ordering test whose order is a tie proves nothing.
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (sender_kind, sender_device, recipient_kind, recipient_device,
+                     blob_sha256, composed, deliveries, created_at)
+                VALUES
+                    ('owner', NULL,        'panel', 'panel-one', 'q-dad',  'text', 0,
+                     now() - interval '30 minutes'),
+                    ('panel', 'panel-two', 'panel', 'panel-one', 'q-gone', 'voice', :cap,
+                     now() - interval '20 minutes'),
+                    ('panel', 'panel-two', 'panel', 'panel-one', 'q-sis',  'voice', 0,
+                     now() - interval '10 minutes')
+                """
+            ),
+            {"cap": JPANEL_MAX_DELIVERIES},
+        )
+        await s.commit()
+
+    # `GET /waiting`'s two queries, verbatim in shape: the count and the queue it describes.
+    count_q = text(
+        """
+        SELECT count(*) FROM app.jpanel_message
+        WHERE recipient_device = :me AND played_at IS NULL AND deliveries < :cap
+        """
+    )
+    queue_q = text(
+        """
+        SELECT sender_kind, blob_sha256 FROM app.jpanel_message
+        WHERE recipient_device = :me AND played_at IS NULL AND deliveries < :cap
+        ORDER BY created_at LIMIT :lim
+        """
+    )
+    # And `GET /next?at=`, which is the same predicate and ordering with an OFFSET.
+    at_q = text(
+        """
+        SELECT blob_sha256 FROM app.jpanel_message
+        WHERE recipient_device = :me AND played_at IS NULL AND deliveries < :cap
+        ORDER BY created_at LIMIT 1 OFFSET :at
+        """
+    )
+    args = {"me": "panel-one", "cap": JPANEL_MAX_DELIVERIES}
+
+    async with scoped_session(maker, ONE) as s:
+        count = (await s.execute(count_q, args)).scalar_one()
+        queue = (await s.execute(queue_q, {**args, "lim": JPANEL_QUEUE_MAX})).all()
+        at0 = (await s.execute(at_q, {**args, "at": 0})).scalar_one_or_none()
+        at1 = (await s.execute(at_q, {**args, "at": 1})).scalar_one_or_none()
+        past = (await s.execute(at_q, {**args, "at": 2})).scalar_one_or_none()
+
+    assert count == 2, (
+        f"the badge counts {count} messages; the one the box has given up delivering must not be "
+        "offered to a child who cannot do anything about it"
+    )
+    assert [r[1] for r in queue] == ["q-dad", "q-sis"], (
+        "the queue the panel draws faces from is not the oldest-first list of what it can play"
+    )
+    assert len(queue) == count, "the count and the list it describes disagree"
+    # The kinds are what pick the face, and they are the reason the list exists at all: one
+    # `from_owner` could only ever describe the head.
+    assert [r[0] for r in queue] == ["owner", "panel"], (
+        "the per-message sender kind is wrong, so a swipe would not change the face"
+    )
+    assert at0 == "q-dad", "?at=0 is not the oldest playable message"
+    assert at1 == "q-sis", (
+        "?at=1 skipped past the second PLAYABLE message — the two routes are filtering "
+        "differently, so the index the panel was handed does not name what it points at"
+    )
+    assert past is None, (
+        "an index past the end must return nothing, so a queue that shrank under the finger "
+        "costs a 204 rather than an error at the moment a child is trying to listen"
+    )

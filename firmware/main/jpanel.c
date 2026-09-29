@@ -45,6 +45,7 @@ typedef struct {
     cmd_kind_t kind;
     jpanel_to_t to;  /* CMD_SEND only */
     bool asked;      /* CMD_FETCH: a finger is waiting for this, so play it and report */
+    int at;          /* CMD_FETCH: which queued message — 0 is the oldest */
 } cmd_t;
 
 static const cfg_t *s_cfg;
@@ -129,10 +130,24 @@ static bool s_in_from_dad;
    acknowledged, so it stays unplayed and the pop-up comes back. */
 static char s_in_sha[72];
 
-/* What the poll last saw. `s_wait_from` is written BEFORE `s_wait_count` is raised and
-   cleared AFTER it is lowered, so a renderer that sees a non-zero count always reads a name
-   that belongs to it — the one ordering rule this lock-free pair needs. */
-static char s_wait_from[32];
+/* What the poll last saw. `s_wait` is written BEFORE `s_wait_count` is raised and cleared AFTER
+   it is lowered, so a renderer that sees a non-zero count always reads entries that belong to it
+   — the one ordering rule this lock-free pair needs.
+
+   A LIST NOW, NOT A SINGLE NAME, because the queue stopped being a number the moment a child
+   could swipe through it: the face in the corner is per-message, and one `from_name` could only
+   ever describe the head. The head is `s_wait[0]`, which is what `jpanel_waiting_from_dad` and the
+   `from` out-parameter of `jpanel_waiting` still report — they did not change meaning, they
+   acquired seven neighbours. */
+typedef struct {
+    char from[32];
+    bool from_dad;
+} wait_one_t;
+
+static wait_one_t s_wait[JPANEL_QUEUE_MAX];
+/* How many of `s_wait` the last poll actually filled — never more than `s_wait_count`, and less
+   whenever the box has more queued than it will describe one by one. */
+static volatile int s_wait_known;
 static volatile int s_wait_count;
 
 /* THE OTHER PANEL'S NAME, which this device has no other way to learn — it is not in NVS,
@@ -142,8 +157,6 @@ static volatile int s_wait_count;
    is not exactly one other panel: with two siblings "the other one" is a question, not a name,
    and a guess would put the wrong child on the glass. */
 static char s_sibling[32];
-/* Whether the oldest waiting message is from the owner rather than the other panel. */
-static bool s_wait_from_dad;
 
 static void trust(esp_http_client_config_t *hc)
 {
@@ -468,7 +481,23 @@ static void do_poll(void)
     esp_http_client_handle_t c = open_client("/waiting", HTTP_METHOD_GET, url, sizeof(url));
     if (c == NULL) return;
 
-    char body[192];
+    /* STATIC, AND BIGGER THAN IT WAS, because the response grew a list.
+     *
+       192 bytes held the four scalar fields with room to spare and would silently TRUNCATE a queue
+       of eight. THE FAILURE MODE IS WHY THIS IS SIZED RATHER THAN GUESSED: a partial JSON body
+       parses as nothing, so the panel would read every poll as "no messages" — a quiet panel, which
+       looks like the box having nothing to say and not like a buffer at all.
+     *
+       MEASURED AGAINST THE BOX'S OWN CAP, not against a name anybody has: eight entries of
+       `{"from_name":"<14>","from_owner":false},` plus the four scalars is 557 bytes at the 14
+       characters `MAX_PANEL_NAME` allows, and 667 even if every name filled the 31 this panel can
+       hold. `test_the_panel_can_hold_the_longest_poll_the_box_will_send` recomputes that from both
+       sides, so a raised name cap or a longer queue fails there rather than here.
+     *
+       Static rather than automatic because only `jpanel_task` ever calls this, and a kilobyte is a
+       meaningful fraction of a 6 KB task stack on a board where stacks are what crash-looped
+       0.3.22. */
+    static char body[1024];
     int got = 0;
     if (esp_http_client_open(c, 0) != ESP_OK) goto done;
     if (esp_http_client_fetch_headers(c) < 0) goto done;
@@ -490,22 +519,53 @@ static void do_poll(void)
                the more likely sender on a panel, and the wrong guess costs a picture rather
                than a misdelivered message. */
             const cJSON *fo = cJSON_GetObjectItemCaseSensitive(root, "from_owner");
-            s_wait_from_dad = cJSON_IsTrue(fo);
             const cJSON *sib = cJSON_GetObjectItemCaseSensitive(root, "sibling");
             const int count = cJSON_IsNumber(n) ? n->valueint : 0;
-            /* Name first, then the count: see the declaration. */
-            if (count > 0 && cJSON_IsString(f) && f->valuestring != NULL) {
-                strlcpy(s_wait_from, f->valuestring, sizeof(s_wait_from));
+            /* THE ENTRIES FIRST, THEN THE COUNT: see the declaration. A reader that sees a count
+               must already be able to see what it counts.
+
+               `queue` IS THE ANSWER AND THE TWO SCALARS ARE ITS FALLBACK, not the other way
+               round. The box derives `from_name`/`from_owner` from `queue[0]`, so on a current
+               box the two agree by construction; on one too old to send a list they are the only
+               thing there is, and seeding the head from them leaves the panel exactly as capable
+               as it was — one message describable, the rest merely counted. */
+            int known = 0;
+            const cJSON *q = cJSON_GetObjectItemCaseSensitive(root, "queue");
+            if (cJSON_IsArray(q)) {
+                const cJSON *one = NULL;
+                cJSON_ArrayForEach(one, q) {
+                    if (known >= JPANEL_QUEUE_MAX) break;
+                    const cJSON *qn = cJSON_GetObjectItemCaseSensitive(one, "from_name");
+                    const cJSON *qo = cJSON_GetObjectItemCaseSensitive(one, "from_owner");
+                    strlcpy(s_wait[known].from,
+                            cJSON_IsString(qn) && qn->valuestring != NULL ? qn->valuestring : "",
+                            sizeof(s_wait[known].from));
+                    s_wait[known].from_dad = cJSON_IsTrue(qo);
+                    known++;
+                }
             }
+            if (known == 0 && count > 0) {
+                strlcpy(s_wait[0].from,
+                        cJSON_IsString(f) && f->valuestring != NULL ? f->valuestring : "",
+                        sizeof(s_wait[0].from));
+                s_wait[0].from_dad = cJSON_IsTrue(fo);
+                known = 1;
+            }
+            s_wait_known = known;
             /* Whatever the box says, including "" — a panel renamed out of the pair must
                stop claiming a sibling, and an older box that does not send the field leaves
                the word MESSAGE in place rather than a stale name. */
             strlcpy(s_sibling, cJSON_IsString(sib) && sib->valuestring != NULL ? sib->valuestring
                                                                               : "",
                     sizeof(s_sibling));
-            if (count != s_wait_count) ESP_LOGI(TAG, "waiting: %d from %s", count, s_wait_from);
+            if (count != s_wait_count) {
+                ESP_LOGI(TAG, "waiting: %d (%d named) from %s", count, known, s_wait[0].from);
+            }
             s_wait_count = count;
-            if (count == 0) s_wait_from[0] = '\0';
+            if (count == 0) {
+                s_wait_known = 0;
+                s_wait[0].from[0] = '\0';
+            }
             cJSON_Delete(root);
         }
     }
@@ -674,10 +734,46 @@ done:
     if (!ok) s_state = JPANEL_FAILED;
 }
 
-static void do_fetch(bool asked)
+/* SEED THE SENDER FROM THE QUEUE THE BOX ALREADY DESCRIBED, and do it wherever a fetch is
+ * ARMED — on the render task at the press, and again on this task when the request goes out.
+ *
+ * THIS IS THE WHOLE OF "the little girl icon while playing a message from Dad". `s_in_from_dad`
+ * used to be CLEARED at the top of every fetch, and false means the sister. The renderer treats a
+ * live run as authoritative about its own sender (which it must — the queue's head is by then the
+ * NEXT message), so for the whole window between a fetch starting and its response headers
+ * landing, the corner showed a little girl for a message from Dad. Two messages queued makes that
+ * window visible every time: the panel finishes one and chains straight into the next, `s_run` is
+ * still true, and the reset lands in plain sight.
+ *
+ * A clear was never the right shape. The box has already said who each queued message is from, and
+ * `/next?at=` resolves the same index off the same ordered list — so the seed is not a guess about
+ * a different message, it is the same message's own answer, arriving one poll early. The header
+ * still overwrites it, so a box that disagrees still wins; a box too old to send the header leaves
+ * the panel with the poll's answer instead of with "sister".
+ *
+ * Idempotent, which is why calling it from two tasks is safe: both read the same snapshot and
+ * write the same bytes, and the header handler is the only other writer. */
+static void seed_sender(int at)
 {
+    const int i = at >= 0 && at < JPANEL_QUEUE_MAX && at < s_wait_known ? at : 0;
+    if (s_wait_known <= 0) {
+        /* Nothing described. Leave whatever the last message left: a stale name is a better guess
+           than the sister, and the header is moments away. */
+        return;
+    }
+    strlcpy(s_in_from, s_wait[i].from, sizeof(s_in_from));
+    s_in_from_dad = s_wait[i].from_dad;
+}
+
+static void do_fetch(bool asked, int at)
+{
+    char path[32];
+    /* THE INDEX RIDES THE PATH RATHER THAN A HEADER, because `open_client` signs and builds one
+       string and a query is part of it. 0 is spelled out rather than omitted: a request that says
+       what it means is one fewer thing to reason about when reading a box access log. */
+    snprintf(path, sizeof(path), "/next?at=%d", at < 0 ? 0 : at);
     char url[288];
-    esp_http_client_handle_t c = open_client("/next", HTTP_METHOD_GET, url, sizeof(url));
+    esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
     if (c == NULL) {
         /* CLEARED ON THE EARLY RETURN TOO, and the comment at `done:` promising "whatever the
            outcome" was written one release before this path existed to contradict it. A leaked
@@ -691,17 +787,22 @@ static void do_fetch(bool asked)
 
     jpanel_state_t out = JPANEL_FAILED;
     int got = 0;
+    /* THE ID AND THE DIGEST ARE CLEARED; THE SENDER IS SEEDED. Both are about a box too old to
+       send the header — but a stale ID would acknowledge the WRONG MESSAGE and a stale digest
+       would judge this one against the last, where a stale sender costs a picture. So the two that
+       can do damage are cleared and the one that cannot is given the best answer available. */
     s_in_id[0] = '\0';
-    s_in_from[0] = '\0';
-    s_in_from_dad = false;
     s_in_sha[0] = '\0';
+    seed_sender(at);
     if (esp_http_client_open(c, 0) != ESP_OK) goto done;
     if (esp_http_client_fetch_headers(c) < 0) goto done;
     const int status = esp_http_client_get_status_code(c);
     if (status == 204) {
-        /* Someone else played it, or the poll was stale. Not a failure — just nothing here. */
+        /* Someone else played it, the poll was stale, or the index is past the end of a queue that
+           shrank under the finger. Not a failure — just nothing here. */
         s_wait_count = 0;
-        s_wait_from[0] = '\0';
+        s_wait_known = 0;
+        s_wait[0].from[0] = '\0';
         out = JPANEL_IDLE;
         goto done;
     }
@@ -724,8 +825,28 @@ static void do_fetch(bool asked)
     s_owed = true;
     s_run = true;
     s_state = JPANEL_PLAYING;
+    /* THE LOCAL VIEW LOSES THE ENTRY THAT WAS JUST TAKEN, not merely a number off the total.
+       The count has been decremented here since the queue existed — a poll is up to thirty
+       seconds away and a notice for a message already playing would be wrong for all of it — and
+       that was enough while the panel only ever played the head. It is not enough now that a
+       finger can point at index 2: dropping the count without dropping the ENTRY leaves the list
+       and the count describing different queues, and the next selection resolves against a stale
+       name.
+
+       COUNT DOWN FIRST, THEN SHIFT, which is the removal half of the ordering rule at the
+       declaration: a reader that sees a count must see that many valid entries, so the moment
+       where the count is low and the entries are the old ones is safe and the reverse is not. */
     if (s_wait_count > 0) s_wait_count--;
-    if (s_wait_count == 0) s_wait_from[0] = '\0';
+    const int taken = at >= 0 && at < s_wait_known ? at : 0;
+    if (s_wait_known > 0) {
+        const int n = s_wait_known - 1;
+        s_wait_known = n;
+        for (int i = taken; i < n; i++) s_wait[i] = s_wait[i + 1];
+    }
+    if (s_wait_count == 0) {
+        s_wait_known = 0;
+        s_wait[0].from[0] = '\0';
+    }
     char heard[72];
     got = pump(c, heard, sizeof(heard));
     audio_stream_end();
@@ -821,7 +942,7 @@ static void jpanel_task(void *arg)
         if (have) {
             switch (cmd.kind) {
             case CMD_SEND: do_send(cmd.to); break;
-            case CMD_FETCH: do_fetch(cmd.asked); break;
+            case CMD_FETCH: do_fetch(cmd.asked, cmd.at); break;
             case CMD_REPLAY: do_replay(); break;
             case CMD_POLL: next_poll = 0; break;
             }
@@ -838,7 +959,9 @@ static void jpanel_task(void *arg)
                finished is acknowledged first — the order matters, because fetching before
                acknowledging would hand back the same message again. */
             if (s_run && s_wait_count > 0) {
-                do_fetch(true);
+                /* THE HEAD, ALWAYS. A run walks the queue oldest-first; the index exists for a
+                   finger pointing at one, and a chain has no finger. */
+                do_fetch(true, 0);
             } else {
                 s_run = false;
             }
@@ -905,10 +1028,10 @@ bool jpanel_start(const cfg_t *cfg)
     return true;
 }
 
-static bool post(cmd_kind_t kind, jpanel_to_t to, bool asked)
+static bool post(cmd_kind_t kind, jpanel_to_t to, bool asked, int at)
 {
     if (s_q == NULL) return false;
-    const cmd_t cmd = {.kind = kind, .to = to, .asked = asked};
+    const cmd_t cmd = {.kind = kind, .to = to, .asked = asked, .at = at};
     return xQueueSend(s_q, &cmd, 0) == pdTRUE;
 }
 
@@ -919,7 +1042,7 @@ bool jpanel_send(const int16_t *pcm, size_t bytes, jpanel_to_t to)
     s_pcm = pcm;
     s_bytes = bytes;
     s_state = JPANEL_BUSY;
-    if (post(CMD_SEND, to, false)) return true;
+    if (post(CMD_SEND, to, false, 0)) return true;
     s_state = JPANEL_IDLE;
     return false;
 }
@@ -929,7 +1052,7 @@ bool jpanel_fetching(void)
     return s_fetching;
 }
 
-bool jpanel_play_next(void)
+bool jpanel_play_at(int at)
 {
     if (s_q == NULL) return false;
     /* ONE PATH NOW. The fetch and the playing are the same act: the jpanel task opens the
@@ -939,10 +1062,21 @@ bool jpanel_play_next(void)
     if (s_state == JPANEL_BUSY) return false;
     s_state = JPANEL_BUSY;
     s_fetching = true;
-    if (post(CMD_FETCH, JPANEL_TO_PANEL, true)) return true;
+    /* SEEDED HERE TOO, ON THE RENDER TASK, AND THAT IS NOT BELT-AND-BRACES. `s_fetching` goes
+       true on this line, so the renderer draws the playback controls — including the sender's face
+       — from the very next frame, which is several frames before the jpanel task has picked the
+       command up. Seeding only inside `do_fetch` would leave that gap showing the PREVIOUS
+       message's sender, which is the same bug one layer in. */
+    seed_sender(at);
+    if (post(CMD_FETCH, JPANEL_TO_PANEL, true, at)) return true;
     s_fetching = false;
     s_state = JPANEL_IDLE;
     return false;
+}
+
+bool jpanel_play_next(void)
+{
+    return jpanel_play_at(0);
 }
 
 bool jpanel_replay(void)
@@ -952,7 +1086,7 @@ bool jpanel_replay(void)
     /* A replay is a message on its way to the speaker too, so the controls belong up for it
        from the press rather than from the first byte. `do_replay` clears it at its own exit. */
     s_fetching = true;
-    if (post(CMD_REPLAY, JPANEL_TO_PANEL, false)) return true;
+    if (post(CMD_REPLAY, JPANEL_TO_PANEL, false, 0)) return true;
     s_fetching = false;
     return false;
 }
@@ -982,7 +1116,7 @@ bool jpanel_running(void)
 
 void jpanel_poll_soon(void)
 {
-    (void)post(CMD_POLL, JPANEL_TO_PANEL, false);
+    (void)post(CMD_POLL, JPANEL_TO_PANEL, false, 0);
 }
 
 /* Who the message now in the buffer came from — the caption beside the repeat icon. Empty
@@ -1000,13 +1134,25 @@ jpanel_to_t jpanel_in_from(void)
 int jpanel_waiting(char *from, size_t cap)
 {
     const int n = s_wait_count;
-    if (from != NULL && cap > 0) strlcpy(from, s_wait_from, cap);
+    if (from != NULL && cap > 0) strlcpy(from, s_wait[0].from, cap);
     return n;
 }
 
 bool jpanel_waiting_from_dad(void)
 {
-    return s_wait_from_dad;
+    return s_wait[0].from_dad;
+}
+
+bool jpanel_waiting_at(int at, char *from, size_t cap, bool *from_dad)
+{
+    /* THE COUNT IS READ FIRST AND IS THE GUARD. `s_wait_known` can only ever be lowered before
+       the entries move (see `do_fetch`), so an index inside it is an index whose entry is still
+       whole — which is the whole of what this lock-free pair promises. */
+    const int known = s_wait_known;
+    if (at < 0 || at >= known || at >= JPANEL_QUEUE_MAX) return false;
+    if (from != NULL && cap > 0) strlcpy(from, s_wait[at].from, cap);
+    if (from_dad != NULL) *from_dad = s_wait[at].from_dad;
+    return true;
 }
 
 int jpanel_sibling(char *out, size_t cap)

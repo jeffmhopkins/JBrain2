@@ -196,6 +196,10 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
        the column: a panel must not post because an older box said nothing. */
     const cJSON *ts = cJSON_GetObjectItemCaseSensitive(root, "telemetry_seq");
     if (cJSON_IsNumber(ts)) out->telemetry_seq = ts->valueint;
+    /* Left at the caller's -1 when the box does not send it — see `ota.h`: absent must not read
+       as "nothing is waiting". */
+    const cJSON *wt = cJSON_GetObjectItemCaseSensitive(root, "waiting");
+    if (cJSON_IsNumber(wt)) out->waiting = wt->valueint;
     const cJSON *fm = cJSON_GetObjectItemCaseSensitive(root, "form");
     if (cJSON_IsString(fm) && fm->valuestring != NULL) {
         out->form = strcmp(fm->valuestring, "robot") == 0 ? 1 : 0;

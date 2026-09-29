@@ -933,6 +933,28 @@ static uint32_t s_down_since;
    the touch gave no point, which the margin test rejects for free. */
 static int s_down_x = -1;
 static int s_down_y = -1;
+/* THIS PRESS HAS ALREADY BEEN A SWIPE — latched for the rest of it, not for a frame. A finger that
+   travelled is not going to become a 700 ms hold by staying down, and without this a drag across
+   the pet would change message AND open the "who?" grid. Mirrors `ui_state_t.swiped`; `ui.c` is
+   where the rule is tested. */
+static bool s_swiped;
+/* WHICH WAITING MESSAGE THE FINGER IS POINTING AT — see `SWIPE_MIN_PX` in `ui.h`. 0 is the oldest,
+   which is where an arriving message and an emptied queue put it back. */
+static int s_sel;
+/* What the last swipe measured, and how many there have been. Telemetry only, and they are here
+   because the CST820 reporting a LIVE position while a finger moves is an assumption this firmware
+   makes and cannot check from a desk — the same reason the raw tap point already rides telemetry
+   (`touch.h`). A panel whose `swipes` stays 0 while the owner swears he swiped is a controller that
+   only reports edges, and `swipe_dx` says how far it thought the finger got. */
+static uint16_t s_swipes;
+static int s_swipe_dx;
+
+void display_swipes(unsigned *n, int *last_dx, int *sel)
+{
+    if (n != NULL) *n = s_swipes;
+    if (last_dx != NULL) *last_dx = s_swipe_dx;
+    if (sel != NULL) *sel = s_sel;
+}
 /* The hands-free listen: whether this turn was started by the name rather than by a finger,
    whether anyone has actually spoken yet, and when the room went quiet. */
 static bool s_listen_voice;
@@ -1260,7 +1282,7 @@ static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpane
  * rule the caption and the label were moved to obey. */
 #define POPUP_SCALE 3
 #define POPUP_NAME_SCALE 4
-static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
+static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count, int sel,
                        sendto_hit_t who)
 {
     /* TALLER, TO MAKE ROOM FOR A FACE. The owner, twice: *"make sure that the notification pop
@@ -1299,16 +1321,28 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
 
     /* THE NUMBER, not "SOME". Five messages used to be five pop-ups and five taps, which is
        indistinguishable from the panel repeating itself — and it is the count that tells a
-       child whether one press is about to cost them ten seconds or a minute. */
+       child whether one press is about to cost them ten seconds or a minute.
+     *
+       WHICH OF HOW MANY, once a finger can point at one of them. The line used to read SENT YOU 2
+       whoever the face above it belonged to, which is fine while the oldest is the only thing a
+       press can reach and actively misleading now: a child looking at the sister's face under
+       "SENT YOU 2" has no way to tell that the 2 is not about her. `2/2` says both facts and puts
+       them in the order they are read — this one, of that many. */
     char sub[28];
     if (count > 1) {
-        snprintf(sub, sizeof(sub), "SENT YOU %d", count);
+        snprintf(sub, sizeof(sub), "%d/%d", sel + 1, count);
     } else {
         snprintf(sub, sizeof(sub), "SENT YOU ONE");
     }
-    w = font_text_w(sub, 2);
-    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 158, 2, sub, SWAP16(0xFFFF));
-    const char *act = count > 1 ? "TAP FOR ALL" : "TAP TO HEAR";
+    w = font_text_w(sub, count > 1 ? 3 : 2);
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 156, count > 1 ? 3 : 2, sub,
+              SWAP16(0xFFFF));
+    /* SWIPE, NOT ALL, AND THIS LINE IS FOR THE ADULT. "TAP FOR ALL" was accurate and still is —
+       one press plays the chosen message and the run walks on through the rest — but a gesture
+       nobody can see is a gesture nobody uses, and the tap is the part a four-year-old already
+       knows. Flanked by dashes rather than arrowheads because the 5x7 font has no `<` or `>`, and
+       a word they cannot read beats a glyph that renders as a blank cell. */
+    const char *act = count > 1 ? "- SWIPE -" : "TAP TO HEAR";
     w = font_text_w(act, POPUP_SCALE);
     font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 186, POPUP_SCALE, act,
               SWAP16(0x07FF));
@@ -1375,21 +1409,29 @@ static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
  * owner asked for the badge's quadrant to keep carrying the sender *"when we're playing back a
  * message"* too. It is the same face in the same corner the notice used, so the picture that
  * said "Dad sent you one" is the picture that says "this is Dad" while it plays. */
-static void draw_run(uint16_t *fb, int y0, int over_h, int left, sendto_hit_t who, bool playing)
+static void draw_run(uint16_t *fb, int y0, int over_h, int count, int sel, sendto_hit_t who,
+                     bool playing)
 {
     draw_sender_face(fb, y0, over_h, who);
     confirm_draw_transport(fb, FACE_W, FACE_H, over_h, playing);
 
-    if (left > 0) {
-        /* HOW MANY MORE, and it keeps the slot the count already had rather than the one the
+    if (count > 1) {
+        /* WHICH OF HOW MANY, and it keeps the slot the count already had rather than the one the
            old numeral used: that sat beside the left disc, which is now a button a finger goes
-           to. Between the two discs it is on black, clear of both targets, and still answers
-           the only question a child sitting through four messages actually asks.
+           to. Between the two discs it is on black, clear of both targets.
 
-           Sized for the FORMAT, not the expected value: `left` is an int, so eleven digits and
-           a sign must fit or the compiler is right to refuse it. */
-        char n[12];
-        snprintf(n, sizeof(n), "%d", left);
+           IT USED TO BE "HOW MANY MORE", which answered the only question a child sitting through
+           four messages had while the panel chose for them. A finger can point at one of them now,
+           so a bare number would say nothing about WHICH — and the swipe would have no visible
+           answer on the screen it is most likely to be used on.
+
+           ONLY WITH SOMETHING TO CHOOSE BETWEEN. One message has no position to report, and `1/1`
+           over a message that is playing is noise.
+
+           Sized for the FORMAT, not the expected value: both are ints, so eleven digits and a sign
+           must fit either side or the compiler is right to refuse it. */
+        char n[26];
+        snprintf(n, sizeof(n), "%d/%d", sel + 1, count);
         const int tw = font_text_w(n, 3);
         font_draw(fb, FACE_W, FACE_H, FACE_W / 2 - tw / 2, confirm_cy(over_h) - (FONT_H * 3) / 2,
                   3, n, SWAP16(0xFFFF));
@@ -3171,10 +3213,98 @@ static void face_task(void *arg)
             s_down_x = tapped ? s_tap_x : -1;
             s_down_y = tapped ? s_tap_y : -1;
         }
+        if (!down) s_swiped = false;
         const uint32_t held = (down && s_down_since != 0) ? now - s_down_since : 0;
         const bool on_the_pet =
             s_down_x >= TALK_MARGIN_PX && s_down_x < FACE_W - TALK_MARGIN_PX &&
             s_down_y >= TALK_MARGIN_PX && s_down_y < FACE_H - TALK_MARGIN_PX;
+
+        /* ── SWIPE LEFT AND RIGHT TO CHANGE WHICH WAITING MESSAGE THIS IS ABOUT ──────────
+         *
+         * The owner, after two messages arrived at once: *"maybe we can add a new gesture which is
+         * swipe left and swipe right to change between the messages ... we again need to make sure
+         * that the icon on the top left updates, as well as the number in the middle. And that we
+         * handle stopping the current playing message if it's playing."*
+         *
+         * BEFORE THE HOLD, AND IT TAKES THE PRESS AWAY FROM IT (`s_swiped`). A swipe is a finger
+         * down for as long as a hold and travelling, so without the latch a drag across the pet
+         * would also open the recipient grid — a menu a child never asked for, on top of the
+         * message they were choosing.
+         *
+         * MEASURED IN THE SPACE THE SCREEN IS DRAWN IN, THROUGH BOTH TRANSFORMS. "Left" has to
+         * mean left as the CHILD sees it, and the controller reports where the finger is on the
+         * GLASS — assuming those agree is exactly the mistake §10.4af spent three releases making
+         * about the accelerometer. So each point goes through the same pair the hit test uses:
+         * `panel_to_frame` for the quarter turns, then `tap_to_overlay` for the 180.
+         *
+         * BOTH, NOT JUST THE FIRST. `panel_to_frame` deliberately stops at the quarter turns —
+         * the tap marker is plotted AFTER `flip_frame` and needs it to — so on an upside-down
+         * panel it returns the touch unchanged while everything drawn is mirrored. A drag measured
+         * there would have had the right magnitude and the WRONG SIGN on exactly the mounting the
+         * owner uses in one of the two bedrooms: swipe right, go left. `tap_to_overlay` is the
+         * half that answers for the flip, which is why it exists.
+         *
+         * ONE STEP PER PRESS. A long drag is one decision, not four, and a finger that wobbles
+         * back over the threshold must not undo itself.
+         *
+         * `ui.c` HOLDS THE RULES AND IS TESTED ON THEM — `waiting > 1`, the clamp, the stop, the
+         * cue. This is the shipping half: it resolves a distance into a direction and then does
+         * what that module says. */
+        int swipe = 0;
+        int drag_x = 0;
+        int drag_y = 0;
+        if (down && !s_swiped && s_down_x >= 0 && touch_drag(&drag_x, &drag_y)) {
+            int fx = 0;
+            int fy = 0;
+            int ox0 = 0;
+            int oy0 = 0;
+            int ox1 = 0;
+            int oy1 = 0;
+            panel_to_frame(s_down_x, s_down_y, &fx, &fy);
+            tap_to_overlay(fx, fy, &ox0, &oy0);
+            panel_to_frame(drag_x, drag_y, &fx, &fy);
+            tap_to_overlay(fx, fy, &ox1, &oy1);
+            const int dx = ox1 - ox0;
+            const int dy = oy1 - oy0;
+            const int adx = dx < 0 ? -dx : dx;
+            const int ady = dy < 0 ? -dy : dy;
+            if (adx >= SWIPE_MIN_PX && adx > ady) {
+                swipe = dx > 0 ? 1 : -1;
+                s_swipe_dx = dx;
+                if (s_swipes < 65535) s_swipes++;
+            }
+        }
+        /* ONE READ OF THE QUEUE, USED BY THE GUARD AND BY THE CLAMP. It is written on another task,
+           so asking twice is asking two different questions — and the pair "there is something to
+           swipe between" and "here is where the end is" must be about the same answer. */
+        const int have = jpanel_waiting(NULL, 0);
+        if (swipe != 0 && have > 1) {
+            s_swiped = true;
+            const int was = s_sel;
+            int want = s_sel + swipe;
+            /* CLAMPED TO WHAT IS DESCRIBED, not to what is counted: past `JPANEL_QUEUE_MAX` the
+               box sends a total and no sender, so there is no face to draw and nothing the index
+               could mean. The ninth message is reachable by listening to the eight ahead of it. */
+            const int last = (have < JPANEL_QUEUE_MAX ? have : JPANEL_QUEUE_MAX) - 1;
+            if (want < 0) want = 0;
+            if (want > last) want = last;
+            s_sel = want;
+            if (want != was) {
+                /* STOP WHAT IS SOUNDING, which the owner asked for and which is also what makes
+                   this gesture safe to leave live during playback: every press on this panel fires
+                   on the DOWN edge, so a swipe that STARTED on the notice or the pause button has
+                   already triggered it by the time the travel is visible. Un-paused first, like
+                   every other stop here — a run ended while the ring is held never drains. */
+                audio_stream_pause(false);
+                s_paused_since = 0;
+                jpanel_stop();
+                /* A deferred play must not fire for the message she just left. */
+                s_pending = PEND_NONE;
+                if (sound) audio_cue(CUE_HEARD);
+                ESP_LOGI(TAG, "swipe: message %d of %d (dx %d)", want + 1, have, s_swipe_dx);
+                dirty = true;
+            }
+        }
         /* NOT WHILE A TURN IS STILL IN FLIGHT, and this is a lifetime rule rather than a
            politeness one. `talk.c` uploads straight out of the capture buffer, and this
            renderer gives up at 12 s while the HTTP timeout is 20 — so without this guard a
@@ -3214,7 +3344,7 @@ static void face_task(void *arg)
            had just made. `ui.c` was corrected first and a host test stands on it
            (`test_a_hold_after_a_poke_still_opens_the_menu`) — this is the shipping half. */
         if (s_talk == TALK_IDLE && down && on_the_pet && !msg_sounding &&
-            !gesture_reserved(gest.taps) && held >= HOLD_TALK_MS &&
+            !gesture_reserved(gest.taps) && !s_swiped && held >= HOLD_TALK_MS &&
             talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
             s_sendto_until = now + SENDTO_MS;
             /* The same cue the button's press makes, because it is the same event: something
@@ -3223,7 +3353,7 @@ static void face_task(void *arg)
             ESP_LOGI(TAG, "sendto: grid opened by hold");
             dirty = true;
         } else if (s_talk == TALK_IDLE && down && !on_the_pet && !gesture_reserved(gest.taps) &&
-                   held >= HOLD_TALK_MS && held < HOLD_TALK_MS + dt_ms) {
+                   !s_swiped && held >= HOLD_TALK_MS && held < HOLD_TALK_MS + dt_ms) {
             /* Once per press, on the frame the threshold passes — the owner has no terminal
                but does have the log, and a margin that is too wide looks exactly like a
                microphone that stopped working unless the panel says which it is. */
@@ -3394,7 +3524,12 @@ static void face_task(void *arg)
                 }
             } else if (!audio_playing()) {
                 if (s_pending == PEND_PLAY) {
-                    if (!jpanel_play_next()) ESP_LOGW(TAG, "jpanel: busy, not fetching");
+                    /* THE SELECTED ONE, READ HERE RATHER THAN CAPTURED AT THE PRESS. A pending
+                       play waits out its own cue, and the child may have swiped in between — a
+                       swipe clears `s_pending` when it moves, so the two cannot disagree about
+                       which message was asked for; this reads the current answer for the ordinary
+                       case where nothing moved. */
+                    if (!jpanel_play_at(s_sel)) ESP_LOGW(TAG, "jpanel: busy, not fetching");
                 } else if (!jpanel_replay()) {
                     ESP_LOGW(TAG, "jpanel: nothing to replay");
                 }
@@ -3470,9 +3605,21 @@ static void face_task(void *arg)
                    the big box — the child has already been interrupted once and has chosen
                    not to come yet. It restarts only from nothing waiting to something. */
                 if (waiting_now > 0 && s_waiting_shown <= 0) s_popup_since = now;
+                /* AND THE SELECTION GOES HOME WHENEVER THE QUEUE CHANGES SHAPE. A finger pointing
+                   at "the second one" is pointing at a POSITION, and the thing at that position is
+                   different the moment anything is added or played. Holding the index would
+                   silently re-aim it at a message the child never chose; the oldest is the one
+                   answer that cannot be wrong, because it is the one they would have got anyway. */
+                s_sel = 0;
                 s_waiting_shown = waiting_now;
                 dirty = true;
             }
+            /* CLAMPED EVERY FRAME, NOT ONLY WHERE IT MOVES. The queue shortens on another task —
+               by a fetch here, by the box retiring something — and an index past the end would
+               draw a face for nothing and ask `/next` for a message that is not there. */
+            if (s_sel >= waiting_now) s_sel = waiting_now > 0 ? waiting_now - 1 : 0;
+            if (s_sel < 0) s_sel = 0;
+            if (s_sel >= JPANEL_QUEUE_MAX) s_sel = JPANEL_QUEUE_MAX - 1;
         }
         /* THE SHRINK IS A FRAME NOBODY ELSE ASKS FOR. The count has not changed, no finger has
            landed and the pet may be perfectly still — so without this the big box would sit
@@ -3811,13 +3958,41 @@ static void face_task(void *arg)
                concerned. */
             char from[32];
             const int waiting = jpanel_waiting(from, sizeof(from));
+            /* THE SELECTED ENTRY, NOT THE HEAD. A finger can point at one of the queue now, and
+               the notice has to be about the one it is pointing at or the swipe has no visible
+               answer. Falls back to the head's two fields — which is what `jpanel_waiting` and
+               `jpanel_waiting_from_dad` already gave us — on a box too old to describe a queue, or
+               for an index past what it described. */
+            bool sel_from_dad = jpanel_waiting_from_dad();
+            (void)jpanel_waiting_at(s_sel, from, sizeof(from), &sel_from_dad);
             /* ONE CONDITION FOR THE PICTURE AND THE TARGET. Arming it from the queue while the
                painting sat behind a fuller guard left the notice armed and invisible; arming it
                INSIDE the painting, as it was before that, left it visible and dead. Neither is
                fixed by moving the arming somewhere better — it is fixed by there being one answer
                to "is there a notice", used twice. `ui.c` says the same thing and is tested. */
+            /* AND NOT WHILE THE PLAYBACK CONTROLS ARE UP, WHICH IS NEW AND IS TWO BUGS.
+             *
+               The top-left quadrant means exactly one thing on this screen — who this is from —
+               and it had two writers: the notice drew the NEXT sender's face there, and the run
+               drew THIS message's. The run is painted second so it usually won, and "usually" is
+               the tell. `msg_sounding` is false for the whole window between a press and the first
+               byte, and false again in the gap where one message has drained and the panel is
+               chaining into the next — so in both of those a notice for the queue behind painted
+               straight through the playback screen. The owner, with two waiting: *"When playing
+               back the first message, the second message notification showed in the background of
+               the menu."* And then the corner: *"it still ended up having the little girl icon."*
+             *
+               The tap table was already right about this — `UI_TAP_ORDER_PLAYING` has no notice in
+               it — so the notice was also UNPRESSABLE for as long as it was visible, which is the
+               fault class the arming above was rewritten to kill. This makes the picture agree
+               with the arbitration, and leaves the quadrant with one writer, which is what stops
+               the next version of this being possible at all.
+             *
+               NOTHING IS LOST: the count lives on the box, and the frame after the run ends draws
+               it. `ui.c` says the same thing and is tested
+               (`test_a_notice_does_not_show_through_the_playback_screen`). */
             const bool notice_up = waiting > 0 && s_talk == TALK_IDLE && !msg_sounding &&
-                                   jpanel_state() != JPANEL_BUSY;
+                                   jpanel_state() != JPANEL_BUSY && !run_controls_up();
             const bool notice_big = now - s_popup_since < POPUP_BIG_MS;
             if (notice_up) ui_popup_target(over_y0, over_h, notice_big, s_popup_box);
             /* `msg_sounding`, NOT `speaking`, IS IN `notice_up` ABOVE, and that is the other
@@ -3832,8 +4007,8 @@ static void face_task(void *arg)
                    question the child is asking right now ("what did she say?"), where the
                    badge answers one they have already declined. */
                 if (notice_big) {
-                    draw_popup(fb, over_y0, over_h, from, waiting,
-                               jpanel_waiting_from_dad() ? SENDTO_DAD : SENDTO_SISTER);
+                    draw_popup(fb, over_y0, over_h, from, waiting, s_sel,
+                               sel_from_dad ? SENDTO_DAD : SENDTO_SISTER);
                 } else {
                     /* OVER THE PAIR, NOT DEFERRED BEHIND IT. This used to wait for
                        `s_repeat_until` to lapse, which was fine while that was a ten-second
@@ -3845,7 +4020,7 @@ static void face_task(void *arg)
                        it is the same quadrant meaning the same thing, updated to whoever
                        is waiting now. */
                     draw_popup_badge(fb, over_y0, over_h, from,
-                                     jpanel_waiting_from_dad() ? SENDTO_DAD : SENDTO_SISTER);
+                                     sel_from_dad ? SENDTO_DAD : SENDTO_SISTER);
                 }
             }
             /* Drawn over everything else while a run is sounding, including the caption: a
@@ -3875,22 +4050,33 @@ static void face_task(void *arg)
                    been taken and sound is coming, so a play icon would invite a second press
                    at exactly the moment the first is still being served. */
                 const bool playing = starting || (audio_playing() && !audio_stream_paused());
-                /* WHO IT IS FROM IS NOT KNOWN YET WHILE STARTING, and showing the wrong face
-                   for those seconds is worse than showing none: the owner opened a message
-                   from Dad and watched a little girl appear. `jpanel_in_from()` is read off
-                   the fetch's OWN response header, so until that fetch lands it still holds
-                   the PREVIOUS message's sender — and the previous message is usually the
-                   sister, which is why it looked like a fixed bug rather than a stale value.
-                   The queue already knows who is waiting; ask it until the fetch can answer. */
-                /* ONCE ANYTHING IS SOUNDING, THE MESSAGE ITSELF IS THE AUTHORITY — see
-                   `ui.c`. `jpanel_fetching()` stays true for the whole download and the download
-                   is the playback, so the press-to-play fallback covered the entire message and
-                   answered with the NEXT sender in the queue rather than this one's. */
-                const bool sounding = jpanel_running() || audio_stream_active();
-                const bool from_dad = sounding ? (jpanel_in_from() == JPANEL_TO_DAD)
-                                     : (starting ? jpanel_waiting_from_dad()
-                                                 : jpanel_in_from() == JPANEL_TO_DAD);
-                draw_run(fb, over_y0, over_h, jpanel_waiting(NULL, 0),
+                /* ONE FACT, ONE READER, AND THAT IS THE FIX RATHER THAN A FOURTH CASE.
+                 *
+                   This was a three-way choice between `jpanel_in_from()` and the queue's head,
+                   arbitrated on whether anything was sounding yet, and it went wrong twice for
+                   the same underlying reason: `jpanel_in_from()` was CLEARED at the start of every
+                   fetch, and cleared means the sister. Reading the queue instead covered that up
+                   while nothing was sounding and could not while something was — so with two
+                   messages queued the panel finished one, chained into the next with
+                   `jpanel_running()` still true, and put a little girl over a second message from
+                   Dad for the whole of that fetch.
+                 *
+                   `jpanel.c` now SEEDS the sender from the queue entry it is about to fetch (see
+                   `seed_sender`), so the response header only ever confirms it and there is
+                   nothing left to arbitrate once a fetch has been ASKED FOR.
+                 *
+                   THE ONE WINDOW BEFORE THAT IS `PEND_PLAY`, and it is a different rule rather
+                   than the old one renamed: a pending play is a press that has been taken and not
+                   yet served — it waits out its own cue — so for those few hundred milliseconds no
+                   fetch exists and `jpanel_in_from()` is definitionally about the message BEFORE
+                   this one. The selection is what the child pointed at, so it is the answer. The
+                   old rule keyed on `jpanel_fetching()`, which stays true for the whole download
+                   and therefore covered the message itself; this ends exactly where the fetch
+                   begins. */
+                const bool from_dad = s_pending == PEND_PLAY
+                                          ? sel_from_dad
+                                          : (jpanel_in_from() == JPANEL_TO_DAD);
+                draw_run(fb, over_y0, over_h, waiting, s_sel,
                          from_dad ? SENDTO_DAD : SENDTO_SISTER, playing);
                 confirm_draw_exit(fb, FACE_W, FACE_H, over_y0, over_h);
             } else if (s_repeat_until != 0) {

@@ -41,6 +41,7 @@ from sqlalchemy import text
 from jbrain.api import nudge
 from jbrain.api.deps import OwnerDep, PanelDep
 from jbrain.api.endpoint import (
+    JPANEL_MAX_DELIVERIES,
     PANEL_RATE,
     UNNAMED_PANEL_LABEL,
     _pcm_from_wav,
@@ -81,22 +82,36 @@ MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
 DAD_VOICE = "kokoro-am_michael"
 DAD_NAME = "Dad"
 
-# HOW MANY TIMES THE BOX WILL HAND THE SAME MESSAGE TO THE SAME PANEL BEFORE GIVING UP.
+# HOW MANY WAITING MESSAGES THE PANEL IS TOLD ABOUT ONE BY ONE, as opposed to merely counted.
 #
-# A panel that cannot acknowledge must not be able to loop audio in a child's bedroom, and that
-# is the box's job because the box is the half that can be fixed without an OTA — §10.4cw is
-# the afternoon this was learned the hard way.
+# The panel lets a child SWIPE between what is queued, which means it needs each entry's sender
+# rather than just a total — the face in the corner is per-message. It does not need all of them:
+# the owner: *"if there's more than one message it shows the number in the middle ... maybe we can
+# add a new gesture which is swipe left and swipe right to change between the messages."* A child
+# swiping past the eighth of nine unheard messages is not a case worth a bigger poll response, so
+# `count` stays authoritative for "how many" and this bounds only "who from, in order".
 #
-# Five, because the honest failures are all ONE: a dropped POST, a crash mid-playback, a power
-# cut between hearing and acknowledging. Retrying a handful of times covers every one of them
-# with room to spare, and the sixth identical delivery is not a flaky link, it is a panel that
-# cannot tell us it heard.
-JPANEL_MAX_DELIVERIES = 5
+# Spelled in `firmware/main/jpanel.h` too, and a test pins that the two agree — the same class of
+# contract as the nudge port and the integrity header, both of which have been got wrong by being
+# written down twice.
+JPANEL_QUEUE_MAX = 8
 
 
 class SendResult(BaseModel):
     id: str
     to_name: str
+
+
+class WaitingOne(BaseModel):
+    """One queued message, as much of it as a panel that cannot show text can use.
+
+    NO ID. The panel plays a chosen message by its POSITION in this list (`GET /next?at=`), not
+    by naming a row — see that route for why. So this carries exactly what the glass draws: the
+    name for an adult, and the kind that picks the face for the children.
+    """
+
+    from_name: str = ""
+    from_owner: bool = False
 
 
 class Waiting(BaseModel):
@@ -122,6 +137,17 @@ class Waiting(BaseModel):
     # matching it against "Dad" in the firmware is the coupling migration 0211 exists to undo.
     # Two answers, and the box is the only side that knows which.
     from_owner: bool = False
+    # THE SAME TWO FACTS, ONCE PER QUEUED MESSAGE, OLDEST FIRST — because the panel stopped
+    # treating the queue as a number.
+    #
+    # `count` and `from_name`/`from_owner` above describe the queue's HEAD, which was the whole
+    # of it while the only thing a child could do was play the oldest. They can now swipe between
+    # what is waiting, and a face that is per-message cannot be served by a field that is
+    # per-queue. The two older fields stay, and stay first: they are what an older firmware
+    # reads, and `queue[0]` says the same thing.
+    #
+    # Capped at `JPANEL_QUEUE_MAX`; `count` may legitimately exceed it.
+    queue: list[WaitingOne] = []
 
 
 class Message(BaseModel):
@@ -568,10 +594,14 @@ async def events(principal: PanelDep, request: Request) -> StreamingResponse:
 async def waiting(principal: PanelDep, request: Request) -> Waiting:
     """Is anything here for me. Polled every ~30 s per panel, so it stays small.
 
-    ALSO WHERE THE BOX LEARNS WHERE TO REACH THIS PANEL (`nudge.py`). The poll is the natural
-    place: every panel makes it, often, and it already proves who it is — so the address cache
-    refreshes itself without a heartbeat of its own, and survives a router handing out new
-    leases at the cost of one poll interval.
+    ALSO WHERE THE BOX LEARNS WHERE TO REACH THIS PANEL (`nudge.py`), THOUGH NO LONGER ONLY
+    HERE. This was the single place, and *"often"* below was doing a lot of work for a poll that
+    runs every thirty seconds: a panel that had just booted could not be nudged until its first
+    one landed, so the first message after a power-on waited out the full interval instead of
+    arriving in milliseconds — the owner, on a freshly-woken unit: *"When sending messages still
+    took a long time for it to show up on the panel."* `GET /endpoint/settings` runs every THREE
+    seconds and proves who it is the same way, so it remembers the address too and this is now the
+    slow refresh rather than the only one.
     """
     nudge.remember(principal.id, request)
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as session:
@@ -579,52 +609,99 @@ async def waiting(principal: PanelDep, request: Request) -> Waiting:
             await session.execute(
                 text(
                     """
-                    SELECT count(*),
-                           min(created_at)
+                    SELECT count(*)
                     FROM app.jpanel_message
                     WHERE recipient_device = :me AND played_at IS NULL
+                      AND deliveries < :cap
                     """
                 ),
-                {"me": principal.id},
+                {"me": principal.id, "cap": JPANEL_MAX_DELIVERIES},
             )
         ).first()
         count = int(row[0]) if row else 0
-        from_owner = False
+        # `deliveries < JPANEL_MAX_DELIVERIES` IS NEW HERE, AND IT IS THE SAME PREDICATE `GET
+        # /next` HAS ALWAYS USED. Without it this route counts messages the other one refuses to
+        # serve, so a panel drew a notice, a child pressed it, and the box answered 204 — a
+        # control that is visible and dead, which is the fault class the pop-up's own arming was
+        # rewritten to kill. It also makes the queue below INDEXABLE: `?at=` only means anything
+        # while both routes are looking at the same list in the same order.
+        #
+        # Giving up on delivery is already loud in the log and already visible in the PWA
+        # (`undelivered`), which is the surface that can do something about it. The child cannot,
+        # so offering it to them is worse than not.
         # ONCE PER POLL, AND UNCONDITIONALLY. It used to be read only when something was
         # waiting; the indicator it now also feeds is drawn while a child is RECORDING, which
         # is precisely the case where nothing is. Two small queries twice a minute.
         names = await _panel_names(request.app.state.session_maker)
-        from_name = ""
-        if count:
-            oldest = (
-                await session.execute(
-                    text(
-                        """
-                        SELECT sender_kind, sender_device
-                        FROM app.jpanel_message
-                        WHERE recipient_device = :me AND played_at IS NULL
-                        ORDER BY created_at LIMIT 1
-                        """
-                    ),
-                    {"me": principal.id},
-                )
-            ).first()
-            if oldest:
-                from_name = _name_of(names, oldest[0], oldest[1])
-                from_owner = oldest[0] == "owner"
+        # THE HEAD USED TO BE ITS OWN QUERY (`ORDER BY created_at LIMIT 1`) and is now the first
+        # row of this one, because the panel needs the sender of every message it can swipe to and
+        # not only of the one it would play. Same order, same predicate, one round trip: a `LIMIT
+        # 8` on the index that already serves `/next` costs no more than the `LIMIT 1` did.
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT sender_kind, sender_device
+                    FROM app.jpanel_message
+                    WHERE recipient_device = :me AND played_at IS NULL
+                      AND deliveries < :give_up
+                    ORDER BY created_at LIMIT :cap
+                    """
+                ),
+                {
+                    "me": principal.id,
+                    "cap": JPANEL_QUEUE_MAX,
+                    "give_up": JPANEL_MAX_DELIVERIES,
+                },
+            )
+        ).all()
+        queue = [
+            WaitingOne(from_name=_name_of(names, r[0], r[1]), from_owner=r[0] == "owner")
+            for r in rows
+        ]
         me = _display_name(principal.label)
         others = [n for pid, n in names.items() if pid != str(principal.id) and n != me]
         sibling = others[0] if len(others) == 1 else ""
-    return Waiting(count=count, from_name=from_name, sibling=sibling, from_owner=from_owner)
+    # THE HEAD IS THE QUEUE'S FIRST ENTRY, SAID TWICE ON PURPOSE. A panel running older firmware
+    # reads only `from_name`/`from_owner`, so they must keep meaning what they meant — and
+    # deriving them from the list here is what stops the two answers from ever disagreeing.
+    head = queue[0] if queue else WaitingOne()
+    return Waiting(
+        count=count,
+        from_name=head.from_name,
+        sibling=sibling,
+        from_owner=head.from_owner,
+        queue=queue,
+    )
 
 
 @router.get("/next")
-async def next_message(principal: PanelDep, request: Request) -> Response:
-    """The oldest unplayed message, as raw PCM the panel can hand straight to its speaker.
+async def next_message(principal: PanelDep, request: Request, at: int = 0) -> Response:
+    """An unplayed message, as raw PCM the panel can hand straight to its speaker.
 
     DOES NOT MARK IT PLAYED — `POST /played` does, once the panel has actually finished. That
     separation is what makes a message survive a reboot mid-playback rather than being lost by
-    having been handed over."""
+    having been handed over.
+
+    `at` IS A POSITION IN THE QUEUE, NOT AN ID, and the default 0 is the oldest — which is the
+    whole of what this route used to serve. A child can swipe between what is waiting now, so the
+    panel has to be able to say *that* one; it picks by the same index it was handed in `GET
+    /waiting`'s `queue`, ordered the same way by the same predicate.
+
+    A POSITION RATHER THAN AN ID BECAUSE THE PANEL NEVER LEARNS IDS UNTIL IT PLAYS. `X-Jpanel-Id`
+    arrives with the audio, so a panel choosing by id could only ever re-ask for something it had
+    already heard — which is `GET /message/{id}/pcm`, and exists. The cost is that the index is
+    only as fresh as the last poll: a message played on the other twin's behalf, or acknowledged
+    between the poll and the press, shifts the queue under the finger. That is bounded and benign
+    — the child gets a neighbouring message rather than an error — where an id the panel guessed
+    would be a 404 at the exact moment it is trying to play something.
+
+    OUT OF RANGE IS THE END OF THE QUEUE, NOT A 4xX. `at` beyond what is left means the queue
+    shrank since the poll, which the paragraph above says is ordinary; `LIMIT 1 OFFSET` past the
+    end then returns no row and this answers 204 — "nothing here" — exactly as an empty queue
+    does. Negative is clamped to the oldest rather than wrapping to the end, because a panel is
+    the only caller and a negative index from it is a bug, not a request for the newest."""
+    at = max(0, at)
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as session:
         row = (
             await session.execute(
@@ -634,10 +711,10 @@ async def next_message(principal: PanelDep, request: Request) -> Response:
                     FROM app.jpanel_message
                     WHERE recipient_device = :me AND played_at IS NULL
                       AND deliveries < :cap
-                    ORDER BY created_at LIMIT 1
+                    ORDER BY created_at LIMIT 1 OFFSET :at
                     """
                 ),
-                {"me": principal.id, "cap": JPANEL_MAX_DELIVERIES},
+                {"me": principal.id, "cap": JPANEL_MAX_DELIVERIES, "at": at},
             )
         ).first()
         if row is None:

@@ -138,3 +138,15 @@ int display_boot_presses(void);
 /* Where the last tap landed and which zone it was classified as. Reported so the touch
    controller's orientation is a measurement rather than an assumption — see display.c. */
 void display_last_tap(int *x, int *y, int *zone);
+
+/* HOW MANY SWIPES THIS PANEL HAS RECOGNISED, how far the last one travelled, and which waiting
+ * message is selected right now.
+ *
+ * FOR THE SAME REASON THE TAP POINT IS REPORTED, and a sharper one. The swipe gesture rests on the
+ * CST820 reporting a LIVE coordinate while a finger moves, and this firmware reads the controller
+ * through five bytes of one register with no datasheet-verified answer to that — it could as easily
+ * latch a point per touch, in which case every drag measures zero and the gesture silently does not
+ * exist. That is indistinguishable from a child not swiping far enough, from the desk. A count that
+ * stays 0 while the owner says he swiped means the controller does not track; a count that rises
+ * with a plausible `swipe_dx` means it does and the threshold is the only thing left to tune. */
+void display_swipes(unsigned *n, int *last_dx, int *sel);

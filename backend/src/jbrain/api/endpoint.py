@@ -541,6 +541,24 @@ class TelemetryIn(BaseModel):
     # from "the glass works and the rotation maths puts the finger somewhere else", which is a
     # fault this panel has actually had.
     tap: list[int] = Field(default_factory=list)
+    # WHETHER THE SWIPE GESTURE EXISTS ON THIS HARDWARE AT ALL, which is the same class of question
+    # as `tap` above and has the same answer: measure it rather than reason about it.
+    #
+    # A child can swipe left and right to change which waiting message the panel is about, and the
+    # gesture rests on the CST820 reporting a LIVE coordinate while a finger MOVES. The firmware
+    # reads that controller through five bytes of one register and has no datasheet-verified answer
+    # to whether it tracks or only latches a point per touch. If it only latches, every drag
+    # measures zero, the gesture silently does not exist, and from a desk that is indistinguishable
+    # from a child not swiping far enough.
+    #
+    # `swipes` stuck at 0 while the owner says he swiped means the controller does not track.
+    # `swipe_dx` is how far the last recognised one travelled, so a count that rises says the
+    # threshold is the only thing left to tune. `msg_sel` is which queued message is selected right
+    # now — the state the gesture exists to move, and the one thing a photo of the glass cannot
+    # distinguish from a redraw.
+    swipes: int = 0
+    swipe_dx: int = 0
+    msg_sel: int = 0
     # Which of the three callers of `esp_restart()` it was — "blit-heal" (a real fault),
     # "gesture" (a four-year-old), "ota-park" (routine). All three arrive as
     # `reset_reason: "sw(3)"` and two of them also share `crash_phase: 9`.
@@ -650,6 +668,12 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         wifi_drops=body.wifi_drops,
         restart_why=body.restart_why,
         tap=body.tap,
+        # WHICH MESSAGE IS SELECTED, ALWAYS; THE SWIPE COUNTERS ONLY ONCE THERE ARE ANY. A zero on
+        # every healthy report is how a log stops being read — and the first non-zero `swipes` is
+        # the answer to whether this hardware reports a moving finger at all, which is worth
+        # noticing on the report that carries it.
+        msg_sel=body.msg_sel,
+        **({"swipes": body.swipes, "swipe_dx": body.swipe_dx} if body.swipes else {}),
         panel_reset=body.panel_reset,
         screen=body.screen,
         # Only when there is something to say. An empty key on every report for fifteen
@@ -793,6 +817,30 @@ class EndpointSettings(BaseModel):
     # columns of `endpoint_settings`, and these come from `endpoint_panel` on the way out.
     pet_name: str = ""
     form: PanelForm = "ostrich"
+    # HOW MANY VOICE POSTS ARE WAITING FOR THIS PANEL, and it is here for latency rather than for
+    # display: `GET /jpanel/waiting` is the route that actually describes the queue, and the panel
+    # still calls it.
+    #
+    # THE PROBLEM THIS SOLVES. A message reaches a panel one of two ways — the box nudges it
+    # (`nudge.py`) and it polls straight away, or it finds out on its own thirty-second
+    # `/jpanel/waiting` cycle. The nudge is the fast path and it is also the fragile one: it is a
+    # UDP datagram to a remembered address, the push stream it shares a code path with is disabled
+    # on the firmware side after the 0.3.22 crash loop, and a panel that has just booted has no
+    # remembered address at all. Every one of those failures degrades to the same thing — up to
+    # thirty seconds of a child not being told — which the owner met head-on, on a freshly-woken
+    # unit: *"When sending messages still took a long time for it to show up on the panel."*
+    #
+    # This poll runs every THREE seconds and the box already knows the answer, so carrying the
+    # number here makes the slow path ten times faster and removes the dependency on a datagram
+    # arriving at all. The panel compares it against what it last saw and asks `/jpanel/waiting`
+    # on a change — the same thing a nudge makes it do, over a channel already in its hand.
+    #
+    # IT COSTS NO HANDSHAKE, which is the only reason it belongs on this response rather than on
+    # one of its own: `fw_version` and `telemetry_seq` above are here for exactly the same reason,
+    # and the handshake arithmetic in `fw_version`'s comment is the argument.
+    #
+    # Per-panel, like `pet_name`, and read-only in effect: the PUT writes six named columns.
+    waiting: int = 0
 
 
 def _clamp(v: EndpointSettings) -> EndpointSettings:
@@ -846,6 +894,51 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
 # the job they were always good at: carrying a name a four-year-old can be told out loud.
 # `jpanel` imports them; it does not restate them.
 UNNAMED_PANEL_LABEL = "room endpoint panel"
+
+
+# HOW MANY TIMES THE BOX WILL HAND THE SAME MESSAGE TO THE SAME PANEL BEFORE GIVING UP.
+#
+# A panel that cannot acknowledge must not be able to loop audio in a child's bedroom, and that
+# is the box's job because the box is the half that can be fixed without an OTA — §10.4cw is
+# the afternoon this was learned the hard way.
+#
+# Five, because the honest failures are all ONE: a dropped POST, a crash mid-playback, a power
+# cut between hearing and acknowledging. Retrying a handful of times covers every one of them
+# with room to spare, and the sixth identical delivery is not a flaky link, it is a panel that
+# cannot tell us it heard.
+#
+# IT LIVES HERE RATHER THAN IN `jpanel` BECAUSE TWO ROUTES IN TWO MODULES NOW SHARE IT. The
+# settings poll reports how many messages are waiting so a panel learns about one in three seconds
+# instead of thirty, and "waiting" has to mean the same thing there as it does in `GET
+# /jpanel/waiting` and `GET /jpanel/next` — a count that included messages the box has stopped
+# serving would have a panel drawing a notice it cannot play. Same rule as the two names above:
+# `jpanel` imports it, it does not restate it.
+JPANEL_MAX_DELIVERIES = 5
+
+
+async def _waiting_count(request: Request, ctx: SessionContext, device_id: str) -> int:
+    """How many voice posts this panel has not played yet.
+
+    Under the PANEL'S OWN context, like everything else on the settings route: `jpanel_message`'s
+    policy opens a row only to the panel that sent it or was sent it (migration 0208), so the
+    isolation is the table's and this handler does not get to be the thing that enforces it. The
+    owner reaching the settings route by cookie passes their own id, matches no recipient, and gets
+    0 — which is the right answer for a caller that has no inbox.
+    """
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
+        n = (
+            await session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM app.jpanel_message
+                    WHERE recipient_device = :me AND played_at IS NULL
+                      AND deliveries < :cap
+                    """
+                ),
+                {"me": device_id, "cap": JPANEL_MAX_DELIVERIES},
+            )
+        ).scalar_one_or_none()
+    return int(n or 0)
 
 
 def panel_label(name: str) -> str:
@@ -1190,6 +1283,18 @@ async def panel_settings(
     # panel's to obey, so there has to be a way for a change to reach a unit on a wall. Read
     # under the panel's own context, where `endpoint_panel_own` shows it exactly one row — its
     # own — so this route cannot be talked into describing a sibling.
+    # WHERE TO NUDGE THIS PANEL, LEARNED FROM THE FAST POLL RATHER THAN THE SLOW ONE.
+    #
+    # `GET /jpanel/waiting` was the only place the address cache was refreshed, and it runs every
+    # thirty seconds — so between a power-on and that panel's first waiting-poll the box knew of
+    # nowhere to send a datagram, and a message arriving in that window waited the whole interval
+    # instead of milliseconds. This route runs every three seconds and proves who it is by the
+    # same key, so it is the better place; the other one stays as the refresh that survives a
+    # router handing out new leases.
+    #
+    # The owner reaching this by cookie has no address worth remembering — nothing nudges the PWA
+    # — and `remember` ignores a caller it cannot name anyway, so this is unconditional.
+    nudge.remember(principal.id, request)
     ctx = ctx_for(principal)
     knobs = await _read_settings(request, ctx)
     # THE APPEARANCE NEEDS THE SUBJECT PIN, and `ctx_for` does not carry one — see
@@ -1209,6 +1314,7 @@ async def panel_settings(
             "form": look.form,
             "fw_version": _firmware_version(settings) or "",
             "pet_name_phonemes": phonemes_for(look.pet_name) or "",
+            "waiting": await _waiting_count(request, ctx, principal.id),
         }
     )
 

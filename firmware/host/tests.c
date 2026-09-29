@@ -3866,11 +3866,43 @@ static void test_the_font_can_spell_the_vocabulary(void)
     }
 }
 
+static void test_the_font_can_spell_what_the_screen_says(void)
+{
+    /* THE SAME ARGUMENT AS THE VOCABULARY ABOVE, FOR THE OTHER HALF OF THE GLASS, and it earns its
+       own test because it has already caught a change: the waiting count became a POSITION —
+       `2/3` — and the font had 44 glyphs and no `/`. An unknown character draws a blank cell of the
+       right width, so `2/3` would have rendered as `2 3` and read as two numbers.
+     *
+       Every string `display.c` hands to `font_draw` is listed here, including the format
+       characters, because a literal that only appears in a `snprintf` is exactly the one nobody
+       remembers to check. `vocab` covers what the panel HEARS; this covers what it SAYS. */
+    static const char *SAID[] = {
+        /* The notice, the badge and the playback numeral. */
+        "- SWIPE -", "TAP TO HEAR", "SENT YOU ONE", "0123456789/",
+        /* The recording indicator and the grid. */
+        "TO DAD", "MESSAGE", "SOMEONE",
+        /* The sleeping animal, the version label's separators, and the failure words. */
+        "ZZZ", "0.3.33", "v", "-",
+    };
+    for (unsigned i = 0; i < sizeof(SAID) / sizeof(SAID[0]); i++) {
+        for (const char *p = SAID[i]; *p; p++) {
+            if (*p == ' ') continue;
+            char one[2] = {*p, '\0'};
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            font_draw(fb, FACE_W, FACE_H, 10, 10, 2, one, 0xFFFF);
+            CHECK(non_black() > 0, "every character the screen draws has a glyph");
+        }
+    }
+}
+
 static void test_the_font_glyphs_are_distinct(void)
 {
     /* Copy-paste is the failure mode of a hand-entered bitmap table, and two letters sharing
        a shape is invisible until someone reads a word on the glass. */
-    static const char *SET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    /* THE PUNCTUATION IS IN HERE TOO, and `/` is why: it was added for `2/3` and the nearest
+       shapes in the table are `-` and `1`, either of which it could plausibly have been typed as.
+       `v` is the font's one lowercase letter and is deliberately not `V`. */
+    static const char *SET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/-.,'?!v";
     uint16_t *seen = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
     CHECK(seen != NULL, "scratch frame allocated");
     for (const char *a = SET; *a; a++) {
@@ -4036,6 +4068,7 @@ int main(void)
     test_caption_survives_a_stalled_clock();
     test_caption_ignores_nonsense();
     test_the_font_can_spell_the_vocabulary();
+    test_the_font_can_spell_what_the_screen_says();
     test_the_font_glyphs_are_distinct();
 
     free(fb);

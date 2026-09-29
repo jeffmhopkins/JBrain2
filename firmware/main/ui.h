@@ -264,6 +264,42 @@ typedef enum {
 #define UI_POPUP_BIG_W 296
 #define UI_POPUP_BIG_H 214
 
+/* ── SWIPING BETWEEN WHAT IS WAITING ──────────────────────────────────────────────────────
+ *
+ * The owner, after watching two messages arrive at once: *"if there's more than one message it
+ * shows the number in the middle of the menu, which isn't a bad thing but maybe we can add a new
+ * gesture which is swipe left and swipe right to change between the messages. When changing
+ * between messages, we again need to make sure that the icon on the top left updates, as well as
+ * the number in the middle. And that we handle stopping the current playing message if it's
+ * playing."*
+ *
+ * THE SELECTION IS A UI FACT, SO IT LIVES HERE. `jpanel.c` holds the queue and can play any index
+ * of it; which index a finger is pointing at is arbitration, and this is the module that can be
+ * stepped frame by frame in a test.
+ *
+ * ONLY WHERE THERE IS SOMETHING TO SWIPE BETWEEN. With one message queued the gesture does
+ * nothing at all — not "nothing visible", nothing: a lone message must not be losable to a smear,
+ * and the 700 ms hold that opens the "who?" menu starts with a finger on the same glass.
+ *
+ * IT CLAMPS, IT DOES NOT WRAP. Three messages and a wrap means swiping right three times lands
+ * back where you started, which reads as the panel ignoring you. Clamped, the ends are ends, and
+ * the count in the middle says where you are.
+ *
+ * AND IT STOPS WHAT IS PLAYING, which the owner asked for and which is also what makes the
+ * gesture safe to leave live during playback: a press on the notice or the transport fires on the
+ * DOWN edge, as every press on this panel has since children-jab was measured, so a swipe that
+ * began on a control has already triggered it by the time the travel is visible. Stopping is how
+ * that unwinds. */
+/* HOW FAR A FINGER MUST TRAVEL. 60 px is 4.7 mm on this glass (322 ppi) — far enough that no jab
+   crosses it, close enough to be one motion of a small hand. And the drag must be more horizontal
+   than vertical (`|dx| > |dy|`), which needs no second constant: a diagonal smear is a swipe, a
+   vertical one is not, and nothing else on this panel wants a vertical drag. */
+#define SWIPE_MIN_PX 60
+
+/* HOW MANY QUEUED MESSAGES THIS MODULE CAN BE TOLD THE SENDER OF. `JPANEL_QUEUE_MAX` in
+   `jpanel.h` and `JPANEL_QUEUE_MAX` in the backend are the same number; a test pins all three. */
+#define UI_QUEUE_MAX 8
+
 void ui_popup_target(int y0, int over_h, bool big, int box[4]);
 
 /* A TOUCH THAT MAKES A SOUND AND STILL PLAYS AT ONCE.
@@ -377,6 +413,15 @@ typedef struct {
        has just turned the panel on. */
     int waiting_shown;
     bool popup_was_big;
+    /* WHICH QUEUED MESSAGE THE FINGER IS POINTING AT — an index, 0 being the oldest, which is
+       where every arriving message and every emptied queue puts it back. Clamped to the queue on
+       every frame rather than trusted: the queue shrinks underneath it whenever something is
+       played, here or on the box. */
+    int sel;
+    /* THIS PRESS HAS ALREADY BEEN A SWIPE. Latched for the rest of the press rather than a frame:
+       a finger that travelled is not going to become a 700 ms hold by staying down, and without
+       this a drag across the pet would change message AND open the "who?" menu. */
+    bool swiped;
 } ui_state_t;
 
 /* ── THE FRAME'S FACTS ────────────────────────────────────────────────────────────────────
@@ -438,6 +483,17 @@ typedef struct {
 
     int waiting;           /* how many voice posts are queued on the box */
     bool waiting_from_dad; /* whether the OLDEST waiting one is from the owner */
+    /* WHO EACH QUEUED MESSAGE IS FROM, OLDEST FIRST — as many as the box described (`known`),
+       which is at most `UI_QUEUE_MAX` and may be fewer than `waiting`. `waiting_from_dad` above is
+       `from_dad[0]` on any box new enough to send a queue at all, and is the only answer on one
+       that is not. */
+    int known;
+    bool from_dad[UI_QUEUE_MAX];
+    /* A HORIZONTAL DRAG, RESOLVED: -1 for a finger that travelled LEFT, +1 for right, 0 for no
+       swipe this frame. Resolved by `display.c` because only it can see the finger move — the
+       touch controller is sampled on its own task and this module never touches a peripheral.
+       At most one per press, so a long drag steps once. */
+    int swipe;
     ui_to_t in_from;       /* where a reply to the last PLAYED message goes */
     ui_jstate_t jstate;
     bool jrunning;
@@ -457,7 +513,7 @@ typedef struct {
  */
 typedef enum {
     UI_ACT_CUE = 0,       /* arg: cue_t */
-    UI_ACT_PLAY_NEXT,     /* fetch the oldest waiting message and play it */
+    UI_ACT_PLAY_NEXT,     /* fetch a waiting message and play it; arg: which, 0 the oldest */
     UI_ACT_REPLAY,        /* ask the box for the last one again */
     UI_ACT_STOP,          /* end a run on a finger */
     UI_ACT_PAUSE,         /* arg: 1 hold, 0 resume */
@@ -518,6 +574,7 @@ typedef struct {
     bool popup_from_dad;
 
     bool run;
+    /* HOW MANY ARE WAITING. Paired with `sel_shown` below, which is the half that changed. */
     int run_count;
     bool run_playing;
     bool run_from_dad;
@@ -528,6 +585,17 @@ typedef struct {
 
     bool exit_corner; /* the way out, top right */
     bool grid;
+    /* WHICH QUEUE ENTRY EVERY FACE AND NAME ON THIS FRAME IS ABOUT. `display.c` reads the NAME
+       from `jpanel.c` and cannot be left to guess which entry that should be — the two would drift
+       apart within a release, which is the whole reason the notice's hit box and its picture were
+       collapsed into one answer. */
+    int sel;
+    /* THE SAME THING ONE-BASED, for a numeral a four-year-old is being taught to read. It used to
+       be "how many are still to come"; now that a finger can point at one of them it says WHERE
+       THAT FINGER IS — `sel_shown` of `run_count` — because a position is only legible next to its
+       total. Drawn on both screens that carry a count, and only while `run_count > 1`: with one
+       message there is no position to report. */
+    int sel_shown;
 } ui_overlay_t;
 
 /* ── WHO CLAIMS A PRESS ───────────────────────────────────────────────────────────────────

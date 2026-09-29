@@ -50,3 +50,16 @@ bool touch_is_down(void);
    in telemetry and a marker is drawn where the firmware THINKS the finger was — if the dot
    is not under the finger, the mapping is wrong and the numbers say how. */
 void touch_point(int *x, int *y);
+
+/* WHERE THE FINGER IS RIGHT NOW, in the same coordinates `touch_point` reports, and false once it
+ * has lifted. This is the one thing `touch_point` cannot answer: that one latches the press EDGE
+ * on purpose, so a caller watching a drag would read the same value all the way through it.
+ *
+ * WHY THIS EXISTS. The owner asked for a swipe to change which waiting message the panel is about,
+ * and a swipe is a distance — there is nothing to subtract from the origin without a live point.
+ * Sampled on this module's own task like everything else here, so a slow frame costs a drag its
+ * resolution and never its existence.
+ *
+ * NOT A GESTURE, DELIBERATELY. This reports a position; `display.c` decides what travel means and
+ * `ui.c` decides what to do about it, which keeps the threshold somewhere it can be tested. */
+bool touch_drag(int *x, int *y);
