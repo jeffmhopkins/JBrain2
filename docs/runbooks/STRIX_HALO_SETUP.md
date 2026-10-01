@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-24
+> **Status:** Living · **Last verified:** 2026-10-01
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -1364,6 +1364,31 @@ so the box never drifts from what the repo says it serves.
 > full verbose log — the resolved repo, include globs, and the hf error (404 / auth
 > / disk / network) — read `GET /api/debug/provision/status` via a debug token
 > (docs/runbooks/DEBUG_ACCESS.md), or the Ops update log.
+
+### Flash-Next — a second, switchable engine (opt-in, PWA only)
+**Qwen3.8-Flash-Next** runs in its own container (`flash-next`) as an *alternative* to the
+standard gateway, never beside it — both up at once would not fit in 128 GB
+(`docs/plans/FLASH_NEXT_ENGINE_PLAN.md`). Every step is in the PWA; none needs a shell or an
+`.env` edit. A box that never installs it is unchanged.
+
+1. **Install the weights.** Settings → LLM → **On-box models** → *Qwen3.8-Flash-Next* →
+   **Install** (~94 GB). The usual disk check applies: it refuses rather than fills the disk,
+   and the queue waits for you to free space. Installing it does **not** make it the active
+   chat model — it is reached through the engine switch, not the per-task pickers.
+2. **Ops → Update.** The update builds the Flash-Next image (its own llama.cpp, pinned in
+   `deploy/Dockerfile.flash-next`) only when the model is installed or queued, and leaves its
+   container **created but stopped**. The standard gateway keeps serving. The update log
+   says which engine it brought back (`[update] local engine: standard`).
+3. **Switching** to it is **Ops → Local engine**, which arrives with wave F3 (drain → swap →
+   smoke test → automatic rollback). Until then nothing is routed to Flash-Next.
+4. **Backing out:** switch back to Standard (F3), then **Uninstall** it in On-box models. The
+   next Ops → Update removes its container and image.
+
+Every path that starts a gateway — the update, the model sync, code mode's power-on — starts
+only the **selected** engine and stops the other first. If Flash-Next is selected but its
+weights are missing or it fails to start, the box falls back to the standard gateway and the
+update log says so (`[local-engine] … falling back to the standard engine`); the setting
+itself is left for you to change.
 
 ## Phase 8 — Confirm it's really local
 - Add a note with a photo → it should OCR locally; watch `jbrain logs local-llm`.

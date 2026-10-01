@@ -1,0 +1,149 @@
+# OPT-IN second on-box engine: Qwen3.8-Flash-Next behind its own llama-swap, for AMD Strix
+# Halo (gfx1151). docs/plans/FLASH_NEXT_ENGINE_PLAN.md is the design; this image is §4 "Image".
+#
+# The same shape as Dockerfile.local-llm — kyuz0's gfx1151 Vulkan toolbox as the base (its
+# proven Mesa/RADV + glslc toolchain), llama-swap in front so the api's gateway contract
+# (`/running`, `/api/models/unload`, `/upstream/…/health`) holds unchanged — with ONE
+# difference that is the reason this is a separate image: llama.cpp is BUILT FROM SOURCE at a
+# pinned commit instead of taken from the base. The model's support landed in #27742
+# (2026-08-27) and its vision + multi-slot correctness fixes in #27941 (2026-09-01), both
+# AFTER the standard gateway's base pin (2026-08-25). Moving the standard base to reach them
+# would re-roll gpt-oss's tool calling too, and the plan's rule is that the standard engine is
+# never rebuilt by this work — so Flash-Next gets its own llama.cpp, and the standard image is
+# untouched.
+#
+# Built only when a Flash-Next model is installed (deploy/update-inner.sh); never part of the
+# default stack, and never running while `local-llm` is (§4d).
+
+# Global scope, before the first FROM, so every stage below can resolve it (an ARG after a
+# FROM is scoped to that stage). The SAME digest as Dockerfile.local-llm's pin: one base to
+# trust, and its toolchain is what both builds were validated on. Override with
+# FLASH_NEXT_BASE in .env only to try another kyuz0 variant deliberately.
+ARG FLASH_NEXT_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:cea7c7e723b8feed67c5a4f4094652f4a0c63207be60584d8088eb5c6e62ef92
+
+# llama-swap, pinned to the same commit as the standard gateway (the v250 release — see
+# Dockerfile.local-llm for why a commit and not a tag, and for the fixes v250 carries). Same
+# gateway on both engines means the api's admin client has one contract to honour.
+FROM golang:1.23-bookworm AS swap
+ENV GOTOOLCHAIN=auto
+ARG LLAMA_SWAP_VERSION=60226b63776efac11e15828abe0bb302ec259699
+RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
+
+# llama.cpp at a PINNED master commit, built inside the base so it uses the base's gfx1151
+# Vulkan toolchain.
+#
+# Current pin (2026-10-01): 869034b4bb93 — llama.cpp master of that date ("llama : fix
+# invalid assert in recurrent memory", #29799). It carries everything the plan requires:
+#   - #27742  qwen4exp support (GDN hybrid, 512-expert MoE, QSA sparse attention, PLE)
+#   - #27941  seq_cp / block-position keying / mtmd input fixes — vision + multi-slot
+#   - #28123  recurrent-state rollback (context checkpoints on this hybrid)
+#   - #28956  Vulkan: wrong results when a mul_mat reads a slice of a larger cache
+#   - #29751  "llama: fix qwen4exp", the latest model fix at pin time
+# Whether the Vulkan full-offload abort (#29028, "tensor read out of bounds" at first decode)
+# is fixed at this commit is NOT confirmed — the issue closed without naming its fix. F2's
+# first check is exactly that, on the box; a failure there is a pin bump, not a code change.
+#
+# A full 40-character SHA, never a branch: a floating ref would let the engine change under
+# the box on any rebuild, with nothing in the diff to point at.
+#
+# BUILD_SHARED_LIBS=OFF: the base ships its OWN libggml*/libllama shared libraries at a
+# different commit. A shared build overlaid on them is the ABI-mismatch failure
+# Dockerfile.local-llm documents at length (2026-08-24); static binaries cannot pick up the
+# base's libraries at all, so the two llama.cpps never meet. Only the Vulkan loader and libc
+# stay dynamic, and those are the base's by design.
+#
+# The checkpoint-sidecar patch (deploy/patches/0001, applied by anchor) is OFF by default:
+# FLASH_NEXT_PATCH_RESTORE_CHECKPOINT=1 turns it on, and the plan does that in F4, after the
+# anchors have been re-validated against this pin. The anchors fail hard on drift, by design.
+FROM ${FLASH_NEXT_BASE} AS llama-build
+ARG LLAMA_CPP_COMMIT=869034b4bb93a425ea989d30fc3d000f5a461d58
+ARG PATCH_RESTORE_CHECKPOINT=0
+COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
+RUN set -eux; \
+    printf '%s' "${LLAMA_CPP_COMMIT}" | grep -Eq '^[0-9a-f]{40}$' \
+        || { echo "FATAL: LLAMA_CPP_COMMIT must be a full 40-char commit SHA, got '${LLAMA_CPP_COMMIT}'"; exit 1; }; \
+    # Same tool bootstrap as Dockerfile.local-llm's patched build: the base is Fedora and has
+    # shipped with `ld` missing while its RPM DB still claimed binutils, so check what the
+    # build invokes, install, reinstall what is still missing, and hard-fail before compiling.
+    tools_missing() { m=""; for t in git cmake c++ ld make; do command -v "$t" >/dev/null 2>&1 || m="$m $t"; done; printf '%s' "$m"; }; \
+    if [ -n "$(tools_missing)" ]; then \
+        echo "installing build tools (missing:$(tools_missing))"; \
+        if command -v dnf >/dev/null 2>&1; then \
+            dnf -y --setopt=install_weak_deps=False install git cmake gcc-c++ binutils make; \
+            [ -z "$(tools_missing)" ] || dnf -y reinstall git cmake gcc-c++ binutils make || true; \
+        elif command -v microdnf >/dev/null 2>&1; then \
+            microdnf -y --setopt=install_weak_deps=0 install git cmake gcc-c++ binutils make; \
+            [ -z "$(tools_missing)" ] || microdnf -y reinstall git cmake gcc-c++ binutils make || true; \
+        elif command -v apt-get >/dev/null 2>&1; then \
+            apt-get update && apt-get install -y --no-install-recommends git cmake build-essential; \
+            [ -z "$(tools_missing)" ] || apt-get install -y --reinstall --no-install-recommends git cmake build-essential binutils || true; \
+        else echo "FATAL: missing tools ($(tools_missing)) and no known package manager (dnf/microdnf/apt-get)"; exit 1; fi; \
+        if [ -n "$(tools_missing)" ]; then echo "FATAL: build tools still missing after install/reinstall:$(tools_missing)"; exit 1; fi; \
+    fi; \
+    git clone --filter=blob:none https://github.com/ggml-org/llama.cpp /llama; \
+    git -C /llama checkout "${LLAMA_CPP_COMMIT}"; \
+    if [ "${PATCH_RESTORE_CHECKPOINT}" = "1" ]; then \
+        /apply-llama-patches.sh /llama; \
+    else \
+        echo "PATCH_RESTORE_CHECKPOINT!=1 — building stock llama.cpp at ${LLAMA_CPP_COMMIT}"; \
+    fi; \
+    # LLAMA_USE_PREBUILT_UI=OFF: the server's web UI is otherwise fetched from a Hugging Face
+    # bucket at BUILD time, an unpinned network input. Nothing here uses that UI (the api
+    # talks to the OpenAI endpoints through llama-swap), so the server embeds an empty table.
+    cmake -S /llama -B /llama/build \
+        -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+        -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+        -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF; \
+    # llama-perplexity rides along for F2's correctness check (WikiText-2 perplexity against
+    # the #27742 reference — it catches the converter's off-by-1.0 norm bug), run as an
+    # allowlisted supervisor one-shot inside THIS image so it measures the binary that serves.
+    cmake --build /llama/build --target llama-server llama-perplexity -j"$(nproc)"; \
+    mkdir -p /out/bin; \
+    for b in llama-server llama-perplexity; do \
+        cp "$(find /llama/build -name "$b" -type f -perm -u+x | head -n1)" "/out/bin/$b"; \
+    done; \
+    /out/bin/llama-server --version 2>&1 | head -n2
+
+# WikiText-2 (raw) for the perplexity one-shot, fetched at build time from a revision-pinned
+# URL and checked against a known SHA-256 — the same file llama.cpp's own
+# scripts/get-wikitext-2.sh fetches, so a result is comparable with upstream's. Baked in rather
+# than downloaded at run time: the check must not depend on the box reaching Hugging Face, and
+# a sample that silently changed would make two perplexity runs incomparable.
+FROM golang:1.23-bookworm AS wikitext
+ARG WIKITEXT_URL=https://huggingface.co/datasets/ggml-org/ci/resolve/927b3642933080f1b0e811e2f916e14c292992f9/wikitext-2-raw-v1.zip
+ARG WIKITEXT_ZIP_SHA256=ef7edb566e3e2b2d31b29c1fdb0c89a4cc683597484c3dc2517919c615435a11
+ARG WIKITEXT_TEST_SHA256=173c87a53759e0201f33e0ccf978e510c2042d7f2cb78229d9a50d79b9e7dd08
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*; \
+    curl -fsSL --retry 3 -o /tmp/wt2.zip "${WIKITEXT_URL}"; \
+    echo "${WIKITEXT_ZIP_SHA256}  /tmp/wt2.zip" | sha256sum -c -; \
+    unzip -q /tmp/wt2.zip -d /tmp/wt2; \
+    mkdir -p /out; \
+    cp /tmp/wt2/wikitext-2-raw/wiki.test.raw /out/wiki.test.raw; \
+    echo "${WIKITEXT_TEST_SHA256}  /out/wiki.test.raw" | sha256sum -c -
+
+FROM ${FLASH_NEXT_BASE}
+ARG LLAMA_CPP_COMMIT=869034b4bb93a425ea989d30fc3d000f5a461d58
+
+COPY --from=swap /out/llama-swap /usr/local/bin/llama-swap
+
+# The built binaries live under /opt/llama.cpp, AND replace the base's `llama-server` wherever
+# PATH finds it: the rendered llama-swap config invokes `llama-server` by bare name (shared
+# with the standard engine's renderer), so the name must resolve to THIS build. The final
+# check fails the image rather than ship one that would quietly serve the base's older
+# llama.cpp — which predates Flash-Next support and would fail every load.
+COPY --from=llama-build /out/bin/ /opt/llama.cpp/bin/
+RUN set -eu; \
+    dst="$(command -v llama-server || echo /usr/local/bin/llama-server)"; \
+    install -m 0755 /opt/llama.cpp/bin/llama-server "${dst}"; \
+    ln -sf /opt/llama.cpp/bin/llama-perplexity /usr/local/bin/llama-perplexity; \
+    short="$(printf '%s' "${LLAMA_CPP_COMMIT}" | cut -c1-7)"; \
+    ver="$(llama-server --version 2>&1 || true)"; \
+    printf '%s\n' "$ver" | grep -q "$short" \
+        || { echo "FATAL: llama-server on PATH does not report commit $short: $ver"; exit 1; }; \
+    echo "llama-server on PATH is the pinned build ($short)"
+
+# Fixed path the F2 perplexity one-shot reads; do not move it without moving that job.
+COPY --from=wikitext /out/wiki.test.raw /opt/jbrain/wikitext-2-raw/wiki.test.raw
+
+EXPOSE 8080

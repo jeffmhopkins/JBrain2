@@ -466,6 +466,62 @@ services:
     # endpoint here — and ONLY this — without being on the shared `internal` net.
     networks: [internal, jcode]
 
+  # OPT-IN second engine: Qwen3.8-Flash-Next behind its own llama-swap
+  # (docs/plans/FLASH_NEXT_ENGINE_PLAN.md). The ALTERNATIVE to `local-llm`, never its
+  # companion: both up at once is ~170 GiB on a 128 GB box, a freeze. So it lives under its
+  # own profile, which no plain `up -d` starts, and only the engine-aware start paths
+  # (deploy/local-engine.sh, called by the update and the model sync; the api's jcode
+  # power-on) bring it up — after stopping `local-llm`. When installed but not selected, the
+  # update leaves it CREATED and stopped so the supervisor's /start can switch to it later.
+  #
+  # Everything but the image and the config file mirrors `local-llm` on purpose: the same
+  # devices, groups, read-only weights with the one rw `.kvslots` carve-out, and the same
+  # networks — under the network alias `local-llm`, so every client (the api, jcode) reaches
+  # whichever engine is up at the name it already uses. That alias is safe ONLY because the
+  # two never run together (§4d); the api opens a fresh client per call, so nothing pins the
+  # old address across a switch.
+  flash-next:
+    logging: *logbound
+    profiles: [flash-next]
+    image: jbrain2-flash-next:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.flash-next
+      args:
+        # Same pinned gfx1151 base as local-llm (keep the two in lockstep); llama.cpp itself
+        # is built from a pinned commit inside the Dockerfile, so the base only supplies the
+        # Vulkan toolchain and runtime.
+        FLASH_NEXT_BASE: ${FLASH_NEXT_BASE:-docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:cea7c7e723b8feed67c5a4f4094652f4a0c63207be60584d8088eb5c6e62ef92}
+        # The checkpoint-sidecar patch, OFF until F4 re-validates its anchors on this pin.
+        PATCH_RESTORE_CHECKPOINT: ${FLASH_NEXT_PATCH_RESTORE_CHECKPOINT:-0}
+    restart: unless-stopped
+    # Its OWN config file (jbrain.llm.engine.CONFIG_FILE), so the standard gateway never
+    # renders a model its llama.cpp cannot load, and this one never renders gpt-oss.
+    command:
+      [
+        "llama-swap",
+        "--listen",
+        ":8080",
+        "--config",
+        "/models/llama-swap.flash-next.yaml",
+        "--watch-config",
+      ]
+    devices:
+      - /dev/dri:/dev/dri
+    security_opt:
+      - seccomp=unconfined
+    group_add:
+      - "${VIDEO_GID:-video}"
+      - "${RENDER_GID:-render}"
+    volumes:
+      - ./local-models:/models:ro
+      - ./local-models/.kvslots:/models/.kvslots
+    networks:
+      internal:
+        aliases: [local-llm]
+      jcode:
+        aliases: [local-llm]
+
   # OPT-IN on-box image generation: a ROCm ComfyUI serving Qwen-Image, the sibling
   # of the local-llm gateway. Guarded by the `comfyui` compose profile so it NEVER
   # starts on a stock deploy — `scripts/comfyui-setup.sh` provisions the weights and
