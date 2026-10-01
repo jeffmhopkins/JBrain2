@@ -9,7 +9,7 @@ the **only** local LLM, in its own container, behind an owner-operated switch:
 Switching back restores the standard gateway and every per-task pick untouched.
 
 Why: one multimodal model replaces the gpt-oss-120b + Qwen3.8-27B pair (~87 GB of weights
-before KV) in ~71 GiB with four full-context slots, and the community has already done
+before KV) in ~84 GiB with four full-context, role-pinned slots, and the community has already done
 most of the gfx1151 groundwork (§2). Nothing changes for a box that never flips the switch.
 
 ## 1. Decisions taken with the owner
@@ -19,7 +19,7 @@ most of the gfx1151 groundwork (§2). Nothing changes for a box that never flips
 | Container | New `flash-next` compose profile, own image. Never co-resident with `local-llm`. |
 | Switching | PWA (Ops), no terminal. Drain → swap → smoke test → automatic rollback on failure. |
 | Routing | **Remap all calls.** While active, every `local:*` spec resolves to Flash-Next. |
-| Slots | **4 slots, unified KV pool** (`-np 4 --kv-unified`), 524,288-cell pool, per-request cap 262,144. |
+| Slots | **4 role-pinned slots, each its own 262,144-cell KV** (`-np 4 -c 1048576`, NOT `--kv-unified`). Slots exist to **keep each workload's prefix warm** (prefill reuse), not for concurrency — see §4a. |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector. |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
 | Engine | Start on mainline llama.cpp (Vulkan); a **custom community engine** is an explicit later wave (W4), adopted only on evidence. |
@@ -29,7 +29,7 @@ most of the gfx1151 groundwork (§2). Nothing changes for a box that never flips
 | Source | What it proves for us |
 |---|---|
 | llama.cpp [#27742](https://github.com/ggml-org/llama.cpp/pull/27742) (merged 2026-08-27) | Mainline support: GDN hybrid, 512-expert MoE, QSA sparse attention, PLE, **vision via the Qwen3-VL clip path**. |
-| llama.cpp [#27941](https://github.com/ggml-org/llama.cpp/pull/27941) (merged 2026-09-01) | Fixes image tokens collapsing onto wrong pooled keys under M-RoPE, and **unified-KV block keying across sequences**. Both are hard requirements for us (vision + `--kv-unified`). Our pin (2026-08-25) predates both. |
+| llama.cpp [#27941](https://github.com/ggml-org/llama.cpp/pull/27941) (merged 2026-09-01) | Fixes image tokens collapsing onto wrong pooled keys under M-RoPE, and stale indexer keys on copied sequences (multi-slot). Both are hard requirements for us (vision + 4 slots). Our pin (2026-08-25) predates both. |
 | [Soot/Silicon, ROCm vs Vulkan](https://www.soothill.io/blog/2026/08/27/qwen38-flash-next-rocm-vulkan-strix-halo/) | Mainline on **Vulkan/RADV** is the safe path: 6.4× ROCm decode, far less GTT, 60-min soak with zero GPU faults. PLE on CPU + mmap; `--no-mmap` exhausted RAM. ~15.6 tok/s single, 24.3 aggregate at 2 slots. |
 | [julianmb/haloq38flash](https://github.com/julianmb/haloq38flash) | PLE streamed from SSD works: ~2.5 GB working set, 262k context, 34–42 GB headroom. Warns the official converter's hyper-connection norms were **off by 1.0** — check our GGUF (W0). |
 | [abliter8-ai repo](https://github.com/abliter8-ai/qwen-3.8-next-flash-amd-strix-halo) | Vision works on gfx1151 (needs thinking off + ≥1024 output tokens). PLE exceeds Vulkan's 4 GiB buffer limit unless split or kept on CPU. |
@@ -46,17 +46,19 @@ DeltaNet; QSA indexer 1 KV head × 128, compress 4.
 | Item | GiB |
 |---|---|
 | Weights without the PLE table (IQ4_XS) | ~60 |
-| KV, q8_0, 524,288-cell unified pool (12 × 2 × 256 × 2 × 1.0625 B/token) | ~6.4 |
-| QSA indexer keys | ~0.4 |
+| KV, q8_0, 4 × 262,144 cells, per-slot (12 × 2 × 256 × 2 × 1.0625 B/token) | ~12.8 |
+| QSA indexer keys | ~0.8 |
 | Recurrent state, 4 slots | ~0.4 |
-| Context checkpoints, 2 per slot × 4 (~0.15 each, unmeasured) | ~1.2 |
+| Context checkpoints, 16 per slot × 4 (~0.11 each derived, unmeasured) | ~7 |
 | Compute buffers | ~1.5 |
 | Vision projector (F16) + CLIP workspace (flash attention on) | ~1.4 |
-| **Total resident** | **~71** |
+| **Total resident** | **~84** |
 | PLE table (file-backed page cache, reclaimable — not budgeted) | ~27 on disk |
 
-A unified pool means all four slots can be long, but not all at 262k at once. Reserving a
-full 262k per slot (pool 1,048,576) costs ~78 GiB — a setting, not a rebuild.
+Levers if W0 measures it heavier: 8 checkpoints per slot (~−3.5), or 131k per slot
+(`-c 524288`, ~−6.8). Both are settings, not rebuilds. A unified pool would save the same
+~6.8 but lets one long conversation evict the other slots' prefixes — the thing the slots
+are for — so it is rejected (§4a).
 
 ## 4. Shape
 
@@ -71,8 +73,8 @@ full 262k per slot (pool 1,048,576) costs ~78 GiB — a setting, not a rebuild.
   served name from the standard catalog (`gpt-oss-120b`, `qwen3-coder-next`, …) to the
   Flash-Next model, so a direct caller sending an old name is still served.
 - **Serving flags:** `--load-mode mmap` (overrides our global `--no-mmap`),
-  `-ot per_layer_token_embd=CPU`, `-np 4 --kv-unified -c 524288`, `-ctk q8_0 -ctv q8_0`,
-  `-fa 1`, `-cram 0`, `--ctx-checkpoints 2`, `--jinja`, the F16 mmproj with the existing
+  `-ot per_layer_token_embd=CPU`, `-np 4 -c 1048576`, `-ctk q8_0 -ctv q8_0`,
+  `-fa 1`, `-cram 0`, `--ctx-checkpoints 16 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the existing
   `--image-min-tokens` floor. No MTP: four slots and speculation are mutually exclusive
   (`llama_swap_config.py`).
 - **Switch:** a `local_engine` setting (`standard` | `flash-next`) in the existing settings
@@ -86,6 +88,30 @@ full 262k per slot (pool 1,048,576) costs ~78 GiB — a setting, not a rebuild.
   Flash-Next's own sampling and `reasoning_effort` mapping. Stored per-task picks are
   never rewritten.
 
+### 4a. Slots are prefix caches, pinned by role
+
+On a hybrid model a prefix is reused only if a context checkpoint covers the divergence
+point; otherwise the whole prompt is re-prefilled (the 27B paid 232 s per turn for this
+before checkpoints were raised). Today separate models give separate caches — the persona
+lives on gpt-oss, ingest on the 27B. With one model, **slots take over that job**.
+
+The gap: nothing pins a request to a slot today (`llama_swap_config.py`, the `-np` comment).
+llama-server picks the longest matching prefix, else the least-recently-used slot — which is
+usually the idle slot holding the primed persona. So W3 adds **slot affinity**: the router
+sends `id_slot` by workload class, and a busy slot queues its own traffic instead of
+stealing another's.
+
+| Slot | Workload | Why it gets its own |
+|---|---|---|
+| 0 | Interactive persona (jerv, omnibox turns) | The prefill the owner waits on. Never evicted by background work. |
+| 1 | Ingest + analysis | Long, stable system prompt reused on every note. |
+| 2 | Agents, research, workflow tasks | Heterogeneous; isolates churn from 0 and 1. |
+| 3 | jcode + overflow | Coding sessions have their own long prefix. |
+
+Per-slot (non-unified) KV is what makes this hold: each slot owns its 262k, so no slot can
+evict another's cache. The disk slot store (`jbrain.llm.kv_prefix`) stays the backstop for a
+prefix that loses its slot anyway (restart, a switch, a fifth workload).
+
 Not touched by the switch: `embed`, `tts-stt` (Whisper/Kokoro), `comfyui`.
 
 ## 5. Waves
@@ -95,14 +121,16 @@ Build the image and serve the model through the debug API (`docs/runbooks/DEBUG_
 with the standard engine stopped. Record, into this doc:
 - resident GTT + host RSS + PLE page-cache working set, cold and warm;
 - decode tok/s at 1, 2 and 4 concurrent requests; prefill at 8k / 32k / 128k;
-- per-checkpoint size (to replace the 0.15 guess) and the unified-pool behaviour when
-  two slots run long at once;
+- per-checkpoint size (to replace the 0.11 derivation);
+- **prefix reuse per slot**: a second turn on a warm slot re-processes only its delta
+  (the 27B's measured bar: 33k-token history, 232 s cold → ~8 s warm), and a request
+  pinned to slot 1 leaves slot 0's prefix intact;
 - correctness: WikiText-2 perplexity vs the #27742 reference (catches the converter norm
   bug), an image-grounding check (catches pre-#27941 collapse), a tool-call round-trip,
   JSON-mode output;
 - a 60-minute mixed soak with zero device-loss or GPU reset events.
 
-**Exit gate:** fits in ≤ 80 GiB resident at 4 slots, survives the soak, passes the
+**Exit gate:** fits in ≤ 90 GiB resident at 4 slots, warm-slot turns reuse their prefix, survives the soak, passes the
 correctness checks. Fail → this plan parks with the numbers recorded.
 
 ### W1 — Container, profile, weights ◻️
@@ -111,8 +139,8 @@ correctness checks. Fail → this plan parks with the numbers recorded.
   + aliases.
 - A catalog entry `qwen3.8-flash-next` carrying a new **engine** field (which container
   serves it) and a **file-backed weights** figure (the PLE share excluded from
-  `footprint_gb`). Also a **unified-pool** KV term: KV is charged once for the pool, not
-  per slot.
+  `footprint_gb`). KV and checkpoints are charged per slot (the existing `slots`
+  multiplier) at the measured W0 checkpoint size.
 - PWA-driven weight install/uninstall through the existing on-box models path.
 - Smoke test (text, image, tool call) in the update path when this engine is selected.
 - Tests: config rendering, catalog footprint maths, supervisor/compose wiring.
@@ -157,9 +185,10 @@ engine is a `cmd` swap in the llama-swap config plus an image change, not a re-p
 
 ## 6. Risks
 
-- **Throughput at 4 slots on mainline Vulkan** — ~24 tok/s aggregate measured at 2 slots
-  implies ~7–10 tok/s each when all four are busy. Acceptable for background work, slow
-  for interactive chat; W4 is the answer if it bites.
+- **Single-stream speed on mainline Vulkan** — ~15 tok/s, against gpt-oss's ~31 today.
+  Slots are caches, not concurrency, so this is the number that matters; W4 is the answer
+  if it bites. (When two slots do run at once they share the GPU: ~24 tok/s aggregate
+  measured at 2.)
 - **Quality vs gpt-oss-120b is unknown** — no shared public benchmark. W0's correctness
   checks are not an eval; run the existing ingest/analysis eval fixtures before retiring
   anything.
