@@ -21,6 +21,11 @@ if TYPE_CHECKING:
 
 COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
+# "True" on a `docker compose run` container. It carries the SAME service label as the
+# long-running container, so a lookup by service alone can land on a transient one-off
+# (an update's `run --rm api`, the perplexity job's `run flash-next`) instead of the
+# service the caller meant to start, stop or read.
+COMPOSE_ONEOFF_LABEL = "com.docker.compose.oneoff"
 
 # Updater one-shots are deliberately OUTSIDE the compose project label so
 # stack-wide restarts never touch a running update.
@@ -72,6 +77,114 @@ def _refresh_command(service: str) -> str:
         "apk add --no-cache git >/dev/null 2>&1 && "
         f"exec sh src/deploy/refresh-inner.sh {shlex.quote(service)}"
     )
+
+
+# The two on-box LLM engines (backend `jbrain.llm.engine.SERVICE`). Never both up: on a
+# 128 GB box their footprints together are a freeze (FLASH_NEXT_ENGINE_PLAN §4d).
+ENGINE_SERVICES = ("local-llm", "flash-next")
+FLASH_NEXT_SERVICE = "flash-next"
+# The WikiText-2 raw test split, baked into the flash-next image at this fixed path
+# by deploy/Dockerfile.flash-next, and llama.cpp's perplexity tool on that image's PATH.
+PERPLEXITY_TEXT = "/opt/jbrain/eval/wiki.test.raw"
+PERPLEXITY_BINARY = "llama-perplexity"
+# Fixed name for the job's model container, so a run killed mid-way (the one-shot
+# reaped, the daemon restarted) leaves something the next run can find and remove by
+# name rather than a second ~60 GiB process nobody is tracking.
+PERPLEXITY_CONTAINER = "jbrain-flash-next-perplexity"
+# The flags are FIXED here, never taken from a request: `-ngl 999` is the full offload
+# the serving config uses (the shape llama.cpp #29028 crashed on); the engram table
+# stays on the CPU because the 26.8 GiB tensor exceeds Vulkan's 4 GiB binding limit;
+# `-c 512` is the context the published WikiText-2 references are measured at.
+PERPLEXITY_ARGS = ("-ngl", "999", "-ot", "per_layer_token_embd=CPU", "-c", "512")
+
+
+# Label on a perplexity one-shot naming the engine service it stopped and must put
+# back ("" for none). Read back by the reaper, because a one-shot killed past its max
+# runtime never runs its own EXIT trap.
+PERPLEXITY_RESTORE_LABEL = "jbrain.perplexity.restore"
+# Without a count the run would walk the whole test split (~560 chunks) — hours on this
+# box with the model loaded beside nothing else. Bounded by default, like the request.
+PERPLEXITY_DEFAULT_CHUNKS = 100
+
+
+def _perplexity_command(
+    project: str, model_path: str, chunks: int | None, restore: str
+) -> str:
+    """The perplexity one-shot's whole script — a FIXED job, never free-form exec.
+
+    The only caller-derived tokens are the model path (validated at the HTTP layer
+    against a strict pattern under /models) and an integer chunk count. Every
+    interpolated value is shell-quoted and appears only as a BARE word, never inside
+    double quotes — a quoted value inside "…" is not quoted at all, and that is how an
+    earlier version let `'$(…)'` in a path run. `restore` is one of ENGINE_SERVICES or
+    "", chosen by the gateway, never by a request.
+
+    It STOPS whichever engine is up first and fails closed if any stop fails or an
+    engine is still running afterwards: an idle-looking gateway is not enough (the warm
+    keeper or a queued ingest can load a model into it mid-run), and that plus the
+    ~60 GiB this run loads is the freeze. The EXIT trap puts `restore` back; a one-shot
+    killed by the reaper never runs it, which is why the reaper reads the same value
+    off the container's label."""
+    q = shlex.quote
+    if restore not in ("", *ENGINE_SERVICES):
+        raise ValueError(f"not an engine service: {restore!r}")
+    scope = (
+        f"--filter {q(f'label={COMPOSE_PROJECT_LABEL}={project}')} "
+        f"--filter {q(f'label={COMPOSE_ONEOFF_LABEL}=False')}"
+    )
+    count = chunks if chunks else PERPLEXITY_DEFAULT_CHUNKS
+    args = [*PERPLEXITY_ARGS, "--chunks", str(int(count))]
+    run = " ".join(
+        [
+            "docker compose --profile",
+            q(FLASH_NEXT_SERVICE),
+            "run --rm --no-deps -T --name",
+            q(PERPLEXITY_CONTAINER),
+            "--entrypoint",
+            q(PERPLEXITY_BINARY),
+            q(FLASH_NEXT_SERVICE),
+            "-m",
+            q(model_path),
+            "-f",
+            q(PERPLEXITY_TEXT),
+            *(q(a) for a in args),
+        ]
+    )
+    engines = " ".join(q(s) for s in ENGINE_SERVICES)
+    label = q(f"label={COMPOSE_SERVICE_LABEL}=")
+    return f"""set -u
+ids() {{ docker ps $1 {scope} --filter {label}"$2"; }}
+restore_svc={q(restore)}
+restore() {{
+  if [ -n "$restore_svc" ]; then
+    echo "[perplexity] restarting $restore_svc"
+    docker start $(ids -aq "$restore_svc") >/dev/null \\
+      || echo "[perplexity] could not restart $restore_svc"
+  fi
+}}
+trap restore EXIT
+for svc in {engines}; do
+  running=$(ids -q "$svc")
+  if [ -n "$running" ]; then
+    echo "[perplexity] stopping $svc for the run"
+    docker stop -t 30 $running >/dev/null \\
+      || {{ echo "[perplexity] could not stop $svc; not running"; exit 1; }}
+  fi
+done
+for svc in {engines}; do
+  if [ -n "$(ids -q "$svc")" ]; then
+    echo "[perplexity] $svc is still running; not running beside it"
+    exit 1
+  fi
+done
+docker rm -f {q(PERPLEXITY_CONTAINER)} >/dev/null 2>&1 || true
+printf '[perplexity] %s on %s, %s chunks\\n' \\
+  {q(model_path)} {q(PERPLEXITY_TEXT)} {int(count)}
+rc=0
+{run} || rc=$?
+echo "[perplexity] exit $rc"
+exit $rc
+"""
 
 
 # Docker reports this zero-value timestamp for containers that never started.
@@ -183,6 +296,12 @@ class DockerGateway(Protocol):
 
     def start_refresh(self, service: str) -> str: ...
 
+    def start_perplexity(self, model_path: str, chunks: int | None) -> str: ...
+
+    def running_oneshot(self) -> str | None: ...
+
+    def list_oneoffs(self) -> list[ContainerInfo]: ...
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus: ...
 
 
@@ -209,8 +328,9 @@ class ComposeDockerGateway:
         )
         infos: list[ContainerInfo] = []
         for container in containers:
-            service = (container.labels or {}).get(COMPOSE_SERVICE_LABEL)
-            if not service:
+            labels = container.labels or {}
+            service = labels.get(COMPOSE_SERVICE_LABEL)
+            if not service or labels.get(COMPOSE_ONEOFF_LABEL) == "True":
                 continue
             infos.append(_to_info(service, container))
         return infos
@@ -334,12 +454,53 @@ class ComposeDockerGateway:
             "jbrain-refresh", {ONESHOT_LABEL: "refresh"}, _refresh_command(service)
         )
 
+    def start_perplexity(self, model_path: str, chunks: int | None) -> str:
+        # Decided HERE, from the daemon's own view, and carried on a label so the reaper
+        # can still put the engine back after killing a hung run. Two engines up is
+        # already the §4d violation, so neither is put back.
+        up = [
+            c.service
+            for c in self.list_containers()
+            if c.service in ENGINE_SERVICES and c.state == "running"
+        ]
+        restore = up[0] if len(up) == 1 else ""
+        return self._run_oneshot(
+            "jbrain-perplexity",
+            {ONESHOT_LABEL: "perplexity", PERPLEXITY_RESTORE_LABEL: restore},
+            _perplexity_command(self._project, model_path, chunks, restore),
+        )
+
+    def running_oneshot(self) -> str | None:
+        """The kind of the one-shot in flight ("update", "perplexity", ...), or None.
+        Same rule - and the same reaping of a hung one - as the start guard."""
+        return self._oneshot_running_kind()
+
+    def list_oneoffs(self) -> list[ContainerInfo]:
+        """`compose run` containers in the project, shown apart from the services so a
+        transient one (an update's `run api`, the perplexity run) is visible without
+        ever being mistaken for the service it was run from."""
+        containers = self._client.containers.list(
+            all=True,
+            filters={"label": f"{COMPOSE_PROJECT_LABEL}={self._project}"},
+        )
+        out: list[ContainerInfo] = []
+        for c in containers:
+            labels = c.labels or {}
+            service = labels.get(COMPOSE_SERVICE_LABEL)
+            if service and labels.get(COMPOSE_ONEOFF_LABEL) == "True":
+                out.append(_to_info(service, c))
+        return out
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
         return self._status_of(self._latest(f"{ONESHOT_LABEL}={kind}"), tail)
 
     def _run_oneshot(self, prefix: str, labels: dict[str, str], command: str) -> str:
         if self._oneshot_running():
             raise UpdateInProgressError
+        # No one-shot is running, so a perplexity model container still here is an
+        # orphan of a killed run - ~60 GiB nobody is tracking. Clear it before anything
+        # else (an update) starts engines beside it.
+        self._remove_perplexity_orphan()
         name = f"{prefix}-{int(time.time())}"
         self._client.containers.run(
             UPDATER_IMAGE,
@@ -356,6 +517,9 @@ class ComposeDockerGateway:
         return name
 
     def _oneshot_running(self) -> bool:
+        return self._oneshot_running_kind() is not None
+
+    def _oneshot_running_kind(self) -> str | None:
         for label in (f"{UPDATER_LABEL}=1", ONESHOT_LABEL):
             latest = self._latest(label)
             if latest is None:
@@ -368,8 +532,10 @@ class ComposeDockerGateway:
             if self._oneshot_age_seconds(latest) > _ONESHOT_MAX_RUNTIME_S:
                 self._reap(latest)
                 continue
-            return True
-        return False
+            if label == ONESHOT_LABEL:
+                return (latest.labels or {}).get(ONESHOT_LABEL) or "oneshot"
+            return "update"
+        return None
 
     def _oneshot_age_seconds(self, container: Container) -> float:
         """Seconds since a one-shot started, read from the epoch suffix baked into its
@@ -384,9 +550,37 @@ class ComposeDockerGateway:
     def _reap(self, container: Container) -> None:
         """Force-remove a hung one-shot so a fresh one can take its slot. Best-effort:
         a daemon hiccup or a container that just exited on its own must never raise
-        into the start path — the worst case is the guard blocks one more time."""
+        into the start path - the worst case is the guard blocks one more time.
+
+        A killed perplexity one-shot never runs its EXIT trap, so its model container
+        would keep running and the engine it stopped would stay down. The reaper does
+        the trap's work: remove the run, then restart the engine named on the label -
+        only once the run is gone and no engine is up, so it never makes two."""
+        labels = container.labels or {}
         with contextlib.suppress(Exception):
             container.remove(force=True)
+        if labels.get(ONESHOT_LABEL) != "perplexity":
+            return
+        if not self._remove_perplexity_orphan():
+            return
+        restore = labels.get(PERPLEXITY_RESTORE_LABEL, "")
+        if restore not in ENGINE_SERVICES:
+            return
+        with contextlib.suppress(Exception):
+            if not any(
+                c.service in ENGINE_SERVICES and c.state == "running"
+                for c in self.list_containers()
+            ):
+                self._find(restore).start()
+
+    def _remove_perplexity_orphan(self) -> bool:
+        """Force-remove the perplexity model container if one exists. True when it is
+        gone (or never existed), False if the daemon would not remove it."""
+        try:
+            self._client.containers.get(PERPLEXITY_CONTAINER).remove(force=True)
+        except Exception as exc:
+            return type(exc).__name__ == "NotFound"
+        return True
 
     def _status_of(self, container: Container | None, tail: int) -> UpdateStatus:
         if container is None:
@@ -416,9 +610,14 @@ class ComposeDockerGateway:
                 ]
             },
         )
-        if not matches:
+        # A one-off alone is not the service: starting or stopping it would act on a
+        # transient `compose run` container while the real one was never created.
+        services = [
+            c for c in matches if (c.labels or {}).get(COMPOSE_ONEOFF_LABEL) != "True"
+        ]
+        if not services:
             raise UnknownServiceError(service)
-        return matches[0]
+        return services[0]
 
 
 def _to_info(service: str, container: Container) -> ContainerInfo:
