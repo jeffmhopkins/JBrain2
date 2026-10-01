@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from jbrain.ingest.imageprep import pdf_page_images
+from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.residency import ResidencyError
 from jbrain.vision import OcrServiceError
@@ -68,11 +69,17 @@ def _authorize(request: Request) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
-def _models(request: Request) -> tuple[local_catalog.LocalModel, ...]:
+async def _models(request: Request) -> tuple[local_catalog.LocalModel, ...]:
+    """The jcode-capable models of the ACTIVE engine, read per request (TTL-cached on
+    app.state). A list fixed to the standard engine would offer gpt-oss after a switch to
+    Flash-Next, and residency then refuses every completion for it."""
     settings = request.app.state.settings
+    active = getattr(request.app.state, "active_engine", None)
+    engine = await active.get() if active is not None else engines.DEFAULT_ENGINE
     return local_catalog.jcode_models(
         getattr(settings, "local_llm_enabled", False),
         getattr(settings, "local_models", []),
+        engine,
     )
 
 
@@ -110,7 +117,7 @@ async def list_models(request: Request) -> Response:
     text block grok-config.sh renders into one `[model."alias"]` entry each (short `/model`
     handles, real served name in `model =`) — no JSON parsing in the shell."""
     _authorize(request)
-    models = _models(request)
+    models = await _models(request)
     if request.query_params.get("format") == "lines":
         body = "".join(
             f"{_alias(m.served_model)}|{m.served_model}|{m.label}|{m.context_window}\n"
@@ -146,7 +153,7 @@ async def chat_completions(request: Request) -> Response:
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
 
     served = str(payload.get("model") or "")
-    if served not in {m.served_model for m in _models(request)}:
+    if served not in {m.served_model for m in await _models(request)}:
         raise HTTPException(status_code=400, detail=f"unknown or unavailable model: {served!r}")
 
     residency = getattr(request.app.state, "residency", None)

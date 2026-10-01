@@ -495,6 +495,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # an eviction without touching the box, and schedule_restore puts back whatever a
         # transient displacement (image render, code session) removed at end of turn instead of
         # cold-loading it. Inert on a cloud-only box (enabled off).
+        #
+        # The active on-box engine, one TTL-cached read shared by residency's admission gate,
+        # the kv-prefix store and the jcode proxy so they agree on which gateway is running,
+        # and a live switch (the F2 debug route, the F3 switch) is seen without a restart.
+        app.state.active_engine = engine_mod.ActiveEngine(
+            lambda: settings_store.llm_local_engine(SYSTEM_CTX)
+        )
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,
             ResidencyWiring(
@@ -539,9 +546,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # The SAME ledger instance the gateway charges through, so the eviction plan
                 # and the admission verdict come from one arithmetic (L3).
                 ledger=api_reservations,
-                # The active engine, read per decision so a switch needs no restart: only its
-                # models are loaded or restored (FLASH_NEXT_ENGINE_PLAN §4d).
-                engine_loader=lambda: settings_store.llm_local_engine(SYSTEM_CTX),
+                # Only the active engine's models are loaded or restored (§4d).
+                engine_loader=app.state.active_engine.get,
             ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
@@ -565,17 +571,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         kv_budget_gb = LLM_KV_PREFIX_BUDGET_GB_DEFAULT
         with suppress(Exception):
             kv_budget_gb = await settings_store.llm_kv_prefix_budget_gb(SYSTEM_CTX)
-        # Which engine's llama-swap config the store fingerprints launch lines from. Read once,
-        # like the patch flag; the engine switch (FLASH_NEXT_ENGINE_PLAN F3) re-points it.
-        kv_engine = engine_mod.DEFAULT_ENGINE
-        with suppress(Exception):
-            kv_engine = await settings_store.llm_local_engine(SYSTEM_CTX)
         app.state.kv_prefix = KvPrefixStore(
             app.state.local_gateway,
             settings.local_models_dir,
             patch_active=kv_patch_active,
             max_store_bytes=kv_budget_gb * 1024**3,
-            engine=kv_engine,
+            # Which engine's config launch lines are fingerprinted from, re-read per call.
+            engine=app.state.active_engine,
         )
         app.state.llm_router = build_router(
             settings,

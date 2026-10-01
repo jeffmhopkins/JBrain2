@@ -1278,9 +1278,16 @@ def test_extra_arg_allowlist_covers_the_speculative_tuning_flags() -> None:
     # own p-min default is 0.00 — ungated. Without them on the allowlist a single tuning
     # iteration costs a catalog edit, a release and an Ops → Update, which is how a knob ends up
     # never tuned at all. Pinned so a future edit can't quietly drop the remote path.
-    for flag in ("--spec-type", "--spec-draft-n-max", "--spec-draft-n-min", "--spec-draft-p-min"):
+    # Each with a value of its own shape: values are validated per flag (a numeric flag takes a
+    # number), so an arbitrary placeholder is no longer accepted.
+    for flag, value in (
+        ("--spec-type", "draft-mtp"),
+        ("--spec-draft-n-max", "3"),
+        ("--spec-draft-n-min", "1"),
+        ("--spec-draft-p-min", "0.6"),
+    ):
         assert flag in llm_settings.EXTRA_ARG_FLAGS
-        assert llm_settings._validate_extra_args([flag, "x"]) == [flag, "x"]
+        assert llm_settings._validate_extra_args([flag, value]) == [flag, value]
 
 
 def test_extra_arg_allowlist_covers_the_image_token_flags() -> None:

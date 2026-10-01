@@ -17,6 +17,7 @@ import contextlib
 import ctypes
 import os
 import platform
+import shutil
 
 from jbrain.llm import local_catalog
 
@@ -46,6 +47,19 @@ def weights_size_gb(models_dir: str, model_id: str) -> float | None:
                     total += os.path.getsize(os.path.join(dirpath, name))
                     found = True
     return round(total / _BYTES_PER_GIB, 1) if found else None
+
+
+def free_gb(models_dir: str) -> float | None:
+    """Free space on the weights volume, in GiB — or None when no weights directory is
+    configured or present (nothing to guard). A directory that exists but cannot be measured
+    reads as 0.0: "unknown" must refuse an install rather than wave a ~90 GB download onto a
+    volume that may be full, on a box whose owner cannot clean one up (CLAUDE.md #10)."""
+    if not models_dir or not os.path.isdir(models_dir):
+        return None
+    try:
+        return round(shutil.disk_usage(models_dir).free / _BYTES_PER_GIB, 1)
+    except OSError:
+        return 0.0
 
 
 def dir_size_gb(models_dir: str, model_id: str) -> float | None:
@@ -110,14 +124,12 @@ def drop_weights_page_cache(models_dir: str, model_id: str) -> float | None:
     (deploy/update-inner.sh): this touches only the weights just read, so Postgres's
     working set and the rest of the box's cache survive.
 
-    A model with a file-backed share is skipped ENTIRELY, returning 0.0: everything above
-    assumes `--no-mmap`, and for a mapped model the "second copy" is the only copy of the
-    engram table — evicting it makes the next tokens page it back in from disk
-    (FLASH_NEXT_ENGINE_PLAN §3). Skipping the whole model rather than the one tensor because
-    that tensor lives inside the same GGUF shards as the rest; `posix_fadvise` works on byte
-    ranges, and the tensor's range is not something this module knows."""
-    if serves_file_backed(model_id):
-        return 0.0
+    Everything above assumes `--no-mmap`. A model with a file-backed share
+    (`serves_file_backed`) is the exception WHILE IT IS RESIDENT: its page cache is the engram
+    table being served, and evicting it only makes the next tokens read it from disk again.
+    That decision needs the resident set, so it is the caller's (`LocalGatewayClient`); once
+    the model is unloaded its cache is residue like any other — ~88 GiB that
+    `host_metrics.read_memory_gb` counts as used — and this drops it."""
     return _drop_page_cache(os.path.join(models_dir, model_id), (".gguf",))
 
 

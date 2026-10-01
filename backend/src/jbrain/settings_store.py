@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm.engine import Engine
+from jbrain.llm.engine import invalidate_cached as invalidate_engine_cache
 from jbrain.llm.engine import parse as parse_engine
 from jbrain.sdr.roles import GAIN_CHOICES, GENERAL, UPCONVERTER_MAX_HZ, Radio
 
@@ -1378,4 +1379,6 @@ class SqlSettingsStore:
     async def set_llm_local_engine(self, ctx: SessionContext, engine: Engine) -> Engine:
         clean = parse_engine(engine)
         await self.upsert(ctx, LLM_LOCAL_ENGINE_KEY, clean)
+        # This process's cached reads see the switch at once; others catch up by TTL.
+        invalidate_engine_cache()
         return clean

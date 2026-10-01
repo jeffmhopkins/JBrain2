@@ -9,6 +9,7 @@ implicit pre-P7; the store's RLS enforces it regardless.
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict
@@ -1481,6 +1482,49 @@ async def plan_load_local_model(
     )
 
 
+# Head-room kept free on the weights volume beyond what the queued downloads need: hf stages
+# shards under `.cache` before moving them, the kv-prefix store shares the volume, and a volume
+# filled to the byte breaks the gateway's config re-stamp along with everything else on it.
+INSTALL_DISK_MARGIN_GB = 10.0
+
+
+def _refuse_short_disk(
+    settings: Settings, model: local_catalog.LocalModel, other_queued: Sequence[str]
+) -> None:
+    """409 when the weights volume cannot hold this download plus every other install still
+    queued, with the margin. Refused at QUEUE time, in the PWA, because the alternative is the
+    next update's one-shot filling the disk part way through ~90 GB of shards — a failure the
+    owner can only see and clean up from a shell they do not have (FLASH_NEXT_ENGINE_PLAN §5).
+    Partly-downloaded bytes already on disk count toward the need, so a resumed install is
+    not refused for space it already holds."""
+    free = local_weights.free_gb(settings.local_models_dir)
+    if free is None:
+        return
+
+    def _remaining(m: local_catalog.LocalModel) -> float:
+        have = local_weights.dir_size_gb(settings.local_models_dir, m.id) or 0.0
+        return max(0.0, m.size_gb - have)
+
+    pending = [m for m in local_catalog.selected(other_queued) if m.id not in settings.local_models]
+    need = _remaining(model) + sum(_remaining(m) for m in pending) + INSTALL_DISK_MARGIN_GB
+    if free < need:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"not enough free disk to install {model.id}: it needs ~{_remaining(model):.0f} "
+                f"GB more"
+                + (
+                    f" (plus ~{need - _remaining(model) - INSTALL_DISK_MARGIN_GB:.0f} GB for "
+                    "the other queued installs)"
+                    if pending
+                    else ""
+                )
+                + f" and {INSTALL_DISK_MARGIN_GB:.0f} GB of head-room, but only {free:.0f} GB "
+                "is free on the models volume. Uninstall a model you no longer use first."
+            ),
+        )
+
+
 @router.post("/settings/llm/local-models/{model_id}/install")
 async def queue_local_install(
     model_id: str,
@@ -1494,9 +1538,10 @@ async def queue_local_install(
     when hosting is off or the model is already provisioned; 404 for an unknown id.
     Pure settings write (no download here), so it can't fail on an unreachable
     gateway; the download is followed live via each model's download_gb."""
-    _require_installable(settings, model_id)
+    model = _require_installable(settings, model_id)
     ctx = ctx_for(principal)
     requested = await store.llm_local_provision_requested(ctx)
+    _refuse_short_disk(settings, model, [r for r in requested if r != model_id])
     if model_id not in requested:
         requested.append(model_id)
         await store.set_llm_local_provision_requested(ctx, requested)
@@ -1985,6 +2030,44 @@ _EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {
     "--checkpoint-min-step": (0, 131072),
 }
 
+# What each allowlisted flag's VALUE may look like. The value lands verbatim in the
+# space-joined llama-server command inside llama-swap's YAML, so a value carrying whitespace
+# smuggles extra flags past the allowlist (`-ot "x=CPU --rpc host:port"`), and one carrying a
+# newline writes a second model entry with an arbitrary `cmd:` — command execution on the box.
+# A value must therefore match its flag's own shape, not merely "not start with `-`".
+_INT = re.compile(r"^[0-9]{1,9}$")
+_FLOAT = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,6})?$")
+_WORD = re.compile(r"^[A-Za-z0-9_+.-]{1,32}$")
+# `-ot`: one or more comma-separated `<tensor-name regex>=<buffer type>` rules. The regex half
+# allows only the characters tensor-name patterns use; no whitespace, quotes, `:` or `#`.
+_TENSOR_RULE = r"[A-Za-z0-9_.\\|*+?()\[\]-]+=[A-Za-z0-9_]+"
+_OVERRIDE_TENSOR = re.compile(rf"^{_TENSOR_RULE}(,{_TENSOR_RULE})*$")
+_EXTRA_ARG_VALUE: dict[str, re.Pattern[str]] = {
+    "-b": _INT,
+    "-ub": _INT,
+    "--spec-type": _WORD,
+    "--spec-draft-n-max": _INT,
+    "--spec-draft-n-min": _INT,
+    "--spec-draft-p-min": _FLOAT,
+    "--image-min-tokens": _INT,
+    "--image-max-tokens": _INT,
+    "--ctx-checkpoints": _INT,
+    "--cache-reuse": _INT,
+    "-ngl": re.compile(r"^([0-9]{1,4}|auto|all)$"),
+    "-fa": _WORD,
+    "--reasoning-format": _WORD,
+    "-lv": _INT,
+    "--checkpoint-min-step": _INT,
+    "-ctk": _WORD,
+    "-ctv": _WORD,
+    "--cache-type-k": _WORD,
+    "--cache-type-v": _WORD,
+    "--load-mode": _WORD,
+    "-lm": _WORD,
+    "-ot": _OVERRIDE_TENSOR,
+    "--override-tensor": _OVERRIDE_TENSOR,
+}
+
 # Values of `-fa` that turn flash attention OFF. Not a style question: with `-fa` on, the CLIP
 # attention workspace is LINEAR in patches (~0.47 GiB at the 4096-token ceiling, measured); with
 # it off llama.cpp materialises the full [n_patches, n_patches] matrix and the same encode
@@ -2015,6 +2098,10 @@ def _validate_extra_args(
         if not token:
             continue
         if expect_value and not token.startswith("-"):
+            if not _EXTRA_ARG_VALUE[flag].fullmatch(raw):
+                raise HTTPException(
+                    status_code=422, detail=f"{flag} does not take the value {raw!r}"
+                )
             bounds = _EXTRA_ARG_BOUNDS.get(flag)
             if bounds is not None:
                 low, high = bounds

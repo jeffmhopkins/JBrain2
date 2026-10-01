@@ -9,8 +9,11 @@ The active engine is an owner setting (`settings_store.LLM_LOCAL_ENGINE_KEY`), n
 flag: the owner has no shell, so the update script reads it through `jbrain.cli local-engine`.
 """
 
+import contextlib
 import os
-from collections.abc import Iterable, Mapping
+import time
+import weakref
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Literal
 
 Engine = Literal["standard", "flash-next"]
@@ -51,3 +54,58 @@ def models_for(
     """The manifest dicts (catalog entries) the given engine serves. An entry without an
     `engine` key predates the field and belongs to the standard gateway."""
     return [m for m in models if parse(m.get("engine", DEFAULT_ENGINE)) == engine]
+
+
+# How long a read of the engine setting is trusted. Short, because the F2 debug route and the
+# F3 switch flip engines on a live api with no restart, and the worker process sees a flip only
+# through expiry; long enough that a restore loop or a burst of loads costs one settings read.
+ACTIVE_ENGINE_TTL_S = 5.0
+
+
+class ActiveEngine:
+    """The active engine, read from the settings store and cached for `ttl_s` seconds.
+
+    One per process, shared by everything that must agree on which gateway is running —
+    residency's admission gate, the kv-prefix store's launch-line resolution and the jcode
+    proxy's model list. A failed read keeps the last known value (the default before any
+    read): a settings hiccup must not flip which engine the box believes it is running."""
+
+    def __init__(
+        self,
+        load: Callable[[], Awaitable[object]],
+        *,
+        ttl_s: float = ACTIVE_ENGINE_TTL_S,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._load = load
+        self._ttl_s = ttl_s
+        self._clock = clock
+        self._value: Engine = DEFAULT_ENGINE
+        self._read_at: float | None = None
+        _LIVE.add(self)
+
+    async def get(self) -> Engine:
+        now = self._clock()
+        if self._read_at is None or now - self._read_at >= self._ttl_s:
+            with contextlib.suppress(Exception):
+                self._value = parse(await self._load())
+            self._read_at = now
+        return self._value
+
+    def last_known(self) -> Engine:
+        """The most recent value without a read — for sync code that runs right after an async
+        caller refreshed it."""
+        return self._value
+
+    def invalidate(self) -> None:
+        self._read_at = None
+
+
+_LIVE: "weakref.WeakSet[ActiveEngine]" = weakref.WeakSet()
+
+
+def invalidate_cached() -> None:
+    """Expire every in-process cache, so a switch made in this process is seen on the next read
+    rather than up to `ACTIVE_ENGINE_TTL_S` later. Other processes catch up by expiry."""
+    for cache in list(_LIVE):
+        cache.invalidate()

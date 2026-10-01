@@ -532,6 +532,21 @@ class LocalGatewayClient:
             # a 200 is the one moment this codebase can honestly say the memory is back.
             await self._reservations.discharge_model(served_model)
         await box_events.record(box_events.MODEL_UNLOAD, served_model)
+        self._drop_mapped_residue(served_model)
+
+    def _drop_mapped_residue(self, served_model: str) -> None:
+        """After a memory-mapped model unloads, its page cache — the whole mapped GGUF, ~88 GiB
+        for Flash-Next — is residue that `host_metrics.read_memory_gb` counts as used, and it
+        would block the next load's admission (e.g. the standard engine coming back after a
+        switch). A `--no-mmap` model's cache was already dropped at load, so only mapped
+        models need this. The 200 above means the process is gone, so nothing is serving
+        from these pages any more."""
+        model = local_catalog.get_by_served(served_model)
+        if model is None or not self._models_dir or not local_weights.serves_file_backed(model.id):
+            return
+        self._seen_resident.discard(served_model)
+        freed = local_weights.drop_weights_page_cache(self._models_dir, model.id)
+        log.info("local_gateway.mapped_cache_dropped_after_unload", model=model.id, freed_gb=freed)
 
     async def _narrate_reload_casualties(self, before: set[str], loading: str) -> None:
         """Record the models a config-driven gateway reload just killed.
@@ -771,8 +786,8 @@ class LocalGatewayClient:
                 if not grew and elapsed < _SWEEP_INTERVAL_S:
                     continue
                 if local_weights.serves_file_backed(model.id):
-                    # Mapped weights: the cache IS the engram working set. Keep polling for the
-                    # progress bar, never drop (local_weights.drop_weights_page_cache).
+                    # Mapped weights: the cache IS the engram working set of the model being
+                    # loaded. Keep polling for the progress bar, never drop.
                     elapsed = 0.0
                     last = now if now is not None else last
                     continue
@@ -1428,6 +1443,18 @@ class LocalGatewayClient:
             drift_gb=drift,
         )
 
+    def _resident_file_backed(self) -> set[str]:
+        """Catalog ids of memory-mapped (file-backed) models this client last saw resident or
+        is loading. From the last `running()` poll because the drop lever is synchronous: a
+        stale reading only errs toward keeping a cache one poll longer, or dropping a working
+        set that the next tokens re-read — memory or latency, never correctness."""
+        out: set[str] = set()
+        for served in self._seen_resident | self._loading:
+            model = local_catalog.get_by_served(served)
+            if model is not None and local_weights.serves_file_backed(model.id):
+                out.add(model.id)
+        return out
+
     def drop_page_cache(self, model_ids: list[str] | None = None) -> dict[str, float | None]:
         """Drop the weights page cache for `model_ids`, or for EVERY catalog model when None.
         Returns {model_id: GiB freed}, with None where the drop could not be measured.
@@ -1452,7 +1479,14 @@ class LocalGatewayClient:
             return {}
         wanted = model_ids if model_ids is not None else [m.id for m in local_catalog.CATALOG]
         freed: dict[str, float | None] = {}
+        kept = self._resident_file_backed()
         for model_id in wanted:
+            if model_id in kept:
+                # Serving from that cache right now — dropping it would only make the next
+                # tokens re-read the engram table from disk. Left out of the result rather
+                # than reported as a 0.0 "drop", which would claim an attempt that never ran.
+                log.info("local_gateway.page_cache_kept_while_resident", model=model_id)
+                continue
             got = local_weights.drop_weights_page_cache(self._models_dir, model_id)
             # Absent directories return None from the walk too, and reporting those as
             # "unmeasurable" would bury the real ones. Only provisioned models get a row.

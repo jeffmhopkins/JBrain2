@@ -247,24 +247,52 @@ def test_kv_prefix_fingerprints_the_active_engines_launch_line(tmp_path: Path) -
 # --- the page-cache drop -----------------------------------------------------------------
 
 
-def test_the_page_cache_drop_skips_a_file_backed_model(tmp_path: Path) -> None:
-    (tmp_path / FLASH_ID).mkdir()
-    (tmp_path / FLASH_ID / "w.gguf").write_bytes(b"\0" * 4096)
-    calls: list[str] = []
-    real = local_weights._drop_page_cache
+def _recording_drop(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    dropped: list[str] = []
 
-    def _spy(root: str, suffixes: tuple[str, ...]) -> float | None:
-        calls.append(root)
-        return real(root, suffixes)
+    def _drop(_dir: str, model_id: str) -> float:
+        dropped.append(model_id)
+        return 1.5
 
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(local_weights, "_drop_page_cache", _spy)
-        assert local_weights.drop_weights_page_cache(str(tmp_path), FLASH_ID) == 0.0
-        assert calls == []
-        local_weights.drop_weights_page_cache(str(tmp_path), "gpt-oss-120b")
-        assert calls == [str(tmp_path / "gpt-oss-120b")]
+    monkeypatch.setattr(local_weights, "drop_weights_page_cache", _drop)
+    return dropped
+
+
+def test_the_drop_lever_keeps_a_resident_mapped_model_and_drops_it_once_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dropped = _recording_drop(monkeypatch)
+    client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
+    client._seen_resident = {FLASH_ID, "gpt-oss-120b"}
+    freed = client.drop_page_cache([FLASH_ID, "gpt-oss-120b"])
+    # Serving from that cache: left alone and NOT reported as a drop that freed nothing.
+    assert dropped == ["gpt-oss-120b"] and FLASH_ID not in freed
+    # Unloaded (after a switch back, say): its ~88 GiB of cache is residue, and is dropped.
+    client._seen_resident = set()
+    freed = client.drop_page_cache([FLASH_ID])
+    assert dropped[-1] == FLASH_ID and freed == {FLASH_ID: 1.5}
     assert local_weights.serves_file_backed(FLASH_ID)
     assert not local_weights.serves_file_backed("gpt-oss-120b")
+
+
+@pytest.mark.asyncio
+async def test_unloading_a_mapped_model_drops_its_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    dropped = _recording_drop(monkeypatch)
+    client = local_gateway.LocalGatewayClient(
+        "http://x/v1",
+        models_dir=str(tmp_path),
+        transport=httpx.MockTransport(lambda _r: httpx.Response(200)),
+    )
+    client._seen_resident = {FLASH_ID}
+    await client.unload(FLASH_ID)
+    assert dropped == [FLASH_ID] and FLASH_ID not in client._seen_resident
+    # A `--no-mmap` model's cache was dropped at load; its unload adds nothing.
+    await client.unload("gpt-oss-120b")
+    assert dropped == [FLASH_ID]
 
 
 def test_the_gateway_keeps_the_engram_cache_after_a_load(
@@ -373,3 +401,290 @@ async def test_the_load_time_restamp_writes_the_active_engines_file(
     store.values["llm_local_engine"] = "standard"
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     assert flash.id not in (tmp_path / "llama-swap.yaml").read_text()
+
+
+# --- one TTL-cached engine read, seen without a restart -----------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.mark.asyncio
+async def test_active_engine_caches_for_its_ttl_and_invalidates_on_a_switch() -> None:
+    value = {"engine": "standard", "reads": 0}
+
+    async def _load() -> str:
+        value["reads"] += 1
+        return value["engine"]
+
+    clock = _Clock()
+    cache = engine.ActiveEngine(_load, ttl_s=5.0, clock=clock)
+    assert await cache.get() == engine.STANDARD
+    value["engine"] = "flash-next"
+    clock.now = 4.0
+    assert await cache.get() == engine.STANDARD and value["reads"] == 1
+    clock.now = 5.0
+    assert await cache.get() == engine.FLASH_NEXT and value["reads"] == 2
+    value["engine"] = "standard"
+    engine.invalidate_cached()  # what set_llm_local_engine does in this process
+    assert await cache.get() == engine.STANDARD and value["reads"] == 3
+
+
+@pytest.mark.asyncio
+async def test_active_engine_keeps_the_last_value_when_a_read_fails() -> None:
+    calls = {"n": 0}
+
+    async def _load() -> str:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("db blink")
+        return "flash-next"
+
+    cache = engine.ActiveEngine(_load, ttl_s=0.0)
+    assert await cache.get() == engine.FLASH_NEXT
+    assert await cache.get() == engine.FLASH_NEXT
+
+
+@pytest.mark.asyncio
+async def test_settings_store_switch_invalidates_the_cache() -> None:
+    from jbrain.settings_store import SqlSettingsStore
+
+    saved: dict[str, object] = {}
+
+    async def _upsert(_ctx: object, key: str, value: object) -> None:
+        saved[key] = value
+
+    async def _get(_ctx: object, key: str, default: object) -> object:
+        return saved.get(key, default)
+
+    store = SqlSettingsStore.__new__(SqlSettingsStore)
+    store.upsert = _upsert  # type: ignore[method-assign]
+    store.get = _get  # type: ignore[method-assign]
+    cache = engine.ActiveEngine(lambda: store.llm_local_engine(None), ttl_s=3600.0)  # type: ignore[arg-type]
+    assert await cache.get() == engine.STANDARD
+    await store.set_llm_local_engine(None, "flash-next")  # type: ignore[arg-type]
+    assert await cache.get() == engine.FLASH_NEXT
+
+
+@pytest.mark.asyncio
+async def test_kv_prefix_follows_an_engine_switch_without_a_restart(tmp_path: Path) -> None:
+    save = " --slot-save-path /models/.kvslots/m"
+    (tmp_path / "llama-swap.yaml").write_text(f"models:\n  m:\n    cmd: llama-server -c 1{save}\n")
+    (tmp_path / "llama-swap.flash-next.yaml").write_text(
+        f"models:\n  m:\n    cmd: llama-server -c 2{save}\n"
+    )
+    current = {"engine": "standard"}
+
+    async def _load() -> str:
+        return current["engine"]
+
+    source = engine.ActiveEngine(_load, ttl_s=0.0)
+    store = KvPrefixStore(object(), str(tmp_path), engine=source)  # type: ignore[arg-type]
+    await store._refresh_engine()
+    standard_fp = store.identity_of("m", "sys", [], None)
+    current["engine"] = "flash-next"  # the debug route flips it on the live api
+    await store._refresh_engine()
+    flash_fp = store.identity_of("m", "sys", [], None)
+    assert standard_fp is not None and flash_fp is not None and standard_fp != flash_fp
+
+
+@pytest.mark.asyncio
+async def test_residency_reads_the_engine_through_the_shared_cache() -> None:
+    reads = {"n": 0}
+
+    async def _load() -> str:
+        reads["n"] += 1
+        return "standard"
+
+    cache = engine.ActiveEngine(_load, ttl_s=60.0)
+    coord = ResidencyCoordinator(
+        FakeLocalGateway(running={"gpt-oss-120b"}),
+        ResidencyWiring.inert(enabled=True, engine_loader=cache.get),
+    )
+    for _ in range(5):
+        with pytest.raises(ResidencyError):
+            await coord.ensure_room(FLASH_ID)
+    assert reads["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_jcode_proxy_lists_the_active_engines_models() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from jbrain.api import jcode_llm
+
+    app = FastAPI()
+    app.include_router(jcode_llm.router, prefix="/api")
+    app.state.settings = SimpleNamespace(
+        jcode_gateway_token="t",
+        local_llm_enabled=True,
+        local_models=["gpt-oss-120b", FLASH_ID],
+        local_llm_url="http://gw/v1",
+    )
+    current = {"engine": "standard"}
+
+    async def _load() -> str:
+        return current["engine"]
+
+    app.state.active_engine = engine.ActiveEngine(_load, ttl_s=0.0)
+    c = TestClient(app)
+    auth = {"Authorization": "Bearer t"}
+    ids = [m["id"] for m in c.get("/api/jcode/llm/v1/models", headers=auth).json()["data"]]
+    assert ids == ["gpt-oss-120b"]
+    current["engine"] = "flash-next"
+    ids = [m["id"] for m in c.get("/api/jcode/llm/v1/models", headers=auth).json()["data"]]
+    assert ids == [FLASH_ID]
+    resp = c.post(
+        "/api/jcode/llm/v1/chat/completions", headers=auth, json={"model": "gpt-oss-120b"}
+    )
+    assert resp.status_code == 400
+
+
+# --- launch-argument injection: both walls -----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        # Flag smuggling: a second flag hidden inside an allowlisted flag's value.
+        ["-ot", "x=CPU --rpc 10.0.0.1:50052"],
+        ["-ub", "512 --rpc 10.0.0.1:50052"],
+        # A newline/YAML break-out writing a second model with its own command.
+        ["-ot", "x=CPU\n  evil:\n    cmd: sh -c id"],
+        ["--load-mode", "mmap\n"],
+        ["-ctk", "q8_0\tq4_0"],
+        # The --ctx-checkpoints bound, bypassed by smuggling the flag into another value.
+        ["-ot", "x=CPU --ctx-checkpoints 999"],
+        ["--ctx-checkpoints", "8 --ctx-checkpoints 999"],
+        # Quote/escape/comment characters the splitter or YAML would interpret.
+        ["-ot", "x='CPU'"],
+        ["-ot", "x=CPU#"],
+        ["--spec-type", "draft-mtp;id"],
+        # Numeric flags must be numbers.
+        ["-ub", "lots"],
+        ["--spec-draft-p-min", "1e9"],
+        ["-ngl", "999x"],
+        # -ot must be <pattern>=<buffer>.
+        ["-ot", "per_layer_token_embd"],
+        ["-ot", "a:b=CPU"],
+    ],
+)
+def test_injected_launch_arguments_are_refused(args: list[str]) -> None:
+    with pytest.raises(llm_settings.HTTPException) as err:
+        llm_settings._validate_extra_args(args)
+    assert err.value.status_code == 422
+
+
+def test_the_vision_flash_attention_refusal_cannot_be_smuggled_past() -> None:
+    vision = local_catalog.get("qwen3-vl-30b")
+    with pytest.raises(llm_settings.HTTPException):
+        llm_settings._validate_extra_args(["-ot", "x=CPU -fa 0"], vision)
+    with pytest.raises(llm_settings.HTTPException):
+        llm_settings._validate_extra_args(["-fa", "0"], vision)
+    with pytest.raises(llm_settings.HTTPException):
+        llm_settings._validate_extra_args(["-fa", "0 "], vision)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["-ot", "per_layer_token_embd=CPU"],
+        ["--override-tensor", r"blk\.(1[0-9])\.ffn_.*_exps=CPU,per_layer_token_embd=CPU"],
+        ["-ngl", "999", "-ub", "512", "--spec-draft-p-min", "0.6", "--load-mode", "mmap+mlock"],
+        ["-ngl", "auto", "-fa", "on", "-ctk", "q8_0"],
+    ],
+)
+def test_legitimate_launch_arguments_still_pass(args: list[str]) -> None:
+    assert llm_settings._validate_extra_args(args) == args
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "x=CPU --rpc 10.0.0.1:50052",
+        "x=CPU\n  evil:\n    cmd: sh -c id",
+        "a\x00b",
+        "x='CPU'",
+        "#",
+        "",
+    ],
+)
+def test_the_renderer_refuses_a_stored_unsafe_argument(tmp_path: Path, bad: str) -> None:
+    """The second wall: an override stored before validation existed must not render."""
+    from jbrain.llm import llama_swap_config
+
+    (tmp_path / "gpt-oss-120b").mkdir()
+    (tmp_path / "gpt-oss-120b" / "m-mxfp4.gguf").write_bytes(b"\0")
+    gpt = local_catalog.get("gpt-oss-120b")
+    assert gpt is not None
+    with pytest.raises(llama_swap_config.UnsafeArgument):
+        llama_swap_config.render(
+            [dataclasses.asdict(gpt)], str(tmp_path), extra_args={"gpt-oss-120b": ["-ot", bad]}
+        )
+
+
+def test_an_empty_roster_renders_an_empty_mapping(tmp_path: Path) -> None:
+    import yaml
+
+    from jbrain.llm import llama_swap_config
+
+    text = llama_swap_config.render([], str(tmp_path))
+    assert yaml.safe_load(text)["models"] == {}
+    gpt = local_catalog.get("gpt-oss-120b")
+    assert gpt is not None
+    # A Flash-Next-only manifest leaves the standard file empty, not null.
+    flash_only = llama_swap_config.render([dataclasses.asdict(_flash())], str(tmp_path))
+    assert yaml.safe_load(flash_only)["models"] == {}
+
+
+# --- the free-disk guard on install ------------------------------------------------------
+
+
+def _install_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, free_gb: float) -> Any:
+    monkeypatch.setattr(local_weights, "free_gb", lambda _d: free_gb)
+    settings = _cloud_settings(
+        local_llm_enabled=True, local_models=["gpt-oss-120b"], local_models_dir=str(tmp_path)
+    )
+    return _authed_client(settings)
+
+
+def test_install_is_refused_when_the_models_volume_is_short(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, store = _install_client(tmp_path, monkeypatch, free_gb=60.0)
+    resp = c.post(f"/api/settings/llm/local-models/{FLASH_ID}/install")
+    assert resp.status_code == 409
+    assert "not enough free disk" in resp.json()["detail"]
+    assert FLASH_ID not in store.values.get("llm_local_provision_requested", [])
+
+
+def test_install_is_allowed_with_room_and_counts_other_queued_installs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    need = _flash().size_gb + llm_settings.INSTALL_DISK_MARGIN_GB
+    c, _ = _install_client(tmp_path, monkeypatch, free_gb=need + 1)
+    assert c.post(f"/api/settings/llm/local-models/{FLASH_ID}/install").status_code == 200
+    # The next queued download must fit beside the one already queued.
+    resp = c.post("/api/settings/llm/local-models/llama-3.3-70b/install")
+    assert resp.status_code == 409 and "other queued installs" in resp.json()["detail"]
+
+
+def test_a_resumed_install_counts_the_bytes_already_downloaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(local_weights, "dir_size_gb", lambda _d, mid: 80.0)
+    c, _ = _install_client(tmp_path, monkeypatch, free_gb=20.0)
+    assert c.post(f"/api/settings/llm/local-models/{FLASH_ID}/install").status_code == 200
+
+
+def test_free_gb_measures_a_real_directory_and_skips_an_absent_one(tmp_path: Path) -> None:
+    assert local_weights.free_gb("") is None
+    assert local_weights.free_gb(str(tmp_path / "absent")) is None
+    measured = local_weights.free_gb(str(tmp_path))
+    assert measured is not None and measured >= 0.0
