@@ -45,6 +45,9 @@ ONESHOT_SCRIPTS = [
     # config so
     # a flag added to the repo reaches a live box. Runs in the same bash-less updater.
     "whisper-config.sh",
+    # Sourced by update-inner.sh and local-models-sync.sh (the one-engine helpers), so
+    # it runs in the same bash-less updater.
+    "local-engine.sh",
 ]
 
 
@@ -215,12 +218,21 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     # The gateway comes back INSIDE the quiesced window now (the smoke test needs
     # it), so "restart after `up -d`" is no longer the invariant. What must still
     # hold is that an enabled gateway is running when the update finishes — including
-    # when auto-update is off and nothing in the quiesced window ever rebuilt it.
-    restarts = [i for i, ln in enumerate(lines) if "up -d local-llm" in ln]
+    # when auto-update is off and nothing in the quiesced window ever rebuilt it. That
+    # last start is the engine-aware one (FLASH_NEXT_ENGINE_PLAN §4d), so it starts
+    # whichever engine is selected rather than `local-llm` by name.
+    restarts = [
+        i
+        for i, ln in enumerate(lines)
+        if "up -d local-llm" in ln or ln.strip().startswith("local_engine_start ")
+    ]
     assert restarts, "update must restart the gateway"
     assert restarts[-1] > up, (
         "the LAST gateway start must follow the stack `up -d`, so an auto-update-off "
         "box still ends with its gateway running"
+    )
+    assert "local_engine_start" in lines[restarts[-1]], (
+        "the final start must go through the engine-aware helper"
     )
 
 
@@ -1914,3 +1926,704 @@ def test_whisper_config_does_not_force_a_language(tmp_path: Path) -> None:
     (models / "ggml-base.en.bin").write_bytes(b"x" * 100)
     _run_whisper_config(models, "false")
     assert "--language" not in (models / "llama-swap.yaml").read_text()
+
+
+# --- exactly one on-box engine (FLASH_NEXT_ENGINE_PLAN §4d) ------------------------
+#
+# Two engines, never both up: the standard `local-llm` gateway and the `flash-next`
+# container together are ~170 GiB on a 128 GB box — a freeze. Every path that starts a
+# gateway goes through deploy/local-engine.sh, which these exercise against a fake
+# `docker` that records every call.
+
+LOCAL_ENGINE = DEPLOY / "local-engine.sh"
+
+
+def _fake_docker(tmp_path: Path) -> Path:
+    """A `docker` that logs its argv and answers from the environment: any call
+    containing $DOCKER_FAIL fails, `ps` lists a container for each service named in
+    $DOCKER_RUNNING, the catalog read prints $DOCKER_CATALOG, the engine read
+    $DOCKER_ENGINE, and the queue reads $DOCKER_QUEUED / $DOCKER_REMOVING."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    fake = bindir / "docker"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'echo "$*" >> "$DOCKER_LOG"\n'
+        'if [ -n "$DOCKER_FAIL" ]; then\n'
+        '  case "$*" in *"$DOCKER_FAIL"*) exit 1 ;; esac\n'
+        "fi\n"
+        'case "$*" in *" ps "*)\n'
+        "  for s in $DOCKER_RUNNING; do\n"
+        '    case "$*" in *" $s") echo "id-$s" ;; esac\n'
+        "  done ;;\n"
+        "esac\n"
+        'case "$*" in *"python -c"*) echo "$DOCKER_CATALOG" ;; esac\n'
+        'case "$*" in *"jbrain.cli local-engine"*) echo "$DOCKER_ENGINE" ;; esac\n'
+        'case "$*" in *"local-provision-ids"*) echo "$DOCKER_QUEUED" ;; esac\n'
+        'case "$*" in *"local-remove-ids"*) echo "$DOCKER_REMOVING" ;; esac\n'
+        "exit 0\n"
+    )
+    fake.chmod(0o755)
+    return bindir
+
+
+def _run_engine(
+    tmp_path: Path,
+    body: str,
+    *,
+    fail: str = "",
+    catalog: str = "no",
+    engine: str = "standard",
+    running: str = "",
+    queued: str = "",
+    removing: str = "",
+    env_file: str = "LOCAL_LLM_ENABLED=true\n",
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    bindir = _fake_docker(tmp_path)
+    log = tmp_path / "docker.log"
+    log.write_text("")
+    (tmp_path / ".env").write_text(env_file)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "DOCKER_LOG": str(log),
+        "DOCKER_FAIL": fail,
+        "DOCKER_CATALOG": catalog,
+        "DOCKER_ENGINE": engine,
+        "DOCKER_RUNNING": running,
+        "DOCKER_QUEUED": queued,
+        "DOCKER_REMOVING": removing,
+        # The release's memory-settle wait, collapsed for a test.
+        "LOCAL_ENGINE_SETTLE_S": "3",
+        "LOCAL_ENGINE_POLL_S": "0",
+    }
+    proc = subprocess.run(
+        ["sh", "-c", f"set -eu\n. {LOCAL_ENGINE}\n{body}"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc, [ln for ln in log.read_text().splitlines() if ln]
+
+
+def _idx(calls: list[str], needle: str) -> int:
+    return next(i for i, c in enumerate(calls) if needle in c)
+
+
+def _ups(calls: list[str]) -> list[str]:
+    return [c for c in calls if c.startswith("compose") and " up " in f" {c} "]
+
+
+def _assert_never_builds(calls: list[str]) -> None:
+    """Every `up` carries --no-build: an implicit build of the Flash-Next image is an
+    unbounded llama.cpp compile on a serving box. The update's bounded build is the
+    only build site."""
+    ups = _ups(calls)
+    assert ups and all("--no-build" in c for c in ups), ups
+    assert not any(" build " in f" {c} " and " up " not in f" {c} " for c in calls)
+
+
+@pytest.mark.parametrize(
+    ("printed", "engine"),
+    [
+        ("flash-next", "flash-next"),
+        ("standard", "standard"),
+        ("", "standard"),
+        ("usage: jbrain.cli [-h] ...", "standard"),
+        ("[update] TIMEOUT after 120s: docker compose run", "standard"),
+        ("Container jbrain-db-1 Running\nflash-next\r\n", "flash-next"),
+    ],
+)
+def test_the_engine_read_parses_to_one_known_engine(printed: str, engine: str) -> None:
+    """An old api image without the subcommand, a DB blip, a timeout line: every one of
+    them must read as `standard`, the engine every box has — never as no engine."""
+    proc = subprocess.run(
+        ["sh", "-c", f'. {LOCAL_ENGINE}\nlocal_engine_parse "$OUT"'],
+        env={**os.environ, "OUT": printed},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert proc.stdout.strip() == engine
+
+
+def test_the_engine_is_read_from_the_settings_store_not_env(tmp_path: Path) -> None:
+    proc, calls = _run_engine(
+        tmp_path,
+        "local_engine_read",
+        engine="flash-next",
+        env_file="LOCAL_LLM_ENABLED=true\nLOCAL_ENGINE=standard\n",
+    )
+    assert proc.stdout.strip() == "flash-next"
+    assert any("python -m jbrain.cli local-engine" in c for c in calls)
+
+
+def test_standard_start_on_a_box_without_flash_next(tmp_path: Path) -> None:
+    """The box that never provisions Flash-Next: the standard gateway starts, and
+    Flash-Next's container is never created."""
+    proc, calls = _run_engine(
+        tmp_path, 'local_engine_start standard ""\necho "STARTED=$LOCAL_ENGINE_STARTED"'
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "STARTED=standard" in proc.stdout
+    assert any("up -d --no-build local-llm" in c for c in calls)
+    assert not any("flash-next" in c for c in _ups(calls))
+    _assert_never_builds(calls)
+
+
+def test_standard_start_leaves_an_installed_flash_next_created_and_stopped(
+    tmp_path: Path,
+) -> None:
+    """The supervisor's /start only starts a container that exists, and every update
+    removes both — so the other engine is created stopped, or a later switch 404s."""
+    proc, calls = _run_engine(tmp_path, "local_engine_start standard 1")
+    assert proc.returncode == 0, proc.stderr
+    stop_fn = _idx(calls, "stop flash-next")
+    create_fn = _idx(calls, "up --no-start --no-build flash-next")
+    start_std = _idx(calls, "up -d --no-build local-llm")
+    assert stop_fn < create_fn < start_std
+    assert not any("up -d --no-build flash-next" in c for c in calls)
+    _assert_never_builds(calls)
+
+
+def test_flash_next_start_stops_the_standard_gateway_first(tmp_path: Path) -> None:
+    proc, calls = _run_engine(
+        tmp_path,
+        'local_engine_start flash-next 1\necho "STARTED=$LOCAL_ENGINE_STARTED"',
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "STARTED=flash-next" in proc.stdout
+    stop_std = _idx(calls, "stop local-llm")
+    create_std = _idx(calls, "up --no-start --no-build local-llm")
+    start_fn = _idx(calls, "up -d --no-build flash-next")
+    assert stop_std < create_std < start_fn, (
+        "stop the standard gateway BEFORE Flash-Next starts — never both up"
+    )
+    assert not any("up -d --no-build local-llm" in c for c in calls)
+    _assert_never_builds(calls)
+
+
+def test_a_running_engine_is_released_and_settled_before_the_other_starts(
+    tmp_path: Path,
+) -> None:
+    """Stopping one engine and starting the other at once makes the kernel reclaim tens
+    of GB while the new one allocates — the update's own freeze. Release the models,
+    stop, and wait for the container to be gone before starting anything."""
+    proc, calls = _run_engine(
+        tmp_path, "local_engine_start flash-next 1", running="local-llm"
+    )
+    assert proc.returncode == 0, proc.stderr
+    unload = _idx(calls, "jbrain.cli local-llm-unload")
+    stop = _idx(calls, "stop local-llm")
+    polls = [
+        i
+        for i, c in enumerate(calls)
+        if i > stop and "ps -q --status running" in c and c.endswith(" local-llm")
+    ]
+    start = _idx(calls, "up -d --no-build flash-next")
+    assert unload < stop < start
+    assert polls and max(polls) < start, "poll the stopped engine before starting"
+    # The fake keeps reporting it running, so the bounded wait must give up — loudly.
+    assert "not settled" in proc.stdout
+
+
+def test_an_idle_engine_is_stopped_without_an_unload(tmp_path: Path) -> None:
+    proc, calls = _run_engine(tmp_path, "local_engine_start flash-next 1")
+    assert proc.returncode == 0, proc.stderr
+    assert not any("local-llm-unload" in c for c in calls)
+
+
+def test_flash_next_selected_but_not_installed_falls_back_and_says_so(
+    tmp_path: Path,
+) -> None:
+    proc, calls = _run_engine(
+        tmp_path,
+        'local_engine_start flash-next ""\necho "STARTED=$LOCAL_ENGINE_STARTED"',
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "STARTED=standard" in proc.stdout
+    assert "not installed" in proc.stdout, "the fallback must be in the update log"
+    assert any("up -d --no-build local-llm" in c for c in calls)
+    assert not any("up -d --no-build flash-next" in c for c in calls)
+
+
+def test_flash_next_that_fails_to_start_falls_back_to_standard(tmp_path: Path) -> None:
+    proc, calls = _run_engine(
+        tmp_path,
+        'local_engine_start flash-next 1\necho "STARTED=$LOCAL_ENGINE_STARTED"',
+        fail="up -d --no-build flash-next",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "STARTED=standard" in proc.stdout
+    assert "falling back to the standard engine" in proc.stdout
+    failed = _idx(calls, "up -d --no-build flash-next")
+    stop_fn = next(
+        i for i, c in enumerate(calls) if i > failed and "stop flash-next" in c
+    )
+    assert stop_fn < _idx(calls, "up -d --no-build local-llm"), (
+        "a half-started Flash-Next is stopped before the standard gateway starts"
+    )
+
+
+@pytest.mark.parametrize(
+    ("catalog", "answer"),
+    [("yes", "yes"), ("no", "no"), ("", "unknown"), ("Traceback ...", "unknown")],
+)
+def test_flash_next_detection_is_tri_state(
+    tmp_path: Path, catalog: str, answer: str
+) -> None:
+    """A failed catalog read is `unknown`, never `no` — callers delete on `no`."""
+    proc, calls = _run_engine(
+        tmp_path, 'local_engine_flash_next_answer "a b"', catalog=catalog
+    )
+    assert proc.stdout.strip() == answer
+    # The program is multi-line, so its argv spans several log lines.
+    logged = "\n".join(calls)
+    assert "IDS=a b" in logged and '"engine", "standard") == "flash-next"' in logged
+
+
+def test_an_empty_roster_is_a_clean_no_without_a_container_run(tmp_path: Path) -> None:
+    proc, calls = _run_engine(tmp_path, 'local_engine_flash_next_answer ""')
+    assert proc.stdout.strip() == "no"
+    assert calls == []
+
+
+def test_flash_next_counts_as_installed_only_with_an_image(tmp_path: Path) -> None:
+    env_file = 'LOCAL_MODELS=["qwen3.8-flash-next"]\n'
+    with_image, _ = _run_engine(
+        tmp_path, "local_engine_flash_next_installed", catalog="yes", env_file=env_file
+    )
+    assert with_image.stdout.strip() == "1"
+    no_image, _ = _run_engine(
+        tmp_path,
+        "local_engine_flash_next_installed",
+        catalog="yes",
+        env_file=env_file,
+        fail="image inspect",
+    )
+    assert no_image.stdout.strip() == ""
+
+
+def test_installed_ids_come_from_the_automation_written_roster(tmp_path: Path) -> None:
+    proc, _ = _run_engine(
+        tmp_path,
+        "local_engine_installed_ids",
+        env_file='LOCAL_MODELS=["gpt-oss-120b","qwen3.8-flash-next"]\n',
+    )
+    assert proc.stdout.split() == ["gpt-oss-120b", "qwen3.8-flash-next"]
+
+
+# local_engine_select: the update's engine decision, run against the fake docker.
+
+_SELECT = 'local_engine_select\necho "E=$ENGINE S=$SELECTED_ENGINE R=$FLASH_NEXT_READY"'
+
+
+def test_select_on_a_standard_box_builds_nothing_and_drops_no_live_image(
+    tmp_path: Path,
+) -> None:
+    proc, calls = _run_engine(
+        tmp_path, _SELECT, env_file='LOCAL_MODELS=["gpt-oss-120b"]\n'
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "E=standard S=standard R=" in proc.stdout
+    assert not any("build flash-next" in c for c in calls)
+    assert any("image rm jbrain2-flash-next:local" in c for c in calls), (
+        "a definite no removes the image (backing out from the PWA)"
+    )
+
+
+def test_select_builds_flash_next_when_installed_and_keeps_it_selected(
+    tmp_path: Path,
+) -> None:
+    proc, calls = _run_engine(
+        tmp_path,
+        _SELECT,
+        engine="flash-next",
+        catalog="yes",
+        env_file='LOCAL_MODELS=["qwen3.8-flash-next"]\n',
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "E=flash-next S=flash-next R=1" in proc.stdout
+    assert any("--profile flash-next build flash-next" in c for c in calls)
+
+
+def test_select_builds_for_a_queued_install_but_falls_back_until_it_lands(
+    tmp_path: Path,
+) -> None:
+    """Queued (weights not yet downloaded): build now so the image is ready, but this
+    update cannot serve from it — fall back and say so; the selection is kept."""
+    proc, calls = _run_engine(
+        tmp_path,
+        _SELECT,
+        engine="flash-next",
+        catalog="yes",
+        queued="qwen3.8-flash-next",
+        env_file='LOCAL_MODELS=["gpt-oss-120b"]\n',
+        fail="image inspect",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert any("build flash-next" in c for c in calls)
+    assert "E=standard S=flash-next R=" in proc.stdout
+    assert "falling back to the standard engine for this update" in proc.stdout
+
+
+def test_select_never_builds_for_a_model_queued_for_removal(tmp_path: Path) -> None:
+    proc, calls = _run_engine(
+        tmp_path,
+        _SELECT,
+        catalog="yes",
+        removing="qwen3.8-flash-next",
+        env_file='LOCAL_MODELS=["qwen3.8-flash-next"]\n',
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert not any("build flash-next" in c for c in calls)
+
+
+def test_select_leaves_the_image_alone_when_the_catalog_read_fails(
+    tmp_path: Path,
+) -> None:
+    proc, calls = _run_engine(
+        tmp_path,
+        _SELECT,
+        engine="flash-next",
+        catalog="",
+        env_file='LOCAL_MODELS=["qwen3.8-flash-next"]\n',
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert not any("image rm" in c for c in calls), "unknown is not no"
+    assert not any("build flash-next" in c for c in calls)
+    assert "E=standard S=flash-next" in proc.stdout
+
+
+def test_select_falls_back_when_the_engine_read_fails(tmp_path: Path) -> None:
+    proc, _ = _run_engine(tmp_path, _SELECT, engine="", fail="local-engine")
+    assert proc.returncode == 0, proc.stderr
+    assert "E=standard S=standard" in proc.stdout
+
+
+def test_select_survives_a_failed_build(tmp_path: Path) -> None:
+    proc, _ = _run_engine(
+        tmp_path,
+        _SELECT,
+        engine="flash-next",
+        catalog="yes",
+        env_file='LOCAL_MODELS=["qwen3.8-flash-next"]\n',
+        fail="build flash-next",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "did not build" in proc.stdout
+
+
+# update-inner.sh's wiring of the helpers.
+
+
+def test_the_update_releases_whichever_engine_is_running() -> None:
+    """A live ~83 GiB Flash-Next left up through the build is the documented freeze —
+    the pre-build release must remove BOTH services and wait for both to be gone."""
+    lines = _update_lines()
+    remove = _cmd_idx(lines, "rm -sf local-llm flash-next")
+    wait = _cmd_idx(lines, "ps -q local-llm flash-next")
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build")
+    assert remove is not None, "the release must remove both engines"
+    assert wait is not None, "and wait for both to be gone"
+    assert build is not None and remove < wait < build
+    assert "--profile local-llm --profile flash-next rm -sf" in lines[remove]
+
+
+def test_the_update_bounds_every_helper_call() -> None:
+    text = (DEPLOY / "update-inner.sh").read_text()
+    assert 'LOCAL_ENGINE_RUNNER="run_bounded $TOGGLE_TIMEOUT_S"' in text
+    assert 'LOCAL_ENGINE_UNLOAD_RUNNER="run_bounded $UNLOAD_TIMEOUT_S"' in text
+    assert 'LOCAL_ENGINE_BUILD_RUNNER="run_bounded $PULL_TIMEOUT_S"' in text
+
+
+def test_the_update_selects_the_engine_after_the_build_before_the_gateway_work() -> (
+    None
+):
+    lines = _update_lines()
+    select = next(
+        i for i, ln in enumerate(lines) if ln.strip() == "local_engine_select"
+    )
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build")
+    floating = _cmd_idx(lines, "build --pull local-llm")
+    assert build is not None and floating is not None
+    assert build < select < floating, (
+        "select after the api image is rebuilt (it owns the subcommand), before the "
+        "gateway work that depends on the answer"
+    )
+    assert 'if [ -n "$LOCAL_LLM_RUNNING" ]; then' in lines[select - 1]
+
+
+def test_the_standard_rebuild_and_rollback_run_only_for_the_standard_engine() -> None:
+    """The smoke test STARTS `local-llm`; with Flash-Next selected that is both engines
+    up. The floating rebuild, smoke test and rollback all sit under an ENGINE=standard
+    gate."""
+    lines = _update_lines()
+    floating = _cmd_idx(lines, "build --pull local-llm")
+    rollback = _rollback_rebuild_idx(lines)
+    assert floating is not None and rollback is not None
+    gate = max(
+        i
+        for i in range(floating)
+        if lines[i].startswith("if ") and "LOCAL_LLM_RUNNING" in lines[i]
+    )
+    assert '[ "$ENGINE" = standard ]' in lines[gate], lines[gate]
+    # The block the gate opens runs to the first top-level `fi` — both builds inside it.
+    end = next(i for i in range(gate, len(lines)) if lines[i] == "fi")
+    assert gate < floating < rollback < end
+    up_starts = [
+        i
+        for i, ln in enumerate(lines)
+        if "up -d local-llm" in ln and not ln.lstrip().startswith("#")
+    ]
+    assert up_starts and all(gate < i < end for i in up_starts), (
+        "every direct `up -d local-llm` must be inside the standard-only block"
+    )
+
+
+def test_the_update_builds_flash_next_nowhere_but_the_helper() -> None:
+    text = (DEPLOY / "update-inner.sh").read_text()
+    commands = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("flash-next" in ln and " build" in ln for ln in commands)
+    assert not any("up -d flash-next" in ln for ln in commands)
+
+
+def test_the_update_brings_back_exactly_one_engine_after_the_sync() -> None:
+    lines = _update_lines()
+    sync = _cmd_idx(lines, "sh src/deploy/local-models-sync.sh")
+    start = next(
+        i for i, ln in enumerate(lines) if ln.strip().startswith("local_engine_start ")
+    )
+    assert sync is not None and sync < start
+    # The owner's selection, so weights that only landed in the sync still start now;
+    # local_engine_start falls back to standard on its own when it cannot.
+    assert '"$SELECTED_ENGINE"' in lines[start]
+
+
+def test_the_profile_set_is_rederived_from_the_new_compose_file() -> None:
+    """The first update that ships `flash-next` must quiesce/restore with its profile,
+    so the set is read again once the new compose file is copied in."""
+    lines = _update_lines()
+    copy = _cmd_idx(lines, 'cp "src/deploy/$f" "$f.new"')
+    derives = [
+        i
+        for i, ln in enumerate(lines)
+        if ln.startswith('ALL_PROFILES="$(docker compose')
+    ]
+    quiesce = _call_idx(lines, "quiesce_stack")
+    assert copy is not None and quiesce is not None
+    assert any(copy < i < quiesce for i in derives)
+
+
+def test_the_sync_starts_one_engine_outside_an_update() -> None:
+    text = (DEPLOY / "local-models-sync.sh").read_text()
+    commands = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("--profile local-llm up -d" in ln for ln in commands), (
+        "a bare local-llm start beside a running Flash-Next is both engines up"
+    )
+    assert ". src/deploy/local-engine.sh" in text
+    start = 'local_engine_start "$(local_engine_read)" '
+    assert start + '"$(local_engine_flash_next_installed)"' in text
+
+
+def test_the_sync_renders_flash_next_its_own_config_only_when_installed() -> None:
+    lines = _logical_lines((DEPLOY / "local-models-sync.sh").read_text())
+    render = [ln for ln in lines if "llama_swap_config --engine flash-next" in ln]
+    assert render and all("--user 0" in ln for ln in render)
+    text = (DEPLOY / "local-models-sync.sh").read_text()
+    gate = text.index('if [ "$fn_answer" = yes ]; then')
+    assert gate < text.index("llama_swap_config --engine flash-next")
+
+
+def test_the_sync_removes_a_stale_flash_next_config_only_on_a_definite_no() -> None:
+    text = (DEPLOY / "local-models-sync.sh").read_text()
+    gate = text.index('if [ "$fn_answer" = no ]')
+    assert gate < text.index('rm -f -- "$PWD/local-models/llama-swap.flash-next.yaml"')
+    assert 'fn_answer="$(local_engine_flash_next_answer "$ids")"' in text
+
+
+def test_the_sync_never_makes_a_flash_next_model_the_standard_chat_model() -> None:
+    text = (DEPLOY / "local-models-sync.sh").read_text()
+    guard = text.index('local_engine_any_flash_next "$activate"')
+    assert guard < text.index("jbrain.cli local-activate")
+
+
+def test_the_first_enable_script_starts_one_engine() -> None:
+    text = (DEPLOY.parent / "scripts" / "local-llm-setup.sh").read_text()
+    commands = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("--profile local-llm up -d" in ln for ln in commands)
+    assert "local_engine_start" in text
+
+
+def test_no_helper_up_can_build_an_image() -> None:
+    """Pinned on the text as well as the behaviour: a later `up` added without
+    --no-build would reintroduce the unbounded compile on the install path."""
+    text = LOCAL_ENGINE.read_text()
+    ups = [
+        ln
+        for ln in text.splitlines()
+        if "docker compose" in ln and " up " in ln and not ln.lstrip().startswith("#")
+    ]
+    assert ups and all("--no-build" in ln for ln in ups), ups
+
+
+# --- desired vs effective engine, and the up predicate ------------------------------
+
+
+def test_a_started_engine_is_recorded_as_effective(tmp_path: Path) -> None:
+    """The api routes by the EFFECTIVE engine, so whatever starts one records it."""
+    proc, calls = _run_engine(tmp_path, "local_engine_start flash-next 1")
+    assert proc.returncode == 0, proc.stderr
+    started = _idx(calls, "up -d --no-build flash-next")
+    recorded = _idx(calls, "jbrain.cli set-local-engine-effective flash-next")
+    assert started < recorded
+    assert not any("set-local-engine-effective standard" in c for c in calls)
+
+
+@pytest.mark.parametrize(
+    ("fn", "fail"), [("", ""), ("1", "up -d --no-build flash-next")]
+)
+def test_a_flash_next_fallback_records_standard_as_effective(
+    tmp_path: Path, fn: str, fail: str
+) -> None:
+    """Desired stays flash-next (the next update retries it), but the api must stop
+    believing Flash-Next is up, or it refuses every standard load with no way out."""
+    proc, calls = _run_engine(
+        tmp_path, f'local_engine_start flash-next "{fn}"', fail=fail
+    )
+    assert proc.returncode == 0, proc.stderr
+    started = _idx(calls, "up -d --no-build local-llm")
+    recorded = _idx(calls, "jbrain.cli set-local-engine-effective standard")
+    assert started < recorded
+    assert "FALLBACK" in proc.stdout and "SELECTED" in proc.stdout
+    # The owner's choice is never rewritten by a deploy script.
+    assert not any("set-local-engine " in f"{c} " for c in calls)
+
+
+def test_a_failed_effective_write_does_not_fail_the_start(tmp_path: Path) -> None:
+    proc, _ = _run_engine(
+        tmp_path,
+        'local_engine_start standard ""\necho "STARTED=$LOCAL_ENGINE_STARTED"',
+        fail="set-local-engine-effective",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "STARTED=standard" in proc.stdout
+    assert "could not record standard" in proc.stdout
+
+
+def test_the_up_check_counts_a_crash_looping_engine(tmp_path: Path) -> None:
+    """`--status running` alone missed a restarting (crash-looping) engine, which then
+    re-took its memory beside the other. It is released and stopped like a running
+    one."""
+    proc, calls = _run_engine(
+        tmp_path, "local_engine_start flash-next 1", running="local-llm"
+    )
+    assert proc.returncode == 0, proc.stderr
+    checks = [c for c in calls if " ps -q " in f" {c} "]
+    assert checks
+    for c in checks:
+        for state in ("running", "paused", "restarting"):
+            assert f"--status {state}" in c, c
+    assert _idx(calls, "stop local-llm") < _idx(calls, "up -d --no-build flash-next")
+
+
+# --- refresh / rebuild of an ENGINE service -----------------------------------------
+
+
+def _run_oneservice(
+    tmp_path: Path, script: str, service: str, **kw: str
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Run a one-service deploy script against the fake docker, from an install dir
+    whose `src` is this checkout (it sources src/deploy/local-engine.sh)."""
+    (tmp_path / "src").symlink_to(DEPLOY.parent)
+    return _run_engine(tmp_path, f"exec sh {DEPLOY / script} {service}", **kw)
+
+
+_FN_INSTALLED = {
+    "catalog": "yes",
+    "env_file": "LOCAL_LLM_ENABLED=true\nLOCAL_MODELS=qwen3.8-flash-next\n",
+}
+
+
+def test_rebuilding_the_idle_engine_never_starts_it(tmp_path: Path) -> None:
+    """`up -d flash-next` would enable its profile and start it beside the serving
+    standard gateway. The build runs with the standard gateway released, flash-next is
+    recreated STOPPED, and only the standard gateway comes back."""
+    proc, calls = _run_oneservice(
+        tmp_path, "rebuild-inner.sh", "flash-next", running="local-llm", **_FN_INSTALLED
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not any("up -d --no-build flash-next" in c for c in calls)
+    assert not any("up -d flash-next" in c for c in calls)
+    stop = _idx(calls, "stop local-llm")
+    build = _idx(calls, "--profile flash-next build flash-next")
+    create = _idx(calls, "up --no-start --no-build flash-next")
+    back = _idx(calls, "up -d --no-build local-llm")
+    assert stop < build < create < back, calls
+    assert _idx(calls, "set-local-engine-effective standard") > back
+    assert all("--no-build" in c for c in _ups(calls)), _ups(calls)
+
+
+def test_rebuilding_the_serving_engine_brings_it_back(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(
+        tmp_path,
+        "rebuild-inner.sh",
+        "flash-next",
+        running="flash-next",
+        **_FN_INSTALLED,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    stop = _idx(calls, "stop flash-next")
+    build = _idx(calls, "--profile flash-next build flash-next")
+    back = _idx(calls, "up -d --no-build flash-next")
+    assert stop < build < back
+    assert not any("up -d --no-build local-llm" in c for c in calls)
+
+
+def test_rebuilding_with_no_engine_up_starts_none(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(tmp_path, "rebuild-inner.sh", "local-llm")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert any("--profile local-llm build local-llm" in c for c in calls)
+    assert any("up --no-start --no-build local-llm" in c for c in calls)
+    assert not any(" up -d " in f" {c} " for c in calls)
+    assert "left created and stopped" in proc.stdout
+
+
+def test_a_failed_engine_build_still_brings_the_engine_back(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(
+        tmp_path,
+        "rebuild-inner.sh",
+        "local-llm",
+        running="local-llm",
+        fail="build local-llm",
+    )
+    assert proc.returncode != 0
+    assert any("up -d --no-build local-llm" in c for c in calls)
+    assert "keeping its previous image" in proc.stdout
+
+
+def test_a_non_engine_rebuild_is_unchanged(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(tmp_path, "rebuild-inner.sh", "api")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "compose build api" in calls
+    assert "compose up -d api" in calls
+
+
+@pytest.mark.parametrize("script", ["refresh-inner.sh", "rebuild-inner.sh"])
+def test_engine_services_take_the_quiesced_path_before_any_plain_up(
+    script: str,
+) -> None:
+    lines = [
+        ln
+        for ln in (DEPLOY / script).read_text().splitlines()
+        if not ln.lstrip().startswith("#")
+    ]
+    branch = next(i for i, ln in enumerate(lines) if "local-llm|flash-next)" in ln)
+    engine = next(i for i, ln in enumerate(lines) if "local_engine_rebuild" in ln)
+    plain = next(i for i, ln in enumerate(lines) if "docker compose up -d" in ln)
+    assert branch < engine < plain
+    if script == "refresh-inner.sh":
+        reset = next(i for i, ln in enumerate(lines) if "reset --hard" in ln)
+        assert reset < branch, "the pulled local-engine.sh is the one sourced"

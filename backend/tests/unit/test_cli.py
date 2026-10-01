@@ -69,10 +69,10 @@ def test_smoketest_exit_code_follows_the_result(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
     monkeypatch.setattr(gateway_mod, "LocalGatewayClient", lambda url, **_kw: object())
 
-    async def _pass(models: object, gw: object) -> tuple[bool, list[str]]:
+    async def _pass(models: object, gw: object, **_kw: object) -> tuple[bool, list[str]]:
         return True, ["load OK"]
 
-    async def _fail(models: object, gw: object) -> tuple[bool, list[str]]:
+    async def _fail(models: object, gw: object, **_kw: object) -> tuple[bool, list[str]]:
         return False, ["load FAILED"]
 
     monkeypatch.setattr(smoketest_mod, "run_smoketest", _pass)
@@ -240,3 +240,23 @@ def test_unload_keeps_going_when_one_model_refuses(
 
     assert cli.main(["local-llm-unload"]) == 0
     assert released == ["b-model"]
+
+
+def test_local_engine_prints_the_active_engine(
+    patched_store: FakeSettingsStore, capsys: Any
+) -> None:
+    patched_store.values["llm_local_engine"] = "flash-next"
+    assert cli.main(["local-engine"]) == 0
+    assert capsys.readouterr().out.strip() == "flash-next"
+
+
+def test_local_engine_defaults_to_standard_when_unset_or_malformed(
+    patched_store: FakeSettingsStore, capsys: Any
+) -> None:
+    # The update script starts whatever this prints, so anything unknown must name the engine
+    # every box has rather than nothing.
+    assert cli.main(["local-engine"]) == 0
+    assert capsys.readouterr().out.strip() == "standard"
+    patched_store.values["llm_local_engine"] = "gpt-9"
+    assert cli.main(["local-engine"]) == 0
+    assert capsys.readouterr().out.strip() == "standard"

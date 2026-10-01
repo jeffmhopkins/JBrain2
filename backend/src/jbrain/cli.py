@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import get_settings
+from jbrain.llm import engine as llm_engine
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import (
     LLM_TASK_OVERRIDES_KEY,
@@ -162,6 +163,34 @@ async def _clear_provision_ids() -> None:
         await engine.dispose()
 
 
+async def _set_local_engine_effective(engine: str) -> None:
+    """Record the engine a deploy script actually started (deploy/local-engine.sh), which the
+    api routes by. The DESIRED setting is never touched here: a fallback to standard must not
+    rewrite the owner's choice, so the next update retries it."""
+    settings = get_settings()
+    db = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(db, expire_on_commit=False))
+        await store.set_llm_local_engine_effective(SYSTEM_CTX, llm_engine.parse(engine))
+    finally:
+        await db.dispose()
+
+
+async def _print_local_engine() -> None:
+    """Print the active on-box engine for the update one-shot, which brings up that engine's
+    container and never the other. An unreachable DB prints the default: the standard gateway
+    is the engine every box has, and the script stops the other one either way."""
+    settings = get_settings()
+    db = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(db, expire_on_commit=False))
+        print(await store.llm_local_engine(SYSTEM_CTX))
+    except Exception:  # noqa: BLE001
+        print(llm_engine.DEFAULT_ENGINE)
+    finally:
+        await db.dispose()
+
+
 async def _print_remove_ids() -> None:
     """Print the uninstall queue (one catalog id per line) for the update one-shot.
     Owner-scoped (settings RLS is is_owner()); empty output is the normal 'nothing
@@ -216,7 +245,7 @@ async def _local_activate(model_id: str) -> None:
         await engine.dispose()
 
 
-async def _local_llm_smoketest() -> int:
+async def _local_llm_smoketest(engine: str = "standard") -> int:
     """Smoke-test the on-box gateway's current build (the opt-in LOCAL_LLM_AUTO_UPDATE
     path calls this after floating the gateway onto the newest llama.cpp). Exit 0 =
     the build loaded a model (and survived a gpt-oss tool turn when installed) and is
@@ -224,10 +253,15 @@ async def _local_llm_smoketest() -> int:
     the installed set + gateway URL from settings (env-wired in the api container); no
     DB needed, so it runs under `docker compose run --rm --no-deps -T api`."""
     from jbrain.llm import gpu_guard, llama_swap_config, local_catalog
+    from jbrain.llm.engine import parse as parse_engine
     from jbrain.llm.local_gateway import LocalGatewayClient
     from jbrain.llm.smoketest import run_smoketest
 
     settings = get_settings()
+    # The engine whose gateway was just rebuilt. An argument rather than a settings read: this
+    # runs `--no-deps` with no database, and the update script already knows which engine it
+    # rebuilt (it read `local-engine` to decide).
+    active = parse_engine(engine)
     if not settings.local_llm_enabled or not settings.local_models:
         print("[smoketest] local hosting off or no models installed — skipping (pass)")
         return 0
@@ -247,7 +281,7 @@ async def _local_llm_smoketest() -> int:
     # a healthy build. The rollback that followed was spurious — and since the newer
     # llama.cpp is where the `no_alloc` estimator lives, the broken test was blocking the
     # fix for the thing it was failing on.
-    _shapes = llama_swap_config.served_shape_from_config(settings.local_models_dir)
+    _shapes = llama_swap_config.served_shape_from_config(settings.local_models_dir, active)
     _by_id = {
         model.id: shape
         for served, shape in _shapes.items()
@@ -271,7 +305,7 @@ async def _local_llm_smoketest() -> int:
         # model in turn" as this comment used to claim — see jbrain.llm.smoketest.)
         models_dir=settings.local_models_dir,
     )
-    ok, messages = await run_smoketest(settings.local_models, gateway)
+    ok, messages = await run_smoketest(settings.local_models, gateway, engine=active)
     for message in messages:
         print(f"[smoketest] {message}")
     return 0 if ok else 1
@@ -286,6 +320,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("local-provision-clear", help="empty the local-model install queue")
     sub.add_parser("local-remove-ids", help="print the local-model uninstall queue")
     sub.add_parser("local-remove-clear", help="empty the local-model uninstall queue")
+    sub.add_parser("local-engine", help="print the DESIRED on-box engine (standard|flash-next)")
+    p_eff = sub.add_parser(
+        "set-local-engine-effective",
+        help="record the on-box engine actually started (the api routes by it)",
+    )
+    p_eff.add_argument("engine", choices=["standard", "flash-next"])
     p_activate = sub.add_parser(
         "local-activate",
         help="make a just-installed local model the active chat model (agent.turn)",
@@ -299,9 +339,15 @@ def main(argv: list[str] | None = None) -> int:
         "local-llm-auto-update",
         help="exit 0 if the owner has the gateway auto-update + smoke test on, else 1",
     )
-    sub.add_parser(
+    p_smoke = sub.add_parser(
         "local-llm-smoketest",
         help="load a model (+ gpt-oss tool probe) to verify the gateway's llama.cpp build",
+    )
+    p_smoke.add_argument(
+        "--engine",
+        choices=["standard", "flash-next"],
+        default="standard",
+        help="which engine's gateway to test (its config file and its models)",
     )
     sub.add_parser(
         "local-llm-patch-restore-checkpoint",
@@ -329,6 +375,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "local-remove-clear":
         asyncio.run(_clear_remove_ids())
         return 0
+    if args.command == "local-engine":
+        asyncio.run(_print_local_engine())
+        return 0
+    if args.command == "set-local-engine-effective":
+        asyncio.run(_set_local_engine_effective(args.engine))
+        return 0
     if args.command == "local-activate":
         asyncio.run(_local_activate(args.model_id))
         return 0
@@ -337,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "local-llm-auto-update":
         return asyncio.run(_print_auto_update())
     if args.command == "local-llm-smoketest":
-        return asyncio.run(_local_llm_smoketest())
+        return asyncio.run(_local_llm_smoketest(args.engine))
     if args.command == "local-llm-patch-restore-checkpoint":
         return asyncio.run(_print_patch_restore_checkpoint())
     if args.command == "set-local-llm-patch-restore-checkpoint":

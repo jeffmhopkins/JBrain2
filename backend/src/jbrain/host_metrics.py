@@ -22,6 +22,10 @@ from pathlib import Path
 _KB_PER_GIB = 1024 * 1024
 
 
+# Pending: a memory-mapped model (Flash-Next's engram table, `LocalModel.file_backed_gb`) is
+# served FROM page cache, so this count charges its working set as used. Deliberately unchanged
+# until FLASH_NEXT_ENGINE_PLAN F2 measures that working set; the catalog budget already
+# excludes the file-backed share.
 def read_memory_gb(path: str = "/proc/meminfo") -> tuple[float, float] | None:
     """`(total_gb, used_gb)` from /proc/meminfo, or None if unavailable.
 

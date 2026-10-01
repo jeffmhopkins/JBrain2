@@ -166,6 +166,7 @@ from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, gpu_guard
+from jbrain.llm import engine as engine_mod
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -494,6 +495,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # an eviction without touching the box, and schedule_restore puts back whatever a
         # transient displacement (image render, code session) removed at end of turn instead of
         # cold-loading it. Inert on a cloud-only box (enabled off).
+        #
+        # The active on-box engine, one TTL-cached read shared by residency's admission gate,
+        # the kv-prefix store and the jcode proxy so they agree on which gateway is running,
+        # and a live switch (the F2 debug route, the F3 switch) is seen without a restart.
+        app.state.active_engine = engine_mod.ActiveEngine(
+            lambda: settings_store.llm_local_engine_effective(SYSTEM_CTX)
+        )
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,
             ResidencyWiring(
@@ -538,6 +546,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # The SAME ledger instance the gateway charges through, so the eviction plan
                 # and the admission verdict come from one arithmetic (L3).
                 ledger=api_reservations,
+                # Only the active engine's models are loaded or restored (§4d).
+                engine_loader=app.state.active_engine.get,
             ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
@@ -566,6 +576,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings.local_models_dir,
             patch_active=kv_patch_active,
             max_store_bytes=kv_budget_gb * 1024**3,
+            # Which engine's config launch lines are fingerprinted from, re-read per call.
+            engine=app.state.active_engine,
         )
         app.state.llm_router = build_router(
             settings,

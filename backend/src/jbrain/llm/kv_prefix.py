@@ -86,6 +86,7 @@ from collections.abc import Sequence
 import structlog
 
 from jbrain import box_events
+from jbrain.llm import engine as engines
 from jbrain.llm import llama_swap_config, local_catalog
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.types import LlmTool
@@ -263,9 +264,20 @@ class KvPrefixStore:
         *,
         patch_active: bool = False,
         max_store_bytes: int = MAX_STORE_BYTES,
+        engine: engines.Engine | engines.ActiveEngine = engines.STANDARD,
     ) -> None:
         self._gateway = gateway
         self._models_root = models_root
+        # Which engine's llama-swap config launch lines are read from (`_resolve`). The
+        # fingerprint is the launch line, so reading the wrong engine's file would describe a
+        # server that is not running. Production passes the process's `ActiveEngine`, re-read
+        # (TTL-cached) at every async entry point, so a switch made on a live api — the F2
+        # debug route, the F3 switch — is picked up without a restart. A fixed engine is for
+        # tests and DB-less callers.
+        self._engine_source = engine if isinstance(engine, engines.ActiveEngine) else None
+        self._engine: engines.Engine = (
+            engines.DEFAULT_ENGINE if isinstance(engine, engines.ActiveEngine) else engine
+        )
         # The disk allowance. A parameter rather than the module constant it defaults to,
         # because the constant's own comment conceded the gap: "changing it is a release,
         # there is no knob" — on a box whose owner has no terminal, and whose store runs at
@@ -388,6 +400,7 @@ class KvPrefixStore:
                 entry["reason"] = self._ineligible_reason(served_model)
             entry["restored_unused"] = served_model in self._restored_unused
             entry["last_outcome"] = self._last_outcome.get(served_model)
+            await self._refresh_engine()
             resolved = await asyncio.to_thread(self._resolve, served_model, system, tools, effort)
             if resolved is None:
                 entry["state"] = "no_disk_layer" if eligible is not None else "ineligible"
@@ -507,6 +520,24 @@ class KvPrefixStore:
             return None
         return model
 
+    def set_engine(self, engine: engines.Engine) -> None:
+        """Pin launch-line resolution to `engine`'s config, for a store built without a live
+        source (a source, when given, always wins)."""
+        self._engine = engine
+
+    async def _refresh_engine(self) -> None:
+        """Re-read the active engine (TTL-cached) before a resolve."""
+        if self._engine_source is not None:
+            await self._engine_source.get()
+
+    def _current_engine(self) -> engines.Engine:
+        """The engine `_resolve` reads. With a live source, its latest value — refreshed by
+        this store's async entry points and by every other reader sharing the cache (residency
+        reads it on each local load), so sync `identity_of` is never more than one TTL behind."""
+        if self._engine_source is not None:
+            return self._engine_source.last_known()
+        return self._engine
+
     def _resolve(
         self,
         served_model: str,
@@ -518,7 +549,9 @@ class KvPrefixStore:
         None when the model is
         not served, or is served without --slot-save-path (no disk layer). One read of the
         rendered config feeds both, so they can never describe two different servers."""
-        line = llama_swap_config.launch_line(self._models_root, served_model)
+        line = llama_swap_config.launch_line(
+            self._models_root, served_model, self._current_engine()
+        )
         if line is None:
             return None
         save_dir = _save_dir_from_line(line, self._models_root)
@@ -610,6 +643,7 @@ class KvPrefixStore:
             return False
         # A fresh prime supersedes any restored-but-unused state.
         self._restored_unused.pop(served_model, None)
+        await self._refresh_engine()
         resolved = await asyncio.to_thread(
             self._resolve, served_model, system, tools, reasoning_effort
         )
@@ -863,6 +897,7 @@ class KvPrefixStore:
         one acquisition point and cannot be taken twice on one path."""
         if served_model in self._restored_unused:
             return False  # already restored; the slot reports nothing until a turn uses it
+        await self._refresh_engine()
         resolved = await asyncio.to_thread(
             self._resolve, served_model, system, tools, reasoning_effort
         )

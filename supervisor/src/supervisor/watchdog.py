@@ -93,7 +93,18 @@ def _update_running(gateway: DockerGateway) -> bool:
     except Exception:
         log.warning("watchdog: could not read updater status; assuming busy")
         return True
-    for kind in ("export", "import", "reset", "provision", "rebuild"):
+    # refresh recreates one service (it may be the api itself); perplexity stops the
+    # engine and holds the box - both are deliberate, not a wedge to restart through.
+    kinds = (
+        "export",
+        "import",
+        "reset",
+        "provision",
+        "rebuild",
+        "refresh",
+        "perplexity",
+    )
+    for kind in kinds:
         try:
             if gateway.oneshot_status(kind, 0).state == "running":
                 return True

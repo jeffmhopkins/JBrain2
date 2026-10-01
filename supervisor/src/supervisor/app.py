@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import re
+import threading
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
 
@@ -23,10 +24,18 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from supervisor import host_metrics, usb_devices, watchdog
-from supervisor.gateway import DockerGateway, UnknownServiceError, UpdateInProgressError
+from supervisor.gateway import (
+    ENGINE_SERVICES,
+    FLASH_NEXT_SERVICE,
+    ContainerInfo,
+    DockerGateway,
+    UnknownServiceError,
+    UpdateInProgressError,
+    engine_up,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -64,6 +73,15 @@ class ContainerStatus(BaseModel):
 
 class StatusResponse(BaseModel):
     containers: list[ContainerStatus]
+    # `docker compose run` containers (an update's `run api`, the perplexity run). They
+    # carry their service's label, so they are listed apart rather than in
+    # `containers`, where one would read as the service itself.
+    oneoffs: list[ContainerStatus] = []
+
+
+class OneshotRunningResponse(BaseModel):
+    # The kind in flight ("update", "refresh", "perplexity", ...), or None.
+    running: str | None
 
 
 class ContainerMemoryOut(BaseModel):
@@ -177,6 +195,34 @@ class RebuildRequest(BaseModel):
     service: str
 
 
+# Bounds on the perplexity job's one numeric knob. 200 chunks of 512 tokens is ~100k
+# tokens — enough for a stable estimate to compare against a published reference, and a
+# ceiling so a token cannot park a ~60 GiB process on the box for hours.
+PERPLEXITY_CHUNKS_MAX = 200
+
+
+class PerplexityRequest(BaseModel):
+    """Everything a caller may say about the perplexity job — and it is not much.
+
+    `model_path` is resolved by the api from the catalog (it owns the models mount and
+    the shard naming); here it must be a .gguf under /models with plain path segments,
+    so it can never name a file outside the weights tree or carry a flag.
+    extra="forbid": an unexpected field is a 422, not a silently ignored argument."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_path: str
+    chunks: int | None = Field(default=None, ge=1, le=PERPLEXITY_CHUNKS_MAX)
+
+
+# /models/<catalog id>/[<quant dir>/]<file>.gguf — every segment starts alphanumeric, so
+# none can be `..` or begin with `-`.
+PERPLEXITY_MODEL_RE = re.compile(
+    r"^/models/[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+    r"(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,127})?"
+    r"/[A-Za-z0-9][A-Za-z0-9._-]{0,191}\.gguf$"
+)
+
 # Import archives are api-named uploads; anything else is rejected before the
 # name reaches a shell command line.
 IMPORT_ARCHIVE_RE = re.compile(r"^import-\d{8}-\d{6}\.jbrain\.tar$")
@@ -234,28 +280,76 @@ def create_app(
 
     @authed.get("/status")
     def status() -> StatusResponse:
+        def out(c: ContainerInfo) -> ContainerStatus:
+            return ContainerStatus(
+                service=c.service,
+                state=c.state,
+                health=c.health,
+                started_at=c.started_at,
+                image=c.image,
+            )
+
         return StatusResponse(
-            containers=[
-                ContainerStatus(
-                    service=c.service,
-                    state=c.state,
-                    health=c.health,
-                    started_at=c.started_at,
-                    image=c.image,
-                )
-                for c in gateway.list_containers()
-            ]
+            containers=[out(c) for c in gateway.list_containers()],
+            oneoffs=[out(c) for c in gateway.list_oneoffs()],
         )
+
+    @authed.get("/oneshot")
+    def oneshot_running() -> OneshotRunningResponse:
+        # One read for "is anything in flight", so a caller deciding whether it may
+        # touch the engines does not have to know every one-shot kind there is.
+        return OneshotRunningResponse(running=gateway.running_oneshot())
+
+    # Guard + start is check-then-act: two concurrent starts of the two engines could
+    # each see the other down and both start (§4d's freeze). FastAPI runs these sync
+    # routes on a threadpool, so a plain lock serialises every engine start/restart.
+    engine_lock = threading.Lock()
+
+    def _engine_refusal(service: str) -> str | None:
+        """Why `service` (an engine) must not be started now, or None. One engine at a
+        time (FLASH_NEXT_ENGINE_PLAN §4d), enforced HERE because every caller that
+        starts an engine - the debug switch, the Ops toggle and Restart, jcode's power
+        on - comes through this app, and the two engines together freeze the box.
+
+        ANY one-shot refuses, not only perplexity: an update/refresh/rebuild/provision
+        is itself starting and stopping engines (or compiling one) with docker
+        directly, and a start from here would race it."""
+        busy = gateway.running_oneshot()
+        if busy is not None:
+            return f"a {busy} one-shot is running; start {service} once it has finished"
+        for c in gateway.list_containers():
+            other = c.service in ENGINE_SERVICES and c.service != service
+            if other and engine_up(c.state):
+                return f"{c.service} is {c.state}; stop it before {service}"
+        return None
+
+    def _guard_engine_start(service: str) -> None:
+        reason = _engine_refusal(service)
+        if reason is not None:
+            raise HTTPException(status_code=409, detail=reason)
 
     @authed.post("/restart", status_code=202)
     def restart(body: RestartRequest, background: BackgroundTasks) -> RestartResponse:
+        # `docker restart` of a STOPPED container starts it. The engine that is not
+        # selected is deliberately created-and-stopped (§4d), so a plain restart of it
+        # - Ops "Restart all" included - would put both engines up. A stopped engine
+        # is therefore never restarted (409 alone, skipped in `all`), and a running
+        # one passes the same guard /start does.
         known = {c.service for c in gateway.list_containers()}
 
         if body.service == "all":
             peers = sorted(known - {settings.self_service})
-            for service in peers:
-                gateway.restart(service)
-            order = list(peers)
+            order: list[str] = []
+            with engine_lock:
+                states = {c.service: c.state for c in gateway.list_containers()}
+                for service in peers:
+                    if service in ENGINE_SERVICES and (
+                        not engine_up(states.get(service, ""))
+                        or _engine_refusal(service) is not None
+                    ):
+                        continue
+                    gateway.restart(service)
+                    order.append(service)
             if settings.self_service in known:
                 # Self-restart kills this process, so it must run after the
                 # response is sent — and after every peer is already bounced.
@@ -267,6 +361,24 @@ def create_app(
             raise UnknownServiceError(body.service)
         if body.service == settings.self_service:
             background.add_task(gateway.restart, body.service)
+        elif body.service in ENGINE_SERVICES:
+            with engine_lock:
+                state = next(
+                    (
+                        c.state
+                        for c in gateway.list_containers()
+                        if c.service == body.service
+                    ),
+                    "missing",
+                )
+                if not engine_up(state):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"{body.service} is {state}, not running; a restart "
+                        "would start it - switch engines instead",
+                    )
+                _guard_engine_start(body.service)
+                gateway.restart(body.service)
         else:
             gateway.restart(body.service)
         return RestartResponse(restarting=[body.service])
@@ -275,7 +387,12 @@ def create_app(
     def start_service(body: ServiceRequest) -> ServiceActionResponse:
         # Toggle an existing-but-stopped service on (the comfyui profile service).
         # An unknown/never-created service raises UnknownServiceError -> 404.
-        gateway.start(body.service)
+        if body.service in ENGINE_SERVICES:
+            with engine_lock:
+                _guard_engine_start(body.service)
+                gateway.start(body.service)
+        else:
+            gateway.start(body.service)
         return ServiceActionResponse(service=body.service, action="start")
 
     @authed.post("/stop", status_code=202)
@@ -512,6 +629,35 @@ def create_app(
         tail: Annotated[int, Query(ge=1)] = 80,
     ) -> UpdateStatusResponse:
         status = gateway.oneshot_status("refresh", min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
+    @authed.post("/perplexity", status_code=202)
+    def start_perplexity(body: PerplexityRequest) -> OneshotStartResponse:
+        # WikiText-2 perplexity inside the flash-next image (FLASH_NEXT_ENGINE_PLAN F2,
+        # check 6) — a FIXED job: the binary, text file and flags are constants in the
+        # gateway; the request picks only a validated model path and a bounded count.
+        # The service must exist (it is the image the job runs), so a box that never
+        # provisioned Flash-Next 404s instead of compose building one on the spot.
+        if not PERPLEXITY_MODEL_RE.fullmatch(body.model_path):
+            raise HTTPException(status_code=400, detail="bad model path")
+        if FLASH_NEXT_SERVICE not in {c.service for c in gateway.list_containers()}:
+            raise UnknownServiceError(FLASH_NEXT_SERVICE)
+        try:
+            return OneshotStartResponse(
+                oneshot=gateway.start_perplexity(body.model_path, body.chunks)
+            )
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/perplexity/status")
+    def perplexity_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("perplexity", min(tail, MAX_LOG_TAIL))
         return UpdateStatusResponse(
             state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
         )

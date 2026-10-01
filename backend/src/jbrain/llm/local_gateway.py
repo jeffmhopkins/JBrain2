@@ -532,6 +532,21 @@ class LocalGatewayClient:
             # a 200 is the one moment this codebase can honestly say the memory is back.
             await self._reservations.discharge_model(served_model)
         await box_events.record(box_events.MODEL_UNLOAD, served_model)
+        self._drop_mapped_residue(served_model)
+
+    def _drop_mapped_residue(self, served_model: str) -> None:
+        """After a memory-mapped model unloads, its page cache — the whole mapped GGUF, ~88 GiB
+        for Flash-Next — is residue that `host_metrics.read_memory_gb` counts as used, and it
+        would block the next load's admission (e.g. the standard engine coming back after a
+        switch). A `--no-mmap` model's cache was already dropped at load, so only mapped
+        models need this. The 200 above means the process is gone, so nothing is serving
+        from these pages any more."""
+        model = local_catalog.get_by_served(served_model)
+        if model is None or not self._models_dir or not local_weights.serves_file_backed(model.id):
+            return
+        self._seen_resident.discard(served_model)
+        freed = local_weights.drop_weights_page_cache(self._models_dir, model.id)
+        log.info("local_gateway.mapped_cache_dropped_after_unload", model=model.id, freed_gb=freed)
 
     async def _narrate_reload_casualties(self, before: set[str], loading: str) -> None:
         """Record the models a config-driven gateway reload just killed.
@@ -770,6 +785,12 @@ class LocalGatewayClient:
                 grew = now is not None and (now - last) >= _SWEEP_GROWTH_GB
                 if not grew and elapsed < _SWEEP_INTERVAL_S:
                     continue
+                if local_weights.serves_file_backed(model.id):
+                    # Mapped weights: the cache IS the engram working set of the model being
+                    # loaded. Keep polling for the progress bar, never drop.
+                    elapsed = 0.0
+                    last = now if now is not None else last
+                    continue
                 # `to_thread`: the walk + fadvise are blocking syscalls, and stalling the event
                 # loop during a load would delay the very health probe we are timing.
                 await asyncio.to_thread(
@@ -806,6 +827,11 @@ class LocalGatewayClient:
         this just returned rather than racing it."""
         if model is None or not self._models_dir:
             return
+        if local_weights.serves_file_backed(model.id):
+            # Not a `--no-mmap` copy: the mapped engram table pages through this cache on every
+            # token, so dropping it would only make the next tokens read it from disk again.
+            log.info("local_gateway.weights_cache_kept_file_backed", model=model.id)
+            return
         freed = local_weights.drop_weights_page_cache(self._models_dir, model.id)
         # All three outcomes are worth a line, and they are not the same thing. `if freed:`
         # logged only the happy case — which was harmless while the figure was the sum of
@@ -829,15 +855,16 @@ class LocalGatewayClient:
 
     async def _served_shape(self, model: local_catalog.LocalModel) -> tuple[int, int]:
         """The (context window, parallel slots) llama-swap will actually serve `model` with —
-        the operator's saved overrides when a loader is wired, else the catalog default and one
-        slot. Best-effort: a settings read that fails must not block a load, so it degrades to
-        the catalog shape rather than raising, and the watchdog still covers the difference."""
-        window, slots = model.context_window, 1
+        the operator's saved overrides when a loader is wired, else the catalog window and
+        `default_slots`. Best-effort: a settings read that fails must not block a load, so it
+        degrades to the catalog shape rather than raising, and the watchdog still covers the
+        difference."""
+        window, slots = model.context_window, model.default_slots
         try:
             if self._windows_loader is not None:
                 window = (await self._windows_loader()).get(model.id, window)
             if self._slots_loader is not None:
-                slots = (await self._slots_loader()).get(model.id, slots)
+                slots = model.served_slots(await self._slots_loader())
         except Exception:  # noqa: BLE001 — any settings failure falls back, never blocks
             log.warning("local_gateway.served_shape_unavailable", model=model.id)
         return window, slots
@@ -1416,6 +1443,18 @@ class LocalGatewayClient:
             drift_gb=drift,
         )
 
+    def _resident_file_backed(self) -> set[str]:
+        """Catalog ids of memory-mapped (file-backed) models this client last saw resident or
+        is loading. From the last `running()` poll because the drop lever is synchronous: a
+        stale reading only errs toward keeping a cache one poll longer, or dropping a working
+        set that the next tokens re-read — memory or latency, never correctness."""
+        out: set[str] = set()
+        for served in self._seen_resident | self._loading:
+            model = local_catalog.get_by_served(served)
+            if model is not None and local_weights.serves_file_backed(model.id):
+                out.add(model.id)
+        return out
+
     def drop_page_cache(self, model_ids: list[str] | None = None) -> dict[str, float | None]:
         """Drop the weights page cache for `model_ids`, or for EVERY catalog model when None.
         Returns {model_id: GiB freed}, with None where the drop could not be measured.
@@ -1440,7 +1479,14 @@ class LocalGatewayClient:
             return {}
         wanted = model_ids if model_ids is not None else [m.id for m in local_catalog.CATALOG]
         freed: dict[str, float | None] = {}
+        kept = self._resident_file_backed()
         for model_id in wanted:
+            if model_id in kept:
+                # Serving from that cache right now — dropping it would only make the next
+                # tokens re-read the engram table from disk. Left out of the result rather
+                # than reported as a 0.0 "drop", which would claim an attempt that never ran.
+                log.info("local_gateway.page_cache_kept_while_resident", model=model_id)
+                continue
             got = local_weights.drop_weights_page_cache(self._models_dir, model_id)
             # Absent directories return None from the walk too, and reporting those as
             # "unmeasurable" would bury the real ones. Only provisioned models get a row.

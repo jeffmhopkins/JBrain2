@@ -401,6 +401,7 @@ def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
         "nemotron-3.5-lightning-30b",
         "qwen3.5-0.8b",
         "qwen3.5-4b",
+        "qwen3.8-flash-next",
     }
 
 
@@ -654,7 +655,12 @@ def test_qwen38_hybrids_publish_an_effort_level_map_and_older_hybrids_do_not() -
     # entries carry a level map; the 3.5/3.6-era hybrids, whose templates genuinely ignore the
     # field, must NOT (sending one there would be noise on the wire).
     mapped = {m.id for m in local_catalog.CATALOG if m.thinking_effort_map}
-    assert mapped == {"qwen3.8-27b", "qwen3.8-27b-q4", "qwen3.8-27b-abliterated"}
+    assert mapped == {
+        "qwen3.8-27b",
+        "qwen3.8-27b-q4",
+        "qwen3.8-27b-abliterated",
+        "qwen3.8-flash-next",
+    }
     for model_id in mapped:
         model = local_catalog.get(model_id)
         assert model is not None
@@ -834,8 +840,8 @@ def test_the_device_column_is_the_host_column_minus_what_never_reaches_the_gpu(
     # being carried. The checkpoints are the term actually doing the work.
     host_only = (
         model.checkpoint_gb
-        * local_catalog.ctx_checkpoints(model.checkpoint_gb)
-        * model.effective_slots(1)
+        * local_catalog.ctx_checkpoints(model.checkpoint_gb, model.served_ctx_checkpoints)
+        * model.effective_slots(model.default_slots)
     ) + local_catalog.CACHE_RAM_GB
     assert device <= host
     assert host - device == pytest.approx(host_only, abs=0.011)

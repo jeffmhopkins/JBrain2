@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-09-19
+> **Status:** Living · **Last verified:** 2026-10-01
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -609,6 +609,11 @@ sweep — L3 (retire the duplicate host-RAM reserves) open.
 in, one way out for local-model loading. W0 and W2 partially landed (the compile-error-if-half-wired
 admission coordinator; the unadmitted debug-console loads now admit); the access-point collapse,
 W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropic/xAI providers) open.
+
+**In progress:** Flash-Next engine (build plan: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`) — Qwen3.8-Flash-Next
+(text + image) as a switchable second local-LLM engine in its own container, either/or with the standard
+gateway and operated entirely from the PWA. F1 shipped (engine-aware container, provisioning, one-engine
+guards, no-terminal debug tooling); F2, the on-box spike that gates everything after it, is next.
 
 **In progress:** Tool catalog (build plan: `docs/plans/TOOL_CATALOG_PLAN.md`) — a scalable tool
 surface for jerv's growing tool count: DISCOVERY (compact menu) split from INVOCATION-SCHEMA

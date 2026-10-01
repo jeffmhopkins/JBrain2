@@ -181,6 +181,15 @@ class _FakeSupervisor:
 
 
 class _FakeStore:
+    def __init__(self, engine: str | None = None, *, engine_error: bool = False) -> None:
+        self.engine = engine
+        self.engine_error = engine_error
+
+    async def llm_local_engine_effective(self, _ctx: object) -> str:
+        if self.engine_error:
+            raise RuntimeError("settings store unreachable")
+        return self.engine or "standard"
+
     async def jcode_model(self, _ctx: object) -> str:
         return ""  # falls back to settings.jcode_model
 
@@ -227,6 +236,7 @@ def _power_app(
     local_llm_enabled: bool = False,  # skip the gateway probe; power is about services here
     gateway: object | None = None,
     residency: object | None = None,
+    store: _FakeStore | None = None,
 ) -> FastAPI:
     app = FastAPI()
     app.include_router(jcode.router, prefix="/api")
@@ -237,7 +247,7 @@ def _power_app(
         jcode_model="qwen3-coder-next",
         jcode_planner_model="gpt-oss-120b",
     )
-    app.state.settings_store = _FakeStore()
+    app.state.settings_store = store if store is not None else _FakeStore()
     app.state.supervisor_client = supervisor
     app.state.local_gateway = gateway
     app.state.residency = residency
@@ -287,6 +297,41 @@ def test_power_on_starts_services_in_order() -> None:
     # Gateway first, then the control server.
     assert sup.calls == [("start", "local-llm"), ("start", "jcode")]
     assert body["on"] is True
+
+
+def test_power_on_starts_the_selected_engine_when_neither_runs() -> None:
+    # Flash-Next selected, no engine up: starting `local-llm` too would put both engines up
+    # at once — on a 128 GB box that is a freeze (FLASH_NEXT_ENGINE_PLAN §4d).
+    sup = _FakeSupervisor({"flash-next": "exited", "local-llm": "exited", "jcode": "exited"})
+    app = _power_app(OWNER, sup, store=_FakeStore("flash-next"))
+    TestClient(app).post("/api/jcode/power", json={"on": True})
+    assert sup.calls == [("start", "flash-next"), ("start", "jcode")]
+
+
+def test_power_on_uses_the_running_engine_even_when_another_is_selected() -> None:
+    # The deploy fell back to standard (Flash-Next could not start) and the setting still
+    # says flash-next: starting the selected one now would be both engines up.
+    sup = _FakeSupervisor({"flash-next": "exited", "local-llm": "running", "jcode": "exited"})
+    app = _power_app(OWNER, sup, store=_FakeStore("flash-next"))
+    TestClient(app).post("/api/jcode/power", json={"on": True})
+    assert sup.calls == [("start", "local-llm"), ("start", "jcode")]
+    assert ("start", "flash-next") not in sup.calls
+
+
+def test_power_on_keeps_a_running_flash_next_when_standard_is_selected() -> None:
+    sup = _FakeSupervisor({"flash-next": "running", "local-llm": "exited", "jcode": "exited"})
+    app = _power_app(OWNER, sup, store=_FakeStore("standard"))
+    TestClient(app).post("/api/jcode/power", json={"on": True})
+    assert sup.calls == [("start", "flash-next"), ("start", "jcode")]
+
+
+def test_power_on_falls_back_to_the_standard_gateway_when_the_engine_is_unreadable() -> None:
+    # A settings hiccup must not leave code mode with no gateway: the standard one is the
+    # engine every box has.
+    sup = _FakeSupervisor({"local-llm": "exited", "jcode": "exited"})
+    app = _power_app(OWNER, sup, store=_FakeStore(engine_error=True))
+    TestClient(app).post("/api/jcode/power", json={"on": True})
+    assert sup.calls == [("start", "local-llm"), ("start", "jcode")]
 
 
 def test_power_off_stops_only_jcode_services_in_reverse_order() -> None:

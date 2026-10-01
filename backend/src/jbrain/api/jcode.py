@@ -26,6 +26,7 @@ from jbrain import box_events, queue
 from jbrain.api.deps import JcodeAccessDep, OwnerDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
+from jbrain.llm import engine as llm_engine
 from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.residency import ResidencyError
@@ -405,10 +406,32 @@ async def warm_model(owner: OwnerDep, request: Request) -> dict[str, object]:
 # what unloading the coder is for).
 _JCODE_SERVICES: tuple[str, ...] = ("jcode",)
 
-# Powering ON also ensures the shared gateway is up first (idempotent when it already is) so
-# the coder has somewhere to load — but OFF never stops it (that's what unloading the coder
-# is for). Gateway, then the control server.
-_POWER_ON_SERVICES: tuple[str, ...] = ("local-llm", *_JCODE_SERVICES)
+
+async def _power_on_services(request: Request, owner_id: str) -> tuple[str, ...]:
+    """Powering ON also ensures the shared gateway is up first (idempotent when it already
+    is) so the coder has somewhere to load — but OFF never stops it (that's what unloading
+    the coder is for). Gateway, then the control server.
+
+    The gateway is never a fixed `local-llm`: both engines up at once is a freeze on this
+    box (FLASH_NEXT_ENGINE_PLAN §4d). So an engine that is ALREADY running is the one powered
+    on — even when it is not the selected one, as after the deploy fell back to standard
+    because Flash-Next could not start — and only when neither runs is the selected engine
+    started, the other being down by definition. An unreadable setting falls back to the
+    default engine, the one every box has."""
+    states = await _service_states(request)
+    running = [
+        llm_engine.SERVICE[e]
+        for e in llm_engine.ENGINES
+        if llm_engine.holds_memory(states.get(llm_engine.SERVICE[e], ""))
+    ]
+    if running:
+        return (running[0], *_JCODE_SERVICES)
+    active = llm_engine.DEFAULT_ENGINE
+    with contextlib.suppress(Exception):
+        active = llm_engine.parse(
+            await _store(request).llm_local_engine_effective(_owner_ctx(owner_id))
+        )
+    return (llm_engine.SERVICE[active], *_JCODE_SERVICES)
 
 
 def _supervisor(request: Request) -> httpx.AsyncClient:
@@ -543,7 +566,7 @@ async def set_power(body: PowerBody, owner: OwnerDep, request: Request) -> dict[
     chat and vision keep working. Best-effort per service; an unprovisioned service is
     skipped."""
     if body.on:
-        await _toggle_services(request, "start", _POWER_ON_SERVICES)
+        await _toggle_services(request, "start", await _power_on_services(request, owner.id))
         # Reserve the unified-memory box for CODE MODE'S OWN models while it is ON: residency
         # then refuses to load any OTHER model and the worker pauses its background jobs, so
         # nothing contends with the coder for RAM (the fix for the OOM when a background
