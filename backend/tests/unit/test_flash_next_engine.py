@@ -4,6 +4,7 @@ default slots, and engine separation on every surface that offers, loads or read
 The config rendering itself is covered in test_llama_swap_config.py and the standard-file
 regression in test_llama_swap_golden.py."""
 
+import ast
 import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
@@ -350,8 +351,7 @@ def test_the_slot_cap_is_per_model() -> None:
     c, store = _api()
     url = f"/api/settings/llm/local-models/{FLASH_ID}/parallel-slots"
     assert c.put(url, json={"slots": 5}).status_code == 422
-    # 1 would be stored as an absence and read back as the default 4, so it is refused.
-    assert c.put(url, json={"slots": 1}).status_code == 422
+    assert c.put(url, json={"slots": 0}).status_code == 422
     resp = c.put(url, json={"slots": 3})
     assert resp.status_code == 200
     assert {m["id"]: m for m in resp.json()["local_models"]}[FLASH_ID]["parallel_slots"] == 3
@@ -363,6 +363,38 @@ def test_the_slot_cap_is_per_model() -> None:
         ).status_code
         == 422
     )
+
+
+def test_one_slot_means_one_on_a_model_served_wider_by_default() -> None:
+    """F2 measures 1 × 262144 against the default 4 × 262144. The store used to record 1 as an
+    absence, which reads back as the default four, so the PUT had to refuse it (422) and the
+    layout was unreachable. Stored explicitly, it reaches the snapshot, the footprint and the
+    served shape; a count equal to the default is still an absence."""
+    c, store = _api("flash-next")
+    url = f"/api/settings/llm/local-models/{FLASH_ID}/parallel-slots"
+    four = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}[FLASH_ID]
+    resp = c.put(url, json={"slots": 1})
+    assert resp.status_code == 200
+    row = {m["id"]: m for m in resp.json()["local_models"]}[FLASH_ID]
+    assert row["parallel_slots"] == 1
+    assert row["kv_gb"] < four["kv_gb"]
+    assert store.values["llm_local_parallel_slots"] == {FLASH_ID: 1}
+    assert _flash().served_slots(store.values["llm_local_parallel_slots"]) == 1
+    assert c.put(url, json={"slots": 4}).status_code == 200
+    assert store.values["llm_local_parallel_slots"] == {}
+
+
+def test_a_single_slot_model_stores_exactly_what_it_always_has() -> None:
+    """Default-1 semantics are byte-identical: 1 (and null) clear the entry, 2 records it."""
+    c, store = _api()
+    url = "/api/settings/llm/local-models/gpt-oss-120b/parallel-slots"
+    assert c.put(url, json={"slots": 2}).status_code == 200
+    assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
+    assert c.put(url, json={"slots": 1}).status_code == 200
+    assert store.values["llm_local_parallel_slots"] == {}
+    assert c.put(url, json={"slots": 2}).status_code == 200
+    assert c.put(url, json={"slots": None}).status_code == 200
+    assert store.values["llm_local_parallel_slots"] == {}
 
 
 def test_override_tensor_is_an_allowlisted_value_taking_flag() -> None:
@@ -402,6 +434,93 @@ async def test_the_load_time_restamp_writes_the_active_engines_file(
     store.values["llm_local_engine_effective"] = "standard"
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     assert flash.id not in (tmp_path / "llama-swap.yaml").read_text()
+
+
+def _lay_down_flash(root: Path) -> None:
+    (root / FLASH_ID / "q").mkdir(parents=True)
+    (root / FLASH_ID / "q" / "a-UD-IQ4_XS.gguf").write_bytes(b"\0")
+    (root / FLASH_ID / "mmproj-F16.gguf").write_bytes(b"\0")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("window", "slots", "c", "np"),
+    [
+        (131072, None, 4 * 131072, 4),
+        (262144, 1, 262144, 1),
+        (131072, 1, 131072, 1),
+        (65536, 2, 2 * 65536, 2),
+    ],
+)
+async def test_a_saved_layout_reaches_the_flash_next_served_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    window: int,
+    slots: int | None,
+    c: int,
+    np: int,
+) -> None:
+    """The F2 layouts, end to end through the load-time re-stamp: `-c` is slots × window."""
+    from tests.unit.fakes import FakeSettingsStore
+
+    _lay_down_flash(tmp_path)
+    monkeypatch.setattr(llm_settings, "_GATEWAY_RELOAD_SETTLE_S", 0.0)
+    settings = SimpleNamespace(local_models=[FLASH_ID], local_models_dir=str(tmp_path))
+    store = FakeSettingsStore()
+    store.values["llm_local_engine_effective"] = "flash-next"
+    await store.set_llm_local_context_window(None, model_id=FLASH_ID, window=window)
+    await store.set_llm_local_parallel_slots(
+        None, model_id=FLASH_ID, slots=slots, default=_flash().default_slots
+    )
+    await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
+    text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
+    assert f" -c {c} " in text and f" -np {np} " in text
+    served = _flash().served_model
+    assert llama_swap_config_shape(tmp_path)[served] == (window, np)
+
+
+def llama_swap_config_shape(root: Path) -> dict[str, tuple[int, int]]:
+    from jbrain.llm import llama_swap_config
+
+    return llama_swap_config.served_shape_from_config(str(root), engine.FLASH_NEXT)
+
+
+def _local_gateway_clients(module: str) -> list[ast.Call]:
+    src = (Path(__file__).resolve().parents[2] / "src" / "jbrain" / f"{module}.py").read_text()
+    return [
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call)
+        and ast.unparse(node.func) == "LocalGatewayClient"
+        and node.args
+        and ast.unparse(node.args[0]) == "settings.local_llm_url"
+    ]
+
+
+@pytest.mark.parametrize("module", ["main", "worker"])
+def test_every_long_lived_llm_gateway_restamps_before_it_loads(module: str) -> None:
+    """The window override never reached Flash-Next on the box because the WORKER's client had
+    no `config_regen`: the window PUT unloads the model, a background job loads it back, and
+    the load ran from the stale file (`n_ctx_slot = 262144` after a 131072 override). Every
+    process that loads models must re-stamp first, or an override lands only by luck."""
+    clients = _local_gateway_clients(module)
+    assert clients, f"{module}.py builds no LLM gateway client any more — update this test"
+    for call in clients:
+        assert "config_regen" in {kw.arg for kw in call.keywords}, (
+            f"{module}.py builds a LocalGatewayClient without config_regen — its loads serve "
+            "whatever llama-swap config was last written, not the saved overrides"
+        )
+
+
+def test_the_worker_can_write_the_config_it_restamps() -> None:
+    import yaml
+
+    compose = Path(__file__).resolve().parents[3] / "deploy" / "docker-compose.yml"
+    volumes = [str(v) for v in yaml.safe_load(compose.read_text())["services"]["worker"]["volumes"]]
+    assert "./local-models:/data/local-models" in volumes, (
+        "the worker re-stamps llama-swap config before its loads; read-only, every write "
+        "fails and its loads serve a stale window"
+    )
 
 
 # --- one TTL-cached engine read, seen without a restart -----------------------------------

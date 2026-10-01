@@ -607,6 +607,18 @@ def test_load_unload_409_when_hosting_off(debug_client: tuple[TestClient, str]) 
     )
 
 
+def test_slots_route_goes_through_the_owner_settings_path(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # The same shared edit as the PWA's: hosting off is the settings path's own 409, and the
+    # route sits behind the debug bearer like every other.
+    client, key = debug_client
+    url = "/api/debug/llm/local-models/foo/parallel-slots"
+    assert client.put(url, json={"slots": 1}).status_code == 401
+    assert client.put(url, headers=_auth(key), json={"slots": 1}).status_code == 409
+    assert client.put(url, headers=_auth(key), json={"nope": 1}).status_code == 422
+
+
 # --- read-only SQL guard ----------------------------------------------------
 
 

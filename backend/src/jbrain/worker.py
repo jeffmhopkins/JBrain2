@@ -28,6 +28,7 @@ from jbrain.analysis.predicates import retire_open_new_predicate_cards
 from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC, graph_rebuild_handler
 from jbrain.analysis.reembed import REEMBED_SPEC, reembed_handler
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate_handler
+from jbrain.api import llm_settings as llm_settings_api
 from jbrain.config import get_settings
 from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
 from jbrain.embed import (
@@ -632,6 +633,14 @@ async def run() -> None:
         # window llama-swap will really serve rather than the catalog default.
         windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
         slots_loader=lambda: worker_settings_store.llm_local_parallel_slots(queue.SYSTEM_CTX),
+        # Re-stamp the active engine's config before EVERY load, exactly as the api's client
+        # does. This was missing, so a window or slot override saved from the PWA or the debug
+        # console reached the served command only if the api happened to load the model
+        # first: the edit unloads the model, a background job wants it back, and the worker
+        # loaded it from the stale file — observed on the box 2026-10-01 as Flash-Next
+        # relaunching at `n_ctx_slot = 262144` after its window was set to 131072. The
+        # worker's models mount is writable for this (deploy/docker-compose.yml).
+        config_regen=lambda: llm_settings_api.regen_gateway_config(settings, worker_settings_store),
         # Lets a finished load drop the page-cache copy of the weights it just read. The
         # worker gained the weights mount for this (deploy/docker-compose.yml) — it swaps
         # models for background jobs, so without it half the box's loads left the copy behind.

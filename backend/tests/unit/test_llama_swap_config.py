@@ -485,7 +485,7 @@ def test_write_is_atomic_and_round_trips(tmp_path: Path) -> None:
     text = Path(path).read_text()
     assert "-c 16384" in text
     # No leftover temp file from the atomic rename.
-    assert not (tmp_path / "llama-swap.yaml.tmp").exists()
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_unresolved_ids_is_empty_when_every_required_file_is_present(tmp_path: Path) -> None:

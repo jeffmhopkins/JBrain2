@@ -3171,6 +3171,28 @@ async def set_context_window(
     )
 
 
+class ParallelSlotsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # null clears the override back to the model's catalog `default_slots`.
+    slots: int | None = None
+
+
+@router.put("/llm/local-models/{model_id}/parallel-slots")
+async def set_parallel_slots(
+    model_id: str, body: ParallelSlotsIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> LlmSettingsOut:
+    """Set one model's served slot count (llama-server `-np`), the PWA control mirrored here.
+
+    The other half of the window knob: `-c` is slots × window, so a layout (Flash-Next's
+    4 × 262144 against 1 × 262144 or 2 × 65536) is these two calls. The PWA caps its control at
+    two slots, so without this a measured layout below a model's default was unreachable."""
+    request.state.debug_detail = f"{model_id}: {body.slots}"
+    return await llm_settings.set_local_parallel_slots_value(
+        model_id, body.slots, settings, _store(request), _OWNER_CTX, _gateway(request)
+    )
+
+
 @router.get("/llm/local-models/{model_id}/props")
 async def model_props(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep

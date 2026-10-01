@@ -634,7 +634,9 @@ def write(
     with contextlib.suppress(OSError):
         if pathlib.Path(path).read_text() == text:
             return path
-    tmp = f"{path}.tmp"
+    # Per-process temp name: the api AND the worker re-stamp before their loads, and two
+    # writers sharing one temp path could rename the other's half-written file into place.
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         f.write(text)
     os.replace(tmp, path)

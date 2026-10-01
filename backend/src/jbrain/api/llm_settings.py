@@ -765,7 +765,9 @@ def _changed_entries(before: str | None, after: str | None) -> list[str]:
 
 async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> None:
     """Re-stamp llama-swap.yaml from the saved overrides. Called by the gateway client
-    IMMEDIATELY BEFORE A LOAD, not by the settings PUTs that change those overrides.
+    IMMEDIATELY BEFORE A LOAD, not by the settings PUTs that change those overrides — by the
+    api's client AND the worker's (main.py, worker.py). The worker's was missing: its loads
+    served the stale file, so an override reached the model only when the api loaded it.
 
     Rewriting that file makes llama-swap reload, and its reload calls `old.Shutdown()`, which
     kills EVERY running llama-server — not only the model being edited. Doing it on the PUT
@@ -1237,8 +1239,8 @@ async def set_local_image_min_tokens(
 class ParallelSlotsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # 1 (or null) clears the override → a single slot; 2 opts into the dedicated interactive
-    # keep-warm slot. Bounded 1..2 by the API — a third slot buys nothing here and only burns KV.
+    # null restores the catalog default (one slot everywhere but Flash-Next's four); otherwise
+    # 1..slots_max(model). On a single-slot model 2 opts into the interactive keep-warm slot.
     slots: int | None = None
 
 
@@ -1267,22 +1269,40 @@ async def set_local_parallel_slots(
     store: SettingsStoreDep,
     gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
-    """Set (2) or clear (1/null) one model's llama-server `-np` slot count — the operator's
-    opt-in to a dedicated interactive keep-warm slot, so a primed jerv prefix isn't evicted by
-    title/background traffic (docs/runbooks/STRIX_HALO_SETUP.md). 409 when hosting is off; 404
-    for an unprovisioned id; 422 outside 1..2. A second slot roughly doubles the model's KV
-    cost — persists the override (the meter reflects it at once), re-stamps the gateway config,
-    and unloads the model if resident so its next request reloads with the new `-np`/`-c`."""
+    """Set (or clear, with null) one model's llama-server `-np` slot count — on a single-slot
+    model the operator's opt-in to a dedicated interactive keep-warm slot, so a primed jerv
+    prefix isn't evicted by title/background traffic (docs/runbooks/STRIX_HALO_SETUP.md); on
+    Flash-Next the layout under measurement (FLASH_NEXT_ENGINE_PLAN F2). 409 when hosting is
+    off; 404 for an unprovisioned id; 422 outside 1..slots_max. Each slot carries the full
+    window's KV — persists the override (the meter reflects it at once) and unloads the model
+    if resident so its next load re-stamps the config with the new `-np`/`-c`."""
+    return await set_local_parallel_slots_value(
+        model_id, body.slots, settings, store, ctx_for(principal), gateway
+    )
+
+
+async def set_local_parallel_slots_value(
+    model_id: str,
+    slots: int | None,
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+) -> LlmSettingsOut:
+    """The slot edit itself, shared by the owner screen and the debug console — so the two
+    surfaces cannot drift on validation or eviction.
+
+    1 is accepted on every model. On a model whose catalog default is above one slot it is
+    stored EXPLICITLY (the store clears only a count equal to the default), because the store
+    used to record 1 as an absence and an absence reads back as Flash-Next's four — so the
+    single-slot layout F2 needs to measure was unreachable and the PUT had to refuse it."""
     model = _require_provisioned(settings, model_id)
     high = slots_max(model)
-    # The store records a count as an ABSENCE at 1 (the single-slot default), so on a model
-    # whose default is above 1 a saved 1 would read back as that default — silently not what
-    # was asked. Refuse it; null restores the catalog default.
-    low = 2 if model.default_slots > 1 else 1
-    if body.slots is not None and not (low <= body.slots <= high):
-        raise HTTPException(status_code=422, detail=f"slots must be {low}..{high}")
-    ctx = ctx_for(principal)
-    await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
+    if slots is not None and not (1 <= slots <= high):
+        raise HTTPException(status_code=422, detail=f"slots must be 1..{high}")
+    await store.set_llm_local_parallel_slots(
+        ctx, model_id=model_id, slots=slots, default=model.default_slots
+    )
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 

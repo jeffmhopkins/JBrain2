@@ -363,13 +363,21 @@ async def test_llm_local_parallel_slots_round_trip_and_sanitizes(
     await store.set_llm_local_parallel_slots(OWNER, model_id="gpt-oss-120b", slots=1)
     assert await store.llm_local_parallel_slots(OWNER) == {}
 
-    # Only ints > 1 survive: 1, bools, non-ints, and a non-dict store all read as no override.
+    # A model served wider by default (Flash-Next's four) records 1 EXPLICITLY — an absence
+    # would read back as its four — and clears only at its own default.
+    flash = "qwen3.8-flash-next"
+    await store.set_llm_local_parallel_slots(OWNER, model_id=flash, slots=1, default=4)
+    assert await store.llm_local_parallel_slots(OWNER) == {flash: 1}
+    await store.set_llm_local_parallel_slots(OWNER, model_id=flash, slots=4, default=4)
+    assert await store.llm_local_parallel_slots(OWNER) == {}
+
+    # Only positive ints survive: bools, non-ints, zero and a non-dict store read as no override.
     await store.upsert(
         OWNER,
         LLM_LOCAL_PARALLEL_SLOTS_KEY,
-        {"a": 1, "b": True, "c": "two", "gpt-oss-120b": 2},
+        {"a": 1, "b": True, "c": "two", "z": 0, "gpt-oss-120b": 2},
     )
-    assert await store.llm_local_parallel_slots(OWNER) == {"gpt-oss-120b": 2}
+    assert await store.llm_local_parallel_slots(OWNER) == {"a": 1, "gpt-oss-120b": 2}
 
 
 async def test_llm_local_unavailable_round_trip_and_dedups(
