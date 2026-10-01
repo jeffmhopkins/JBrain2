@@ -542,6 +542,11 @@ for f in docker-compose.yml backup.sh restore.sh jbrain; do
 done
 cp src/deploy/db-init/01-app-role.sh db-init/
 chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
+# Re-derive the profile set from the compose file just copied in: the set read near the top
+# came from the PREVIOUS file, so a profile this release adds (flash-next, the first time)
+# would be missing from every quiesce/restore below.
+ALL_PROFILES="$(docker compose config --profiles 2>/dev/null \
+  | sed 's/^/--profile /' | tr '\n' ' ')"
 
 # Refresh the SearXNG settings host file. Compose bind-mounts it writable (the
 # image injects $SEARXNG_SECRET at boot) and it enables the JSON format the
@@ -670,7 +675,23 @@ fi
 # cycle. Stopping it here releases the memory for the build/migrate/recreate; it is
 # brought back deliberately, once, further down. Gated on hosting being enabled so a
 # stock cloud stack is untouched; best-effort so a stop hiccup never fails the update.
+#
+# "The gateway" is WHICHEVER ENGINE is up: the standard `local-llm` or the Flash-Next
+# container (docs/plans/FLASH_NEXT_ENGINE_PLAN.md §4d). Both answer at the `local-llm` network
+# alias, so the unload below reaches the live one, and both are removed: a ~83 GiB Flash-Next
+# left up through the build is this same freeze, from the engine the old code never named.
 LOCAL_LLM_RUNNING=""
+# The one-engine helpers (local_engine_start and friends) — shared with the model sync so
+# "start one engine, stop the other" is decided in exactly one place.
+. src/deploy/local-engine.sh
+# Bounded the same way as this script's other one-offs: the helpers run with the stack
+# quiesced, where an unbounded `compose run` hangs the whole update.
+# shellcheck disable=SC2034  # read by the sourced helpers
+LOCAL_ENGINE_RUNNER="run_bounded $TOGGLE_TIMEOUT_S"
+# shellcheck disable=SC2034  # read by the sourced helpers
+LOCAL_ENGINE_UNLOAD_RUNNER="run_bounded $UNLOAD_TIMEOUT_S"
+# shellcheck disable=SC2034  # read by the sourced helpers
+LOCAL_ENGINE_BUILD_RUNNER="run_bounded $PULL_TIMEOUT_S"
 if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   LOCAL_LLM_RUNNING=1
 
@@ -688,8 +709,8 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   #    mid-update, reloading the weights we just released into the middle of the churn.
   #    Removing it means nothing restarts the gateway by accident: it has to be recreated
   #    deliberately, which this script does once, at the end.
-  echo "[update] stopping and removing the local-llm gateway"
-  docker compose --profile local-llm rm -sf local-llm || true
+  echo "[update] stopping and removing the on-box engines (local-llm, flash-next)"
+  docker compose --profile local-llm --profile flash-next rm -sf local-llm flash-next || true
 
   # 3. Do not proceed while it is still winding down. Allocating on top of a gateway that
   #    has not finished releasing is the whole failure mode; a few seconds of waiting is
@@ -697,7 +718,7 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   #    update must not hang forever on a wedged container.
   _waited=0
   while [ "$_waited" -lt 60 ]; do
-    if [ -z "$(docker compose --profile local-llm ps -q local-llm 2>/dev/null)" ]; then
+    if [ -z "$(docker compose --profile local-llm --profile flash-next ps -q local-llm flash-next 2>/dev/null)" ]; then
       break
     fi
     sleep 2
@@ -897,7 +918,34 @@ else
   export LOCAL_LLM_PATCH_RESTORE_CHECKPOINT=0
 fi
 
-if [ -n "$LOCAL_LLM_RUNNING" ] && { [ -n "$AUTO_UPDATE_ON" ] || [ -n "$PATCH_ON" ]; }; then
+# ---- which engine this update brings back (FLASH_NEXT_ENGINE_PLAN §4d) ----------------
+#
+# The owner's engine setting, read through the api image like the toggles above (never an
+# `.env` flag — they have no shell to set one). Read AFTER the build, so the api image that
+# answers is the one that knows the subcommand; an older image, a DB blip or a timeout all
+# parse as `standard`, the engine every box has.
+#
+# local_engine_select (deploy/local-engine.sh) decides it, and is the ONE place the
+# Flash-Next image is built — bounded, here in the quiesced window, and only when one of its
+# models is installed or queued. It sets SELECTED_ENGINE (the owner's setting), ENGINE (that,
+# or `standard` when Flash-Next is selected but not ready — logged) and FLASH_NEXT_READY.
+ENGINE=standard
+SELECTED_ENGINE=standard
+if [ -n "$LOCAL_LLM_RUNNING" ]; then
+  local_engine_select
+fi
+
+# The standard gateway is rebuilt and smoke-tested only while it is the engine that will
+# serve. The smoke test has to START it, and starting `local-llm` with Flash-Next selected is
+# exactly the both-engines state §4d forbids on every path — so with Flash-Next selected the
+# standard image is left as it is, last vetted, ready for a switch back.
+if [ -n "$LOCAL_LLM_RUNNING" ] && [ "$ENGINE" = flash-next ] \
+    && { [ -n "$AUTO_UPDATE_ON" ] || [ -n "$PATCH_ON" ]; }; then
+  echo "[update] Flash-Next is the selected engine — not rebuilding or smoke-testing the standard gateway this update"
+fi
+
+if [ -n "$LOCAL_LLM_RUNNING" ] && [ "$ENGINE" = standard ] \
+    && { [ -n "$AUTO_UPDATE_ON" ] || [ -n "$PATCH_ON" ]; }; then
   # AUTO_UPDATE_ON tracks the newest llama.cpp (FLOATING base, --pull). With auto-update OFF
   # but the patch ON we still rebuild — but on the PINNED base and with no --pull, because
   # "auto-update off" means freeze the reproducible digest; only the patch build arg changes.
@@ -986,7 +1034,8 @@ fi
 # start the gateway above (it is still removed otherwise), so without a start this would
 # spend a compose run on an unreachable target and log a reassuring line about memory it
 # never freed.
-if [ -n "$LOCAL_LLM_RUNNING" ] && { [ -n "$AUTO_UPDATE_ON" ] || [ -n "$PATCH_ON" ]; }; then
+if [ -n "$LOCAL_LLM_RUNNING" ] && [ "$ENGINE" = standard ] \
+    && { [ -n "$AUTO_UPDATE_ON" ] || [ -n "$PATCH_ON" ]; }; then
   release_models
   echo "[update] gateway emptied before the recreate ($(mem_available_gb) GB available)"
 fi
@@ -1043,9 +1092,17 @@ fi
 # routine update. Idempotent — with the sync's own start, and with the auto-update
 # block's, which already brought it back inside the quiesced window; best-effort. This
 # is the ONLY thing that restarts it when auto-update is off and nothing rebuilt it.
+#
+# Exactly ONE engine comes back: the selected one, with the other created STOPPED so the
+# supervisor's /start can switch to it later (local_engine_start). Installed-ness is re-read
+# here because the model sync above may just have installed or removed Flash-Next, and it
+# counts only with an image to run. The OWNER'S selection is passed, not this update's
+# working engine: a Flash-Next whose weights only landed in the sync above starts now, not
+# one update later (local_engine_start falls back on its own if it cannot).
 if [ -n "$LOCAL_LLM_RUNNING" ]; then
-  echo "[update] restarting local-llm gateway"
-  docker compose --profile local-llm up -d local-llm || true
+  _fn_final="$(local_engine_flash_next_installed)"
+  echo "[update] restarting the local engine ($SELECTED_ENGINE selected)"
+  local_engine_start "$SELECTED_ENGINE" "$_fn_final" || true
 fi
 
 

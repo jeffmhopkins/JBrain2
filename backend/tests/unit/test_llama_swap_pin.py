@@ -13,12 +13,14 @@ the update" with nothing in the diff to point at.
 import re
 from pathlib import Path
 
-_DOCKERFILE = Path(__file__).resolve().parents[3] / "deploy" / "Dockerfile.local-llm"
+_DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
+_DOCKERFILE = _DEPLOY / "Dockerfile.local-llm"
+_FLASH_NEXT = _DEPLOY / "Dockerfile.flash-next"
 
 
-def _pin() -> str:
-    m = re.search(r"^ARG LLAMA_SWAP_VERSION=(\S+)", _DOCKERFILE.read_text(), re.M)
-    assert m, "Dockerfile.local-llm no longer declares ARG LLAMA_SWAP_VERSION"
+def _pin(dockerfile: Path = _DOCKERFILE, arg: str = "LLAMA_SWAP_VERSION") -> str:
+    m = re.search(rf"^ARG {arg}=(\S+)", dockerfile.read_text(), re.M)
+    assert m, f"{dockerfile.name} no longer declares ARG {arg}"
     return m.group(1)
 
 
@@ -37,3 +39,47 @@ def test_the_pin_is_explained_in_the_file_that_carries_it() -> None:
     (#875, a browser tab stalling llama.cpp) had been sitting unread upstream for weeks."""
     text = _DOCKERFILE.read_text()
     assert "v250" in text, "the pin's comment does not name the release the SHA corresponds to"
+
+
+def test_both_engines_run_the_same_gateway() -> None:
+    """Flash-Next keeps llama-swap so the api's admin client (`/running`, unload, upstream
+    health) has ONE contract to honour (FLASH_NEXT_ENGINE_PLAN §4). Two pins would let the
+    engines' gateways drift apart one bump at a time."""
+    assert _pin(_FLASH_NEXT) == _pin()
+
+
+def test_flash_next_llama_cpp_is_a_full_commit_with_its_reason_beside_it() -> None:
+    """Flash-Next builds llama.cpp from source rather than taking the base image's, so the
+    commit IS the engine. A branch or short SHA would let it move on any rebuild."""
+    pin = _pin(_FLASH_NEXT, "LLAMA_CPP_COMMIT")
+    assert re.fullmatch(r"[0-9a-f]{40}", pin), f"llama.cpp pin {pin!r} is not a full SHA"
+    text = _FLASH_NEXT.read_text()
+    # Every stage that declares it agrees (the final stage re-checks the binary against it).
+    assert set(re.findall(r"^ARG LLAMA_CPP_COMMIT=(\S+)", text, re.M)) == {pin}
+    # The fixes the plan requires are named where the pin is, so a bump is reviewable.
+    for pr in ("#27742", "#27941", "#29028"):
+        assert pr in text, f"the pin's comment no longer accounts for {pr}"
+
+
+def test_flash_next_checkpoint_patch_is_off_by_default() -> None:
+    """The sidecar patch's anchors are re-validated against this pin in F4, not before."""
+    assert _pin(_FLASH_NEXT, "PATCH_RESTORE_CHECKPOINT") == "0"
+
+
+def test_flash_next_bakes_a_checksummed_wikitext_sample() -> None:
+    text = _FLASH_NEXT.read_text()
+    assert re.search(r"^ARG WIKITEXT_ZIP_SHA256=[0-9a-f]{64}$", text, re.M)
+    assert re.search(r"^ARG WIKITEXT_TEST_SHA256=[0-9a-f]{64}$", text, re.M)
+    assert "sha256sum -c" in text, "the sample must be verified, not just downloaded"
+    # Revision-pinned, not `resolve/main`, so the bytes cannot move under the checksum.
+    assert "/resolve/main/" not in text
+    assert "/opt/jbrain/eval/wiki.test.raw" in text
+
+
+def test_flash_next_puts_llama_perplexity_on_path() -> None:
+    """The perplexity one-shot invokes it by bare name inside this image; the build
+    fails rather than ship an image where it does not resolve."""
+    text = _FLASH_NEXT.read_text()
+    assert "--target llama-server llama-perplexity" in text
+    assert "/usr/local/bin/llama-perplexity" in text
+    assert "command -v llama-perplexity" in text

@@ -165,7 +165,12 @@ sed -i '/^LOCAL_LLM_ENABLED=/d; /^LOCAL_LLM_URL=/d; /^LOCAL_MODELS=/d; /^COMPOSE
 
 say "Building the gateway image and starting the stack"
 docker compose --profile local-llm build local-llm
-docker compose --profile local-llm up -d
+docker compose up -d
+# Exactly one engine (docs/plans/FLASH_NEXT_ENGINE_PLAN.md §4d): a re-run on a box serving
+# Flash-Next must not start the standard gateway beside it. A first enable reads `standard`.
+# shellcheck source=deploy/local-engine.sh
+. "$INSTALL_DIR/src/deploy/local-engine.sh"
+local_engine_start "$(local_engine_read)" "$(local_engine_flash_next_installed)"
 
 say "Done. Local models are now selectable in Settings → LLM. They stay OFF as"
 say "defaults — route specific tasks/tiers to them from that screen."

@@ -33,6 +33,10 @@ say() { printf '\n[local-llm] %s\n' "$*"; }
 [ -f .env ] || { say "no .env — skipping model sync"; exit 0; }
 grep -q '^LOCAL_LLM_ENABLED=true' .env || { say "hosting off — skipping model sync"; exit 0; }
 
+# The one-engine helpers: which engine to start, and stopping the other first
+# (docs/plans/FLASH_NEXT_ENGINE_PLAN.md §4d). Shared with update-inner.sh.
+. src/deploy/local-engine.sh
+
 # Catalog reads run in the api image (pure Python; --no-deps skips the database).
 catalog() { docker compose run --rm --no-deps -T api python "$@"; }
 
@@ -139,6 +143,10 @@ fi
 
 say "syncing models: ${ids:-<none>}"
 
+# Whether the final roster holds a Flash-Next model: yes / no / unknown (a failed catalog
+# read). Its config is rendered on yes and deleted only on a definite no.
+fn_answer="$(local_engine_flash_next_answer "$ids")"
+
 if [ -n "$ids" ]; then
   # 4. Download ONLY the models whose required weights are incomplete. `hf download` re-hashes
   #    every file it is handed even when the bytes are already present (~2 min/model), so
@@ -222,11 +230,27 @@ print(int(sum(m.get("size_gb") or 0 for m in json.load(sys.stdin))) + 10)' 2>/de
   docker compose run --rm --no-deps -T --user 0 \
     -e MANIFEST="$manifest" \
     api python -m jbrain.llm.llama_swap_config /data/local-models
+  # 5b. Flash-Next renders its OWN config (llama-swap.flash-next.yaml, jbrain.llm.engine), from
+  #    the same manifest filtered to its engine — so each gateway only ever lists models its
+  #    llama.cpp can load. Only when a Flash-Next model is in the roster: a box that never
+  #    installs it never gets the file.
+  if [ "$fn_answer" = yes ]; then
+    docker compose run --rm --no-deps -T --user 0 \
+      -e MANIFEST="$manifest" \
+      api python -m jbrain.llm.llama_swap_config --engine flash-next /data/local-models
+  fi
 else
   # Empty roster: every served model was uninstalled. Skip download/swap (nothing to
   # fetch; `_manifest([])` would pull the whole catalog), but still apply the removal
   # below — LOCAL_MODELS=[], restart, prune, clear.
   say "no models remain enabled — clearing local roster"
+fi
+
+# 5c. The last Flash-Next model is gone: drop its config too, so nothing (a stale container,
+#    a future switch) can start a gateway that lists weights no longer on disk.
+if [ "$fn_answer" = no ] && [ -f "$PWD/local-models/llama-swap.flash-next.yaml" ]; then
+  say "no Flash-Next model remains — removing llama-swap.flash-next.yaml"
+  rm -f -- "$PWD/local-models/llama-swap.flash-next.yaml"
 fi
 
 # 6. Rewrite only LOCAL_MODELS in .env to the union (build the JSON array in sh —
@@ -251,11 +275,16 @@ echo "LOCAL_MODELS=$json" >> .env
 #    the host. This `up -d` sat right in that window. When the update sets
 #    JBRAIN_SKIP_GATEWAY_START it restarts the gateway itself, once, after the churn — so
 #    skipping here loses nothing and the api restart still happens below.
+#
+#    Outside an update, exactly ONE engine is started — the selected one — after stopping the
+#    other (local_engine_start, §4d). This used to be `--profile local-llm up -d`, which would
+#    have started the standard gateway beside a running Flash-Next: both engines at once.
 if [ -n "${JBRAIN_SKIP_GATEWAY_START:-}" ]; then
   say "update in progress — leaving the gateway down; it is restarted after the rebuild"
   docker compose up -d api
 else
-  docker compose --profile local-llm up -d
+  docker compose up -d
+  local_engine_start "$(local_engine_read)" "$(local_engine_flash_next_installed)"
 fi
 
 # 7b. Prune the weights for uninstalled models (DESTRUCTIVE — see prune-local-weights.sh
@@ -296,6 +325,13 @@ done
 #    the queue captured at step 1). Best-effort: a failed activation only leaves routing as-is.
 activate="$(printf '%s\n' "$requested" | grep -v '^[[:space:]]*$' | tail -n1 || true)"
 case " $ids " in *" $activate "*) : ;; *) activate='' ;; esac
+# Not a model of another engine: agent.turn would then name a model the serving gateway does
+# not list. Flash-Next is reached through the engine switch (and its remap), not by becoming
+# the standard engine's chat model.
+if [ -n "$activate" ] && local_engine_any_flash_next "$activate"; then
+  say "installed $activate — it serves through the Flash-Next engine, so the active chat model is left as it is"
+  activate=''
+fi
 if [ -n "$activate" ]; then
   say "activating just-installed model as the active chat model (agent.turn): $activate"
   docker compose run --rm -T api python -m jbrain.cli local-activate "$activate" || true

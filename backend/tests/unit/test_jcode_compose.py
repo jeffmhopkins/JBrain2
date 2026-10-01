@@ -87,3 +87,13 @@ def test_jcode_declares_its_aggregate_resource_ceilings() -> None:
         "jcode must keep its mem_limit/cpus/pids_limit caps — they bound an "
         "arbitrary-code sandbox from starving the box"
     )
+
+
+def test_flash_next_answers_at_the_gateway_name_jcode_already_uses() -> None:
+    """jcode reaches its model at http://local-llm:8080. Flash-Next carries that alias on the
+    same two networks, so a switch needs no client change — and joins no other network, so
+    the sandbox reaches nothing new (FLASH_NEXT_ENGINE_PLAN §4)."""
+    nets = _spec()["services"]["flash-next"]["networks"]
+    assert set(nets) == set(_spec()["services"]["local-llm"]["networks"])
+    for name in ("internal", "jcode"):
+        assert nets[name]["aliases"] == ["local-llm"], name

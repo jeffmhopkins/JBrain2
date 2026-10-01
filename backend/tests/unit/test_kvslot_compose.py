@@ -9,6 +9,7 @@ asserted the one writable carve-out the feature depends on. These are that asser
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 _COMPOSE = Path(__file__).resolve().parents[3] / "deploy" / "docker-compose.yml"
@@ -19,8 +20,11 @@ def _volumes(service: str) -> list[str]:
     return [str(v) for v in spec["services"][service].get("volumes", ())]
 
 
-def test_llama_server_gets_exactly_one_writable_subtree_of_the_weights() -> None:
-    volumes = _volumes("local-llm")
+# Both on-box engines run llama-server against the same weights and the same slot store
+# (docs/plans/FLASH_NEXT_ENGINE_PLAN.md §4b), so both get the same guarantee.
+@pytest.mark.parametrize("service", ["local-llm", "flash-next"])
+def test_llama_server_gets_exactly_one_writable_subtree_of_the_weights(service: str) -> None:
+    volumes = _volumes(service)
     assert "./local-models:/models:ro" in volumes, (
         "the weights mount must stay READ-ONLY — the carve-out below is the only write "
         "path the inference process may have"
