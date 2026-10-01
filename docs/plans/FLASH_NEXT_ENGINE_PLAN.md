@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** Scheduled · **Last verified:** 2026-10-01 · **Waves:** F1◻️ F2◻️ F3◻️ F4◻️ F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-01 · **Waves:** F1✅ F2◻️ F3◻️ F4◻️ F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -275,7 +275,7 @@ today.
 
 ## 6. Waves
 
-### F1 — Engine-aware container and provisioning ◻️
+### F1 — Engine-aware container and provisioning ✅
 - `deploy/Dockerfile.flash-next`; the `flash-next` compose profile (devices, groups,
   models volume, rw `.kvslots` mount, logbound logging, `local-llm` alias); its own
   llama-swap config renderer.

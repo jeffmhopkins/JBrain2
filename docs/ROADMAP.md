@@ -610,10 +610,10 @@ in, one way out for local-model loading. W0 and W2 partially landed (the compile
 admission coordinator; the unadmitted debug-console loads now admit); the access-point collapse,
 W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropic/xAI providers) open.
 
-**Scheduled:** Flash-Next engine (build plan: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`) — Qwen3.8-Flash-Next
+**In progress:** Flash-Next engine (build plan: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`) — Qwen3.8-Flash-Next
 (text + image) as a switchable second local-LLM engine in its own container, either/or with the standard
-gateway and operated entirely from the PWA. F1 (engine-aware container + provisioning) under way; F2 is
-the on-box spike that gates everything after it.
+gateway and operated entirely from the PWA. F1 shipped (engine-aware container, provisioning, one-engine
+guards, no-terminal debug tooling); F2, the on-box spike that gates everything after it, is next.
 
 **In progress:** Tool catalog (build plan: `docs/plans/TOOL_CATALOG_PLAN.md`) — a scalable tool
 surface for jerv's growing tool count: DISCOVERY (compact menu) split from INVOCATION-SCHEMA
