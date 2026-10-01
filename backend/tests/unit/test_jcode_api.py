@@ -299,14 +299,30 @@ def test_power_on_starts_services_in_order() -> None:
     assert body["on"] is True
 
 
-def test_power_on_starts_the_active_engine_not_a_fixed_gateway() -> None:
-    # Flash-Next serving: starting `local-llm` too would put both engines up at once — on a
-    # 128 GB box that is a freeze (FLASH_NEXT_ENGINE_PLAN §4d). The active one is started.
+def test_power_on_starts_the_selected_engine_when_neither_runs() -> None:
+    # Flash-Next selected, no engine up: starting `local-llm` too would put both engines up
+    # at once — on a 128 GB box that is a freeze (FLASH_NEXT_ENGINE_PLAN §4d).
     sup = _FakeSupervisor({"flash-next": "exited", "local-llm": "exited", "jcode": "exited"})
     app = _power_app(OWNER, sup, store=_FakeStore("flash-next"))
     TestClient(app).post("/api/jcode/power", json={"on": True})
     assert sup.calls == [("start", "flash-next"), ("start", "jcode")]
-    assert ("start", "local-llm") not in sup.calls
+
+
+def test_power_on_uses_the_running_engine_even_when_another_is_selected() -> None:
+    # The deploy fell back to standard (Flash-Next could not start) and the setting still
+    # says flash-next: starting the selected one now would be both engines up.
+    sup = _FakeSupervisor({"flash-next": "exited", "local-llm": "running", "jcode": "exited"})
+    app = _power_app(OWNER, sup, store=_FakeStore("flash-next"))
+    TestClient(app).post("/api/jcode/power", json={"on": True})
+    assert sup.calls == [("start", "local-llm"), ("start", "jcode")]
+    assert ("start", "flash-next") not in sup.calls
+
+
+def test_power_on_keeps_a_running_flash_next_when_standard_is_selected() -> None:
+    sup = _FakeSupervisor({"flash-next": "running", "local-llm": "exited", "jcode": "exited"})
+    app = _power_app(OWNER, sup, store=_FakeStore("standard"))
+    TestClient(app).post("/api/jcode/power", json={"on": True})
+    assert sup.calls == [("start", "flash-next"), ("start", "jcode")]
 
 
 def test_power_on_falls_back_to_the_standard_gateway_when_the_engine_is_unreadable() -> None:

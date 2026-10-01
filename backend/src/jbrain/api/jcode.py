@@ -412,10 +412,20 @@ async def _power_on_services(request: Request, owner_id: str) -> tuple[str, ...]
     is) so the coder has somewhere to load — but OFF never stops it (that's what unloading
     the coder is for). Gateway, then the control server.
 
-    The gateway is the ACTIVE engine's container, never a fixed `local-llm`: starting the
-    standard gateway while Flash-Next is serving puts both engines up at once, which on this
-    box is a freeze (FLASH_NEXT_ENGINE_PLAN §4d). An unreadable setting falls back to the
+    The gateway is never a fixed `local-llm`: both engines up at once is a freeze on this
+    box (FLASH_NEXT_ENGINE_PLAN §4d). So an engine that is ALREADY running is the one powered
+    on — even when it is not the selected one, as after the deploy fell back to standard
+    because Flash-Next could not start — and only when neither runs is the selected engine
+    started, the other being down by definition. An unreadable setting falls back to the
     default engine, the one every box has."""
+    states = await _service_states(request)
+    running = [
+        llm_engine.SERVICE[e]
+        for e in llm_engine.ENGINES
+        if states.get(llm_engine.SERVICE[e]) == "running"
+    ]
+    if running:
+        return (running[0], *_JCODE_SERVICES)
     active = llm_engine.DEFAULT_ENGINE
     with contextlib.suppress(Exception):
         active = llm_engine.parse(await _store(request).llm_local_engine(_owner_ctx(owner_id)))

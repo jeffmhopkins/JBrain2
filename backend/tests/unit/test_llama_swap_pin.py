@@ -73,4 +73,13 @@ def test_flash_next_bakes_a_checksummed_wikitext_sample() -> None:
     assert "sha256sum -c" in text, "the sample must be verified, not just downloaded"
     # Revision-pinned, not `resolve/main`, so the bytes cannot move under the checksum.
     assert "/resolve/main/" not in text
-    assert "/opt/jbrain/wikitext-2-raw/wiki.test.raw" in text
+    assert "/opt/jbrain/eval/wiki.test.raw" in text
+
+
+def test_flash_next_puts_llama_perplexity_on_path() -> None:
+    """The perplexity one-shot invokes it by bare name inside this image; the build
+    fails rather than ship an image where it does not resolve."""
+    text = _FLASH_NEXT.read_text()
+    assert "--target llama-server llama-perplexity" in text
+    assert "/usr/local/bin/llama-perplexity" in text
+    assert "command -v llama-perplexity" in text

@@ -141,9 +141,11 @@ RUN set -eu; \
     ver="$(llama-server --version 2>&1 || true)"; \
     printf '%s\n' "$ver" | grep -q "$short" \
         || { echo "FATAL: llama-server on PATH does not report commit $short: $ver"; exit 1; }; \
-    echo "llama-server on PATH is the pinned build ($short)"
+    echo "llama-server on PATH is the pinned build ($short)"; \
+    command -v llama-perplexity >/dev/null \
+        || { echo "FATAL: llama-perplexity is not on PATH"; exit 1; }
 
 # Fixed path the F2 perplexity one-shot reads; do not move it without moving that job.
-COPY --from=wikitext /out/wiki.test.raw /opt/jbrain/wikitext-2-raw/wiki.test.raw
+COPY --from=wikitext /out/wiki.test.raw /opt/jbrain/eval/wiki.test.raw
 
 EXPOSE 8080

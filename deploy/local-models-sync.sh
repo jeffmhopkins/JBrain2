@@ -143,6 +143,10 @@ fi
 
 say "syncing models: ${ids:-<none>}"
 
+# Whether the final roster holds a Flash-Next model: yes / no / unknown (a failed catalog
+# read). Its config is rendered on yes and deleted only on a definite no.
+fn_answer="$(local_engine_flash_next_answer "$ids")"
+
 if [ -n "$ids" ]; then
   # 4. Download ONLY the models whose required weights are incomplete. `hf download` re-hashes
   #    every file it is handed even when the bytes are already present (~2 min/model), so
@@ -230,7 +234,7 @@ print(int(sum(m.get("size_gb") or 0 for m in json.load(sys.stdin))) + 10)' 2>/de
   #    the same manifest filtered to its engine — so each gateway only ever lists models its
   #    llama.cpp can load. Only when a Flash-Next model is in the roster: a box that never
   #    installs it never gets the file.
-  if local_engine_any_flash_next "$ids"; then
+  if [ "$fn_answer" = yes ]; then
     docker compose run --rm --no-deps -T --user 0 \
       -e MANIFEST="$manifest" \
       api python -m jbrain.llm.llama_swap_config --engine flash-next /data/local-models
@@ -240,6 +244,13 @@ else
   # fetch; `_manifest([])` would pull the whole catalog), but still apply the removal
   # below — LOCAL_MODELS=[], restart, prune, clear.
   say "no models remain enabled — clearing local roster"
+fi
+
+# 5c. The last Flash-Next model is gone: drop its config too, so nothing (a stale container,
+#    a future switch) can start a gateway that lists weights no longer on disk.
+if [ "$fn_answer" = no ] && [ -f "$PWD/local-models/llama-swap.flash-next.yaml" ]; then
+  say "no Flash-Next model remains — removing llama-swap.flash-next.yaml"
+  rm -f -- "$PWD/local-models/llama-swap.flash-next.yaml"
 fi
 
 # 6. Rewrite only LOCAL_MODELS in .env to the union (build the JSON array in sh —

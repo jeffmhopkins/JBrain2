@@ -542,6 +542,11 @@ for f in docker-compose.yml backup.sh restore.sh jbrain; do
 done
 cp src/deploy/db-init/01-app-role.sh db-init/
 chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
+# Re-derive the profile set from the compose file just copied in: the set read near the top
+# came from the PREVIOUS file, so a profile this release adds (flash-next, the first time)
+# would be missing from every quiesce/restore below.
+ALL_PROFILES="$(docker compose config --profiles 2>/dev/null \
+  | sed 's/^/--profile /' | tr '\n' ' ')"
 
 # Refresh the SearXNG settings host file. Compose bind-mounts it writable (the
 # image injects $SEARXNG_SECRET at boot) and it enables the JSON format the
@@ -679,8 +684,14 @@ LOCAL_LLM_RUNNING=""
 # The one-engine helpers (local_engine_start and friends) — shared with the model sync so
 # "start one engine, stop the other" is decided in exactly one place.
 . src/deploy/local-engine.sh
+# Bounded the same way as this script's other one-offs: the helpers run with the stack
+# quiesced, where an unbounded `compose run` hangs the whole update.
 # shellcheck disable=SC2034  # read by the sourced helpers
 LOCAL_ENGINE_RUNNER="run_bounded $TOGGLE_TIMEOUT_S"
+# shellcheck disable=SC2034  # read by the sourced helpers
+LOCAL_ENGINE_UNLOAD_RUNNER="run_bounded $UNLOAD_TIMEOUT_S"
+# shellcheck disable=SC2034  # read by the sourced helpers
+LOCAL_ENGINE_BUILD_RUNNER="run_bounded $PULL_TIMEOUT_S"
 if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   LOCAL_LLM_RUNNING=1
 
@@ -914,51 +925,14 @@ fi
 # answers is the one that knows the subcommand; an older image, a DB blip or a timeout all
 # parse as `standard`, the engine every box has.
 #
-# Flash-Next's image is built only when one of its models is installed (LOCAL_MODELS) or
-# queued for install, and not queued for removal — a box that never provisions it
-# never compiles its llama.cpp — and the queued case is included so a first install has its
-# image ready when the model sync below lands the weights, instead of one update later.
-# Built here, in the quiesced window, with the rest of the image work.
-#
-# FLASH_NEXT_READY: installed AND an image exists — the only state in which this update may
-# treat Flash-Next as the engine. Selected but not ready falls back to the standard gateway,
-# and the log says so.
+# local_engine_select (deploy/local-engine.sh) decides it, and is the ONE place the
+# Flash-Next image is built — bounded, here in the quiesced window, and only when one of its
+# models is installed or queued. It sets SELECTED_ENGINE (the owner's setting), ENGINE (that,
+# or `standard` when Flash-Next is selected but not ready — logged) and FLASH_NEXT_READY.
 ENGINE=standard
 SELECTED_ENGINE=standard
-FLASH_NEXT_READY=''
 if [ -n "$LOCAL_LLM_RUNNING" ]; then
-  ENGINE="$(local_engine_parse "$(run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
-    python -m jbrain.cli local-engine 2>/dev/null || true)")"
-  SELECTED_ENGINE="$ENGINE"
-  _fn_queued="$(run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
-    python -m jbrain.cli local-provision-ids 2>/dev/null || true)"
-  _fn_removing="$(run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
-    python -m jbrain.cli local-remove-ids 2>/dev/null || true)"
-  _fn_ids=''
-  for _id in $(local_engine_installed_ids) $_fn_queued; do
-    # Catalog ids only: a TIMEOUT line from run_bounded is words, not ids.
-    printf '%s' "$_id" | grep -Eq '^[A-Za-z0-9._-]+$' || continue
-    printf '%s\n' "$_fn_removing" | grep -qxF "$_id" && continue
-    _fn_ids="$_fn_ids $_id"
-  done
-  if local_engine_any_flash_next "$_fn_ids"; then
-    echo "[update] a Flash-Next model is installed or queued — building the flash-next engine image"
-    run_bounded "$PULL_TIMEOUT_S" docker compose --profile flash-next build flash-next \
-      || echo "[update] WARNING: the flash-next image did not build — keeping its previous image, if any"
-    if [ -n "$(local_engine_flash_next_installed)" ] \
-        && docker image inspect jbrain2-flash-next:local >/dev/null 2>&1; then
-      FLASH_NEXT_READY=1
-    fi
-  else
-    # Uninstalled (or never installed): the pre-build release already removed its container;
-    # drop the image too, so backing out from the PWA leaves nothing of it behind (§5).
-    docker image rm jbrain2-flash-next:local >/dev/null 2>&1 || true
-  fi
-  if [ "$ENGINE" = flash-next ] && [ -z "$FLASH_NEXT_READY" ]; then
-    echo "[update] Flash-Next is the selected engine but is not installed or has no image — falling back to the standard engine for this update"
-    ENGINE=standard
-  fi
-  echo "[update] local engine: $ENGINE"
+  local_engine_select
 fi
 
 # The standard gateway is rebuilt and smoke-tested only while it is the engine that will
@@ -1126,11 +1100,7 @@ fi
 # working engine: a Flash-Next whose weights only landed in the sync above starts now, not
 # one update later (local_engine_start falls back on its own if it cannot).
 if [ -n "$LOCAL_LLM_RUNNING" ]; then
-  _fn_final=''
-  if [ -n "$(local_engine_flash_next_installed)" ] \
-      && docker image inspect jbrain2-flash-next:local >/dev/null 2>&1; then
-    _fn_final=1
-  fi
+  _fn_final="$(local_engine_flash_next_installed)"
   echo "[update] restarting the local engine ($SELECTED_ENGINE selected)"
   local_engine_start "$SELECTED_ENGINE" "$_fn_final" || true
 fi

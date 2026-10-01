@@ -1384,11 +1384,14 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
 4. **Backing out:** switch back to Standard (F3), then **Uninstall** it in On-box models. The
    next Ops → Update removes its container and image.
 
-Every path that starts a gateway — the update, the model sync, code mode's power-on — starts
-only the **selected** engine and stops the other first. If Flash-Next is selected but its
-weights are missing or it fails to start, the box falls back to the standard gateway and the
-update log says so (`[local-engine] … falling back to the standard engine`); the setting
-itself is left for you to change.
+Every path that starts a gateway — the update and the model sync — starts only the
+**selected** engine, after releasing the other's models and waiting for its memory to come
+back; code mode's power-on keeps whichever engine is already running. Only the update builds
+the Flash-Next image (a llama.cpp compile, bounded, while the stack is quiesced) — an Install
+from the drawer never compiles on a serving box. If Flash-Next is selected but its weights or
+image are missing, or it fails to start, the box falls back to the standard gateway and the
+log says so (`… falling back to the standard engine`); the setting itself is left for you to
+change.
 
 ## Phase 8 — Confirm it's really local
 - Add a note with a photo → it should OCR locally; watch `jbrain logs local-llm`.
