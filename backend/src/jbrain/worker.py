@@ -54,6 +54,7 @@ from jbrain.ingest.stream_analysis import ANALYZE_STREAM_URL_SPEC, StreamAnalysi
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gpu_guard
+from jbrain.llm.engine import ActiveEngine
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import (
@@ -702,6 +703,11 @@ async def run() -> None:
             # The SAME ledger instance this process's gateway charges through, so the worker's
             # eviction plans and its admission verdicts come from one arithmetic (L3).
             ledger=worker_reservations,
+            # The same active-engine gate as the api's coordinator: a background job never
+            # loads the engine that is not running (FLASH_NEXT_ENGINE_PLAN §4d).
+            engine_loader=ActiveEngine(
+                lambda: worker_settings_store.llm_local_engine(queue.SYSTEM_CTX)
+            ).get,
         ),
     )
     router = build_router(

@@ -65,6 +65,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain import box_events
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import admission, gpu_guard, local_catalog
+from jbrain.llm import engine as engines
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import STATE_READY, LocalGateway, LocalGatewayError
 from jbrain.llm.local_weights import weights_size_gb
@@ -282,6 +283,12 @@ class ResidencyWiring:
     # are one calculation. None (DB-less CLIs, cloud-only, tests) falls back to the
     # measured+predicted planner — the last place that duplicate survives (L3).
     ledger: ReservationLedger | None
+    # The active on-box engine (`settings_store.llm_local_engine`), read per decision. Only
+    # that engine's models are loaded or restored: the other engine's gateway is down, so a
+    # load of its model can only fail after this coordinator has already evicted something
+    # for it (FLASH_NEXT_ENGINE_PLAN §4d). None -> every catalog model is admissible, the
+    # behaviour before a second engine existed.
+    engine_loader: Callable[[], Awaitable[engines.Engine]] | None
 
     @classmethod
     def inert(
@@ -301,6 +308,7 @@ class ResidencyWiring:
         on_prefix_lost: PrefixLostHook | None = None,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
         ledger: ReservationLedger | None = None,
+        engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
     ) -> ResidencyWiring:
         """A gate wired to do nothing, for tests and cloud-only builds. Named rather than
         implied: production code may not call this, and a guard test holds that."""
@@ -319,6 +327,7 @@ class ResidencyWiring:
             on_prefix_lost=on_prefix_lost,
             gpu_probe=gpu_probe,
             ledger=ledger,
+            engine_loader=engine_loader,
         )
 
 
@@ -395,6 +404,35 @@ class ResidencyCoordinator:
         # edge, and it is a callback rather than a direct call so residency keeps knowing
         # nothing about personas or priming.
         self._on_prefix_lost = wiring.on_prefix_lost
+        self._engine_loader = wiring.engine_loader
+
+    async def _off_engine(self, served_model: str) -> engines.Engine | None:
+        """The engine `served_model` belongs to when that is NOT the active one, else None.
+
+        None also for a name outside the catalog (nothing to say about it) and when the read
+        fails: a settings hiccup must not refuse every local load, and the standard engine is
+        what every box runs unless switched."""
+        if self._engine_loader is None:
+            return None
+        model = local_catalog.get_by_served(served_model)
+        if model is None:
+            return None
+        active: engines.Engine = engines.DEFAULT_ENGINE
+        with contextlib.suppress(Exception):
+            active = await self._engine_loader()
+        own = engines.parse(model.engine)
+        return own if own != active else None
+
+    async def _refuse_off_engine(self, served_model: str) -> None:
+        """Raise ResidencyError before any eviction when `served_model` belongs to the engine
+        that is not running. Evicting for it would cost a resident model and then fail the load
+        anyway, because the active gateway's config does not name it."""
+        own = await self._off_engine(served_model)
+        if own is not None:
+            raise ResidencyError(
+                f"{served_model} runs on the {own} engine, which is not the active local engine "
+                "— switch engines to use it."
+            )
 
     def _prefix_lost(self, served_model: str) -> None:
         """Signal that `served_model`'s primed prefix is gone. Best-effort and synchronous —
@@ -550,7 +588,7 @@ class ResidencyCoordinator:
         if model is None:
             return 0.0
         window = windows.get(model.id, model.context_window)
-        n_slots = slots.get(model.id, 1)
+        n_slots = model.served_slots(slots)
         disk = weights_size_gb(self._models_dir, model.id) if self._models_dir else None
         return local_catalog.footprint_gb(model, window, disk_gb=disk, slots=n_slots)
 
@@ -645,7 +683,7 @@ class ResidencyCoordinator:
         windows = await self._windows()
         slots = await self._slots()
         window = windows.get(model.id, model.context_window)
-        n_slots = slots.get(model.id, 1)
+        n_slots = model.served_slots(slots)
         # The exact declaration `LocalGatewayClient._reservation` will charge for this load.
         host_need, device_need = local_catalog.declared_gb(model, window, slots=n_slots)
         request = admission.Reservation(
@@ -874,6 +912,7 @@ class ResidencyCoordinator:
         callers are unchanged."""
         if not self._enabled:
             return
+        await self._refuse_off_engine(served_model)
         # Code-mode exclusivity: while the box is reserved for code mode, refuse to load ANY
         # model outside its reserved set (jcode's executor + planner). A model already resident
         # may keep serving (no new load, no memory pressure), but a NON-resident, non-reserved
@@ -1024,6 +1063,7 @@ class ResidencyCoordinator:
         the operator's own two surfaces."""
         if not self._enabled:
             return
+        await self._refuse_off_engine(served_model)
         try:
             plan = await self._plan(served_model, narrate_skip=True)
         except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
@@ -1149,6 +1189,10 @@ class ResidencyCoordinator:
         # restore an arbitrary subset.
         scored: list[tuple[float, str]] = []
         for served in targets:
+            # A member of the engine that is no longer running cannot come back on this
+            # gateway; it stays displaced and restores once its engine is active again.
+            if await self._off_engine(served) is not None:
+                continue
             scored.append((-await self._footprint(served, windows, slots), served))
         scored.sort()
         plan: list[str] = []

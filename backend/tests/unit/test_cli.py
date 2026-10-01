@@ -69,10 +69,10 @@ def test_smoketest_exit_code_follows_the_result(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
     monkeypatch.setattr(gateway_mod, "LocalGatewayClient", lambda url, **_kw: object())
 
-    async def _pass(models: object, gw: object) -> tuple[bool, list[str]]:
+    async def _pass(models: object, gw: object, **_kw: object) -> tuple[bool, list[str]]:
         return True, ["load OK"]
 
-    async def _fail(models: object, gw: object) -> tuple[bool, list[str]]:
+    async def _fail(models: object, gw: object, **_kw: object) -> tuple[bool, list[str]]:
         return False, ["load FAILED"]
 
     monkeypatch.setattr(smoketest_mod, "run_smoketest", _pass)

@@ -17,6 +17,9 @@ import contextlib
 import ctypes
 import os
 import platform
+import shutil
+
+from jbrain.llm import local_catalog
 
 # Weights are GiB-scale; report in GiB to match the catalog's size_gb units.
 _BYTES_PER_GIB = 1024**3
@@ -46,6 +49,19 @@ def weights_size_gb(models_dir: str, model_id: str) -> float | None:
     return round(total / _BYTES_PER_GIB, 1) if found else None
 
 
+def free_gb(models_dir: str) -> float | None:
+    """Free space on the weights volume, in GiB — or None when no weights directory is
+    configured or present (nothing to guard). A directory that exists but cannot be measured
+    reads as 0.0: "unknown" must refuse an install rather than wave a ~90 GB download onto a
+    volume that may be full, on a box whose owner cannot clean one up (CLAUDE.md #10)."""
+    if not models_dir or not os.path.isdir(models_dir):
+        return None
+    try:
+        return round(shutil.disk_usage(models_dir).free / _BYTES_PER_GIB, 1)
+    except OSError:
+        return 0.0
+
+
 def dir_size_gb(models_dir: str, model_id: str) -> float | None:
     """Summed size of EVERY file in a model's directory, in GiB — partial
     `*.incomplete` shards included — or None when the directory is absent. Drives
@@ -70,6 +86,14 @@ def dir_size_gb(models_dir: str, model_id: str) -> float | None:
             with contextlib.suppress(OSError):
                 total += os.path.getsize(os.path.join(dirpath, name))
     return round(total / _BYTES_PER_GIB, 1)
+
+
+def serves_file_backed(model_id: str) -> bool:
+    """Whether the engine serves part of `model_id`'s weights memory-mapped from disk
+    (`LocalModel.file_backed_gb`) — Flash-Next's engram table, read through the page cache on
+    every token. Its page cache is the working set, not a residue."""
+    model = local_catalog.get(model_id)
+    return model is not None and model.file_backed_gb > 0
 
 
 def drop_weights_page_cache(models_dir: str, model_id: str) -> float | None:
@@ -98,7 +122,14 @@ def drop_weights_page_cache(models_dir: str, model_id: str) -> float | None:
 
     Deliberately targeted rather than the global `drop_caches` the update path uses
     (deploy/update-inner.sh): this touches only the weights just read, so Postgres's
-    working set and the rest of the box's cache survive."""
+    working set and the rest of the box's cache survive.
+
+    Everything above assumes `--no-mmap`. A model with a file-backed share
+    (`serves_file_backed`) is the exception WHILE IT IS RESIDENT: its page cache is the engram
+    table being served, and evicting it only makes the next tokens read it from disk again.
+    That decision needs the resident set, so it is the caller's (`LocalGatewayClient`); once
+    the model is unloaded its cache is residue like any other — ~88 GiB that
+    `host_metrics.read_memory_gb` counts as used — and this drops it."""
     return _drop_page_cache(os.path.join(models_dir, model_id), (".gguf",))
 
 

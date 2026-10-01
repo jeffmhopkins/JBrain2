@@ -232,7 +232,7 @@ async def _local_activate(model_id: str) -> None:
         await engine.dispose()
 
 
-async def _local_llm_smoketest() -> int:
+async def _local_llm_smoketest(engine: str = "standard") -> int:
     """Smoke-test the on-box gateway's current build (the opt-in LOCAL_LLM_AUTO_UPDATE
     path calls this after floating the gateway onto the newest llama.cpp). Exit 0 =
     the build loaded a model (and survived a gpt-oss tool turn when installed) and is
@@ -240,10 +240,15 @@ async def _local_llm_smoketest() -> int:
     the installed set + gateway URL from settings (env-wired in the api container); no
     DB needed, so it runs under `docker compose run --rm --no-deps -T api`."""
     from jbrain.llm import gpu_guard, llama_swap_config, local_catalog
+    from jbrain.llm.engine import parse as parse_engine
     from jbrain.llm.local_gateway import LocalGatewayClient
     from jbrain.llm.smoketest import run_smoketest
 
     settings = get_settings()
+    # The engine whose gateway was just rebuilt. An argument rather than a settings read: this
+    # runs `--no-deps` with no database, and the update script already knows which engine it
+    # rebuilt (it read `local-engine` to decide).
+    active = parse_engine(engine)
     if not settings.local_llm_enabled or not settings.local_models:
         print("[smoketest] local hosting off or no models installed — skipping (pass)")
         return 0
@@ -263,7 +268,7 @@ async def _local_llm_smoketest() -> int:
     # a healthy build. The rollback that followed was spurious — and since the newer
     # llama.cpp is where the `no_alloc` estimator lives, the broken test was blocking the
     # fix for the thing it was failing on.
-    _shapes = llama_swap_config.served_shape_from_config(settings.local_models_dir)
+    _shapes = llama_swap_config.served_shape_from_config(settings.local_models_dir, active)
     _by_id = {
         model.id: shape
         for served, shape in _shapes.items()
@@ -287,7 +292,7 @@ async def _local_llm_smoketest() -> int:
         # model in turn" as this comment used to claim — see jbrain.llm.smoketest.)
         models_dir=settings.local_models_dir,
     )
-    ok, messages = await run_smoketest(settings.local_models, gateway)
+    ok, messages = await run_smoketest(settings.local_models, gateway, engine=active)
     for message in messages:
         print(f"[smoketest] {message}")
     return 0 if ok else 1
@@ -316,9 +321,15 @@ def main(argv: list[str] | None = None) -> int:
         "local-llm-auto-update",
         help="exit 0 if the owner has the gateway auto-update + smoke test on, else 1",
     )
-    sub.add_parser(
+    p_smoke = sub.add_parser(
         "local-llm-smoketest",
         help="load a model (+ gpt-oss tool probe) to verify the gateway's llama.cpp build",
+    )
+    p_smoke.add_argument(
+        "--engine",
+        choices=["standard", "flash-next"],
+        default="standard",
+        help="which engine's gateway to test (its config file and its models)",
     )
     sub.add_parser(
         "local-llm-patch-restore-checkpoint",
@@ -357,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "local-llm-auto-update":
         return asyncio.run(_print_auto_update())
     if args.command == "local-llm-smoketest":
-        return asyncio.run(_local_llm_smoketest())
+        return asyncio.run(_local_llm_smoketest(args.engine))
     if args.command == "local-llm-patch-restore-checkpoint":
         return asyncio.run(_print_patch_restore_checkpoint())
     if args.command == "set-local-llm-patch-restore-checkpoint":

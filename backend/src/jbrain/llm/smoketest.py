@@ -46,6 +46,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from jbrain.llm import engine as engines
 from jbrain.llm import local_catalog
 from jbrain.llm.local_gateway import LocalGatewayError
 
@@ -200,6 +201,7 @@ async def run_smoketest(
     gateway: SmokeGateway,
     *,
     meminfo_path: Path | None = None,
+    engine: engines.Engine = engines.STANDARD,
 ) -> tuple[bool, list[str]]:
     """Smoke-test the gateway's current build against the installed model set.
 
@@ -213,11 +215,19 @@ async def run_smoketest(
     free-memory reading is only as honest as the caller made it — the update drops the
     page cache first, because MemAvailable counts reclaimable cache as free and
     reclaiming it is the very thing that livelocks this hardware.
+
+    ``engine`` is the engine whose gateway is under test; only its models are tried.
     """
     messages: list[str] = []
     meminfo = meminfo_path if meminfo_path is not None else MEMINFO_PATH
 
-    installed = [m for m in local_catalog.selected(local_models) if m.supports_tools]
+    # Only the engine under test: the other engine's models are not in this gateway's config,
+    # so "the smallest installed model" must be chosen among the ones it can actually load.
+    installed = [
+        m
+        for m in local_catalog.selected(local_models)
+        if m.supports_tools and engines.parse(m.engine) == engine
+    ]
     if not installed:
         messages.append("no installed tool-capable models to smoke-test — treating as pass")
         return True, messages
@@ -255,7 +265,12 @@ async def run_smoketest(
     probe = local_catalog.get(TOOL_PROBE_MODEL_ID)
     # `is not smallest`: on a gpt-oss-only box it IS the model just probed, and probing the
     # same model twice proves nothing twice.
-    if probe is not None and probe is not smallest and TOOL_PROBE_MODEL_ID in set(local_models):
+    if (
+        probe is not None
+        and probe is not smallest
+        and TOOL_PROBE_MODEL_ID in set(local_models)
+        and engines.parse(probe.engine) == engine
+    ):
         try:
             resident = await gateway.running()
         except Exception:  # noqa: BLE001 — an unreadable roster just means "skip the bonus"
