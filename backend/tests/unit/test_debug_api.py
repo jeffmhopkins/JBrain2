@@ -607,6 +607,43 @@ def test_load_unload_409_when_hosting_off(debug_client: tuple[TestClient, str]) 
     )
 
 
+def test_slots_route_goes_through_the_owner_settings_path(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # The same shared edit as the PWA's: hosting off is the settings path's own 409, and the
+    # route sits behind the debug bearer like every other.
+    client, key = debug_client
+    url = "/api/debug/llm/local-models/foo/parallel-slots"
+    assert client.put(url, json={"slots": 1}).status_code == 401
+    assert client.put(url, headers=_auth(key), json={"slots": 1}).status_code == 409
+    assert client.put(url, headers=_auth(key), json={"nope": 1}).status_code == 422
+
+
+def test_slots_route_sets_and_bounds_a_local_models_slot_count() -> None:
+    flash = "qwen3.8-flash-next"
+    app = create_app(_settings(local_llm_enabled=True, local_models=["gpt-oss-120b", flash]))
+    repo = FakeAuthRepo()
+    store = FakeSettingsStore()
+    with TestClient(app) as client:
+        app.state.auth_repo = repo
+        app.state.settings_store = store
+        app.state.local_gateway = FakeLocalGateway()
+        key, _ = asyncio.run(auth_service.mint_capability(repo, "claude", ttl_hours=24))
+        url = f"/api/debug/llm/local-models/{flash}/parallel-slots"
+        resp = client.put(url, headers=_auth(key), json={"slots": 1})
+        assert resp.status_code == 200, resp.text
+        row = {m["id"]: m for m in resp.json()["local_models"]}[flash]
+        assert row["parallel_slots"] == 1
+        assert store.values["llm_local_parallel_slots"] == {flash: 1}
+        for bad in (0, 5):
+            assert client.put(url, headers=_auth(key), json={"slots": bad}).status_code == 422
+        assert store.values["llm_local_parallel_slots"] == {flash: 1}
+        resp = client.put(url, headers=_auth(key), json={"slots": None})
+        assert {m["id"]: m for m in resp.json()["local_models"]}[flash]["parallel_slots"] == 4
+        gpt = "/api/debug/llm/local-models/gpt-oss-120b/parallel-slots"
+        assert client.put(gpt, headers=_auth(key), json={"slots": 3}).status_code == 422
+
+
 # --- read-only SQL guard ----------------------------------------------------
 
 

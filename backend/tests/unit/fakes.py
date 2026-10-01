@@ -752,14 +752,14 @@ class FakeSettingsStore:
         return {
             mid: n
             for mid, n in raw.items()
-            if isinstance(mid, str) and isinstance(n, int) and not isinstance(n, bool) and n > 1
+            if isinstance(mid, str) and isinstance(n, int) and not isinstance(n, bool) and n >= 1
         }
 
     async def set_llm_local_parallel_slots(
-        self, ctx: object, *, model_id: str, slots: int | None
+        self, ctx: object, *, model_id: str, slots: int | None, default: int = 1
     ) -> dict[str, int]:
         current = await self.llm_local_parallel_slots(ctx)
-        if slots is None or slots <= 1:
+        if slots is None or slots < 1 or slots == default:
             current.pop(model_id, None)
         else:
             current[model_id] = slots

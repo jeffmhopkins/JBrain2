@@ -53,7 +53,7 @@ from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.stream_analysis import ANALYZE_STREAM_URL_SPEC, StreamAnalysisPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
-from jbrain.llm import build_router, gpu_guard
+from jbrain.llm import build_router, gateway_regen, gpu_guard
 from jbrain.llm.engine import ActiveEngine
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -632,6 +632,16 @@ async def run() -> None:
         # window llama-swap will really serve rather than the catalog default.
         windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
         slots_loader=lambda: worker_settings_store.llm_local_parallel_slots(queue.SYSTEM_CTX),
+        # Re-stamp the active engine's config before EVERY load, exactly as the api's client
+        # does. This was missing, so a window or slot override saved from the PWA or the debug
+        # console reached the served command only if the api happened to load the model
+        # first: the edit unloads the model, a background job wants it back, and the worker
+        # loaded it from the stale file — observed on the box 2026-10-01 as Flash-Next
+        # relaunching at `n_ctx_slot = 262144` after its window was set to 131072. The api
+        # does the write (jbrain.llm.gateway_regen says why the worker must not).
+        config_regen=lambda: gateway_regen.request_regen(
+            settings.internal_api_url, settings.supervisor_token
+        ),
         # Lets a finished load drop the page-cache copy of the weights it just read. The
         # worker gained the weights mount for this (deploy/docker-compose.yml) — it swaps
         # models for background jobs, so without it half the box's loads left the copy behind.

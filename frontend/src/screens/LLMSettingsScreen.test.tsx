@@ -1106,6 +1106,55 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(putBody).toEqual({ slots: 2 }));
   });
 
+  it("offers a wider-by-default model every count to its cap, marks the default, sends 1 as 1", async () => {
+    // Flash-Next serves four role-pinned slots by default; F2 measures one and two. The old
+    // control offered only off/on and mapped 1 to "clear", which reads back as the default four.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "qwen3.8-flash-next",
+        label: "Qwen3.8 Flash-Next",
+        enabled: true,
+        size_gb: 88,
+        disk_gb: 88,
+        context_window: 262144,
+        max_context_window: 262144,
+        kv_gb: 20,
+        parallel_slots: 4,
+        parallel_slots_max: 4,
+        default_slots: 4,
+      }),
+    ];
+    let putBody: { slots: number | null } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/parallel-slots") && method === "PUT") {
+          putBody = JSON.parse(String(init?.body));
+          const m0 = s.local_models[0];
+          if (m0) m0.parallel_slots = putBody?.slots ?? 4;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    const select = (await screen.findByLabelText("slots")) as HTMLSelectElement;
+    expect(select.value).toBe("4");
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["1", "2", "3", "4"]);
+    expect(select.selectedOptions[0]?.textContent).toMatch(/4 slots.*\(default\)/);
+    fireEvent.change(select, { target: { value: "1" } });
+    await waitFor(() => expect(putBody).toEqual({ slots: 1 }));
+  });
+
   it("pins a model as keep-loaded and PUTs it, without loading anything", async () => {
     // The owner, after a 4.3 GB pet model evicted a 59 GB assistant: "I would rather keep OSS
     // 120 loaded all the time and then the Qwen models be able to hotswap first." Which model

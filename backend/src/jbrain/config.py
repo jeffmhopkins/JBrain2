@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://jbrain_app:jbrain_app@localhost:5432/jbrain"
     supervisor_url: str = "http://supervisor:9000"
     supervisor_token: str = ""
+    # The api as the worker reaches it on the internal network — for the worker's pre-load
+    # gateway-config re-stamp (jbrain.llm.gateway_regen). The compose service name and port, so
+    # no `.env` entry is needed.
+    internal_api_url: str = "http://api:8000"
     session_cookie: str = "jbrain_session"
     blob_dir: str = "/data/blobs"
     backups_dir: str = "/data/backups"

@@ -309,6 +309,9 @@ services:
       # (jbrain.llm.local_weights.drop_weights_page_cache). `--no-mmap` leaves every model
       # resident twice — GTT plus the cache the read filled — and the worker swaps models for
       # background jobs, so without this mount half the box's loads leave that copy behind.
+      # Read-only is a security boundary, not a convenience: the worker handles untrusted
+      # content, and a writable models dir would let it write a llama-swap `cmd:` the gateway
+      # executes. Its pre-load config re-stamp is done by the api (jbrain.llm.gateway_regen).
       - ./local-models:/data/local-models:ro
     networks: [internal]
     depends_on:

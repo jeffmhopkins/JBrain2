@@ -95,6 +95,7 @@ from jbrain.api import (
     jlaunch_share,
     jlaunch_terminal,
     live,
+    llm_internal,
     locations,
     member,
     mqtt,
@@ -1647,6 +1648,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The on-box wall display reads the pet snapshot here (internal
     # network only; read-only; safe 'general' domain) — never off-box via Caddy.
     app.include_router(pet_api.internal_router, prefix="/internal")
+    # The worker's pre-load gateway-config re-stamp (internal network only, bearer-gated;
+    # jbrain.llm.gateway_regen says why the worker cannot write the config itself).
+    app.include_router(llm_internal.router, prefix="/internal")
     app.include_router(notes.router, prefix="/api")
     app.include_router(notifications.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")

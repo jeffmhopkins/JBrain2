@@ -269,10 +269,10 @@ def test_render_appends_operator_extra_args_after_the_catalog_flags(tmp_path: Pa
     text = llama_swap_config.render(
         _manifest(),
         str(tmp_path),
-        extra_args={"gpt-oss-120b": ["--swa-full", "--slot-save-path", "/tmp/kv/"]},
+        extra_args={"gpt-oss-120b": ["--swa-full", "-lv", "4"]},
     )
     line = next(ln for ln in text.splitlines() if "--swa-full" in ln)
-    assert "--slot-save-path /tmp/kv/" in line
+    assert line.rstrip().endswith("--swa-full -lv 4")
     # Only the targeted model is affected — a bad flag can never take the whole gateway down.
     assert sum("--swa-full" in ln for ln in text.splitlines()) == 1
 
@@ -297,6 +297,59 @@ def test_main_applies_saved_extra_args_so_an_update_keeps_them(
     # left out of `_saved_overrides`, so every Ops → Update reverted it to the catalog value —
     # the same silent-reset bug this test exists to prevent, reproduced for a newer knob.
     assert "--image-min-tokens 4096" in text
+
+
+def test_one_models_bad_stored_flag_does_not_stop_the_others_rendering(tmp_path: Path) -> None:
+    """A legacy `--cache-ram` row (retired from the allowlist) on one model: that model is served
+    on its catalog flags, every other model keeps its overrides, and the reason is reported."""
+    _lay_down(tmp_path)
+    rejected: dict[str, str] = {}
+    text = llama_swap_config.render(
+        _manifest(),
+        str(tmp_path),
+        windows={"qwen3-vl-30b": 16384},
+        extra_args={"gpt-oss-120b": ["--cache-ram", "8192"], "qwen3-vl-30b": ["--swa-full"]},
+        rejected=rejected,
+    )
+    gpt = next(ln for ln in text.splitlines() if "-c 131072" in ln)
+    qwen = next(ln for ln in text.splitlines() if "-c 16384" in ln)
+    assert "--cache-ram" not in gpt and "8192" not in gpt
+    assert "--swa-full" in qwen
+    assert list(rejected) == ["gpt-oss-120b"]
+    assert "--cache-ram" in rejected["gpt-oss-120b"]
+    assert "extra-args" in rejected["gpt-oss-120b"]
+
+
+def test_main_serves_the_rest_and_says_why_when_a_stored_flag_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _lay_down(tmp_path)
+    monkeypatch.setattr(
+        llama_swap_config,
+        "_saved_overrides",
+        lambda: ({"qwen3-vl-30b": 16384}, {}, {"gpt-oss-120b": ["--cache-ram", "8192"]}, {}),
+    )
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    text = (tmp_path / "llama-swap.yaml").read_text()
+    assert "-c 16384" in text and "--cache-ram" not in text
+    assert "gpt-oss-120b: its saved launch flags were NOT applied" in capsys.readouterr().err
+
+
+def test_main_leaves_the_file_and_exits_zero_when_a_render_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal the renderer cannot drop per model (a catalog/generated token) must not fail
+    the model sync, which runs under `set -eu` — every step after it would be skipped."""
+    _lay_down(tmp_path)
+    existing = tmp_path / "llama-swap.yaml"
+    existing.write_text("models: {}\n")
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: ({}, {}, {}, {}))
+    manifest = _manifest()
+    manifest[1]["served_model"] = "gpt oss"  # whitespace: refused by the hard wall
+    monkeypatch.setenv("MANIFEST", json.dumps(manifest))
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert existing.read_text() == "models: {}\n"
 
 
 def test_a_settings_read_that_fails_leaves_the_existing_config_untouched(
@@ -485,7 +538,7 @@ def test_write_is_atomic_and_round_trips(tmp_path: Path) -> None:
     text = Path(path).read_text()
     assert "-c 16384" in text
     # No leftover temp file from the atomic rename.
-    assert not (tmp_path / "llama-swap.yaml.tmp").exists()
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_unresolved_ids_is_empty_when_every_required_file_is_present(tmp_path: Path) -> None:

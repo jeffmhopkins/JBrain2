@@ -1816,6 +1816,26 @@ function LlmModelRow({
       effWindow,
     ]),
   ).sort((a, b) => a - b);
+  // Slot choices run 1..the server's cap for this model (2 on a standard model, Flash-Next's
+  // 4), keeping the current count selectable even if the cap ever moves below it.
+  const defaultSlots = m.default_slots ?? 1;
+  const multiSlot = defaultSlots > 1;
+  const slotOpts = Array.from(
+    new Set([
+      ...Array.from({ length: Math.max(1, m.parallel_slots_max ?? 2) }, (_, i) => i + 1),
+      m.parallel_slots,
+    ]),
+  ).sort((a, b) => a - b);
+  // A single-slot model keeps its on/off reading (the second slot is the interactive keep-warm
+  // one); a model served wider by default shows counts, marking its default.
+  const slotLabel = (n: number): string =>
+    multiSlot
+      ? `${n} slot${n === 1 ? "" : "s"} · ${n}× KV${n === defaultSlots ? " (default)" : ""}`
+      : n <= 1
+        ? "off (shared slot)"
+        : n === 2
+          ? "on (dedicated · 2× KV)"
+          : `${n} slots · ${n}× KV`;
   return (
     <div className={`llm-local-row on${isVictim ? " evicting" : staged ? " staged" : ""}`}>
       <div className="llm-local-head">
@@ -1904,7 +1924,7 @@ function LlmModelRow({
       </div>
       <div className="llm-local-ctx">
         <label className="llm-local-ctx-label" htmlFor={`slots-${m.id}`}>
-          interactive slot
+          {multiSlot ? "slots" : "interactive slot"}
         </label>
         <select
           id={`slots-${m.id}`}
@@ -1916,16 +1936,20 @@ function LlmModelRow({
               ? "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server falls back to the least-recently-used one, which is the idle prefix slot — so it buys headroom, not immunity. On THIS model it also turns OFF the saved-to-disk copy of the prefix (the speculative decoding it needs is dropped above one slot, and a restore without it would restore garbage), so a restart pays the full ~2 min read again. Doubles the model's KV cost."
               : "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server routes by longest matching prefix and otherwise to the least-recently-used slot, which is the idle prefix slot — so it buys headroom, not immunity. The saved-to-disk copy is what actually makes a lost prefix cheap (~100 ms). Doubles the model's KV cost."
           }
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            // 1 is the default (single slot) — store null so no redundant override row persists.
-            onSetSlots(m.id, v <= 1 ? null : v);
-          }}
+          // Sent as chosen: the server clears a count equal to the model's default, so the
+          // default never persists as a redundant override and 1 still means 1 on a model
+          // served wider by default.
+          onChange={(e) => onSetSlots(m.id, Number(e.target.value))}
         >
-          <option value="1">off (shared slot)</option>
-          <option value="2">on (dedicated · 2× KV)</option>
+          {slotOpts.map((n) => (
+            <option key={n} value={n}>
+              {slotLabel(n)}
+            </option>
+          ))}
         </select>
-        {!m.loaded && <span className="llm-local-ctx-meta">keeps chat instant after restart</span>}
+        {!m.loaded && !multiSlot && (
+          <span className="llm-local-ctx-meta">keeps chat instant after restart</span>
+        )}
       </div>
       <div className="llm-local-ctx">
         <label className="llm-local-ctx-label" htmlFor={`keep-${m.id}`}>

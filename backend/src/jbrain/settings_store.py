@@ -1191,25 +1191,29 @@ class SqlSettingsStore:
         """Per-model llama-server `-np` slot-count overrides, keyed by catalog id, sanitized.
 
         Feeds both the regenerated gateway `-np` and the residency KV budget (a second slot
-        doubles the KV), so a non-dict store, or any entry whose value isn't an int > 1 (bool
-        excluded; 1 is the default and stored as an absence), is dropped rather than trusted."""
+        doubles the KV), so a non-dict store, or any entry whose value isn't a positive int (bool
+        excluded), is dropped rather than trusted. A stored 1 is kept: it is how a model whose
+        catalog default is ABOVE one slot (Flash-Next's four) is asked to serve a single slot —
+        dropping it would read back as that default, the opposite of what was set."""
         raw = await self.get(ctx, LLM_LOCAL_PARALLEL_SLOTS_KEY, {})
         if not isinstance(raw, dict):
             return {}
         clean: dict[str, int] = {}
         for mid, n in raw.items():
-            if isinstance(mid, str) and isinstance(n, int) and not isinstance(n, bool) and n > 1:
+            if isinstance(mid, str) and isinstance(n, int) and not isinstance(n, bool) and n >= 1:
                 clean[mid] = n
         return clean
 
     async def set_llm_local_parallel_slots(
-        self, ctx: SessionContext, *, model_id: str, slots: int | None
+        self, ctx: SessionContext, *, model_id: str, slots: int | None, default: int = 1
     ) -> dict[str, int]:
-        """Set (slots is an int > 1) or clear (slots is None or 1 — the single-slot default)
-        one model's override; returns the sanitized map. Read-modify-write on the single row.
-        Bounds/validity are the API's job — the store stays a dumb sanitizer."""
+        """Set or clear one model's override; returns the sanitized map. Read-modify-write on
+        the single row. `default` is the model's catalog `default_slots`: None, a non-positive
+        count, or a count EQUAL to the default clears the entry, so a single-slot model stores
+        exactly what it always has (1 is an absence) while a model served wider by default can
+        record an explicit narrower count, 1 included. Bounds are the API's job."""
         current = await self.llm_local_parallel_slots(ctx)
-        if slots is None or slots <= 1:
+        if slots is None or slots < 1 or slots == default:
             current.pop(model_id, None)
         else:
             current[model_id] = slots
