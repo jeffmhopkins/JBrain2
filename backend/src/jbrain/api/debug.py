@@ -14,9 +14,11 @@ it can read anything yet write nothing.
 
 import asyncio
 import base64
+import contextlib
 import datetime as dt
 import decimal
 import json
+import math
 import re
 import time
 import uuid
@@ -32,6 +34,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain import box_events
 from jbrain.agent.chat_images import ImageTooLarge, UndecodableImage, image_dimensions
 from jbrain.agent.grounding import (
     Convention,
@@ -56,7 +59,8 @@ from jbrain.ingest.ocr import (
     OCR_SYSTEM,
 )
 from jbrain.ingest.video import transcribe_audio_chunked
-from jbrain.llm import LlmImage
+from jbrain.llm import LlmImage, llama_swap_config, local_catalog
+from jbrain.llm import engine as llm_engine
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.router import LlmRouter
@@ -1414,9 +1418,22 @@ async def logs(
     return PlainTextResponse(resp.text)
 
 
-# The code-mode (jcode) services, in the order most useful for debugging a turn: the
-# control server, then the model gateway.
-_JCODE_LOG_SERVICES = ("jcode", "local-llm")
+async def _active_engine(request: Request) -> llm_engine.Engine:
+    """The engine the owner has selected (FLASH_NEXT_ENGINE_PLAN §4d). A settings read that
+    fails reads as the default rather than failing a log pull: the logs are most wanted
+    exactly when something else on the box is broken."""
+    try:
+        return await _store(request).llm_local_engine(_OWNER_CTX)
+    except Exception:  # noqa: BLE001
+        log.warning("debug.engine_unreadable", exc_info=True)
+        return llm_engine.DEFAULT_ENGINE
+
+
+def _jcode_log_services(engine: llm_engine.Engine) -> tuple[str, ...]:
+    """The code-mode services, in the order most useful for debugging a turn: the control
+    server, then the model gateway — the ACTIVE engine's container, since only one of
+    `local-llm` / `flash-next` is ever up and the other's log is a stale run."""
+    return ("jcode", llm_engine.SERVICE[engine])
 
 
 @router.get("/jcode/logs", response_class=PlainTextResponse)
@@ -1433,7 +1450,7 @@ async def jcode_logs(
     client = _supervisor(request)
     headers = {"Authorization": f"Bearer {settings.supervisor_token}"}
     sections: list[str] = []
-    for service in _JCODE_LOG_SERVICES:
+    for service in _jcode_log_services(await _active_engine(request)):
         resp = await client.get(f"/logs/{service}", params={"tail": tail}, headers=headers)
         if resp.status_code == 404:
             body = "(service not running)"
@@ -1442,6 +1459,20 @@ async def jcode_logs(
             body = resp.text
         sections.append(f"===== {service} =====\n{body}")
     return PlainTextResponse("\n\n".join(sections))
+
+
+# Which engine answered a gateway/upstream log read. Both engines carry the `local-llm`
+# network alias and only one is ever up, so the gateway client reaches whichever is running
+# with no per-engine URL — this header is how a reader knows which one that was.
+_ENGINE_HEADER = "X-JBrain-Engine"
+
+
+def _engine_hint(engine: llm_engine.Engine) -> str:
+    service = llm_engine.SERVICE[engine]
+    return (
+        f" (active engine: {engine}; its container log is /debug/logs/{service}, and "
+        "/debug/llm/engine says whether it is running)"
+    )
 
 
 @router.get("/llm/gateway-logs", response_class=PlainTextResponse)
@@ -1463,13 +1494,20 @@ async def gateway_logs(
 
     `tail` reaches 20000 because a busy box turns over the buffer quickly and the old 2000
     cap could drop the window an operator was looking for. Sits beside /logs/{service}
-    (the container's stdout via the supervisor). 502 if the gateway can't be reached."""
-    request.state.debug_detail = f"gateway (tail {tail})"
+    (the container's stdout via the supervisor). 502 if the gateway can't be reached.
+
+    Engine-aware (FLASH_NEXT_ENGINE_PLAN §4d): both engines answer at the `local-llm` alias
+    and only one is ever up, so this reads whichever is running. The `X-JBrain-Engine`
+    header names the selected engine, and a 502 names that engine's container log."""
+    engine = await _active_engine(request)
+    request.state.debug_detail = f"gateway {engine} (tail {tail})"
     try:
         full = await _gateway(request).tail_logs()
     except LocalGatewayError as exc:
-        raise HTTPException(status_code=502, detail=f"gateway logs unavailable: {exc}") from exc
-    return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
+        raise HTTPException(
+            status_code=502, detail=f"gateway logs unavailable: {exc}{_engine_hint(engine)}"
+        ) from exc
+    return PlainTextResponse("\n".join(full.splitlines()[-tail:]), headers={_ENGINE_HEADER: engine})
 
 
 @router.get("/llm/upstream-logs", response_class=PlainTextResponse)
@@ -1496,15 +1534,20 @@ async def upstream_logs(
     instead (`local_gateway._record_measured_footprint`), which needs no log at all.
 
     `stream` defaults to `upstream` (every model's output interleaved) and also accepts a
-    served model id to isolate one model's load. An empty body means the engine has printed
-    nothing since llama-swap started — usually a box with no load since boot, not a fault.
+    served model id to isolate one model's load. Engine-aware like `gateway-logs`: it reads
+    whichever engine is up, and the `X-JBrain-Engine` header names it. An empty body means the
+    engine has printed nothing since llama-swap started — usually a box with no load since
+    boot, not a fault.
     502 if the gateway can't be reached."""
-    request.state.debug_detail = f"upstream {stream} (tail {tail})"
+    engine = await _active_engine(request)
+    request.state.debug_detail = f"upstream {engine} {stream} (tail {tail})"
     try:
         full = await _gateway(request).tail_upstream_logs(stream)
     except LocalGatewayError as exc:
-        raise HTTPException(status_code=502, detail=f"upstream logs unavailable: {exc}") from exc
-    return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
+        raise HTTPException(
+            status_code=502, detail=f"upstream logs unavailable: {exc}{_engine_hint(engine)}"
+        ) from exc
+    return PlainTextResponse("\n".join(full.splitlines()[-tail:]), headers={_ENGINE_HEADER: engine})
 
 
 @router.post("/llm/drop-page-cache")
@@ -1531,7 +1574,12 @@ async def drop_page_cache(
     GTT copy llama-server serves from, and weights are read-only. `freed_gb` is MEASURED via
     `cachestat(2)`; a null per-model value means the kernel could not measure the drop (the
     syscall is unavailable — it is blocked by the container's seccomp profile on this box),
-    not that nothing was freed."""
+    not that nothing was freed.
+
+    File-backed weights are SKIPPED (`local_weights`, FLASH_NEXT_ENGINE_PLAN §3): Flash-Next
+    serves its engram (PLE) table memory-mapped from disk, so that file's page cache is the
+    working set the model reads from, not residue — evicting it would turn every decode into
+    disk reads. A catalog entry with `file_backed_gb` reports less freed than its size."""
     request.state.debug_detail = f"drop page cache ({models or 'all'})"
     ids = [m.strip() for m in models.split(",") if m.strip()] if models else None
     freed = _gateway(request).drop_page_cache(ids)
@@ -3274,6 +3322,620 @@ async def prime_model(
         settings_store=_store(request),
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
     )
+
+
+# --- Local engine: Standard or Flash-Next (FLASH_NEXT_ENGINE_PLAN F1, debug-only) -------
+# The pre-F3 way to switch engines, so the F2 on-box spike can run through the token alone
+# (CLAUDE.md #10). It applies the §4d one-engine guard and nothing more: no drain, no smoke
+# test, no auto-rollback on a bad model. F3's PWA switch replaces it and these routes are
+# folded into that one.
+
+# Docker states in which a container holds (or is about to hold) its memory. Anything else
+# — exited, created, dead, or no container at all — is an engine that is not up.
+_UP_STATES = frozenset({"running", "restarting", "paused", "removing"})
+# Not provisioned: the supervisor has no container for the service.
+_MISSING = "missing"
+# How long a stop or start may take to show in the supervisor's /status. `docker stop`
+# grants 10 s before SIGKILL and the supervisor's stop is synchronous, so this is margin for
+# a slow daemon, not an expected wait. Module-level so tests can shrink them.
+_ENGINE_SETTLE_S = 90.0
+_ENGINE_POLL_S = 1.0
+
+
+class EngineIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    engine: llm_engine.Engine
+
+
+class EngineServiceOut(BaseModel):
+    service: str
+    # Docker's container state, or "missing" when the service was never provisioned.
+    state: str
+
+
+class EngineOut(BaseModel):
+    # The persisted owner setting — what the update one-shot will bring up.
+    active: llm_engine.Engine
+    services: dict[str, EngineServiceOut]
+    # Engines whose container is actually up. Exactly `[active]` on a healthy box.
+    running: list[llm_engine.Engine]
+    # `running == [active]`: false means the box disagrees with the setting (both up, none
+    # up, or the other one up) and the next switch is the repair.
+    consistent: bool
+    # A perplexity run owns the box while it lasts; a switch is refused until it ends.
+    perplexity_running: bool
+
+
+def _sup_headers(settings: Any) -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.supervisor_token}"}
+
+
+async def _container_states(request: Request, settings: Any) -> dict[str, str]:
+    """Service → docker state from the supervisor. Raises 502: every decision this section
+    makes is about what is running, so guessing on an unreadable supervisor is not safe."""
+    try:
+        resp = await _supervisor(request).get("/status", headers=_sup_headers(settings))
+        resp.raise_for_status()
+        payload = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"supervisor unreachable: {exc}") from exc
+    return {
+        str(c["service"]): str(c.get("state", ""))
+        for c in payload.get("containers", [])
+        if isinstance(c, dict) and "service" in c
+    }
+
+
+async def _perplexity_running(request: Request, settings: Any) -> bool:
+    resp = await _supervisor(request).get(
+        "/perplexity/status", params={"tail": 1}, headers=_sup_headers(settings)
+    )
+    # A supervisor that predates the job has never run one.
+    if resp.status_code == 404:
+        return False
+    resp.raise_for_status()
+    return cast(dict[str, Any], resp.json()).get("state") == "running"
+
+
+def _engine_out(active: llm_engine.Engine, states: dict[str, str], perplexity: bool) -> EngineOut:
+    services = {
+        e: EngineServiceOut(
+            service=llm_engine.SERVICE[e], state=states.get(llm_engine.SERVICE[e], _MISSING)
+        )
+        for e in llm_engine.ENGINES
+    }
+    running: list[llm_engine.Engine] = [
+        e for e in llm_engine.ENGINES if services[e].state in _UP_STATES
+    ]
+    return EngineOut(
+        active=active,
+        services=services,
+        running=running,
+        consistent=running == [active],
+        perplexity_running=perplexity,
+    )
+
+
+async def _wait_for(request: Request, settings: Any, service: str, *, up: bool) -> bool:
+    """Poll /status until `service` is up (or down). False on timeout. The supervisor's
+    start/stop return when docker does, but "returned" and "reported" are different claims
+    and only the second licenses starting the other engine."""
+    deadline = time.monotonic() + _ENGINE_SETTLE_S
+    while True:
+        state = (await _container_states(request, settings)).get(service, _MISSING)
+        if (state in _UP_STATES) == up:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(_ENGINE_POLL_S)
+
+
+async def _sup_toggle(request: Request, settings: Any, action: str, service: str) -> int:
+    """POST /start or /stop to the supervisor; the status code, with 404 (not provisioned)
+    left for the caller to decide about."""
+    resp = await _supervisor(request).post(
+        f"/{action}", json={"service": service}, headers=_sup_headers(settings)
+    )
+    if resp.status_code not in (202, 404):
+        raise HTTPException(
+            status_code=502, detail=f"supervisor {action} {service}: HTTP {resp.status_code}"
+        )
+    return resp.status_code
+
+
+async def _unload_resident(request: Request, why: str) -> list[str]:
+    """Unload every model the running gateway holds, through the client's own unload — the
+    one chokepoint that discharges the reservation ledger and narrates to box events. A
+    container stop would free the memory too, but leave the ledger charging for models that
+    no longer exist. An unreachable gateway reports nothing resident, so there is nothing
+    to release and nothing blocks."""
+    gateway = _gateway(request)
+    if gateway is None:
+        return []
+    released: list[str] = []
+    try:
+        with box_events.because(why):
+            for served in sorted(await gateway.running()):
+                await gateway.unload(served)
+                released.append(served)
+    except LocalGatewayError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"could not unload every resident model before {why} "
+            f"(released: {', '.join(released) or 'none'}): {exc}. Nothing was stopped.",
+        ) from exc
+    return released
+
+
+@router.get("/llm/engine")
+async def read_engine(request: Request, settings: SettingsDep, _p: DebugDep) -> EngineOut:
+    """Which local engine is selected, and the container state of BOTH engines' services —
+    the read that says whether the §4d "exactly one engine" guarantee holds right now."""
+    request.state.debug_detail = "engine state"
+    states = await _container_states(request, settings)
+    return _engine_out(
+        await _store(request).llm_local_engine(_OWNER_CTX),
+        states,
+        await _perplexity_running(request, settings),
+    )
+
+
+@router.post("/llm/engine")
+async def switch_engine(
+    body: EngineIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> EngineOut:
+    """**Debug-only engine switch** — Standard (`local-llm`) or Flash-Next (`flash-next`),
+    for the F2 spike before F3's PWA switch exists. Folded into that switch when it lands.
+
+    Never both up (§4d: their footprints together freeze a 128 GB box), so the order is
+    fixed: unload the running gateway's models (through the client, so the ledger and the
+    vitals surface stay honest), stop every OTHER engine and wait until the supervisor
+    REPORTS it stopped, only then start the target and wait for it to report running, and
+    only then persist the setting. Nothing is started while anything else is still up.
+
+    **409, with the previous engine left (or put back) running**, when the target was never
+    provisioned — refused before anything is touched when /status already shows no
+    container, and rolled back if /start 404s anyway. Also 409 while a perplexity run owns
+    the box. 504 if a stop or start never shows up in /status; the box is then in whatever
+    state the read says, and the same call is the repair.
+
+    What it does NOT do, and F3 must: drain. In-flight local calls are cut when their
+    engine stops, and nothing smoke-tests the new engine. Already on the target with the
+    other one down: a no-op that only re-persists the setting."""
+    target = body.engine
+    request.state.debug_detail = f"engine → {target}"
+    store = _store(request)
+    previous = await store.llm_local_engine(_OWNER_CTX)
+    if await _perplexity_running(request, settings):
+        raise HTTPException(
+            status_code=409,
+            detail="a perplexity run owns the box; wait for /llm/perplexity/status to finish",
+        )
+    states = await _container_states(request, settings)
+    target_service = llm_engine.SERVICE[target]
+    if target_service not in states:
+        raise HTTPException(
+            status_code=409,
+            detail=f"the {target} engine is not provisioned (no `{target_service}` container); "
+            "Ops → Update creates it once its weights are installed. Nothing was changed.",
+        )
+    up: list[llm_engine.Engine] = [
+        e for e in llm_engine.ENGINES if states.get(llm_engine.SERVICE[e]) in _UP_STATES
+    ]
+    others: list[llm_engine.Engine] = [e for e in up if e != target]
+    if not others and target in up:
+        await store.set_llm_local_engine(_OWNER_CTX, target)
+        return _engine_out(target, states, False)
+
+    await _unload_resident(request, f"switching the local engine to {target}")
+    for engine in others:
+        await _sup_toggle(request, settings, "stop", llm_engine.SERVICE[engine])
+        if not await _wait_for(request, settings, llm_engine.SERVICE[engine], up=False):
+            raise HTTPException(
+                status_code=504,
+                detail=f"{llm_engine.SERVICE[engine]} did not report stopped; "
+                f"{target_service} was NOT started",
+            )
+
+    # Put back ONE engine on failure — the selected one if it was up, else the first that
+    # was. Restoring two would recreate the very state this route exists to prevent.
+    restore = previous if previous in others else (others[0] if others else None)
+
+    async def _rollback() -> None:
+        with contextlib.suppress(HTTPException, httpx.HTTPError):
+            await _sup_toggle(request, settings, "stop", target_service)
+        if restore is not None:
+            with contextlib.suppress(HTTPException, httpx.HTTPError):
+                await _sup_toggle(request, settings, "start", llm_engine.SERVICE[restore])
+
+    # Already up beside the other one (the inconsistent state): stopping the other was the
+    # whole repair, and a start would be a no-op at best.
+    if target not in up and await _sup_toggle(request, settings, "start", target_service) == 404:
+        await _rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"the {target} engine is not provisioned (supervisor 404 on "
+            f"{target_service}); {restore or 'no engine'} was put back",
+        )
+    if not await _wait_for(request, settings, target_service, up=True):
+        await _rollback()
+        raise HTTPException(
+            status_code=504,
+            detail=f"{target_service} did not report running; "
+            f"{restore or 'no engine'} was put back",
+        )
+    await store.set_llm_local_engine(_OWNER_CTX, target)
+    log.info("debug.engine_switched", previous=previous, engine=target, stopped=others)
+    return _engine_out(target, await _container_states(request, settings), False)
+
+
+# --- Slot save/restore probe (F2 check 7) ------------------------------------------------
+# Whether a saved-then-restored slot computes the SAME next token distribution as the slot
+# it was saved from. Greedy token equality is too coarse (it can differ legitimately and
+# agree by luck), so this returns the top-n log-probabilities side by side and the largest
+# difference between them. Talks to llama-server directly through llama-swap's
+# `/upstream/<model>/…` passthrough — only after checking the model is resident, because
+# reaching that passthrough on a cold model makes llama-swap load it outside the budget.
+
+# A fixed file name: each probe overwrites the last, so repeated runs never accumulate
+# multi-GiB files in the `.kvslots` tree (the kv_prefix budget would evict them, but only
+# after they had displaced real prefixes).
+_SLOT_PROBE_FILE = "debug-slot-probe.bin"
+# Long prompts prefill for minutes on this box; the read waits that long.
+_SLOT_PROBE_TIMEOUT_S = 900.0
+# Tests swap in an httpx.MockTransport here; production uses the default network stack.
+_UPSTREAM_TRANSPORT: httpx.AsyncBaseTransport | None = None
+# ~12 tokens a line on the tokenizers this box serves; numbered so no two lines are equal
+# (a repeated line would let a cache reuse mask a restore that lost state).
+_SYNTH_LINE = "Line {i}: the ledger records {i} quiet observations about river stones.\n"
+
+
+class SlotProbeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Exactly one of these: the prompt itself, or roughly how many tokens to synthesize.
+    prompt: str | None = Field(default=None, min_length=1, max_length=2_000_000)
+    synth_tokens: int | None = Field(default=None, ge=16, le=262_144)
+    # Served model name; omitted = the one model resident on the active engine.
+    model: str | None = None
+    # Slot ids; omitted = the last two slots. The probe OVERWRITES both slots' caches.
+    slot_a: int | None = Field(default=None, ge=0, le=63)
+    slot_b: int | None = Field(default=None, ge=0, le=63)
+    n_probs: int = Field(default=10, ge=1, le=100)
+
+
+class SlotProbeRead(BaseModel):
+    slot: int
+    # Top-n next-token candidates: {"id", "token", "logprob"}, most likely first.
+    top: list[dict[str, Any]]
+    # llama-server's `timings` (prompt_n is how many tokens it actually evaluated — the
+    # number that shows whether a restored slot re-prefilled) and `tokens_cached`.
+    timings: dict[str, Any]
+    tokens_cached: int | None
+
+
+class SlotProbeDiff(BaseModel):
+    # Largest |logprob difference| over the token ids both reads put in their top-n.
+    max_abs_diff: float | None
+    shared: int
+    top1_equal: bool
+
+
+class SlotProbeOut(BaseModel):
+    engine: llm_engine.Engine
+    model: str
+    slot_a: int
+    slot_b: int
+    prompt_chars: int
+    cold: SlotProbeRead
+    warm: SlotProbeRead
+    restored: SlotProbeRead
+    restored_vs_cold: SlotProbeDiff
+    restored_vs_warm: SlotProbeDiff
+    n_saved: int | None
+    n_restored: int | None
+    file_bytes: int | None
+    save_ms: float | None
+    restore_ms: float | None
+
+
+def _synth_prompt(tokens: int) -> str:
+    return "".join(_SYNTH_LINE.format(i=i) for i in range(max(1, tokens // 12)))
+
+
+def _top_logprobs(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """The first generated token's candidates, in both shapes llama-server has shipped:
+    `top_logprobs` with log-probabilities (current), or `probs` with probabilities (older),
+    normalised to log space so the two compare."""
+    probs = body.get("completion_probabilities") or []
+    if not probs or not isinstance(probs[0], dict):
+        return []
+    first = probs[0]
+    if isinstance(first.get("top_logprobs"), list):
+        return [
+            {"id": c.get("id"), "token": c.get("token"), "logprob": float(c["logprob"])}
+            for c in first["top_logprobs"]
+            if isinstance(c, dict) and "logprob" in c
+        ]
+    out: list[dict[str, Any]] = []
+    for c in first.get("probs") or []:
+        if isinstance(c, dict) and c.get("prob", 0) > 0:
+            out.append(
+                {"id": c.get("id"), "token": c.get("tok_str"), "logprob": math.log(c["prob"])}
+            )
+    return out
+
+
+def _diff(a: SlotProbeRead, b: SlotProbeRead) -> SlotProbeDiff:
+    def key(c: dict[str, Any]) -> Any:
+        return c["id"] if c.get("id") is not None else c.get("token")
+
+    left = {key(c): c["logprob"] for c in a.top}
+    right = {key(c): c["logprob"] for c in b.top}
+    shared = left.keys() & right.keys()
+    return SlotProbeDiff(
+        max_abs_diff=max((abs(left[k] - right[k]) for k in shared), default=None),
+        shared=len(shared),
+        top1_equal=bool(a.top and b.top and key(a.top[0]) == key(b.top[0])),
+    )
+
+
+def _needs_save_path(resp: httpx.Response) -> bool:
+    # llama-server answers every slot action with 501 (ERROR_TYPE_NOT_SUPPORTED) when it was
+    # started without --slot-save-path; the message names the flag on every build seen.
+    return resp.status_code == 501 or "slot-save-path" in resp.text
+
+
+@router.post("/llm/slot-probe")
+async def slot_probe(
+    body: SlotProbeIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> SlotProbeOut:
+    """**Slot save/restore probe** (FLASH_NEXT_ENGINE_PLAN F2, check 7): does a restored slot
+    compute what the saved one did?
+
+    On the active engine's resident model: erase slots A and B, prime A with the prompt
+    (`n_predict: 1` — its next-token candidates are the COLD read), save A to a fixed file,
+    restore that file into B, then ask A (WARM, a cache hit) and B (RESTORED) for the same
+    next token with identical settings (`temperature 0`, `n_probs`). Returns the three top-n
+    log-probability lists side by side, the largest difference over shared candidates,
+    `n_saved` / `n_restored`, the file size (`n_written`), and each step's timings —
+    `restored.timings.prompt_n` is how many tokens B re-evaluated, which is how a restore that
+    lost its context checkpoints shows up (a hybrid re-prefills from zero).
+
+    Not a byte-equal ubatch comparison: the cold read prefills in whatever ubatch split the
+    server chooses for the whole prompt, so expect small differences, not zero.
+
+    **Overwrites both slots' caches** — pick slots no live workload is pinned to (on
+    Flash-Next, not slot 0's persona). 409 when no model is resident (this never loads one),
+    when the model serves fewer than two slots, or when the server runs without
+    `--slot-save-path` (llama-server refuses every slot action then). 400 for a bad slot pair
+    or neither/both of `prompt` and `synth_tokens`."""
+    if (body.prompt is None) == (body.synth_tokens is None):
+        raise HTTPException(status_code=400, detail="give exactly one of prompt, synth_tokens")
+    gateway = _gateway(request)
+    if gateway is None:
+        raise HTTPException(status_code=409, detail="local hosting is off on this box")
+    engine = await _active_engine(request)
+    resident = sorted(await gateway.running())
+    if body.model is not None:
+        if body.model not in resident:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{body.model} is not resident; load it first (this probe never loads)",
+            )
+        served = body.model
+    elif len(resident) == 1:
+        served = resident[0]
+    elif not resident:
+        raise HTTPException(
+            status_code=409, detail="no model is resident; load one first (this never loads)"
+        )
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"several models resident ({', '.join(resident)}); name one"
+        )
+    request.state.debug_detail = f"slot probe {served} ({engine})"
+    try:
+        n_slots = len(await gateway.slots(served))
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"could not read /slots: {exc}") from exc
+    if n_slots < 2:
+        raise HTTPException(
+            status_code=409, detail=f"{served} serves {n_slots} slot(s); the probe needs two"
+        )
+    slot_a = body.slot_a if body.slot_a is not None else n_slots - 2
+    slot_b = body.slot_b if body.slot_b is not None else n_slots - 1
+    if slot_a == slot_b or max(slot_a, slot_b) >= n_slots:
+        raise HTTPException(
+            status_code=400,
+            detail=f"slots must be two different ids below {n_slots} (got {slot_a}, {slot_b})",
+        )
+    prompt = body.prompt if body.prompt is not None else _synth_prompt(body.synth_tokens or 0)
+    base = f"{settings.local_llm_url.rstrip('/').removesuffix('/v1')}/upstream/{served}"
+
+    async with httpx.AsyncClient(
+        timeout=_SLOT_PROBE_TIMEOUT_S, transport=_UPSTREAM_TRANSPORT
+    ) as client:
+
+        async def action(slot: int, verb: str, payload: dict[str, Any]) -> dict[str, Any]:
+            resp = await client.post(f"{base}/slots/{slot}?action={verb}", json=payload)
+            if resp.status_code >= 400:
+                if _needs_save_path(resp):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"{served} runs without --slot-save-path, so llama-server "
+                        "refuses slot save/restore; nothing was primed",
+                    )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"slot {verb} on {slot}: HTTP {resp.status_code} {resp.text[:300]}",
+                )
+            return cast(dict[str, Any], resp.json())
+
+        async def read(slot: int) -> SlotProbeRead:
+            resp = await client.post(
+                f"{base}/completion",
+                json={
+                    "prompt": prompt,
+                    "n_predict": 1,
+                    "id_slot": slot,
+                    "cache_prompt": True,
+                    "n_probs": body.n_probs,
+                    "temperature": 0,
+                },
+            )
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"completion on slot {slot}: HTTP {resp.status_code} {resp.text[:300]}",
+                )
+            got = cast(dict[str, Any], resp.json())
+            return SlotProbeRead(
+                slot=slot,
+                top=_top_logprobs(got),
+                timings=cast(dict[str, Any], got.get("timings") or {}),
+                tokens_cached=got.get("tokens_cached"),
+            )
+
+        try:
+            await action(slot_a, "erase", {})
+            await action(slot_b, "erase", {})
+            cold = await read(slot_a)
+            saved = await action(slot_a, "save", {"filename": _SLOT_PROBE_FILE})
+            restored_meta = await action(slot_b, "restore", {"filename": _SLOT_PROBE_FILE})
+            warm = await read(slot_a)
+            restored = await read(slot_b)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"upstream: {exc}") from exc
+
+    def num(meta: dict[str, Any], *path: str) -> Any:
+        cur: Any = meta
+        for part in path:
+            cur = cur.get(part) if isinstance(cur, dict) else None
+        return cur
+
+    return SlotProbeOut(
+        engine=engine,
+        model=served,
+        slot_a=slot_a,
+        slot_b=slot_b,
+        prompt_chars=len(prompt),
+        cold=cold,
+        warm=warm,
+        restored=restored,
+        restored_vs_cold=_diff(restored, cold),
+        restored_vs_warm=_diff(restored, warm),
+        n_saved=num(saved, "n_saved"),
+        n_restored=num(restored_meta, "n_restored"),
+        file_bytes=num(saved, "n_written"),
+        save_ms=num(saved, "timings", "save_ms"),
+        restore_ms=num(restored_meta, "timings", "restore_ms"),
+    )
+
+
+# --- Perplexity one-shot (F2 check 6) ------------------------------------------------------
+
+_PPL_RE = re.compile(r"Final estimate: PPL = ([0-9.]+) \+/- ([0-9.]+)")
+
+
+class PerplexityIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # 512-token chunks of WikiText-2; omitted = the whole test split. The supervisor
+    # enforces the same 1..200 bound.
+    chunks: int | None = Field(default=None, ge=1, le=200)
+
+
+def _flash_next_model_path(models_dir: str) -> str:
+    """`/models/<id>/<first shard>` for the catalog's Flash-Next entry, resolved the way the
+    gateway config resolves `-m` — so the run reads exactly the file serving would, and no
+    shard name is hardcoded anywhere."""
+    entries = [
+        m for m in local_catalog.CATALOG if llm_engine.parse(m.engine) == llm_engine.FLASH_NEXT
+    ]
+    if not entries:
+        raise HTTPException(status_code=409, detail="this build's catalog has no Flash-Next model")
+    model = entries[0]
+    try:
+        rel = llama_swap_config.resolve_weight(models_dir, model.id, model.gguf_include)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{model.id} weights are not on the box ({exc}); install them in the PWA",
+        ) from exc
+    return f"/models/{model.id}/{rel}"
+
+
+@router.post("/llm/perplexity", status_code=202)
+async def start_perplexity(
+    body: PerplexityIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """**WikiText-2 perplexity on Flash-Next** (FLASH_NEXT_ENGINE_PLAN F2, check 6) — the
+    check that catches a bad conversion (the hyper-connection norm bug) against the #27742
+    reference, without a shell.
+
+    A FIXED supervisor job: `docker compose run --rm --no-deps flash-next llama-perplexity
+    -m <catalog weights> -f /opt/jbrain/eval/wiki.test.raw -ngl 999 -ot
+    per_layer_token_embd=CPU -c 512 [--chunks N]`. The only thing a caller chooses is the
+    chunk count (1..200); the model path is resolved HERE from the catalog and validated
+    again by the supervisor. There is no args field, because an argv is an exec.
+
+    It STOPS the running engine for the duration and restarts that same one afterwards
+    (the job's own trap, so it happens even when the run fails): this run loads the model
+    a second time, and only a stopped gateway cannot have something loaded into it mid-run.
+    Resident models are unloaded through the gateway first so the ledger is discharged.
+    Local calls fail while it runs. Poll `/llm/perplexity/status`.
+
+    409 when the weights are absent, the flash-next container was never provisioned, or
+    another one-shot (update, refresh, a previous run) is running."""
+    model_path = _flash_next_model_path(settings.local_models_dir)
+    request.state.debug_detail = f"perplexity {model_path} (chunks {body.chunks or 'all'})"
+    if await _perplexity_running(request, settings):
+        raise HTTPException(status_code=409, detail="a perplexity run is already going")
+    released = await _unload_resident(request, "a perplexity run needs the box")
+    resp = await _supervisor(request).post(
+        "/perplexity",
+        json={"model_path": model_path, "chunks": body.chunks},
+        headers=_sup_headers(settings),
+    )
+    if resp.status_code == 404:
+        raise HTTPException(
+            status_code=409,
+            detail="the flash-next service is not provisioned; Ops → Update creates it",
+        )
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another one-shot is running")
+    if resp.status_code == 400:
+        raise HTTPException(
+            status_code=409,
+            detail=f"the supervisor refused the resolved path {model_path!r}",
+        )
+    resp.raise_for_status()
+    return {**cast(dict[str, object], resp.json()), "model_path": model_path, "unloaded": released}
+
+
+@router.get("/llm/perplexity/status")
+async def perplexity_status(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> dict[str, object]:
+    """The perplexity one-shot's state + log tail, with `ppl` / `ppl_error` parsed from
+    llama-perplexity's `Final estimate` line once it has printed one (null until then)."""
+    request.state.debug_detail = f"perplexity (tail {tail})"
+    resp = await _supervisor(request).get(
+        "/perplexity/status", params={"tail": tail}, headers=_sup_headers(settings)
+    )
+    resp.raise_for_status()
+    data = cast(dict[str, object], resp.json())
+    found = _PPL_RE.search(str(data.get("log_tail", "")))
+    return {
+        **data,
+        "ppl": float(found.group(1)) if found else None,
+        "ppl_error": float(found.group(2)) if found else None,
+    }
 
 
 # --- What the panels heard, and asking them to say so now -------------------

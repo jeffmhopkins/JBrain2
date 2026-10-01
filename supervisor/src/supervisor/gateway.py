@@ -21,6 +21,11 @@ if TYPE_CHECKING:
 
 COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
+# "True" on a `docker compose run` container. It carries the SAME service label as the
+# long-running container, so a lookup by service alone can land on a transient one-off
+# (an update's `run --rm api`, the perplexity job's `run flash-next`) instead of the
+# service the caller meant to start, stop or read.
+COMPOSE_ONEOFF_LABEL = "com.docker.compose.oneoff"
 
 # Updater one-shots are deliberately OUTSIDE the compose project label so
 # stack-wide restarts never touch a running update.
@@ -72,6 +77,90 @@ def _refresh_command(service: str) -> str:
         "apk add --no-cache git >/dev/null 2>&1 && "
         f"exec sh src/deploy/refresh-inner.sh {shlex.quote(service)}"
     )
+
+
+# The two on-box LLM engines (backend `jbrain.llm.engine.SERVICE`). Never both up: on a
+# 128 GB box their footprints together are a freeze (FLASH_NEXT_ENGINE_PLAN §4d).
+ENGINE_SERVICES = ("local-llm", "flash-next")
+FLASH_NEXT_SERVICE = "flash-next"
+# The WikiText-2 raw test split, baked into the flash-next image at this fixed path
+# by deploy/Dockerfile.flash-next, and llama.cpp's perplexity tool on that image's PATH.
+PERPLEXITY_TEXT = "/opt/jbrain/eval/wiki.test.raw"
+PERPLEXITY_BINARY = "llama-perplexity"
+# Fixed name for the job's model container, so a run killed mid-way (the one-shot
+# reaped, the daemon restarted) leaves something the next run can find and remove by
+# name rather than a second ~60 GiB process nobody is tracking.
+PERPLEXITY_CONTAINER = "jbrain-flash-next-perplexity"
+# The flags are FIXED here, never taken from a request: `-ngl 999` is the full offload
+# the serving config uses (the shape llama.cpp #29028 crashed on); the engram table
+# stays on the CPU because the 26.8 GiB tensor exceeds Vulkan's 4 GiB binding limit;
+# `-c 512` is the context the published WikiText-2 references are measured at.
+PERPLEXITY_ARGS = ("-ngl", "999", "-ot", "per_layer_token_embd=CPU", "-c", "512")
+
+
+def _perplexity_command(project: str, model_path: str, chunks: int | None) -> str:
+    """The perplexity one-shot's whole script — a FIXED job, never free-form exec.
+
+    The only caller-derived tokens are the model path (validated at the HTTP layer
+    against a strict pattern under /models) and an integer chunk count; both are
+    shell-quoted here too, so a caller that skips the validation still cannot inject.
+
+    It STOPS whichever engine is up first, and restarts exactly that one afterwards.
+    An idle-looking gateway is not enough: the warm keeper or a queued ingest can load
+    a model into it mid-run, and that model plus the ~60 GiB this run loads is the
+    freeze. Only a stopped container is race-free. Two engines found up at once is
+    already the §4d violation, so neither is restarted and the log says so."""
+    q = shlex.quote
+    scope = (
+        f"--filter {q(f'label={COMPOSE_PROJECT_LABEL}={project}')} "
+        f"--filter {q(f'label={COMPOSE_ONEOFF_LABEL}=False')}"
+    )
+    args = [*PERPLEXITY_ARGS, *(("--chunks", str(int(chunks))) if chunks else ())]
+    run = " ".join(
+        [
+            "docker compose --profile",
+            q(FLASH_NEXT_SERVICE),
+            "run --rm --no-deps -T --name",
+            q(PERPLEXITY_CONTAINER),
+            "--entrypoint",
+            q(PERPLEXITY_BINARY),
+            q(FLASH_NEXT_SERVICE),
+            "-m",
+            q(model_path),
+            "-f",
+            q(PERPLEXITY_TEXT),
+            *(q(a) for a in args),
+        ]
+    )
+    engines = " ".join(q(s) for s in ENGINE_SERVICES)
+    return f"""set -u
+ids() {{ docker ps $1 {scope} --filter "label={COMPOSE_SERVICE_LABEL}=$2"; }}
+stopped=""
+for svc in {engines}; do
+  running=$(ids -q "$svc")
+  if [ -n "$running" ]; then
+    echo "[perplexity] stopping $svc for the run"
+    docker stop -t 30 $running >/dev/null
+    stopped="$stopped $svc"
+  fi
+done
+restore() {{
+  set -- $stopped
+  if [ "$#" -eq 1 ]; then
+    echo "[perplexity] restarting $1"
+    docker start $(ids -aq "$1") >/dev/null || echo "[perplexity] could not restart $1"
+  elif [ "$#" -gt 1 ]; then
+    echo "[perplexity] both engines were up before the run; leaving both stopped"
+  fi
+}}
+trap restore EXIT
+docker rm -f {q(PERPLEXITY_CONTAINER)} >/dev/null 2>&1 || true
+echo "[perplexity] {q(model_path)} on {PERPLEXITY_TEXT}"
+rc=0
+{run} || rc=$?
+echo "[perplexity] exit $rc"
+exit $rc
+"""
 
 
 # Docker reports this zero-value timestamp for containers that never started.
@@ -183,6 +272,8 @@ class DockerGateway(Protocol):
 
     def start_refresh(self, service: str) -> str: ...
 
+    def start_perplexity(self, model_path: str, chunks: int | None) -> str: ...
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus: ...
 
 
@@ -209,8 +300,9 @@ class ComposeDockerGateway:
         )
         infos: list[ContainerInfo] = []
         for container in containers:
-            service = (container.labels or {}).get(COMPOSE_SERVICE_LABEL)
-            if not service:
+            labels = container.labels or {}
+            service = labels.get(COMPOSE_SERVICE_LABEL)
+            if not service or labels.get(COMPOSE_ONEOFF_LABEL) == "True":
                 continue
             infos.append(_to_info(service, container))
         return infos
@@ -334,6 +426,13 @@ class ComposeDockerGateway:
             "jbrain-refresh", {ONESHOT_LABEL: "refresh"}, _refresh_command(service)
         )
 
+    def start_perplexity(self, model_path: str, chunks: int | None) -> str:
+        return self._run_oneshot(
+            "jbrain-perplexity",
+            {ONESHOT_LABEL: "perplexity"},
+            _perplexity_command(self._project, model_path, chunks),
+        )
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
         return self._status_of(self._latest(f"{ONESHOT_LABEL}={kind}"), tail)
 
@@ -416,9 +515,14 @@ class ComposeDockerGateway:
                 ]
             },
         )
-        if not matches:
+        # A one-off alone is not the service: starting or stopping it would act on a
+        # transient `compose run` container while the real one was never created.
+        services = [
+            c for c in matches if (c.labels or {}).get(COMPOSE_ONEOFF_LABEL) != "True"
+        ]
+        if not services:
             raise UnknownServiceError(service)
-        return matches[0]
+        return services[0]
 
 
 def _to_info(service: str, container: Container) -> ContainerInfo:

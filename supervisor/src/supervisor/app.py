@@ -23,10 +23,15 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from supervisor import host_metrics, usb_devices, watchdog
-from supervisor.gateway import DockerGateway, UnknownServiceError, UpdateInProgressError
+from supervisor.gateway import (
+    FLASH_NEXT_SERVICE,
+    DockerGateway,
+    UnknownServiceError,
+    UpdateInProgressError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -176,6 +181,34 @@ class ImportStartRequest(BaseModel):
 class RebuildRequest(BaseModel):
     service: str
 
+
+# Bounds on the perplexity job's one numeric knob. 200 chunks of 512 tokens is ~100k
+# tokens — enough for a stable estimate to compare against a published reference, and a
+# ceiling so a token cannot park a ~60 GiB process on the box for hours.
+PERPLEXITY_CHUNKS_MAX = 200
+
+
+class PerplexityRequest(BaseModel):
+    """Everything a caller may say about the perplexity job — and it is not much.
+
+    `model_path` is resolved by the api from the catalog (it owns the models mount and
+    the shard naming); here it must be a .gguf under /models with plain path segments,
+    so it can never name a file outside the weights tree or carry a flag.
+    extra="forbid": an unexpected field is a 422, not a silently ignored argument."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_path: str
+    chunks: int | None = Field(default=None, ge=1, le=PERPLEXITY_CHUNKS_MAX)
+
+
+# /models/<catalog id>/[<quant dir>/]<file>.gguf — every segment starts alphanumeric, so
+# none can be `..` or begin with `-`.
+PERPLEXITY_MODEL_RE = re.compile(
+    r"^/models/[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+    r"(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,127})?"
+    r"/[A-Za-z0-9][A-Za-z0-9._-]{0,191}\.gguf$"
+)
 
 # Import archives are api-named uploads; anything else is rejected before the
 # name reaches a shell command line.
@@ -512,6 +545,35 @@ def create_app(
         tail: Annotated[int, Query(ge=1)] = 80,
     ) -> UpdateStatusResponse:
         status = gateway.oneshot_status("refresh", min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
+    @authed.post("/perplexity", status_code=202)
+    def start_perplexity(body: PerplexityRequest) -> OneshotStartResponse:
+        # WikiText-2 perplexity inside the flash-next image (FLASH_NEXT_ENGINE_PLAN F2,
+        # check 6) — a FIXED job: the binary, text file and flags are constants in the
+        # gateway; the request picks only a validated model path and a bounded count.
+        # The service must exist (it is the image the job runs), so a box that never
+        # provisioned Flash-Next 404s instead of compose building one on the spot.
+        if not PERPLEXITY_MODEL_RE.fullmatch(body.model_path):
+            raise HTTPException(status_code=400, detail="bad model path")
+        if FLASH_NEXT_SERVICE not in {c.service for c in gateway.list_containers()}:
+            raise UnknownServiceError(FLASH_NEXT_SERVICE)
+        try:
+            return OneshotStartResponse(
+                oneshot=gateway.start_perplexity(body.model_path, body.chunks)
+            )
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/perplexity/status")
+    def perplexity_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("perplexity", min(tail, MAX_LOG_TAIL))
         return UpdateStatusResponse(
             state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
         )

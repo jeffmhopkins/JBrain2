@@ -136,6 +136,13 @@ class FakeGateway:
         self.oneshots_started.append(("refresh", service))
         return f"jbrain-refresh-{len(self.oneshots_started)}"
 
+    def start_perplexity(self, model_path: str, chunks: int | None) -> str:
+        if self._busy():
+            raise UpdateInProgressError
+        self.oneshot_running = "perplexity"
+        self.oneshots_started.append(("perplexity", f"{model_path}|{chunks}"))
+        return f"jbrain-perplexity-{len(self.oneshots_started)}"
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
         if not any(k == kind for k, _ in self.oneshots_started):
             return UpdateStatus(state="none", exit_code=None, log_tail="")
