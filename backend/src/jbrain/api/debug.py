@@ -14,7 +14,6 @@ it can read anything yet write nothing.
 
 import asyncio
 import base64
-import contextlib
 import datetime as dt
 import decimal
 import json
@@ -3330,9 +3329,10 @@ async def prime_model(
 # test, no auto-rollback on a bad model. F3's PWA switch replaces it and these routes are
 # folded into that one.
 
-# Docker states in which a container holds (or is about to hold) its memory. Anything else
-# — exited, created, dead, or no container at all — is an engine that is not up.
-_UP_STATES = frozenset({"running", "restarting", "paused", "removing"})
+# Docker states in which a container holds its memory. `restarting` is deliberately NOT
+# here: it is a container between runs (a crash loop's gap), and counting it as up would
+# let a crash-looping engine block every switch away from it — the repair this route is.
+_UP_STATES = frozenset({"running", "paused", "removing"})
 # Not provisioned: the supervisor has no container for the service.
 _MISSING = "missing"
 # How long a stop or start may take to show in the supervisor's /status. `docker stop`
@@ -3340,6 +3340,11 @@ _MISSING = "missing"
 # a slow daemon, not an expected wait. Module-level so tests can shrink them.
 _ENGINE_SETTLE_S = 90.0
 _ENGINE_POLL_S = 1.0
+# One switch at a time in this process. A client that times out and retries must not
+# start a second stop/start sequence interleaved with the first — two sequences can each
+# see "the other engine is down" and start their own target. The second gets a 409, not a
+# queue: by the time it ran, the first would have changed what it was asked to change.
+_ENGINE_LOCK = asyncio.Lock()
 
 
 class EngineIn(BaseModel):
@@ -3396,6 +3401,19 @@ async def _perplexity_running(request: Request, settings: Any) -> bool:
         return False
     resp.raise_for_status()
     return cast(dict[str, Any], resp.json()).get("state") == "running"
+
+
+async def _oneshot_in_flight(request: Request, settings: Any) -> str | None:
+    """The supervisor one-shot in flight ("update", "refresh", "perplexity", …), or None.
+    An update or refresh recreates containers and a perplexity run holds the box, so an
+    engine must not be started or stopped underneath any of them."""
+    resp = await _supervisor(request).get("/oneshot", headers=_sup_headers(settings))
+    if resp.status_code == 404:
+        # A supervisor that predates the route: the perplexity read is the most it can say.
+        return "perplexity" if await _perplexity_running(request, settings) else None
+    resp.raise_for_status()
+    running = cast(dict[str, Any], resp.json()).get("running")
+    return str(running) if running else None
 
 
 def _engine_out(active: llm_engine.Engine, states: dict[str, str], perplexity: bool) -> EngineOut:
@@ -3492,25 +3510,38 @@ async def switch_engine(
     fixed: unload the running gateway's models (through the client, so the ledger and the
     vitals surface stay honest), stop every OTHER engine and wait until the supervisor
     REPORTS it stopped, only then start the target and wait for it to report running, and
-    only then persist the setting. Nothing is started while anything else is still up.
+    only then persist the setting. Nothing is started while anything else is still up —
+    and the supervisor's own `/start` refuses an engine while the other runs, so this holds
+    even against a caller that is not this route.
 
     **409, with the previous engine left (or put back) running**, when the target was never
     provisioned — refused before anything is touched when /status already shows no
-    container, and rolled back if /start 404s anyway. Also 409 while a perplexity run owns
-    the box. 504 if a stop or start never shows up in /status; the box is then in whatever
-    state the read says, and the same call is the repair.
+    container, and rolled back if /start 404s anyway. The rollback starts the previous
+    engine ONLY after the target's stop was accepted and /status confirms it down; if that
+    cannot be confirmed it restores nothing and says so (504), because one engine down is
+    recoverable and two up is a freeze. 409 too while any supervisor one-shot runs (update,
+    refresh, provision, perplexity, …) or another switch is in flight in this process. 504
+    if a stop or start never shows up in /status; the same call is the repair.
 
     What it does NOT do, and F3 must: drain. In-flight local calls are cut when their
     engine stops, and nothing smoke-tests the new engine. Already on the target with the
     other one down: a no-op that only re-persists the setting."""
     target = body.engine
     request.state.debug_detail = f"engine → {target}"
+    if _ENGINE_LOCK.locked():
+        raise HTTPException(status_code=409, detail="an engine switch is already in progress")
+    async with _ENGINE_LOCK:
+        return await _switch_engine(target, request, settings)
+
+
+async def _switch_engine(target: llm_engine.Engine, request: Request, settings: Any) -> EngineOut:
     store = _store(request)
     previous = await store.llm_local_engine(_OWNER_CTX)
-    if await _perplexity_running(request, settings):
+    busy = await _oneshot_in_flight(request, settings)
+    if busy is not None:
         raise HTTPException(
             status_code=409,
-            detail="a perplexity run owns the box; wait for /llm/perplexity/status to finish",
+            detail=f"a supervisor one-shot ({busy}) is running; switch once it has finished",
         )
     states = await _container_states(request, settings)
     target_service = llm_engine.SERVICE[target]
@@ -3542,28 +3573,51 @@ async def switch_engine(
     # was. Restoring two would recreate the very state this route exists to prevent.
     restore = previous if previous in others else (others[0] if others else None)
 
-    async def _rollback() -> None:
-        with contextlib.suppress(HTTPException, httpx.HTTPError):
-            await _sup_toggle(request, settings, "stop", target_service)
-        if restore is not None:
-            with contextlib.suppress(HTTPException, httpx.HTTPError):
-                await _sup_toggle(request, settings, "start", llm_engine.SERVICE[restore])
+    async def _rollback() -> str:
+        """Stop the target, and restart `restore` only once the target is CONFIRMED down.
+        Returns what to tell the caller."""
+        try:
+            code = await _sup_toggle(request, settings, "stop", target_service)
+            down = code == 404 or await _wait_for(request, settings, target_service, up=False)
+        except (HTTPException, httpx.HTTPError):
+            down = False
+        if not down:
+            raise HTTPException(
+                status_code=504,
+                detail=f"{target_service} could not be confirmed stopped, so nothing was "
+                "restored (starting the previous engine beside it could freeze the box); "
+                "read /llm/engine and switch again",
+            )
+        if restore is None:
+            return "no engine was running before, so none was put back"
+        try:
+            await _sup_toggle(request, settings, "start", llm_engine.SERVICE[restore])
+        except (HTTPException, httpx.HTTPError):
+            return f"{restore} could NOT be put back; switch to it again"
+        return f"{restore} was put back"
 
-    # Already up beside the other one (the inconsistent state): stopping the other was the
-    # whole repair, and a start would be a no-op at best.
-    if target not in up and await _sup_toggle(request, settings, "start", target_service) == 404:
-        await _rollback()
+    try:
+        # Already up beside the other one (the inconsistent state): stopping the other was
+        # the whole repair, and a start would be a no-op at best.
+        started = (
+            202 if target in up else await _sup_toggle(request, settings, "start", target_service)
+        )
+    except (HTTPException, httpx.HTTPError) as exc:
+        outcome = await _rollback()
+        raise HTTPException(
+            status_code=502, detail=f"{target_service} did not start ({exc}); {outcome}"
+        ) from exc
+    if started == 404:
+        outcome = await _rollback()
         raise HTTPException(
             status_code=409,
             detail=f"the {target} engine is not provisioned (supervisor 404 on "
-            f"{target_service}); {restore or 'no engine'} was put back",
+            f"{target_service}); {outcome}",
         )
     if not await _wait_for(request, settings, target_service, up=True):
-        await _rollback()
+        outcome = await _rollback()
         raise HTTPException(
-            status_code=504,
-            detail=f"{target_service} did not report running; "
-            f"{restore or 'no engine'} was put back",
+            status_code=504, detail=f"{target_service} did not report running; {outcome}"
         )
     await store.set_llm_local_engine(_OWNER_CTX, target)
     log.info("debug.engine_switched", previous=previous, engine=target, stopped=others)
@@ -3599,7 +3653,8 @@ class SlotProbeIn(BaseModel):
     synth_tokens: int | None = Field(default=None, ge=16, le=262_144)
     # Served model name; omitted = the one model resident on the active engine.
     model: str | None = None
-    # Slot ids; omitted = the last two slots. The probe OVERWRITES both slots' caches.
+    # Slot ids; omitted = the last two slots, and then only on a model serving at least
+    # three, so slot 0 is never picked by default. The probe OVERWRITES both slots' caches.
     slot_a: int | None = Field(default=None, ge=0, le=63)
     slot_b: int | None = Field(default=None, ge=0, le=63)
     n_probs: int = Field(default=10, ge=1, le=100)
@@ -3633,6 +3688,10 @@ class SlotProbeOut(BaseModel):
     restored: SlotProbeRead
     restored_vs_cold: SlotProbeDiff
     restored_vs_warm: SlotProbeDiff
+    # False when the restored read re-evaluated the whole prompt (prompt_n ≥ the cold
+    # read's) — the restore loaded state the server then threw away, which is what a
+    # hybrid without its context checkpoints does. None when timings are missing.
+    restore_effective: bool | None
     n_saved: int | None
     n_restored: int | None
     file_bytes: int | None
@@ -3679,6 +3738,14 @@ def _diff(a: SlotProbeRead, b: SlotProbeRead) -> SlotProbeDiff:
         shared=len(shared),
         top1_equal=bool(a.top and b.top and key(a.top[0]) == key(b.top[0])),
     )
+
+
+def _restore_effective(cold: SlotProbeRead, restored: SlotProbeRead) -> bool | None:
+    full = cold.timings.get("prompt_n")
+    again = restored.timings.get("prompt_n")
+    if not isinstance(full, int | float) or not isinstance(again, int | float):
+        return None
+    return again < full
 
 
 def _needs_save_path(resp: httpx.Response) -> bool:
@@ -3740,9 +3807,13 @@ async def slot_probe(
         n_slots = len(await gateway.slots(served))
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"could not read /slots: {exc}") from exc
-    if n_slots < 2:
+    named = body.slot_a is not None and body.slot_b is not None
+    if n_slots < 2 or (n_slots < 3 and not named):
         raise HTTPException(
-            status_code=409, detail=f"{served} serves {n_slots} slot(s); the probe needs two"
+            status_code=409,
+            detail=f"{served} serves {n_slots} slot(s); the probe needs two, and picks them "
+            "itself only when there are three or more (it never defaults to slot 0, the "
+            "persona slot) — name slot_a and slot_b to use slot 0 deliberately",
         )
     slot_a = body.slot_a if body.slot_a is not None else n_slots - 2
     slot_b = body.slot_b if body.slot_b is not None else n_slots - 1
@@ -3826,6 +3897,7 @@ async def slot_probe(
         restored=restored,
         restored_vs_cold=_diff(restored, cold),
         restored_vs_warm=_diff(restored, warm),
+        restore_effective=_restore_effective(cold, restored),
         n_saved=num(saved, "n_saved"),
         n_restored=num(restored_meta, "n_restored"),
         file_bytes=num(saved, "n_written"),
@@ -3842,8 +3914,8 @@ _PPL_RE = re.compile(r"Final estimate: PPL = ([0-9.]+) \+/- ([0-9.]+)")
 class PerplexityIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # 512-token chunks of WikiText-2; omitted = the whole test split. The supervisor
-    # enforces the same 1..200 bound.
+    # 512-token chunks of WikiText-2; omitted = the supervisor's bounded default (100),
+    # never the whole split. The supervisor enforces the same 1..200 bound.
     chunks: int | None = Field(default=None, ge=1, le=200)
 
 
@@ -3877,22 +3949,30 @@ async def start_perplexity(
 
     A FIXED supervisor job: `docker compose run --rm --no-deps flash-next llama-perplexity
     -m <catalog weights> -f /opt/jbrain/eval/wiki.test.raw -ngl 999 -ot
-    per_layer_token_embd=CPU -c 512 [--chunks N]`. The only thing a caller chooses is the
-    chunk count (1..200); the model path is resolved HERE from the catalog and validated
-    again by the supervisor. There is no args field, because an argv is an exec.
+    per_layer_token_embd=CPU -c 512 --chunks N`. The only thing a caller chooses is the
+    chunk count (1..200, default 100); the model path is resolved HERE from the catalog and
+    validated again by the supervisor. There is no args field, because an argv is an exec.
 
     It STOPS the running engine for the duration and restarts that same one afterwards
     (the job's own trap, so it happens even when the run fails): this run loads the model
     a second time, and only a stopped gateway cannot have something loaded into it mid-run.
     Resident models are unloaded through the gateway first so the ledger is discharged.
-    Local calls fail while it runs. Poll `/llm/perplexity/status`.
+    Known gap, accepted for a debug route: between that unload and the job's container
+    stop, the warm keeper or a request can load a model again; the stop then frees it
+    without the client's unload, so the ledger keeps a stale charge until its TTL sweep
+    (no memory is at risk — the container is down). Local calls fail while it runs. The
+    model container's output is in `/llm/perplexity/status`; `/logs/flash-next` shows the
+    idle service container, not the run. Poll the status route.
 
     409 when the weights are absent, the flash-next container was never provisioned, or
     another one-shot (update, refresh, a previous run) is running."""
     model_path = _flash_next_model_path(settings.local_models_dir)
-    request.state.debug_detail = f"perplexity {model_path} (chunks {body.chunks or 'all'})"
-    if await _perplexity_running(request, settings):
-        raise HTTPException(status_code=409, detail="a perplexity run is already going")
+    request.state.debug_detail = f"perplexity {model_path} (chunks {body.chunks or 'default'})"
+    # Checked BEFORE unloading: refusing after would have evicted the owner's models for a
+    # run that never starts.
+    busy = await _oneshot_in_flight(request, settings)
+    if busy is not None:
+        raise HTTPException(status_code=409, detail=f"a supervisor one-shot ({busy}) is running")
     released = await _unload_resident(request, "a perplexity run needs the box")
     resp = await _supervisor(request).post(
         "/perplexity",

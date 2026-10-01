@@ -27,7 +27,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from supervisor import host_metrics, usb_devices, watchdog
 from supervisor.gateway import (
+    ENGINE_SERVICES,
     FLASH_NEXT_SERVICE,
+    ContainerInfo,
     DockerGateway,
     UnknownServiceError,
     UpdateInProgressError,
@@ -69,6 +71,15 @@ class ContainerStatus(BaseModel):
 
 class StatusResponse(BaseModel):
     containers: list[ContainerStatus]
+    # `docker compose run` containers (an update's `run api`, the perplexity run). They
+    # carry their service's label, so they are listed apart rather than in
+    # `containers`, where one would read as the service itself.
+    oneoffs: list[ContainerStatus] = []
+
+
+class OneshotRunningResponse(BaseModel):
+    # The kind in flight ("update", "refresh", "perplexity", ...), or None.
+    running: str | None
 
 
 class ContainerMemoryOut(BaseModel):
@@ -267,18 +278,25 @@ def create_app(
 
     @authed.get("/status")
     def status() -> StatusResponse:
+        def out(c: ContainerInfo) -> ContainerStatus:
+            return ContainerStatus(
+                service=c.service,
+                state=c.state,
+                health=c.health,
+                started_at=c.started_at,
+                image=c.image,
+            )
+
         return StatusResponse(
-            containers=[
-                ContainerStatus(
-                    service=c.service,
-                    state=c.state,
-                    health=c.health,
-                    started_at=c.started_at,
-                    image=c.image,
-                )
-                for c in gateway.list_containers()
-            ]
+            containers=[out(c) for c in gateway.list_containers()],
+            oneoffs=[out(c) for c in gateway.list_oneoffs()],
         )
+
+    @authed.get("/oneshot")
+    def oneshot_running() -> OneshotRunningResponse:
+        # One read for "is anything in flight", so a caller deciding whether it may
+        # touch the engines does not have to know every one-shot kind there is.
+        return OneshotRunningResponse(running=gateway.running_oneshot())
 
     @authed.post("/restart", status_code=202)
     def restart(body: RestartRequest, background: BackgroundTasks) -> RestartResponse:
@@ -304,10 +322,28 @@ def create_app(
             gateway.restart(body.service)
         return RestartResponse(restarting=[body.service])
 
+    def _guard_engine_start(service: str) -> None:
+        # One engine at a time (FLASH_NEXT_ENGINE_PLAN §4d), enforced HERE because every
+        # caller that starts an engine - the debug switch, the Ops toggle, jcode's power
+        # on - comes through this route, and the two engines together freeze the box.
+        if gateway.running_oneshot() == "perplexity":
+            raise HTTPException(
+                status_code=409, detail="a perplexity run holds the box"
+            )
+        for c in gateway.list_containers():
+            other = c.service in ENGINE_SERVICES and c.service != service
+            if other and c.state == "running":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{c.service} is running; stop it before {service}",
+                )
+
     @authed.post("/start", status_code=202)
     def start_service(body: ServiceRequest) -> ServiceActionResponse:
         # Toggle an existing-but-stopped service on (the comfyui profile service).
         # An unknown/never-created service raises UnknownServiceError -> 404.
+        if body.service in ENGINE_SERVICES:
+            _guard_engine_start(body.service)
         gateway.start(body.service)
         return ServiceActionResponse(service=body.service, action="start")
 

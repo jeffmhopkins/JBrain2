@@ -44,6 +44,7 @@ class FakeGateway:
         self.update_log = "[update] starting"
         self.oneshot_running: str | None = None
         self.oneshots_started: list[tuple[str, str | None]] = []
+        self.oneoffs: list[ContainerInfo] = []
 
     def list_containers(self) -> list[ContainerInfo]:
         return list(self.containers)
@@ -151,6 +152,14 @@ class FakeGateway:
                 state="running", exit_code=None, log_tail=f"[{kind}] starting"
             )
         return UpdateStatus(state="exited", exit_code=0, log_tail=f"[{kind}] complete")
+
+    def running_oneshot(self) -> str | None:
+        if self.updater_running:
+            return "update"
+        return self.oneshot_running
+
+    def list_oneoffs(self) -> list[ContainerInfo]:
+        return list(self.oneoffs)
 
     def _busy(self) -> bool:
         return self.updater_running or self.oneshot_running is not None

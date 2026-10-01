@@ -63,12 +63,21 @@ class _Supervisor:
         self.perplexity_tail = ""
         self.perplexity_posts: list[dict] = []
         self.perplexity_answer = 202
+        # Another one-shot kind in flight (update, refresh, ...), or None.
+        self.oneshot: str | None = None
+        # An older supervisor with no /oneshot route.
+        self.no_oneshot_route = False
 
     async def get(self, url: str, params: dict | None = None, headers: dict | None = None) -> _Resp:
         assert headers == {"Authorization": "Bearer sek"}
         if url == "/status":
             containers = [{"service": s, "state": st} for s, st in self.states.items()]
             return _Resp(200, {"containers": containers})
+        if url == "/oneshot":
+            if self.no_oneshot_route:
+                return _Resp(404)
+            running = "perplexity" if self.perplexity_state == "running" else self.oneshot
+            return _Resp(200, {"running": running})
         if url == "/perplexity/status":
             body = {"state": self.perplexity_state, "exit_code": None}
             return _Resp(200, {**body, "log_tail": self.perplexity_tail})
@@ -451,7 +460,10 @@ class _Upstream:
     a /completion that answers per-slot logprobs. `save_path=False` is a server started
     without --slot-save-path, which refuses every slot action with 501."""
 
-    def __init__(self, *, save_path: bool = True, drift: float = 0.0) -> None:
+    def __init__(
+        self, *, save_path: bool = True, drift: float = 0.0, reprefill: bool = False
+    ) -> None:
+        self.reprefill = reprefill
         self.save_path = save_path
         self.drift = drift
         self.calls: list[str] = []
@@ -503,7 +515,7 @@ class _Upstream:
             200,
             json={
                 "completion_probabilities": [{"id": 11, "logprob": -0.1, "top_logprobs": top}],
-                "timings": {"prompt_n": 1 if slot in self.restored else 777},
+                "timings": {"prompt_n": 1 if slot in self.restored and not self.reprefill else 777},
                 "tokens_cached": 777,
             },
         )
@@ -850,3 +862,207 @@ def test_slot_probe_502s_on_a_slot_action_error(
     monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(broken))
     resp = _probe(client, key)
     assert resp.status_code == 502 and "disk full" in resp.json()["detail"]
+
+
+# --- review fixes ------------------------------------------------------------------------
+
+
+def test_switch_refuses_while_any_oneshot_runs(box: tuple[TestClient, str, Any]) -> None:
+    client, key, state = box
+    for kind in ("update", "refresh", "provision"):
+        state.supervisor_client.oneshot = kind
+        resp = client.post(
+            "/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key)
+        )
+        assert resp.status_code == 409 and kind in resp.json()["detail"]
+    assert state.supervisor_client.events == []
+    assert state.local_gateway.unloaded == []
+
+
+def test_switch_against_an_older_supervisor_still_sees_a_perplexity_run(
+    box: tuple[TestClient, str, Any],
+) -> None:
+    client, key, state = box
+    sup = state.supervisor_client
+    sup.no_oneshot_route = True
+    sup.perplexity_state = "running"
+    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    assert resp.status_code == 409
+    sup.perplexity_state = "exited"
+    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    assert resp.status_code == 200
+
+
+def test_a_concurrent_switch_is_refused_not_interleaved(
+    box: tuple[TestClient, str, Any],
+) -> None:
+    client, key, state = box
+
+    async def hold() -> None:
+        await debug._ENGINE_LOCK.acquire()
+
+    asyncio.run(hold())
+    try:
+        resp = client.post(
+            "/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key)
+        )
+    finally:
+        debug._ENGINE_LOCK.release()
+    assert resp.status_code == 409 and "in progress" in resp.json()["detail"]
+    assert state.supervisor_client.events == []
+
+
+def test_a_restarting_container_is_not_counted_as_up(box: tuple[TestClient, str, Any]) -> None:
+    """A crash-looping engine must not block the switch away from it."""
+    client, key, state = box
+    sup = state.supervisor_client
+    sup.states.update({"local-llm": "exited", "flash-next": "restarting"})
+    body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
+    assert body["running"] == []
+    resp = client.post("/api/debug/llm/engine", json={"engine": "standard"}, headers=_auth(key))
+    assert resp.status_code == 200
+    assert "start local-llm" in sup.events
+
+
+def test_rollback_restores_nothing_when_the_target_will_not_stop(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Target started but never reported running, and its stop then fails: putting the
+    previous engine back would make two. One down is recoverable; two up is a freeze."""
+    client, key, state = box
+    sup = state.supervisor_client
+    real_post = sup.post
+
+    async def crash_then_refuse_stop(
+        url: str, json: dict | None = None, headers: dict | None = None
+    ):
+        service = (json or {}).get("service")
+        if url == "/stop" and service == "flash-next":
+            sup.events.append("stop flash-next refused")
+            return _Resp(500)
+        resp = await real_post(url, json=json, headers=headers)
+        if url == "/start" and service == "flash-next":
+            sup.states["flash-next"] = "created"  # never reports running
+        return resp
+
+    monkeypatch.setattr(sup, "post", crash_then_refuse_stop)
+    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+
+    assert resp.status_code == 504
+    assert "nothing was restored" in resp.json()["detail"]
+    assert "start local-llm" not in sup.events
+    assert sup.violations == []
+
+
+def test_rollback_restores_nothing_when_the_target_stop_is_not_confirmed(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop is ACCEPTED (202) but /status never shows the target down."""
+    client, key, state = box
+    sup = state.supervisor_client
+    real_post = sup.post
+
+    async def flaky(url: str, json: dict | None = None, headers: dict | None = None):
+        service = (json or {}).get("service")
+        resp = await real_post(url, json=json, headers=headers)
+        if service == "flash-next":
+            sup.states["flash-next"] = "created" if url == "/start" else "running"
+        return resp
+
+    monkeypatch.setattr(sup, "post", flaky)
+    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    assert resp.status_code == 504
+    assert "nothing was restored" in resp.json()["detail"]
+    assert "start local-llm" not in sup.events
+
+
+def test_rollback_when_the_start_itself_errors(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, key, state = box
+    sup = state.supervisor_client
+    real_post = sup.post
+
+    async def start_500(url: str, json: dict | None = None, headers: dict | None = None):
+        if url == "/start" and (json or {}).get("service") == "flash-next":
+            sup.events.append("start flash-next 500")
+            return _Resp(500)
+        return await real_post(url, json=json, headers=headers)
+
+    monkeypatch.setattr(sup, "post", start_500)
+    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    assert resp.status_code == 502
+    assert "standard was put back" in resp.json()["detail"]
+    assert sup.events[-1] == "start local-llm"
+    assert sup.violations == []
+
+
+def test_rollback_reports_a_restore_that_failed(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, key, state = box
+    sup = state.supervisor_client
+    sup.start_404.add("flash-next")
+    real_post = sup.post
+
+    async def restore_fails(url: str, json: dict | None = None, headers: dict | None = None):
+        if url == "/start" and (json or {}).get("service") == "local-llm":
+            return _Resp(500)
+        return await real_post(url, json=json, headers=headers)
+
+    monkeypatch.setattr(sup, "post", restore_fails)
+    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    assert resp.status_code == 409
+    assert "could NOT be put back" in resp.json()["detail"]
+
+
+def test_rollback_with_nothing_previously_up(box: tuple[TestClient, str, Any]) -> None:
+    client, key, state = box
+    sup = state.supervisor_client
+    sup.states["local-llm"] = "exited"
+    sup.start_404.add("flash-next")
+    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    assert resp.status_code == 409
+    assert "none was put back" in resp.json()["detail"]
+
+
+def test_slot_probe_never_defaults_to_slot_zero(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, key, state = box
+    upstream = _Upstream()
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(upstream))
+    state.local_gateway.n_slots = 2
+    resp = _probe(client, key)
+    assert resp.status_code == 409 and "slot 0" in resp.json()["detail"]
+    assert upstream.calls == []
+    # Named explicitly, slot 0 is the operator's deliberate choice.
+    resp = _probe(client, key, prompt="x", slot_a=0, slot_b=1)
+    assert resp.status_code == 200
+
+
+def test_slot_probe_flags_a_restore_the_server_threw_away(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, key, _ = box
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(_Upstream()))
+    assert _probe(client, key).json()["restore_effective"] is True
+    upstream = _Upstream(reprefill=True)
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(upstream))
+    assert _probe(client, key).json()["restore_effective"] is False
+
+
+def test_restore_effective_is_unknown_without_timings() -> None:
+    bare = debug.SlotProbeRead(slot=0, top=[], timings={}, tokens_cached=None)
+    assert debug._restore_effective(bare, bare) is None
+
+
+def test_perplexity_checks_for_a_oneshot_before_unloading(
+    box: tuple[TestClient, str, Any], flash_next_catalog: str
+) -> None:
+    client, key, state = box
+    state.supervisor_client.oneshot = "update"
+    resp = client.post("/api/debug/llm/perplexity", json={}, headers=_auth(key))
+    assert resp.status_code == 409 and "update" in resp.json()["detail"]
+    assert state.local_gateway.unloaded == []
+    assert state.supervisor_client.perplexity_posts == []
