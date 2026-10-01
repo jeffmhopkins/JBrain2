@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import get_settings
+from jbrain.llm import engine as llm_engine
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import (
     LLM_TASK_OVERRIDES_KEY,
@@ -162,6 +163,21 @@ async def _clear_provision_ids() -> None:
         await engine.dispose()
 
 
+async def _print_local_engine() -> None:
+    """Print the active on-box engine for the update one-shot, which brings up that engine's
+    container and never the other. An unreachable DB prints the default: the standard gateway
+    is the engine every box has, and the script stops the other one either way."""
+    settings = get_settings()
+    db = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(db, expire_on_commit=False))
+        print(await store.llm_local_engine(SYSTEM_CTX))
+    except Exception:  # noqa: BLE001
+        print(llm_engine.DEFAULT_ENGINE)
+    finally:
+        await db.dispose()
+
+
 async def _print_remove_ids() -> None:
     """Print the uninstall queue (one catalog id per line) for the update one-shot.
     Owner-scoped (settings RLS is is_owner()); empty output is the normal 'nothing
@@ -286,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("local-provision-clear", help="empty the local-model install queue")
     sub.add_parser("local-remove-ids", help="print the local-model uninstall queue")
     sub.add_parser("local-remove-clear", help="empty the local-model uninstall queue")
+    sub.add_parser("local-engine", help="print the active on-box engine (standard|flash-next)")
     p_activate = sub.add_parser(
         "local-activate",
         help="make a just-installed local model the active chat model (agent.turn)",
@@ -328,6 +345,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "local-remove-clear":
         asyncio.run(_clear_remove_ids())
+        return 0
+    if args.command == "local-engine":
+        asyncio.run(_print_local_engine())
         return 0
     if args.command == "local-activate":
         asyncio.run(_local_activate(args.model_id))

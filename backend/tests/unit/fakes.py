@@ -908,6 +908,18 @@ class FakeSettingsStore:
         self.values["llm_local_remove_requested"] = clean
         return clean
 
+    async def llm_local_engine(self, ctx: object) -> str:
+        from jbrain.llm.engine import parse
+
+        return parse(self.values.get("llm_local_engine"))
+
+    async def set_llm_local_engine(self, ctx: object, engine: str) -> str:
+        from jbrain.llm.engine import parse
+
+        clean = parse(engine)
+        self.values["llm_local_engine"] = clean
+        return clean
+
 
 class FakeLocalGateway:
     """In-memory stand-in for the llama-swap admin client (LocalGatewayClient)."""

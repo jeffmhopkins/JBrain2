@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** Proposed · **Last verified:** 2026-10-01 · **Waves:** F1◻️ F2◻️ F3◻️ F4◻️ F5◻️
+> **Status:** Scheduled · **Last verified:** 2026-10-01 · **Waves:** F1◻️ F2◻️ F3◻️ F4◻️ F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -368,9 +368,7 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
   been exercised from the PWA or the debug token on the real box.
 - `docs/runbooks/DEBUG_ACCESS.md` lists the new debug routes (F1).
 - Docs: `docs/runbooks/STRIX_HALO_SETUP.md` gains a Flash-Next section in F1, written as
-  PWA steps only; the
-  operator-facing switch is documented in F3; this plan flips to Scheduled when committed
-  to the roadmap.
+  PWA steps only; the operator-facing switch is documented in F3.
 
 ## 9. Open questions
 

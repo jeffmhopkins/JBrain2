@@ -397,6 +397,18 @@ class LocalModel:
     # model is generating a thinking trace, else `sampling`. None when the card is unified
     # (Nemotron/GLM) or the model has no thinking mode — `sampling` then applies always.
     sampling_thinking: Sampling | None = None
+    # Which on-box engine serves this model (jbrain.llm.engine): the standard `local-llm`
+    # gateway, or the Flash-Next container. Each engine renders only its own models, so the
+    # standard gateway never tries to load a model its llama.cpp build cannot serve.
+    engine: str = "standard"
+    # The `-np` served when the operator has saved no slot count. 1 for every standard entry;
+    # Flash-Next uses its slots as role-pinned prefix caches (FLASH_NEXT_ENGINE_PLAN §4a).
+    default_slots: int = 1
+    # GB of the weight files served memory-mapped from disk rather than loaded resident — the
+    # Flash-Next engram (PLE) table, pinned to CPU and paged in on demand. Subtracted from the
+    # measured on-disk size when budgeting, because the kernel reclaims those pages under
+    # pressure instead of the box running out of memory.
+    file_backed_gb: float = 0.0
 
     @property
     def spec(self) -> str:

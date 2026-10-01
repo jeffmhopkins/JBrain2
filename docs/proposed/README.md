@@ -15,14 +15,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
-- `FLASH_NEXT_ENGINE_PLAN.md` — a **switchable second local-LLM stack**: Qwen3.8-Flash-Next
-  (125B MoE + 51B engram table, text + image) in its own `flash-next` container, never co-resident
-  with the standard `local-llm` gateway, flipped from Ops with drain → swap → smoke → auto-rollback.
-  While active it is the only local LLM and the API remaps every local call to it. Four role-pinned
-  slots (each its own 262k KV) used as prefix caches, one disk-saved prefix per role; IQ4_XS with the
-  engram table memory-mapped from disk, ~83 GiB resident (derived). Mainline llama.cpp on Vulkan
-  first, custom engines (gufo, EngramHalo) evidence-gated. Revised after two independent reviews.
-
 - `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
   owner's gesture, and the research answer that both hard halves already ship: whisper.cpp and
   Kokoro TTS are in production in the `tts-stt` container, and a full voice loop already runs

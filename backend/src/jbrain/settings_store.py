@@ -16,6 +16,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.llm.engine import Engine
+from jbrain.llm.engine import parse as parse_engine
 from jbrain.sdr.roles import GAIN_CHOICES, GENERAL, UPCONVERTER_MAX_HZ, Radio
 
 ImageAnalysisMode = Literal["full", "ocr"]
@@ -126,6 +128,12 @@ LLM_LOCAL_PROVISION_REQUESTED_KEY = "llm_local_provision_requested"
 # weights behind hard guards, then clears it. A list of catalog ids; non-string and
 # duplicate entries are dropped on read (first-seen order preserved).
 LLM_LOCAL_REMOVE_REQUESTED_KEY = "llm_local_remove_requested"
+
+# Which on-box engine serves local calls: "standard" (the `local-llm` gateway) or
+# "flash-next" (docs/plans/FLASH_NEXT_ENGINE_PLAN.md). Read by the update one-shot through
+# `jbrain.cli local-engine` to decide which container to bring up — never both. Absent or
+# unknown reads as "standard" (jbrain.llm.engine.parse).
+LLM_LOCAL_ENGINE_KEY = "llm_local_engine"
 
 # The owner's IANA display timezone (e.g. "America/New_York"). Absent = UTC.
 # Server-rendered times — the agent's appointment prose — localize to it so they
@@ -1361,4 +1369,13 @@ class SqlSettingsStore:
         """Replace the uninstall queue with `ids` (sanitized like the reader); returns it."""
         clean = _dedup_str_list(ids)
         await self.upsert(ctx, LLM_LOCAL_REMOVE_REQUESTED_KEY, clean)
+        return clean
+
+    async def llm_local_engine(self, ctx: SessionContext) -> Engine:
+        """The active on-box engine; absent or malformed reads as the default."""
+        return parse_engine(await self.get(ctx, LLM_LOCAL_ENGINE_KEY, None))
+
+    async def set_llm_local_engine(self, ctx: SessionContext, engine: Engine) -> Engine:
+        clean = parse_engine(engine)
+        await self.upsert(ctx, LLM_LOCAL_ENGINE_KEY, clean)
         return clean

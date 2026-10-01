@@ -430,6 +430,20 @@ async def test_llm_local_remove_requested_round_trip_and_dedups(
     assert await store.llm_local_remove_requested(OWNER) == []
 
 
+async def test_llm_local_engine_round_trip_and_rejects_unknown(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_ENGINE_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.llm_local_engine(OWNER) == "standard"
+    assert await store.set_llm_local_engine(OWNER, "flash-next") == "flash-next"
+    assert await store.llm_local_engine(OWNER) == "flash-next"
+    # A malformed stored value reads as the default rather than leaving no engine to start.
+    await store.upsert(OWNER, LLM_LOCAL_ENGINE_KEY, "gpt-9")
+    assert await store.llm_local_engine(OWNER) == "standard"
+
+
 async def test_llm_local_settings_are_owner_only(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
