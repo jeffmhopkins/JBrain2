@@ -83,10 +83,23 @@ def _refresh_command(service: str) -> str:
 # 128 GB box their footprints together are a freeze (FLASH_NEXT_ENGINE_PLAN §4d).
 ENGINE_SERVICES = ("local-llm", "flash-next")
 FLASH_NEXT_SERVICE = "flash-next"
+# Docker states in which an engine container holds (or is about to re-take) its memory.
+# ONE definition, mirrored in backend `jbrain.llm.engine.UP_STATES`,
+# deploy/local-engine.sh `_le_running` and the perplexity script below, so no path calls
+# an engine "down" that another calls "up". `restarting` counts: a crash-looping engine
+# re-allocates on every loop, so it is STOPPED before the other starts, never skipped.
+ENGINE_UP_STATES = frozenset({"running", "paused", "restarting", "removing"})
+
+
+def engine_up(state: str) -> bool:
+    return state in ENGINE_UP_STATES
+
+
 # The WikiText-2 raw test split, baked into the flash-next image at this fixed path
-# by deploy/Dockerfile.flash-next, and llama.cpp's perplexity tool on that image's PATH.
+# by deploy/Dockerfile.flash-next, and llama.cpp's perplexity tool by ABSOLUTE path —
+# the image's own pinned build, so a base-image binary on PATH never stands in for it.
 PERPLEXITY_TEXT = "/opt/jbrain/eval/wiki.test.raw"
-PERPLEXITY_BINARY = "llama-perplexity"
+PERPLEXITY_BINARY = "/opt/llama.cpp/bin/llama-perplexity"
 # Fixed name for the job's model container, so a run killed mid-way (the one-shot
 # reaped, the daemon restarted) leaves something the next run can find and remove by
 # name rather than a second ~60 GiB process nobody is tracking.
@@ -152,8 +165,12 @@ def _perplexity_command(
     )
     engines = " ".join(q(s) for s in ENGINE_SERVICES)
     label = q(f"label={COMPOSE_SERVICE_LABEL}=")
+    # Every state engine_up() counts, OR'd by docker: a bare `docker ps` lists only
+    # what it calls running, and a paused or crash-looping engine still holds memory.
+    up = " ".join(f"--filter status={st}" for st in sorted(ENGINE_UP_STATES))
     return f"""set -u
 ids() {{ docker ps $1 {scope} --filter {label}"$2"; }}
+up_ids() {{ ids "-aq {up}" "$1"; }}
 restore_svc={q(restore)}
 restore() {{
   if [ -n "$restore_svc" ]; then
@@ -164,7 +181,7 @@ restore() {{
 }}
 trap restore EXIT
 for svc in {engines}; do
-  running=$(ids -q "$svc")
+  running=$(up_ids "$svc")
   if [ -n "$running" ]; then
     echo "[perplexity] stopping $svc for the run"
     docker stop -t 30 $running >/dev/null \\
@@ -172,7 +189,7 @@ for svc in {engines}; do
   fi
 done
 for svc in {engines}; do
-  if [ -n "$(ids -q "$svc")" ]; then
+  if [ -n "$(up_ids "$svc")" ]; then
     echo "[perplexity] $svc is still running; not running beside it"
     exit 1
   fi
@@ -461,7 +478,7 @@ class ComposeDockerGateway:
         up = [
             c.service
             for c in self.list_containers()
-            if c.service in ENGINE_SERVICES and c.state == "running"
+            if c.service in ENGINE_SERVICES and engine_up(c.state)
         ]
         restore = up[0] if len(up) == 1 else ""
         return self._run_oneshot(
@@ -568,7 +585,7 @@ class ComposeDockerGateway:
             return
         with contextlib.suppress(Exception):
             if not any(
-                c.service in ENGINE_SERVICES and c.state == "running"
+                c.service in ENGINE_SERVICES and engine_up(c.state)
                 for c in self.list_containers()
             ):
                 self._find(restore).start()

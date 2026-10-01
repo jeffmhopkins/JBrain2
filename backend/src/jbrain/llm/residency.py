@@ -283,8 +283,8 @@ class ResidencyWiring:
     # are one calculation. None (DB-less CLIs, cloud-only, tests) falls back to the
     # measured+predicted planner — the last place that duplicate survives (L3).
     ledger: ReservationLedger | None
-    # The active on-box engine (`settings_store.llm_local_engine`), read per decision. Only
-    # that engine's models are loaded or restored: the other engine's gateway is down, so a
+    # The active (EFFECTIVE) on-box engine (`llm_local_engine_effective`), read per decision.
+    # Only that engine's models are loaded or restored: the other engine's gateway is down, so a
     # load of its model can only fail after this coordinator has already evicted something
     # for it (FLASH_NEXT_ENGINE_PLAN §4d). None -> every catalog model is admissible, the
     # behaviour before a second engine existed.

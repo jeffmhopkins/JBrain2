@@ -2,7 +2,8 @@
 # Exactly one on-box LLM engine, on every path that starts one.
 #
 # A LIBRARY, sourced (`. src/deploy/local-engine.sh`) by the scripts that bring a gateway up:
-# deploy/update-inner.sh, deploy/local-models-sync.sh and scripts/local-llm-setup.sh. It
+# deploy/update-inner.sh, deploy/local-models-sync.sh, scripts/local-llm-setup.sh, and the
+# one-service deploys deploy/refresh-inner.sh / deploy/rebuild-inner.sh for an engine. It
 # defines functions and runs nothing.
 #
 # Two engines exist (docs/plans/FLASH_NEXT_ENGINE_PLAN.md): the standard `local-llm` gateway
@@ -15,10 +16,18 @@
 # flag the owner would have to edit from a shell they do not have (CLAUDE.md #10). An
 # unreadable setting reads as `standard`, the engine every box has.
 #
-# NOTHING HERE BUILDS AN IMAGE. Every `up` carries --no-build: an implicit compose build of the
-# Flash-Next image is a full llama.cpp compile, and the model sync runs these helpers with the
-# stack up and serving, unbounded. The ONLY build site is update-inner.sh's bounded build in
-# the quiesced window (local_engine_select). An engine with no image is treated as absent.
+# DESIRED vs EFFECTIVE. That setting (`llm_local_engine`) is what the owner WANTS; it is never
+# rewritten here. Whatever actually starts an engine records it as the EFFECTIVE engine
+# (`llm_local_engine_effective`, local_engine_set_effective), and the api routes, lists and
+# re-stamps by that — so a Flash-Next that could not start (no image, weights incomplete, a
+# failed start) falls back to standard WITHOUT leaving the api refusing every standard load
+# while it still believes Flash-Next is up. The next update tries the desired engine again.
+#
+# Every `up` carries --no-build: an implicit compose build of the Flash-Next image is a full
+# llama.cpp compile, and the model sync runs these helpers with the stack up and serving,
+# unbounded. An engine image is built in exactly two places, each bounded and each with NO
+# engine running: update-inner.sh's quiesced window (local_engine_select) and an engine
+# refresh/rebuild (local_engine_rebuild). An engine with no image is treated as absent.
 #
 # POSIX sh: it runs inside the bash-less docker:cli updater. Every caller runs from the
 # install dir (docker-compose.yml + .env + ./src).
@@ -118,8 +127,13 @@ local_engine_flash_next_installed() {
   fi
 }
 
+# "Up" = holds (or is about to re-take) its memory: running, paused, restarting or removing —
+# the one predicate the supervisor (gateway.ENGINE_UP_STATES), the api (llm.engine.UP_STATES)
+# and the perplexity job share. A crash-looping (restarting) engine re-allocates on every loop,
+# so it is released and stopped like a running one, never skipped as down.
 _le_running() {
-  [ -n "$(docker compose --profile "$1" ps -q --status running "$1" 2>/dev/null)" ]
+  [ -n "$(docker compose --profile "$1" ps -q --status running --status paused \
+    --status restarting --status removing "$1" 2>/dev/null)" ]
 }
 
 _le_mem_available_kb() {
@@ -161,6 +175,15 @@ local_engine_release() {
   return 0
 }
 
+# Record the engine that is actually up as the EFFECTIVE engine, for the api. Best-effort: an
+# unreachable DB leaves the last value, and the next start writes it again.
+local_engine_set_effective() {
+  # shellcheck disable=SC2086  # the runner is a deliberately word-split command prefix.
+  $LOCAL_ENGINE_RUNNER docker compose run --rm --no-deps -T api \
+    python -m jbrain.cli set-local-engine-effective "$1" >/dev/null 2>&1 \
+    || local_engine_say "WARNING: could not record $1 as the effective engine"
+}
+
 # Bring up exactly ONE engine.
 #
 #   $1  the selected engine (standard | flash-next)
@@ -173,10 +196,11 @@ local_engine_release() {
 #
 # Flash-Next selected but not runnable, or failing to start, falls back to the standard
 # gateway and SAYS SO — the owner reads this in the PWA's update log, and a box with no
-# engine at all is worse than one on the other engine. The setting itself is left alone:
-# rewriting the owner's choice is the switch's job (F3), not a deploy script's.
+# engine at all is worse than one on the other engine. The DESIRED setting is left alone
+# (rewriting the owner's choice is the switch's job, F3), so the next update retries it; the
+# EFFECTIVE engine is recorded as standard, so the api serves standard meanwhile.
 #
-# Sets LOCAL_ENGINE_STARTED to the engine actually started.
+# Sets LOCAL_ENGINE_STARTED to the engine actually started, and records it as effective.
 local_engine_start() {
   _le_engine="${1:-standard}"
   _le_fn="${2:-}"
@@ -191,10 +215,14 @@ local_engine_start() {
       || local_engine_say "WARNING: could not create the standard gateway (stopped) — switching back will need an Update first"
     if docker compose --profile flash-next up -d --no-build flash-next; then
       LOCAL_ENGINE_STARTED=flash-next
+      local_engine_set_effective flash-next
       local_engine_say "Flash-Next engine started; the standard gateway is created and stopped"
       return 0
     fi
     local_engine_say "WARNING: the Flash-Next engine did not start — falling back to the standard engine"
+  fi
+  if [ "${1:-standard}" = flash-next ]; then
+    local_engine_say "FALLBACK: Flash-Next stays SELECTED (the next update retries it) but the standard engine serves — the api routes to standard until then"
   fi
   local_engine_release flash-next
   if [ "$_le_fn" = 1 ]; then
@@ -202,7 +230,61 @@ local_engine_start() {
       || local_engine_say "WARNING: could not create the Flash-Next container (stopped)"
   fi
   LOCAL_ENGINE_STARTED=standard
-  docker compose --profile local-llm up -d --no-build local-llm
+  _le_rc=0
+  docker compose --profile local-llm up -d --no-build local-llm || _le_rc=$?
+  local_engine_set_effective standard
+  return "$_le_rc"
+}
+
+# Rebuild ONE engine's image (`local-llm` or `flash-next`) for deploy/refresh-inner.sh and
+# deploy/rebuild-inner.sh, without ever putting a second engine up.
+#
+# A plain `up -d <service>` there would enable that service's profile and START it — beside the
+# other engine if that one serves (§4d's freeze) — and its implicit build is a llama.cpp
+# compile on a serving box. So an engine refresh is a QUIESCED build, the same discipline as
+# the update's: release whichever engine is up (models unloaded, stopped, memory settled),
+# build under the bounded runner with nothing serving, recreate the container STOPPED
+# (`up --no-start --no-build`), then bring back exactly the engine that was up before — the
+# refreshed one or the other — through local_engine_start (one engine, effective recorded,
+# fallback to standard if Flash-Next will not start). Nothing up before: nothing started.
+#
+# This is what lets F2 iterate on the flash-next image whichever engine serves, at the cost of
+# local inference being down for the build; the supervisor refuses any engine /start or
+# /restart while the one-shot runs, so nothing restarts one underneath the compile.
+#
+# A failed build keeps the previous image (compose leaves it), still brings the engine back,
+# and returns non-zero so the one-shot reads as failed.
+local_engine_rebuild() {
+  _le_target="$1"
+  _le_was=''
+  for _le_svc in local-llm flash-next; do
+    if _le_running "$_le_svc"; then _le_was="$_le_was $_le_svc"; fi
+  done
+  case "$_le_was" in
+    *local-llm*flash-next*)
+      # Both up is the violation itself: bring back the one the owner selected.
+      _le_back="$(local_engine_read)" ;;
+    *flash-next*) _le_back=flash-next ;;
+    *local-llm*) _le_back=standard ;;
+    *) _le_back='' ;;
+  esac
+  for _le_svc in $_le_was; do
+    local_engine_release "$_le_svc"
+  done
+  _le_brc=0
+  local_engine_say "building $_le_target with no engine running (bounded)"
+  # shellcheck disable=SC2086  # the runner is a deliberately word-split command prefix.
+  $LOCAL_ENGINE_BUILD_RUNNER docker compose --profile "$_le_target" build "$_le_target" \
+    || { _le_brc=1; local_engine_say "WARNING: $_le_target did not build — keeping its previous image"; }
+  docker compose --profile "$_le_target" up --no-start --no-build "$_le_target" >/dev/null 2>&1 \
+    || { _le_brc=1; local_engine_say "WARNING: could not recreate $_le_target (stopped)"; }
+  if [ -n "$_le_back" ]; then
+    local_engine_say "bringing back the engine that was running: $_le_back"
+    local_engine_start "$_le_back" "$(local_engine_flash_next_installed)" || _le_brc=1
+  else
+    local_engine_say "no engine was running before; $_le_target is left created and stopped"
+  fi
+  return "$_le_brc"
 }
 
 # The update's engine decision, run once after the image build (update-inner.sh). Sets:

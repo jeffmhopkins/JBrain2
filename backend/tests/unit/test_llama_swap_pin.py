@@ -77,9 +77,12 @@ def test_flash_next_bakes_a_checksummed_wikitext_sample() -> None:
 
 
 def test_flash_next_puts_llama_perplexity_on_path() -> None:
-    """The perplexity one-shot invokes it by bare name inside this image; the build
-    fails rather than ship an image where it does not resolve."""
+    """The perplexity one-shot runs /opt/llama.cpp/bin/llama-perplexity; the same build is
+    installed over whatever `llama-perplexity` PATH resolves to (as llama-server is), and
+    the image fails to build unless the binary on PATH reports the pinned commit."""
     text = _FLASH_NEXT.read_text()
     assert "--target llama-server llama-perplexity" in text
-    assert "/usr/local/bin/llama-perplexity" in text
-    assert "command -v llama-perplexity" in text
+    assert "for b in llama-server llama-perplexity" in text
+    assert 'command -v "$b"' in text
+    assert "llama-perplexity --version" in text
+    assert "/opt/llama.cpp/bin/" in text

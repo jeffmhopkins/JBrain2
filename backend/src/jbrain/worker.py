@@ -706,7 +706,7 @@ async def run() -> None:
             # The same active-engine gate as the api's coordinator: a background job never
             # loads the engine that is not running (FLASH_NEXT_ENGINE_PLAN §4d).
             engine_loader=ActiveEngine(
-                lambda: worker_settings_store.llm_local_engine(queue.SYSTEM_CTX)
+                lambda: worker_settings_store.llm_local_engine_effective(queue.SYSTEM_CTX)
             ).get,
         ),
     )

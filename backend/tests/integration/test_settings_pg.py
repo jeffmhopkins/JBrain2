@@ -444,6 +444,24 @@ async def test_llm_local_engine_round_trip_and_rejects_unknown(
     assert await store.llm_local_engine(OWNER) == "standard"
 
 
+async def test_llm_local_engine_effective_is_its_own_key(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_ENGINE_EFFECTIVE_KEY
+
+    store = SqlSettingsStore(maker)
+    await store.set_llm_local_engine(OWNER, "flash-next")
+    # Desired Flash-Next with nothing recorded as started reads as standard: the engine
+    # every box has, never one the api would then refuse loads for.
+    assert await store.llm_local_engine_effective(OWNER) == "standard"
+    assert await store.set_llm_local_engine_effective(OWNER, "flash-next") == "flash-next"
+    assert await store.llm_local_engine_effective(OWNER) == "flash-next"
+    await store.set_llm_local_engine_effective(OWNER, "standard")
+    assert await store.llm_local_engine(OWNER) == "flash-next"
+    await store.upsert(OWNER, LLM_LOCAL_ENGINE_EFFECTIVE_KEY, "gpt-9")
+    assert await store.llm_local_engine_effective(OWNER) == "standard"
+
+
 async def test_llm_local_settings_are_owner_only(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

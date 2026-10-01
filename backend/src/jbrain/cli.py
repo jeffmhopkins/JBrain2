@@ -163,6 +163,19 @@ async def _clear_provision_ids() -> None:
         await engine.dispose()
 
 
+async def _set_local_engine_effective(engine: str) -> None:
+    """Record the engine a deploy script actually started (deploy/local-engine.sh), which the
+    api routes by. The DESIRED setting is never touched here: a fallback to standard must not
+    rewrite the owner's choice, so the next update retries it."""
+    settings = get_settings()
+    db = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(db, expire_on_commit=False))
+        await store.set_llm_local_engine_effective(SYSTEM_CTX, llm_engine.parse(engine))
+    finally:
+        await db.dispose()
+
+
 async def _print_local_engine() -> None:
     """Print the active on-box engine for the update one-shot, which brings up that engine's
     container and never the other. An unreachable DB prints the default: the standard gateway
@@ -307,7 +320,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("local-provision-clear", help="empty the local-model install queue")
     sub.add_parser("local-remove-ids", help="print the local-model uninstall queue")
     sub.add_parser("local-remove-clear", help="empty the local-model uninstall queue")
-    sub.add_parser("local-engine", help="print the active on-box engine (standard|flash-next)")
+    sub.add_parser("local-engine", help="print the DESIRED on-box engine (standard|flash-next)")
+    p_eff = sub.add_parser(
+        "set-local-engine-effective",
+        help="record the on-box engine actually started (the api routes by it)",
+    )
+    p_eff.add_argument("engine", choices=["standard", "flash-next"])
     p_activate = sub.add_parser(
         "local-activate",
         help="make a just-installed local model the active chat model (agent.turn)",
@@ -359,6 +377,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "local-engine":
         asyncio.run(_print_local_engine())
+        return 0
+    if args.command == "set-local-engine-effective":
+        asyncio.run(_set_local_engine_effective(args.engine))
         return 0
     if args.command == "local-activate":
         asyncio.run(_local_activate(args.model_id))

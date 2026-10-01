@@ -130,11 +130,20 @@ LLM_LOCAL_PROVISION_REQUESTED_KEY = "llm_local_provision_requested"
 # duplicate entries are dropped on read (first-seen order preserved).
 LLM_LOCAL_REMOVE_REQUESTED_KEY = "llm_local_remove_requested"
 
-# Which on-box engine serves local calls: "standard" (the `local-llm` gateway) or
-# "flash-next" (docs/plans/FLASH_NEXT_ENGINE_PLAN.md). Read by the update one-shot through
+# Which on-box engine the owner WANTS: "standard" (the `local-llm` gateway) or "flash-next"
+# (docs/plans/FLASH_NEXT_ENGINE_PLAN.md). Read by the update one-shot through
 # `jbrain.cli local-engine` to decide which container to bring up — never both. Absent or
-# unknown reads as "standard" (jbrain.llm.engine.parse).
+# unknown reads as "standard" (jbrain.llm.engine.parse). Only the debug engine route (and
+# F3's switch) writes it; a deploy script never rewrites the owner's choice.
 LLM_LOCAL_ENGINE_KEY = "llm_local_engine"
+
+# Which engine is ACTUALLY up — what the api routes, lists and re-stamps by. Written by
+# whatever starts an engine (deploy/local-engine.sh via `jbrain.cli
+# set-local-engine-effective`, the debug engine route). Separate from the desired key
+# because a Flash-Next that cannot start falls back to standard: keyed off the desire, the
+# api would refuse every standard load while believing Flash-Next serves. Absent reads as
+# "standard", the engine every box has.
+LLM_LOCAL_ENGINE_EFFECTIVE_KEY = "llm_local_engine_effective"
 
 # The owner's IANA display timezone (e.g. "America/New_York"). Absent = UTC.
 # Server-rendered times — the agent's appointment prose — localize to it so they
@@ -1373,12 +1382,23 @@ class SqlSettingsStore:
         return clean
 
     async def llm_local_engine(self, ctx: SessionContext) -> Engine:
-        """The active on-box engine; absent or malformed reads as the default."""
+        """The DESIRED on-box engine (the owner's choice); absent or malformed reads as the
+        default. What serves is `llm_local_engine_effective`."""
         return parse_engine(await self.get(ctx, LLM_LOCAL_ENGINE_KEY, None))
 
     async def set_llm_local_engine(self, ctx: SessionContext, engine: Engine) -> Engine:
         clean = parse_engine(engine)
         await self.upsert(ctx, LLM_LOCAL_ENGINE_KEY, clean)
+        return clean
+
+    async def llm_local_engine_effective(self, ctx: SessionContext) -> Engine:
+        """The engine actually up, which every load, list and re-stamp keys off; absent or
+        malformed reads as the default."""
+        return parse_engine(await self.get(ctx, LLM_LOCAL_ENGINE_EFFECTIVE_KEY, None))
+
+    async def set_llm_local_engine_effective(self, ctx: SessionContext, engine: Engine) -> Engine:
+        clean = parse_engine(engine)
+        await self.upsert(ctx, LLM_LOCAL_ENGINE_EFFECTIVE_KEY, clean)
         # This process's cached reads see the switch at once; others catch up by TTL.
         invalidate_engine_cache()
         return clean

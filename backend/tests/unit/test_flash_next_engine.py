@@ -318,6 +318,7 @@ def _api(engine_now: str | None = None) -> Any:
     c, store = _authed_client(settings)
     if engine_now is not None:
         store.values["llm_local_engine"] = engine_now
+        store.values["llm_local_engine_effective"] = engine_now
     return c, store
 
 
@@ -394,11 +395,11 @@ async def test_the_load_time_restamp_writes_the_active_engines_file(
     from tests.unit.fakes import FakeSettingsStore
 
     store = FakeSettingsStore()
-    store.values["llm_local_engine"] = "flash-next"
+    store.values["llm_local_engine_effective"] = "flash-next"
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     assert not (tmp_path / "llama-swap.yaml").exists()
     assert "--load-mode mmap" in (tmp_path / "llama-swap.flash-next.yaml").read_text()
-    store.values["llm_local_engine"] = "standard"
+    store.values["llm_local_engine_effective"] = "standard"
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     assert flash.id not in (tmp_path / "llama-swap.yaml").read_text()
 
@@ -431,7 +432,7 @@ async def test_active_engine_caches_for_its_ttl_and_invalidates_on_a_switch() ->
     clock.now = 5.0
     assert await cache.get() == engine.FLASH_NEXT and value["reads"] == 2
     value["engine"] = "standard"
-    engine.invalidate_cached()  # what set_llm_local_engine does in this process
+    engine.invalidate_cached()  # what set_llm_local_engine_effective does in this process
     assert await cache.get() == engine.STANDARD and value["reads"] == 3
 
 
@@ -465,10 +466,54 @@ async def test_settings_store_switch_invalidates_the_cache() -> None:
     store = SqlSettingsStore.__new__(SqlSettingsStore)
     store.upsert = _upsert  # type: ignore[method-assign]
     store.get = _get  # type: ignore[method-assign]
-    cache = engine.ActiveEngine(lambda: store.llm_local_engine(None), ttl_s=3600.0)  # type: ignore[arg-type]
+    cache = engine.ActiveEngine(lambda: store.llm_local_engine_effective(None), ttl_s=3600.0)  # type: ignore[arg-type]
     assert await cache.get() == engine.STANDARD
-    await store.set_llm_local_engine(None, "flash-next")  # type: ignore[arg-type]
+    await store.set_llm_local_engine_effective(None, "flash-next")  # type: ignore[arg-type]
     assert await cache.get() == engine.FLASH_NEXT
+
+
+@pytest.mark.asyncio
+async def test_the_desired_engine_never_moves_the_effective_one() -> None:
+    """The owner's choice and what serves are separate keys: a desire for Flash-Next that
+    could not be met (the deploy fell back) leaves the api on standard."""
+    from jbrain.settings_store import SqlSettingsStore
+
+    saved: dict[str, object] = {}
+
+    async def _upsert(_ctx: object, key: str, value: object) -> None:
+        saved[key] = value
+
+    async def _get(_ctx: object, key: str, default: object) -> object:
+        return saved.get(key, default)
+
+    store = SqlSettingsStore.__new__(SqlSettingsStore)
+    store.upsert = _upsert  # type: ignore[method-assign]
+    store.get = _get  # type: ignore[method-assign]
+    await store.set_llm_local_engine(None, "flash-next")  # type: ignore[arg-type]
+    assert await store.llm_local_engine(None) == engine.FLASH_NEXT  # type: ignore[arg-type]
+    assert await store.llm_local_engine_effective(None) == engine.STANDARD  # type: ignore[arg-type]
+    await store.set_llm_local_engine_effective(None, "flash-next")  # type: ignore[arg-type]
+    await store.set_llm_local_engine_effective(None, "gpt-9")  # type: ignore[arg-type]
+    assert await store.llm_local_engine_effective(None) == engine.STANDARD  # type: ignore[arg-type]
+    assert await store.llm_local_engine(None) == engine.FLASH_NEXT  # type: ignore[arg-type]
+
+
+def test_a_fallback_leaves_the_api_on_the_engine_that_is_up() -> None:
+    """Flash-Next DESIRED but the deploy fell back to standard (no image, incomplete weights,
+    a failed start): every list keys off the EFFECTIVE engine, so the standard models stay
+    offered and the Flash-Next entry stays hidden — no load is refused for the engine up."""
+    c, store = _api()
+    store.values["llm_local_engine"] = "flash-next"
+    store.values["llm_local_engine_effective"] = "standard"
+    ids = {p["id"] for p in c.get("/api/settings/llm").json()["providers"]}
+    assert "gpt-oss-120b" in ids and FLASH_ID not in ids
+
+
+def test_the_up_predicate_counts_a_crash_looping_engine() -> None:
+    for state in ("running", "paused", "restarting"):
+        assert engine.holds_memory(state)
+    for state in ("exited", "created", "dead", "missing", ""):
+        assert not engine.holds_memory(state)
 
 
 @pytest.mark.asyncio

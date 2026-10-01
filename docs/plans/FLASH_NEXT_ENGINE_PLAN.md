@@ -207,6 +207,30 @@ supervisor or by `update-inner.sh`), and the switch is then a plain stop/start. 
 this, a switch back after an update taken on Flash-Next 404s — and no on-box work,
 including F2, can run through the debug API before F1 lands.
 
+**Desired vs effective engine.** Two settings-store keys, never an `.env` flag:
+`llm_local_engine` is what the owner **wants** (read by every deploy path through
+`jbrain.cli local-engine`; only the debug engine route — and F3's switch — writes it), and
+`llm_local_engine_effective` is what **actually started**, written by whatever starts an engine
+(`deploy/local-engine.sh` via `jbrain.cli set-local-engine-effective`, the debug engine
+route). Every api actor that gates a load, lists models or re-stamps a config — residency's
+off-engine refusal, `kv_prefix`, the jcode proxy's model list, the settings picker and
+re-stamp, `engine.ActiveEngine` — follows the **effective** engine. So when Flash-Next is
+wanted but cannot start (no image, weights incomplete, a failed start) the deploy falls back to
+standard, logs `FALLBACK` in the update log, records standard as effective, and the api keeps
+serving standard instead of refusing every load; the desire is untouched, so the next update
+tries Flash-Next again. `GET /api/debug/llm/engine` shows both.
+
+**One "up" predicate.** An engine is up — holding, or about to re-take, its memory — when its
+container is `running`, `paused`, `restarting` or `removing`. The supervisor's guard, the debug
+route, `local-engine.sh` and the perplexity job all use that one definition; a crash-looping
+(`restarting`) engine is **stopped** before the other starts, never skipped as down.
+
+**Every route that can start a container is guarded** in the supervisor, under one lock (guard
+and start are atomic): `/start` of an engine refuses while the other is up or while **any**
+one-shot runs, and `/restart` — `docker restart` of a stopped container starts it — refuses a
+stopped engine outright (Ops "Restart all" skips it) and puts a running one through the same
+guard.
+
 Not touched by the switch: `embed`, `tts-stt` (Whisper/Kokoro), `comfyui`.
 
 ## 5. No terminal, anywhere
@@ -227,9 +251,9 @@ on the real box".
 | Provision the Flash-Next container | The update creates it **stopped** whenever Flash-Next is installed — keyed off a **settings-store value** read through the api CLI (the pattern `update-inner.sh` already uses for `local-llm-unload`), never an `.env` flag | automatic | F1 |
 | Download / remove weights (~94 GB) | PWA on-box models **Install / Uninstall** queue; the next update one-shot downloads or prunes. Progress and failure reasons: the PWA, or debug `GET /provision/status` | owner | exists; F1 adds the entry |
 | Check disk and host limits first | Install is refused in the PWA when free disk is short; GTT/TTM limits are read by `host_settings.check_host_settings` and shown in the PWA. The current box already serves ~94 GiB of GTT (gpt-oss + 27B), above Flash-Next's ~83 | automatic | F1 (disk guard) |
-| Start / stop Flash-Next **before** the switch exists (F2) | A debug-only engine route, `POST /api/debug/llm/engine {standard\|flash-next}`, applying the same §4d one-engine guard. Removed or folded into the F3 switch once that lands | Claude with a token | F1 |
-| On-box measurements (F2) | Debug routes: `/complete`, `/vision`, `/grounding`, `/tool-probe`, `/host/metrics`, `/llm/upstream-logs`, `/llm/gateway-logs`, the extra-args launch-flag route — all made **engine-aware** in F1. Two new ones: a **slot save/restore probe** (check 7) and an **allowlisted perplexity one-shot** run by the supervisor inside the `flash-next` image on a bundled WikiText-2 sample (check 6) — a fixed job, never free-form exec | Claude with a token | F1 |
-| Iterate on the image (pin bump, flags baked into it) | Debug `POST /refresh` with `flash-next` — rebuilds that one service from `main` without the ~10-minute full update | Claude with a token | exists; works once F1 has created the service |
+| Start / stop Flash-Next **before** the switch exists (F2) | A debug-only engine route, `POST /api/debug/llm/engine {standard\|flash-next}`, applying the same §4d one-engine guard; on success it records the target as both the **desired** and the **effective** engine (§4d), and `GET` shows both, so a deploy fallback is visible. The supervisor refuses any engine `/start` or `/restart` that would make two (a stopped engine is never restarted; Ops "Restart all" skips it). Removed or folded into the F3 switch once that lands | Claude with a token | F1 |
+| On-box measurements (F2) | Debug routes: `/complete`, `/vision`, `/grounding`, `/tool-probe`, `/host/metrics`, `/llm/upstream-logs`, `/llm/gateway-logs`, the extra-args launch-flag route — all made **engine-aware** in F1. Two new ones: a **slot save/restore probe** (usable from F4, whose first check it is — §6) and an **allowlisted perplexity one-shot** run by the supervisor inside the `flash-next` image on a bundled WikiText-2 sample (check 6) — a fixed job, never free-form exec | Claude with a token | F1 |
+| Iterate on the image (pin bump, flags baked into it) | Debug `POST /refresh` (or `/rebuild`) with `flash-next` — rebuilds that one service from `main` without the ~10-minute full update. **For an engine service it is a quiesced build**: whichever engine is up is released (models unloaded, stopped, memory settled), the image builds under the update's bounded runner with **no engine running** (a llama.cpp compile beside a ~90 GiB engine is the update's own freeze), the container is recreated **stopped**, and exactly the engine that was up before comes back — the refreshed one or the other. So it works whichever engine serves, at the cost of local inference being down for the build; to try the new build, switch with the debug engine route afterwards | Claude with a token | exists; engine-safe in F1 |
 | Reclaim weight page cache | Debug `POST /llm/drop-page-cache` — made to skip the mmapped engram table, which it would otherwise evict (§3) | Claude with a token | exists; F1 |
 | Tune launch flags | Debug extra-args route (`-ngl`, `-ub`, `--ctx-checkpoints`, `-lv`, `--load-mode`, …), engine-aware; `-ot` is added to `EXTRA_ARG_FLAGS` | Claude with a token | F1 |
 | Switch engines | PWA **Ops → Local engine** (drain → swap → smoke → auto-rollback) | owner | F3 |
@@ -291,10 +315,10 @@ Record into this doc:
 6. Correctness: WikiText-2 perplexity vs the #27742 reference (catches the converter norm
    bug); **mainline-Vulkan vision** grounding (catches pre-#27941 collapse; thinking off,
    ≥1024 output tokens); a tool-call round-trip; JSON-mode output.
-7. Slot save/restore (with the sidecar patch built in): save a primed slot, restore, and
-   compare the next-token **logits within a tolerance** against a cold prefill with
-   identical ubatch boundaries — greedy token equality can differ legitimately.
-8. A 60-minute mixed soak with zero device-loss or GPU reset events.
+7. A 60-minute mixed soak with zero device-loss or GPU reset events.
+
+Slot save/restore is **not** an F2 check: it needs `--slot-save-path` and the checkpoint
+sidecar patch, which the flash-next image only gets in F4, so it is F4's first check (below).
 
 **Exit gate:** measured resident ≤ 90 GiB with 8 checkpoints per slot, every check above
 passes, and no check needed a host shell. Fail → the plan parks with the numbers recorded.
@@ -320,9 +344,13 @@ carrying gpt-oss's sampling and reasoning quirks.
   Flash-Next for an old name, frontend card and marker.
 
 ### F4 — Per-role disk prefix cache ◻️
-Gated on F2 check 7.
+Begins with the check moved out of F2, and gated on it:
 - Re-validate the sidecar patch against the new pin (anchors fail hard on drift, by
-  design) and turn its build arg on for this image.
+  design), turn its build arg on for this image and render `--slot-save-path` for it.
+- **Slot save/restore** (debug `POST /llm/slot-probe`, built in F1): save a primed slot,
+  restore, and compare the next-token **logits within a tolerance** against a cold prefill
+  with identical ubatch boundaries — greedy token equality can differ legitimately. Fail →
+  F4 stops there.
 - §4b store changes: patch-gated eligibility, per-role state, slot-targeted restore,
   per-slot guard, per-role fingerprint inputs; budget sized for four files per engine.
 - Warm keeper primes each role's prefix into its slot after a load or switch, saves once,

@@ -201,7 +201,7 @@ def test_every_new_route_requires_the_debug_token(
 def test_engine_read_reports_both_services(box: tuple[TestClient, str, Any]) -> None:
     client, key, _ = box
     body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
-    assert body["active"] == "standard"
+    assert body["desired"] == "standard" and body["effective"] == "standard"
     assert body["services"]["standard"] == {"service": "local-llm", "state": "running"}
     assert body["services"]["flash-next"] == {"service": "flash-next", "state": "exited"}
     assert body["running"] == ["standard"] and body["consistent"] is True
@@ -227,8 +227,10 @@ def test_switch_orders_unload_stop_wait_start_persist(box: tuple[TestClient, str
     assert sup.events == ["unload gpt-oss-120b", "stop local-llm", "start flash-next"]
     assert sup.violations == []
     assert state.settings_store.values["llm_local_engine"] == "flash-next"
+    assert state.settings_store.values["llm_local_engine_effective"] == "flash-next"
     body = resp.json()
-    assert body["active"] == "flash-next" and body["running"] == ["flash-next"]
+    assert body["desired"] == "flash-next" and body["effective"] == "flash-next"
+    assert body["running"] == ["flash-next"]
     assert body["consistent"] is True
 
 
@@ -237,6 +239,7 @@ def test_switch_back_to_standard_is_symmetric(box: tuple[TestClient, str, Any]) 
     sup = state.supervisor_client
     sup.states.update({"local-llm": "exited", "flash-next": "running"})
     state.settings_store.values["llm_local_engine"] = "flash-next"
+    state.settings_store.values["llm_local_engine_effective"] = "flash-next"
     state.local_gateway = _Gateway(sup.events, {"qwen3.8-flash-next"})
 
     resp = client.post("/api/debug/llm/engine", json={"engine": "standard"}, headers=_auth(key))
@@ -244,6 +247,7 @@ def test_switch_back_to_standard_is_symmetric(box: tuple[TestClient, str, Any]) 
     assert resp.status_code == 200
     assert sup.events == ["unload qwen3.8-flash-next", "stop flash-next", "start local-llm"]
     assert state.settings_store.values["llm_local_engine"] == "standard"
+    assert state.settings_store.values["llm_local_engine_effective"] == "standard"
 
 
 def test_switch_stops_both_others_when_the_box_is_already_inconsistent(
@@ -301,6 +305,8 @@ def test_switch_rolls_back_when_start_404s(box: tuple[TestClient, str, Any]) -> 
     assert sup.states["local-llm"] == "running"
     assert sup.violations == []
     assert "llm_local_engine" not in state.settings_store.values
+    # The desire is untouched; what serves is recorded as the engine put back.
+    assert state.settings_store.values["llm_local_engine_effective"] == "standard"
 
 
 def test_switch_never_starts_the_target_while_the_other_is_still_up(
@@ -388,7 +394,7 @@ def test_engine_read_502s_on_an_unreachable_supervisor(box: tuple[TestClient, st
 
 def test_jcode_logs_follow_the_active_engine(box: tuple[TestClient, str, Any]) -> None:
     client, key, state = box
-    state.settings_store.values["llm_local_engine"] = "flash-next"
+    state.settings_store.values["llm_local_engine_effective"] = "flash-next"
 
     resp = client.get("/api/debug/jcode/logs", headers=_auth(key))
 
@@ -399,7 +405,7 @@ def test_jcode_logs_follow_the_active_engine(box: tuple[TestClient, str, Any]) -
 
 def test_gateway_and_upstream_logs_name_the_engine(box: tuple[TestClient, str, Any]) -> None:
     client, key, state = box
-    state.settings_store.values["llm_local_engine"] = "flash-next"
+    state.settings_store.values["llm_local_engine_effective"] = "flash-next"
     state.local_gateway.logs_text = "a\nb"
 
     resp = client.get("/api/debug/llm/gateway-logs", headers=_auth(key))
@@ -446,7 +452,7 @@ def test_an_unreadable_engine_setting_reads_as_the_default(
     async def broken(ctx: object) -> str:
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(state.settings_store, "llm_local_engine", broken)
+    monkeypatch.setattr(state.settings_store, "llm_local_engine_effective", broken)
     resp = client.get("/api/debug/jcode/logs", headers=_auth(key))
     assert resp.status_code == 200
     assert state.supervisor_client.events == ["logs jcode", "logs local-llm"]
@@ -912,16 +918,42 @@ def test_a_concurrent_switch_is_refused_not_interleaved(
     assert state.supervisor_client.events == []
 
 
-def test_a_restarting_container_is_not_counted_as_up(box: tuple[TestClient, str, Any]) -> None:
-    """A crash-looping engine must not block the switch away from it."""
+def test_a_crash_looping_engine_is_stopped_before_the_other_starts(
+    box: tuple[TestClient, str, Any],
+) -> None:
+    """A restarting engine re-allocates on every loop: it counts as UP (the predicate the
+    supervisor and deploy scripts share), so the switch STOPS it and only then starts the
+    target — it neither blocks the switch nor is skipped as down."""
     client, key, state = box
     sup = state.supervisor_client
     sup.states.update({"local-llm": "exited", "flash-next": "restarting"})
     body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
-    assert body["running"] == []
+    assert body["running"] == ["flash-next"]
     resp = client.post("/api/debug/llm/engine", json={"engine": "standard"}, headers=_auth(key))
     assert resp.status_code == 200
-    assert "start local-llm" in sup.events
+    assert sup.events.index("stop flash-next") < sup.events.index("start local-llm")
+    assert sup.violations == []
+
+
+def test_engine_read_reports_a_fallback(box: tuple[TestClient, str, Any]) -> None:
+    """Flash-Next wanted, the deploy fell back to standard: the read says both, and is
+    consistent against what actually serves."""
+    client, key, state = box
+    state.settings_store.values["llm_local_engine"] = "flash-next"
+    state.settings_store.values["llm_local_engine_effective"] = "standard"
+    body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
+    assert body["desired"] == "flash-next" and body["effective"] == "standard"
+    assert body["running"] == ["standard"] and body["consistent"] is True
+
+
+def test_logs_follow_the_effective_engine_not_the_desired_one(
+    box: tuple[TestClient, str, Any],
+) -> None:
+    client, key, state = box
+    state.settings_store.values["llm_local_engine"] = "flash-next"
+    resp = client.get("/api/debug/jcode/logs", headers=_auth(key))
+    assert resp.status_code == 200
+    assert state.supervisor_client.events == ["logs jcode", "logs local-llm"]
 
 
 def test_rollback_restores_nothing_when_the_target_will_not_stop(
