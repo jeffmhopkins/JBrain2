@@ -109,8 +109,46 @@ stealing another's.
 | 3 | jcode + overflow | Coding sessions have their own long prefix. |
 
 Per-slot (non-unified) KV is what makes this hold: each slot owns its 262k, so no slot can
-evict another's cache. The disk slot store (`jbrain.llm.kv_prefix`) stays the backstop for a
-prefix that loses its slot anyway (restart, a switch, a fifth workload).
+evict another's cache. The disk prefix store (§4b) is the backstop for a prefix that loses
+its slot anyway (restart, a switch, an overflow request).
+
+### 4b. Disk prefix cache, one prefix per slot role
+
+Today `jbrain.llm.kv_prefix` saves ONE prefix — the interactive model's persona + tools
+(~29k tokens) — to disk after the warm keeper primes it, and restores it in ~2 s instead of
+a ~60 s prefill. Its fingerprint (launch line + system text + tool schema) names the file,
+so anything that could make it stale moves the name; an owner-set byte budget evicts by
+least-recent use. On the Qwen hybrids a restore is reusable only with the checkpoint
+sidecar patch (`deploy/patches/0001`, applied by `deploy/apply-llama-patches.sh`).
+
+On Flash-Next a slot file is small: only the 12 attention layers carry KV, so the same
+29k-token prefix is ~0.36 GiB of q8_0 KV plus ~0.11 GiB of recurrent state — about a fifth
+of gpt-oss's ~2 GiB file (derived; W0 measures it). That makes **one primed prefix per
+slot role** affordable:
+
+| Slot | Primed prefix |
+|---|---|
+| 0 | Persona + tools (today's prefix) |
+| 1 | Ingest / analysis system prompt |
+| 2 | Agent / research base prompt |
+| 3 | jcode system prompt |
+
+Each is primed once, saved, and restored **into its own pinned slot** when found missing —
+after a restart, an engine switch, or an overflow request that took the slot. The
+fingerprint already includes the launch line, so Flash-Next's files never collide with the
+standard engine's: switching back finds gpt-oss's file still in the budget and restores it.
+
+Changes the store needs: restore targets a slot id (today it picks any empty idle slot,
+`_empty_idle`); the keeper and store take a role → prefix table instead of one prefix; the
+budget is sized for four files per engine.
+
+**Correctness gate.** This model carries state the current hybrids do not: QSA indexer
+keys and the PLE convolution state (which #27742 itself lists as unverified). If the slot
+save omits either, a restored prefix yields subtly wrong output with no error. W0 compares
+save → restore → generate against a cold prefill of the same prompt, token for token. A
+mismatch keeps disk caching off for this engine (pinned slots alone) until upstream fixes
+it — the store already refuses ineligible models (`_ineligible_reason`), so "off" is a
+catalog flag, not new code.
 
 Not touched by the switch: `embed`, `tts-stt` (Whisper/Kokoro), `comfyui`.
 
@@ -128,6 +166,9 @@ with the standard engine stopped. Record, into this doc:
 - correctness: WikiText-2 perplexity vs the #27742 reference (catches the converter norm
   bug), an image-grounding check (catches pre-#27941 collapse), a tool-call round-trip,
   JSON-mode output;
+- **slot save/restore correctness**: save a primed slot, restore it into an empty slot,
+  generate greedily, and compare token-for-token with a cold prefill of the same prompt;
+  record the slot-file size and restore time (§4b);
 - a 60-minute mixed soak with zero device-loss or GPU reset events.
 
 **Exit gate:** fits in ≤ 90 GiB resident at 4 slots, warm-slot turns reuse their prefix, survives the soak, passes the
@@ -160,13 +201,23 @@ correctness checks. Fail → this plan parks with the numbers recorded.
 ### W3 — Remap all calls ◻️
 - Router remap of every `local:*` spec while the engine is `flash-next`; per-call
   `spec_override` included; sampling and reasoning effort taken from Flash-Next.
-- `context_window_for_spec` caps at 262,144 per request (the pool is larger than any one
-  sequence may use).
-- `residency.py` budgets one resident model; `warm_keeper` and `kv_prefix` verified
-  against a hybrid with 4 slots (the slot-restore patch in `deploy/patches/` is
-  re-validated against the new pin, or disabled for this engine).
+- Slot affinity (§4a): the router maps each task class to its pinned slot and sends
+  `id_slot`; `context_window_for_spec` reports 262,144 (one slot's own cells).
+- `residency.py` budgets one resident model.
 - Settings screen shows each task's pick with an "→ Flash-Next (engine active)" marker.
 - Tests: remap on/off for every task and tier, override precedence, cloud routes untouched.
+
+### W3b — Per-role disk prefix cache ◻️
+Gated on W0's restore-correctness check; skipped (pinned slots alone) if it fails.
+- Re-apply and re-validate the checkpoint sidecar patch against the new pin (its anchors
+  fail hard on drift, by design).
+- `kv_prefix`: restore into a given slot id; a role → prefix table (system text + tool
+  schema per role) feeding the existing fingerprint; budget sized for four files per engine.
+- `warm_keeper`: prime each role's prefix into its own slot after a load or engine switch,
+  save once, restore on loss.
+- Tests: per-role fingerprints, restore targets the right slot, an occupied slot is never
+  overwritten, engine switch leaves the other engine's files intact, budget eviction across
+  roles.
 
 ### W4 — Custom engine track (evidence-gated) ◻️
 The container's contract stays fixed — llama-swap in front, OpenAI API behind — so an
@@ -192,6 +243,9 @@ engine is a `cmd` swap in the llama-swap config plus an image change, not a re-p
 - **Quality vs gpt-oss-120b is unknown** — no shared public benchmark. W0's correctness
   checks are not an eval; run the existing ingest/analysis eval fixtures before retiring
   anything.
+- **Silent restore corruption** — a slot save that misses QSA or PLE state restores
+  wrong output with no error. W0's token-for-token check is the gate; it re-runs on every
+  pin move.
 - **Page-cache pressure** — the PLE working set is reclaimable, so pressure shows up as
   slower cold prefill rather than an OOM. W0 measures it under a concurrent ingest load.
 - **Upstream churn** — qwen4exp is a month old; follow-up fixes are still landing. The pin
@@ -203,5 +257,9 @@ engine is a `cmd` swap in the llama-swap config plus an image change, not a re-p
 
 1. Can the W0 on-box spike run entirely through the debug API, or does building the image
    need one host step? If the latter, it is a gap to design out before W1 lands.
-2. Should the switch also be schedulable (e.g. Flash-Next overnight for batch ingest)?
+2. Turn llama.cpp's in-RAM prompt cache back on for this engine? We serve `-cram 0`
+   because it cost 8 GiB per model; with ~0.4 GiB prefixes, 3–4 GiB would hold ~8 recent
+   ones for near-instant reuse (Soot/Silicon measured 27 s → 0.73 s on a hit). It is host
+   memory the budget must count. Decide after W0 measures prefix sizes.
+3. Should the switch also be schedulable (e.g. Flash-Next overnight for batch ingest)?
    Out of scope for v1; the endpoint shape should not preclude it.

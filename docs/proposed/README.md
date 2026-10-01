@@ -20,7 +20,8 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   standard `local-llm` gateway, flipped from Ops with drain → swap → smoke → auto-rollback. While
   active it is the only local LLM and every `local:*` call remaps to it. Four role-pinned slots, each
   with its own 262k KV, used as prefix caches (prefill reuse), not for concurrency; IQ4_XS, the
-  engram (PLE) table memory-mapped from disk: ~84 GiB resident (derived; W0 measures it). Mainline llama.cpp on Vulkan first; a custom community engine
+  engram (PLE) table memory-mapped from disk: ~84 GiB resident (derived; W0 measures it); the disk prefix
+  store extended to one primed prefix per slot role, gated on a token-for-token restore check. Mainline llama.cpp on Vulkan first; a custom community engine
   (gufo / halogen / EngramHalo) is an evidence-gated later wave.
 
 - `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
