@@ -51,6 +51,36 @@ which, so none is mistaken for a prediction of this configuration.
 | [EngramHalo.cpp](https://github.com/Aristo94/EngramHalo.cpp) | llama.cpp fork, MIT, HIP-first | 30–40 tok/s reported on Vulkan with MTP. Multi-slot support unverified. |
 | [unsloth GGUF discussions #52](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/discussions/52) | ROCm 7.x | Garbage output on gfx1151 before #27941; fixed by building from it. |
 
+## 3a. Measured on the box (F2 sitting 2026-10-01)
+
+UD-IQ4_XS, q8_0 KV, every layer offloaded on mainline Vulkan (pin `869034b`), engram table
+`-ot …=CPU` + `--load-mode mmap`. Each row is a cold load, read as GTT used from host metrics
+with nothing else resident (standard engine stopped; baseline GTT 0.06 GiB).
+
+| Layout (slots × cells per slot) | Total cells | GTT used |
+|---|---|---|
+| 2 × 65,536 | 131,072 | 63.62 GiB |
+| 1 × 131,072 | 131,072 | 63.76 GiB |
+| 1 × 262,144 | 262,144 | 67.45 GiB |
+| 2 × 262,144 | 524,288 | 74.21 GiB |
+| 4 × 262,144 (sitting 1, before the override fix) | 1,048,576 | 96.9 GiB — see below |
+
+**Fit: GTT ≈ 60.2 GiB + 7.0 GiB per 262,144 cells; slot count costs ~nothing** (2×64k equals
+1×131k within noise). The per-cell cost is ~1.75× the §3 derivation (KV + QSA indexer), and the
+fixed cost (weights without the engram table, compute, vision) is ~60 GiB as derived.
+
+- The 4×262k point sits ~8.7 GiB above the fit (88.2 predicted). It was taken in sitting 1 under
+  a different load path and is unexplained; it is not re-measured because at that size host
+  free memory reached the gateway guard's floor (a reload was aborted at 5.7 GB free).
+- Host side: anonymous memory stays ~1–2 GiB; page cache from the mmapped weights/engram ran
+  25–45 GiB and is reclaimable (the engram really is paged from disk).
+- Speed (sitting 1, 4×262k): load 50 s; decode 23.5 tok/s at short context; prefill 580 → 373
+  tok/s over a 37,916-token prompt. First decode with full offload is clean (#29028 fixed in the pin).
+
+**Consequence for §4a (owner decision 2026-10-01):** slots stay role-pinned but share one
+`--kv-unified` pool sized as the sum of per-task reservations, with the agent reserved 256k;
+memory is priced by the fit above (e.g. a 512k pool ≈ 74 GiB, measured as the 2×262k row).
+
 ## 3. Memory budget (derived — F2 replaces it with a measurement)
 
 Read from the UD-IQ4_XS GGUF headers and llama.cpp master: 48 layers, 12 full-attention
