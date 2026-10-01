@@ -15,7 +15,7 @@ already done most of the gfx1151 groundwork (§2). Nothing changes for a box tha
 provisions it.
 
 Revised 2026-10-01 after two independent reviews (one against this codebase, one against
-upstream source and published measurements). §9 records what they changed.
+upstream source and published measurements). §10 records what they changed.
 
 ## 1. Decisions taken with the owner
 
@@ -209,7 +209,47 @@ including F2, can run through the debug API before F1 lands.
 
 Not touched by the switch: `embed`, `tts-stt` (Whisper/Kokoro), `comfyui`.
 
-## 5. Waves
+## 5. No terminal, anywhere
+
+The owner runs this box remotely with **no shell** (`CLAUDE.md` rule 10). Every step of this
+plan — building it, provisioning it, testing it on the box, operating it, upgrading it,
+backing it out — must be doable through **GitHub** (code lands as merged PRs) and the
+**PWA** (or the owner-minted debug token, `docs/runbooks/DEBUG_ACCESS.md`, which reaches the
+same surfaces). A step that needs `ssh`, `sudo jbrain …`, `docker compose …` or an `.env`
+edit is a **defect in the plan**, not an instruction to the owner. The table is the
+contract; each wave's exit criteria include "every row this wave touches works from the PWA
+on the real box".
+
+| Step | How it happens | Who | Built in |
+|---|---|---|---|
+| Land code, bump the llama.cpp / llama-swap pins | PR on GitHub, CI green, merge to `main` | Claude + owner review | every wave |
+| Deploy | **Ops → Update** (or debug `POST /update`): pulls `main`, builds images — including `flash-next` — and recreates containers. A token can only deploy what `main` already holds | owner, or Claude with a token | exists |
+| Provision the Flash-Next container | The update creates it **stopped** whenever Flash-Next is installed — keyed off a **settings-store value** read through the api CLI (the pattern `update-inner.sh` already uses for `local-llm-unload`), never an `.env` flag | automatic | F1 |
+| Download / remove weights (~94 GB) | PWA on-box models **Install / Uninstall** queue; the next update one-shot downloads or prunes. Progress and failure reasons: the PWA, or debug `GET /provision/status` | owner | exists; F1 adds the entry |
+| Check disk and host limits first | Install is refused in the PWA when free disk is short; GTT/TTM limits are read by `host_settings.check_host_settings` and shown in the PWA. The current box already serves ~94 GiB of GTT (gpt-oss + 27B), above Flash-Next's ~83 | automatic | F1 (disk guard) |
+| Start / stop Flash-Next **before** the switch exists (F2) | A debug-only engine route, `POST /api/debug/llm/engine {standard\|flash-next}`, applying the same §4d one-engine guard. Removed or folded into the F3 switch once that lands | Claude with a token | F1 |
+| On-box measurements (F2) | Debug routes: `/complete`, `/vision`, `/grounding`, `/tool-probe`, `/host/metrics`, `/llm/upstream-logs`, `/llm/gateway-logs`, the extra-args launch-flag route — all made **engine-aware** in F1. Two new ones: a **slot save/restore probe** (check 7) and an **allowlisted perplexity one-shot** run by the supervisor inside the `flash-next` image on a bundled WikiText-2 sample (check 6) — a fixed job, never free-form exec | Claude with a token | F1 |
+| Iterate on the image (pin bump, flags baked into it) | Debug `POST /refresh` with `flash-next` — rebuilds that one service from `main` without the ~10-minute full update | Claude with a token | exists; works once F1 has created the service |
+| Reclaim weight page cache | Debug `POST /llm/drop-page-cache` — made to skip the mmapped engram table, which it would otherwise evict (§3) | Claude with a token | exists; F1 |
+| Tune launch flags | Debug extra-args route (`-ngl`, `-ub`, `--ctx-checkpoints`, `-lv`, `--load-mode`, …), engine-aware; `-ot` is added to `EXTRA_ARG_FLAGS` | Claude with a token | F1 |
+| Switch engines | PWA **Ops → Local engine** (drain → swap → smoke → auto-rollback) | owner | F3 |
+| See what the engine is doing | PWA Ops card (engine, memory, tok/s, last smoke); logs via PWA and debug | owner | F3 |
+| Clear or inspect disk prefix caches | The existing kv-prefix clear/snapshot surfaces, per role | owner | F4 |
+| Try a custom engine | PWA engine sub-setting (mainline \| gufo \| …); images arrive by Ops → Update | owner | F5 |
+| Back out completely | Switch to Standard, Uninstall the weights in the PWA; the next update removes the stopped container and its image | owner | F1 + F3 |
+| Recover from a bad build | Ops → Update's existing rollback; the switch's auto-rollback keeps a local engine serving; Standard is never rebuilt by this plan | automatic | exists + F3 |
+
+**Precondition, not introduced here:** the box already has local hosting enabled
+(`LOCAL_LLM_ENABLED=true`). Turning local hosting on for the *first* time is still a
+shell step (`jbrain enable-local-models`) — a pre-existing gap this plan does not widen
+and does not depend on; it is recorded for its own fix.
+
+**If F2 finds a host limit too low** (GTT/TTM ceiling, swap, a kernel parameter), the plan
+stops there: it does not ship a runbook step asking the owner to edit the host. The fix is
+designed as a PWA-applied host setting first, the same way `host_settings` surfaces limits
+today.
+
+## 6. Waves
 
 ### F1 — Engine-aware container and provisioning ◻️
 - `deploy/Dockerfile.flash-next`; the `flash-next` compose profile (devices, groups,
@@ -223,8 +263,12 @@ Not touched by the switch: `embed`, `tts-stt` (Whisper/Kokoro), `comfyui`.
   engine; page-cache drop and host-metrics handling of mmapped tensors (§3).
 - §4d: every `local-llm` start path and the update's pre-build release made engine-aware;
   provisioning creates both containers stopped.
-- PWA weight install/uninstall through the on-box models path (no shell).
-- Debug-API access for F2: engine logs and upstream routes (`debug.py`'s
+- PWA weight install/uninstall through the on-box models path, with a free-disk guard;
+  provisioning keyed off the settings store, not `.env` (§5).
+- No-terminal tooling for F2 (§5): the debug-only engine route, engine-aware debug probes,
+  the slot save/restore probe, the allowlisted perplexity one-shot, `-ot` on
+  `EXTRA_ARG_FLAGS`.
+- Engine-aware debug logs and upstream routes (`debug.py`'s
   `_JCODE_LOG_SERVICES` and the upstream-log routes are tied to `local-llm` today).
 - Tests: config rendering for both engines, catalog footprint maths (file-backed
   subtraction, default slots), engine filtering, `supervisor/tests/test_deploy_scripts.py`
@@ -233,8 +277,9 @@ Not touched by the switch: `embed`, `tts-stt` (Whisper/Kokoro), `comfyui`.
   service.
 
 ### F2 — On-box spike (measurement) ◻️
-With the standard engine stopped, start `flash-next` through the debug API and record into
-this doc:
+Run entirely through the debug token (§5): switch to `flash-next` with the debug engine
+route, measure, switch back. The owner touches nothing but Ops → Update and the token.
+Record into this doc:
 1. **Full offload survives the first decode** on the pinned commit (#29028). Fail → stop.
 2. Resident GTT, host RSS, PLE page-cache working set — cold, warm, and under a concurrent
    ingest load.
@@ -252,7 +297,7 @@ this doc:
 8. A 60-minute mixed soak with zero device-loss or GPU reset events.
 
 **Exit gate:** measured resident ≤ 90 GiB with 8 checkpoints per slot, every check above
-passes. Fail → the plan parks with the numbers recorded.
+passes, and no check needed a host shell. Fail → the plan parks with the numbers recorded.
 
 ### F3 — The switch and the remap (one wave) ◻️
 They land together: a live switch without the remap would send every call to Flash-Next
@@ -298,7 +343,7 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
 - An engine sub-setting under Flash-Next (mainline | gufo | …) so the owner can fall back
   without a deploy.
 
-## 6. Risks
+## 7. Risks
 
 - **Speed** — mainline Vulkan single-stream is ~17 tok/s at short context and ~12 at 32k
   (Soot/Silicon), against gpt-oss's ~31 today. Slots are caches, not concurrency, so this
@@ -315,15 +360,19 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
   engine-awareness must leave a box that never provisions Flash-Next byte-identical in
   behaviour (covered by the existing test suite plus the new update-inner branch tests).
 
-## 7. Obligations
+## 8. Obligations
 
 - `scripts/dev-setup.sh`: unaffected (no new dev dependency; the image builds on-box).
 - No new table → no new RLS isolation test.
-- Docs: `docs/runbooks/STRIX_HALO_SETUP.md` gains a Flash-Next section in F1; the
+- No-terminal acceptance (§5): each wave is done only when every §5 row it touches has
+  been exercised from the PWA or the debug token on the real box.
+- `docs/runbooks/DEBUG_ACCESS.md` lists the new debug routes (F1).
+- Docs: `docs/runbooks/STRIX_HALO_SETUP.md` gains a Flash-Next section in F1, written as
+  PWA steps only; the
   operator-facing switch is documented in F3; this plan flips to Scheduled when committed
   to the roadmap.
 
-## 8. Open questions
+## 9. Open questions
 
 1. Turn llama.cpp's in-RAM prompt cache back on for this engine? We serve `-cram 0`
    because it cost 8 GiB per model; with ~0.55 GiB prefixes, 3–4 GiB holds ~6 recent ones
@@ -333,7 +382,7 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
    scope for v1; the endpoint shape should not preclude it.
 3. MTP with multiple slots — measure after F3, or leave to F5's engines?
 
-## 9. What the reviews changed
+## 10. What the reviews changed
 
 - Wave order: container + provisioning (F1) now precede the spike (F2), which cannot run
   through the debug API without them; the switch and remap merged into one wave (F3).
