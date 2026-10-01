@@ -24,7 +24,7 @@ upstream source and published measurements). §10 records what they changed.
 | Container | New `flash-next` compose profile, own image, own llama-swap config. Never co-resident with `local-llm`. |
 | Switching | PWA (Ops), no terminal. Drain → swap → smoke test → automatic rollback on failure. |
 | Routing | **Remap all calls**, inside the API — not by model-name aliases at the gateway (§4c). |
-| Slots | **4 role-pinned slots sharing one 589,824-cell (576k) `--kv-unified` pool**, each role capped by a router-enforced **reservation**: agent 256k, ingest/analysis 64k, agents/research 128k, jcode 128k (§4a). Slots exist to **keep each workload's prefix warm**, not for concurrency. Decided 2026-10-01 from the F2 measurements (§3a): ~75.6 GiB. |
+| Slots | **5 role-pinned slots sharing one 524,288-cell (512k) `--kv-unified` pool**, each role capped by a router-enforced **reservation**: agent 256k, ingest/analysis 64k, agents/research 128k (jcode shares this slot — no reservation of its own), and two 32k slots for the jpanel pet and small-prompt tasks (§4a). Slots exist to **keep each workload's prefix warm**, not for concurrency. Decided 2026-10-01 from the F2 measurements (§3a): ~74.2 GiB, the size measured directly as the 2×262k row. |
 | Checkpoints | **8 per slot** to start; 16 only once F2 has measured their real cost (§3). |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector (904 MB). |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
@@ -78,9 +78,9 @@ fixed cost (weights without the engram table, compute, vision) is ~60 GiB as der
   tok/s over a 37,916-token prompt. First decode with full offload is clean (#29028 fixed in the pin).
 
 **Consequence for §4a (owner decision 2026-10-01):** slots stay role-pinned but share one
-`--kv-unified` pool of **576k cells** (agent 256k + ingest 64k + research 128k + jcode 128k),
-predicted by the fit at **~75.6 GiB** GTT (between the measured 2×262k row at 74.2 and the
-fit's 1M point at 88). F3 re-measures the chosen pool before it ships.
+`--kv-unified` pool of **512k cells** (agent 256k + ingest 64k + research/jcode 128k + 2 × 32k
+for the pet and small prompts) — the same total cells as the measured 2×262k row, **74.2 GiB**
+GTT, and slot count costs ~nothing. F3 re-measures the chosen pool before it ships.
 
 ## 3. Memory budget (derived — F2 replaces it with a measurement)
 
@@ -137,7 +137,7 @@ from the measured `disk_gb`, and the page-cache drop skips mmapped tensors.
   this engine — catalog `extra_server_args` do not supersede base flags today; only
   operator args do), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
   4 GiB binding limit; GPU placement aborted for Soot/Silicon), `--lazy-mode on`,
-  `-np 4 --kv-unified -c 589824` (one shared pool; no single sequence may exceed
+  `-np 5 --kv-unified -c 524288` (one shared pool; no single sequence may exceed
   `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
   `--ctx-checkpoints 8 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the
   existing `--image-min-tokens` floor.
@@ -174,9 +174,15 @@ the caps enforced; the test is that it fails loudly rather than silently evictin
 |---|---|---|---|
 | 0 | Interactive persona (jerv, omnibox turns) | 256k (262,144) | router, by task |
 | 1 | Ingest + analysis | 64k (65,536) | router, by task |
-| 2 | Agents, research, workflow tasks | 128k (131,072) | router, by task |
-| 3 | jcode | 128k (131,072) | the jcode proxy (`api/jcode_llm.py`) — jcode's `grok` reaches the model through it, not directly |
-| | **Pool** | **576k (589,824)** | `--kv-unified -c 589824` |
+| 2 | Agents, research, workflow tasks — **and jcode**, which gets no reservation of its own (owner, 2026-10-01) and shares this slot's cap | 128k (131,072) | router by task; the jcode proxy (`api/jcode_llm.py`) for jcode |
+| 3 | jpanel kid pet (`pet.turn`, `pet.thought`, `pet.statue`) | 32k (32,768) | router, by task |
+| 4 | Small-prompt tasks: titles (`research.title`), `triage.classify`, and other short-prefill calls; overflow for the pet | 32k (32,768) | router, by task |
+| | **Pool** | **512k (524,288)** | `--kv-unified -c 524288` |
+
+jcode is pinned (to slot 2) rather than left unpinned on purpose: an unpinned request lands on
+the least-recently-used idle slot, which would evict whichever role's cached prefix lives there.
+The pet and small-prompt slots are short by design — their prompts are small, so a 32k cap
+costs them nothing and keeps their churn away from the long agent and ingest prefixes.
 
 ### 4b. Disk prefix cache, one prefix per slot role
 
@@ -189,7 +195,8 @@ use.
 On Flash-Next a 29k-token prefix file is ~0.55 GiB (attention KV + indexer cache + recurrent
 state), a quarter of gpt-oss's ~2 GiB — so **one primed prefix per slot role** is
 affordable: persona (0), ingest/analysis system prompt (1), agent/research base prompt (2),
-jcode system prompt (3). Each is primed once, saved, and restored **into its own slot**
+the pet's persona prompt (3). jcode shares slot 2 and the small-prompt slot (4) is too short
+to be worth priming, so neither gets a primed prefix. Each is primed once, saved, and restored **into its own slot**
 when lost (restart, engine switch, an overflow request). The launch line is in the
 fingerprint, so switching back finds gpt-oss's file still in the budget.
 
@@ -375,11 +382,11 @@ carrying gpt-oss's sampling and reasoning quirks.
   Discharge ledger rows for the stopped engine's instances. Any failure: stop it, restart
   the previous engine, surface the reason as a box event.
 - §4c remap at every entry point; §4a slot affinity (`id_slot` through the provider
-  protocol, chosen by task name; slot 3 injected by the jcode proxy).
-- §4a reservations: the 576k `--kv-unified` pool (`-np 4 --kv-unified -c 589824`), a
+  protocol, chosen by task name; slot 2 injected by the jcode proxy).
+- §4a reservations: the 512k `--kv-unified` pool (`-np 5 --kv-unified -c 524288`), a
   per-role cap table in the catalog entry, enforced at the router and the jcode proxy (refuse
   or trim over-cap requests, with a clear error), the budget charging the pool once; re-measure
-  the pool on the box against the ~75.6 GiB prediction. Tests: caps per role, over-cap refusal,
+  the pool on the box against the ~74.2 GiB prediction. Tests: caps per role, over-cap refusal,
   caps sum to the pool, pool flags rendered.
 - PWA: Ops card (current engine, switch, memory + tok/s readout, last smoke) and the
   per-task "→ Flash-Next" marker — **three mocks each** before code (`PROCESS.md`).
