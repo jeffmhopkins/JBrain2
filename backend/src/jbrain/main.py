@@ -500,7 +500,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the kv-prefix store and the jcode proxy so they agree on which gateway is running,
         # and a live switch (the F2 debug route, the F3 switch) is seen without a restart.
         app.state.active_engine = engine_mod.ActiveEngine(
-            lambda: settings_store.llm_local_engine(SYSTEM_CTX)
+            lambda: settings_store.llm_local_engine_effective(SYSTEM_CTX)
         )
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,

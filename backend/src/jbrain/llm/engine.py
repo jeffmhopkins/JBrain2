@@ -5,8 +5,12 @@ compose service behind its own llama-swap config, and on a 128 GB box their foot
 together are a freeze. Everything that starts, stops, renders or reads a gateway resolves the
 engine through here, so "which container, which config file" has exactly one answer.
 
-The active engine is an owner setting (`settings_store.LLM_LOCAL_ENGINE_KEY`), not an `.env`
-flag: the owner has no shell, so the update script reads it through `jbrain.cli local-engine`.
+Two settings, never an `.env` flag (the owner has no shell): the DESIRED engine
+(`settings_store.LLM_LOCAL_ENGINE_KEY`, the owner's choice, read by the update script through
+`jbrain.cli local-engine`) and the EFFECTIVE one (`LLM_LOCAL_ENGINE_EFFECTIVE_KEY`), written by
+whatever actually starts an engine. They differ when Flash-Next is wanted but could not start
+and the standard gateway serves instead; everything that loads, lists or re-stamps follows the
+EFFECTIVE engine, so that fallback never leaves the api refusing the engine that is up.
 """
 
 import contextlib
@@ -33,6 +37,17 @@ CONFIG_FILE: Mapping[Engine, str] = {
     STANDARD: "llama-swap.yaml",
     FLASH_NEXT: "llama-swap.flash-next.yaml",
 }
+
+
+# Docker states in which an engine container holds (or is about to re-take) its memory. The
+# one predicate shared — by value — with the supervisor (`gateway.ENGINE_UP_STATES`),
+# deploy/local-engine.sh `_le_running` and the perplexity job. `restarting` counts: a
+# crash-looping engine re-allocates on every loop, so it is stopped before the other starts.
+UP_STATES = frozenset({"running", "paused", "restarting", "removing"})
+
+
+def holds_memory(state: str) -> bool:
+    return state in UP_STATES
 
 
 def parse(value: object) -> Engine:
@@ -63,7 +78,8 @@ ACTIVE_ENGINE_TTL_S = 5.0
 
 
 class ActiveEngine:
-    """The active engine, read from the settings store and cached for `ttl_s` seconds.
+    """The EFFECTIVE engine (the one actually up), read from the settings store and cached for
+    `ttl_s` seconds.
 
     One per process, shared by everything that must agree on which gateway is running —
     residency's admission gate, the kv-prefix store's launch-line resolution and the jcode

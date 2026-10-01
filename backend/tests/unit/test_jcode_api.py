@@ -185,7 +185,7 @@ class _FakeStore:
         self.engine = engine
         self.engine_error = engine_error
 
-    async def llm_local_engine(self, _ctx: object) -> str:
+    async def llm_local_engine_effective(self, _ctx: object) -> str:
         if self.engine_error:
             raise RuntimeError("settings store unreachable")
         return self.engine or "standard"

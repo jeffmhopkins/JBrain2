@@ -487,7 +487,7 @@ async def _snapshot(
     requested = set(await store.llm_local_provision_requested(ctx))
     removing = set(await store.llm_local_remove_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
-    engine = await store.llm_local_engine(ctx)
+    engine = await store.llm_local_engine_effective(ctx)
     return LlmSettingsOut(
         providers=[
             ProviderInfo(
@@ -781,7 +781,7 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
     windows, slots, extra, floors = await _saved_override_maps(store, queue.SYSTEM_CTX)
     # The ACTIVE engine's file only: it is the gateway about to load. The other engine's file
     # is re-stamped by the deploy CLI and by whatever starts that engine.
-    engine = await store.llm_local_engine(queue.SYSTEM_CTX)
+    engine = await store.llm_local_engine_effective(queue.SYSTEM_CTX)
     path = Path(settings.local_models_dir or ".") / engines.CONFIG_FILE[engine]
     before_text = path.read_text() if path.exists() else None
     _try_regenerate(settings, windows, slots, extra, floors, engine=engine)
@@ -1012,7 +1012,7 @@ async def reconcile_gateway_windows_on_boot(
     try:
         windows, slots, extra, floors = await _saved_override_maps(store, ctx)
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
-        engine = await store.llm_local_engine(ctx)
+        engine = await store.llm_local_engine_effective(ctx)
     except Exception as exc:  # noqa: BLE001 — never fail boot on a reconcile-setup hiccup
         log.warning("llm_settings.gateway_reconcile_load_failed", error=str(exc))
         return False
@@ -1059,7 +1059,7 @@ async def set_jcode_model(
     otherwise) — the same set the dropdown shows. New jcode sessions pick up the
     change; an in-flight session keeps the model it started with."""
     ctx = ctx_for(principal)
-    valid = {c.id for c in _jcode_options(settings, await store.llm_local_engine(ctx))}
+    valid = {c.id for c in _jcode_options(settings, await store.llm_local_engine_effective(ctx))}
     if body.model and body.model not in valid:
         raise HTTPException(
             status_code=422, detail="model must be an installed, tool-capable local model"
@@ -1091,7 +1091,7 @@ async def set_jcode_planner(
     (422 otherwise) — the same set the executor dropdown shows. New jcode sessions pick up
     the change; an in-flight session keeps the planner it started with."""
     ctx = ctx_for(principal)
-    valid = {c.id for c in _jcode_options(settings, await store.llm_local_engine(ctx))}
+    valid = {c.id for c in _jcode_options(settings, await store.llm_local_engine_effective(ctx))}
     if body.planner and body.planner != JCODE_PLANNER_SAME and body.planner not in valid:
         raise HTTPException(
             status_code=422,
@@ -1646,7 +1646,9 @@ async def apply_overrides(
                 status_code=422, detail=f"task is not independently routable: {task}"
             )
     overrides = await store.llm_task_overrides(ctx)
-    choices = {c.id: c for c in provider_choices(settings, await store.llm_local_engine(ctx))}
+    choices = {
+        c.id: c for c in provider_choices(settings, await store.llm_local_engine_effective(ctx))
+    }
     for task, choice in body.tasks.items():
         picked = choices.get(choice.provider)
         # Unknown id, or a local model offered only when local hosting is enabled.

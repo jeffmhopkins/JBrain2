@@ -1386,12 +1386,15 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come
-back; code mode's power-on keeps whichever engine is already running. Only the update builds
-the Flash-Next image (a llama.cpp compile, bounded, while the stack is quiesced) — an Install
-from the drawer never compiles on a serving box. If Flash-Next is selected but its weights or
-image are missing, or it fails to start, the box falls back to the standard gateway and the
-log says so (`… falling back to the standard engine`); the setting itself is left for you to
-change.
+back; code mode's power-on keeps whichever engine is already running. An engine image is
+built only with no engine running — by the update (bounded, while the stack is quiesced) or
+by a one-service refresh/rebuild of that engine, which stops the serving engine for the build
+and brings the same one back — so an Install from the drawer never compiles on a serving box.
+Ops **Restart** never starts a stopped engine ("Restart all" skips it). If Flash-Next is
+selected but its weights or image are missing, or it fails to start, the box falls back to the
+standard gateway and the log says so (`FALLBACK: Flash-Next stays SELECTED …`): the api then
+serves the standard models as usual, your selection is kept, and the next Ops → Update tries
+Flash-Next again.
 
 ## Phase 8 — Confirm it's really local
 - Add a note with a photo → it should OCR locally; watch `jbrain logs local-llm`.

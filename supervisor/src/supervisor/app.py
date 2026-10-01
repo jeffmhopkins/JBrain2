@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import re
+import threading
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
 
@@ -33,6 +34,7 @@ from supervisor.gateway import (
     DockerGateway,
     UnknownServiceError,
     UpdateInProgressError,
+    engine_up,
 )
 
 if TYPE_CHECKING:
@@ -298,15 +300,56 @@ def create_app(
         # touch the engines does not have to know every one-shot kind there is.
         return OneshotRunningResponse(running=gateway.running_oneshot())
 
+    # Guard + start is check-then-act: two concurrent starts of the two engines could
+    # each see the other down and both start (§4d's freeze). FastAPI runs these sync
+    # routes on a threadpool, so a plain lock serialises every engine start/restart.
+    engine_lock = threading.Lock()
+
+    def _engine_refusal(service: str) -> str | None:
+        """Why `service` (an engine) must not be started now, or None. One engine at a
+        time (FLASH_NEXT_ENGINE_PLAN §4d), enforced HERE because every caller that
+        starts an engine - the debug switch, the Ops toggle and Restart, jcode's power
+        on - comes through this app, and the two engines together freeze the box.
+
+        ANY one-shot refuses, not only perplexity: an update/refresh/rebuild/provision
+        is itself starting and stopping engines (or compiling one) with docker
+        directly, and a start from here would race it."""
+        busy = gateway.running_oneshot()
+        if busy is not None:
+            return f"a {busy} one-shot is running; start {service} once it has finished"
+        for c in gateway.list_containers():
+            other = c.service in ENGINE_SERVICES and c.service != service
+            if other and engine_up(c.state):
+                return f"{c.service} is {c.state}; stop it before {service}"
+        return None
+
+    def _guard_engine_start(service: str) -> None:
+        reason = _engine_refusal(service)
+        if reason is not None:
+            raise HTTPException(status_code=409, detail=reason)
+
     @authed.post("/restart", status_code=202)
     def restart(body: RestartRequest, background: BackgroundTasks) -> RestartResponse:
+        # `docker restart` of a STOPPED container starts it. The engine that is not
+        # selected is deliberately created-and-stopped (§4d), so a plain restart of it
+        # - Ops "Restart all" included - would put both engines up. A stopped engine
+        # is therefore never restarted (409 alone, skipped in `all`), and a running
+        # one passes the same guard /start does.
         known = {c.service for c in gateway.list_containers()}
 
         if body.service == "all":
             peers = sorted(known - {settings.self_service})
-            for service in peers:
-                gateway.restart(service)
-            order = list(peers)
+            order: list[str] = []
+            with engine_lock:
+                states = {c.service: c.state for c in gateway.list_containers()}
+                for service in peers:
+                    if service in ENGINE_SERVICES and (
+                        not engine_up(states.get(service, ""))
+                        or _engine_refusal(service) is not None
+                    ):
+                        continue
+                    gateway.restart(service)
+                    order.append(service)
             if settings.self_service in known:
                 # Self-restart kills this process, so it must run after the
                 # response is sent — and after every peer is already bounced.
@@ -318,33 +361,38 @@ def create_app(
             raise UnknownServiceError(body.service)
         if body.service == settings.self_service:
             background.add_task(gateway.restart, body.service)
+        elif body.service in ENGINE_SERVICES:
+            with engine_lock:
+                state = next(
+                    (
+                        c.state
+                        for c in gateway.list_containers()
+                        if c.service == body.service
+                    ),
+                    "missing",
+                )
+                if not engine_up(state):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"{body.service} is {state}, not running; a restart "
+                        "would start it - switch engines instead",
+                    )
+                _guard_engine_start(body.service)
+                gateway.restart(body.service)
         else:
             gateway.restart(body.service)
         return RestartResponse(restarting=[body.service])
-
-    def _guard_engine_start(service: str) -> None:
-        # One engine at a time (FLASH_NEXT_ENGINE_PLAN §4d), enforced HERE because every
-        # caller that starts an engine - the debug switch, the Ops toggle, jcode's power
-        # on - comes through this route, and the two engines together freeze the box.
-        if gateway.running_oneshot() == "perplexity":
-            raise HTTPException(
-                status_code=409, detail="a perplexity run holds the box"
-            )
-        for c in gateway.list_containers():
-            other = c.service in ENGINE_SERVICES and c.service != service
-            if other and c.state == "running":
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"{c.service} is running; stop it before {service}",
-                )
 
     @authed.post("/start", status_code=202)
     def start_service(body: ServiceRequest) -> ServiceActionResponse:
         # Toggle an existing-but-stopped service on (the comfyui profile service).
         # An unknown/never-created service raises UnknownServiceError -> 404.
         if body.service in ENGINE_SERVICES:
-            _guard_engine_start(body.service)
-        gateway.start(body.service)
+            with engine_lock:
+                _guard_engine_start(body.service)
+                gateway.start(body.service)
+        else:
+            gateway.start(body.service)
         return ServiceActionResponse(service=body.service, action="start")
 
     @authed.post("/stop", status_code=202)

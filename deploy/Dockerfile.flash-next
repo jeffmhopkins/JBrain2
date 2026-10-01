@@ -127,23 +127,27 @@ ARG LLAMA_CPP_COMMIT=869034b4bb93a425ea989d30fc3d000f5a461d58
 
 COPY --from=swap /out/llama-swap /usr/local/bin/llama-swap
 
-# The built binaries live under /opt/llama.cpp, AND replace the base's `llama-server` wherever
-# PATH finds it: the rendered llama-swap config invokes `llama-server` by bare name (shared
-# with the standard engine's renderer), so the name must resolve to THIS build. The final
-# check fails the image rather than ship one that would quietly serve the base's older
+# The built binaries live under /opt/llama.cpp, AND replace the base's `llama-server` and
+# `llama-perplexity` wherever PATH finds them: the rendered llama-swap config invokes
+# `llama-server` by bare name (shared with the standard engine's renderer), so the name must
+# resolve to THIS build — and a base image shipping its own llama-perplexity earlier on PATH
+# would otherwise shadow ours (the perplexity one-shot also runs it by absolute path). The
+# checks fail the image rather than ship one that would quietly run the base's older
 # llama.cpp — which predates Flash-Next support and would fail every load.
 COPY --from=llama-build /out/bin/ /opt/llama.cpp/bin/
 RUN set -eu; \
-    dst="$(command -v llama-server || echo /usr/local/bin/llama-server)"; \
-    install -m 0755 /opt/llama.cpp/bin/llama-server "${dst}"; \
-    ln -sf /opt/llama.cpp/bin/llama-perplexity /usr/local/bin/llama-perplexity; \
+    for b in llama-server llama-perplexity; do \
+        dst="$(command -v "$b" || echo "/usr/local/bin/$b")"; \
+        install -m 0755 "/opt/llama.cpp/bin/$b" "${dst}"; \
+    done; \
     short="$(printf '%s' "${LLAMA_CPP_COMMIT}" | cut -c1-7)"; \
     ver="$(llama-server --version 2>&1 || true)"; \
     printf '%s\n' "$ver" | grep -q "$short" \
         || { echo "FATAL: llama-server on PATH does not report commit $short: $ver"; exit 1; }; \
     echo "llama-server on PATH is the pinned build ($short)"; \
-    command -v llama-perplexity >/dev/null \
-        || { echo "FATAL: llama-perplexity is not on PATH"; exit 1; }
+    pver="$(llama-perplexity --version 2>&1 || true)"; \
+    printf '%s\n' "$pver" | grep -q "$short" \
+        || { echo "FATAL: llama-perplexity on PATH does not report commit $short: $pver"; exit 1; }
 
 # Fixed path the F2 perplexity one-shot reads; do not move it without moving that job.
 COPY --from=wikitext /out/wiki.test.raw /opt/jbrain/eval/wiki.test.raw

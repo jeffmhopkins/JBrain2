@@ -1418,11 +1418,12 @@ async def logs(
 
 
 async def _active_engine(request: Request) -> llm_engine.Engine:
-    """The engine the owner has selected (FLASH_NEXT_ENGINE_PLAN §4d). A settings read that
-    fails reads as the default rather than failing a log pull: the logs are most wanted
-    exactly when something else on the box is broken."""
+    """The engine actually up — the EFFECTIVE one, which differs from the owner's selection
+    after a Flash-Next fallback (FLASH_NEXT_ENGINE_PLAN §4d). A settings read that fails
+    reads as the default rather than failing a log pull: the logs are most wanted exactly
+    when something else on the box is broken."""
     try:
-        return await _store(request).llm_local_engine(_OWNER_CTX)
+        return await _store(request).llm_local_engine_effective(_OWNER_CTX)
     except Exception:  # noqa: BLE001
         log.warning("debug.engine_unreadable", exc_info=True)
         return llm_engine.DEFAULT_ENGINE
@@ -3329,10 +3330,11 @@ async def prime_model(
 # test, no auto-rollback on a bad model. F3's PWA switch replaces it and these routes are
 # folded into that one.
 
-# Docker states in which a container holds its memory. `restarting` is deliberately NOT
-# here: it is a container between runs (a crash loop's gap), and counting it as up would
-# let a crash-looping engine block every switch away from it — the repair this route is.
-_UP_STATES = frozenset({"running", "paused", "removing"})
+# Docker states in which an engine holds its memory: the one predicate shared with the
+# supervisor's guard and the deploy scripts (`llm_engine.UP_STATES`). `restarting` counts —
+# a crash-looping engine re-allocates every loop — so the switch STOPS it as one of the
+# "others" before starting the target; it is never skipped as down, and never blocks.
+_UP_STATES = llm_engine.UP_STATES
 # Not provisioned: the supervisor has no container for the service.
 _MISSING = "missing"
 # How long a stop or start may take to show in the supervisor's /status. `docker stop`
@@ -3360,13 +3362,17 @@ class EngineServiceOut(BaseModel):
 
 
 class EngineOut(BaseModel):
-    # The persisted owner setting — what the update one-shot will bring up.
-    active: llm_engine.Engine
+    # The owner's choice — what the update one-shot TRIES to bring up.
+    desired: llm_engine.Engine
+    # The engine recorded as actually started — what every load, list and re-stamp in the
+    # api keys off. Differs from `desired` after a fallback (Flash-Next could not start and
+    # the standard gateway serves); the next update retries `desired`.
+    effective: llm_engine.Engine
     services: dict[str, EngineServiceOut]
-    # Engines whose container is actually up. Exactly `[active]` on a healthy box.
+    # Engines whose container is actually up. Exactly `[effective]` on a healthy box.
     running: list[llm_engine.Engine]
-    # `running == [active]`: false means the box disagrees with the setting (both up, none
-    # up, or the other one up) and the next switch is the repair.
+    # `running == [effective]`: false means the box disagrees with what the api routes to
+    # (both up, none up, or the other one up) and the next switch is the repair.
     consistent: bool
     # A perplexity run owns the box while it lasts; a switch is refused until it ends.
     perplexity_running: bool
@@ -3416,7 +3422,12 @@ async def _oneshot_in_flight(request: Request, settings: Any) -> str | None:
     return str(running) if running else None
 
 
-def _engine_out(active: llm_engine.Engine, states: dict[str, str], perplexity: bool) -> EngineOut:
+def _engine_out(
+    desired: llm_engine.Engine,
+    effective: llm_engine.Engine,
+    states: dict[str, str],
+    perplexity: bool,
+) -> EngineOut:
     services = {
         e: EngineServiceOut(
             service=llm_engine.SERVICE[e], state=states.get(llm_engine.SERVICE[e], _MISSING)
@@ -3427,10 +3438,11 @@ def _engine_out(active: llm_engine.Engine, states: dict[str, str], perplexity: b
         e for e in llm_engine.ENGINES if services[e].state in _UP_STATES
     ]
     return EngineOut(
-        active=active,
+        desired=desired,
+        effective=effective,
         services=services,
         running=running,
-        consistent=running == [active],
+        consistent=running == [effective],
         perplexity_running=perplexity,
     )
 
@@ -3488,12 +3500,15 @@ async def _unload_resident(request: Request, why: str) -> list[str]:
 
 @router.get("/llm/engine")
 async def read_engine(request: Request, settings: SettingsDep, _p: DebugDep) -> EngineOut:
-    """Which local engine is selected, and the container state of BOTH engines' services —
+    """Which local engine is DESIRED (the owner's choice) and which is EFFECTIVE (actually
+    started, what the api routes by), and the container state of BOTH engines' services —
     the read that says whether the §4d "exactly one engine" guarantee holds right now."""
     request.state.debug_detail = "engine state"
     states = await _container_states(request, settings)
+    store = _store(request)
     return _engine_out(
-        await _store(request).llm_local_engine(_OWNER_CTX),
+        await store.llm_local_engine(_OWNER_CTX),
+        await store.llm_local_engine_effective(_OWNER_CTX),
         states,
         await _perplexity_running(request, settings),
     )
@@ -3510,7 +3525,8 @@ async def switch_engine(
     fixed: unload the running gateway's models (through the client, so the ledger and the
     vitals surface stay honest), stop every OTHER engine and wait until the supervisor
     REPORTS it stopped, only then start the target and wait for it to report running, and
-    only then persist the setting. Nothing is started while anything else is still up —
+    only then persist it as both DESIRED and EFFECTIVE. Nothing is started while anything
+    else is still up (a crash-looping, `restarting` engine counts as up and is stopped) —
     and the supervisor's own `/start` refuses an engine while the other runs, so this holds
     even against a caller that is not this route.
 
@@ -3536,7 +3552,7 @@ async def switch_engine(
 
 async def _switch_engine(target: llm_engine.Engine, request: Request, settings: Any) -> EngineOut:
     store = _store(request)
-    previous = await store.llm_local_engine(_OWNER_CTX)
+    previous = await store.llm_local_engine_effective(_OWNER_CTX)
     busy = await _oneshot_in_flight(request, settings)
     if busy is not None:
         raise HTTPException(
@@ -3556,8 +3572,8 @@ async def _switch_engine(target: llm_engine.Engine, request: Request, settings: 
     ]
     others: list[llm_engine.Engine] = [e for e in up if e != target]
     if not others and target in up:
-        await store.set_llm_local_engine(_OWNER_CTX, target)
-        return _engine_out(target, states, False)
+        await _persist_engine(store, target)
+        return _engine_out(target, target, states, False)
 
     await _unload_resident(request, f"switching the local engine to {target}")
     for engine in others:
@@ -3591,9 +3607,13 @@ async def _switch_engine(target: llm_engine.Engine, request: Request, settings: 
         if restore is None:
             return "no engine was running before, so none was put back"
         try:
-            await _sup_toggle(request, settings, "start", llm_engine.SERVICE[restore])
+            code = await _sup_toggle(request, settings, "start", llm_engine.SERVICE[restore])
         except (HTTPException, httpx.HTTPError):
             return f"{restore} could NOT be put back; switch to it again"
+        if code == 404:
+            return f"{restore} could NOT be put back (not provisioned); switch to it again"
+        # The desire is unchanged (the switch failed); what serves is the restored engine.
+        await store.set_llm_local_engine_effective(_OWNER_CTX, restore)
         return f"{restore} was put back"
 
     try:
@@ -3619,12 +3639,21 @@ async def _switch_engine(target: llm_engine.Engine, request: Request, settings: 
         raise HTTPException(
             status_code=504, detail=f"{target_service} did not report running; {outcome}"
         )
-    await store.set_llm_local_engine(_OWNER_CTX, target)
+    await _persist_engine(store, target)
     log.info("debug.engine_switched", previous=previous, engine=target, stopped=others)
-    return _engine_out(target, await _container_states(request, settings), False)
+    return _engine_out(target, target, await _container_states(request, settings), False)
 
 
-# --- Slot save/restore probe (F2 check 7) ------------------------------------------------
+async def _persist_engine(store: SqlSettingsStore, engine: llm_engine.Engine) -> None:
+    """A successful switch is both the owner's new choice and what now serves."""
+    await store.set_llm_local_engine(_OWNER_CTX, engine)
+    await store.set_llm_local_engine_effective(_OWNER_CTX, engine)
+
+
+# --- Slot save/restore probe (F4's first check) ------------------------------------------
+# Usable from F4 on: the flash-next config renders no --slot-save-path and the checkpoint
+# sidecar patch is off until F4 turns it on for this image, so before then the save step
+# fails with llama-server's own error rather than measuring anything.
 # Whether a saved-then-restored slot computes the SAME next token distribution as the slot
 # it was saved from. Greedy token equality is too coarse (it can differ legitimately and
 # agree by luck), so this returns the top-n log-probabilities side by side and the largest
@@ -3758,8 +3787,8 @@ def _needs_save_path(resp: httpx.Response) -> bool:
 async def slot_probe(
     body: SlotProbeIn, request: Request, settings: SettingsDep, _p: DebugDep
 ) -> SlotProbeOut:
-    """**Slot save/restore probe** (FLASH_NEXT_ENGINE_PLAN F2, check 7): does a restored slot
-    compute what the saved one did?
+    """**Slot save/restore probe** (FLASH_NEXT_ENGINE_PLAN F4's first check, moved out of F2):
+    does a restored slot compute what the saved one did?
 
     On the active engine's resident model: erase slots A and B, prime A with the prompt
     (`n_predict: 1` — its next-token candidates are the COLD read), save A to a fixed file,

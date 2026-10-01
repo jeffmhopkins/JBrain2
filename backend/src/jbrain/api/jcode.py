@@ -422,13 +422,15 @@ async def _power_on_services(request: Request, owner_id: str) -> tuple[str, ...]
     running = [
         llm_engine.SERVICE[e]
         for e in llm_engine.ENGINES
-        if states.get(llm_engine.SERVICE[e]) == "running"
+        if llm_engine.holds_memory(states.get(llm_engine.SERVICE[e], ""))
     ]
     if running:
         return (running[0], *_JCODE_SERVICES)
     active = llm_engine.DEFAULT_ENGINE
     with contextlib.suppress(Exception):
-        active = llm_engine.parse(await _store(request).llm_local_engine(_owner_ctx(owner_id)))
+        active = llm_engine.parse(
+            await _store(request).llm_local_engine_effective(_owner_ctx(owner_id))
+        )
     return (llm_engine.SERVICE[active], *_JCODE_SERVICES)
 
 

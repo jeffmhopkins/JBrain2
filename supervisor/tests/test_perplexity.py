@@ -169,7 +169,7 @@ def test_perplexity_status_lifecycle(client: TestClient, gateway: FakeGateway) -
 def test_the_command_runs_only_the_fixed_binary_file_and_flags() -> None:
     script = gw._perplexity_command("jbrain", MODEL, 25, "")
 
-    assert "--entrypoint llama-perplexity" in script
+    assert "--entrypoint /opt/llama.cpp/bin/llama-perplexity" in script
     assert "run --rm --no-deps -T" in script
     assert f"-f {gw.PERPLEXITY_TEXT}" in script
     assert "-ngl 999 -ot per_layer_token_embd=CPU -c 512 --chunks 25" in script
@@ -186,7 +186,7 @@ def test_the_command_refuses_a_restore_target_that_is_not_an_engine() -> None:
         gw._perplexity_command("jbrain", MODEL, None, "api; rm -rf /")
 
 
-# A `docker` stand-in with STATE: a file per running engine under $STATE, so a stop
+# A `docker` stand-in with STATE: a file per up engine under $STATE, so a stop
 # really stops and the script's re-check sees it. STOP_FAIL makes `stop` fail;
 # STOP_NOOP makes it "succeed" without stopping. While `compose` runs it logs which
 # engines are up, which is what the one-engine assertions read.
@@ -194,7 +194,11 @@ _FAKE_DOCKER = """#!/bin/sh
 echo "$*" >> "$LOG"
 case "$1" in
   ps)
-    if [ "$2" = -aq ]; then pool="local-llm flash-next"; else pool=$(ls "$STATE"); fi
+    # An up-state lookup sees what $STATE holds; a bare -aq lookup sees every engine.
+    case "$*" in
+      *status=running*) pool=$(ls "$STATE") ;;
+      *) pool="local-llm flash-next" ;;
+    esac
     for s in $pool; do
       case "$*" in *"service=$s"*) echo "id-$s";; esac
     done ;;
@@ -267,6 +271,23 @@ def test_the_script_stops_the_running_engine_first_and_restarts_it(
         assert f"label={COMPOSE_PROJECT_LABEL}=jbrain" in c
         assert f"label={COMPOSE_ONEOFF_LABEL}=False" in c
     assert "restarting flash-next" in out
+
+
+def test_the_script_counts_a_paused_or_crash_looping_engine_as_up(
+    tmp_path: Path,
+) -> None:
+    """A bare `docker ps` lists only what docker calls running, so a crash-looping
+    (restarting) engine slipped past the stop and re-took its memory beside the run.
+    The up check names every state `engine_up` counts, so it is STOPPED, not skipped."""
+    _, calls, _ = _run_script(tmp_path, "local-llm", restore="local-llm")
+
+    up_checks = [c for c in calls if c.startswith("ps") and "status=" in c]
+    assert up_checks, calls
+    for c in up_checks:
+        for state in gw.ENGINE_UP_STATES:
+            assert f"status={state}" in c
+    assert {"running", "paused", "restarting"} <= gw.ENGINE_UP_STATES
+    assert any(c.startswith("stop") and "id-local-llm" in c for c in calls)
 
 
 def test_the_script_restores_the_engine_even_when_the_run_fails(

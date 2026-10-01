@@ -96,8 +96,8 @@ def provider_choices(
     provider still reverse-maps via id_for_spec, so the screen surfaces it as an
     unavailable choice rather than crashing.
 
-    `engine` is the active on-box engine (`settings_store.llm_local_engine`), which the async
-    caller reads; the default is the standard gateway every box runs unless switched."""
+    `engine` is the active on-box engine (`settings_store.llm_local_engine_effective`), which
+    the async caller reads; the default is the standard gateway every box runs unless switched."""
     cloud: list[ProviderChoice] = []
     if settings.xai_api_key:
         cloud.append(

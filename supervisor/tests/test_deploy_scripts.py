@@ -2120,7 +2120,7 @@ def test_a_running_engine_is_released_and_settled_before_the_other_starts(
     polls = [
         i
         for i, c in enumerate(calls)
-        if i > stop and "ps -q --status running local-llm" in c
+        if i > stop and "ps -q --status running" in c and c.endswith(" local-llm")
     ]
     start = _idx(calls, "up -d --no-build flash-next")
     assert unload < stop < start
@@ -2467,3 +2467,163 @@ def test_no_helper_up_can_build_an_image() -> None:
         if "docker compose" in ln and " up " in ln and not ln.lstrip().startswith("#")
     ]
     assert ups and all("--no-build" in ln for ln in ups), ups
+
+
+# --- desired vs effective engine, and the up predicate ------------------------------
+
+
+def test_a_started_engine_is_recorded_as_effective(tmp_path: Path) -> None:
+    """The api routes by the EFFECTIVE engine, so whatever starts one records it."""
+    proc, calls = _run_engine(tmp_path, "local_engine_start flash-next 1")
+    assert proc.returncode == 0, proc.stderr
+    started = _idx(calls, "up -d --no-build flash-next")
+    recorded = _idx(calls, "jbrain.cli set-local-engine-effective flash-next")
+    assert started < recorded
+    assert not any("set-local-engine-effective standard" in c for c in calls)
+
+
+@pytest.mark.parametrize(
+    ("fn", "fail"), [("", ""), ("1", "up -d --no-build flash-next")]
+)
+def test_a_flash_next_fallback_records_standard_as_effective(
+    tmp_path: Path, fn: str, fail: str
+) -> None:
+    """Desired stays flash-next (the next update retries it), but the api must stop
+    believing Flash-Next is up, or it refuses every standard load with no way out."""
+    proc, calls = _run_engine(
+        tmp_path, f'local_engine_start flash-next "{fn}"', fail=fail
+    )
+    assert proc.returncode == 0, proc.stderr
+    started = _idx(calls, "up -d --no-build local-llm")
+    recorded = _idx(calls, "jbrain.cli set-local-engine-effective standard")
+    assert started < recorded
+    assert "FALLBACK" in proc.stdout and "SELECTED" in proc.stdout
+    # The owner's choice is never rewritten by a deploy script.
+    assert not any("set-local-engine " in f"{c} " for c in calls)
+
+
+def test_a_failed_effective_write_does_not_fail_the_start(tmp_path: Path) -> None:
+    proc, _ = _run_engine(
+        tmp_path,
+        'local_engine_start standard ""\necho "STARTED=$LOCAL_ENGINE_STARTED"',
+        fail="set-local-engine-effective",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "STARTED=standard" in proc.stdout
+    assert "could not record standard" in proc.stdout
+
+
+def test_the_up_check_counts_a_crash_looping_engine(tmp_path: Path) -> None:
+    """`--status running` alone missed a restarting (crash-looping) engine, which then
+    re-took its memory beside the other. It is released and stopped like a running
+    one."""
+    proc, calls = _run_engine(
+        tmp_path, "local_engine_start flash-next 1", running="local-llm"
+    )
+    assert proc.returncode == 0, proc.stderr
+    checks = [c for c in calls if " ps -q " in f" {c} "]
+    assert checks
+    for c in checks:
+        for state in ("running", "paused", "restarting"):
+            assert f"--status {state}" in c, c
+    assert _idx(calls, "stop local-llm") < _idx(calls, "up -d --no-build flash-next")
+
+
+# --- refresh / rebuild of an ENGINE service -----------------------------------------
+
+
+def _run_oneservice(
+    tmp_path: Path, script: str, service: str, **kw: str
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Run a one-service deploy script against the fake docker, from an install dir
+    whose `src` is this checkout (it sources src/deploy/local-engine.sh)."""
+    (tmp_path / "src").symlink_to(DEPLOY.parent)
+    return _run_engine(tmp_path, f"exec sh {DEPLOY / script} {service}", **kw)
+
+
+_FN_INSTALLED = {
+    "catalog": "yes",
+    "env_file": "LOCAL_LLM_ENABLED=true\nLOCAL_MODELS=qwen3.8-flash-next\n",
+}
+
+
+def test_rebuilding_the_idle_engine_never_starts_it(tmp_path: Path) -> None:
+    """`up -d flash-next` would enable its profile and start it beside the serving
+    standard gateway. The build runs with the standard gateway released, flash-next is
+    recreated STOPPED, and only the standard gateway comes back."""
+    proc, calls = _run_oneservice(
+        tmp_path, "rebuild-inner.sh", "flash-next", running="local-llm", **_FN_INSTALLED
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not any("up -d --no-build flash-next" in c for c in calls)
+    assert not any("up -d flash-next" in c for c in calls)
+    stop = _idx(calls, "stop local-llm")
+    build = _idx(calls, "--profile flash-next build flash-next")
+    create = _idx(calls, "up --no-start --no-build flash-next")
+    back = _idx(calls, "up -d --no-build local-llm")
+    assert stop < build < create < back, calls
+    assert _idx(calls, "set-local-engine-effective standard") > back
+    assert all("--no-build" in c for c in _ups(calls)), _ups(calls)
+
+
+def test_rebuilding_the_serving_engine_brings_it_back(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(
+        tmp_path,
+        "rebuild-inner.sh",
+        "flash-next",
+        running="flash-next",
+        **_FN_INSTALLED,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    stop = _idx(calls, "stop flash-next")
+    build = _idx(calls, "--profile flash-next build flash-next")
+    back = _idx(calls, "up -d --no-build flash-next")
+    assert stop < build < back
+    assert not any("up -d --no-build local-llm" in c for c in calls)
+
+
+def test_rebuilding_with_no_engine_up_starts_none(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(tmp_path, "rebuild-inner.sh", "local-llm")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert any("--profile local-llm build local-llm" in c for c in calls)
+    assert any("up --no-start --no-build local-llm" in c for c in calls)
+    assert not any(" up -d " in f" {c} " for c in calls)
+    assert "left created and stopped" in proc.stdout
+
+
+def test_a_failed_engine_build_still_brings_the_engine_back(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(
+        tmp_path,
+        "rebuild-inner.sh",
+        "local-llm",
+        running="local-llm",
+        fail="build local-llm",
+    )
+    assert proc.returncode != 0
+    assert any("up -d --no-build local-llm" in c for c in calls)
+    assert "keeping its previous image" in proc.stdout
+
+
+def test_a_non_engine_rebuild_is_unchanged(tmp_path: Path) -> None:
+    proc, calls = _run_oneservice(tmp_path, "rebuild-inner.sh", "api")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "compose build api" in calls
+    assert "compose up -d api" in calls
+
+
+@pytest.mark.parametrize("script", ["refresh-inner.sh", "rebuild-inner.sh"])
+def test_engine_services_take_the_quiesced_path_before_any_plain_up(
+    script: str,
+) -> None:
+    lines = [
+        ln
+        for ln in (DEPLOY / script).read_text().splitlines()
+        if not ln.lstrip().startswith("#")
+    ]
+    branch = next(i for i, ln in enumerate(lines) if "local-llm|flash-next)" in ln)
+    engine = next(i for i, ln in enumerate(lines) if "local_engine_rebuild" in ln)
+    plain = next(i for i, ln in enumerate(lines) if "docker compose up -d" in ln)
+    assert branch < engine < plain
+    if script == "refresh-inner.sh":
+        reset = next(i for i, ln in enumerate(lines) if "reset --hard" in ln)
+        assert reset < branch, "the pulled local-engine.sh is the one sourced"

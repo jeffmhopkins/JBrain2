@@ -236,7 +236,7 @@ async def test_on_boot_reconcile_carries_every_override_kind_through(tmp_path: P
         async def llm_local_image_min_tokens(self, _ctx: object) -> dict[str, int]:
             return {"qwen3-vl-30b": 4096}
 
-        async def llm_local_engine(self, _ctx: object) -> str:
+        async def llm_local_engine_effective(self, _ctx: object) -> str:
             return "standard"
 
     settings = SimpleNamespace(
