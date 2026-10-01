@@ -161,6 +161,35 @@ class UnsafeArgument(ValueError):
     """A command token that would break out of its place in the rendered config."""
 
 
+def _rejected_operator_args(model_id: str, args: Sequence[str]) -> str | None:
+    """Why `model_id`'s STORED operator flags may not be served, or None when they may.
+
+    The settings API's allowlist and value shapes, re-applied to what is stored (a row that
+    bypassed the API — or one saved before a flag left the list, like the retired
+    `--cache-ram` — must not become an argv the gateway executes), plus `_UNSAFE_TOKEN`.
+    The reason names the no-shell fix, because the owner reads it on the settings screen."""
+    problem: str | None = None
+    try:
+        launch_flags.validate(args)
+    except launch_flags.LaunchFlagError as exc:
+        problem = str(exc)
+    else:
+        bad = next((a for a in args if _UNSAFE_TOKEN.search(a)), None)
+        if bad is not None:
+            problem = (
+                f"{bad!r} cannot appear in a llama-server argument (whitespace, control "
+                "characters, quotes and '#' are refused)"
+            )
+    if problem is None:
+        return None
+    return (
+        f"{model_id}: its saved launch flags were NOT applied — {problem}. The model is served "
+        "with its catalog flags only. Clear them from the debug console: PUT "
+        f'/api/debug/llm/local-models/{model_id}/extra-args with {{"args": []}}, or set '
+        "allowlisted ones the same way"
+    )
+
+
 def _refuse_unsafe(model_id: str, cmd: Sequence[str]) -> None:
     for token in cmd:
         if _UNSAFE_TOKEN.search(token):
@@ -259,6 +288,7 @@ def render(
     extra_args: Mapping[str, Sequence[str]] | None = None,
     image_min_tokens: Mapping[str, int] | None = None,
     engine: engines.Engine = engines.STANDARD,
+    rejected: dict[str, str] | None = None,
 ) -> str:
     """The full llama-swap.yaml text for `models` (catalog manifest dicts). `root`
     is the host path to the weights (globbed to resolve filenames); `windows` maps
@@ -277,7 +307,12 @@ def render(
     app is the sole evictor (jbrain.llm.residency).
 
     Only `engine`'s entries are rendered (engine.models_for): callers pass the whole installed
-    manifest, and the other engine's models are left to that engine's own file."""
+    manifest, and the other engine's models are left to that engine's own file.
+
+    A model whose stored operator flags fail validation is rendered WITHOUT them (catalog flags
+    only) rather than failing the whole file: one bad row must not stop every other model's
+    window and slot overrides from reaching the gateway. Each such model's reason is added to
+    `rejected` (catalog id -> reason) when the caller passes a dict to collect them."""
     models = engines.models_for(engine, models)
     windows = windows or {}
     slots = slots or {}
@@ -299,14 +334,14 @@ def render(
         # to rewrite and the command line carries exactly one --image-min-tokens.
         floor = image_min_tokens.get(model_id, cast("int | None", m.get("image_min_tokens")))
         operator_args = tuple(str(a) for a in extra_args.get(model_id, ()))
-        # Re-apply the settings API's allowlist to what is STORED: the operator's flags come
-        # out of a settings row, and a row that bypassed the API must not become an argv the
-        # gateway executes. `_refuse_unsafe` below is the other wall (no token may break out
-        # of its place in the YAML); this one keeps every flag to the allowlisted set.
-        try:
-            launch_flags.validate(operator_args)
-        except launch_flags.LaunchFlagError as exc:
-            raise UnsafeArgument(f"{model_id}: refusing a stored launch flag — {exc}") from exc
+        # Re-apply the settings API's allowlist to what is STORED, and serve the model without
+        # its operator flags when they fail (see the docstring). `_refuse_unsafe` below stays
+        # the hard wall for the rest of the line, which comes from code and the catalog.
+        reason = _rejected_operator_args(model_id, operator_args)
+        if reason is not None:
+            operator_args = ()
+            if rejected is not None:
+                rejected[model_id] = reason
         # Absent an operator count, the catalog's `default_slots` (1 everywhere but Flash-Next,
         # whose four slots are role-pinned prefix caches — FLASH_NEXT_ENGINE_PLAN §4a).
         n_slots = max(1, slots.get(model_id, int(cast(int, m.get("default_slots") or 1))))
@@ -583,6 +618,7 @@ def write(
     extra_args: Mapping[str, Sequence[str]] | None = None,
     image_min_tokens: Mapping[str, int] | None = None,
     engine: engines.Engine = engines.STANDARD,
+    rejected: dict[str, str] | None = None,
 ) -> str:
     """Render and atomically write `engine`'s config ({root}/llama-swap.yaml for the standard
     gateway; engine.CONFIG_FILE) — temp + rename so the gateway's --watch-config never sees a
@@ -620,6 +656,7 @@ def write(
         extra_args=extra_args,
         image_min_tokens=image_min_tokens,
         engine=engine,
+        rejected=rejected,
     )
     path = engines.config_path(root, engine)
     # llama-server does not create its --slot-save-path, and a save into a missing
@@ -877,15 +914,30 @@ def _main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         windows, slots, extra, floors = {}, {}, {}, {}
-    path = write(
-        root,
-        models,
-        windows=windows,
-        slots=slots,
-        extra_args=extra,
-        image_min_tokens=floors,
-        engine=engine,
-    )
+    rejected: dict[str, str] = {}
+    try:
+        path = write(
+            root,
+            models,
+            windows=windows,
+            slots=slots,
+            extra_args=extra,
+            image_min_tokens=floors,
+            engine=engine,
+            rejected=rejected,
+        )
+    except UnsafeArgument as exc:
+        # Same contract as OverridesUnavailable: leave the config that is serving and exit 0,
+        # because this runs under `set -eu` in the model sync and a non-zero exit would skip
+        # every step after it. Operator flags no longer reach here (they are dropped per model
+        # above); what does is a catalog or generated token, i.e. a code bug, not a setting.
+        print(
+            f"[llama-swap] refusing to render {path} ({exc}); LEAVING the existing file as it is",
+            file=sys.stderr,
+        )
+        return 0
+    for reason in rejected.values():
+        print(f"[llama-swap] {reason}", file=sys.stderr)
     served = engines.models_for(engine, models)
     applied = sum(
         1

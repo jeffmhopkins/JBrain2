@@ -27,8 +27,9 @@ class RegenOut(BaseModel):
 
 def _authorize(request: Request, supervisor_token: str) -> None:
     expected = regen_token(supervisor_token)
-    header = request.headers.get("authorization", "")
-    presented = header.removeprefix("Bearer ") if header.startswith("Bearer ") else ""
+    scheme, _, presented = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer":
+        presented = ""
     # Fail closed with no secret configured: an empty expected token must not match an empty
     # presented one.
     if not expected or not hmac.compare_digest(presented.encode(), expected.encode()):

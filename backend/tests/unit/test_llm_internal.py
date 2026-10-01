@@ -64,6 +64,12 @@ def test_the_route_re_stamps_for_a_holder_of_the_derived_bearer(
     assert calls == ["regen"]
 
 
+def test_the_bearer_scheme_is_case_insensitive(client: TestClient, calls: list[str]) -> None:
+    token = gateway_regen.regen_token("sek")
+    assert client.post(_URL, headers={"Authorization": f"bearer {token}"}).status_code == 200
+    assert calls == ["regen"]
+
+
 @pytest.mark.parametrize(
     "headers",
     [
@@ -158,6 +164,8 @@ async def test_the_worker_client_posts_the_derived_bearer_and_no_body() -> None:
         httpx.Response(403, json={"detail": "forbidden"}),
         httpx.Response(500),
         httpx.Response(200, json={"error": "stale"}),
+        httpx.Response(200, json=["not", "a", "dict"]),
+        httpx.Response(200, text="not json"),
     ],
 )
 async def test_the_worker_client_raises_on_a_failed_re_stamp(response: httpx.Response) -> None:

@@ -480,6 +480,33 @@ async def test_a_saved_layout_reaches_the_flash_next_served_command(
     assert llama_swap_config_shape(tmp_path)[served] == (window, np)
 
 
+@pytest.mark.asyncio
+async def test_a_dropped_stored_flag_is_named_on_the_settings_screen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The re-stamp still lands the window, serves the model without the refused flag, and
+    `gateway_config_error` (what the settings screen shows) names the model, the reason and the
+    no-shell fix."""
+    from tests.unit.fakes import FakeSettingsStore
+
+    _lay_down_flash(tmp_path)
+    monkeypatch.setattr(llm_settings, "_GATEWAY_RELOAD_SETTLE_S", 0.0)
+    settings = SimpleNamespace(local_models=[FLASH_ID], local_models_dir=str(tmp_path))
+    store = FakeSettingsStore()
+    store.values["llm_local_engine_effective"] = "flash-next"
+    store.values["llm_local_extra_args"] = {FLASH_ID: ["--cache-ram", "8192"]}
+    await store.set_llm_local_context_window(None, model_id=FLASH_ID, window=131072)
+    try:
+        await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
+        text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
+        assert " -c 524288 " in text and "--cache-ram" not in text
+        err = llm_settings.gateway_config_error()
+        assert err is not None and FLASH_ID in err and "--cache-ram" in err
+        assert f"/api/debug/llm/local-models/{FLASH_ID}/extra-args" in err
+    finally:
+        llm_settings._set_regen_error(None)
+
+
 def llama_swap_config_shape(root: Path) -> dict[str, tuple[int, int]]:
     from jbrain.llm import llama_swap_config
 
@@ -562,17 +589,25 @@ def test_the_renderer_re_applies_the_launch_flag_allowlist(
     tmp_path: Path, stored: list[str]
 ) -> None:
     """A stored override that never went through the settings API's allowlist must not reach
-    a launch command — the renderer checks what is STORED, not just what the PUT accepted."""
+    a launch command — the renderer checks what is STORED, not just what the PUT accepted. The
+    model is served on its catalog flags and the reason names the no-shell fix."""
     from jbrain.llm import llama_swap_config
 
     (tmp_path / "gpt-oss-120b").mkdir()
     (tmp_path / "gpt-oss-120b" / "m-mxfp4.gguf").write_bytes(b"\0")
     gpt = local_catalog.get("gpt-oss-120b")
     assert gpt is not None
-    with pytest.raises(llama_swap_config.UnsafeArgument):
-        llama_swap_config.render(
-            [dataclasses.asdict(gpt)], str(tmp_path), extra_args={"gpt-oss-120b": stored}
-        )
+    rejected: dict[str, str] = {}
+    text = llama_swap_config.render(
+        [dataclasses.asdict(gpt)],
+        str(tmp_path),
+        extra_args={"gpt-oss-120b": stored},
+        rejected=rejected,
+    )
+    # Exactly the catalog-only line: nothing of the stored override reached it.
+    assert text == llama_swap_config.render([dataclasses.asdict(gpt)], str(tmp_path))
+    assert set(rejected) == {"gpt-oss-120b"}
+    assert "/api/debug/llm/local-models/gpt-oss-120b/extra-args" in rejected["gpt-oss-120b"]
     # An allowlisted override still renders.
     text = llama_swap_config.render(
         [dataclasses.asdict(gpt)],
@@ -839,17 +874,26 @@ def test_legitimate_launch_arguments_still_pass(args: list[str]) -> None:
     ],
 )
 def test_the_renderer_refuses_a_stored_unsafe_argument(tmp_path: Path, bad: str) -> None:
-    """The second wall: an override stored before validation existed must not render."""
+    """The second wall: an override stored before validation existed must not render — the
+    model's operator flags are dropped and the reason reported, never smuggled into the YAML."""
+    import yaml
+
     from jbrain.llm import llama_swap_config
 
     (tmp_path / "gpt-oss-120b").mkdir()
     (tmp_path / "gpt-oss-120b" / "m-mxfp4.gguf").write_bytes(b"\0")
     gpt = local_catalog.get("gpt-oss-120b")
     assert gpt is not None
-    with pytest.raises(llama_swap_config.UnsafeArgument):
-        llama_swap_config.render(
-            [dataclasses.asdict(gpt)], str(tmp_path), extra_args={"gpt-oss-120b": ["-ot", bad]}
-        )
+    rejected: dict[str, str] = {}
+    text = llama_swap_config.render(
+        [dataclasses.asdict(gpt)],
+        str(tmp_path),
+        extra_args={"gpt-oss-120b": ["-ot", bad]},
+        rejected=rejected,
+    )
+    assert list(yaml.safe_load(text)["models"]) == ["gpt-oss-120b"]
+    assert text == llama_swap_config.render([dataclasses.asdict(gpt)], str(tmp_path))
+    assert set(rejected) == {"gpt-oss-120b"}
 
 
 def test_an_empty_roster_renders_an_empty_mapping(tmp_path: Path) -> None:

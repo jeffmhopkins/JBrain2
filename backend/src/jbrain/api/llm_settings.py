@@ -901,6 +901,7 @@ def _try_regenerate(
     regen failure only delays the gateway catching up, it must never fail the edit."""
     try:
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
+        rejected: dict[str, str] = {}
         llama_swap_config.write(
             settings.local_models_dir,
             manifest,
@@ -909,8 +910,13 @@ def _try_regenerate(
             extra_args=extra,
             image_min_tokens=image_min_tokens,
             engine=engine,
+            rejected=rejected,
         )
-        _set_regen_error(None)
+        # Written, but a model's stored flags were dropped: say which and why on the settings
+        # screen (and in the log), rather than letting it serve without them silently.
+        if rejected:
+            log.warning("llm_settings.gateway_extra_args_dropped", rejected=rejected)
+        _set_regen_error("; ".join(rejected.values()) or None)
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
         _set_regen_error(str(exc))
         log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
@@ -976,6 +982,7 @@ async def reconcile_gateway_config(
 
     Reconciles `engine`'s file and evicts only that engine's models: the running gateway is
     the active engine's, and the other engine's names cannot be resident on it."""
+    rejected: dict[str, str] = {}
     try:
         desired = llama_swap_config.render(
             list(manifest),
@@ -985,10 +992,14 @@ async def reconcile_gateway_config(
             extra_args=extra_args,
             image_min_tokens=image_min_tokens,
             engine=engine,
+            rejected=rejected,
         )
     except Exception as exc:  # noqa: BLE001 — a missing weight/glob must never fail boot
         log.warning("llm_settings.gateway_reconcile_render_failed", error=str(exc))
         return False
+    if rejected:
+        log.warning("llm_settings.gateway_extra_args_dropped", rejected=rejected)
+        _set_regen_error("; ".join(rejected.values()))
     path = Path(models_dir) / engines.CONFIG_FILE[engine]
     with contextlib.suppress(OSError):
         if path.read_text() == desired:

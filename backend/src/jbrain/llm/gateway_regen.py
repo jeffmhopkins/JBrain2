@@ -60,6 +60,12 @@ async def request_regen(
         # The re-stamp itself can fail in the api (an unwritable or unrenderable config) and
         # still answer 200 — the api records it for the settings screen. Raise so the worker's
         # log says so too, rather than reading as a clean re-stamp.
-        error = resp.json().get("error")
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise RuntimeError("the api answered the re-stamp with an unexpected body")
+        error = body.get("error")
         if error:
             raise RuntimeError(f"the api could not re-stamp the gateway config: {error}")

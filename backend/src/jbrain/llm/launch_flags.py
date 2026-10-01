@@ -6,6 +6,7 @@ command): a value that bypassed the API — a hand-edited settings row, a future
 must never become an argv llama-swap executes."""
 
 import re
+from collections.abc import Sequence
 
 # The llama-server flags an operator may set remotely. An ALLOWLIST, not a filter: llama-server
 # REFUSES TO START on an unknown flag, and the flag lands in that model's launch command, so an
@@ -251,7 +252,7 @@ class LaunchFlagError(ValueError):
     """An operator launch flag, or its value, that is not allowed."""
 
 
-def validate(args: list[str] | tuple[str, ...]) -> list[str]:
+def validate(args: Sequence[str]) -> list[str]:
     """`args` with blanks dropped, or LaunchFlagError on anything not on EXTRA_ARG_FLAGS. A value
     is accepted positionally (a token following a flag that takes one) and must match its
     flag's shape, so `--cache-reuse 256` passes while a bare `256` or an unknown `--foo` is
