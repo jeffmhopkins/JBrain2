@@ -20,9 +20,10 @@ operator enables local hosting and selects it.
 
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 
+from jbrain.llm import engine as engines
 from jbrain.llm.types import Sampling
 
 # The router spec for a local model is always "local:<served_model>": the local
@@ -149,13 +150,53 @@ CTX_CHECKPOINTS = 16
 # deliberate zero on `checkpoint_gb`: a measurement earns the memory, a guess does not.
 CTX_CHECKPOINTS_UNMEASURED = 2
 
+# Qwen3.8-Flash-Next's per-token cache, DERIVED from the UD-IQ4_XS GGUF headers and llama.cpp
+# master (FLASH_NEXT_ENGINE_PLAN §3) — UNMEASURED; F2 replaces it with an on-box reading. Of 48
+# layers only 12 are full attention (2 KV heads x 256); the other 36 are Gated DeltaNet with a
+# constant state. Both caches below are served q8_0 (1.0625 B/element, `-ctk`/`-ctv` on the
+# entry), and both grow with every token:
+#
+#   attention KV   12 layers x 2 heads x 256 x 2 (K+V) x 1.0625 = 13,056 B/token -> 1.594 GiB/128k
+#   QSA indexer    12 layers x 256 (one 128-wide key head, raw + pooled) x 1.0625
+#                                                              =  3,264 B/token -> 0.398 GiB/128k
+#
+# The indexer cache is the term an earlier draft of the plan put at ~0.8 GiB total: it caches
+# every token at the KV type, so compression does not shrink it. 1.99 per 128k per slot is
+# 15.9 GiB across the four 262,144-token slots. The Qwen3.8 27B history says derivations here
+# run light (5.78 measured against 4.25 derived), which is why F2's exit gate is set on the
+# measurement, not on this.
+#
+# MOVES WITH THE SERVING FLAG: `-ctk`/`-ctv q8_0` on the entry and this number are one decision.
+_FLASH_NEXT_KV_GB_PER_128K = 1.99
 
-def ctx_checkpoints(checkpoint_gb: float | None) -> int:
+# Everything else a Flash-Next load pins that is neither weights nor KV, at its four default
+# slots (derived, FLASH_NEXT_ENGINE_PLAN §3): ~1.5 GiB compute buffers (unverified for QSA at
+# 262k on Vulkan) + 4 x 0.11 GiB recurrent state (GDN + conv + the PLE conv row, per slot).
+# Booked flat at the default slot count: the per-model slot cap is the default, so an operator
+# can only lower the count and this can only over-reserve, by at most 0.33 GiB.
+_FLASH_NEXT_RUNTIME_OVERHEAD_GB = 1.5 + 4 * 0.11
+
+# The Flash-Next engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB —
+# which the engine serves memory-mapped and pinned to CPU (`--load-mode mmap`,
+# `-ot per_layer_token_embd=CPU`). It exceeds Vulkan's 4 GiB binding limit, so it cannot be
+# device-resident anyway, and its working set is a few GB of page cache the kernel can reclaim.
+_FLASH_NEXT_FILE_BACKED_GB = 26.8
+
+
+def ctx_checkpoints(checkpoint_gb: float | None, served: int | None = 0) -> int:
     """Per-slot context checkpoints to serve a model with (`--ctx-checkpoints`).
 
     Takes the model's measured per-checkpoint cost rather than the model, because the gateway
     config renders from manifest dicts while the cost model holds `LocalModel`s. 0/None means
-    unmeasured — see `CTX_CHECKPOINTS_UNMEASURED`."""
+    unmeasured — see `CTX_CHECKPOINTS_UNMEASURED`.
+
+    `served` is a catalog-pinned count (`LocalModel.served_ctx_checkpoints`) that wins over the
+    rule. It exists for an entry whose cost is DERIVED and booked in the budget but whose count
+    a plan fixed deliberately — Flash-Next serves 8 per slot (FLASH_NEXT_ENGINE_PLAN §3), where
+    the measured-cost rule would hand it 16 on the strength of a number nobody has measured.
+    The command and the footprint both read it through here, so they cannot disagree."""
+    if served:
+        return served
     return CTX_CHECKPOINTS if (checkpoint_gb or 0) > 0 else CTX_CHECKPOINTS_UNMEASURED
 
 
@@ -409,6 +450,9 @@ class LocalModel:
     # measured on-disk size when budgeting, because the kernel reclaims those pages under
     # pressure instead of the box running out of memory.
     file_backed_gb: float = 0.0
+    # A catalog-pinned `--ctx-checkpoints` count, 0 for the measured/unmeasured rule in
+    # `ctx_checkpoints()`. Set only where a plan fixed the count against a derived cost.
+    served_ctx_checkpoints: int = 0
 
     @property
     def spec(self) -> str:
@@ -452,6 +496,14 @@ class LocalModel:
         remains. Trading MTP's decode gain (~22 vs ~11-12 t/s measured) for that is a real
         choice, and it is the operator's to make."""
         return max(1, requested)
+
+    def served_slots(self, saved: Mapping[str, int]) -> int:
+        """The `-np` this model serves given the operator's saved slot overrides (catalog id ->
+        count): the saved count when there is one, else the catalog's `default_slots`. Every
+        reader of a slots map goes through here so an unconfigured Flash-Next is budgeted at
+        the four slots it is served with, not the single slot an absent override used to mean.
+        """
+        return self.effective_slots(saved.get(self.id, self.default_slots))
 
     def serves_speculative(self, requested_slots: int) -> bool:
         """Whether speculation is actually served at `requested_slots`.
@@ -1123,6 +1175,78 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=131072,
         kv_gb_per_128k=8.0,
     ),
+    LocalModel(
+        id="qwen3.8-flash-next",
+        label="Qwen3.8 Flash-Next · vision + reasoning (own engine)",
+        served_model="qwen3.8-flash-next",
+        # Same Qwen3.8 hybrid sampling split as the 27B entries: non-thinking temp 0.7 / top_p
+        # 0.8 / presence_penalty 1.5; thinking temp 1.0 / top_p 0.95.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
+        tiers=("vision", "high"),
+        supports_vision=True,
+        supports_tools=True,
+        # Never pulled by a plain enable: ~88 GiB, and it only runs on its own engine.
+        recommended=False,
+        hf_repo="unsloth/Qwen3.8-Flash-Next-GGUF",
+        gguf_include="*UD-IQ4_XS*.gguf",
+        # Exact name, as on the 27B entries, so the BF16 projector beside it is not pulled.
+        mmproj_include="mmproj-F16.gguf",
+        image_min_tokens=2048,
+        quant="UD-IQ4_XS",
+        # GiB on disk (the catalog's unit): HF's 93.7 decimal GB of UD-IQ4_XS shards is 87.3
+        # GiB — the 60.4 GiB of weights plus the 26.8 GiB engram table in the plan's §3 — plus
+        # the 904 MB (0.84 GiB) F16 projector. Kept at the GiB sum so the install bar does not
+        # cap at 94% and read as a stall (the Nemotron note).
+        size_gb=88.1,
+        note="125B MoE (~6B active) + a 51B n-gram engram table, text + vision — a hybrid "
+        "reasoner meant to replace the gpt-oss-120b + Qwen3.8-27B pair on its own engine "
+        "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container with four "
+        "role-pinned 262k slots; never co-resident with the standard gateway. ~88 GiB on disk, "
+        "~83 GiB resident (derived, not yet measured on-box).",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
+        # Each slot serves the model's full `n_ctx_train`; the gateway's `-c` is that times the
+        # slot count (non-unified KV, so one long conversation cannot evict another slot's
+        # prefix — §4a).
+        context_window=262144,
+        native_context_window=262144,
+        kv_gb_per_128k=_FLASH_NEXT_KV_GB_PER_128K,
+        runtime_overhead_gb=_FLASH_NEXT_RUNTIME_OVERHEAD_GB,
+        recurrent=True,
+        # DERIVED (~0.11 GiB, the recurrent state a checkpoint copies), not measured — F2 check
+        # 4 replaces it. Booked rather than left at zero because the plan's resident budget
+        # (§3) counts it, and the count is pinned below so the measured-cost rule cannot hand
+        # this guess 16 per slot.
+        checkpoint_gb=0.11,
+        served_ctx_checkpoints=8,
+        engine=engines.FLASH_NEXT,
+        # Slots are role-pinned prefix caches here (persona, ingest, agents, jcode — §4a).
+        default_slots=4,
+        file_backed_gb=_FLASH_NEXT_FILE_BACKED_GB,
+        extra_server_args=(
+            # Map the GGUF instead of reading it: the engram table must stay file-backed.
+            # Catalog flags supersede the shared command's `--no-mmap` (llama_swap_config), so
+            # this is the ONLY load-mode flag on the line. `--no-mmap` here exhausted RAM in
+            # the published Strix Halo runs (plan §2).
+            "--load-mode",
+            "mmap",
+            # The 26.8 GiB engram tensor exceeds Vulkan's 4 GiB binding limit; GPU placement
+            # aborted in the published runs. Pin it to CPU, paged in from the mapping.
+            "-ot",
+            "per_layer_token_embd=CPU",
+            "--lazy-mode",
+            "on",
+            # q8_0 KV — `_FLASH_NEXT_KV_GB_PER_128K` MOVES WITH THIS. `-fa` is served
+            # unconditionally, which a quantised cache requires.
+            "-ctk",
+            "q8_0",
+            "-ctv",
+            "q8_0",
+        ),
+    ),
 )
 
 _BY_ID = {m.id: m for m in CATALOG}
@@ -1196,6 +1320,31 @@ def get_by_served(served_model: str) -> LocalModel | None:
 # the runtime-overhead and vision terms, because load_footprint_gb needs them.)
 
 
+def _resident_weights_gb(model: LocalModel, disk_gb: float | None) -> float:
+    """The weights a load pins: the measured on-disk size when known, else the nominal
+    `size_gb`, less whatever the engine serves memory-mapped from disk (`file_backed_gb`).
+
+    Flash-Next's engram table is ~27 GiB of the 88 on disk, pinned to CPU and paged in on
+    demand; the kernel reclaims those pages under pressure rather than the box running out, so
+    charging them as resident would refuse a load that fits (FLASH_NEXT_ENGINE_PLAN §3).
+    Clamped at zero so a partial download read as `disk_gb` cannot go negative."""
+    weights = disk_gb if disk_gb is not None else model.size_gb
+    return max(0.0, weights - model.file_backed_gb)
+
+
+def _slots_or_default(model: LocalModel, slots: int | None) -> int:
+    """None means "whatever this model serves unconfigured" — its catalog `default_slots`."""
+    return model.default_slots if slots is None else slots
+
+
+def _checkpoints_gb(model: LocalModel, slots: int) -> float:
+    return (
+        model.checkpoint_gb
+        * ctx_checkpoints(model.checkpoint_gb, model.served_ctx_checkpoints)
+        * model.effective_slots(slots)
+    )
+
+
 def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
     """KV cache (GiB) for `model` held at `window` tokens across `slots` parallel slots.
 
@@ -1207,7 +1356,7 @@ def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
 
 
 def footprint_gb(
-    model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int = 1
+    model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int | None = None
 ) -> float:
     """Total unified-memory footprint (GiB) of `model` held resident at `window`
     tokens: weights + KV cache. Weights = the measured on-disk size when known
@@ -1221,8 +1370,11 @@ def footprint_gb(
 
     `slots` goes through `effective_slots`, so a speculative model costs one slot's KV even
     with a larger override saved — matching what the gateway will really serve rather than
-    reserving for slots the engine won't allocate."""
-    weights = disk_gb if disk_gb is not None else model.size_gb
+    reserving for slots the engine won't allocate. None means the catalog's `default_slots`.
+
+    Weights exclude the file-backed share (`_resident_weights_gb`)."""
+    slots = _slots_or_default(model, slots)
+    weights = _resident_weights_gb(model, disk_gb)
     # `--swa-full` doubling lives in `_kv_gb`: omitting it under-reported the model by several
     # GB in both the meter and the eviction budget — on a box that has hard-locked under
     # memory pressure.
@@ -1239,9 +1391,7 @@ def footprint_gb(
     # Budgeted at the SERVED count — an operator override through `--ctx-checkpoints` is not
     # threaded in here, which is why that flag is bounded in the settings API rather than left
     # open.
-    checkpoints = (
-        model.checkpoint_gb * ctx_checkpoints(model.checkpoint_gb) * model.effective_slots(slots)
-    )
+    checkpoints = _checkpoints_gb(model, slots)
     return round(
         weights
         + kv
@@ -1275,7 +1425,9 @@ def _vision_resident_gb(model: LocalModel) -> float:
     return vision_attn_buffer_gb() if model.mmproj_include else 0.0
 
 
-def load_footprint_gb(model: LocalModel, window: int | None = None, *, slots: int = 1) -> float:
+def load_footprint_gb(
+    model: LocalModel, window: int | None = None, *, slots: int | None = None
+) -> float:
     """Device memory to have free before loading `model`, in GiB.
 
     Weights + KV at the window it will actually be SERVED at + runtime overhead, and for a
@@ -1300,14 +1452,19 @@ def load_footprint_gb(model: LocalModel, window: int | None = None, *, slots: in
     Kept distinct from `footprint_gb` because the two answer different questions, but note the
     difference is now much smaller than the old code assumed — and pointed the other way."""
     served_window = model.context_window if window is None else window
-    total = model.size_gb + _kv_gb(model, served_window, slots) + _runtime_overhead_gb(model)
+    n_slots = _slots_or_default(model, slots)
+    total = (
+        _resident_weights_gb(model, None)
+        + _kv_gb(model, served_window, n_slots)
+        + _runtime_overhead_gb(model)
+    )
     if model.mmproj_include:
         total += vision_attn_buffer_gb(_VISION_WARMUP_IMAGE_TOKENS)
     return round(total, 2)
 
 
 def declared_gb(
-    model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int = 1
+    model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int | None = None
 ) -> tuple[float, float]:
     """The reservation ledger's two columns for one instance: (host_gb, device_gb).
 
@@ -1336,15 +1493,14 @@ def declared_gb(
     life", and `ggml_gallocr_reserve_n_impl` only ever grows the allocation — a smaller later
     image releases nothing. Declaring the warmup figure would silently under-reserve every
     vision model from its first real image onward."""
+    slots = _slots_or_default(model, slots)
     device = (
-        (disk_gb if disk_gb is not None else model.size_gb)
+        _resident_weights_gb(model, disk_gb)
         + _kv_gb(model, window, slots)
         + _runtime_overhead_gb(model)
         + _vision_resident_gb(model)
     )
-    host_only = (
-        model.checkpoint_gb * ctx_checkpoints(model.checkpoint_gb) * model.effective_slots(slots)
-    ) + CACHE_RAM_GB
+    host_only = _checkpoints_gb(model, slots) + CACHE_RAM_GB
     return round(device + host_only, 2), round(device, 2)
 
 
@@ -1366,14 +1522,28 @@ def selected(ids: Sequence[str]) -> tuple[LocalModel, ...]:
     return tuple(m for m in CATALOG if m.id in wanted)
 
 
-def jcode_models(local_llm_enabled: bool, local_models: Sequence[str]) -> tuple[LocalModel, ...]:
+def jcode_models(
+    local_llm_enabled: bool,
+    local_models: Sequence[str],
+    engine: engines.Engine = engines.STANDARD,
+) -> tuple[LocalModel, ...]:
     """Installed, tool-capable local models — the set code mode (jcode) can run, in catalog
     order. The single source of truth for three consumers that must agree: the jcode model
     dropdown (llm_settings), the sandbox's grok `/model` list, and the residency-aware jcode
     proxy's allow-list (api.jcode_llm). jcode is a tool-using agent, so non-tool models are
-    excluded; empty when local hosting is off (nothing installed to serve)."""
+    excluded; empty when local hosting is off (nothing installed to serve).
+
+    Only `engine`'s models: the other engine's gateway is down, so offering one of its models
+    would offer a load that cannot be served (FLASH_NEXT_ENGINE_PLAN §4)."""
     installed = set(local_models)
-    return tuple(m for m in CATALOG if local_llm_enabled and m.id in installed and m.supports_tools)
+    return tuple(
+        m
+        for m in CATALOG
+        if local_llm_enabled
+        and m.id in installed
+        and m.supports_tools
+        and engines.parse(m.engine) == engine
+    )
 
 
 def _manifest(ids: Sequence[str]) -> str:

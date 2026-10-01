@@ -28,6 +28,12 @@ false` lets an on-demand request still load a member.
 Each manifest entry is a catalog dict (jbrain.llm.local_catalog.LocalModel
 asdict): id, served_model, gguf_include, mmproj_include, context_window,
 recommended. `windows` overrides a model's `-c` by catalog id.
+
+ONE FILE PER ENGINE (jbrain.llm.engine, FLASH_NEXT_ENGINE_PLAN §4). The standard `local-llm`
+gateway reads `llama-swap.yaml` and the Flash-Next container `llama-swap.flash-next.yaml`; each
+renders only its own engine's catalog entries, so neither gateway ever tries to load a model
+its build cannot serve. Every reader takes the engine explicitly — the caller resolves the
+active one from the settings store — so "which file" has one answer per call.
 """
 
 from __future__ import annotations
@@ -43,6 +49,7 @@ from typing import cast
 
 import yaml
 
+from jbrain.llm import engine as engines
 from jbrain.llm import local_catalog
 
 # Concrete, distinct upstream ports — llama-swap's ${PORT} macro isn't substituted
@@ -132,12 +139,22 @@ CHAT_TEMPLATE_DIR = "/opt/jbrain/chat-templates"
 _SUPERSEDES: dict[str, tuple[str, ...]] = {
     "-lm": ("--mmap", "--no-mmap", "--mlock"),
     "--load-mode": ("--mmap", "--no-mmap", "--mlock"),
+    # Two spellings of one flag: setting either replaces the other's copy rather than adding a
+    # second placement rule beside it. An operator `-ot` therefore REPLACES the catalog's
+    # (Flash-Next's `per_layer_token_embd=CPU`), so an experiment must restate that rule.
+    "-ot": ("--override-tensor",),
+    "--override-tensor": ("-ot",),
 }
 
 
 def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str]) -> list[str]:
     """Strip from a base command every flag the operator has also set (and its value), so the
     operator's copy appended afterwards is the ONLY occurrence.
+
+    Also applied to a catalog entry's own `extra_server_args` against the shared command, for
+    the same invariant one layer down: Flash-Next's `--load-mode mmap` must REMOVE the shared
+    `--no-mmap`, not sit beside it relying on argv order. No standard entry's flags overlap
+    the shared command, so for them this is a no-op and their lines are unchanged.
 
     The invariant is #1152's, generalised: a command line carrying the same flag twice is
     unreadable as a record of what is actually served, on a box whose only window into the
@@ -218,6 +235,7 @@ def render(
     slots: Mapping[str, int] | None = None,
     extra_args: Mapping[str, Sequence[str]] | None = None,
     image_min_tokens: Mapping[str, int] | None = None,
+    engine: engines.Engine = engines.STANDARD,
 ) -> str:
     """The full llama-swap.yaml text for `models` (catalog manifest dicts). `root`
     is the host path to the weights (globbed to resolve filenames); `windows` maps
@@ -233,7 +251,11 @@ def render(
     launch flag on a live box with no terminal (CLAUDE.md #10); the API allowlists which flags
     may be set, because a bad one stops llama-server booting.
     Every model joins one `swap: false` group so the gateway never auto-evicts — the
-    app is the sole evictor (jbrain.llm.residency)."""
+    app is the sole evictor (jbrain.llm.residency).
+
+    Only `engine`'s entries are rendered (engine.models_for): callers pass the whole installed
+    manifest, and the other engine's models are left to that engine's own file."""
+    models = engines.models_for(engine, models)
     windows = windows or {}
     slots = slots or {}
     extra_args = extra_args or {}
@@ -251,7 +273,9 @@ def render(
         # to rewrite and the command line carries exactly one --image-min-tokens.
         floor = image_min_tokens.get(model_id, cast("int | None", m.get("image_min_tokens")))
         operator_args = tuple(str(a) for a in extra_args.get(model_id, ()))
-        n_slots = max(1, slots.get(model_id, 1))
+        # Absent an operator count, the catalog's `default_slots` (1 everywhere but Flash-Next,
+        # whose four slots are role-pinned prefix caches — FLASH_NEXT_ENGINE_PLAN §4a).
+        n_slots = max(1, slots.get(model_id, int(cast(int, m.get("default_slots") or 1))))
         # Either source can turn speculation on: the catalog's static flags, or an operator
         # trying `--spec-type` remotely via the extra-args route. Both must pin the model to
         # one slot, so the test reads the flags actually going on the command line.
@@ -396,7 +420,12 @@ def render(
             # allowlist
             # so the question is answerable without a release (docs/runbooks/STRIX_HALO_SETUP.md).
             "--ctx-checkpoints",
-            str(local_catalog.ctx_checkpoints(cast("float | None", m.get("checkpoint_gb")))),
+            str(
+                local_catalog.ctx_checkpoints(
+                    cast("float | None", m.get("checkpoint_gb")),
+                    cast("int | None", m.get("served_ctx_checkpoints")),
+                )
+            ),
             # Without this llama.cpp uses 8192, which makes the count above nearly useless: the
             # checkpoints bunch at the end of the conversation and none covers an earlier
             # divergence. The two are one setting (local_catalog.CHECKPOINT_MIN_STEP).
@@ -480,6 +509,7 @@ def render(
         # the value came from the catalog or from an operator override.
         if floor is not None:
             cmd += ["--image-min-tokens", str(floor)]
+        cmd = _drop_operator_overridden(cmd, catalog_args)
         cmd += catalog_args
         # Operator overrides last, so they append to (never reorder) the catalog's own flags —
         # and anything they override is stripped from what came before, so each flag appears
@@ -517,9 +547,11 @@ def write(
     slots: Mapping[str, int] | None = None,
     extra_args: Mapping[str, Sequence[str]] | None = None,
     image_min_tokens: Mapping[str, int] | None = None,
+    engine: engines.Engine = engines.STANDARD,
 ) -> str:
-    """Render and atomically write {root}/llama-swap.yaml (temp + rename so the
-    gateway's --watch-config never sees a half-written file). Returns the path.
+    """Render and atomically write `engine`'s config ({root}/llama-swap.yaml for the standard
+    gateway; engine.CONFIG_FILE) — temp + rename so the gateway's --watch-config never sees a
+    half-written file. Returns the path.
 
     NO-OPS WHEN THE RENDERED CONFIG IS UNCHANGED, and that is the whole point of the
     comparison rather than a micro-optimisation: rewriting this file KILLS EVERY RESIDENT
@@ -552,12 +584,13 @@ def write(
         slots=slots,
         extra_args=extra_args,
         image_min_tokens=image_min_tokens,
+        engine=engine,
     )
-    path = os.path.join(root, "llama-swap.yaml")
+    path = engines.config_path(root, engine)
     # llama-server does not create its --slot-save-path, and a save into a missing
     # directory fails exactly once — on the first prime after a fresh volume, where
     # nobody is watching. Best-effort: a read-only mount (the smoketest's) just skips.
-    for m in models:
+    for m in engines.models_for(engine, models):
         static_args = tuple(str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ()))
         if (
             m.get("kv_slot_restorable")
@@ -581,14 +614,18 @@ def write(
     return path
 
 
-def launch_line(root: str, served_model: str) -> str | None:
+def launch_line(
+    root: str, served_model: str, engine: engines.Engine = engines.STANDARD
+) -> str | None:
     """The exact cmd llama-swap executes for one served model, read back out of the rendered
     config — the same source `served_shape_from_config` trusts, for the same reason: it cannot
     disagree with what the server actually runs. `jbrain.llm.kv_prefix` fingerprints THIS
     string, so anything that could invalidate a saved KV-slot file (a window or slot change,
     new extra args, a new build's flag set) moves the fingerprint with it. Best-effort:
-    an absent or unparseable config returns None and callers skip disk save/restore."""
-    path = os.path.join(root, "llama-swap.yaml")
+    an absent or unparseable config returns None and callers skip disk save/restore.
+
+    Reads `engine`'s config: a model of the engine that is not running has no launch line."""
+    path = engines.config_path(root, engine)
     try:
         with open(path) as handle:
             parsed = yaml.safe_load(handle)
@@ -603,7 +640,9 @@ def launch_line(root: str, served_model: str) -> str | None:
     return cmd if isinstance(cmd, str) and cmd.strip() else None
 
 
-def served_shape_from_config(root: str) -> dict[str, tuple[int, int]]:
+def served_shape_from_config(
+    root: str, engine: engines.Engine = engines.STANDARD
+) -> dict[str, tuple[int, int]]:
     """The `(window, slots)` each model is ACTUALLY served at, read back out of the
     llama-swap.yaml we already wrote. Keyed by served model name.
 
@@ -625,9 +664,10 @@ def served_shape_from_config(root: str) -> dict[str, tuple[int, int]]:
     `-c` is total KV cells across all slots (llama-server divides it evenly by `-np`), so
     the per-slot window this returns is `-c // -np`, matching what the router reports to
     the meter. Best-effort: an unreadable or unparseable config returns an empty map and
-    the caller falls back to catalog defaults, which is the prior behaviour."""
+    the caller falls back to catalog defaults, which is the prior behaviour. Reads `engine`'s
+    config file."""
     shapes: dict[str, tuple[int, int]] = {}
-    path = os.path.join(root, "llama-swap.yaml")
+    path = engines.config_path(root, engine)
     try:
         with open(path) as handle:
             parsed = yaml.safe_load(handle)
@@ -736,7 +776,19 @@ def _main(argv: list[str]) -> int:
     `--check <models_dir>` instead PRINTS the ids whose required weights are incomplete (one per
     line, empty when all resolve) and exits 0 — the provisioning scripts' download filter. It
     reads the same globs the write path will, so a model that needs a NEWLY-required file is
-    re-downloaded rather than passing a `*.gguf` presence check and failing the re-stamp."""
+    re-downloaded rather than passing a `*.gguf` presence check and failing the re-stamp.
+
+    `--engine <standard|flash-next>` picks which engine's file is written (default standard,
+    so the long-standing no-flag call keeps writing `llama-swap.yaml` with standard models
+    only). The deploy sync calls it once per engine it provisions."""
+    engine: engines.Engine = engines.STANDARD
+    if "--engine" in argv:
+        at = argv.index("--engine")
+        if at + 1 >= len(argv) or argv[at + 1] not in engines.ENGINES:
+            print(f"--engine takes one of {', '.join(engines.ENGINES)}", file=sys.stderr)
+            return 2
+        engine = engines.parse(argv[at + 1])
+        argv = argv[:at] + argv[at + 2 :]
     if argv[:1] == ["--check"]:
         if len(argv) != 2:
             print("usage: ... --check <models_dir>", file=sys.stderr)
@@ -746,12 +798,13 @@ def _main(argv: list[str]) -> int:
         return 0
     if len(argv) != 1:
         print(
-            "usage: python -m jbrain.llm.llama_swap_config [--check] <models_dir>", file=sys.stderr
+            "usage: python -m jbrain.llm.llama_swap_config [--engine E] [--check] <models_dir>",
+            file=sys.stderr,
         )
         return 2
     root = argv[0]
     models = json.loads(os.environ["MANIFEST"])
-    path = os.path.join(root, "llama-swap.yaml")
+    path = engines.config_path(root, engine)
     try:
         windows, slots, extra, floors = _saved_overrides()
     except OverridesUnavailable as exc:
@@ -780,18 +833,25 @@ def _main(argv: list[str]) -> int:
         )
         windows, slots, extra, floors = {}, {}, {}, {}
     path = write(
-        root, models, windows=windows, slots=slots, extra_args=extra, image_min_tokens=floors
+        root,
+        models,
+        windows=windows,
+        slots=slots,
+        extra_args=extra,
+        image_min_tokens=floors,
+        engine=engine,
     )
+    served = engines.models_for(engine, models)
     applied = sum(
         1
-        for m in models
+        for m in served
         if str(m["id"]) in windows
         or str(m["id"]) in slots
         or str(m["id"]) in extra
         or str(m["id"]) in floors
     )
     print(
-        f"wrote {path}: {len(models)} model(s), {applied} with a saved override; "
+        f"wrote {path}: {len(served)} model(s), {applied} with a saved override; "
         "the app evicts to make room per load"
     )
     return 0

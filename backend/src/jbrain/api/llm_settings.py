@@ -29,6 +29,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb, read_page_cache_gb
+from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, llama_swap_config, local_catalog, local_weights
 from jbrain.llm import kv_prefix as kv_prefix_mod
 from jbrain.llm import router as llm_router
@@ -249,6 +250,13 @@ class LocalModelInfo(BaseModel):
     # deleted the durable copy of it (and the box grew an empty `.kvslots` folder that read as
     # "configured"). Surfaced so the screen can say so before the owner spends the trade.
     slots_drop_disk_cache: bool
+    # The largest `parallel_slots` the PUT accepts for this model (`slots_max`): 2 for a
+    # standard entry, the catalog's `default_slots` where that is higher (Flash-Next's 4).
+    parallel_slots_max: int = 2
+    # Which on-box engine serves this model (jbrain.llm.engine). A model of the engine that is
+    # not running cannot be loaded or picked; the drawer still lists it so its weights can be
+    # installed and removed from the PWA (FLASH_NEXT_ENGINE_PLAN §5).
+    engine: str = engines.STANDARD
     # Keep this model resident: the coordinator evicts pinned models LAST. The answer to a
     # 4.3 GB pet model displacing a 59 GB assistant, which no ranking by size could have got
     # right — see `LLM_LOCAL_KEEP_LOADED_KEY`. A last resort, not a lock: a model big enough
@@ -478,6 +486,7 @@ async def _snapshot(
     requested = set(await store.llm_local_provision_requested(ctx))
     removing = set(await store.llm_local_remove_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
+    engine = await store.llm_local_engine(ctx)
     return LlmSettingsOut(
         providers=[
             ProviderInfo(
@@ -486,7 +495,7 @@ async def _snapshot(
                 supports_reasoning=c.supports_reasoning,
                 supports_vision=c.supports_vision,
             )
-            for c in provider_choices(settings)
+            for c in provider_choices(settings, engine)
         ],
         reasoning_efforts=list(REASONING_EFFORTS),
         reasoning_default=REASONING_DEFAULT,
@@ -521,12 +530,12 @@ async def _snapshot(
             override=free_ram_override,
         ),
         auto_restore=auto_restore,
-        jcode=await _jcode_info(settings, store, ctx),
+        jcode=await _jcode_info(settings, store, ctx, engine),
         local_llm_timeout_s=settings.local_llm_timeout,
     )
 
 
-def _jcode_options(settings: Settings) -> list[JcodeModelChoice]:
+def _jcode_options(settings: Settings, engine: engines.Engine) -> list[JcodeModelChoice]:
     """Installed, tool-capable local models the jcode dropdown offers — jcode is a
     tool-using agent on the on-box gateway, so non-tool or uninstalled models are
     excluded. Empty when local hosting is off (nothing is installed to serve). Shares the
@@ -534,12 +543,14 @@ def _jcode_options(settings: Settings) -> list[JcodeModelChoice]:
     (jbrain.llm.local_catalog.jcode_models)."""
     return [
         JcodeModelChoice(id=m.id, label=m.label)
-        for m in local_catalog.jcode_models(settings.local_llm_enabled, settings.local_models)
+        for m in local_catalog.jcode_models(
+            settings.local_llm_enabled, settings.local_models, engine
+        )
     ]
 
 
 async def _jcode_info(
-    settings: Settings, store: SqlSettingsStore, ctx: SessionContext
+    settings: Settings, store: SqlSettingsStore, ctx: SessionContext, engine: engines.Engine
 ) -> JcodeModelInfo:
     stored = await store.jcode_model(ctx)
     stored_planner = await store.jcode_planner_model(ctx)
@@ -557,7 +568,7 @@ async def _jcode_info(
         default=settings.jcode_model,
         planner=planner,
         planner_default=settings.jcode_planner_model,
-        options=_jcode_options(settings),
+        options=_jcode_options(settings, engine),
     )
 
 
@@ -610,7 +621,7 @@ def _local_model_info(
     # What the gateway will REALLY serve: a speculative model is pinned to one slot whatever
     # override is stored, so the drawer shows the served value rather than a saved one the
     # engine ignores (and sizes its KV bar off the same number).
-    n_slots = m.effective_slots(slots.get(m.id, 1))
+    n_slots = m.served_slots(slots)
     # Derive from footprint_gb rather than re-deriving the KV formula here. The two drifted
     # the moment `kv_full_history` landed: footprint_gb doubled gpt-oss's KV for `--swa-full`
     # and this line did not, so the eviction budget was right while the meter the owner reads
@@ -645,6 +656,8 @@ def _local_model_info(
         kv_gb=kv_gb,
         parallel_slots=n_slots,
         slots_drop_disk_cache=bool(m.recurrent and m.is_mtp_speculative),
+        parallel_slots_max=slots_max(m),
+        engine=m.engine,
         keep_loaded=keep_loaded,
         # Only meaningful with a projector: a floor on a text-only entry would never be read,
         # so the drawer gets None and renders no control rather than a dead one.
@@ -765,9 +778,12 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
     Best-effort by contract: the settings are already persisted, so a failure here only delays
     the gateway catching up and must never fail the load that called it."""
     windows, slots, extra, floors = await _saved_override_maps(store, queue.SYSTEM_CTX)
-    path = Path(settings.local_models_dir or ".") / "llama-swap.yaml"
+    # The ACTIVE engine's file only: it is the gateway about to load. The other engine's file
+    # is re-stamped by the deploy CLI and by whatever starts that engine.
+    engine = await store.llm_local_engine(queue.SYSTEM_CTX)
+    path = Path(settings.local_models_dir or ".") / engines.CONFIG_FILE[engine]
     before_text = path.read_text() if path.exists() else None
-    _try_regenerate(settings, windows, slots, extra, floors)
+    _try_regenerate(settings, windows, slots, extra, floors, engine=engine)
     after_text = path.read_text() if path.exists() else None
 
     if before_text != after_text:
@@ -808,7 +824,7 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
         with contextlib.suppress(Exception):  # noqa: BLE001 — narration must not fail a load
             await box_events.record(
                 box_events.GATEWAY_CONFIG_STALE,
-                "llama-swap.yaml",
+                engines.CONFIG_FILE[engine],
                 detail=f"the gateway is serving stale flags: {err}",
                 status="failed",
             )
@@ -850,9 +866,11 @@ def _try_regenerate(
     slots: dict[str, int],
     extra: dict[str, list[str]] | None = None,
     image_min_tokens: dict[str, int] | None = None,
+    *,
+    engine: engines.Engine,
 ) -> None:
-    """Re-stamp llama-swap.yaml with the current per-model windows AND slot counts so the
-    gateway (run with --watch-config) reloads at the configured `-c`/`-np`. Every model is a
+    """Re-stamp `engine`'s llama-swap config with the current per-model windows AND slot counts
+    so the gateway (run with --watch-config) reloads at the configured `-c`/`-np`. Every model is a
     non-swapping group member regardless of staging (the app is the sole evictor), so this is
     driven only by window/slot edits. Best-effort: the settings are already persisted (so the
     meter is correct), and the weights dir may not be writable/complete in every deploy — a
@@ -866,6 +884,7 @@ def _try_regenerate(
             slots=slots,
             extra_args=extra,
             image_min_tokens=image_min_tokens,
+            engine=engine,
         )
         _set_regen_error(None)
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
@@ -907,6 +926,7 @@ async def reconcile_gateway_config(
     gateway: LocalGateway,
     extra_args: Mapping[str, Sequence[str]] | None = None,
     image_min_tokens: Mapping[str, int] | None = None,
+    engine: engines.Engine = engines.STANDARD,
 ) -> bool:
     """Re-stamp llama-swap.yaml with the operator's SAVED per-model overrides — context window,
     `-np` slots, extra launch flags and the image floor — and
@@ -928,7 +948,10 @@ async def reconcile_gateway_config(
     therefore silently reverted on the next restart, which is worse than not having the knob —
     the flag reads as ineffective rather than absent, and the measurement taken after it is a lie.
 
-    Best-effort — a render/glob miss or a down gateway is logged, never raised into boot."""
+    Best-effort — a render/glob miss or a down gateway is logged, never raised into boot.
+
+    Reconciles `engine`'s file and evicts only that engine's models: the running gateway is
+    the active engine's, and the other engine's names cannot be resident on it."""
     try:
         desired = llama_swap_config.render(
             list(manifest),
@@ -937,11 +960,12 @@ async def reconcile_gateway_config(
             slots=slots,
             extra_args=extra_args,
             image_min_tokens=image_min_tokens,
+            engine=engine,
         )
     except Exception as exc:  # noqa: BLE001 — a missing weight/glob must never fail boot
         log.warning("llm_settings.gateway_reconcile_render_failed", error=str(exc))
         return False
-    path = Path(models_dir) / "llama-swap.yaml"
+    path = Path(models_dir) / engines.CONFIG_FILE[engine]
     with contextlib.suppress(OSError):
         if path.read_text() == desired:
             return False  # already correct — the common case; leave any resident model warm
@@ -952,6 +976,7 @@ async def reconcile_gateway_config(
         slots=slots,
         extra_args=extra_args,
         image_min_tokens=image_min_tokens,
+        engine=engine,
     )
     log.info("llm_settings.gateway_config_reconciled")
     # The served `-c` changed under a possibly-resident gateway (an app restart with the gateway
@@ -962,7 +987,7 @@ async def reconcile_gateway_config(
         running = await gateway.running()
     except LocalGatewayError:
         return True
-    served = {str(m["served_model"]) for m in manifest}
+    served = {str(m["served_model"]) for m in engines.models_for(engine, manifest)}
     for name in sorted(running & served):
         with (
             contextlib.suppress(LocalGatewayError),
@@ -986,6 +1011,7 @@ async def reconcile_gateway_windows_on_boot(
     try:
         windows, slots, extra, floors = await _saved_override_maps(store, ctx)
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
+        engine = await store.llm_local_engine(ctx)
     except Exception as exc:  # noqa: BLE001 — never fail boot on a reconcile-setup hiccup
         log.warning("llm_settings.gateway_reconcile_load_failed", error=str(exc))
         return False
@@ -997,6 +1023,7 @@ async def reconcile_gateway_windows_on_boot(
         gateway=gateway,
         extra_args=extra,
         image_min_tokens=floors,
+        engine=engine,
     )
 
 
@@ -1030,12 +1057,12 @@ async def set_jcode_model(
     default; any other value must be an installed, tool-capable local model (422
     otherwise) — the same set the dropdown shows. New jcode sessions pick up the
     change; an in-flight session keeps the model it started with."""
-    valid = {c.id for c in _jcode_options(settings)}
+    ctx = ctx_for(principal)
+    valid = {c.id for c in _jcode_options(settings, await store.llm_local_engine(ctx))}
     if body.model and body.model not in valid:
         raise HTTPException(
             status_code=422, detail="model must be an installed, tool-capable local model"
         )
-    ctx = ctx_for(principal)
     await store.set_jcode_model(ctx, body.model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1062,13 +1089,13 @@ async def set_jcode_planner(
     executor plans too); any other value must be an installed, tool-capable local model
     (422 otherwise) — the same set the executor dropdown shows. New jcode sessions pick up
     the change; an in-flight session keeps the planner it started with."""
-    valid = {c.id for c in _jcode_options(settings)}
+    ctx = ctx_for(principal)
+    valid = {c.id for c in _jcode_options(settings, await store.llm_local_engine(ctx))}
     if body.planner and body.planner != JCODE_PLANNER_SAME and body.planner not in valid:
         raise HTTPException(
             status_code=422,
             detail="planner must be an installed, tool-capable local model or 'same'",
         )
-    ctx = ctx_for(principal)
     await store.set_jcode_planner_model(ctx, body.planner)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1219,6 +1246,17 @@ class ParallelSlotsIn(BaseModel):
 PARALLEL_SLOTS_MAX = 2
 
 
+def slots_max(model: local_catalog.LocalModel) -> int:
+    """The largest `-np` the operator may set for `model`.
+
+    PARALLEL_SLOTS_MAX for a standard entry. A model the catalog serves with MORE slots by
+    default (Flash-Next's four role-pinned prefix caches, FLASH_NEXT_ENGINE_PLAN §4a) is capped
+    at that default instead: a cap below it would refuse the count the model already runs at,
+    and going above it would put slots on the box that the derived budget — computed at the
+    default — never accounted for."""
+    return max(PARALLEL_SLOTS_MAX, model.default_slots)
+
+
 @router.put("/settings/llm/local-models/{model_id}/parallel-slots")
 async def set_local_parallel_slots(
     model_id: str,
@@ -1235,8 +1273,13 @@ async def set_local_parallel_slots(
     cost — persists the override (the meter reflects it at once), re-stamps the gateway config,
     and unloads the model if resident so its next request reloads with the new `-np`/`-c`."""
     model = _require_provisioned(settings, model_id)
-    if body.slots is not None and not (1 <= body.slots <= PARALLEL_SLOTS_MAX):
-        raise HTTPException(status_code=422, detail=f"slots must be 1..{PARALLEL_SLOTS_MAX}")
+    high = slots_max(model)
+    # The store records a count as an ABSENCE at 1 (the single-slot default), so on a model
+    # whose default is above 1 a saved 1 would read back as that default — silently not what
+    # was asked. Refuse it; null restores the catalog default.
+    low = 2 if model.default_slots > 1 else 1
+    if body.slots is not None and not (low <= body.slots <= high):
+        raise HTTPException(status_code=422, detail=f"slots must be {low}..{high}")
     ctx = ctx_for(principal)
     await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
     await _unload_if_loaded(settings, gateway, model)
@@ -1558,7 +1601,7 @@ async def apply_overrides(
                 status_code=422, detail=f"task is not independently routable: {task}"
             )
     overrides = await store.llm_task_overrides(ctx)
-    choices = {c.id: c for c in provider_choices(settings)}
+    choices = {c.id: c for c in provider_choices(settings, await store.llm_local_engine(ctx))}
     for task, choice in body.tasks.items():
         picked = choices.get(choice.provider)
         # Unknown id, or a local model offered only when local hosting is enabled.
@@ -1899,6 +1942,14 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         # so exactly one of the two reaches the command line.
         "--load-mode",
         "-lm",
+        # Tensor placement (`<regex>=<buffer type>`), value-taking. Flash-Next pins its 26.8 GiB
+        # engram tensor to CPU this way (it exceeds Vulkan's 4 GiB binding limit), and F2 tunes
+        # placement through this route with no release (FLASH_NEXT_ENGINE_PLAN §5). An operator
+        # value REPLACES the catalog's rule (llama_swap_config._SUPERSEDES), so it must restate
+        # `per_layer_token_embd=CPU`; a placement that puts the table on the GPU fails to load,
+        # which is recoverable — clearing does not need the model to be loadable.
+        "-ot",
+        "--override-tensor",
     }
 )
 

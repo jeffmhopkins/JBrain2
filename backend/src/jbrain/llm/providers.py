@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from jbrain.config import Settings
+from jbrain.llm import engine as engines
 from jbrain.llm import local_catalog
 
 # Reasoning-capable providers honor `reasoning_effort`: xAI Grok, and the local
@@ -54,19 +55,24 @@ class ProviderChoice:
     supports_vision: bool
 
 
-def _local_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
+def _local_choices(settings: Settings, engine: engines.Engine) -> tuple[ProviderChoice, ...]:
     """The local-model choices for the settings screen, or () when local hosting
     is off. Driven by the operator's provisioned selection; an enabled-but-empty
-    selection falls back to the single generic escape-hatch choice."""
+    selection falls back to the single generic escape-hatch choice.
+
+    Only `engine`'s models are offered: a pick of the other engine's model would route to a
+    gateway that is down, so Flash-Next is never pickable while the standard engine is active
+    (FLASH_NEXT_ENGINE_PLAN §6, F1) and vice versa."""
     if not settings.local_llm_enabled:
         return ()
-    models = local_catalog.selected(settings.local_models)
-    if not models:
+    provisioned = local_catalog.selected(settings.local_models)
+    if not provisioned:
         return (
             ProviderChoice(
                 "local", "Local", f"local:{settings.local_llm_model}", False, supports_vision=True
             ),
         )
+    models = (m for m in provisioned if engines.parse(m.engine) == engine)
     return tuple(
         ProviderChoice(
             m.id,
@@ -79,14 +85,19 @@ def _local_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
     )
 
 
-def provider_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
+def provider_choices(
+    settings: Settings, engine: engines.Engine = engines.STANDARD
+) -> tuple[ProviderChoice, ...]:
     """The selectable providers in UI order: each cloud provider only when its API
     key is configured, then any opt-in local models the operator has enabled.
 
     A keyless cloud provider is hidden — offering it would only let a task be
     pinned to a model that fails at call time. A stored override to a now-keyless
     provider still reverse-maps via id_for_spec, so the screen surfaces it as an
-    unavailable choice rather than crashing."""
+    unavailable choice rather than crashing.
+
+    `engine` is the active on-box engine (`settings_store.llm_local_engine`), which the async
+    caller reads; the default is the standard gateway every box runs unless switched."""
     cloud: list[ProviderChoice] = []
     if settings.xai_api_key:
         cloud.append(
@@ -104,7 +115,7 @@ def provider_choices(settings: Settings) -> tuple[ProviderChoice, ...]:
                 supports_vision=True,
             )
         )
-    return (*cloud, *_local_choices(settings))
+    return (*cloud, *_local_choices(settings, engine))
 
 
 def _by_id(settings: Settings) -> Mapping[str, ProviderChoice]:

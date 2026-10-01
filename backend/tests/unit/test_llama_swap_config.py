@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from jbrain.llm import llama_swap_config, local_catalog
+from jbrain.llm import engine, llama_swap_config, local_catalog
 
 
 def _manifest() -> list[dict[str, object]]:
@@ -145,12 +145,15 @@ def test_every_recurrent_catalog_entry_is_served_without_cache_reuse(tmp_path: P
         "qwen3.8-27b-q4",
         "qwen3.8-27b-abliterated",
         "nemotron-3.5-lightning-30b",
+        "qwen3.8-flash-next",
     }
     for model in recurrent:
         (tmp_path / model.id).mkdir(exist_ok=True)
         (tmp_path / model.id / "w.gguf").write_bytes(b"\0")
         entry = dict(asdict(model), gguf_include="*.gguf", mmproj_include=None)
-        assert "--cache-reuse" not in llama_swap_config.render([entry], str(tmp_path))
+        text = llama_swap_config.render([entry], str(tmp_path), engine=engine.parse(model.engine))
+        assert model.served_model in text
+        assert "--cache-reuse" not in text
 
 
 def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
@@ -999,3 +1002,171 @@ def test_launch_line_reads_back_the_exact_served_command(tmp_path: Path) -> None
 
 def test_launch_line_survives_a_missing_config(tmp_path: Path) -> None:
     assert llama_swap_config.launch_line(str(tmp_path), "gpt-oss-120b") is None
+
+
+def _flash_next_on_disk(root: Path) -> dict[str, object]:
+    flash = local_catalog.get("qwen3.8-flash-next")
+    assert flash is not None
+    (root / flash.id / "UD-IQ4_XS").mkdir(parents=True, exist_ok=True)
+    for i in (1, 2):
+        (root / flash.id / "UD-IQ4_XS" / f"m-UD-IQ4_XS-0000{i}-of-00002.gguf").write_bytes(b"\0")
+    (root / flash.id / "mmproj-F16.gguf").write_bytes(b"\0")
+    return asdict(flash)
+
+
+def _cmd(text: str, served: str) -> list[str]:
+    import yaml
+
+    return str(yaml.safe_load(text)["models"][served]["cmd"]).split()
+
+
+def _value(tokens: list[str], flag: str) -> str:
+    assert tokens.count(flag) == 1, flag
+    return tokens[tokens.index(flag) + 1]
+
+
+def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
+    """FLASH_NEXT_ENGINE_PLAN §4 "Serving flags", flag by flag: the engram table mapped and on
+    CPU, four non-unified 262k slots, q8_0 KV, 8 checkpoints per slot, no speculation."""
+    entry = _flash_next_on_disk(tmp_path)
+    text = llama_swap_config.render([entry], str(tmp_path), engine=engine.FLASH_NEXT)
+    tokens = _cmd(text, "qwen3.8-flash-next")
+    # The base command's `--no-mmap` is REMOVED, not superseded by argv order.
+    assert "--no-mmap" not in tokens
+    assert _value(tokens, "--load-mode") == "mmap"
+    assert _value(tokens, "-ot") == "per_layer_token_embd=CPU"
+    assert _value(tokens, "--lazy-mode") == "on"
+    assert _value(tokens, "-ngl") == "999"
+    assert _value(tokens, "-np") == "4"
+    assert _value(tokens, "-c") == str(4 * 262144) == "1048576"
+    assert _value(tokens, "-ctk") == "q8_0" and _value(tokens, "-ctv") == "q8_0"
+    assert _value(tokens, "-fa") == "1"
+    assert _value(tokens, "-cram") == "0"
+    assert _value(tokens, "--ctx-checkpoints") == "8"
+    assert _value(tokens, "--checkpoint-min-step") == "1024"
+    assert "--jinja" in tokens
+    assert _value(tokens, "--mmproj") == "/models/qwen3.8-flash-next/mmproj-F16.gguf"
+    assert _value(tokens, "--image-min-tokens") == "2048"
+    assert _value(tokens, "-m").endswith("-00001-of-00002.gguf")
+    assert not any(t.startswith("--spec") for t in tokens)
+    # A hybrid without the sidecar patch: no cache-reuse crash path, no slot files (F4).
+    assert "--cache-reuse" not in tokens and "--slot-save-path" not in tokens
+
+
+def test_flash_next_slot_override_rescales_c(tmp_path: Path) -> None:
+    entry = _flash_next_on_disk(tmp_path)
+    text = llama_swap_config.render(
+        [entry], str(tmp_path), engine=engine.FLASH_NEXT, slots={"qwen3.8-flash-next": 2}
+    )
+    tokens = _cmd(text, "qwen3.8-flash-next")
+    assert _value(tokens, "-np") == "2" and _value(tokens, "-c") == "524288"
+
+
+def test_each_engine_renders_only_its_own_models(tmp_path: Path) -> None:
+    _lay_down(tmp_path)
+    manifest = [*_manifest(), _flash_next_on_disk(tmp_path)]
+    standard = llama_swap_config.render(manifest, str(tmp_path), engine=engine.STANDARD)
+    flash = llama_swap_config.render(manifest, str(tmp_path), engine=engine.FLASH_NEXT)
+    assert "qwen3.8-flash-next" not in standard
+    assert "gpt-oss-120b" in standard and "qwen3-vl-30b-a3b" in standard
+    assert "gpt-oss-120b" not in flash and "qwen3-vl-30b-a3b" not in flash
+    # Its own container, so its own port range starts at the base.
+    assert "--port 9100" in flash and "- qwen3.8-flash-next" in flash
+
+
+def test_write_lands_each_engine_in_its_own_file(tmp_path: Path) -> None:
+    _lay_down(tmp_path)
+    manifest = [*_manifest(), _flash_next_on_disk(tmp_path)]
+    std_path = llama_swap_config.write(str(tmp_path), manifest, engine=engine.STANDARD)
+    fn_path = llama_swap_config.write(str(tmp_path), manifest, engine=engine.FLASH_NEXT)
+    assert std_path == str(tmp_path / "llama-swap.yaml")
+    assert fn_path == str(tmp_path / "llama-swap.flash-next.yaml")
+    assert "qwen3.8-flash-next" not in Path(std_path).read_text()
+    assert "qwen3.8-flash-next" in Path(fn_path).read_text()
+
+
+def test_readers_resolve_the_engine_they_are_given(tmp_path: Path) -> None:
+    """launch_line and served_shape_from_config read the ACTIVE engine's file: a model of the
+    engine that is not running has no launch line and no served shape."""
+    _lay_down(tmp_path)
+    manifest = [*_manifest(), _flash_next_on_disk(tmp_path)]
+    for e in engine.ENGINES:
+        llama_swap_config.write(str(tmp_path), manifest, engine=e)
+    root = str(tmp_path)
+    assert llama_swap_config.launch_line(root, "qwen3.8-flash-next", engine.STANDARD) is None
+    line = llama_swap_config.launch_line(root, "qwen3.8-flash-next", engine.FLASH_NEXT)
+    assert line is not None and "--load-mode mmap" in line
+    assert llama_swap_config.launch_line(root, "gpt-oss-120b", engine.FLASH_NEXT) is None
+    assert llama_swap_config.launch_line(root, "gpt-oss-120b", engine.STANDARD) is not None
+    assert llama_swap_config.served_shape_from_config(root, engine.FLASH_NEXT) == {
+        "qwen3.8-flash-next": (262144, 4)
+    }
+    assert "qwen3.8-flash-next" not in llama_swap_config.served_shape_from_config(
+        root, engine.STANDARD
+    )
+
+
+def test_operator_override_tensor_replaces_the_catalog_rule_under_either_spelling(
+    tmp_path: Path,
+) -> None:
+    entry = _flash_next_on_disk(tmp_path)
+    text = llama_swap_config.render(
+        [entry],
+        str(tmp_path),
+        engine=engine.FLASH_NEXT,
+        extra_args={"qwen3.8-flash-next": ["--override-tensor", "per_layer_token_embd=CPU,x=CPU"]},
+    )
+    tokens = _cmd(text, "qwen3.8-flash-next")
+    assert "-ot" not in tokens
+    assert _value(tokens, "--override-tensor") == "per_layer_token_embd=CPU,x=CPU"
+
+
+def test_cli_without_engine_flag_writes_only_the_standard_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The long-standing no-flag call (deploy/local-models-sync.sh) keeps writing
+    llama-swap.yaml with standard models only, even when Flash-Next is in the manifest."""
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: ({}, {}, {}, {}))
+    _lay_down(tmp_path)
+    monkeypatch.setenv("MANIFEST", json.dumps([*_manifest(), _flash_next_on_disk(tmp_path)]))
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert "qwen3.8-flash-next" not in (tmp_path / "llama-swap.yaml").read_text()
+    assert "gpt-oss-120b" in (tmp_path / "llama-swap.yaml").read_text()
+    assert not (tmp_path / "llama-swap.flash-next.yaml").exists()
+
+
+def test_cli_engine_flag_writes_that_engines_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: ({}, {}, {}, {}))
+    _lay_down(tmp_path)
+    monkeypatch.setenv("MANIFEST", json.dumps([*_manifest(), _flash_next_on_disk(tmp_path)]))
+    assert llama_swap_config._main(["--engine", "flash-next", str(tmp_path)]) == 0
+    text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
+    assert "qwen3.8-flash-next" in text and "gpt-oss-120b" not in text
+    assert not (tmp_path / "llama-swap.yaml").exists()
+    assert llama_swap_config._main(["--engine", "standard", str(tmp_path)]) == 0
+    assert "qwen3.8-flash-next" not in (tmp_path / "llama-swap.yaml").read_text()
+
+
+def test_cli_rejects_an_unknown_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MANIFEST", "[]")
+    assert llama_swap_config._main(["--engine", "nope", str(tmp_path)]) == 2
+    assert llama_swap_config._main([str(tmp_path), "--engine"]) == 2
+
+
+def test_cli_engine_flag_leaves_an_existing_file_when_overrides_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail() -> Any:
+        raise llama_swap_config.OverridesUnavailable("db down")
+
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", _fail)
+    _lay_down(tmp_path)
+    monkeypatch.setenv("MANIFEST", json.dumps([*_manifest(), _flash_next_on_disk(tmp_path)]))
+    (tmp_path / "llama-swap.flash-next.yaml").write_text("kept\n")
+    assert llama_swap_config._main(["--engine", "flash-next", str(tmp_path)]) == 0
+    assert (tmp_path / "llama-swap.flash-next.yaml").read_text() == "kept\n"
+    # No standard file yet: catalog defaults are written so that gateway can start.
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert "gpt-oss-120b" in (tmp_path / "llama-swap.yaml").read_text()

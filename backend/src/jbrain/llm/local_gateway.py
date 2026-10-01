@@ -770,6 +770,12 @@ class LocalGatewayClient:
                 grew = now is not None and (now - last) >= _SWEEP_GROWTH_GB
                 if not grew and elapsed < _SWEEP_INTERVAL_S:
                     continue
+                if local_weights.serves_file_backed(model.id):
+                    # Mapped weights: the cache IS the engram working set. Keep polling for the
+                    # progress bar, never drop (local_weights.drop_weights_page_cache).
+                    elapsed = 0.0
+                    last = now if now is not None else last
+                    continue
                 # `to_thread`: the walk + fadvise are blocking syscalls, and stalling the event
                 # loop during a load would delay the very health probe we are timing.
                 await asyncio.to_thread(
@@ -806,6 +812,11 @@ class LocalGatewayClient:
         this just returned rather than racing it."""
         if model is None or not self._models_dir:
             return
+        if local_weights.serves_file_backed(model.id):
+            # Not a `--no-mmap` copy: the mapped engram table pages through this cache on every
+            # token, so dropping it would only make the next tokens read it from disk again.
+            log.info("local_gateway.weights_cache_kept_file_backed", model=model.id)
+            return
         freed = local_weights.drop_weights_page_cache(self._models_dir, model.id)
         # All three outcomes are worth a line, and they are not the same thing. `if freed:`
         # logged only the happy case — which was harmless while the figure was the sum of
@@ -829,15 +840,16 @@ class LocalGatewayClient:
 
     async def _served_shape(self, model: local_catalog.LocalModel) -> tuple[int, int]:
         """The (context window, parallel slots) llama-swap will actually serve `model` with —
-        the operator's saved overrides when a loader is wired, else the catalog default and one
-        slot. Best-effort: a settings read that fails must not block a load, so it degrades to
-        the catalog shape rather than raising, and the watchdog still covers the difference."""
-        window, slots = model.context_window, 1
+        the operator's saved overrides when a loader is wired, else the catalog window and
+        `default_slots`. Best-effort: a settings read that fails must not block a load, so it
+        degrades to the catalog shape rather than raising, and the watchdog still covers the
+        difference."""
+        window, slots = model.context_window, model.default_slots
         try:
             if self._windows_loader is not None:
                 window = (await self._windows_loader()).get(model.id, window)
             if self._slots_loader is not None:
-                slots = (await self._slots_loader()).get(model.id, slots)
+                slots = model.served_slots(await self._slots_loader())
         except Exception:  # noqa: BLE001 — any settings failure falls back, never blocks
             log.warning("local_gateway.served_shape_unavailable", model=model.id)
         return window, slots

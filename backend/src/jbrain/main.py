@@ -166,6 +166,7 @@ from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, gpu_guard
+from jbrain.llm import engine as engine_mod
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -538,6 +539,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # The SAME ledger instance the gateway charges through, so the eviction plan
                 # and the admission verdict come from one arithmetic (L3).
                 ledger=api_reservations,
+                # The active engine, read per decision so a switch needs no restart: only its
+                # models are loaded or restored (FLASH_NEXT_ENGINE_PLAN §4d).
+                engine_loader=lambda: settings_store.llm_local_engine(SYSTEM_CTX),
             ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
@@ -561,11 +565,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         kv_budget_gb = LLM_KV_PREFIX_BUDGET_GB_DEFAULT
         with suppress(Exception):
             kv_budget_gb = await settings_store.llm_kv_prefix_budget_gb(SYSTEM_CTX)
+        # Which engine's llama-swap config the store fingerprints launch lines from. Read once,
+        # like the patch flag; the engine switch (FLASH_NEXT_ENGINE_PLAN F3) re-points it.
+        kv_engine = engine_mod.DEFAULT_ENGINE
+        with suppress(Exception):
+            kv_engine = await settings_store.llm_local_engine(SYSTEM_CTX)
         app.state.kv_prefix = KvPrefixStore(
             app.state.local_gateway,
             settings.local_models_dir,
             patch_active=kv_patch_active,
             max_store_bytes=kv_budget_gb * 1024**3,
+            engine=kv_engine,
         )
         app.state.llm_router = build_router(
             settings,

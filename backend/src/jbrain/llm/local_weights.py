@@ -18,6 +18,8 @@ import ctypes
 import os
 import platform
 
+from jbrain.llm import local_catalog
+
 # Weights are GiB-scale; report in GiB to match the catalog's size_gb units.
 _BYTES_PER_GIB = 1024**3
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
@@ -72,6 +74,14 @@ def dir_size_gb(models_dir: str, model_id: str) -> float | None:
     return round(total / _BYTES_PER_GIB, 1)
 
 
+def serves_file_backed(model_id: str) -> bool:
+    """Whether the engine serves part of `model_id`'s weights memory-mapped from disk
+    (`LocalModel.file_backed_gb`) — Flash-Next's engram table, read through the page cache on
+    every token. Its page cache is the working set, not a residue."""
+    model = local_catalog.get(model_id)
+    return model is not None and model.file_backed_gb > 0
+
+
 def drop_weights_page_cache(models_dir: str, model_id: str) -> float | None:
     """Drop the kernel page-cache copy of `model_id`'s weights. Returns the GiB whose
     cache was released, or None when the model's directory is missing.
@@ -98,7 +108,16 @@ def drop_weights_page_cache(models_dir: str, model_id: str) -> float | None:
 
     Deliberately targeted rather than the global `drop_caches` the update path uses
     (deploy/update-inner.sh): this touches only the weights just read, so Postgres's
-    working set and the rest of the box's cache survive."""
+    working set and the rest of the box's cache survive.
+
+    A model with a file-backed share is skipped ENTIRELY, returning 0.0: everything above
+    assumes `--no-mmap`, and for a mapped model the "second copy" is the only copy of the
+    engram table — evicting it makes the next tokens page it back in from disk
+    (FLASH_NEXT_ENGINE_PLAN §3). Skipping the whole model rather than the one tensor because
+    that tensor lives inside the same GGUF shards as the rest; `posix_fadvise` works on byte
+    ranges, and the tensor's range is not something this module knows."""
+    if serves_file_backed(model_id):
+        return 0.0
     return _drop_page_cache(os.path.join(models_dir, model_id), (".gguf",))
 
 

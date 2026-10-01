@@ -702,6 +702,9 @@ async def run() -> None:
             # The SAME ledger instance this process's gateway charges through, so the worker's
             # eviction plans and its admission verdicts come from one arithmetic (L3).
             ledger=worker_reservations,
+            # The same active-engine gate as the api's coordinator: a background job never
+            # loads the engine that is not running (FLASH_NEXT_ENGINE_PLAN §4d).
+            engine_loader=lambda: worker_settings_store.llm_local_engine(queue.SYSTEM_CTX),
         ),
     )
     router = build_router(

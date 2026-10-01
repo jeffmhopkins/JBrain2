@@ -671,7 +671,13 @@ def test_set_context_window_round_trips_override() -> None:
 def test_drawer_reports_parallel_slots_default_of_one() -> None:
     c, _ = _authed_client(_local_settings())
     by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
-    assert all(m["parallel_slots"] == 1 for m in by_id.values())
+    # Every unconfigured model serves its catalog default: one slot, except an entry whose
+    # catalog sets more (Flash-Next's four role-pinned slots).
+    assert all(
+        m["parallel_slots"] == local_catalog.get(mid).default_slots  # type: ignore[union-attr]
+        for mid, m in by_id.items()
+    )
+    assert by_id["gpt-oss-120b"]["parallel_slots"] == 1
 
 
 def test_the_meter_reports_the_same_kv_the_eviction_budget_uses() -> None:

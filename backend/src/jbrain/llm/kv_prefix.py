@@ -86,6 +86,7 @@ from collections.abc import Sequence
 import structlog
 
 from jbrain import box_events
+from jbrain.llm import engine as engines
 from jbrain.llm import llama_swap_config, local_catalog
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.types import LlmTool
@@ -263,9 +264,14 @@ class KvPrefixStore:
         *,
         patch_active: bool = False,
         max_store_bytes: int = MAX_STORE_BYTES,
+        engine: engines.Engine = engines.STANDARD,
     ) -> None:
         self._gateway = gateway
         self._models_root = models_root
+        # Which engine's llama-swap config launch lines are read from (`_resolve`). The
+        # fingerprint is the launch line, so reading the wrong engine's file would describe a
+        # server that is not running. `set_engine` re-points it when the engine switches.
+        self._engine: engines.Engine = engine
         # The disk allowance. A parameter rather than the module constant it defaults to,
         # because the constant's own comment conceded the gap: "changing it is a release,
         # there is no knob" — on a box whose owner has no terminal, and whose store runs at
@@ -507,6 +513,11 @@ class KvPrefixStore:
             return None
         return model
 
+    def set_engine(self, engine: engines.Engine) -> None:
+        """Point launch-line resolution at `engine`'s config — called by whatever switches the
+        active engine, so the store never fingerprints the stopped gateway's commands."""
+        self._engine = engine
+
     def _resolve(
         self,
         served_model: str,
@@ -518,7 +529,7 @@ class KvPrefixStore:
         None when the model is
         not served, or is served without --slot-save-path (no disk layer). One read of the
         rendered config feeds both, so they can never describe two different servers."""
-        line = llama_swap_config.launch_line(self._models_root, served_model)
+        line = llama_swap_config.launch_line(self._models_root, served_model, self._engine)
         if line is None:
             return None
         save_dir = _save_dir_from_line(line, self._models_root)
