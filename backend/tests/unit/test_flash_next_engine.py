@@ -377,6 +377,7 @@ def test_one_slot_means_one_on_a_model_served_wider_by_default() -> None:
     assert resp.status_code == 200
     row = {m["id"]: m for m in resp.json()["local_models"]}[FLASH_ID]
     assert row["parallel_slots"] == 1
+    assert row["default_slots"] == 4 and row["parallel_slots_max"] == 4
     assert row["kv_gb"] < four["kv_gb"]
     assert store.values["llm_local_parallel_slots"] == {FLASH_ID: 1}
     assert _flash().served_slots(store.values["llm_local_parallel_slots"]) == 1
@@ -486,15 +487,28 @@ def llama_swap_config_shape(root: Path) -> dict[str, tuple[int, int]]:
 
 
 def _local_gateway_clients(module: str) -> list[ast.Call]:
+    """Every `LocalGatewayClient(...)` in `module` that talks to the LLM gateway — whether
+    named bare or as an attribute, and whether the url is positional or `base_url=`."""
     src = (Path(__file__).resolve().parents[2] / "src" / "jbrain" / f"{module}.py").read_text()
-    return [
-        node
-        for node in ast.walk(ast.parse(src))
-        if isinstance(node, ast.Call)
-        and ast.unparse(node.func) == "LocalGatewayClient"
-        and node.args
-        and ast.unparse(node.args[0]) == "settings.local_llm_url"
-    ]
+    clients: list[ast.Call] = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name != "LocalGatewayClient":
+            continue
+        url = node.args[0] if node.args else None
+        for kw in node.keywords:
+            if kw.arg == "base_url":
+                url = kw.value
+        if url is not None and "local_llm_url" in ast.unparse(url):
+            clients.append(node)
+    return clients
+
+
+def _kw(call: ast.Call, name: str) -> ast.expr | None:
+    return next((kw.value for kw in call.keywords if kw.arg == name), None)
 
 
 @pytest.mark.parametrize("module", ["main", "worker"])
@@ -506,21 +520,66 @@ def test_every_long_lived_llm_gateway_restamps_before_it_loads(module: str) -> N
     clients = _local_gateway_clients(module)
     assert clients, f"{module}.py builds no LLM gateway client any more — update this test"
     for call in clients:
-        assert "config_regen" in {kw.arg for kw in call.keywords}, (
+        assert _kw(call, "config_regen") is not None, (
             f"{module}.py builds a LocalGatewayClient without config_regen — its loads serve "
             "whatever llama-swap config was last written, not the saved overrides"
         )
 
 
-def test_the_worker_can_write_the_config_it_restamps() -> None:
+def test_the_worker_asks_the_api_to_restamp_rather_than_writing_itself() -> None:
+    """The worker handles untrusted content, so it must never write the gateway config: its
+    re-stamp is the api's internal route (jbrain.llm.gateway_regen), not a local write."""
+    (call,) = _local_gateway_clients("worker")
+    regen = _kw(call, "config_regen")
+    assert regen is not None
+    assert "gateway_regen.request_regen" in ast.unparse(regen)
+    assert "regen_gateway_config" not in ast.unparse(regen)
+
+
+def test_the_worker_cannot_write_the_models_directory() -> None:
     import yaml
 
     compose = Path(__file__).resolve().parents[3] / "deploy" / "docker-compose.yml"
     volumes = [str(v) for v in yaml.safe_load(compose.read_text())["services"]["worker"]["volumes"]]
-    assert "./local-models:/data/local-models" in volumes, (
-        "the worker re-stamps llama-swap config before its loads; read-only, every write "
-        "fails and its loads serve a stale window"
+    models = [v for v in volumes if "local-models" in v]
+    assert models == ["./local-models:/data/local-models:ro"], (
+        "the worker's models mount must stay READ-ONLY — a writable one lets a compromised "
+        "worker write a llama-swap `cmd:` the gateway executes, or swap a GGUF"
     )
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        ["--rpc", "10.0.0.1:50052"],
+        ["--no-mmap"],
+        ["-ot", "x=CPU", "--model-url", "http://evil"],
+        ["--ctx-checkpoints", "999"],
+        ["-ngl", "x;y"],
+    ],
+)
+def test_the_renderer_re_applies_the_launch_flag_allowlist(
+    tmp_path: Path, stored: list[str]
+) -> None:
+    """A stored override that never went through the settings API's allowlist must not reach
+    a launch command — the renderer checks what is STORED, not just what the PUT accepted."""
+    from jbrain.llm import llama_swap_config
+
+    (tmp_path / "gpt-oss-120b").mkdir()
+    (tmp_path / "gpt-oss-120b" / "m-mxfp4.gguf").write_bytes(b"\0")
+    gpt = local_catalog.get("gpt-oss-120b")
+    assert gpt is not None
+    with pytest.raises(llama_swap_config.UnsafeArgument):
+        llama_swap_config.render(
+            [dataclasses.asdict(gpt)], str(tmp_path), extra_args={"gpt-oss-120b": stored}
+        )
+    # An allowlisted override still renders.
+    text = llama_swap_config.render(
+        [dataclasses.asdict(gpt)],
+        str(tmp_path),
+        extra_args={"gpt-oss-120b": ["--ctx-checkpoints", "8", "--swa-full"]},
+    )
+    assert "--ctx-checkpoints 8" in text and "--swa-full" in text
 
 
 # --- one TTL-cached engine read, seen without a restart -----------------------------------

@@ -304,14 +304,15 @@ services:
     environment: *api_env
     volumes:
       - blobs:/data/blobs
-      # The local-model weights. The worker never downloads or serves them; it needs the files
-      # so a finished load can drop their PAGE-CACHE copy
-      # (jbrain.llm.local_weights.drop_weights_page_cache) — `--no-mmap` leaves every model
-      # resident twice, GTT plus the cache the read filled — and WRITABLE because its loads
-      # re-stamp the active engine's llama-swap config first, exactly as the api's do. Read-
-      # only, a worker load served whatever file the api last wrote, so a window or slot
-      # override never reached a model the worker brought back (Flash-Next, 2026-10-01).
-      - ./local-models:/data/local-models
+      # The local-model weights, READ-ONLY. The worker never downloads or serves them; it
+      # needs the files only so a finished load can drop their PAGE-CACHE copy
+      # (jbrain.llm.local_weights.drop_weights_page_cache). `--no-mmap` leaves every model
+      # resident twice — GTT plus the cache the read filled — and the worker swaps models for
+      # background jobs, so without this mount half the box's loads leave that copy behind.
+      # Read-only is a security boundary, not a convenience: the worker handles untrusted
+      # content, and a writable models dir would let it write a llama-swap `cmd:` the gateway
+      # executes. Its pre-load config re-stamp is done by the api (jbrain.llm.gateway_regen).
+      - ./local-models:/data/local-models:ro
     networks: [internal]
     depends_on:
       db:

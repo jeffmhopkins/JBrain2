@@ -3171,16 +3171,13 @@ async def set_context_window(
     )
 
 
-class ParallelSlotsIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # null clears the override back to the model's catalog `default_slots`.
-    slots: int | None = None
-
-
 @router.put("/llm/local-models/{model_id}/parallel-slots")
 async def set_parallel_slots(
-    model_id: str, body: ParallelSlotsIn, request: Request, settings: SettingsDep, _p: DebugDep
+    model_id: str,
+    body: llm_settings.ParallelSlotsIn,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
 ) -> LlmSettingsOut:
     """Set one model's served slot count (llama-server `-np`), the PWA control mirrored here.
 

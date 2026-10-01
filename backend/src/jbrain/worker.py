@@ -28,7 +28,6 @@ from jbrain.analysis.predicates import retire_open_new_predicate_cards
 from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC, graph_rebuild_handler
 from jbrain.analysis.reembed import REEMBED_SPEC, reembed_handler
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate_handler
-from jbrain.api import llm_settings as llm_settings_api
 from jbrain.config import get_settings
 from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
 from jbrain.embed import (
@@ -54,7 +53,7 @@ from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.stream_analysis import ANALYZE_STREAM_URL_SPEC, StreamAnalysisPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
-from jbrain.llm import build_router, gpu_guard
+from jbrain.llm import build_router, gateway_regen, gpu_guard
 from jbrain.llm.engine import ActiveEngine
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -638,9 +637,11 @@ async def run() -> None:
         # console reached the served command only if the api happened to load the model
         # first: the edit unloads the model, a background job wants it back, and the worker
         # loaded it from the stale file — observed on the box 2026-10-01 as Flash-Next
-        # relaunching at `n_ctx_slot = 262144` after its window was set to 131072. The
-        # worker's models mount is writable for this (deploy/docker-compose.yml).
-        config_regen=lambda: llm_settings_api.regen_gateway_config(settings, worker_settings_store),
+        # relaunching at `n_ctx_slot = 262144` after its window was set to 131072. The api
+        # does the write (jbrain.llm.gateway_regen says why the worker must not).
+        config_regen=lambda: gateway_regen.request_regen(
+            settings.internal_api_url, settings.supervisor_token
+        ),
         # Lets a finished load drop the page-cache copy of the weights it just read. The
         # worker gained the weights mount for this (deploy/docker-compose.yml) — it swaps
         # models for background jobs, so without it half the box's loads left the copy behind.

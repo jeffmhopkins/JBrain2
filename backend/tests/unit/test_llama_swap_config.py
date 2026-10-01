@@ -269,10 +269,10 @@ def test_render_appends_operator_extra_args_after_the_catalog_flags(tmp_path: Pa
     text = llama_swap_config.render(
         _manifest(),
         str(tmp_path),
-        extra_args={"gpt-oss-120b": ["--swa-full", "--slot-save-path", "/tmp/kv/"]},
+        extra_args={"gpt-oss-120b": ["--swa-full", "-lv", "4"]},
     )
     line = next(ln for ln in text.splitlines() if "--swa-full" in ln)
-    assert "--slot-save-path /tmp/kv/" in line
+    assert line.rstrip().endswith("--swa-full -lv 4")
     # Only the targeted model is affected — a bad flag can never take the whole gateway down.
     assert sum("--swa-full" in ln for ln in text.splitlines()) == 1
 

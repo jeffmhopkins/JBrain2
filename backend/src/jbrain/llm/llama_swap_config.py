@@ -51,7 +51,7 @@ from typing import cast
 import yaml
 
 from jbrain.llm import engine as engines
-from jbrain.llm import local_catalog
+from jbrain.llm import launch_flags, local_catalog
 
 # Concrete, distinct upstream ports — llama-swap's ${PORT} macro isn't substituted
 # by every build, and the non-swapping group runs models concurrently so they can't
@@ -299,6 +299,14 @@ def render(
         # to rewrite and the command line carries exactly one --image-min-tokens.
         floor = image_min_tokens.get(model_id, cast("int | None", m.get("image_min_tokens")))
         operator_args = tuple(str(a) for a in extra_args.get(model_id, ()))
+        # Re-apply the settings API's allowlist to what is STORED: the operator's flags come
+        # out of a settings row, and a row that bypassed the API must not become an argv the
+        # gateway executes. `_refuse_unsafe` below is the other wall (no token may break out
+        # of its place in the YAML); this one keeps every flag to the allowlisted set.
+        try:
+            launch_flags.validate(operator_args)
+        except launch_flags.LaunchFlagError as exc:
+            raise UnsafeArgument(f"{model_id}: refusing a stored launch flag — {exc}") from exc
         # Absent an operator count, the catalog's `default_slots` (1 everywhere but Flash-Next,
         # whose four slots are role-pinned prefix caches — FLASH_NEXT_ENGINE_PLAN §4a).
         n_slots = max(1, slots.get(model_id, int(cast(int, m.get("default_slots") or 1))))
@@ -634,12 +642,20 @@ def write(
     with contextlib.suppress(OSError):
         if pathlib.Path(path).read_text() == text:
             return path
-    # Per-process temp name: the api AND the worker re-stamp before their loads, and two
-    # writers sharing one temp path could rename the other's half-written file into place.
+    # Per-process temp name: the api and the deploy CLI (a separate process in the same
+    # container) both write here, and two writers sharing one temp path could rename the
+    # other's half-written file into place.
     tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        f.write(text)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        # A failed write (disk full, permissions) must not leave a stray temp file beside the
+        # config for every later attempt to trip over.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     return path
 
 

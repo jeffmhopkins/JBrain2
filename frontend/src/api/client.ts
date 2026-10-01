@@ -951,6 +951,12 @@ export interface LocalModelInfo {
    * withheld with it (a plain-recurrent restore can only restore garbage). Sound, but it used
    * to be silent — protecting the prefix quietly deleted the durable copy of it. */
   slots_drop_disk_cache: boolean;
+  /** The largest `parallel_slots` the server accepts: 2 for a standard model, the catalog default
+   * where that is higher (Flash-Next's 4). Absent from an older server — read as 2. */
+  parallel_slots_max?: number;
+  /** The catalog's own slot count, what `parallel_slots` reads with no override saved (1 for every
+   * model but Flash-Next's 4). Absent from an older server — read as 1. */
+  default_slots?: number;
   /** Keep this model resident: the evictor picks pinned models LAST. Which model matters is
    * what you use it FOR, and no ranking by size can know that — the evictor used to rank
    * biggest-first and threw a 59 GB assistant out to seat a 4.3 GB pet model. A last resort,
