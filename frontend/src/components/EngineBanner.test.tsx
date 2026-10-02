@@ -76,6 +76,22 @@ describe("engineBanners", () => {
     expect(fresh?.detail).not.toMatch(/can't reach/);
   });
 
+  it("is silent after a cancel — neither amber nor rose", () => {
+    const state = engineState({ switching: false, switch: switchStatus({ stage: "cancelled" }) });
+    expect(engineBanners(snap({ state }))).toEqual([]);
+  });
+
+  it("is rose and not dismissable while no local engine is up", () => {
+    const sw = switchStatus({ stage: "failed", no_engine_up: true });
+    const [b] = engineBanners(snap({ state: engineState({ running: [], switch: sw }) }));
+    expect(b?.tone).toBe("rose");
+    expect(b?.title).toBe("No local engine is up");
+    expect(b?.dismiss).toBeUndefined();
+    // The flag outlives the outage on the switch record; what runs now decides.
+    const [after] = engineBanners(snap({ state: engineState({ switch: sw }) }));
+    expect(after?.title).toBe("Engine switch failed");
+  });
+
   it("is amber for a fallback (desired ≠ effective)", () => {
     const [b] = engineBanners(snap({ state: engineState({ desired: "flash-next" }) }));
     expect(b?.tone).toBe("amber");

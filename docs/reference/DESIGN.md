@@ -628,8 +628,16 @@ F3a). Switches the box between **Standard** (the `local-llm` gateway) and **Flas
 - **"Keep" is a confirm too.** On a fallback, *Keep {effective}* is offered only when the
   box is cleanly on that engine (nothing would stop or reload) and its confirm says so;
   on an inconsistent box it is named and confirmed as the switch it really is.
-- **Cancel only while draining** (*"Cancel — nothing has stopped yet"*), and only while the
-  server offers the route; a server without it stops being offered it.
+- **Cancel only while draining** (*"Cancel — nothing has stopped yet"*,
+  `POST /api/settings/llm/engine/cancel`), and only while the server offers the route; a
+  server without it (404) stops being offered it. A cancelled switch ends **neutral** —
+  *"Switch cancelled — X still serving"*, no amber, no rose — because nothing was stopped.
+  Every surface reads endings from one `isTerminal()`, so a new terminal stage cannot
+  leave the banner saying "Switching…" forever.
+- **No local engine up** is the one state louder than a rollback: a rose, non-dismissable
+  *"No local engine is up — reason"* in the card and the banner, with a *Start …* action
+  per startable engine (a real, confirmed switch). It is read against what is running now,
+  so it clears itself the moment an engine is up again.
 - **Progress is phased text + a five-step list with timestamps + the notes tail** —
   Drain → Stop → Start → Load → Smoke — the Server-update register, no fake bar.
 - **Disabled states say why**: Flash-Next not installed (with *Install in On-box

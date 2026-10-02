@@ -1,12 +1,13 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api } from "./api/client";
+import { ApiError, EngineCancelUnsupported, api } from "./api/client";
 import { engineState, switchStatus } from "./components/engineFixtures";
 import {
   ENGINE_POLL_FAST_MS,
   ENGINE_POLL_IDLE_MS,
   activeSince,
   hhmm,
+  isTerminal,
   nextDelay,
   peekEngineSnapshot,
   refreshEngine,
@@ -38,6 +39,12 @@ describe("engine state helpers", () => {
     // Another process's switch: not our lock, but a non-terminal stage.
     expect(switchInFlight(engineState({ switch: switchStatus({ stage: "loading" }) }))).toBe(true);
     expect(switchInFlight(engineState({ switch: switchStatus({ stage: "done" }) }))).toBe(false);
+    // A cancelled switch is over: no 2 s beat, no "switching" forever.
+    expect(switchInFlight(engineState({ switch: switchStatus({ stage: "cancelled" }) }))).toBe(
+      false,
+    );
+    expect(isTerminal("cancelled")).toBe(true);
+    expect(isTerminal("draining")).toBe(false);
   });
 
   it("dates Flash-Next's tenure only from a finished switch to it", () => {
@@ -116,6 +123,17 @@ describe("engine client", () => {
     expect(path).toBe("/api/settings/llm/engine");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toEqual({ engine: "flash-next", force: true });
+  });
+
+  it("cancel POSTs the one route and reads a 404 as unsupported", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json({ detail: "Not Found" }, 404));
+    vi.stubGlobal("fetch", fetchMock);
+    const err = await api.cancelEngineSwitch().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EngineCancelUnsupported);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [path, init] = fetchMock.mock.calls[0] ?? [];
+    expect(path).toBe("/api/settings/llm/engine/cancel");
+    expect(init?.method).toBe("POST");
   });
 
   it("cancel surfaces a past-draining 409 rather than falling through", async () => {

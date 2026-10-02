@@ -20,7 +20,9 @@ import {
   hhmm,
   hhmmss,
   holdEngineArm,
+  isTerminal,
   kickEnginePoll,
+  noEngineUp,
   openOnBoxModels,
   setEngineState,
   switchInFlight,
@@ -199,7 +201,8 @@ export function LocalEngineCard() {
     (sw.stage === "rolled_back" || sw.stage === "failed") &&
     !snap.dismissed.has(sw.id);
   const fallback = s !== null && !inFlight && s.desired !== s.effective;
-  const attention = inFlight || failed || fallback || armed !== null;
+  const noEngine = noEngineUp(s);
+  const attention = inFlight || failed || fallback || noEngine || armed !== null;
 
   useEffect(() => {
     if (!attention) return;
@@ -239,7 +242,7 @@ export function LocalEngineCard() {
         setEngineState({
           ...s,
           switch: status,
-          switching: !["done", "rolled_back", "failed"].includes(status.stage),
+          switching: !isTerminal(status.stage),
         });
       }
       kickEnginePoll();
@@ -255,7 +258,9 @@ export function LocalEngineCard() {
     setCancelling(true);
     setPostError(null);
     try {
-      await api.cancelEngineSwitch();
+      const status = await api.cancelEngineSwitch();
+      // Announce its ending here, as for a switch this card started.
+      setWatched(status.id);
       kickEnginePoll();
     } catch (err) {
       if (err instanceof EngineCancelUnsupported) setCancelUnsupported(true);
@@ -268,7 +273,10 @@ export function LocalEngineCard() {
   function arm(e: EngineId) {
     if (s === null || inFlight) return;
     setPostError(null);
-    armEngineSwitch(e === s.effective && s.desired === s.effective ? null : e);
+    // Re-choosing the engine that is cleanly serving is a no-op; on a box where it is NOT up
+    // (no engine, or both) choosing it is a real switch and must be armable.
+    const noop = e === s.effective && s.desired === s.effective && s.consistent;
+    armEngineSwitch(noop ? null : e);
   }
 
   let summary = "checking…";
@@ -280,6 +288,9 @@ export function LocalEngineCard() {
     const n = steps.findIndex((x) => x.stage === sw.stage);
     summary = n < 0 ? "switching · finishing" : `switching · step ${n + 1} of ${steps.length}`;
     summaryCls = " warn";
+  } else if (noEngine) {
+    summary = "no engine up";
+    summaryCls = " bad";
   } else if (failed) {
     summary = `rolled back · ${ENGINE_LABEL[s.effective]}`;
     summaryCls = " bad";
@@ -488,7 +499,34 @@ function EngineBody({
           </div>
         )}
 
-        {!inFlight && failed && sw && (
+        {!inFlight && sw?.stage === "cancelled" && watched === sw.id && (
+          <div className="engine-notice off">
+            Switch cancelled — {ENGINE_LABEL[s.effective]} still serving{" "}
+            <span>— nothing was stopped.</span>
+          </div>
+        )}
+
+        {noEngineUp(s) && sw && (
+          <div className="engine-notice err" role="alert">
+            <b>No local engine is up</b>
+            {sw.reason ? <span> — {sw.reason}</span> : null}
+            <div className="engine-acts">
+              {ENGINES.filter((e) => blockedReason(s, e) === null).map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  className="engine-btn secondary"
+                  disabled={posting}
+                  onClick={() => onArm(e)}
+                >
+                  Start {ENGINE_LABEL[e]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!inFlight && failed && sw && !noEngineUp(s) && (
           <div className="engine-notice err" role="alert">
             {sw.stage === "rolled_back" ? (
               <>

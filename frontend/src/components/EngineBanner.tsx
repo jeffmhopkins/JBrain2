@@ -13,6 +13,7 @@ import {
   type EngineSnapshot,
   activeSince,
   dismissEngineSwitch,
+  noEngineUp,
   openEngineCard,
   switchInFlight,
   switchSteps,
@@ -44,6 +45,16 @@ export function engineBanners(snap: EngineSnapshot): EngineBannerItem[] {
       live: true,
       title: `Switching to ${ENGINE_LABEL[sw.target]}`,
       detail: `${step ? step.label.toLowerCase() : sw.stage} · local AI paused`,
+      action: details,
+    });
+  } else if (noEngineUp(s)) {
+    // Not dismissable: it is not news about a past switch but the box's present state, and
+    // it clears itself the moment an engine is up again.
+    out.push({
+      key: "no-engine",
+      tone: "rose",
+      title: "No local engine is up",
+      detail: "local models are unavailable — switch again to start one",
       action: details,
     });
   } else if (
