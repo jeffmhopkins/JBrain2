@@ -137,7 +137,14 @@ async def test_an_executing_pipeline_run_is_the_reason(maker: async_sessionmaker
         assert "quiet_window_run" in await executing_runs(maker, moment)
         assert await quiet_window_guard(maker, moment) is not None
     finally:
+        # Run history is append-only for the app role (no DELETE grant on runs/run_steps), so
+        # the cleanup finishes the job and the run instead: neither then reads as executing.
         async with scoped_session(maker, queue.SYSTEM_CTX) as s:
-            await s.execute(text("DELETE FROM app.run_steps WHERE run_id = :r"), {"r": run_id})
-            await s.execute(text("DELETE FROM app.runs WHERE id = :r"), {"r": run_id})
-            await s.execute(text("DELETE FROM app.jobs WHERE id = :id"), {"id": job_id})
+            await s.execute(
+                text("UPDATE app.jobs SET status = 'done', finished_at = now() WHERE id = :id"),
+                {"id": job_id},
+            )
+            await s.execute(
+                text("UPDATE app.runs SET status = 'done', ended_at = now() WHERE id = :r"),
+                {"r": run_id},
+            )
