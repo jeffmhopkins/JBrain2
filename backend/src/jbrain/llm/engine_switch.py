@@ -148,9 +148,14 @@ class Timings:
     memory_settle_s: float = 60.0
     memory_settled_gb: float = 0.5
     poll_s: float = 2.0
-    # The admission row's and the supervisor hold's deadline, re-extended at every stage, so a
-    # switch never outlives it while a crashed one cannot hold the box for long.
+    # The admission row's deadline, re-extended at every stage, so a switch never outlives it.
+    # The api also reopens admission on boot, so a crash cannot leave it closed this long.
     admission_ttl_s: float = 30 * 60.0
+    # The supervisor hold's deadline: SHORT, because a hold left by a crashed api refuses
+    # every engine start and one-shot (an update included) until it lapses. Renewed at every
+    # stage and by a heartbeat every quarter of it while the switch runs, so no single stage
+    # (a cold multi-minute load) outlives it; released on boot after a crash as well.
+    hold_ttl_s: float = 120.0
     # After closing admission: other processes may trust a cached "open" for one gate TTL;
     # this is that with margin for a call that read it just before the write.
     gate_wait_s: float = 3.0
@@ -364,7 +369,7 @@ class EngineSwitcher:
             return status, previous, up
         # Last: the hold is what the run keeps, so take it only once nothing else refuses.
         try:
-            held = await deps.supervisor.hold(status["id"], self.timings.admission_ttl_s)
+            held = await deps.supervisor.hold(status["id"], self.timings.hold_ttl_s)
         except HoldRefused as exc:
             raise SwitchRefused(409, f"the supervisor refused the switch: {exc}") from exc
         except SupervisorError as exc:
@@ -397,7 +402,16 @@ class EngineSwitcher:
             with contextlib.suppress(Exception):
                 await deps.store.set_llm_local_admission(deps.ctx, row)
         with contextlib.suppress(Exception):
-            await deps.supervisor.hold(status["id"], ttl)
+            await deps.supervisor.hold(status["id"], self.timings.hold_ttl_s)
+
+    async def _heartbeat(self, deps: SwitchDeps, switch_id: str) -> None:
+        """Keep the short supervisor hold alive between stage writes. Real time on purpose:
+        the hold's deadline is the supervisor's wall clock, not the injected test clock."""
+        interval = max(1.0, self.timings.hold_ttl_s / 4)
+        while True:
+            await asyncio.sleep(interval)
+            with contextlib.suppress(Exception):
+                await deps.supervisor.hold(switch_id, self.timings.hold_ttl_s)
 
     async def _run(
         self,
@@ -410,6 +424,7 @@ class EngineSwitcher:
         self._effective_written_at = None
         self._cancel_requested = False
         outcome, reason = FAILED, "the switch did not finish"
+        heartbeat = asyncio.create_task(self._heartbeat(deps, status["id"]))
         try:
             try:
                 outcome, reason = await self._switch(deps, status, previous, up)
@@ -417,6 +432,7 @@ class EngineSwitcher:
                 log.exception("engine_switch.crashed", target=target)
                 outcome, reason = FAILED, f"the switch crashed: {exc!r}"
             finally:
+                heartbeat.cancel()
                 await self._await_engine_caches()
                 await self._open_admission(deps)
                 with contextlib.suppress(Exception):
@@ -796,19 +812,35 @@ def _log_task_failure(task: asyncio.Task[None]) -> None:
         log.error("engine_switch.task_failed", error=repr(exc))
 
 
-async def reset_after_restart(store: SwitchStore, ctx: Any) -> None:
-    """Boot: a switch cannot survive its process, so reopen admission and mark an unfinished
-    switch as interrupted. Best-effort — the admission row's deadline is the backstop."""
+async def reset_after_restart(
+    store: SwitchStore, ctx: Any, supervisor: Supervisor | None = None
+) -> None:
+    """Boot: a switch cannot survive its process, so reopen admission, mark an unfinished
+    switch as interrupted, and release its supervisor hold — which would otherwise refuse
+    every engine start and one-shot until it lapsed. Best-effort and logged; the admission
+    row's and the hold's deadlines are the backstop."""
     with contextlib.suppress(Exception):
         await store.set_llm_local_admission(ctx, dict(drain.OPEN_ROW))
-    with contextlib.suppress(Exception):
+    try:
         status = await store.llm_local_engine_switch(ctx)
-        if status is not None and status.get("stage") not in TERMINAL:
-            status.update(
-                stage=FAILED,
-                reason="interrupted: the api restarted mid-switch; read the engine state and "
-                "switch again if it is not the one you want",
-                ended_at=_now_iso(),
-                updated_at=_now_iso(),
-            )
-            await store.set_llm_local_engine_switch(ctx, status)
+    except Exception:  # noqa: BLE001
+        log.warning("engine_switch.reset_read_failed", exc_info=True)
+        return
+    if status is None or status.get("stage") in TERMINAL:
+        return
+    switch_id = status.get("id")
+    if supervisor is not None and isinstance(switch_id, str):
+        try:
+            await supervisor.release(switch_id)
+            log.info("engine_switch.hold_released_after_restart", switch_id=switch_id)
+        except Exception:  # noqa: BLE001 — the hold's own deadline still ends it
+            log.warning("engine_switch.hold_release_failed", switch_id=switch_id, exc_info=True)
+    status.update(
+        stage=FAILED,
+        reason="interrupted: the api restarted mid-switch; read the engine state and "
+        "switch again if it is not the one you want",
+        ended_at=_now_iso(),
+        updated_at=_now_iso(),
+    )
+    with contextlib.suppress(Exception):
+        await store.set_llm_local_engine_switch(ctx, status)

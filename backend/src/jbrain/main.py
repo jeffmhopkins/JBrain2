@@ -453,10 +453,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # reserved forever (the worker paused). Boot is safe: no night is in flight yet.
         with suppress(Exception):
             await settings_store.set_night_hold_names(SYSTEM_CTX, [])
-        # And for the engine switch: it runs in this process, so a restart ended any switch in
-        # flight — reopen local admission and mark that switch interrupted rather than leave
-        # every local call waiting out the admission row's deadline.
-        await engine_switch.reset_after_restart(settings_store, SYSTEM_CTX)
         # Budget and WATCH every load against the iGPU's device pool (GTT), not just system
         # RAM. The two are accounted separately on an APU, and counting only system RAM let
         # loads whose real device cost far exceeded their catalog estimate freeze this host —
@@ -1489,6 +1485,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # default 5 s httpx timeout would spuriously fail a stop that actually succeeds.
         app.state.supervisor_client = httpx.AsyncClient(
             base_url=settings.supervisor_url, timeout=30.0
+        )
+        # The engine switch runs in this process, so a restart ended any switch in flight:
+        # reopen local admission, mark that switch interrupted, and release its supervisor
+        # hold — otherwise every engine start and one-shot stays refused until it lapses.
+        await engine_switch.reset_after_restart(
+            settings_store,
+            SYSTEM_CTX,
+            engine_api.HttpSupervisor(app.state.supervisor_client, settings.supervisor_token),
         )
         yield
         # Finalize a recording that is still running, before anything else is torn down.

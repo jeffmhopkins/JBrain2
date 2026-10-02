@@ -404,10 +404,13 @@ per-task marker follow the owner's choice of mock (the GUI gate).
   and proceeds. Admission reopens on every exit, after the processes' cached effective
   engine has expired; an api restart mid-switch reopens it on boot.
 - **Exclusivity and honest endings** (review round): the switch holds a supervisor-side
-  switch hold for its whole run (deadline renewed per stage), so no engine start, restart or
-  one-shot can begin under it from any caller, and the api refuses its own engine-affecting
-  routes (Ops update/rebuild/provision/restart/start, jcode power-on, debug update/refresh/
-  perplexity) while it runs; one-shots are re-checked before every start. Whatever cannot be
+  switch hold for its whole run — a short deadline (2 min) renewed at every stage and by a
+  heartbeat, and released on api boot after a crash, so a dead switch cannot block the box
+  for long — so no engine start, restart or one-shot **started via the supervisor** can begin
+  under it from any caller (a host-shell `jbrain update` is outside it). The api refuses its
+  own engine-affecting routes (Ops update/rebuild/provision/restart/start, restarting the api
+  itself, jcode power-on, debug update/refresh/perplexity) while it runs; one-shots are
+  re-checked before every start. Whatever cannot be
   confirmed, the switch ends on what is actually up and records that as effective — "NO local
   engine is up" when nothing is. It can be cancelled while still draining. The engine read
   carries `effective_since`, the recorded `fallback_reason` (also from deploy/local-engine.sh)
