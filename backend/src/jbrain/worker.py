@@ -54,6 +54,7 @@ from jbrain.ingest.stream_analysis import ANALYZE_STREAM_URL_SPEC, StreamAnalysi
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gateway_regen, gpu_guard
+from jbrain.llm.drain import AdmissionGate
 from jbrain.llm.engine import ActiveEngine
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -656,6 +657,12 @@ async def run() -> None:
     # coordinator, so passing ours reuses this gateway for the triage precondition too.
     # No schedule_restore here: a background job has no end-of-turn steady state to drift
     # back to, and the next on-demand load re-admits through ensure_room regardless.
+    worker_engine = ActiveEngine(
+        lambda: worker_settings_store.llm_local_engine_effective(queue.SYSTEM_CTX)
+    )
+    worker_admission = AdmissionGate(
+        lambda: worker_settings_store.llm_local_admission(queue.SYSTEM_CTX)
+    )
     residency = ResidencyCoordinator(
         llm_gateway,
         ResidencyWiring(
@@ -715,9 +722,10 @@ async def run() -> None:
             ledger=worker_reservations,
             # The same active-engine gate as the api's coordinator: a background job never
             # loads the engine that is not running (FLASH_NEXT_ENGINE_PLAN §4d).
-            engine_loader=ActiveEngine(
-                lambda: worker_settings_store.llm_local_engine_effective(queue.SYSTEM_CTX)
-            ).get,
+            engine_loader=worker_engine.get,
+            # The engine switch's drain, written by the api: a background job's local load
+            # waits it out, then is deferred (a ResidencyError) without burning an attempt.
+            admission_gate=worker_admission.wait_open,
         ),
     )
     router = build_router(
@@ -732,6 +740,11 @@ async def run() -> None:
         # prompt evaluation exactly like a chat turn, and the worker's are the loads nobody is
         # watching a screen for — a slow prefill there is invisible until the job is late.
         slots_probe=llm_gateway.slots,
+        # The same engine read and drain gate as this process's coordinator, so a nightly
+        # job's `local:gpt-oss-120b` runs on Flash-Next while it serves instead of being
+        # refused (FLASH_NEXT_ENGINE_PLAN §4c).
+        engine_loader=worker_engine.get,
+        admission_gate=worker_admission.wait_open,
     )
     # The report display-title job (external.report_titler): one LLM one-shot per
     # report, so it takes the router rather than the embed container.

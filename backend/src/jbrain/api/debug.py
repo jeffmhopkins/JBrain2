@@ -45,6 +45,7 @@ from jbrain.agent.grounding import (
 )
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api import endpoint as endpoint_api
+from jbrain.api import engine as engine_api
 from jbrain.api import llm_settings, nudge
 from jbrain.api import sdr as sdr_api
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
@@ -3343,78 +3344,15 @@ async def prime_model(
     )
 
 
-# --- Local engine: Standard or Flash-Next (FLASH_NEXT_ENGINE_PLAN F1, debug-only) -------
-# The pre-F3 way to switch engines, so the F2 on-box spike can run through the token alone
-# (CLAUDE.md #10). It applies the §4d one-engine guard and nothing more: no drain, no smoke
-# test, no auto-rollback on a bad model. F3's PWA switch replaces it and these routes are
-# folded into that one.
-
-# Docker states in which an engine holds its memory: the one predicate shared with the
-# supervisor's guard and the deploy scripts (`llm_engine.UP_STATES`). `restarting` counts —
-# a crash-looping engine re-allocates every loop — so the switch STOPS it as one of the
-# "others" before starting the target; it is never skipped as down, and never blocks.
-_UP_STATES = llm_engine.UP_STATES
-# Not provisioned: the supervisor has no container for the service.
-_MISSING = "missing"
-# How long a stop or start may take to show in the supervisor's /status. `docker stop`
-# grants 10 s before SIGKILL and the supervisor's stop is synchronous, so this is margin for
-# a slow daemon, not an expected wait. Module-level so tests can shrink them.
-_ENGINE_SETTLE_S = 90.0
-_ENGINE_POLL_S = 1.0
-# One switch at a time in this process. A client that times out and retries must not
-# start a second stop/start sequence interleaved with the first — two sequences can each
-# see "the other engine is down" and start their own target. The second gets a 409, not a
-# queue: by the time it ran, the first would have changed what it was asked to change.
-_ENGINE_LOCK = asyncio.Lock()
-
-
-class EngineIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    engine: llm_engine.Engine
-
-
-class EngineServiceOut(BaseModel):
-    service: str
-    # Docker's container state, or "missing" when the service was never provisioned.
-    state: str
-
-
-class EngineOut(BaseModel):
-    # The owner's choice — what the update one-shot TRIES to bring up.
-    desired: llm_engine.Engine
-    # The engine recorded as actually started — what every load, list and re-stamp in the
-    # api keys off. Differs from `desired` after a fallback (Flash-Next could not start and
-    # the standard gateway serves); the next update retries `desired`.
-    effective: llm_engine.Engine
-    services: dict[str, EngineServiceOut]
-    # Engines whose container is actually up. Exactly `[effective]` on a healthy box.
-    running: list[llm_engine.Engine]
-    # `running == [effective]`: false means the box disagrees with what the api routes to
-    # (both up, none up, or the other one up) and the next switch is the repair.
-    consistent: bool
-    # A perplexity run owns the box while it lasts; a switch is refused until it ends.
-    perplexity_running: bool
+# --- Local engine: Standard or Flash-Next (FLASH_NEXT_ENGINE_PLAN F3a) -------------------
+# Thin wrappers over the owner switch (jbrain.api.engine), so the token reaches the SAME
+# orchestration the PWA does — drain, one-engine stop/start, smoke test, auto-rollback, box
+# event — and there is no second switching path to drift. The perplexity job below keeps its
+# own small helpers: it is a supervisor one-shot, not a switch.
 
 
 def _sup_headers(settings: Any) -> dict[str, str]:
     return {"Authorization": f"Bearer {settings.supervisor_token}"}
-
-
-async def _container_states(request: Request, settings: Any) -> dict[str, str]:
-    """Service → docker state from the supervisor. Raises 502: every decision this section
-    makes is about what is running, so guessing on an unreadable supervisor is not safe."""
-    try:
-        resp = await _supervisor(request).get("/status", headers=_sup_headers(settings))
-        resp.raise_for_status()
-        payload = resp.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail=f"supervisor unreachable: {exc}") from exc
-    return {
-        str(c["service"]): str(c.get("state", ""))
-        for c in payload.get("containers", [])
-        if isinstance(c, dict) and "service" in c
-    }
 
 
 async def _perplexity_running(request: Request, settings: Any) -> bool:
@@ -3439,58 +3377,6 @@ async def _oneshot_in_flight(request: Request, settings: Any) -> str | None:
     resp.raise_for_status()
     running = cast(dict[str, Any], resp.json()).get("running")
     return str(running) if running else None
-
-
-def _engine_out(
-    desired: llm_engine.Engine,
-    effective: llm_engine.Engine,
-    states: dict[str, str],
-    perplexity: bool,
-) -> EngineOut:
-    services = {
-        e: EngineServiceOut(
-            service=llm_engine.SERVICE[e], state=states.get(llm_engine.SERVICE[e], _MISSING)
-        )
-        for e in llm_engine.ENGINES
-    }
-    running: list[llm_engine.Engine] = [
-        e for e in llm_engine.ENGINES if services[e].state in _UP_STATES
-    ]
-    return EngineOut(
-        desired=desired,
-        effective=effective,
-        services=services,
-        running=running,
-        consistent=running == [effective],
-        perplexity_running=perplexity,
-    )
-
-
-async def _wait_for(request: Request, settings: Any, service: str, *, up: bool) -> bool:
-    """Poll /status until `service` is up (or down). False on timeout. The supervisor's
-    start/stop return when docker does, but "returned" and "reported" are different claims
-    and only the second licenses starting the other engine."""
-    deadline = time.monotonic() + _ENGINE_SETTLE_S
-    while True:
-        state = (await _container_states(request, settings)).get(service, _MISSING)
-        if (state in _UP_STATES) == up:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        await asyncio.sleep(_ENGINE_POLL_S)
-
-
-async def _sup_toggle(request: Request, settings: Any, action: str, service: str) -> int:
-    """POST /start or /stop to the supervisor; the status code, with 404 (not provisioned)
-    left for the caller to decide about."""
-    resp = await _supervisor(request).post(
-        f"/{action}", json={"service": service}, headers=_sup_headers(settings)
-    )
-    if resp.status_code not in (202, 404):
-        raise HTTPException(
-            status_code=502, detail=f"supervisor {action} {service}: HTTP {resp.status_code}"
-        )
-    return resp.status_code
 
 
 async def _unload_resident(request: Request, why: str) -> list[str]:
@@ -3518,155 +3404,23 @@ async def _unload_resident(request: Request, why: str) -> list[str]:
 
 
 @router.get("/llm/engine")
-async def read_engine(request: Request, settings: SettingsDep, _p: DebugDep) -> EngineOut:
-    """Which local engine is DESIRED (the owner's choice) and which is EFFECTIVE (actually
-    started, what the api routes by), and the container state of BOTH engines' services —
-    the read that says whether the §4d "exactly one engine" guarantee holds right now."""
+async def read_engine(request: Request, _p: DebugDep) -> engine_api.EngineStateOut:
+    """`GET /api/settings/llm/engine` for the token: desired + effective engine, both
+    services' state, installed, one-shot, memory, admission, the nightly guard and the
+    in-flight or last switch. 502 if the supervisor cannot be read."""
     request.state.debug_detail = "engine state"
-    states = await _container_states(request, settings)
-    store = _store(request)
-    return _engine_out(
-        await store.llm_local_engine(_OWNER_CTX),
-        await store.llm_local_engine_effective(_OWNER_CTX),
-        states,
-        await _perplexity_running(request, settings),
-    )
+    return await engine_api.engine_state(request, _OWNER_CTX)
 
 
-@router.post("/llm/engine")
+@router.post("/llm/engine", status_code=202)
 async def switch_engine(
-    body: EngineIn, request: Request, settings: SettingsDep, _p: DebugDep
-) -> EngineOut:
-    """**Debug-only engine switch** — Standard (`local-llm`) or Flash-Next (`flash-next`),
-    for the F2 spike before F3's PWA switch exists. Folded into that switch when it lands.
-
-    Never both up (§4d: their footprints together freeze a 128 GB box), so the order is
-    fixed: unload the running gateway's models (through the client, so the ledger and the
-    vitals surface stay honest), stop every OTHER engine and wait until the supervisor
-    REPORTS it stopped, only then start the target and wait for it to report running, and
-    only then persist it as both DESIRED and EFFECTIVE. Nothing is started while anything
-    else is still up (a crash-looping, `restarting` engine counts as up and is stopped) —
-    and the supervisor's own `/start` refuses an engine while the other runs, so this holds
-    even against a caller that is not this route.
-
-    **409, with the previous engine left (or put back) running**, when the target was never
-    provisioned — refused before anything is touched when /status already shows no
-    container, and rolled back if /start 404s anyway. The rollback starts the previous
-    engine ONLY after the target's stop was accepted and /status confirms it down; if that
-    cannot be confirmed it restores nothing and says so (504), because one engine down is
-    recoverable and two up is a freeze. 409 too while any supervisor one-shot runs (update,
-    refresh, provision, perplexity, …) or another switch is in flight in this process. 504
-    if a stop or start never shows up in /status; the same call is the repair.
-
-    What it does NOT do, and F3 must: drain. In-flight local calls are cut when their
-    engine stops, and nothing smoke-tests the new engine. Already on the target with the
-    other one down: a no-op that only re-persists the setting."""
-    target = body.engine
-    request.state.debug_detail = f"engine → {target}"
-    if _ENGINE_LOCK.locked():
-        raise HTTPException(status_code=409, detail="an engine switch is already in progress")
-    async with _ENGINE_LOCK:
-        return await _switch_engine(target, request, settings)
-
-
-async def _switch_engine(target: llm_engine.Engine, request: Request, settings: Any) -> EngineOut:
-    store = _store(request)
-    previous = await store.llm_local_engine_effective(_OWNER_CTX)
-    busy = await _oneshot_in_flight(request, settings)
-    if busy is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"a supervisor one-shot ({busy}) is running; switch once it has finished",
-        )
-    states = await _container_states(request, settings)
-    target_service = llm_engine.SERVICE[target]
-    if target_service not in states:
-        raise HTTPException(
-            status_code=409,
-            detail=f"the {target} engine is not provisioned (no `{target_service}` container); "
-            "Ops → Update creates it once its weights are installed. Nothing was changed.",
-        )
-    up: list[llm_engine.Engine] = [
-        e for e in llm_engine.ENGINES if states.get(llm_engine.SERVICE[e]) in _UP_STATES
-    ]
-    others: list[llm_engine.Engine] = [e for e in up if e != target]
-    if not others and target in up:
-        await _persist_engine(store, target)
-        return _engine_out(target, target, states, False)
-
-    await _unload_resident(request, f"switching the local engine to {target}")
-    for engine in others:
-        await _sup_toggle(request, settings, "stop", llm_engine.SERVICE[engine])
-        if not await _wait_for(request, settings, llm_engine.SERVICE[engine], up=False):
-            raise HTTPException(
-                status_code=504,
-                detail=f"{llm_engine.SERVICE[engine]} did not report stopped; "
-                f"{target_service} was NOT started",
-            )
-
-    # Put back ONE engine on failure — the selected one if it was up, else the first that
-    # was. Restoring two would recreate the very state this route exists to prevent.
-    restore = previous if previous in others else (others[0] if others else None)
-
-    async def _rollback() -> str:
-        """Stop the target, and restart `restore` only once the target is CONFIRMED down.
-        Returns what to tell the caller."""
-        try:
-            code = await _sup_toggle(request, settings, "stop", target_service)
-            down = code == 404 or await _wait_for(request, settings, target_service, up=False)
-        except (HTTPException, httpx.HTTPError):
-            down = False
-        if not down:
-            raise HTTPException(
-                status_code=504,
-                detail=f"{target_service} could not be confirmed stopped, so nothing was "
-                "restored (starting the previous engine beside it could freeze the box); "
-                "read /llm/engine and switch again",
-            )
-        if restore is None:
-            return "no engine was running before, so none was put back"
-        try:
-            code = await _sup_toggle(request, settings, "start", llm_engine.SERVICE[restore])
-        except (HTTPException, httpx.HTTPError):
-            return f"{restore} could NOT be put back; switch to it again"
-        if code == 404:
-            return f"{restore} could NOT be put back (not provisioned); switch to it again"
-        # The desire is unchanged (the switch failed); what serves is the restored engine.
-        await store.set_llm_local_engine_effective(_OWNER_CTX, restore)
-        return f"{restore} was put back"
-
-    try:
-        # Already up beside the other one (the inconsistent state): stopping the other was
-        # the whole repair, and a start would be a no-op at best.
-        started = (
-            202 if target in up else await _sup_toggle(request, settings, "start", target_service)
-        )
-    except (HTTPException, httpx.HTTPError) as exc:
-        outcome = await _rollback()
-        raise HTTPException(
-            status_code=502, detail=f"{target_service} did not start ({exc}); {outcome}"
-        ) from exc
-    if started == 404:
-        outcome = await _rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"the {target} engine is not provisioned (supervisor 404 on "
-            f"{target_service}); {outcome}",
-        )
-    if not await _wait_for(request, settings, target_service, up=True):
-        outcome = await _rollback()
-        raise HTTPException(
-            status_code=504, detail=f"{target_service} did not report running; {outcome}"
-        )
-    await _persist_engine(store, target)
-    log.info("debug.engine_switched", previous=previous, engine=target, stopped=others)
-    return _engine_out(target, target, await _container_states(request, settings), False)
-
-
-async def _persist_engine(store: SqlSettingsStore, engine: llm_engine.Engine) -> None:
-    """A successful switch is both the owner's new choice and what now serves."""
-    await store.set_llm_local_engine(_OWNER_CTX, engine)
-    await store.set_llm_local_engine_effective(_OWNER_CTX, engine)
+    body: engine_api.EngineIn, request: Request, _p: DebugDep
+) -> engine_api.SwitchStatusOut:
+    """`POST /api/settings/llm/engine` for the token — the same orchestration, recorded with
+    `source: "debug"`. 202 with the status; poll `GET /llm/engine` until `switch.stage` is
+    `done`, `rolled_back` or `failed`."""
+    request.state.debug_detail = f"engine → {body.engine}"
+    return await engine_api.begin_switch(request, body, source="debug", ctx=_OWNER_CTX)
 
 
 # --- Slot save/restore probe (F4's first check) ------------------------------------------

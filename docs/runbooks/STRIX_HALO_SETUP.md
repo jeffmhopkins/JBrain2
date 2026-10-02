@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-10-01
+> **Status:** Living · **Last verified:** 2026-10-02
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -1379,10 +1379,21 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
    `deploy/Dockerfile.flash-next`) only when the model is installed or queued, and leaves its
    container **created but stopped**. The standard gateway keeps serving. The update log
    says which engine it brought back (`[update] local engine: standard`).
-3. **Switching** to it is **Ops → Local engine**, which arrives with wave F3 (drain → swap →
-   smoke test → automatic rollback). Until then nothing is routed to Flash-Next.
-4. **Backing out:** switch back to Standard (F3), then **Uninstall** it in On-box models. The
-   next Ops → Update removes its container and image.
+3. **Switching** is one owner action: `POST /api/settings/llm/engine {"engine": "flash-next"}`
+   (wave F3a — the backend; the **Ops → Local engine** card that calls it ships once its mock
+   is chosen, and until then the debug console's `POST /llm/engine` reaches the same switch).
+   It runs in the background for a few minutes — poll `GET /api/settings/llm/engine` — and
+   walks *draining* (local calls pause, in-flight ones get up to 60 s to finish) → *stopping*
+   → *starting* → *loading* → *smoke* (a text reply, a tool call, an image read) → *done*. Any
+   failure stops Flash-Next and puts Standard back (*rolled_back*, with the reason); the
+   switch is a box event either way. It refuses while an update or another one-shot runs, in
+   the 30 minutes before a nightly schedule fires or the hour after, and while a workflow run
+   is executing — send `"force": true` to switch anyway. While Flash-Next serves, **every**
+   local task runs on it with its own sampling and thinking settings; your per-task picks are
+   untouched and come back when you switch to Standard (the settings screen marks each one
+   "→ Flash-Next"). A pick of Flash-Next while Standard serves runs on the task default.
+4. **Backing out:** switch back to Standard the same way, then **Uninstall** it in On-box
+   models. The next Ops → Update removes its container and image.
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come

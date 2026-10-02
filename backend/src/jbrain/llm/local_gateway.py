@@ -33,9 +33,12 @@ strip that suffix once here.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
+import struct
+import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Protocol
 
@@ -48,6 +51,28 @@ from jbrain.llm.admission import Outcome, Phase
 from jbrain.llm.ledger import ReservationLedger
 
 log = structlog.get_logger()
+
+
+def _solid_png(size: int, rgb: tuple[int, int, int]) -> bytes:
+    """A size×size single-colour RGB PNG, built from the spec with stdlib only — the image
+    probe's fixture, so the engine switch can smoke-test vision without an attachment."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    row = b"\x00" + bytes(rgb) * size
+    header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(row * size))
+        + chunk(b"IEND", b"")
+    )
+
+
+# 64 px: above every projector's patch minimum, small enough to cost nothing to encode.
+_PROBE_PNG = base64.b64encode(_solid_png(64, (220, 20, 20))).decode("ascii")
 
 # How the in-flight page-cache sweep is paced (`_sweep_page_cache_during_load`).
 #
@@ -1394,6 +1419,63 @@ class LocalGatewayClient:
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
+
+    async def text_probe(self, served_model: str) -> str:
+        """One short, thinking-off completion against a RESIDENT model — the engine switch's
+        smoke check that the new engine generates text at all. Returns what it said (or its
+        reasoning, for a template that routes everything there); raises LocalGatewayError on a
+        non-2xx, an unreachable gateway, a cold model or an empty answer. A readiness probe
+        like `tool_probe`, so it lives here rather than on the adapter."""
+        return await self._probe(
+            served_model, "text-probe", [{"role": "user", "content": "Reply with the word OK."}]
+        )
+
+    async def image_probe(self, served_model: str) -> str:
+        """`text_probe` with a synthesized image (a solid red square, built in memory — no
+        attachment, no DB), so a vision model's projector is exercised end to end. Passing
+        means the engine encoded the image and answered; WHAT it answered is reported, not
+        judged, because a one-word colour is a smoke check, not an eval."""
+        content = [
+            {"type": "text", "text": "What colour is this image? Answer in one word."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_PROBE_PNG}"}},
+        ]
+        return await self._probe(
+            served_model, "image-probe", [{"role": "user", "content": content}]
+        )
+
+    async def _probe(self, served_model: str, what: str, messages: list[dict]) -> str:
+        # `/upstream/<model>/…` loads a cold model outside residency — never from a probe.
+        await self._require_resident(served_model, what)
+        body: dict[str, object] = {
+            "model": served_model,
+            "messages": messages,
+            "max_tokens": 64,
+            "temperature": 0,
+            "stream": False,
+        }
+        openai_compat.apply_local_reasoning(body, "none")
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 180.0), transport=self._transport
+            ) as client:
+                resp = await client.post(
+                    f"{self._root}/upstream/{served_model}/v1/chat/completions", json=body
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise LocalGatewayError(str(exc)) from exc
+        message: object = {}
+        if isinstance(payload, dict):
+            choices = payload.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message") or {}
+        said = ""
+        if isinstance(message, dict):
+            said = str(message.get("content") or message.get("reasoning_content") or "")
+        if not said.strip():
+            raise LocalGatewayError(f"{what}: {served_model} answered with nothing")
+        return said.strip()[:200]
 
     def _record_measured_footprint(
         self, model: object, projected_gb: float, measured_gb: float | None

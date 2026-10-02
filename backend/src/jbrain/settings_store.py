@@ -145,6 +145,17 @@ LLM_LOCAL_ENGINE_KEY = "llm_local_engine"
 # "standard", the engine every box has.
 LLM_LOCAL_ENGINE_EFFECTIVE_KEY = "llm_local_engine_effective"
 
+# Local admission, closed across the api and the worker while an engine switch drains and
+# swaps engines: `{"closed": true, "reason": str, "until": epoch_s}`, or `{"closed": false}`.
+# The deadline means a switch that dies mid-flight cannot keep local inference shut; the api
+# also reopens it on boot (jbrain.llm.drain).
+LLM_LOCAL_ADMISSION_KEY = "llm_local_admission"
+
+# The last engine switch's status — stage, outcome, reason, smoke results — written at every
+# stage so the PWA can poll a switch that outlives its HTTP request and show the last result
+# after a restart (jbrain.llm.engine_switch).
+LLM_LOCAL_ENGINE_SWITCH_KEY = "llm_local_engine_switch"
+
 # The owner's IANA display timezone (e.g. "America/New_York"). Absent = UTC.
 # Server-rendered times — the agent's appointment prose — localize to it so they
 # agree with the cards the client localizes to the browser zone; the frontend
@@ -1406,3 +1417,20 @@ class SqlSettingsStore:
         # This process's cached reads see the switch at once; others catch up by TTL.
         invalidate_engine_cache()
         return clean
+
+    async def llm_local_admission(self, ctx: SessionContext) -> object:
+        """The raw local-admission row (`jbrain.llm.drain.closure_from` interprets it)."""
+        return await self.get(ctx, LLM_LOCAL_ADMISSION_KEY, None)
+
+    async def set_llm_local_admission(self, ctx: SessionContext, row: dict[str, Any]) -> None:
+        await self.upsert(ctx, LLM_LOCAL_ADMISSION_KEY, row)
+
+    async def llm_local_engine_switch(self, ctx: SessionContext) -> dict[str, Any] | None:
+        """The last (or the in-flight) engine switch's status, or None before the first."""
+        value = await self.get(ctx, LLM_LOCAL_ENGINE_SWITCH_KEY, None)
+        return cast(dict[str, Any], value) if isinstance(value, dict) else None
+
+    async def set_llm_local_engine_switch(
+        self, ctx: SessionContext, status: dict[str, Any]
+    ) -> None:
+        await self.upsert(ctx, LLM_LOCAL_ENGINE_SWITCH_KEY, status)

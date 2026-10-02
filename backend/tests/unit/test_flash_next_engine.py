@@ -159,14 +159,16 @@ def _coord(engine_now: engine.Engine, gw: FakeLocalGateway) -> ResidencyCoordina
 async def test_residency_refuses_a_model_of_the_engine_that_is_not_running() -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
     coord = _coord(engine.STANDARD, gw)
-    with pytest.raises(ResidencyError, match="flash-next engine"):
+    with pytest.raises(ResidencyError, match="Runs on the Flash-Next engine"):
         await coord.ensure_room(FLASH_ID)
-    with pytest.raises(ResidencyError, match="flash-next engine"):
+    with pytest.raises(ResidencyError, match="Runs on the Flash-Next engine"):
         await coord.free_room(FLASH_ID)
     # Refused BEFORE any eviction: the resident model was not touched for a load that fails.
     assert gw.unloaded == []
-    with pytest.raises(ResidencyError, match="standard engine"):
-        await _coord(engine.FLASH_NEXT, gw).ensure_room("gpt-oss-120b")
+    # The operator's deliberate load of a standard model is refused while Flash-Next serves
+    # (a completion for one is REMAPPED instead — test_engine_switch.py).
+    with pytest.raises(ResidencyError, match="Runs on the Standard engine"):
+        await _coord(engine.FLASH_NEXT, gw).free_room("gpt-oss-120b")
 
 
 @pytest.mark.asyncio
@@ -798,9 +800,9 @@ async def test_jcode_proxy_lists_the_active_engines_models() -> None:
     current["engine"] = "flash-next"
     ids = [m["id"] for m in c.get("/api/jcode/llm/v1/models", headers=auth).json()["data"]]
     assert ids == [FLASH_ID]
-    resp = c.post(
-        "/api/jcode/llm/v1/chat/completions", headers=auth, json={"model": "gpt-oss-120b"}
-    )
+    # A name outside the catalog is still refused; a stale standard name is remapped (F3a,
+    # covered in test_engine_switch.py).
+    resp = c.post("/api/jcode/llm/v1/chat/completions", headers=auth, json={"model": "nope"})
     assert resp.status_code == 400
 
 

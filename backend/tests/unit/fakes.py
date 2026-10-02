@@ -933,6 +933,19 @@ class FakeSettingsStore:
         invalidate_cached()
         return clean
 
+    async def llm_local_admission(self, ctx: object) -> object:
+        return self.values.get("llm_local_admission")
+
+    async def set_llm_local_admission(self, ctx: object, row: dict[str, object]) -> None:
+        self.values["llm_local_admission"] = dict(row)
+
+    async def llm_local_engine_switch(self, ctx: object) -> dict[str, object] | None:
+        value = self.values.get("llm_local_engine_switch")
+        return dict(value) if isinstance(value, dict) else None
+
+    async def set_llm_local_engine_switch(self, ctx: object, status: dict[str, object]) -> None:
+        self.values["llm_local_engine_switch"] = dict(status)
+
 
 class FakeLocalGateway:
     """In-memory stand-in for the llama-swap admin client (LocalGatewayClient)."""
@@ -1040,6 +1053,32 @@ class FakeLocalGateway:
         if self.metrics_readings:
             return self.metrics_readings.pop(0)
         return self.metrics_text
+
+    # --- the engine switch's surface (jbrain.llm.engine_switch.SwitchGateway) -------------
+
+    async def running_states(self) -> dict[str, str] | None:
+        return {m: self.states.get(m, "ready") for m in self._running}
+
+    async def slots(self, served_model: str) -> list[dict[str, object]]:
+        busy = getattr(self, "busy_slots", set())
+        return [{"id": 0, "is_processing": served_model in busy}]
+
+    async def _probe_result(self, kind: str, served_model: str) -> str:
+        from jbrain.llm.local_gateway import LocalGatewayError
+
+        self.probed = [*getattr(self, "probed", []), f"{kind} {served_model}"]
+        if kind in getattr(self, "fail_probes", set()):
+            raise LocalGatewayError(f"simulated {kind} probe failure")
+        return "red" if kind == "image" else "OK"
+
+    async def text_probe(self, served_model: str) -> str:
+        return await self._probe_result("text", served_model)
+
+    async def tool_probe(self, served_model: str) -> None:
+        await self._probe_result("tool", served_model)
+
+    async def image_probe(self, served_model: str) -> str:
+        return await self._probe_result("image", served_model)
 
 
 class FakeComfyUiGateway:

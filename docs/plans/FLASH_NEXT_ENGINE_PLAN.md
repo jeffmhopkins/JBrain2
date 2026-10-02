@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-01 · **Waves:** F1✅ F2◻️ F3◻️ F4◻️ F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-02 · **Waves:** F1✅ F2◻️ F3a◻️ F3b◻️ F4◻️ F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -80,7 +80,7 @@ fixed cost (weights without the engram table, compute, vision) is ~60 GiB as der
 **Consequence for §4a (owner decision 2026-10-01):** slots stay role-pinned but share one
 `--kv-unified` pool of **512k cells** (agent 256k + ingest 64k + research/jcode 128k + 2 × 32k
 for the pet and small prompts) — the same total cells as the measured 2×262k row, **74.2 GiB**
-GTT, and slot count costs ~nothing. F3 re-measures the chosen pool before it ships.
+GTT, and slot count costs ~nothing. F3b re-measures the chosen pool before it ships.
 
 ## 3. Memory budget (derived — F2 replaces it with a measurement)
 
@@ -158,7 +158,7 @@ on gpt-oss, ingest on the 27B. With one model, **slots take over that job**.
 
 Nothing pins a request to a slot today (`llama_swap_config.py`, the `-np` comment):
 llama-server picks a slot sharing ≥10% of the prefix, else the least-recently-used one —
-usually the idle slot holding the primed persona. F3 adds **slot affinity**: an `id_slot`
+usually the idle slot holding the primed persona. F3b adds **slot affinity**: an `id_slot`
 parameter through the provider protocol and `openai_compat` (rule 1), chosen by **task
 name** (agent turns pass `SYSTEM_STRENGTH`, so strength cannot carry the class). A busy
 pinned slot queues its own traffic; llama-server defers the task until the slot frees.
@@ -167,7 +167,7 @@ Because the pool is shared, each role also carries a **reservation**: the router
 trims, where the caller allows it) a request whose prompt plus `max_tokens` exceeds its role's
 cap, so no role can grow into another's cells and evict its cached prefix. The caps sum to the
 pool exactly, so the pool never runs out of cells while every role stays inside its own.
-F2/F3 also verify what llama-server does if a pool fills anyway (it should never happen with
+F2/F3b also verify what llama-server does if a pool fills anyway (it should never happen with
 the caps enforced; the test is that it fails loudly rather than silently evicting).
 
 | Slot | Workload | Reservation | Pinned by |
@@ -230,10 +230,12 @@ load resolves to `qwen3.8-flash-next`, with Flash-Next's own sampling and
 - `context_window_for_spec` and `providers.supports_vision_for_spec` — module-level today,
   so they take the active engine explicitly;
 - `residency.ensure_room` / load, and `_displaced` auto-restore;
-- the jcode proxy (`jcode_llm.py`), which also injects `id_slot: 3`.
+- the jcode proxy (`jcode_llm.py`); pinning it to slot 2 with `id_slot` is F3b.
 
-Stored per-task picks are never rewritten; the settings screen marks each local pick
-"→ Flash-Next (engine active)".
+And the mirror: while Standard serves, a stored pick of Flash-Next runs on the task's static
+route (env pin, tier or default) — never refused. Stored per-task picks are never rewritten;
+the settings snapshot reports each task's `effective_spec` with a `remap_note`
+("→ Flash-Next (engine active)") for the screen to mark.
 
 ### 4d. Exactly one engine, on every path
 
@@ -256,7 +258,7 @@ including F2, can run through the debug API before F1 lands.
 
 **Desired vs effective engine.** Two settings-store keys, never an `.env` flag:
 `llm_local_engine` is what the owner **wants** (read by every deploy path through
-`jbrain.cli local-engine`; only the debug engine route — and F3's switch — writes it), and
+`jbrain.cli local-engine`; only the engine switch — the F3a owner route and the debug route, one orchestration — writes it), and
 `llm_local_engine_effective` is what **actually started**, written by whatever starts an engine
 (`deploy/local-engine.sh` via `jbrain.cli set-local-engine-effective`, the debug engine
 route). Every api actor that gates a load, lists models or re-stamps a config — residency's
@@ -298,17 +300,17 @@ on the real box".
 | Provision the Flash-Next container | The update creates it **stopped** whenever Flash-Next is installed — keyed off a **settings-store value** read through the api CLI (the pattern `update-inner.sh` already uses for `local-llm-unload`), never an `.env` flag | automatic | F1 |
 | Download / remove weights (~94 GB) | PWA on-box models **Install / Uninstall** queue; the next update one-shot downloads or prunes. Progress and failure reasons: the PWA, or debug `GET /provision/status` | owner | exists; F1 adds the entry |
 | Check disk and host limits first | Install is refused in the PWA when free disk is short; GTT/TTM limits are read by `host_settings.check_host_settings` and shown in the PWA. The current box already serves ~94 GiB of GTT (gpt-oss + 27B), above Flash-Next's ~83 | automatic | F1 (disk guard) |
-| Start / stop Flash-Next **before** the switch exists (F2) | A debug-only engine route, `POST /api/debug/llm/engine {standard\|flash-next}`, applying the same §4d one-engine guard; on success it records the target as both the **desired** and the **effective** engine (§4d), and `GET` shows both, so a deploy fallback is visible. The supervisor refuses any engine `/start` or `/restart` that would make two (a stopped engine is never restarted; Ops "Restart all" skips it). Removed or folded into the F3 switch once that lands | Claude with a token | F1 |
+| Start / stop Flash-Next **before** the switch exists (F2) | A debug-only engine route, `POST /api/debug/llm/engine {standard\|flash-next}`, applying the same §4d one-engine guard; on success it records the target as both the **desired** and the **effective** engine (§4d), and `GET` shows both, so a deploy fallback is visible. The supervisor refuses any engine `/start` or `/restart` that would make two (a stopped engine is never restarted; Ops "Restart all" skips it). Since F3a it is a thin wrapper over the owner switch — one orchestration (drain, smoke, rollback), reached with the token | Claude with a token | F1; folded in F3a |
 | On-box measurements (F2) | Debug routes: `/complete`, `/vision`, `/grounding`, `/tool-probe`, `/host/metrics`, `/llm/upstream-logs`, `/llm/gateway-logs`, the extra-args launch-flag route — all made **engine-aware** in F1. Two new ones: a **slot save/restore probe** (usable from F4, whose first check it is — §6) and an **allowlisted perplexity one-shot** run by the supervisor inside the `flash-next` image on a bundled WikiText-2 sample (check 6) — a fixed job, never free-form exec | Claude with a token | F1 |
 | Iterate on the image (pin bump, flags baked into it) | Debug `POST /refresh` (or `/rebuild`) with `flash-next` — rebuilds that one service from `main` without the ~10-minute full update. **For an engine service it is a quiesced build**: whichever engine is up is released (models unloaded, stopped, memory settled), the image builds under the update's bounded runner with **no engine running** (a llama.cpp compile beside a ~90 GiB engine is the update's own freeze), the container is recreated **stopped**, and exactly the engine that was up before comes back — the refreshed one or the other. So it works whichever engine serves, at the cost of local inference being down for the build; to try the new build, switch with the debug engine route afterwards | Claude with a token | exists; engine-safe in F1 |
 | Reclaim weight page cache | Debug `POST /llm/drop-page-cache` — made to skip the mmapped engram table, which it would otherwise evict (§3) | Claude with a token | exists; F1 |
 | Tune launch flags | Debug extra-args route (`-ngl`, `-ub`, `--ctx-checkpoints`, `-lv`, `--load-mode`, …), engine-aware; `-ot` is added to `EXTRA_ARG_FLAGS` | Claude with a token | F1 |
-| Switch engines | PWA **Ops → Local engine** (drain → swap → smoke → auto-rollback) | owner | F3 |
-| See what the engine is doing | PWA Ops card (engine, memory, tok/s, last smoke); logs via PWA and debug | owner | F3 |
+| Switch engines | PWA **Ops → Local engine** (drain → swap → smoke → auto-rollback) over the owner API `POST /api/settings/llm/engine` | owner | F3a (API; the card after its mock is chosen) |
+| See what the engine is doing | PWA Ops card over `GET /api/settings/llm/engine` (engine, memory, last switch + smoke, history as `engine_switch` box events); logs via PWA and debug | owner | F3a (API) |
 | Clear or inspect disk prefix caches | The existing kv-prefix clear/snapshot surfaces, per role | owner | F4 |
 | Try a custom engine | PWA engine sub-setting (mainline \| gufo \| …); images arrive by Ops → Update | owner | F5 |
-| Back out completely | Switch to Standard, Uninstall the weights in the PWA; the next update removes the stopped container and its image | owner | F1 + F3 |
-| Recover from a bad build | Ops → Update's existing rollback; the switch's auto-rollback keeps a local engine serving; Standard is never rebuilt by this plan | automatic | exists + F3 |
+| Back out completely | Switch to Standard, Uninstall the weights in the PWA; the next update removes the stopped container and its image | owner | F1 + F3a |
+| Recover from a bad build | Ops → Update's existing rollback; the switch's auto-rollback keeps a local engine serving; Standard is never rebuilt by this plan | automatic | exists + F3a |
 
 **Precondition, not introduced here:** the box already has local hosting enabled
 (`LOCAL_LLM_ENABLED=true`). Turning local hosting on for the *first* time is still a
@@ -327,7 +329,7 @@ today.
   models volume, rw `.kvslots` mount, logbound logging, `local-llm` alias); its own
   llama-swap config renderer.
 - Catalog: `qwen3.8-flash-next` with `engine`, `default_slots`, a file-backed weights
-  figure, the §3 KV/indexer/checkpoint terms. **Hidden from the settings picker** until F3
+  figure, the §3 KV/indexer/checkpoint terms. **Hidden from the settings picker** unless it is the effective engine
   (an `engine` other than `standard` is not offered while the standard engine is active).
 - Engine filtering in `render`, providers, `jcode_models`, residency; engine-aware
   resolution for every `llama-swap.yaml` reader; base-command `--no-mmap` removed for this
@@ -370,30 +372,68 @@ sidecar patch, which the flash-next image only gets in F4, so it is F4's first c
 **Exit gate:** measured resident ≤ 90 GiB with 8 checkpoints per slot, every check above
 passes, and no check needed a host shell. Fail → the plan parks with the numbers recorded.
 
-### F3 — The switch and the remap (one wave) ◻️
-They land together: a live switch without the remap would send every call to Flash-Next
-carrying gpt-oss's sampling and reasoning quirks.
-- `local_engine` setting (`standard` | `flash-next`) in the existing settings store — no
-  new table, so no new RLS test.
-- **Drain** — new code, not an existing gate: `admission.py` is load arithmetic and the
-  ledger's `_in_flight` tracks per-process load charges. Close local admission across api
-  and worker, wait for in-flight local calls to finish (bounded), then stop the active
-  engine, wait for host memory to settle, start the other, health + smoke, persist.
-  Discharge ledger rows for the stopped engine's instances. Any failure: stop it, restart
-  the previous engine, surface the reason as a box event.
-- §4c remap at every entry point; §4a slot affinity (`id_slot` through the provider
-  protocol, chosen by task name; slot 2 injected by the jcode proxy).
-- §4a reservations: the 512k `--kv-unified` pool (`-np 5 --kv-unified -c 524288`), a
-  per-role cap table in the catalog entry, enforced at the router and the jcode proxy (refuse
-  or trim over-cap requests, with a clear error), the budget charging the pool once; re-measure
-  the pool on the box against the ~74.2 GiB prediction. Tests: caps per role, over-cap refusal,
-  caps sum to the pool, pool flags rendered.
-- PWA: Ops card (current engine, switch, memory + tok/s readout, last smoke) and the
-  per-task "→ Flash-Next" marker — **three mocks each** before code (`PROCESS.md`).
-- Tests: orchestration against a fake supervisor (happy path, every rollback branch),
-  drain across processes, remap on/off for every task, tier and entry point in §4c, slot
-  selection per task, engine-aware jcode power-on, residency never evicting the active
-  Flash-Next for an old name, frontend card and marker.
+### F3a — The owner switch and the remap ◻️
+Split from F3 on 2026-10-02, after F1 ran live: while Flash-Next was effective, every task
+still routed to a standard model (gpt-oss-120b, qwen3.8-27b-q4, …) was refused by residency's
+off-engine gate, so the nightly workflows did nothing; and the PWA's Load button for
+Flash-Next got a silent 409 while Standard served. The switch and the remap land together —
+a live switch without the remap would send every call to Flash-Next carrying gpt-oss's
+sampling and reasoning quirks, or refuse it outright. Backend built; the PWA card and the
+per-task marker follow the owner's choice of mock (the GUI gate).
+- **Owner API** (owner session, not the debug token): `GET /api/settings/llm/engine` —
+  desired, effective, per-service state, installed per engine, a busy one-shot, local
+  admission, device memory, the nightly guard and the in-flight or last switch — and
+  `POST /api/settings/llm/engine {engine, force}`. The debug `GET`/`POST /llm/engine` are thin
+  wrappers over the same two functions: **one orchestration** (`jbrain.llm.engine_switch`).
+- **Orchestration**, as a background job (a Flash-Next load outlives a request and the 100 s
+  Cloudflare limit; the POST answers 202 and the status is polled), stages
+  `draining → stopping → starting → loading → smoke → done | rolled_back | failed` + reason,
+  persisted in the settings store at each stage and ended as an `engine_switch` box event.
+  Refused (nothing touched) while a switch or any supervisor one-shot runs, when the target is
+  not provisioned or its weights are not installed, and — unless `force` — while a workflow
+  run is executing or inside the nightly window (30 min before a daily schedule fires to 60
+  min after, read from the scheduler's own `app.schedules`). Any failure after the target was
+  touched: stop it, confirm it down, restart the previous engine (`rolled_back`); unconfirmed
+  → restore nothing (`failed`).
+- **Drain** — new code, not an existing gate (`admission.py` is load arithmetic, the ledger
+  tracks load charges): a settings-store row with a wall-clock deadline that the api's and the
+  worker's routers and residency coordinators read (`jbrain.llm.drain`, 1 s cache). A local
+  call waits up to 30 s for it to reopen, then is refused with a `ResidencyError` (a worker job
+  is deferred, no attempt burned). The switch then waits up to 60 s for in-flight calls,
+  read off the gateway (a loading model or a slot `is_processing` — every process's calls),
+  and proceeds. Admission reopens on every exit, after the processes' cached effective
+  engine has expired; an api restart mid-switch reopens it on boot.
+- **Smoke**: a thinking-off text completion, a tool-carrying probe, and an image probe on a
+  vision model — a solid-colour PNG synthesized in memory, so no attachment or DB lookup.
+- **Remap** (§4c) at every entry point: the router's `_resolve_live` (stored pick, env pin,
+  tier and per-call `spec_override`, then the effort re-gated on the model that runs), the warm
+  keeper's target (`primary_local_served_model`), `context_window_for_spec` and
+  `providers.supports_vision_for_spec` (engine passed explicitly), residency's `ensure_room`
+  (never evicts Flash-Next for an old name) and `_displaced` restore, and the jcode proxy
+  (rewrites a stale model name). The mirror while Standard serves: a Flash-Next pick runs on
+  the task's static route. Stored picks are never rewritten; the snapshot reports each task's
+  `effective_spec` + `remap_note`.
+- **Load button**: each local model carries `loadable_now` + `blocked_reason` ("Runs on the
+  Flash-Next engine — switch engines to load it"); the load route's 409 carries the same text.
+- No new table (two settings-store keys), so no new RLS test.
+- Tests: owner-route auth, orchestration against a fake supervisor (happy path, every rollback
+  branch, crash, refusals, concurrency), drain across processes, remap per task/tier/override
+  and entry point in both directions, warm-keeper target, jcode proxy, residency never evicting
+  the active engine's model for an old name, `loadable_now`, the nightly guard (pure + real
+  Postgres), the box event.
+
+### F3b — Slot affinity, the 512k reserved pool, per-role prefix priming ◻️
+- §4a slot affinity: `id_slot` through the provider protocol and `openai_compat` (rule 1),
+  chosen by task name; slot 2 injected by the jcode proxy.
+- §4a reservations: the 512k `--kv-unified` pool (`-np 5 --kv-unified -c 524288`), a per-role
+  cap table in the catalog entry, enforced at the router and the jcode proxy (refuse or trim
+  over-cap requests, with a clear error), the budget charging the pool once; re-measure the
+  pool on the box against the ~74.2 GiB prediction.
+- Per-role prefix priming into each pinned slot (the in-memory half; the disk layer is F4).
+- PWA: the Ops engine card and the per-task "→ Flash-Next" marker over the F3a API — **three
+  mocks each** before code (`PROCESS.md`), if not already chosen for F3a.
+- Tests: caps per role, over-cap refusal, caps sum to the pool, pool flags rendered, slot
+  selection per task, engine-aware jcode power-on.
 
 ### F4 — Per-role disk prefix cache ◻️
 Begins with the check moved out of F2, and gated on it:
@@ -448,7 +488,7 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
   been exercised from the PWA or the debug token on the real box.
 - `docs/runbooks/DEBUG_ACCESS.md` lists the new debug routes (F1).
 - Docs: `docs/runbooks/STRIX_HALO_SETUP.md` gains a Flash-Next section in F1, written as
-  PWA steps only; the operator-facing switch is documented in F3.
+  PWA steps only; the operator-facing switch is documented there in F3a.
 
 ## 9. Open questions
 
@@ -458,7 +498,7 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
    needs it. It is host memory the budget must count. Decide after F2.
 2. Should the switch be schedulable (e.g. Flash-Next overnight for batch ingest)? Out of
    scope for v1; the endpoint shape should not preclude it.
-3. MTP with multiple slots — measure after F3, or leave to F5's engines?
+3. MTP with multiple slots — measure after F3b, or leave to F5's engines?
 
 ## 10. What the reviews changed
 
