@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -30,6 +31,7 @@ from jbrain.llm import FakeLlmClient, drain, local_catalog, providers
 from jbrain.llm import engine as engines
 from jbrain.llm.engine_switch import (
     EngineSwitcher,
+    HoldRefused,
     SupervisorError,
     SwitchDeps,
     SwitchRefused,
@@ -424,6 +426,31 @@ class _Sup:
         self.busy: str | None = None
         self.start_404: set[str] = set()
         self.unreachable = False
+        # Services whose stop is accepted but never takes; whose stop/start raises.
+        self.stuck: set[str] = set()
+        self.stop_error: set[str] = set()
+        self.start_error: set[str] = set()
+        # Services that crash on start (accepted, never reported running).
+        self.start_crash: set[str] = set()
+        self.holds: list[tuple[str, float]] = []
+        self.released: list[str] = []
+        self.hold_answer: str = "ok"  # "ok" | "refused" | "missing" | "error"
+        self.start_ids: list[str | None] = []
+        # A one-shot that appears once the preflight has read "none".
+        self.busy_after_preflight: str | None = None
+
+    async def hold(self, switch_id: str, ttl_s: float) -> bool:
+        self.holds.append((switch_id, ttl_s))
+        if self.hold_answer == "refused":
+            raise HoldRefused("another engine switch holds it")
+        if self.hold_answer == "error":
+            raise SupervisorError("HTTP 500")
+        if self.busy_after_preflight is not None:
+            self.busy = self.busy_after_preflight
+        return self.hold_answer == "ok"
+
+    async def release(self, switch_id: str) -> None:
+        self.released.append(switch_id)
 
     async def states(self) -> dict[str, str]:
         if self.unreachable:
@@ -435,14 +462,20 @@ class _Sup:
             raise SupervisorError("no route")
         return self.busy
 
-    async def toggle(self, action: str, service: str) -> int:
+    async def toggle(self, action: str, service: str, switch_id: str | None = None) -> int:
         self.events.append(f"{action} {service}")
         if action == "start":
+            self.start_ids.append(switch_id)
+            if service in self.start_error:
+                raise SupervisorError("HTTP 500")
             if service in self.start_404:
                 return 404
-            self.state[service] = "running"
+            self.state[service] = "exited" if service in self.start_crash else "running"
         else:
-            self.state[service] = "exited"
+            if service in self.stop_error:
+                raise SupervisorError("HTTP 500")
+            if service not in self.stuck:
+                self.state[service] = "exited"
         return 202
 
 
@@ -748,7 +781,15 @@ def test_the_nightly_window() -> None:
         return ScheduleWindow(**{**base, **kw})
 
     soon = sched(next_run_at=now + timedelta(minutes=15))
-    assert nightly_window_reason([soon], now) == "the scheduled wiki_build run fires in 15 min"
+    assert nightly_window_reason([soon], now) == (
+        "the scheduled wiki_build run fires in 15 min (at 02:00 UTC)"
+    )
+    # Rendered in the owner's zone.
+    tz = ZoneInfo("America/New_York")
+    assert "(at 22:00 EDT)" in str(nightly_window_reason([soon], now, tz=tz))
+    # Due but not yet picked up by the tick: still the window.
+    overdue = sched(next_run_at=now - timedelta(minutes=5))
+    assert "is due now" in str(nightly_window_reason([overdue], now))
     later = sched(next_run_at=now + timedelta(hours=2))
     assert nightly_window_reason([later], now) is None
     running = sched(schedule_kind="repeat", last_run_at=now - timedelta(minutes=20))
@@ -765,7 +806,7 @@ def test_the_nightly_window() -> None:
 
 @pytest.fixture
 def owner_box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[TestClient, Any]]:
-    async def quiet(maker: object) -> None:
+    async def quiet(maker: object, **_kw: object) -> None:
         return None
 
     monkeypatch.setattr(engine_api, "quiet_window_guard", quiet)
@@ -849,7 +890,7 @@ def test_owner_switch_respects_the_nightly_guard_and_force(
 ) -> None:
     client, _ = owner_box
 
-    async def nightly(maker: object) -> str:
+    async def nightly(maker: object, **_kw: object) -> str:
         return "the workflow run 'nightly_sweep' is executing"
 
     monkeypatch.setattr(engine_api, "quiet_window_guard", nightly)
@@ -1062,3 +1103,458 @@ async def test_text_and_image_probes_are_thinking_off_and_resident_only() -> Non
         await client.text_probe(FN)
     with pytest.raises(LocalGatewayError, match="not resident"):
         await client.text_probe("gpt-oss-120b")
+
+
+# --- review round: the hold, every failure branch, the admitted name, deadlines -------------
+
+
+def _sw() -> EngineSwitcher:
+    return EngineSwitcher(_FAST)
+
+
+def _standard_up() -> _Sup:
+    return _Sup({"local-llm": "running", "flash-next": "exited"})
+
+
+@pytest.mark.asyncio
+async def test_the_switch_holds_the_supervisor_and_its_own_start_carries_the_id() -> None:
+    sup = _standard_up()
+    status = await _run(
+        _sw(), _deps(sup, FakeLocalGateway(), FakeSettingsStore()), engines.FLASH_NEXT
+    )
+    assert status["stage"] == "done"
+    held_ids = {h[0] for h in sup.holds}
+    assert held_ids == {status["id"]} and len(sup.holds) >= 5  # taken, then renewed per stage
+    assert sup.start_ids == [status["id"]]
+    assert sup.released == [status["id"]]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_hold_refuses_the_switch_and_touches_nothing() -> None:
+    store = FakeSettingsStore()
+    for answer, code in (("refused", 409), ("error", 502)):
+        sup = _standard_up()
+        sup.hold_answer = answer
+        sw = _sw()
+        with pytest.raises(SwitchRefused) as exc:
+            await sw.begin(_deps(sup, FakeLocalGateway(), store), engines.FLASH_NEXT, source="o")
+        assert exc.value.status == code and not sw.busy
+        assert sup.events == [] and "llm_local_admission" not in store.values
+
+
+@pytest.mark.asyncio
+async def test_an_older_supervisor_without_the_hold_still_switches_and_says_so() -> None:
+    sup = _standard_up()
+    sup.hold_answer = "missing"
+    status = await _run(
+        _sw(), _deps(sup, FakeLocalGateway(), FakeSettingsStore()), engines.FLASH_NEXT
+    )
+    assert status["stage"] == "done"
+    assert any("predates the switch hold" in n for n in status["notes"])
+
+
+@pytest.mark.asyncio
+async def test_a_oneshot_that_appears_mid_switch_stops_the_start(recorded: list) -> None:
+    sup = _standard_up()
+    sup.busy_after_preflight = "update"
+    store = FakeSettingsStore()
+    status = await _run(_sw(), _deps(sup, FakeLocalGateway(), store), engines.FLASH_NEXT)
+    assert status["stage"] == "failed"
+    assert "update one-shot started" in status["reason"] and "NOT started" in status["reason"]
+    assert "start flash-next" not in sup.events
+    # Nothing is up and the update owns the box: said plainly, and recorded.
+    assert "NO local engine is up" in status["reason"]
+    assert store.values["llm_local_engine_effective"] == "standard"
+    assert recorded[-1][3] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_stop_is_reissued_and_what_is_up_is_recorded() -> None:
+    sup = _standard_up()
+    sup.stuck.add("local-llm")
+    store = FakeSettingsStore()
+    status = await _run(_sw(), _deps(sup, FakeLocalGateway(), store), engines.FLASH_NEXT)
+    assert status["stage"] == "failed"
+    assert sup.events == ["stop local-llm", "stop local-llm"]
+    assert (
+        "local-llm did not stop" in status["reason"] and "standard is serving" in status["reason"]
+    )
+    assert store.values["llm_local_engine_effective"] == "standard"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_stop_of_the_other_engine_starts_nothing() -> None:
+    sup = _standard_up()
+    sup.stop_error.add("local-llm")
+    status = await _run(
+        _sw(), _deps(sup, FakeLocalGateway(), FakeSettingsStore()), engines.FLASH_NEXT
+    )
+    assert status["stage"] == "failed" and "start flash-next" not in sup.events
+
+
+@pytest.mark.asyncio
+async def test_a_stop_that_takes_but_never_confirms_with_nothing_up_puts_previous_back() -> None:
+    """The stop is refused and /status was unreadable while waiting, then shows it down:
+    the previous engine is restarted once it is confirmed down."""
+    sup = _standard_up()
+    sup.stop_error.add("local-llm")
+    sup.state["local-llm"] = "running"
+    reads = {"n": 0}
+    real_states = sup.states
+
+    async def flaky_states() -> dict[str, str]:
+        reads["n"] += 1
+        if reads["n"] == 4:  # after both stop attempts gave up, it has gone down
+            sup.state["local-llm"] = "exited"
+        if 2 <= reads["n"] < 4:
+            raise SupervisorError("no route")
+        return await real_states()
+
+    sup.states = flaky_states  # type: ignore[method-assign]
+    store = FakeSettingsStore()
+    status = await _run(_sw(), _deps(sup, FakeLocalGateway(), store), engines.FLASH_NEXT)
+    assert status["stage"] == "rolled_back" and "standard was put back" in status["reason"]
+    assert (
+        sup.events[-1] == "start local-llm"
+        and store.values["llm_local_engine_effective"] == "standard"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rollback_with_the_target_not_confirmed_down_restores_nothing() -> None:
+    sup = _standard_up()
+    gw = FakeLocalGateway(fail_load=True)
+    sup.stuck.add("flash-next")
+    store = FakeSettingsStore()
+    status = await _run(_sw(), _deps(sup, gw, store), engines.FLASH_NEXT)
+    assert status["stage"] == "failed" and "nothing was restored" in status["reason"]
+    assert "start local-llm" not in sup.events
+    assert store.values["llm_local_engine_effective"] == "flash-next"  # what IS up
+    meta = store.values["llm_local_engine_effective_meta"]
+    assert isinstance(meta, dict) and "nothing was restored" in str(meta["reason"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["refused", "crash"])
+async def test_a_restore_that_fails_says_no_local_engine_is_up(recorded: list, how: str) -> None:
+    sup = _standard_up()
+    sup.start_404.add("flash-next")
+    if how == "refused":
+        sup.start_error.add("local-llm")
+    else:
+        sup.start_crash.add("local-llm")
+    store = FakeSettingsStore()
+    status = await _run(_sw(), _deps(sup, FakeLocalGateway(), store), engines.FLASH_NEXT)
+    assert status["stage"] == "failed"
+    assert "could NOT be put back" in status["reason"]
+    assert "NO local engine is up" in status["reason"]
+    assert status["no_engine_up"] is True
+    assert store.values["llm_local_engine_effective"] == "standard"
+    assert "NO local engine is up" in str(recorded[-1][2])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["404", "error", "crash"])
+async def test_every_start_failure_rolls_back(how: str) -> None:
+    sup = _standard_up()
+    {"404": sup.start_404, "error": sup.start_error, "crash": sup.start_crash}[how].add(
+        "flash-next"
+    )
+    store = FakeSettingsStore()
+    status = await _run(_sw(), _deps(sup, FakeLocalGateway(), store), engines.FLASH_NEXT)
+    assert status["stage"] == "rolled_back" and "standard was put back" in status["reason"]
+    assert sup.events[-1] == "start local-llm"
+    assert store.values["llm_local_engine_effective"] == "standard"
+
+
+@pytest.mark.asyncio
+async def test_an_unload_failure_names_what_was_already_released() -> None:
+    class _HalfUnload(FakeLocalGateway):
+        async def unload(self, served_model: str) -> None:
+            if served_model == "qwen3.5-4b":
+                raise LocalGatewayError("stuck")
+            await super().unload(served_model)
+
+    sup = _standard_up()
+    gw = _HalfUnload(running={"gpt-oss-120b", "qwen3.5-4b"})
+    status = await _run(_sw(), _deps(sup, gw, FakeSettingsStore()), engines.FLASH_NEXT)
+    assert status["stage"] == "failed"
+    assert "could not unload qwen3.5-4b (stuck)" in status["reason"]
+    assert "already unloaded" in status["reason"] and "gpt-oss-120b" in status["reason"]
+    assert sup.events == []
+
+
+@pytest.mark.asyncio
+async def test_admission_and_the_hold_are_extended_at_every_stage() -> None:
+    wall = {"t": 1_000.0}
+    rows: list[object] = []
+
+    class _Store(FakeSettingsStore):
+        async def set_llm_local_admission(self, ctx: object, row: dict[str, object]) -> None:
+            rows.append(dict(row))
+            wall["t"] += 100.0  # every stage write lands later
+            await super().set_llm_local_admission(ctx, row)
+
+    sw = EngineSwitcher(_FAST, wall=lambda: wall["t"])
+    sup = _standard_up()
+    status = await _run(sw, _deps(sup, FakeLocalGateway(), _Store()), engines.FLASH_NEXT)
+    assert status["stage"] == "done"
+    closed = [r for r in rows if isinstance(r, dict) and r.get("closed")]
+    untils = [float(r["until"]) for r in closed]  # type: ignore[arg-type]
+    assert len(closed) >= 5 and untils == sorted(untils) and untils[-1] > untils[0]
+    # Never reopened until the very end.
+    assert rows[-1] == drain.OPEN_ROW and all(r != drain.OPEN_ROW for r in rows[:-1])
+
+
+@pytest.mark.asyncio
+async def test_a_guard_that_cannot_be_read_fails_closed() -> None:
+    async def broken() -> str | None:
+        raise RuntimeError("db down")
+
+    sup = _standard_up()
+    deps = _deps(sup, FakeLocalGateway(), FakeSettingsStore(), quiet_guard=broken)
+    with pytest.raises(SwitchRefused) as exc:
+        await _sw().begin(deps, engines.FLASH_NEXT, source="owner")
+    assert exc.value.status == 409 and "force" in exc.value.detail and "db down" in exc.value.detail
+    status = await _run(_sw(), deps, engines.FLASH_NEXT, force=True)
+    assert status["stage"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_box_event_still_ends_the_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken(*a: object, **k: object) -> None:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(box_events, "record", broken)
+    sw = _sw()
+    status = await _run(
+        sw, _deps(_standard_up(), FakeLocalGateway(), FakeSettingsStore()), engines.FLASH_NEXT
+    )
+    assert status["stage"] == "done" and not sw.busy
+
+
+@pytest.mark.asyncio
+async def test_concurrent_gate_reads_share_one_load() -> None:
+    loads = {"n": 0}
+    release = asyncio.Event()
+
+    async def slow() -> object:
+        loads["n"] += 1
+        await release.wait()
+        return drain.OPEN_ROW
+
+    gate = drain.AdmissionGate(slow, ttl_s=60.0)
+    readers = [asyncio.create_task(gate.closure()) for _ in range(5)]
+    await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.gather(*readers) == [None] * 5
+    assert loads["n"] == 1
+
+
+def test_the_drain_waits_three_seconds_after_closing() -> None:
+    assert Timings().gate_wait_s == 3.0
+
+
+# --- the router and residency agree on the name they admit and send -------------------------
+
+
+class _RemappingAdmit:
+    """Residency that admits something other than what it was asked for — the engine changed
+    between the router's read and its own."""
+
+    def __init__(self, admitted: str, flip: dict[str, Any] | None = None) -> None:
+        self.admitted = admitted
+        self.flip = flip
+
+    async def ensure_room(self, served_model: str) -> str:
+        if self.flip is not None:
+            self.flip["engine"] = engines.FLASH_NEXT
+        return self.admitted
+
+
+@pytest.mark.asyncio
+async def test_the_router_sends_what_residency_admitted_after_a_switch() -> None:
+    engine_now: dict[str, Any] = {"engine": engines.STANDARD}
+    router, local, _, _ = _router(engine_now, {"agent.turn": {"spec": "local:gpt-oss-120b"}})
+    router._residency = _RemappingAdmit(FN, engine_now)
+    await router.complete("agent.turn", system="s", user_text="u")
+    # Re-resolved on the new engine: Flash-Next with ITS effort and sampling.
+    assert local.calls[-1]["model"] == FN
+    flash = local_catalog.get(FN)
+    assert flash is not None and local.calls[-1]["sampling"] == flash.sampling_thinking
+
+
+@pytest.mark.asyncio
+async def test_the_router_sends_the_admitted_name_when_a_resolve_still_disagrees() -> None:
+    engine_now: dict[str, Any] = {"engine": engines.FLASH_NEXT}
+    router, local, _, _ = _router(engine_now, {"agent.turn": {"spec": "local:gpt-oss-120b"}})
+    router._residency = _RemappingAdmit("qwen3-30b-a3b")
+    await router.complete("agent.turn", system="s", user_text="u")
+    assert local.calls[-1]["model"] == "qwen3-30b-a3b"
+    assert local.calls[-1]["reasoning_effort"] is None  # re-gated: a non-reasoning model
+
+
+@pytest.mark.asyncio
+async def test_residency_returns_the_name_it_admitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    gw = FakeLocalGateway(running={FN})
+    assert await _coord({"engine": engines.FLASH_NEXT}, gw).ensure_room("gpt-oss-120b") == FN
+    coord = ResidencyCoordinator(gw, ResidencyWiring.inert(enabled=False))
+    assert await coord.ensure_room("gpt-oss-120b") == "gpt-oss-120b"
+
+
+def test_the_jcode_proxy_sends_what_residency_admitted() -> None:
+    sent: dict[str, Any] = {}
+    client = _jcode_app({"engine": engines.STANDARD}, sent)
+    app = client.app
+
+    class _Flip:
+        async def ensure_room(self, served: str) -> str:
+            return FN
+
+    app.state.residency = _Flip()  # type: ignore[attr-defined]
+    resp = client.post(
+        "/api/jcode/llm/v1/chat/completions",
+        headers={"Authorization": "Bearer t"},
+        json={"model": "gpt-oss-120b", "messages": []},
+    )
+    assert resp.status_code == 200 and sent["payload"]["model"] == FN
+
+
+# --- api routes refuse engine-affecting work while a switch runs ----------------------------
+
+
+def test_engine_affecting_routes_refuse_while_a_switch_runs(
+    owner_box: tuple[TestClient, Any],
+) -> None:
+    client, app = owner_box
+    switcher: EngineSwitcher = app.state.engine_switcher
+    asyncio.run(switcher._lock.acquire())
+    try:
+        for method, path, body in (
+            ("POST", "/api/ops/update", None),
+            ("POST", "/api/ops/rebuild", {"service": "api"}),
+            ("POST", "/api/ops/restart", {"service": "local-llm"}),
+            ("POST", "/api/ops/restart", {"service": "all"}),
+            ("POST", "/api/ops/start", {"service": "flash-next"}),
+            ("POST", "/api/ops/local-provision", None),
+            ("POST", "/api/ops/export", None),
+            ("POST", "/api/ops/reset", None),
+            ("POST", "/api/jcode/power", {"on": True}),
+            ("POST", "/api/jcode/model/warm", None),
+        ):
+            resp = client.request(method, path, json=body)
+            assert resp.status_code == 409, (path, resp.status_code, resp.text)
+            assert "engine switch is in progress" in resp.json()["detail"]
+        # A non-engine container is not the switch's business.
+        app.state.supervisor_client.states["api"] = "running"
+        assert client.post("/api/ops/start", json={"service": "api"}).status_code != 409
+    finally:
+        switcher._lock.release()
+    assert all(
+        not e.startswith(("start", "restart")) or "api" in e
+        for e in app.state.supervisor_client.events
+    )
+
+
+# --- the engine card's extra fields, the cancel, the weights text ---------------------------
+
+
+def test_effective_since_and_the_fallback_reason(owner_box: tuple[TestClient, Any]) -> None:
+    client, app = owner_box
+    store: FakeSettingsStore = app.state.settings_store
+    store.values["llm_local_engine"] = "flash-next"
+    asyncio.run(
+        store.set_llm_local_engine_effective(
+            None, "standard", reason="the Flash-Next engine did not start on the last update"
+        )
+    )
+    body = client.get("/api/settings/llm/engine").json()
+    assert body["effective_since"] and body["fallback_reason"].startswith("the Flash-Next")
+    store.values["llm_local_engine"] = "standard"
+    assert client.get("/api/settings/llm/engine").json()["fallback_reason"] is None
+
+
+def test_decode_tps_reads_the_resident_models_gauge(owner_box: tuple[TestClient, Any]) -> None:
+    client, app = owner_box
+    app.state.local_gateway.metrics_text = (
+        "# HELP llamacpp:predicted_tokens_seconds Average generation throughput in tokens/s.\n"
+        "llamacpp:predicted_tokens_seconds 31.47\n"
+    )
+    body = client.get("/api/settings/llm/engine").json()
+    assert body["decode_tps"] == 31.5 and body["decode_model"] == "gpt-oss-120b"
+    app.state.local_gateway = FakeLocalGateway()
+    body = client.get("/api/settings/llm/engine").json()
+    assert body["decode_tps"] is None and body["decode_model"] is None
+    assert engine_api.parse_decode_tps("llamacpp:predicted_tokens_seconds 0\n") is None
+    assert engine_api.parse_decode_tps("") is None
+
+
+@pytest.mark.asyncio
+async def test_a_draining_switch_can_be_cancelled_and_nothing_stops(recorded: list) -> None:
+    release = asyncio.Event()
+
+    class _Busy(FakeLocalGateway):
+        async def slots(self, served_model: str) -> list[dict[str, object]]:
+            await release.wait()
+            return [{"id": 0, "is_processing": True}]
+
+    sup = _standard_up()
+    store = FakeSettingsStore()
+    sw = EngineSwitcher(
+        Timings(
+            drain_s=60, settle_s=0, memory_settle_s=0, poll_s=0, gate_wait_s=0, engine_cache_s=0
+        )
+    )
+    deps = _deps(sup, _Busy(running={"gpt-oss-120b"}), store)
+    with pytest.raises(SwitchRefused):
+        sw.cancel()  # nothing running
+    await sw.begin(deps, engines.FLASH_NEXT, source="owner")
+    for _ in range(5):
+        await asyncio.sleep(0)
+    sw.cancel()
+    release.set()
+    await sw.wait()
+    status = await sw.status(deps)
+    assert status is not None and status["stage"] == "cancelled"
+    assert sup.events == [] and store.values["llm_local_admission"] == drain.OPEN_ROW
+    assert "llm_local_engine" not in store.values
+    assert recorded[-1][0] == box_events.ENGINE_SWITCH and "cancelled" in str(recorded[-1][2])
+
+
+@pytest.mark.asyncio
+async def test_a_switch_past_draining_cannot_be_cancelled() -> None:
+    release = asyncio.Event()
+
+    class _SlowLoad(FakeLocalGateway):
+        async def load(self, served_model: str, **kw: Any) -> None:
+            await release.wait()
+            await super().load(served_model)
+
+    sw = _sw()
+    deps = _deps(_standard_up(), _SlowLoad(), FakeSettingsStore())
+    await sw.begin(deps, engines.FLASH_NEXT, source="owner")
+    for _ in range(30):
+        await asyncio.sleep(0)
+    with pytest.raises(SwitchRefused, match="stage: loading"):
+        sw.cancel()
+    release.set()
+    await sw.wait()
+
+
+def test_cancel_routes(owner_box: tuple[TestClient, Any]) -> None:
+    client, _ = owner_box
+    resp = client.post("/api/settings/llm/engine/cancel")
+    assert resp.status_code == 409 and "draining" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_missing_weights_point_at_on_box_models() -> None:
+    with pytest.raises(SwitchRefused, match="under On-box models first"):
+        await _sw().begin(
+            _deps(_standard_up(), FakeLocalGateway(), FakeSettingsStore(), local_models=[]),
+            engines.FLASH_NEXT,
+            source="owner",
+        )

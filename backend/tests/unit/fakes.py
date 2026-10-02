@@ -925,13 +925,26 @@ class FakeSettingsStore:
 
         return parse(self.values.get("llm_local_engine_effective"))
 
-    async def set_llm_local_engine_effective(self, ctx: object, engine: str) -> str:
+    async def set_llm_local_engine_effective(
+        self, ctx: object, engine: str, *, reason: str | None = None
+    ) -> str:
+        from datetime import UTC, datetime
+
         from jbrain.llm.engine import invalidate_cached, parse
 
         clean = parse(engine)
+        meta = await self.llm_local_engine_effective_meta(ctx)
+        since = meta.get("since")
+        if self.values.get("llm_local_engine_effective") != clean or not isinstance(since, str):
+            since = datetime.now(UTC).isoformat()
         self.values["llm_local_engine_effective"] = clean
+        self.values["llm_local_engine_effective_meta"] = {"since": since, "reason": reason}
         invalidate_cached()
         return clean
+
+    async def llm_local_engine_effective_meta(self, ctx: object) -> dict[str, object]:
+        value = self.values.get("llm_local_engine_effective_meta")
+        return dict(value) if isinstance(value, dict) else {}
 
     async def llm_local_admission(self, ctx: object) -> object:
         return self.values.get("llm_local_admission")

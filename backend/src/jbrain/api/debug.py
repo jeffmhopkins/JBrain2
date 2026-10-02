@@ -2816,6 +2816,7 @@ async def start_update_debug(
     for the log tail, and `/version` to know the new build is actually serving — a
     restart is not the same event as a rebuild, and only `git_sha` tells them apart."""
     request.state.debug_detail = "update (pull main, rebuild, restart)"
+    engine_api.refuse_while_switching(request, "update")
     resp = await _supervisor(request).post(
         "/update", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
     )
@@ -2872,6 +2873,7 @@ async def start_backup_debug(
     a backup racing an update would snapshot a half-migrated database. Poll
     `/backup/status` for the log tail and the filename it wrote."""
     request.state.debug_detail = "backup (full export)"
+    engine_api.refuse_while_switching(request, "back up")
     resp = await _supervisor(request).post(
         "/export", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
     )
@@ -2935,6 +2937,7 @@ async def start_refresh_debug(
     an sdr lease, a live spectrum — ends. 409 while another one-shot is running; poll
     `/refresh/status` for the log tail."""
     request.state.debug_detail = f"refresh {service} (pull main, rebuild one service)"
+    engine_api.refuse_while_switching(request, f"refresh {service}")
     resp = await _supervisor(request).post(
         "/refresh",
         json={"service": service},
@@ -3106,6 +3109,7 @@ async def load_model(
         registry=getattr(request.app.state, "agent_registry", None),
         settings_store=_store(request),
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
+        ctx=_OWNER_CTX,
     )
 
 
@@ -3341,6 +3345,7 @@ async def prime_model(
         registry=getattr(request.app.state, "agent_registry", None),
         settings_store=_store(request),
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
+        ctx=_OWNER_CTX,
     )
 
 
@@ -3421,6 +3426,14 @@ async def switch_engine(
     `done`, `rolled_back` or `failed`."""
     request.state.debug_detail = f"engine → {body.engine}"
     return await engine_api.begin_switch(request, body, source="debug", ctx=_OWNER_CTX)
+
+
+@router.post("/llm/engine/cancel", status_code=202)
+async def cancel_engine_switch(request: Request, _p: DebugDep) -> engine_api.SwitchStatusOut:
+    """`POST /api/settings/llm/engine/cancel` for the token: cancel a switch that is still
+    draining (nothing stopped yet); 409 at any other stage."""
+    request.state.debug_detail = "engine switch cancel"
+    return engine_api.cancel_switch(request)
 
 
 # --- Slot save/restore probe (F4's first check) ------------------------------------------
@@ -3768,6 +3781,7 @@ async def start_perplexity(
 
     409 when the weights are absent, the flash-next container was never provisioned, or
     another one-shot (update, refresh, a previous run) is running."""
+    engine_api.refuse_while_switching(request, "run perplexity")
     model_path = _flash_next_model_path(settings.local_models_dir)
     request.state.debug_detail = f"perplexity {model_path} (chunks {body.chunks or 'default'})"
     # Checked BEFORE unloading: refusing after would have evicted the owner's models for a

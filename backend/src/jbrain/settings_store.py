@@ -9,6 +9,7 @@ the OcrPipeline reads it per job and the Settings screen round-trips it.
 
 import json
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -144,6 +145,11 @@ LLM_LOCAL_ENGINE_KEY = "llm_local_engine"
 # api would refuse every standard load while believing Flash-Next serves. Absent reads as
 # "standard", the engine every box has.
 LLM_LOCAL_ENGINE_EFFECTIVE_KEY = "llm_local_engine_effective"
+
+# When the effective engine last changed and, if it is not the desired one, why — written
+# with every effective write (the switch, deploy/local-engine.sh via the CLI's --reason):
+# `{"since": iso, "reason": str | None}`. The engine card's "since" and its fallback line.
+LLM_LOCAL_ENGINE_EFFECTIVE_META_KEY = "llm_local_engine_effective_meta"
 
 # Local admission, closed across the api and the worker while an engine switch drains and
 # swaps engines: `{"closed": true, "reason": str, "until": epoch_s}`, or `{"closed": false}`.
@@ -1411,12 +1417,30 @@ class SqlSettingsStore:
         malformed reads as the default."""
         return parse_engine(await self.get(ctx, LLM_LOCAL_ENGINE_EFFECTIVE_KEY, None))
 
-    async def set_llm_local_engine_effective(self, ctx: SessionContext, engine: Engine) -> Engine:
+    async def set_llm_local_engine_effective(
+        self, ctx: SessionContext, engine: Engine, *, reason: str | None = None
+    ) -> Engine:
+        """Record the engine actually up. `reason` says why it is not the desired one (a deploy
+        fallback, a failed switch) and replaces any earlier reason; `since` moves only when the
+        engine actually changes, so a re-persist does not reset "effective since"."""
         clean = parse_engine(engine)
+        before = await self.get(ctx, LLM_LOCAL_ENGINE_EFFECTIVE_KEY, None)
+        meta = await self.llm_local_engine_effective_meta(ctx)
+        since = meta.get("since")
+        if before != clean or not isinstance(since, str):
+            since = datetime.now(UTC).isoformat()
         await self.upsert(ctx, LLM_LOCAL_ENGINE_EFFECTIVE_KEY, clean)
+        await self.upsert(
+            ctx, LLM_LOCAL_ENGINE_EFFECTIVE_META_KEY, {"since": since, "reason": reason}
+        )
         # This process's cached reads see the switch at once; others catch up by TTL.
         invalidate_engine_cache()
         return clean
+
+    async def llm_local_engine_effective_meta(self, ctx: SessionContext) -> dict[str, Any]:
+        """`{"since": iso | None, "reason": str | None}` for the effective engine."""
+        value = await self.get(ctx, LLM_LOCAL_ENGINE_EFFECTIVE_META_KEY, None)
+        return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
     async def llm_local_admission(self, ctx: SessionContext) -> object:
         """The raw local-admission row (`jbrain.llm.drain.closure_from` interprets it)."""

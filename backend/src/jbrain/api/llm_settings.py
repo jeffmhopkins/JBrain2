@@ -1264,6 +1264,7 @@ async def load_local_model(
         registry=registry,
         settings_store=store,
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
+        ctx=ctx_for(principal),
     )
 
 
@@ -1815,14 +1816,18 @@ async def apply_overrides(
 
 
 async def _refuse_off_engine(
-    store: SqlSettingsStore | None, model: local_catalog.LocalModel
+    store: SqlSettingsStore | None,
+    model: local_catalog.LocalModel,
+    ctx: SessionContext | None,
 ) -> None:
     """409 with the snapshot's own `blocked_reason` sentence when `model` belongs to the engine
     that is not serving — checked before admission, because the PWA showed a bare 409 when
     Flash-Next's Load was pressed while Standard served."""
     if store is None:
         return
-    active = await store.llm_local_engine_effective(queue.SYSTEM_CTX)
+    # Under the caller's own (owner) context; the system context only for a caller that has
+    # none (a CLI), which still reads as the owner's box.
+    active = await store.llm_local_engine_effective(ctx or queue.SYSTEM_CTX)
     blocked = engines.blocked_reason(engines.parse(model.engine), active)
     if blocked is not None:
         raise HTTPException(status_code=409, detail=blocked)
@@ -1927,6 +1932,7 @@ async def gateway_load(
     registry: ToolRegistry | None = None,
     settings_store: SqlSettingsStore | None = None,
     kv_prefix: "KvPrefixStore | None" = None,
+    ctx: SessionContext | None = None,
 ) -> LoadedModelsOut:
     """Warm one provisioned model into the gateway. Shared by the owner screen and
     the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects.
@@ -1948,7 +1954,7 @@ async def gateway_load(
     ends and the reuse misses. `registry` supplies those schemas (via `jerv_prime_spec`);
     without it — a build with no agent wired — the warm falls back to persona-only."""
     model = _require_provisioned(settings, model_id)
-    await _refuse_off_engine(settings_store, model)
+    await _refuse_off_engine(settings_store, model, ctx)
     await _admit_or_409(residency, model.served_model)
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None
@@ -2229,6 +2235,7 @@ async def gateway_prime(
     registry: ToolRegistry | None = None,
     settings_store: SqlSettingsStore | None = None,
     kv_prefix: "KvPrefixStore | None" = None,
+    ctx: SessionContext | None = None,
 ) -> dict[str, object]:
     """Prime one model with the real jerv prefix and TIME it — the measurement instrument for
     prefill experiments. `elapsed_ms` is the number that matters: a cold prefill and a
@@ -2238,7 +2245,7 @@ async def gateway_prime(
     Admits through `residency` first, for the same reason `gateway_load` does: this reached
     `gateway.load` with no eviction at all, and it is reachable only from the debug console."""
     model = _require_provisioned(settings, model_id)
-    await _refuse_off_engine(settings_store, model)
+    await _refuse_off_engine(settings_store, model, ctx)
     await _admit_or_409(residency, model.served_model)
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None

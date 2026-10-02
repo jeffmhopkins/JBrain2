@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
 import structlog
@@ -604,9 +604,12 @@ def expire_research_reports_handler(
 # Started just before a nightly sweep fires, the sweep's local tasks are deferred or refused;
 # started mid-run, they are cut. So the switch asks here first. The window is derived from the
 # schedules THIS scheduler fires — not a separately configured clock that could drift from
-# them: a daily (or longer) schedule's fire, from `NIGHTLY_LEAD` before it to `NIGHTLY_TRAIL`
-# after it, plus any pipeline run whose job is actually executing right now. Sub-day interval
-# schedules (the reconcilers, every few minutes) are not "nightly" and never block.
+# them: a daily (or longer) schedule with an ENABLED trigger, from `NIGHTLY_LEAD` before its
+# fire to `NIGHTLY_TRAIL` after it (a fire that is due but not yet picked up by the tick
+# counts), plus any pipeline run with a step executing or about to (a queued step whose
+# `run_after` has come — a run between its steps). Sub-day interval schedules (the
+# reconcilers, every few minutes) are not "nightly" and never block; a step deferred to later
+# (a precondition waiting on its model) does not block either.
 
 NIGHTLY_LEAD = timedelta(minutes=30)
 NIGHTLY_TRAIL = timedelta(minutes=60)
@@ -628,56 +631,67 @@ def nightly_window_reason(
     schedules: Sequence[ScheduleWindow],
     now: datetime,
     *,
+    tz: tzinfo = UTC,
     lead: timedelta = NIGHTLY_LEAD,
     trail: timedelta = NIGHTLY_TRAIL,
 ) -> str | None:
-    """Why `now` sits inside a scheduled run's window, or None. Pure, so the window rule is
-    tested without a database."""
+    """Why `now` sits inside a scheduled run's window, or None. Times are rendered in `tz`
+    (the owner's zone). Pure, so the window rule is tested without a database."""
     for s in schedules:
         daily = s.schedule_kind != "interval" or (s.interval_seconds or 0) >= _DAILY_SECONDS
         if not daily:
             continue
-        if s.next_run_at is not None and now <= s.next_run_at <= now + lead:
-            minutes = max(0, round((s.next_run_at - now).total_seconds() / 60))
-            return f"the scheduled {s.label} run fires in {minutes} min"
-        if s.last_run_at is not None and s.last_run_at <= now <= s.last_run_at + trail:
-            return f"the scheduled {s.label} run started at {s.last_run_at:%H:%M} UTC"
+        nxt = s.next_run_at
+        if nxt is not None and now - trail <= nxt <= now:
+            return f"the scheduled {s.label} run is due now (since {nxt.astimezone(tz):%H:%M %Z})"
+        if nxt is not None and now < nxt <= now + lead:
+            minutes = max(1, round((nxt - now).total_seconds() / 60))
+            return (
+                f"the scheduled {s.label} run fires in {minutes} min "
+                f"(at {nxt.astimezone(tz):%H:%M %Z})"
+            )
+        last = s.last_run_at
+        if last is not None and last <= now <= last + trail:
+            return f"the scheduled {s.label} run started at {last.astimezone(tz):%H:%M %Z}"
     return None
 
 
-async def quiet_window_guard(
-    maker: async_sessionmaker[AsyncSession], now: datetime | None = None
-) -> str | None:
-    """Why a disruptive operation should wait — a workflow run executing now, or a nightly
-    window — or None when the box is quiet. Read under SYSTEM_CTX like the tick itself."""
-    moment = now or utcnow()
+async def executing_runs(
+    maker: async_sessionmaker[AsyncSession], now: datetime, *, limit: int = 20
+) -> list[str]:
+    """Pipelines with a run whose step is executing, or queued with its `run_after` come."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
-        running = (
-            await session.execute(
-                text(
-                    "SELECT r.pipeline FROM app.runs r"
-                    " WHERE r.kind = 'pipeline' AND r.status = 'running'"
-                    "   AND EXISTS (SELECT 1 FROM app.run_steps s"
-                    "               JOIN app.jobs j ON j.id = s.job_id"
-                    "               WHERE s.run_id = r.id AND j.status = 'running')"
-                    " LIMIT 1"
-                )
-            )
-        ).scalar_one_or_none()
-        if running is not None:
-            return f"the workflow run '{running}' is executing"
+        rows = await session.execute(
+            text(
+                "SELECT r.pipeline FROM app.runs r"
+                " WHERE r.kind = 'pipeline' AND r.status = 'running'"
+                "   AND EXISTS (SELECT 1 FROM app.run_steps s"
+                "               JOIN app.jobs j ON j.id = s.job_id"
+                "               WHERE s.run_id = r.id"
+                "                 AND (j.status = 'running'"
+                "                      OR (j.status = 'queued' AND j.run_after <= :now)))"
+                " ORDER BY r.started_at DESC LIMIT :limit"
+            ),
+            {"now": now, "limit": limit},
+        )
+        return [str(p) for p in rows.scalars().all()]
+
+
+async def schedule_windows(maker: async_sessionmaker[AsyncSession]) -> list[ScheduleWindow]:
+    """Every enabled schedule with an enabled trigger, labelled by its pipeline."""
+    async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         rows = (
             await session.execute(
                 text(
-                    "SELECT COALESCE(t.pipeline, s.id::text) AS label, s.schedule_kind,"
+                    "SELECT t.pipeline AS label, s.schedule_kind,"
                     "       s.interval_seconds, s.next_run_at, s.last_run_at"
                     "  FROM app.schedules s"
-                    "  LEFT JOIN app.triggers t ON t.on_schedule_id = s.id AND t.enabled"
+                    "  JOIN app.triggers t ON t.on_schedule_id = s.id AND t.enabled"
                     " WHERE s.enabled"
                 )
             )
         ).all()
-    windows = [
+    return [
         ScheduleWindow(
             label=str(r.label),
             schedule_kind=str(r.schedule_kind),
@@ -687,4 +701,18 @@ async def quiet_window_guard(
         )
         for r in rows
     ]
-    return nightly_window_reason(windows, moment)
+
+
+async def quiet_window_guard(
+    maker: async_sessionmaker[AsyncSession],
+    now: datetime | None = None,
+    *,
+    tz: tzinfo = UTC,
+) -> str | None:
+    """Why a disruptive operation should wait — a workflow run executing now, or a nightly
+    window — or None when the box is quiet. Read under SYSTEM_CTX like the tick itself."""
+    moment = now or utcnow()
+    running = await executing_runs(maker, moment, limit=1)
+    if running:
+        return f"the workflow run '{running[0]}' is executing"
+    return nightly_window_reason(await schedule_windows(maker), moment, tz=tz)

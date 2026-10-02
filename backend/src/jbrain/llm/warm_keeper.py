@@ -233,9 +233,10 @@ class WarmKeeper:
         # Best-effort: on failure fall through to the prime, which is exactly the old behaviour.
         if cold:
             try:
-                await self._router.admit_local_load(served)
-                if served not in await self._gateway.running():
-                    await self._gateway.load(served)
+                # Load what residency ADMITTED: an engine switch between the two reads remaps it.
+                admitted = await self._router.admit_local_load(served) or served
+                if admitted not in await self._gateway.running():
+                    await self._gateway.load(admitted)
             except Exception as exc:  # noqa: BLE001 — no room / gateway down: the prime retries
                 log.info("warm_keeper.preload_failed", model=served, error=str(exc))
         # The disk layer's moment: with the weights up but the prefix cold, a valid saved

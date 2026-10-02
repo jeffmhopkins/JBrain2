@@ -2497,6 +2497,9 @@ def test_a_flash_next_fallback_records_standard_as_effective(
     started = _idx(calls, "up -d --no-build local-llm")
     recorded = _idx(calls, "jbrain.cli set-local-engine-effective standard")
     assert started < recorded
+    # The cause rides along, so the engine card can say why Flash-Next is not serving.
+    why = "did not start" if fail else "not installed or has no image"
+    assert "--reason" in calls[recorded] and why in calls[recorded]
     assert "FALLBACK" in proc.stdout and "SELECTED" in proc.stdout
     # The owner's choice is never rewritten by a deploy script.
     assert not any("set-local-engine " in f"{c} " for c in calls)

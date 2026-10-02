@@ -921,7 +921,19 @@ class ResidencyCoordinator:
                 f"of {plan.total_gb:.0f} GB — refusing to load (it would run out of memory)."
             )
 
-    async def ensure_room(self, served_model: str) -> None:
+    async def ensure_room(self, served_model: str) -> str:
+        """Admit `served_model` for a completion and return the served name ACTUALLY admitted
+        — the active engine's model when the engine remaps it (FLASH_NEXT_ENGINE_PLAN §4c).
+        The caller sends that name, so a request resolved before an engine switch can never
+        be admitted as one model and sent as another."""
+        if not self._enabled:
+            return served_model
+        await self._wait_admission()
+        served_model = await self._for_active(served_model)
+        await self._admit(served_model)
+        return served_model
+
+    async def _admit(self, served_model: str) -> None:
         """Before `served_model` loads on the completion path, evict the fewest resident
         models needed to hold the free-RAM floor after it's resident, and record each
         eviction as a TRANSIENT displacement so the end-of-turn restore can put it back. A
@@ -936,10 +948,6 @@ class ResidencyCoordinator:
         against the same free memory. Without one, this is the original per-process
         evict-only path (the client triggers the load), so single-process/cloud/test
         callers are unchanged."""
-        if not self._enabled:
-            return
-        await self._wait_admission()
-        served_model = await self._for_active(served_model)
         await self._refuse_off_engine(served_model)
         # Code-mode exclusivity: while the box is reserved for code mode, refuse to load ANY
         # model outside its reserved set (jcode's executor + planner). A model already resident

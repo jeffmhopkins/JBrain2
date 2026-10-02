@@ -403,6 +403,15 @@ per-task marker follow the owner's choice of mock (the GUI gate).
   read off the gateway (a loading model or a slot `is_processing` — every process's calls),
   and proceeds. Admission reopens on every exit, after the processes' cached effective
   engine has expired; an api restart mid-switch reopens it on boot.
+- **Exclusivity and honest endings** (review round): the switch holds a supervisor-side
+  switch hold for its whole run (deadline renewed per stage), so no engine start, restart or
+  one-shot can begin under it from any caller, and the api refuses its own engine-affecting
+  routes (Ops update/rebuild/provision/restart/start, jcode power-on, debug update/refresh/
+  perplexity) while it runs; one-shots are re-checked before every start. Whatever cannot be
+  confirmed, the switch ends on what is actually up and records that as effective — "NO local
+  engine is up" when nothing is. It can be cancelled while still draining. The engine read
+  carries `effective_since`, the recorded `fallback_reason` (also from deploy/local-engine.sh)
+  and llama-server's own `decode_tps` gauge.
 - **Smoke**: a thinking-off text completion, a tool-carrying probe, and an image probe on a
   vision model — a solid-colour PNG synthesized in memory, so no attachment or DB lookup.
 - **Remap** (§4c) at every entry point: the router's `_resolve_live` (stored pick, env pin,

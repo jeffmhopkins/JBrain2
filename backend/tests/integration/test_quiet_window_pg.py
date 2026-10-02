@@ -1,8 +1,8 @@
-"""The engine switch's quiet-window guard (`workflow.scheduler.quiet_window_guard`) against
-real Postgres: it reads the schedules the tick fires and the run log, so the window it
-enforces cannot drift from the scheduler's own rows (docs/plans/FLASH_NEXT_ENGINE_PLAN.md
-F3a). The moments are far in the future so the migration-seeded nightly rows never fall
-inside them."""
+"""The engine switch's quiet-window guard (`workflow.scheduler`) against real Postgres: it
+reads the schedules the tick fires and the run log, so the window it enforces cannot drift
+from the scheduler's own rows (docs/plans/FLASH_NEXT_ENGINE_PLAN.md F3a). Assertions are
+about this test's own rows, so a shared database's other schedules and runs never decide
+them; the window rule itself is unit-tested (`nightly_window_reason`)."""
 
 import uuid
 from collections.abc import AsyncIterator
@@ -16,7 +16,12 @@ from sqlalchemy.pool import NullPool
 from jbrain import queue
 from jbrain.db.session import scoped_session
 from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
-from jbrain.workflow.scheduler import quiet_window_guard
+from jbrain.workflow.scheduler import (
+    executing_runs,
+    nightly_window_reason,
+    quiet_window_guard,
+    schedule_windows,
+)
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -35,7 +40,9 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
     await engine.dispose()
 
 
-async def _schedule(maker: async_sessionmaker, *, interval: int, next_run_at: datetime) -> str:
+async def _schedule(
+    maker: async_sessionmaker, *, interval: int, next_run_at: datetime, enabled: bool = True
+) -> str:
     sid, tid = str(uuid.uuid4()), str(uuid.uuid4())
     pipeline = f"quiet_window_{sid[:8]}"
     async with scoped_session(maker, queue.SYSTEM_CTX) as s:
@@ -51,8 +58,11 @@ async def _schedule(maker: async_sessionmaker, *, interval: int, next_run_at: da
             {"id": sid, "iv": interval, "nr": next_run_at},
         )
         await s.execute(
-            text("INSERT INTO app.triggers (id, on_schedule_id, pipeline) VALUES (:id, :s, :p)"),
-            {"id": tid, "s": sid, "p": pipeline},
+            text(
+                "INSERT INTO app.triggers (id, on_schedule_id, pipeline, enabled)"
+                " VALUES (:id, :s, :p, :en)"
+            ),
+            {"id": tid, "s": sid, "p": pipeline, "en": enabled},
         )
     return pipeline
 
@@ -74,20 +84,26 @@ async def _drop(maker: async_sessionmaker, pipeline: str) -> None:
             await s.execute(text("DELETE FROM app.schedules WHERE id = :id"), {"id": sid})
 
 
-async def test_a_nightly_fire_within_the_lead_is_the_reason(maker: async_sessionmaker) -> None:
-    pipeline = await _schedule(maker, interval=86_400, next_run_at=FAR + timedelta(minutes=15))
+async def test_a_nightly_fire_is_read_with_its_pipeline_label(maker: async_sessionmaker) -> None:
+    fire = FAR + timedelta(minutes=15)
+    pipeline = await _schedule(maker, interval=86_400, next_run_at=fire)
     try:
-        reason = await quiet_window_guard(maker, FAR)
-        assert reason is not None and pipeline in reason and "fires in 15 min" in reason
-        assert await quiet_window_guard(maker, FAR - timedelta(hours=3)) is None
+        mine = [w for w in await schedule_windows(maker) if w.label == pipeline]
+        assert len(mine) == 1 and mine[0].next_run_at == fire
+        reason = nightly_window_reason(mine, FAR)
+        assert reason is not None and "fires in 15 min" in reason
     finally:
         await _drop(maker, pipeline)
 
 
-async def test_a_sub_day_interval_never_blocks(maker: async_sessionmaker) -> None:
-    pipeline = await _schedule(maker, interval=300, next_run_at=FAR + timedelta(minutes=2))
+async def test_a_schedule_whose_trigger_is_disabled_is_not_read(
+    maker: async_sessionmaker,
+) -> None:
+    pipeline = await _schedule(
+        maker, interval=86_400, next_run_at=FAR + timedelta(minutes=5), enabled=False
+    )
     try:
-        assert await quiet_window_guard(maker, FAR) is None
+        assert all(w.label != pipeline for w in await schedule_windows(maker))
     finally:
         await _drop(maker, pipeline)
 
@@ -103,15 +119,23 @@ async def test_an_executing_pipeline_run_is_the_reason(maker: async_sessionmaker
         principal_id=None,
         steps=[EnqueuedStep(kind="purge_deleted", job_id=job_id)],
     )
+    moment = FAR - timedelta(hours=3)
     try:
-        # Queued (a deferred precondition, say) does not count: nothing is executing.
-        assert await quiet_window_guard(maker, FAR - timedelta(hours=3)) is None
+        # A queued step whose run_after has come is a run between its steps: it counts.
+        assert "quiet_window_run" in await executing_runs(maker, moment)
+        # Deferred to later (a precondition waiting on its model) it does not.
+        async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+            await s.execute(
+                text("UPDATE app.jobs SET run_after = :later WHERE id = :id"),
+                {"id": job_id, "later": moment + timedelta(hours=1)},
+            )
+        assert "quiet_window_run" not in await executing_runs(maker, moment)
         async with scoped_session(maker, queue.SYSTEM_CTX) as s:
             await s.execute(
                 text("UPDATE app.jobs SET status = 'running' WHERE id = :id"), {"id": job_id}
             )
-        reason = await quiet_window_guard(maker, FAR - timedelta(hours=3))
-        assert reason is not None and "quiet_window_run" in reason
+        assert "quiet_window_run" in await executing_runs(maker, moment)
+        assert await quiet_window_guard(maker, moment) is not None
     finally:
         async with scoped_session(maker, queue.SYSTEM_CTX) as s:
             await s.execute(text("DELETE FROM app.run_steps WHERE run_id = :r"), {"r": run_id})
