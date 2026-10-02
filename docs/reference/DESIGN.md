@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-18
+> **Status:** Living · **Last verified:** 2026-10-02
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -186,6 +186,20 @@ swipe-up.
 problems: `--rose` text on rose-tint background, e.g. *"Browser online, but
 JBrain server unreachable — retrying…"*. Auto-dismisses on recovery. Never
 use modals for connectivity.
+The **engine banner** (`components/EngineBanner.tsx`) is the same strip for the on-box
+engine, and it rides **every** screen: under every `TopBar`, and under the own header of
+each full-screen overlay that brings one (Automations, Image, Radio, Tasks, jcode,
+jlaunch, pet Control, jpanel, Room endpoints) — a switch pauses local AI on all of them,
+so "only on the screens with the shared bar" would hide it exactly where a long-running
+local job lives. It is and the one place the strip is *not* only for
+problems: **steel** *"Flash-Next active · since HH:MM · Switch back"* while Flash-Next
+serves (a standing mode the owner chose, so it informs rather than alarms), **amber**
+while something holds the engine (a switch, a desired-≠-effective fallback, the
+perplexity one-shot, admission closed by a debug job), **rose** after a rollback or a
+failed switch — dismissable, per switch. When the latest read failed it keeps the last
+reading and says so (*"· can't reach the engine"*) rather than going silent or stale
+without a word. Its text is the live region, not the strip, so its own buttons are not
+re-announced on every poll. See "Ops Local engine card".
 
 **Status dot** — 8px circle: green=healthy, amber=degraded/retrying,
 rose=error, `--text-3`=unknown. Used in the composer footer. It no longer
@@ -587,6 +601,63 @@ line behind the fold. Remedies that need a shell are prefixed **"Needs host
 access:"** rather than being styled the same as the ones an Update fixes — the
 owner has no terminal (CLAUDE.md #10), so "press the button" and "plan a
 reboot" must be distinguishable at a glance.
+
+**Ops Local engine card** (GUI gate settled 2026-10-02 — chosen **A, a segmented
+toggle inside an Ops card**; binding mock
+`docs/mocks/engine-switch/a-segmented-toggle.html`, rivals B "two engine cards" and C
+"status-first block + stage timeline" kept beside it with the round record in
+`docs/mocks/engine-switch/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`
+F3a). Switches the box between **Standard** (the `local-llm` gateway) and **Flash-Next**
+(one model, its own container) — exactly one runs at a time.
+
+- **A collapsed card that opens itself**, like Host settings: it expands while a switch
+  runs, after a rollback/failure (until dismissed), while desired ≠ effective, and when
+  the banner's *Switch back* arms a switch. `OpsCard` takes `open`/`onToggle` for this —
+  the key-remount trick Host settings uses would collapse the card the moment a confirm
+  was cancelled.
+- **The segmented control only arms.** A switch stops every local model for minutes, so
+  tapping the other segment expands an **inline confirm** that states the consequence
+  (pause, drain, what the per-task picks do, automatic rollback) with Cancel / Switch.
+  When the server's `guard` says now is a bad time (the nightly window, a workflow run)
+  the confirm says so, and **Switch anyway** (rose, `force: true`) stays disabled until a
+  separate **"I understand — nightly jobs may fail"** box is ticked; the tick is bound to
+  that guard's text. Force must never land under a finger: if a guard appears while a
+  confirm is open, the *same* button turns disabled — it is never swapped for an enabled
+  one under the tap. With no guard there is no force control at all. A confirm armed
+  against one engine is dropped if the serving engine changes under it.
+- **"Keep" is a confirm too.** On a fallback, *Keep {effective}* is offered only when the
+  box is cleanly on that engine (nothing would stop or reload) and its confirm says so;
+  on an inconsistent box it is named and confirmed as the switch it really is.
+- **Cancel only while draining** (*"Cancel — nothing has stopped yet"*), and only while the
+  server offers the route; a server without it stops being offered it.
+- **Progress is phased text + a five-step list with timestamps + the notes tail** —
+  Drain → Stop → Start → Load → Smoke — the Server-update register, no fake bar.
+- **Disabled states say why**: Flash-Next not installed (with *Install in On-box
+  models*), a supervisor one-shot running, no container yet, a switch in flight.
+- **Readouts are the System card's label rows** — Engine (desired vs effective),
+  Memory (GTT used / pool, host free), Decode, Last smoke (per-probe chips), Engine
+  log. Anything the api does not report reads **—**, never a guess (`decode_tps`,
+  `effective_since` and `fallback_reason` render when the server sends them). A failed
+  read keeps the last reading under *"Can't reach the engine · last read HH:MM"*.
+- **One shared store** (`engineState.ts`) feeds the card and the banner: the shell
+  polls on a 30 s idle beat and every 2 s while a switch runs, backs off 2 → 4 → … → 30 s
+  on failed reads (reset on success), pauses while the app is hidden, and stops only on a
+  403 — until the next foreground signal (a 404 is transient: mid-update the api is briefly
+  an older build). The two can never disagree about whether a switch is happening, and a
+  header costs no request.
+- **LLM settings follows the engine**: an off-engine model keeps its **Stage** label but
+  is disabled with the server's `blocked_reason` beneath it ("Runs on the Flash-Next
+  engine — switch engines to load it"); a remapped pick is marked with its
+  `remap_note` ("→ Flash-Next (engine active)") on the tier head and the task row; a
+  Stage/Load refusal's 409 detail shows under the row instead of failing silently.
+
+A won for being native to the Ops stack — everything collapsed except System, the card
+earning space only when it needs attention — and the cheapest to build on `OpsCard`.
+Its known cost (a segmented control reads as a cheap toggle for a multi-minute,
+disruptive act) is carried by the confirm, which is why the confirm must state the
+consequence rather than ask "Are you sure?". B's side-by-side cards truncated at 390px
+and needed the heaviest (Dialog) confirm; C broke the collapsed-stack rule by spending a
+permanent block at the top of Ops when nothing is happening.
 
 **Ops Data card** (settled in a three-way review — inline card won over a
 backup-vault list and a guided transfer sheet): a "Data" section with two

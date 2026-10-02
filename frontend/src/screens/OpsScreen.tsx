@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type ContainerStatus,
@@ -10,6 +10,8 @@ import {
   type UpdateStatus,
   api,
 } from "../api/client";
+import { LocalEngineCard } from "../components/LocalEngineCard";
+import { OpsCard } from "../components/OpsCard";
 import { TimeSeriesPlot } from "../components/TimeSeriesPlot";
 import { serverMetricSeries } from "../components/serverMetricSeries";
 import { agoLabel, panelConcerns, panelFacts, panelHealth } from "../panelStatus";
@@ -152,47 +154,6 @@ function groupContainers(
 }
 
 // ===== Collapsible card — the shared disclosure shell for every Ops section =====
-
-/** `headerRight` shows in the header whether open or closed (group counts);
- * `summaryCollapsed` shows only while collapsed (the System recap). The body
- * is mounted only when open, so collapsed groups never fetch their logs. */
-function OpsCard({
-  title,
-  defaultOpen = false,
-  headerRight,
-  summaryCollapsed,
-  bodyClassName,
-  children,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  headerRight?: ReactNode;
-  summaryCollapsed?: ReactNode;
-  bodyClassName?: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <section className="ops-card">
-      <button
-        type="button"
-        className={`ops-card-head${open ? " open" : ""}`}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="ops-card-title">{title}</span>
-        <span className="ops-card-right">
-          {!open && summaryCollapsed}
-          {headerRight}
-        </span>
-        <span className="ops-card-caret">›</span>
-      </button>
-      {open && (
-        <div className={`ops-card-body${bodyClassName ? ` ${bodyClassName}` : ""}`}>{children}</div>
-      )}
-    </section>
-  );
-}
 
 // ===== Server update — folded into the System card's Load row (owner request) =====
 
@@ -1551,6 +1512,8 @@ export function OpsScreen() {
       )}
 
       <SystemCard metrics={metrics} />
+
+      <LocalEngineCard />
 
       <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />
 

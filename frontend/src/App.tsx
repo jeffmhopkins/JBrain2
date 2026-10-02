@@ -6,6 +6,7 @@ import { Launcher, type LauncherTarget } from "./components/Launcher";
 import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { PresenceToast } from "./components/PresenceToast";
 import { TopBar } from "./components/TopBar";
+import { setEngineNavigator, useEnginePolling } from "./engineState";
 import { closeHomeBackLayer, useHomeBackDepth } from "./homeBack";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
@@ -528,6 +529,23 @@ export function App() {
   }
 
   useBackGesture(overlayDepth, closeTopLayer);
+
+  // The engine banner under every top bar reads one shared store; the shell keeps it fed
+  // (idle beat, fast while a switch runs) and tells it how to reach Ops and On-box models.
+  useEnginePolling(session.status === "in");
+  useEffect(() => {
+    setEngineNavigator({
+      ops: () => {
+        setSessionBackTo(null);
+        setCard("ops");
+      },
+      models: () => {
+        setSessionBackTo(null);
+        setCard("llm-settings");
+      },
+    });
+    return () => setEngineNavigator(null);
+  }, []);
 
   if (session.status === "loading") {
     return <main className="centered muted">Loading…</main>;

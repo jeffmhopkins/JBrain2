@@ -24,6 +24,7 @@ import {
 } from "../api/client";
 import { useBackLayer } from "../backLayers";
 import { CommandKeySheet } from "../components/CommandKeySheet";
+import { EngineBanner } from "../components/EngineBanner";
 import { MoveTaskSheet } from "../components/MoveTaskSheet";
 import {
   CheckIcon,
@@ -1391,6 +1392,7 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
           <RefreshIcon size={20} />
         </button>
       </header>
+      <EngineBanner />
 
       {hasAny && (
         <div className="task-chiprow" role="tablist" aria-label="Group filter">

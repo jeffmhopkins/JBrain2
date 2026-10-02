@@ -18,6 +18,7 @@ import {
   type PanelRole,
   api,
 } from "../api/client";
+import { EngineBanner } from "../components/EngineBanner";
 import "./endpoints.css";
 
 interface EndpointsScreenProps {
@@ -164,6 +165,7 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
           <h1>Room endpoints</h1>
         </header>
       )}
+      {onClose && <EngineBanner />}
 
       {absent ? (
         <p className="ep-empty">

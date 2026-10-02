@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MetricsHistory, OpsMetrics, OpsStatus } from "../api/client";
+import { engineState } from "../components/engineFixtures";
+import { resetEngineStore } from "../engineState";
 import { OpsScreen } from "./OpsScreen";
 
 function json(body: unknown, status = 200): Response {
@@ -826,5 +828,31 @@ describe("OpsScreen", () => {
         exact: false,
       }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("OpsScreen local engine", () => {
+  afterEach(() => {
+    resetEngineStore();
+    vi.unstubAllGlobals();
+  });
+
+  it("stacks the Local engine card right under System, collapsed while nothing needs it", async () => {
+    resetEngineStore();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const hit = baseMock(input);
+        if (hit) return hit;
+        if (String(input) === "/api/settings/llm/engine") return json(engineState());
+        return json({ detail: "nope" }, 404);
+      }),
+    );
+    const { container } = render(<OpsScreen />);
+    const head = await screen.findByRole("button", { name: /Local engine/ });
+    expect(head).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(head).toHaveTextContent("Standard"));
+    const titles = [...container.querySelectorAll(".ops-card-title")].map((t) => t.textContent);
+    expect(titles.slice(0, 2)).toEqual(["System", "Local engine"]);
   });
 });

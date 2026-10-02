@@ -19,6 +19,7 @@ import {
   type ScheduleSpecKind,
   api,
 } from "../api/client";
+import { EngineBanner } from "../components/EngineBanner";
 import {
   CheckIcon,
   ChevronLeftIcon,
@@ -782,6 +783,7 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
           <RefreshIcon size={20} />
         </button>
       </header>
+      <EngineBanner />
 
       <div className="auto-tabs" role="tablist">
         <button

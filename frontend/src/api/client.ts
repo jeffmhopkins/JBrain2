@@ -867,6 +867,100 @@ export interface DebugTokenMint {
   payload: string;
 }
 
+// ----- The on-box engine switch (GET/POST /api/settings/llm/engine) -----
+
+/** The two on-box LLM engines — exactly one runs at a time. */
+export type EngineId = "standard" | "flash-next";
+
+/** Where a switch is. Walks draining → stopping → starting → loading → smoke, then ends at
+ * `done`, `rolled_back` (the previous engine was put back) or `failed` (it could not be). */
+export type EngineSwitchStage =
+  | "draining"
+  | "stopping"
+  | "starting"
+  | "loading"
+  | "smoke"
+  | "done"
+  | "rolled_back"
+  | "failed";
+
+export interface EngineSmokeResult {
+  probe: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface EngineSwitchStatus {
+  id: string;
+  /** Who started it: "owner" (the PWA) or "debug" (the debug console). */
+  source: string;
+  target: EngineId;
+  previous: EngineId;
+  force: boolean;
+  stage: EngineSwitchStage;
+  /** Why it rolled back or failed; null otherwise. */
+  reason: string | null;
+  started_at: string;
+  updated_at: string;
+  ended_at: string | null;
+  /** Every stage entered, with its ISO timestamp, in order. */
+  stages: { stage: EngineSwitchStage; at: string }[];
+  /** The served model the switch loaded and smoke-tested, when there was one. */
+  model: string | null;
+  smoke: EngineSmokeResult[];
+  notes: string[];
+}
+
+export interface EngineState {
+  /** The owner's choice — what the update one-shot tries to bring up. */
+  desired: EngineId;
+  /** The engine recorded as actually started — what every load and list follows. */
+  effective: EngineId;
+  /** Per engine: its compose service and Docker state ("missing" = never provisioned). */
+  services: Record<EngineId, { service: string; state: string }>;
+  /** Engines whose container is actually up — exactly `[effective]` on a healthy box. */
+  running: EngineId[];
+  consistent: boolean;
+  /** Whether each engine has weights installed to serve. */
+  installed: Record<EngineId, boolean>;
+  /** The supervisor one-shot in flight (update, perplexity, …) — a switch waits for it. */
+  oneshot: string | null;
+  perplexity_running: boolean;
+  /** A switch is running in the api right now. */
+  switching: boolean;
+  /** Local admission: closed while a switch (or a debug job) holds the engine. `until` is
+   * epoch seconds. */
+  admission: { closed: boolean; reason: string | null; until: number | null };
+  /** GB; any field null when unreadable. GTT is the iGPU's pool — what an engine holds. */
+  memory: {
+    gtt_used_gb: number | null;
+    gtt_total_gb: number | null;
+    gtt_free_gb: number | null;
+    host_total_gb: number | null;
+    host_used_gb: number | null;
+  };
+  /** Why a switch would be refused right now without `force` (a workflow run, the nightly
+   * window), or null. */
+  guard: string | null;
+  /** The in-flight switch, else the last one. */
+  switch: EngineSwitchStatus | null;
+  /** Why the last start fell back to the other engine (desired ≠ effective), when known.
+   * Absent from a server that predates it. */
+  fallback_reason?: string | null | undefined;
+  /** When the effective engine started serving (ISO), when known. */
+  effective_since?: string | null | undefined;
+  /** The serving engine's last decode rate (tok/s), null while none serves. */
+  decode_tps?: number | null | undefined;
+}
+
+/** The server has no cancel route for an engine switch (it predates it). */
+export class EngineCancelUnsupported extends Error {
+  constructor() {
+    super("This server can't cancel a switch");
+    this.name = "EngineCancelUnsupported";
+  }
+}
+
 // ----- Per-task LLM routing (GET/PUT /api/settings/llm) -----
 
 /**
@@ -893,6 +987,14 @@ export interface LlmTask {
   provider: LlmProviderId;
   /** null whenever provider !== "grok" — the wire mirrors the UI's disabling. */
   reasoning_effort: ReasoningEffort | null;
+  /** The "provider:model" the task actually RUNS on with the active engine — equal to the
+   * pick unless the engine remaps it. The pick itself is never rewritten. Absent from an
+   * older server. */
+  effective_spec?: string | undefined;
+  /** True when the active engine remaps this pick, with the owner's sentence for it
+   * ("→ Flash-Next (engine active)"). */
+  remapped?: boolean | undefined;
+  remap_note?: string | null | undefined;
 }
 
 /** A catalog model for the "Manage local models" drawer (read-only — weights
@@ -970,6 +1072,15 @@ export interface LocalModelInfo {
   /** The catalog's own floor, so the drawer can mark it "(default)" and persist null for it
    * instead of a redundant override row. */
   image_min_tokens_default: number | null;
+  /** Which on-box engine serves this model ("standard" | "flash-next"). Absent from an
+   * older server — read as standard. */
+  engine?: string | undefined;
+  /** Whether Stage/Load can work RIGHT NOW, and if not the sentence saying why — the same
+   * text the load route's 409 carries ("Runs on the Flash-Next engine — switch engines to
+   * load it"), so the control is disabled with a reason instead of failing. Absent from an
+   * older server — read as loadable. */
+  loadable_now?: boolean | undefined;
+  blocked_reason?: string | null | undefined;
 }
 
 /** One model a staged load would evict — catalog id, label, and resident footprint (GB),
@@ -3395,6 +3506,40 @@ export const api = {
   async updateLlmSettings(patch: LlmSettingsPatch): Promise<LlmSettings> {
     const response = await request("/api/settings/llm", jsonInit("PUT", patch));
     return (await response.json()) as LlmSettings;
+  },
+
+  /** Which on-box engine is wanted and which serves, both containers, memory, admission,
+   * the nightly guard, and the in-flight or last switch. 502 when the supervisor is down. */
+  async getEngineState(): Promise<EngineState> {
+    const response = await request("/api/settings/llm/engine");
+    return (await response.json()) as EngineState;
+  },
+
+  /** Start an engine switch (202 + its status; poll `getEngineState` for the stage). 409 —
+   * with the reason as the ApiError message — while a switch or one-shot runs, inside the
+   * nightly window without `force`, or when the target isn't installed. */
+  async switchEngine(engine: EngineId, force = false): Promise<EngineSwitchStatus> {
+    const response = await request("/api/settings/llm/engine", jsonInit("POST", { engine, force }));
+    return (await response.json()) as EngineSwitchStatus;
+  },
+
+  /** Cancel a switch while it is still draining (nothing has stopped yet). Tries the cancel
+   * route, then the DELETE form; a server with neither throws EngineCancelUnsupported so the
+   * card can stop offering it. A 409 (past draining) surfaces as an ApiError. */
+  async cancelEngineSwitch(): Promise<void> {
+    for (const [path, method] of [
+      ["/api/settings/llm/engine/cancel", "POST"],
+      ["/api/settings/llm/engine/switch", "DELETE"],
+    ] as const) {
+      try {
+        await request(path, { method });
+        return;
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 404 || err.status === 405)) continue;
+        throw err;
+      }
+    }
+    throw new EngineCancelUnsupported();
   },
 
   /** Evict one local model from the gateway's memory; returns what's still resident. */

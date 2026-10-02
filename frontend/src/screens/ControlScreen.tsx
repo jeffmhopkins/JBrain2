@@ -9,6 +9,7 @@
 
 import { type PointerEvent, useCallback, useEffect, useState } from "react";
 import { type PetCommand, type PetState, api } from "../api/client";
+import { EngineBanner } from "../components/EngineBanner";
 import "./control.css";
 import { listenOnce, sttAvailable } from "./speech";
 
@@ -172,6 +173,7 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
           ✕
         </button>
       </div>
+      <EngineBanner />
 
       {sttAvailable() ? (
         <button
