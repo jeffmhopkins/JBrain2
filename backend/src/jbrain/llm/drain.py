@@ -91,20 +91,30 @@ class AdmissionGate:
         self._sleep = sleep
         self._row: object = None
         self._read_at: float | None = None
+        self._refresh: asyncio.Future[None] | None = None
         _LIVE.add(self)
 
     async def closure(self) -> Closure | None:
         now = self._clock()
         if self._read_at is None or now - self._read_at >= self._ttl_s:
-            row: object = None
-            with contextlib.suppress(Exception):
-                row = await self._load()
-            self._row = row
+            # One read for a burst of callers: every local call admits through here, and a
+            # cold cache would otherwise send each of them to the database at once.
+            if self._refresh is None or self._refresh.done():
+                self._refresh = asyncio.ensure_future(self._read())
+            await asyncio.shield(self._refresh)
             self._read_at = now
         return closure_from(self._row, self._wall())
 
+    async def _read(self) -> None:
+        row: object = None
+        with contextlib.suppress(Exception):
+            row = await self._load()
+        self._row = row
+
     def invalidate(self) -> None:
+        # Drop an in-flight read too: it may have started before the write being announced.
         self._read_at = None
+        self._refresh = None
 
     async def wait_open(self) -> bool:
         """False when admission is open now; True once it reopened after a wait. Raises

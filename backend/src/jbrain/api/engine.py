@@ -9,8 +9,11 @@ docs/runbooks/STRIX_HALO_SETUP.md.
 
 from __future__ import annotations
 
+import contextlib
 import time
+from datetime import UTC
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -21,7 +24,13 @@ from jbrain.api.notes import ctx_for
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import drain, local_catalog
 from jbrain.llm import engine as engines
-from jbrain.llm.engine_switch import EngineSwitcher, SupervisorError, SwitchDeps, SwitchRefused
+from jbrain.llm.engine_switch import (
+    EngineSwitcher,
+    HoldRefused,
+    SupervisorError,
+    SwitchDeps,
+    SwitchRefused,
+)
 from jbrain.workflow.scheduler import quiet_window_guard
 
 router = APIRouter()
@@ -118,6 +127,49 @@ class EngineStateOut(BaseModel):
     guard: str | None
     # The in-flight switch, else the last one.
     switch: SwitchStatusOut | None
+    # When the effective engine last became effective (ISO), wherever that was written — a
+    # switch, or the update's deploy/local-engine.sh. Null before the first record.
+    effective_since: str | None = None
+    # Why the engine serving is not the one wanted, as recorded by whatever started it (a
+    # deploy fallback: "the Flash-Next engine did not start on the last update"; a failed
+    # switch). Only while desired != effective; null when they agree.
+    fallback_reason: str | None = None
+    # llama-server's own generation throughput (tokens/s, `llamacpp:predicted_tokens_seconds`
+    # on /metrics) for the effective engine's resident model — its average since that model
+    # loaded, read from the gateway. Null when nothing is resident or the read fails; never
+    # estimated.
+    decode_tps: float | None = None
+    decode_model: str | None = None
+
+
+_TPS_METRIC = "llamacpp:predicted_tokens_seconds"
+
+
+def parse_decode_tps(metrics: str) -> float | None:
+    """The generation-throughput gauge out of llama-server's Prometheus text, or None."""
+    for line in metrics.splitlines():
+        if line.startswith(_TPS_METRIC):
+            parts = line.split()
+            with contextlib.suppress(ValueError, IndexError):
+                value = float(parts[-1])
+                return round(value, 1) if value > 0 else None
+    return None
+
+
+async def _decode_tps(request: Request) -> tuple[float | None, str | None]:
+    """The first ready resident model's throughput gauge. Reads only what is RESIDENT (the
+    gateway client refuses a cold model's /metrics rather than loading it)."""
+    gateway = getattr(request.app.state, "local_gateway", None)
+    if gateway is None:
+        return None, None
+    try:
+        states = await gateway.running_states()
+        for served, state in sorted((states or {}).items()):
+            if state in ("", "ready"):
+                return parse_decode_tps(await gateway.metrics(served)), served
+    except Exception:  # noqa: BLE001 — a gauge, never a failure
+        return None, None
+    return None, None
 
 
 class HttpSupervisor:
@@ -165,16 +217,56 @@ class HttpSupervisor:
             raise SupervisorError(str(exc)) from exc
         return str(running) if running else None
 
-    async def toggle(self, action: str, service: str) -> int:
+    async def toggle(self, action: str, service: str, switch_id: str | None = None) -> int:
+        body: dict[str, str] = {"service": service}
+        if switch_id is not None and action == "start":
+            body["switch_id"] = switch_id
         try:
-            resp = await self._client.post(
-                f"/{action}", json={"service": service}, headers=self._headers
-            )
-        except httpx.HTTPError as exc:
+            resp = await self._client.post(f"/{action}", json=body, headers=self._headers)
+        except (httpx.HTTPError, AttributeError) as exc:
             raise SupervisorError(str(exc)) from exc
         if resp.status_code not in (202, 404):
             raise SupervisorError(f"{action} {service}: HTTP {resp.status_code}")
         return int(resp.status_code)
+
+    async def hold(self, switch_id: str, ttl_s: float) -> bool:
+        try:
+            resp = await self._client.post(
+                "/engine-switch/hold",
+                json={"id": switch_id, "ttl_s": ttl_s},
+                headers=self._headers,
+            )
+        except (httpx.HTTPError, AttributeError) as exc:
+            raise SupervisorError(str(exc)) from exc
+        if resp.status_code == 404:
+            return False  # a supervisor that predates the hold
+        if resp.status_code == 409:
+            detail = ""
+            with contextlib.suppress(ValueError, AttributeError):
+                detail = str(resp.json().get("detail", ""))
+            raise HoldRefused(detail or "another engine operation holds the box")
+        if resp.status_code >= 400:
+            raise SupervisorError(f"engine-switch hold: HTTP {resp.status_code}")
+        return True
+
+    async def release(self, switch_id: str) -> None:
+        with contextlib.suppress(httpx.HTTPError, AttributeError):
+            await self._client.post(
+                "/engine-switch/release", json={"id": switch_id}, headers=self._headers
+            )
+
+
+def refuse_while_switching(request: Request, what: str) -> None:
+    """409 for an engine-affecting operation (an update, a refresh, an engine start or
+    restart, jcode's power-on, a perplexity run) while an engine switch runs in this api.
+    The supervisor's switch hold refuses the same operations for any caller; this is the
+    api's own, immediate answer with the sentence the PWA shows."""
+    existing = getattr(request.app.state, "engine_switcher", None)
+    if isinstance(existing, EngineSwitcher) and existing.busy:
+        raise HTTPException(
+            status_code=409,
+            detail=f"an engine switch is in progress; {what} once it has finished",
+        )
 
 
 def switcher(request: Request) -> EngineSwitcher:
@@ -197,7 +289,10 @@ def switch_deps(request: Request, ctx: Any) -> SwitchDeps:
     router_ = getattr(state, "llm_router", None)
 
     async def _guard() -> str | None:
-        return None if maker is None else await quiet_window_guard(maker)
+        if maker is None:
+            return None
+        zone = await state.settings_store.owner_timezone(ctx)
+        return await quiet_window_guard(maker, tz=ZoneInfo(zone) if zone else UTC)
 
     async def _gtt_used() -> float | None:
         sample = await probe.sample() if probe is not None else None
@@ -274,12 +369,21 @@ async def engine_state(request: Request, ctx: Any) -> EngineStateOut:
     if deps.quiet_guard is not None:
         try:
             guard = await deps.quiet_guard()
-        except Exception:  # noqa: BLE001 — an unreadable schedule never blocks the read
-            guard = None
+        except Exception as exc:  # noqa: BLE001 — reported; the switch itself fails closed
+            guard = f"could not check the nightly window or running workflows ({exc})"
     sw = switcher(request)
     last = await sw.status(deps)
+    desired = await store.llm_local_engine(ctx)
+    meta = await request.app.state.settings_store.llm_local_engine_effective_meta(ctx)
+    since = meta.get("since")
+    reason = meta.get("reason")
+    tps, tps_model = await _decode_tps(request)
     return EngineStateOut(
-        desired=await store.llm_local_engine(ctx),
+        desired=desired,
+        effective_since=since if isinstance(since, str) else None,
+        fallback_reason=reason if isinstance(reason, str) and desired != effective else None,
+        decode_tps=tps,
+        decode_model=tps_model if tps is not None else None,
         effective=effective,
         services=services,
         running=running,
@@ -312,6 +416,15 @@ async def begin_switch(
     return SwitchStatusOut.model_validate(status)
 
 
+def cancel_switch(request: Request) -> SwitchStatusOut:
+    """Cancel the in-flight switch while it is draining — the one entry both surfaces use."""
+    try:
+        status = switcher(request).cancel()
+    except SwitchRefused as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    return SwitchStatusOut.model_validate(status)
+
+
 @router.get("/settings/llm/engine")
 async def read_engine(request: Request, owner: OwnerDep) -> EngineStateOut:
     """Which local engine is wanted and which serves, both containers' state, whether each is
@@ -330,3 +443,11 @@ async def switch_engine(body: EngineIn, request: Request, owner: OwnerDep) -> Sw
     502 when the supervisor is unreachable. Switching to the engine already serving alone
     re-persists the setting and answers `done`."""
     return await begin_switch(request, body, source="owner", ctx=ctx_for(owner))
+
+
+@router.post("/settings/llm/engine/cancel", status_code=202)
+async def cancel_engine_switch(request: Request, _owner: OwnerDep) -> SwitchStatusOut:
+    """Cancel the switch in flight — only while it is DRAINING, before anything has been
+    unloaded or stopped. 202 with the status (poll for `cancelled`; admission reopens and a
+    box event is recorded); 409 at any other stage or with no switch running."""
+    return cancel_switch(request)

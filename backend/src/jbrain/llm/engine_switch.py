@@ -15,10 +15,16 @@ every step is checked before the next:
   smoke     a text completion, a tool-call probe, and an image probe on a vision model
   done      persist the target as DESIRED too, reopen admission
 
+The whole run holds the supervisor's switch hold (`/engine-switch/hold`), so nothing else —
+the Ops toggle, a restart, jcode's power-on, an update — can start an engine or a one-shot
+under it, and the api refuses its own engine-affecting routes while `busy`.
+
 Any failure after the target was touched: stop it, wait until it is CONFIRMED down, restart
-the previous engine and record it as effective (`rolled_back`). If the target cannot be
-confirmed down nothing is restored (`failed`) — one engine down is recoverable, two up is a
-freeze. Admission is reopened on every exit. Each switch ends as a box event.
+the previous engine and record it as effective (`rolled_back`). Whatever cannot be confirmed,
+the switch ends by reading what is actually up and recording THAT as effective — one engine
+up: that one; none up: it says NO local engine is up; both up: it restores nothing and says
+so, because starting anything beside them is the freeze. Admission is reopened on every exit.
+Each switch ends as a box event.
 
 It runs as a background task: a Flash-Next load alone outlives an HTTP request and the
 Cloudflare 100 s limit, so the POST answers 202 and the status is polled. The status is held
@@ -42,7 +48,6 @@ import structlog
 from jbrain import box_events
 from jbrain.llm import drain, local_catalog
 from jbrain.llm import engine as engines
-from jbrain.llm.local_gateway import LocalGatewayError
 
 log = structlog.get_logger()
 
@@ -54,7 +59,9 @@ SMOKE = "smoke"
 DONE = "done"
 ROLLED_BACK = "rolled_back"
 FAILED = "failed"
-TERMINAL = frozenset({DONE, ROLLED_BACK, FAILED})
+# The owner cancelled while it was still draining — before anything was stopped.
+CANCELLED = "cancelled"
+TERMINAL = frozenset({DONE, ROLLED_BACK, FAILED, CANCELLED})
 
 
 class SwitchRefused(Exception):
@@ -70,12 +77,30 @@ class SupervisorError(Exception):
     """The supervisor could not be read or refused a toggle unexpectedly."""
 
 
+class HoldRefused(Exception):
+    """The supervisor would not grant the switch hold (another switch, a one-shot)."""
+
+
+class UnloadFailed(Exception):
+    def __init__(self, served: str, cause: Exception, released: list[str]) -> None:
+        super().__init__(f"{served}: {cause}")
+        self.served = served
+        self.cause = cause
+        self.released = released
+
+
 class Supervisor(Protocol):
     async def states(self) -> dict[str, str]: ...
 
     async def oneshot(self) -> str | None: ...
 
-    async def toggle(self, action: str, service: str) -> int: ...
+    async def toggle(self, action: str, service: str, switch_id: str | None = None) -> int: ...
+
+    # Take or renew the hold; False when the supervisor predates it (the api's own lock
+    # then is the only guard). Raises HoldRefused / SupervisorError.
+    async def hold(self, switch_id: str, ttl_s: float) -> bool: ...
+
+    async def release(self, switch_id: str) -> None: ...
 
 
 class SwitchGateway(Protocol):
@@ -101,7 +126,9 @@ class SwitchStore(Protocol):
 
     async def llm_local_engine_effective(self, ctx: Any) -> engines.Engine: ...
 
-    async def set_llm_local_engine_effective(self, ctx: Any, engine: engines.Engine) -> Any: ...
+    async def set_llm_local_engine_effective(
+        self, ctx: Any, engine: engines.Engine, *, reason: str | None = None
+    ) -> Any: ...
 
     async def set_llm_local_admission(self, ctx: Any, row: dict[str, Any]) -> None: ...
 
@@ -114,16 +141,19 @@ class SwitchStore(Protocol):
 class Timings:
     # In-flight local calls get this long to finish before the engine is stopped under them.
     drain_s: float = 60.0
-    # A stop or start must show in the supervisor's /status within this.
+    # A stop or start must show in the supervisor's /status within this. A stop that does not
+    # is re-issued once and waited for again before the switch gives up on it.
     settle_s: float = 120.0
     # Device memory must stop moving within this after the stop, or the start goes ahead.
     memory_settle_s: float = 60.0
     memory_settled_gb: float = 0.5
     poll_s: float = 2.0
-    # The admission row's deadline: past every bounded step above plus a cold Flash-Next load.
+    # The admission row's and the supervisor hold's deadline, re-extended at every stage, so a
+    # switch never outlives it while a crashed one cannot hold the box for long.
     admission_ttl_s: float = 30 * 60.0
-    # How long other processes may still trust a cached "open" after the closure is written.
-    gate_wait_s: float = drain.GATE_TTL_S
+    # After closing admission: other processes may trust a cached "open" for one gate TTL;
+    # this is that with margin for a call that read it just before the write.
+    gate_wait_s: float = 3.0
     # How long another process may keep routing by a cached effective engine
     # (`engines.ACTIVE_ENGINE_TTL_S`); admission reopens only once that has passed.
     engine_cache_s: float = engines.ACTIVE_ENGINE_TTL_S
@@ -137,7 +167,8 @@ class SwitchDeps:
     ctx: Any
     # Installed catalog ids (`settings.local_models`).
     local_models: Sequence[str]
-    # Why a switch should wait (a workflow run, the nightly window), or None.
+    # Why a switch should wait (a workflow run, the nightly window), or None. Raising is a
+    # refusal too: an unreadable schedule must not be read as a quiet box.
     quiet_guard: Callable[[], Awaitable[str | None]] | None = None
     # Device (GTT) memory in use, GB, or None when unreadable.
     memory_used_gb: Callable[[], Awaitable[float | None]] | None = None
@@ -189,6 +220,10 @@ class EngineSwitcher:
         self._task: asyncio.Task[None] | None = None
         self._status: dict[str, Any] | None = None
         self._effective_written_at: float | None = None
+        # Whether this run closed admission (so each stage write re-extends its deadline).
+        self._admission_closed = False
+        # Set by `cancel` while the run is draining; read before anything is stopped.
+        self._cancel_requested = False
 
     @property
     def busy(self) -> bool:
@@ -202,6 +237,24 @@ class EngineSwitcher:
         with contextlib.suppress(Exception):
             stored = await deps.store.llm_local_engine_switch(deps.ctx)
         return stored or (dict(self._status) if self._status is not None else None)
+
+    def cancel(self) -> dict[str, Any]:
+        """Ask the in-flight switch to stop — only while it is DRAINING, when nothing has been
+        unloaded or stopped yet, so cancelling costs nothing but the pause. The run notices at
+        its next drain poll, reopens admission and ends `cancelled`. SwitchRefused (409) at any
+        other moment: past draining, an engine is already being stopped, and the way back from
+        there is the rollback, not an abort."""
+        status = self._status
+        if not self.busy or status is None or status["stage"] != DRAINING:
+            stage = status["stage"] if status is not None and self.busy else "none"
+            raise SwitchRefused(
+                409,
+                f"only a switch that is still draining can be cancelled (stage: {stage}); "
+                "once it is stopping engines it runs to done or rolls back",
+            )
+        self._cancel_requested = True
+        status["notes"].append("cancel requested")
+        return dict(status)
 
     async def wait(self) -> None:
         """Until the in-flight switch ends (tests, shutdown)."""
@@ -225,17 +278,16 @@ class EngineSwitcher:
         await self._lock.acquire()
         try:
             status, previous, up = await self._preflight(deps, target, source=source, force=force)
+            self._status = status
+            await self._save(deps, status)
         except BaseException:
             self._lock.release()
             raise
         if status["stage"] == DONE:
-            self._status = status
-            await self._save(deps, status)
             self._lock.release()
             return dict(status)
-        self._status = status
-        await self._save(deps, status)
         self._task = asyncio.create_task(self._run(deps, status, previous, up))
+        self._task.add_done_callback(_log_task_failure)
         return dict(status)
 
     async def _preflight(
@@ -250,9 +302,14 @@ class EngineSwitcher:
                 409, f"a supervisor one-shot ({busy}) is running; switch once it has finished"
             )
         if not force and deps.quiet_guard is not None:
-            reason: str | None = None
-            with contextlib.suppress(Exception):
+            try:
                 reason = await deps.quiet_guard()
+            except Exception as exc:  # noqa: BLE001 — fail CLOSED, but say how to override
+                raise SwitchRefused(
+                    409,
+                    f"could not check the nightly window or running workflows ({exc}); "
+                    "send force: true to switch anyway.",
+                ) from exc
             if reason is not None:
                 raise SwitchRefused(
                     409,
@@ -275,7 +332,7 @@ class EngineSwitcher:
             raise SwitchRefused(
                 409,
                 f"the {engines.LABEL[target]} weights are not installed — install "
-                f"{sole.id} under Settings → Local models first. Nothing was changed.",
+                f"{sole.id} under On-box models first. Nothing was changed.",
             )
         previous = await deps.store.llm_local_engine_effective(deps.ctx)
         up: list[engines.Engine] = [
@@ -305,6 +362,18 @@ class EngineSwitcher:
             )
             status["notes"].append(f"{target} was already the only engine up; setting re-persisted")
             return status, previous, up
+        # Last: the hold is what the run keeps, so take it only once nothing else refuses.
+        try:
+            held = await deps.supervisor.hold(status["id"], self.timings.admission_ttl_s)
+        except HoldRefused as exc:
+            raise SwitchRefused(409, f"the supervisor refused the switch: {exc}") from exc
+        except SupervisorError as exc:
+            raise SwitchRefused(502, f"supervisor unreachable: {exc}") from exc
+        if not held:
+            status["notes"].append(
+                "this supervisor predates the switch hold — only the api's own routes are "
+                "refused while it runs"
+            )
         return status, previous, up
 
     async def _save(self, deps: SwitchDeps, status: dict[str, Any]) -> None:
@@ -315,7 +384,20 @@ class EngineSwitcher:
     async def _stage(self, deps: SwitchDeps, status: dict[str, Any], stage: str) -> None:
         status["stage"] = stage
         status["stages"].append({"stage": stage, "at": _now_iso()})
+        if stage not in TERMINAL:
+            await self._extend(deps, status)
         await self._save(deps, status)
+
+    async def _extend(self, deps: SwitchDeps, status: dict[str, Any]) -> None:
+        """Push the admission row's and the supervisor hold's deadlines out again, so a long
+        switch never has admission reopen (or the hold lapse) in the middle of it."""
+        ttl = self.timings.admission_ttl_s
+        if self._admission_closed:
+            row = drain.closed_row(f"switching to {status['target']}", ttl_s=ttl, now=self._wall())
+            with contextlib.suppress(Exception):
+                await deps.store.set_llm_local_admission(deps.ctx, row)
+        with contextlib.suppress(Exception):
+            await deps.supervisor.hold(status["id"], ttl)
 
     async def _run(
         self,
@@ -326,6 +408,8 @@ class EngineSwitcher:
     ) -> None:
         target: engines.Engine = status["target"]
         self._effective_written_at = None
+        self._cancel_requested = False
+        outcome, reason = FAILED, "the switch did not finish"
         try:
             try:
                 outcome, reason = await self._switch(deps, status, previous, up)
@@ -335,21 +419,32 @@ class EngineSwitcher:
             finally:
                 await self._await_engine_caches()
                 await self._open_admission(deps)
+                with contextlib.suppress(Exception):
+                    await deps.supervisor.release(status["id"])
             status["reason"] = reason
             status["ended_at"] = _now_iso()
             await self._stage(deps, status, outcome)
-            await box_events.record(
-                box_events.ENGINE_SWITCH,
-                target,
-                detail=(
-                    f"switched from {previous} to {target}"
-                    if outcome == DONE
-                    else f"{outcome.replace('_', ' ')}: {reason}"
-                ),
-                status="ok" if outcome == DONE else "failed",
-            )
-            log.info("engine_switch.ended", target=target, previous=previous, outcome=outcome)
+            try:
+                await box_events.record(
+                    box_events.ENGINE_SWITCH,
+                    target,
+                    detail=(
+                        f"switched from {previous} to {target}"
+                        if outcome == DONE
+                        else f"{outcome.replace('_', ' ')}: {reason}"
+                    ),
+                    status="ok" if outcome in (DONE, CANCELLED) else "failed",
+                )
+            except Exception:  # noqa: BLE001 — narration never decides the outcome
+                log.warning("engine_switch.box_event_failed", exc_info=True)
         finally:
+            log.info(
+                "engine_switch.ended",
+                target=target,
+                previous=previous,
+                outcome=outcome,
+                reason=reason,
+            )
             self._lock.release()
 
     async def _switch(
@@ -361,50 +456,61 @@ class EngineSwitcher:
     ) -> tuple[str, str | None]:
         target: engines.Engine = status["target"]
         service = engines.SERVICE[target]
+        status["was_up"] = list(up)
         await self._drain(deps, status, target)
+        # The last moment a cancel is honoured: nothing below this line is undone by one.
+        if self._cancel_requested:
+            return CANCELLED, f"cancelled while draining — nothing was stopped; {previous} serves"
 
         await self._stage(deps, status, STOPPING)
         try:
             await self._unload_resident(deps, f"switching the local engine to {target}")
-        except LocalGatewayError as exc:
+        except UnloadFailed as exc:
+            released = ", ".join(exc.released) or "none"
             return FAILED, (
-                f"could not unload every resident model ({exc}); nothing was stopped and "
-                f"{previous} still serves"
+                f"could not unload {exc.served} ({exc.cause}); no engine was stopped and "
+                f"{previous} still serves, but these were already unloaded and reload on "
+                f"their next use: {released}"
             )
         others: list[engines.Engine] = [e for e in up if e != target]
-        for engine in others:
-            other = engines.SERVICE[engine]
-            try:
-                await deps.supervisor.toggle("stop", other)
-            except SupervisorError as exc:
-                return (
-                    FAILED,
-                    f"the supervisor would not stop {other} ({exc}); {service} was NOT started",
-                )
-            if not await self._wait_for(deps, other, up=False):
-                return FAILED, f"{other} did not report stopped; {service} was NOT started"
-        await self._settle_memory(deps, status)
-
         # Put back ONE engine on failure — the effective one if it was up, else the first that
         # was. Restoring two would recreate the very state this exists to prevent.
         restore: engines.Engine | None = (
             previous if previous in others else (others[0] if others else None)
         )
+        for engine in others:
+            other = engines.SERVICE[engine]
+            if not await self._stop_confirmed(deps, other):
+                return await self._settle(
+                    deps, f"{other} did not stop; {service} was NOT started", restore, status
+                )
+        await self._settle_memory(deps, status)
 
         await self._stage(deps, status, STARTING)
         if target not in up:
+            busy = await self._oneshot_now(deps)
+            if busy is not None:
+                return await self._settle(
+                    deps, f"a {busy} one-shot started; {service} was NOT started", restore, status
+                )
             try:
-                code = await deps.supervisor.toggle("start", service)
+                code = await deps.supervisor.toggle("start", service, status["id"])
             except SupervisorError as exc:
                 return await self._rollback(
-                    deps, target, restore, f"{service} did not start ({exc})"
+                    deps, target, restore, f"{service} did not start ({exc})", status
                 )
             if code == 404:
                 return await self._rollback(
-                    deps, target, restore, f"the {target} engine is not provisioned (404 on start)"
+                    deps,
+                    target,
+                    restore,
+                    f"the {target} engine is not provisioned (404 on start)",
+                    status,
                 )
         if not await self._wait_for(deps, service, up=True):
-            return await self._rollback(deps, target, restore, f"{service} did not report running")
+            return await self._rollback(
+                deps, target, restore, f"{service} did not report running", status
+            )
         # It is what is up now: residency's engine gate and the config re-stamp before the load
         # below must follow the target, not the engine just stopped.
         await self._set_effective(deps, target)
@@ -426,14 +532,14 @@ class EngineSwitcher:
                     await deps.gateway.load(model.served_model)
             except Exception as exc:  # noqa: BLE001 — every load failure is a rollback
                 return await self._rollback(
-                    deps, target, restore, f"{model.served_model} did not load ({exc})"
+                    deps, target, restore, f"{model.served_model} did not load ({exc})", status
                 )
             await self._stage(deps, status, SMOKE)
             failure = await self._smoke(deps.gateway, model, status)
             if failure is not None:
-                with contextlib.suppress(Exception):
-                    await deps.gateway.unload(model.served_model)
-                return await self._rollback(deps, target, restore, f"smoke test failed: {failure}")
+                return await self._rollback(
+                    deps, target, restore, f"smoke test failed: {failure}", status
+                )
 
         await deps.store.set_llm_local_engine(deps.ctx, target)
         await self._set_effective(deps, target)
@@ -465,6 +571,7 @@ class EngineSwitcher:
         target: engines.Engine,
         restore: engines.Engine | None,
         why: str,
+        status: dict[str, Any],
     ) -> tuple[str, str]:
         """Stop the target and restart `restore`, but only once the target is CONFIRMED down."""
         service = engines.SERVICE[target]
@@ -472,29 +579,94 @@ class EngineSwitcher:
         # model the stop is about to free (a half-loaded one included).
         with contextlib.suppress(Exception):
             await self._unload_resident(deps, f"rolling back the switch to {target}")
-        down = False
-        try:
-            code = await deps.supervisor.toggle("stop", service)
-            down = code == 404 or await self._wait_for(deps, service, up=False)
-        except SupervisorError:
-            down = False
-        if not down:
-            return FAILED, (
+        if not await self._stop_confirmed(deps, service):
+            return await self._settle(
+                deps,
                 f"{why}; {service} could not be confirmed stopped, so nothing was restored "
-                "(starting the previous engine beside it could freeze the box) — switch again"
+                "(starting the previous engine beside it could freeze the box)",
+                None,
+                status,
             )
-        if restore is None:
-            return ROLLED_BACK, f"{why}; no engine was running before, so none was put back"
-        restore_service = engines.SERVICE[restore]
+        return await self._settle(deps, why, restore, status)
+
+    async def _settle(
+        self,
+        deps: SwitchDeps,
+        why: str,
+        restore: engines.Engine | None,
+        status: dict[str, Any],
+    ) -> tuple[str, str]:
+        """End a failed switch on what is ACTUALLY up, never on a stale belief.
+
+        One engine up: record it as effective. Both up: restore nothing (that is the freeze
+        state) and say so. None up: start `restore` if there is one and it may start (no
+        one-shot), confirm it, record it — `rolled_back`; otherwise record the previous engine
+        as effective (what the next update brings back) and say NO local engine is up."""
         try:
-            code = await deps.supervisor.toggle("start", restore_service)
+            states = await deps.supervisor.states()
         except SupervisorError:
-            code = 0
-        if code != 202 or not await self._wait_for(deps, restore_service, up=True):
-            return FAILED, f"{why}; {restore} could NOT be put back — switch to it again"
-        # The desire is unchanged (the switch failed); what serves is the restored engine.
-        await self._set_effective(deps, restore)
-        return ROLLED_BACK, f"{why}; {restore} was put back"
+            states = None
+        if states is None:
+            return FAILED, f"{why}; the supervisor could not be read, so what is up is unknown"
+        up: list[engines.Engine] = [
+            e for e in engines.ENGINES if engines.holds_memory(states.get(engines.SERVICE[e], ""))
+        ]
+        if len(up) == 1:
+            await self._set_effective(deps, up[0], why)
+            return FAILED, f"{why}; {up[0]} is serving"
+        if len(up) > 1:
+            return FAILED, (
+                f"{why}; BOTH engines are up — nothing was started; switch again to stop one"
+            )
+        fallback: engines.Engine = restore or status["previous"]
+        if restore is None and not status.get("was_up"):
+            return ROLLED_BACK, f"{why}; no engine was running before, so none was put back"
+        if restore is not None:
+            busy = await self._oneshot_now(deps)
+            started = False
+            if busy is None:
+                try:
+                    code = await deps.supervisor.toggle(
+                        "start", engines.SERVICE[restore], status["id"]
+                    )
+                    started = code == 202 and await self._wait_for(
+                        deps, engines.SERVICE[restore], up=True
+                    )
+                except SupervisorError:
+                    started = False
+            if started:
+                await self._set_effective(deps, restore, why)
+                return ROLLED_BACK, f"{why}; {restore} was put back"
+            why = f"{why}; {restore} could NOT be put back" + (
+                f" (a {busy} one-shot is running)" if busy else ""
+            )
+        await self._set_effective(deps, fallback, f"{why}; no local engine is up")
+        status["no_engine_up"] = True
+        return FAILED, (
+            f"{why}. NO local engine is up — local models are unavailable until you switch "
+            f"again (or the next Ops → Update brings {fallback} back)"
+        )
+
+    async def _stop_confirmed(self, deps: SwitchDeps, service: str) -> bool:
+        """Stop `service` and wait until /status reports it down; re-issue the stop once if it
+        does not show. True when confirmed (or the container does not exist)."""
+        for _ in range(2):
+            try:
+                if await deps.supervisor.toggle("stop", service) == 404:
+                    return True
+            except SupervisorError:
+                pass
+            if await self._wait_for(deps, service, up=False):
+                return True
+        return False
+
+    async def _oneshot_now(self, deps: SwitchDeps) -> str | None:
+        """A one-shot that started since preflight (an older supervisor without the hold
+        cannot refuse it). Unreadable counts as busy: a start under an update is the freeze."""
+        try:
+            return await deps.supervisor.oneshot()
+        except SupervisorError:
+            return "unknown (supervisor unreadable)"
 
     async def _drain(self, deps: SwitchDeps, status: dict[str, Any], target: str) -> None:
         """Close admission, let other processes see it, then wait for the gateway to go idle."""
@@ -502,11 +674,11 @@ class EngineSwitcher:
             f"switching to {target}", ttl_s=self.timings.admission_ttl_s, now=self._wall()
         )
         await deps.store.set_llm_local_admission(deps.ctx, row)
+        self._admission_closed = True
         drain.invalidate_cached()
-        # A process that read "open" just before the write keeps trusting it for one TTL.
         await self._sleep(self.timings.gate_wait_s)
         deadline = self._clock() + self.timings.drain_s
-        while True:
+        while not self._cancel_requested:
             busy = await self._in_flight(deps.gateway)
             if not busy:
                 return
@@ -543,13 +715,19 @@ class EngineSwitcher:
 
     async def _unload_resident(self, deps: SwitchDeps, why: str) -> None:
         """Unload through the client — the one chokepoint that discharges the reservation
-        ledger and narrates to box events. An unreachable gateway holds nothing."""
+        ledger and narrates to box events. An unreachable gateway holds nothing. A failure
+        names the model and what was already released before it."""
         if deps.gateway is None:
             return
         states = await deps.gateway.running_states()
+        released: list[str] = []
         with box_events.because(why):
             for served in sorted(states or {}):
-                await deps.gateway.unload(served)
+                try:
+                    await deps.gateway.unload(served)
+                except Exception as exc:  # noqa: BLE001 — reported with what was released
+                    raise UnloadFailed(served, exc, released) from exc
+                released.append(served)
 
     async def _wait_for(self, deps: SwitchDeps, service: str, *, up: bool) -> bool:
         """Poll /status until `service` is up (or down). False on timeout or an unreadable
@@ -584,8 +762,10 @@ class EngineSwitcher:
                 return
             last = now
 
-    async def _set_effective(self, deps: SwitchDeps, engine: engines.Engine) -> None:
-        await deps.store.set_llm_local_engine_effective(deps.ctx, engine)
+    async def _set_effective(
+        self, deps: SwitchDeps, engine: engines.Engine, reason: str | None = None
+    ) -> None:
+        await deps.store.set_llm_local_engine_effective(deps.ctx, engine, reason=reason)
         self._effective_written_at = self._clock()
 
     async def _await_engine_caches(self) -> None:
@@ -599,11 +779,21 @@ class EngineSwitcher:
             await self._sleep(left)
 
     async def _open_admission(self, deps: SwitchDeps) -> None:
+        self._admission_closed = False
         try:
             await deps.store.set_llm_local_admission(deps.ctx, dict(drain.OPEN_ROW))
         except Exception:  # noqa: BLE001 — the row's deadline reopens it if this write fails
             log.warning("engine_switch.reopen_failed", exc_info=True)
         drain.invalidate_cached()
+
+
+def _log_task_failure(task: asyncio.Task[None]) -> None:
+    """Observe the background task's outcome, so nothing it raised is silently dropped."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("engine_switch.task_failed", error=repr(exc))
 
 
 async def reset_after_restart(store: SwitchStore, ctx: Any) -> None:

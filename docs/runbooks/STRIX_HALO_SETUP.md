@@ -1386,7 +1386,12 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
    walks *draining* (local calls pause, in-flight ones get up to 60 s to finish) → *stopping*
    → *starting* → *loading* → *smoke* (a text reply, a tool call, an image read) → *done*. Any
    failure stops Flash-Next and puts Standard back (*rolled_back*, with the reason); the
-   switch is a box event either way. It refuses while an update or another one-shot runs, in
+   switch is a box event either way. While it is still *draining* it can be cancelled
+   (`POST /api/settings/llm/engine/cancel`) at no cost; after that it runs to the end. If an
+   engine cannot be confirmed stopped or started, the switch reports what is actually up — and
+   says **NO local engine is up** when nothing is; switch again, or Ops → Update brings the
+   selected engine back. While it runs, Ops Update/Restart/Start of an engine and code mode's
+   power-on are refused. It refuses while an update or another one-shot runs, in
    the 30 minutes before a nightly schedule fires or the hour after, and while a workflow run
    is executing — send `"force": true` to switch anyway. While Flash-Next serves, **every**
    local task runs on it with its own sampling and thinking settings; your per-task picks are

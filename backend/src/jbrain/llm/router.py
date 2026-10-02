@@ -316,7 +316,7 @@ class LocalAdmitter(Protocol):
     coordinator on a cloud-only box — so a local load can never bypass admission and
     co-load past the unified-memory budget."""
 
-    async def ensure_room(self, served_model: str) -> None: ...
+    async def ensure_room(self, served_model: str) -> str | None: ...
 
 
 def _reading(messages: Sequence[LlmMessage]) -> str:
@@ -530,11 +530,34 @@ class LlmRouter:
             fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
             self._kv_prefix.note_prefix_used(model, fingerprint)
 
-    async def _admit_local(self, provider: str, model: str) -> None:
+    async def _admit_local(self, provider: str, model: str) -> str:
+        """Admit a local model; the served name residency actually admitted (it differs only
+        when the engine changed under the call — a remap). None from a fake means "as asked"."""
         if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
-            await self._residency.ensure_room(model)
+            return await self._residency.ensure_room(model) or model
+        return model
 
-    async def admit_local_load(self, served_model: str) -> None:
+    async def _admitted(
+        self,
+        task: str,
+        strength: str | None,
+        spec_override: str | None,
+        resolved: tuple[str, str, str | None],
+    ) -> tuple[str, str, str | None]:
+        """Admit the resolved route and return the one to SEND. When residency admitted a
+        different model than the router resolved (the engine switched between the two reads),
+        resolve again — the route now sees the same engine — and if the two still disagree, send
+        the admitted name with the effort re-gated on it. Never send one name and admit another."""
+        provider, model, effort = resolved
+        admitted = await self._admit_local(provider, model)
+        if admitted == model:
+            return resolved
+        again = await self._resolve_live(task, strength, spec_override)
+        if again[:2] == (provider, admitted):
+            return again
+        return provider, admitted, effort if _reasoning_capable(provider, admitted) else None
+
+    async def admit_local_load(self, served_model: str) -> str:
         """Make room for a local model a CALLER is about to load itself, through the same
         admission a routed completion gets.
 
@@ -542,8 +565,9 @@ class LlmRouter:
         (a cold model has no slots to restore into) and so cannot let the priming completion be
         what loads it. Without this it would either skip admission — co-loading past the
         unified-memory budget, on a box that hard-locks when that happens — or reach into
-        `_admit_local`, which is the same bypass with extra steps."""
-        await self._admit_local(local_catalog.LOCAL_PROVIDER, served_model)
+        `_admit_local`, which is the same bypass with extra steps. Returns the served name
+        admitted, which is the one to load."""
+        return await self._admit_local(local_catalog.LOCAL_PROVIDER, served_model)
 
     def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
         """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
@@ -843,12 +867,13 @@ class LlmRouter:
         # agent model) — same precedence as in converse_stream, so a background
         # completion (e.g. the research-report titler) can run on the exact model the chat
         # turn will use, no separate route and no model swap.
-        provider, model, reasoning_effort = await self._route(task, strength, spec_override)
+        provider, model, reasoning_effort = await self._admitted(
+            task, strength, spec_override, await self._route(task, strength, spec_override)
+        )
         # `sampling` is the prompt's per-task override (its `.prompt` `config: sampling:`
         # block); it merges over the resolved model's recommended defaults.
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        await self._admit_local(provider, model)
         start = time.perf_counter()
         result = await client.complete(
             model=model,
@@ -920,12 +945,13 @@ class LlmRouter:
         `spec_override` steers the MODEL for this turn (the omnibox's per-conversation
         pick), outranking the resolved route; a malformed/can't-serve override is
         ignored."""
-        provider, model, reasoning_effort = await self._route(task, strength, spec_override)
+        provider, model, reasoning_effort = await self._admitted(
+            task, strength, spec_override, await self._route(task, strength, spec_override)
+        )
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        await self._admit_local(provider, model)
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         start = time.perf_counter()
         turn = await client.converse(
@@ -981,12 +1007,13 @@ class LlmRouter:
         model's reasoning for this turn (gated to reasoning-capable models, like
         `converse`); `spec_override` steers the MODEL (the per-conversation pick),
         outranking the resolved route."""
-        provider, model, reasoning_effort = await self._route(task, strength, spec_override)
+        provider, model, reasoning_effort = await self._admitted(
+            task, strength, spec_override, await self._route(task, strength, spec_override)
+        )
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        await self._admit_local(provider, model)
         final: LlmTurn | None = None
         first_part = True
         start = time.perf_counter()

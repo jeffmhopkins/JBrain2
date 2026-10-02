@@ -215,7 +215,11 @@ async def chat_completions(request: Request) -> Response:
                 # fail this swap than crash the box loading a model that can't fit.
                 if residency is not None:
                     try:
-                        await residency.ensure_room(served)
+                        # Send what was ADMITTED: a switch between our engine read and
+                        # residency's would otherwise admit one model and send another.
+                        admitted = await residency.ensure_room(served)
+                        if admitted:
+                            payload["model"] = admitted
                     except (ResidencyError, gpu_guard.GpuBudgetError):
                         # GpuBudgetError joins ResidencyError here, and the omission was the
                         # worst kind: it is not a subclass, so it fell to the blanket arm,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hmac
 import re
 import threading
+import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
 
@@ -56,6 +57,36 @@ class RestartResponse(BaseModel):
 
 class ServiceRequest(BaseModel):
     service: str
+    # The engine switch's hold id: the one start the hold lets through (see
+    # `/engine-switch/hold`). Any other engine start is refused while a switch holds.
+    switch_id: str | None = None
+
+
+# The api's switch ids are uuid hex; a bounded shape keeps the field from carrying
+# anything else into a log line.
+SWITCH_ID_RE = r"^[0-9a-f]{8,64}$"
+# A hold the api forgot to release (it crashed mid-switch) lapses on its own; the api
+# renews it at every stage, so this only bounds the stall after a crash.
+MAX_SWITCH_HOLD_S = 3600.0
+
+
+class SwitchHoldRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=SWITCH_ID_RE)
+    ttl_s: float = Field(gt=0, le=MAX_SWITCH_HOLD_S)
+
+
+class SwitchReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=SWITCH_ID_RE)
+
+
+class SwitchHoldResponse(BaseModel):
+    held: bool
+    id: str | None = None
+    remaining_s: float = 0.0
 
 
 class ServiceActionResponse(BaseModel):
@@ -305,7 +336,75 @@ def create_app(
     # routes on a threadpool, so a plain lock serialises every engine start/restart.
     engine_lock = threading.Lock()
 
-    def _engine_refusal(service: str) -> str | None:
+    # The api's engine switch (FLASH_NEXT_ENGINE_PLAN F3a) holds this for its whole
+    # run, so nothing else starts an engine or a one-shot under it — the Ops toggle and
+    # Restart, jcode's power-on, an update, a refresh — even a caller that never asked
+    # the api. In memory: a supervisor restart drops it, which ends the guard early
+    # rather than wedging the box; the api's own in-process lock still refuses its own
+    # routes.
+    switch_hold: dict[str, float | str | None] = {"id": None, "until": 0.0}
+
+    def _held_by() -> str | None:
+        """The live hold's id, or None (none, or past its deadline). Under the lock."""
+        until = switch_hold["until"]
+        if switch_hold["id"] is None or not isinstance(until, float):
+            return None
+        if time.monotonic() >= until:
+            switch_hold.update(id=None, until=0.0)
+            return None
+        return str(switch_hold["id"])
+
+    def _switch_refusal(switch_id: str | None = None) -> str | None:
+        held = _held_by()
+        if held is not None and held != switch_id:
+            return "an engine switch is in progress; try again once it has finished"
+        return None
+
+    def _refuse_while_switching() -> None:
+        reason = _switch_refusal()
+        if reason is not None:
+            raise HTTPException(status_code=409, detail=reason)
+
+    @authed.post("/engine-switch/hold")
+    def hold_switch(body: SwitchHoldRequest) -> SwitchHoldResponse:
+        """Take (or renew, with the same id) the switch hold. 409 while another switch
+        holds it or any one-shot runs — the switch must not start under an update."""
+        with engine_lock:
+            held = _held_by()
+            if held is not None and held != body.id:
+                raise HTTPException(
+                    status_code=409, detail="another engine switch holds it"
+                )
+            busy = gateway.running_oneshot()
+            if held is None and busy is not None:
+                raise HTTPException(
+                    status_code=409, detail=f"a {busy} one-shot is running"
+                )
+            switch_hold.update(id=body.id, until=time.monotonic() + body.ttl_s)
+            return SwitchHoldResponse(held=True, id=body.id, remaining_s=body.ttl_s)
+
+    @authed.post("/engine-switch/release")
+    def release_switch(body: SwitchReleaseRequest) -> SwitchHoldResponse:
+        # Idempotent, and only the holder releases: a late release from a switch whose
+        # hold lapsed must not end the next one's.
+        with engine_lock:
+            if _held_by() == body.id:
+                switch_hold.update(id=None, until=0.0)
+            return SwitchHoldResponse(held=_held_by() is not None)
+
+    @authed.get("/engine-switch")
+    def switch_state() -> SwitchHoldResponse:
+        with engine_lock:
+            held = _held_by()
+            until = switch_hold["until"]
+            remaining = until - time.monotonic() if isinstance(until, float) else 0.0
+            return SwitchHoldResponse(
+                held=held is not None,
+                id=held,
+                remaining_s=max(0.0, remaining) if held else 0.0,
+            )
+
+    def _engine_refusal(service: str, switch_id: str | None = None) -> str | None:
         """Why `service` (an engine) must not be started now, or None. One engine at a
         time (FLASH_NEXT_ENGINE_PLAN §4d), enforced HERE because every caller that
         starts an engine - the debug switch, the Ops toggle and Restart, jcode's power
@@ -313,7 +412,11 @@ def create_app(
 
         ANY one-shot refuses, not only perplexity: an update/refresh/rebuild/provision
         is itself starting and stopping engines (or compiling one) with docker
-        directly, and a start from here would race it."""
+        directly, and a start from here would race it. A held engine switch refuses
+        every start but its own."""
+        switching = _switch_refusal(switch_id)
+        if switching is not None:
+            return switching
         busy = gateway.running_oneshot()
         if busy is not None:
             return f"a {busy} one-shot is running; start {service} once it has finished"
@@ -323,8 +426,8 @@ def create_app(
                 return f"{c.service} is {c.state}; stop it before {service}"
         return None
 
-    def _guard_engine_start(service: str) -> None:
-        reason = _engine_refusal(service)
+    def _guard_engine_start(service: str, switch_id: str | None = None) -> None:
+        reason = _engine_refusal(service, switch_id)
         if reason is not None:
             raise HTTPException(status_code=409, detail=reason)
 
@@ -389,7 +492,7 @@ def create_app(
         # An unknown/never-created service raises UnknownServiceError -> 404.
         if body.service in ENGINE_SERVICES:
             with engine_lock:
-                _guard_engine_start(body.service)
+                _guard_engine_start(body.service, body.switch_id)
                 gateway.start(body.service)
         else:
             gateway.start(body.service)
@@ -491,12 +594,14 @@ def create_app(
 
     @authed.post("/update", status_code=202)
     def start_update() -> UpdateStartResponse:
-        try:
-            return UpdateStartResponse(updater=gateway.start_update())
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="update already running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return UpdateStartResponse(updater=gateway.start_update())
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="update already running"
+                ) from None
 
     @authed.get("/update/status")
     def update_status(
@@ -509,12 +614,14 @@ def create_app(
 
     @authed.post("/export", status_code=202)
     def start_export() -> OneshotStartResponse:
-        try:
-            return OneshotStartResponse(oneshot=gateway.start_export())
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="another one-shot is running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return OneshotStartResponse(oneshot=gateway.start_export())
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="another one-shot is running"
+                ) from None
 
     @authed.get("/export/status")
     def export_status(
@@ -529,12 +636,14 @@ def create_app(
     def start_import(body: ImportStartRequest) -> OneshotStartResponse:
         if not IMPORT_ARCHIVE_RE.fullmatch(body.archive):
             raise HTTPException(status_code=400, detail="bad archive name")
-        try:
-            return OneshotStartResponse(oneshot=gateway.start_import(body.archive))
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="another one-shot is running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return OneshotStartResponse(oneshot=gateway.start_import(body.archive))
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="another one-shot is running"
+                ) from None
 
     @authed.get("/import/status")
     def import_status(
@@ -547,12 +656,14 @@ def create_app(
 
     @authed.post("/reset", status_code=202)
     def start_reset() -> OneshotStartResponse:
-        try:
-            return OneshotStartResponse(oneshot=gateway.start_reset())
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="another one-shot is running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return OneshotStartResponse(oneshot=gateway.start_reset())
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="another one-shot is running"
+                ) from None
 
     @authed.get("/reset/status")
     def reset_status(
@@ -568,12 +679,14 @@ def create_app(
         # The PWA "Download" action: sync local-model weights on demand (no git pull,
         # no rebuild). Shares the one-shot mutual-exclusion guard, so it 409s during
         # an update/export/import/reset rather than racing over .env and the weights.
-        try:
-            return OneshotStartResponse(oneshot=gateway.start_provision())
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="another one-shot is running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return OneshotStartResponse(oneshot=gateway.start_provision())
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="another one-shot is running"
+                ) from None
 
     @authed.get("/provision/status")
     def provision_status(
@@ -592,12 +705,14 @@ def create_app(
         # reaches the shell-quoted command; shares the one-shot mutual-exclusion guard.
         if body.service not in {c.service for c in gateway.list_containers()}:
             raise UnknownServiceError(body.service)
-        try:
-            return OneshotStartResponse(oneshot=gateway.start_rebuild(body.service))
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="another one-shot is running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return OneshotStartResponse(oneshot=gateway.start_rebuild(body.service))
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="another one-shot is running"
+                ) from None
 
     @authed.get("/rebuild/status")
     def rebuild_status(
@@ -617,12 +732,14 @@ def create_app(
         # live-service validation and one-shot mutual exclusion as rebuild.
         if body.service not in {c.service for c in gateway.list_containers()}:
             raise UnknownServiceError(body.service)
-        try:
-            return OneshotStartResponse(oneshot=gateway.start_refresh(body.service))
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="another one-shot is running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return OneshotStartResponse(oneshot=gateway.start_refresh(body.service))
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="another one-shot is running"
+                ) from None
 
     @authed.get("/refresh/status")
     def refresh_status(
@@ -644,14 +761,16 @@ def create_app(
             raise HTTPException(status_code=400, detail="bad model path")
         if FLASH_NEXT_SERVICE not in {c.service for c in gateway.list_containers()}:
             raise UnknownServiceError(FLASH_NEXT_SERVICE)
-        try:
-            return OneshotStartResponse(
-                oneshot=gateway.start_perplexity(body.model_path, body.chunks)
-            )
-        except UpdateInProgressError:
-            raise HTTPException(
-                status_code=409, detail="another one-shot is running"
-            ) from None
+        with engine_lock:
+            _refuse_while_switching()
+            try:
+                return OneshotStartResponse(
+                    oneshot=gateway.start_perplexity(body.model_path, body.chunks)
+                )
+            except UpdateInProgressError:
+                raise HTTPException(
+                    status_code=409, detail="another one-shot is running"
+                ) from None
 
     @authed.get("/perplexity/status")
     def perplexity_status(
