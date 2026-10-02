@@ -24,7 +24,7 @@ upstream source and published measurements). §10 records what they changed.
 | Container | New `flash-next` compose profile, own image, own llama-swap config. Never co-resident with `local-llm`. |
 | Switching | PWA (Ops), no terminal. Drain → swap → smoke test → automatic rollback on failure. |
 | Routing | **Remap all calls**, inside the API — not by model-name aliases at the gateway (§4c). |
-| Slots | **4 role-pinned slots, each its own 262,144-cell KV** (`-np 4 -c 1048576`). Slots exist to **keep each workload's prefix warm**, not for concurrency (§4a). |
+| Slots | **5 role-pinned slots sharing one 524,288-cell (512k) `--kv-unified` pool**, each role capped by a router-enforced **reservation**: agent 256k, ingest/analysis 64k, agents/research 128k (jcode shares this slot — no reservation of its own), and two 32k slots for the jpanel pet and small-prompt tasks (§4a). Slots exist to **keep each workload's prefix warm**, not for concurrency. Decided 2026-10-01 from the F2 measurements (§3a): ~74.2 GiB, the size measured directly as the 2×262k row. |
 | Checkpoints | **8 per slot** to start; 16 only once F2 has measured their real cost (§3). |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector (904 MB). |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
@@ -51,6 +51,37 @@ which, so none is mistaken for a prediction of this configuration.
 | [EngramHalo.cpp](https://github.com/Aristo94/EngramHalo.cpp) | llama.cpp fork, MIT, HIP-first | 30–40 tok/s reported on Vulkan with MTP. Multi-slot support unverified. |
 | [unsloth GGUF discussions #52](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/discussions/52) | ROCm 7.x | Garbage output on gfx1151 before #27941; fixed by building from it. |
 
+## 3a. Measured on the box (F2 sitting 2026-10-01)
+
+UD-IQ4_XS, q8_0 KV, every layer offloaded on mainline Vulkan (pin `869034b`), engram table
+`-ot …=CPU` + `--load-mode mmap`. Each row is a cold load, read as GTT used from host metrics
+with nothing else resident (standard engine stopped; baseline GTT 0.06 GiB).
+
+| Layout (slots × cells per slot) | Total cells | GTT used |
+|---|---|---|
+| 2 × 65,536 | 131,072 | 63.62 GiB |
+| 1 × 131,072 | 131,072 | 63.76 GiB |
+| 1 × 262,144 | 262,144 | 67.45 GiB |
+| 2 × 262,144 | 524,288 | 74.21 GiB |
+| 4 × 262,144 (sitting 1, before the override fix) | 1,048,576 | 96.9 GiB — see below |
+
+**Fit: GTT ≈ 60.2 GiB + 7.0 GiB per 262,144 cells; slot count costs ~nothing** (2×64k equals
+1×131k within noise). The per-cell cost is ~1.75× the §3 derivation (KV + QSA indexer), and the
+fixed cost (weights without the engram table, compute, vision) is ~60 GiB as derived.
+
+- The 4×262k point sits ~8.7 GiB above the fit (88.2 predicted). It was taken in sitting 1 under
+  a different load path and is unexplained; it is not re-measured because at that size host
+  free memory reached the gateway guard's floor (a reload was aborted at 5.7 GB free).
+- Host side: anonymous memory stays ~1–2 GiB; page cache from the mmapped weights/engram ran
+  25–45 GiB and is reclaimable (the engram really is paged from disk).
+- Speed (sitting 1, 4×262k): load 50 s; decode 23.5 tok/s at short context; prefill 580 → 373
+  tok/s over a 37,916-token prompt. First decode with full offload is clean (#29028 fixed in the pin).
+
+**Consequence for §4a (owner decision 2026-10-01):** slots stay role-pinned but share one
+`--kv-unified` pool of **512k cells** (agent 256k + ingest 64k + research/jcode 128k + 2 × 32k
+for the pet and small prompts) — the same total cells as the measured 2×262k row, **74.2 GiB**
+GTT, and slot count costs ~nothing. F3 re-measures the chosen pool before it ships.
+
 ## 3. Memory budget (derived — F2 replaces it with a measurement)
 
 Read from the UD-IQ4_XS GGUF headers and llama.cpp master: 48 layers, 12 full-attention
@@ -75,7 +106,8 @@ measured 0.28 GiB per checkpoint against 0.15 derived, and KV 1.53 GiB per 128k 
 derived cache (`local_catalog.py`, `_QWEN38_KV_GB_PER_128K`). So F2's exit gate is set on
 the **measurement**, and the levers are settings, not rebuilds: 16 checkpoints per slot
 (+3.5), 131k per slot (`-c 524288`, −8). A unified pool would save the same but lets one
-long conversation evict the other slots' prefixes, so it is rejected (§4a).
+long conversation evict the other slots' prefixes — which the router-enforced reservations of
+§4a prevent, so the pool is what was chosen after F2 measured that slots cost ~nothing (§3a).
 
 **The engram page cache is not free in our accounting today.** `host_metrics` counts page
 cache as used, so admission would charge the PLE working set; and the load path drops the
@@ -105,8 +137,8 @@ from the measured `disk_gb`, and the page-cache drop skips mmapped tensors.
   this engine — catalog `extra_server_args` do not supersede base flags today; only
   operator args do), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
   4 GiB binding limit; GPU placement aborted for Soot/Silicon), `--lazy-mode on`,
-  `-np 4 -c 1048576` (explicit `-np` keeps KV non-unified; each slot gets 262,144 =
-  `n_ctx_train`), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
+  `-np 5 --kv-unified -c 524288` (one shared pool; no single sequence may exceed
+  `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
   `--ctx-checkpoints 8 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the
   existing `--image-min-tokens` floor.
 - **MTP: not adopted in v1, pending measurement.** Upstream now has a qwen4exp MTP draft
@@ -131,12 +163,26 @@ parameter through the provider protocol and `openai_compat` (rule 1), chosen by 
 name** (agent turns pass `SYSTEM_STRENGTH`, so strength cannot carry the class). A busy
 pinned slot queues its own traffic; llama-server defers the task until the slot frees.
 
-| Slot | Workload | Pinned by |
-|---|---|---|
-| 0 | Interactive persona (jerv, omnibox turns) | router, by task |
-| 1 | Ingest + analysis | router, by task |
-| 2 | Agents, research, workflow tasks | router, by task |
-| 3 | jcode | the jcode proxy (`api/jcode_llm.py`) — jcode's `grok` reaches the model through it, not directly |
+Because the pool is shared, each role also carries a **reservation**: the router refuses (or
+trims, where the caller allows it) a request whose prompt plus `max_tokens` exceeds its role's
+cap, so no role can grow into another's cells and evict its cached prefix. The caps sum to the
+pool exactly, so the pool never runs out of cells while every role stays inside its own.
+F2/F3 also verify what llama-server does if a pool fills anyway (it should never happen with
+the caps enforced; the test is that it fails loudly rather than silently evicting).
+
+| Slot | Workload | Reservation | Pinned by |
+|---|---|---|---|
+| 0 | Interactive persona (jerv, omnibox turns) | 256k (262,144) | router, by task |
+| 1 | Ingest + analysis | 64k (65,536) | router, by task |
+| 2 | Agents, research, workflow tasks — **and jcode**, which gets no reservation of its own (owner, 2026-10-01) and shares this slot's cap | 128k (131,072) | router by task; the jcode proxy (`api/jcode_llm.py`) for jcode |
+| 3 | jpanel kid pet (`pet.turn`, `pet.thought`, `pet.statue`) | 32k (32,768) | router, by task |
+| 4 | Small-prompt tasks: titles (`research.title`), `triage.classify`, and other short-prefill calls; overflow for the pet | 32k (32,768) | router, by task |
+| | **Pool** | **512k (524,288)** | `--kv-unified -c 524288` |
+
+jcode is pinned (to slot 2) rather than left unpinned on purpose: an unpinned request lands on
+the least-recently-used idle slot, which would evict whichever role's cached prefix lives there.
+The pet and small-prompt slots are short by design — their prompts are small, so a 32k cap
+costs them nothing and keeps their churn away from the long agent and ingest prefixes.
 
 ### 4b. Disk prefix cache, one prefix per slot role
 
@@ -149,7 +195,8 @@ use.
 On Flash-Next a 29k-token prefix file is ~0.55 GiB (attention KV + indexer cache + recurrent
 state), a quarter of gpt-oss's ~2 GiB — so **one primed prefix per slot role** is
 affordable: persona (0), ingest/analysis system prompt (1), agent/research base prompt (2),
-jcode system prompt (3). Each is primed once, saved, and restored **into its own slot**
+the pet's persona prompt (3). jcode shares slot 2 and the small-prompt slot (4) is too short
+to be worth priming, so neither gets a primed prefix. Each is primed once, saved, and restored **into its own slot**
 when lost (restart, engine switch, an overflow request). The launch line is in the
 fingerprint, so switching back finds gpt-oss's file still in the budget.
 
@@ -335,7 +382,12 @@ carrying gpt-oss's sampling and reasoning quirks.
   Discharge ledger rows for the stopped engine's instances. Any failure: stop it, restart
   the previous engine, surface the reason as a box event.
 - §4c remap at every entry point; §4a slot affinity (`id_slot` through the provider
-  protocol, chosen by task name; slot 3 injected by the jcode proxy).
+  protocol, chosen by task name; slot 2 injected by the jcode proxy).
+- §4a reservations: the 512k `--kv-unified` pool (`-np 5 --kv-unified -c 524288`), a
+  per-role cap table in the catalog entry, enforced at the router and the jcode proxy (refuse
+  or trim over-cap requests, with a clear error), the budget charging the pool once; re-measure
+  the pool on the box against the ~74.2 GiB prediction. Tests: caps per role, over-cap refusal,
+  caps sum to the pool, pool flags rendered.
 - PWA: Ops card (current engine, switch, memory + tok/s readout, last smoke) and the
   per-task "→ Flash-Next" marker — **three mocks each** before code (`PROCESS.md`).
 - Tests: orchestration against a fake supervisor (happy path, every rollback branch),
