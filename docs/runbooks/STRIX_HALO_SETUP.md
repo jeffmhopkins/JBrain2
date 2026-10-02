@@ -1390,8 +1390,10 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
    (`POST /api/settings/llm/engine/cancel`) at no cost; after that it runs to the end. If an
    engine cannot be confirmed stopped or started, the switch reports what is actually up — and
    says **NO local engine is up** when nothing is; switch again, or Ops → Update brings the
-   selected engine back. While it runs, Ops Update/Restart/Start of an engine and code mode's
-   power-on are refused. It refuses while an update or another one-shot runs, in
+   selected engine back. While it runs, Ops Update/Restart/Start of an engine, restarting the
+   api itself, and code mode's power-on are refused (the supervisor holds off anything started
+   through it; a host-shell update is outside that). If the api restarts mid-switch, the
+   switch is marked interrupted and the hold released on boot. It refuses while an update or another one-shot runs, in
    the 30 minutes before a nightly schedule fires or the hour after, and while a workflow run
    is executing — send `"force": true` to switch anyway. While Flash-Next serves, **every**
    local task runs on it with its own sampling and thinking settings; your per-task picks are

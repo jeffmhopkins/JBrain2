@@ -370,7 +370,9 @@ class RestartRequest(BaseModel):
 async def restart(
     body: RestartRequest, request: Request, settings: SettingsDep
 ) -> dict[str, object]:
-    if body.service == "all" or body.service in ENGINE_SERVICES:
+    # `api` too: the switch runs in this process, so restarting it mid-switch would end it
+    # half-done (the boot reset then cleans up, but nothing finishes the switch).
+    if body.service in ("all", "api") or body.service in ENGINE_SERVICES:
         refuse_while_switching(request, f"restart {body.service}")
     resp = await _client(request).post(
         "/restart", json={"service": body.service}, headers=_headers(settings)

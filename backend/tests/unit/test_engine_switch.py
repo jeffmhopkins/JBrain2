@@ -7,6 +7,7 @@ supervisor, the gateway and the providers are faked; nothing touches docker or a
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import time
 from collections.abc import Awaitable, Callable, Iterator
@@ -764,6 +765,49 @@ async def test_a_restart_reopens_admission_and_marks_an_unfinished_switch() -> N
     assert store.values["llm_local_engine_switch"] == {"id": "b", "stage": "done"}
 
 
+@pytest.mark.asyncio
+async def test_a_restart_releases_the_dead_switchs_supervisor_hold() -> None:
+    store = FakeSettingsStore()
+    sup = _Sup({"local-llm": "exited", "flash-next": "exited"})
+    await store.set_llm_local_engine_switch(None, {"id": "abc123", "stage": "loading"})
+    await reset_after_restart(store, None, sup)  # type: ignore[arg-type]
+    assert sup.released == ["abc123"]
+    # A finished switch holds nothing: no release.
+    await reset_after_restart(store, None, sup)  # type: ignore[arg-type]
+    assert sup.released == ["abc123"]
+
+    class _Broken(_Sup):
+        async def release(self, switch_id: str) -> None:
+            raise SupervisorError("no route")
+
+    await store.set_llm_local_engine_switch(None, {"id": "def456", "stage": "smoke"})
+    await reset_after_restart(store, None, _Broken({}))  # type: ignore[arg-type]
+    switch = store.values["llm_local_engine_switch"]
+    assert isinstance(switch, dict) and switch["stage"] == "failed"  # still marked
+
+
+@pytest.mark.asyncio
+async def test_the_hold_is_short_and_kept_alive_by_a_heartbeat() -> None:
+    release = asyncio.Event()
+
+    class _SlowLoad(FakeLocalGateway):
+        async def load(self, served_model: str, **kw: Any) -> None:
+            await release.wait()
+            await super().load(served_model)
+
+    sup = _Sup({"local-llm": "running", "flash-next": "exited"})
+    sw = EngineSwitcher(dataclasses.replace(_FAST, hold_ttl_s=4.0))
+    deps = _deps(sup, _SlowLoad(), FakeSettingsStore())
+    await sw.begin(deps, engines.FLASH_NEXT, source="owner")
+    assert sup.holds[0][1] == 4.0  # never the 30-minute admission deadline
+    renewals = len(sup.holds)
+    await asyncio.sleep(1.3)  # one heartbeat interval (ttl / 4, floored at 1 s)
+    assert len(sup.holds) > renewals
+    release.set()
+    await sw.wait()
+    assert all(ttl == 4.0 for _, ttl in sup.holds)
+
+
 # --- the nightly window (pure) -------------------------------------------------------------
 
 
@@ -849,11 +893,13 @@ def test_owner_routes_need_the_owner() -> None:
         app.state.auth_repo = FakeAuthRepo()
         assert anon.get("/api/settings/llm/engine").status_code == 401
         assert anon.post("/api/settings/llm/engine", json={"engine": "standard"}).status_code == 401
+        assert anon.post("/api/settings/llm/engine/cancel").status_code == 401
         app.dependency_overrides[current_principal] = lambda: PrincipalInfo(
             id="cap", kind="capability_token", label="token"
         )
         assert anon.get("/api/settings/llm/engine").status_code == 403
         assert anon.post("/api/settings/llm/engine", json={"engine": "standard"}).status_code == 403
+        assert anon.post("/api/settings/llm/engine/cancel").status_code == 403
 
 
 def _poll(client: TestClient, switch_id: str) -> dict[str, Any]:
@@ -1249,6 +1295,8 @@ async def test_a_restore_that_fails_says_no_local_engine_is_up(recorded: list, h
     assert "could NOT be put back" in status["reason"]
     assert "NO local engine is up" in status["reason"]
     assert status["no_engine_up"] is True
+    out = engine_api.SwitchStatusOut.model_validate(status)
+    assert out.no_engine_up is True and out.was_up == ["standard"]
     assert store.values["llm_local_engine_effective"] == "standard"
     assert "NO local engine is up" in str(recorded[-1][2])
 
@@ -1438,6 +1486,7 @@ def test_engine_affecting_routes_refuse_while_a_switch_runs(
             ("POST", "/api/ops/rebuild", {"service": "api"}),
             ("POST", "/api/ops/restart", {"service": "local-llm"}),
             ("POST", "/api/ops/restart", {"service": "all"}),
+            ("POST", "/api/ops/restart", {"service": "api"}),
             ("POST", "/api/ops/start", {"service": "flash-next"}),
             ("POST", "/api/ops/local-provision", None),
             ("POST", "/api/ops/export", None),

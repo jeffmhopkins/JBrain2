@@ -102,6 +102,11 @@ class SwitchStatusOut(BaseModel):
     model: str | None
     smoke: list[SmokeOut]
     notes: list[str]
+    # True when the switch ended with NO local engine up (a failed restore): local models are
+    # unavailable until the owner switches again or an update brings one back.
+    no_engine_up: bool | None = None
+    # The engines that were up when the switch began.
+    was_up: list[engines.Engine] = []
 
 
 class EngineStateOut(BaseModel):
@@ -348,7 +353,6 @@ async def engine_state(request: Request, ctx: Any) -> EngineStateOut:
     try:
         states = await supervisor.states()
         oneshot = await supervisor.oneshot()
-        perplexity = await supervisor.perplexity_running()
     except SupervisorError as exc:
         raise HTTPException(status_code=502, detail=f"supervisor unreachable: {exc}") from exc
     store = deps.store
@@ -390,7 +394,9 @@ async def engine_state(request: Request, ctx: Any) -> EngineStateOut:
         consistent=running == [effective],
         installed=_installed(list(deps.local_models)),
         oneshot=oneshot,
-        perplexity_running=perplexity,
+        # From the one /oneshot read (whose fallback on an older supervisor is itself the
+        # perplexity status), so the card's poll costs one supervisor round trip less.
+        perplexity_running=oneshot == "perplexity",
         switching=sw.busy,
         admission=AdmissionOut(
             closed=closure is not None,

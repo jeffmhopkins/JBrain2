@@ -867,8 +867,28 @@ def test_a_supervisor_without_the_perplexity_job_reads_as_not_running(
         return await real_get(url, params=params, headers=headers)
 
     monkeypatch.setattr(sup, "get", older)
+    sup.no_oneshot_route = True
     body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
     assert body["perplexity_running"] is False
+
+
+def test_perplexity_running_comes_from_the_one_oneshot_read(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, key, state = box
+    sup = state.supervisor_client
+    sup.perplexity_state = "running"
+    real_get = sup.get
+    reads: list[str] = []
+
+    async def counting(url: str, params: dict | None = None, headers: dict | None = None):
+        reads.append(url)
+        return await real_get(url, params=params, headers=headers)
+
+    monkeypatch.setattr(sup, "get", counting)
+    body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
+    assert body["perplexity_running"] is True and body["oneshot"] == "perplexity"
+    assert "/perplexity/status" not in reads
 
 
 def test_a_supervisor_error_on_stop_fails_the_switch_and_nothing_starts(
