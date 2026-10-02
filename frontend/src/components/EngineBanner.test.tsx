@@ -12,7 +12,14 @@ import { EngineBanner, engineBanners } from "./EngineBanner";
 import { engineState, switchStatus } from "./engineFixtures";
 
 function snap(over: Partial<EngineSnapshot> = {}): EngineSnapshot {
-  return { state: engineState(), error: null, armed: null, dismissed: new Set(), ...over };
+  return {
+    state: engineState(),
+    error: null,
+    lastOk: null,
+    armed: null,
+    dismissed: new Set(),
+    ...over,
+  };
 }
 
 const flashOn = engineState({
@@ -59,6 +66,14 @@ describe("engineBanners", () => {
     expect(b?.detail).toBe("rolled back to Standard");
     expect(b?.dismiss).toBeDefined();
     expect(engineBanners(snap({ state, dismissed: new Set(["sw-7"]) }))).toEqual([]);
+  });
+
+  it("flags a strip read from a state the api can no longer confirm", () => {
+    const state = engineState({ switching: true, switch: switchStatus({ stage: "starting" }) });
+    const [b] = engineBanners(snap({ state, error: "Request failed: 502" }));
+    expect(b?.detail).toMatch(/ · can't reach the engine$/);
+    const [fresh] = engineBanners(snap({ state }));
+    expect(fresh?.detail).not.toMatch(/can't reach/);
   });
 
   it("is amber for a fallback (desired ≠ effective)", () => {

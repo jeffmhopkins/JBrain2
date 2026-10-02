@@ -6,6 +6,7 @@
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
+import { EngineBanner } from "../components/EngineBanner";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
 import { jlaunchShareUrl } from "../jlaunch/share";
 import { attachTerminal, jlaunchTerminalWsUrl } from "../jlaunch/terminal";
@@ -81,6 +82,7 @@ export function JlaunchScreen({ onClose }: { onClose: () => void }) {
           Math<span className="jl-dot">.</span>
         </h2>
       </header>
+      <EngineBanner />
 
       {state.kind === "disabled" ? (
         <p className="jl-empty">The job launcher isn't enabled on this server.</p>

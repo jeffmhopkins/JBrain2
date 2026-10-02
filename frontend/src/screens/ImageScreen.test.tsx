@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GeneratedImageOut } from "../api/client";
+import { engineState, switchStatus } from "../components/engineFixtures";
+import { resetEngineStore, setEngineState } from "../engineState";
 import { ImageScreen } from "./ImageScreen";
 
 function img(over: Partial<GeneratedImageOut>): GeneratedImageOut {
@@ -197,5 +199,25 @@ describe("ImageScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /generate render 1024×1024/ }));
     // The lightbox shows the kind badge + meta and the use-as-source action.
     await waitFor(() => expect(screen.getByText(/seed 12009654/)).toBeInTheDocument());
+  });
+});
+
+describe("ImageScreen engine banner", () => {
+  afterEach(() => {
+    resetEngineStore();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the rose rollback strip under its own header", () => {
+    resetEngineStore();
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    stubFetch([]);
+    const { container } = render(<ImageScreen onClose={noop} />);
+    act(() =>
+      setEngineState(engineState({ switch: switchStatus({ id: "rb", stage: "rolled_back" }) })),
+    );
+    expect(screen.getByText("Switch to Flash-Next failed")).toBeInTheDocument();
+    const nav = container.querySelector(".imgscreen-nav");
+    expect(nav?.nextElementSibling?.classList.contains("engine-banners")).toBe(true);
   });
 });

@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api/client";
+import { engineState, switchStatus } from "../components/engineFixtures";
+import { resetEngineStore, setEngineState } from "../engineState";
 import type { JcodePowerStatus, JcodeSession } from "../jcode/types";
 import { JcodeScreen } from "./JcodeScreen";
 
@@ -301,5 +303,20 @@ describe("JcodeScreen (launcher)", () => {
     expect(set).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /end it & continue/i }));
     await waitFor(() => expect(set).toHaveBeenCalledWith(true));
+  });
+});
+
+describe("JcodeScreen engine banner", () => {
+  it("shows the amber switching strip under its own header", async () => {
+    resetEngineStore();
+    vi.spyOn(api, "jcodeSessions").mockResolvedValue([]);
+    const { container } = render(<JcodeScreen onClose={vi.fn()} />);
+    act(() =>
+      setEngineState(engineState({ switching: true, switch: switchStatus({ stage: "starting" }) })),
+    );
+    expect(screen.getByText("Switching to Flash-Next")).toBeInTheDocument();
+    const bar = container.querySelector(".jcode-bar");
+    expect(bar?.nextElementSibling?.classList.contains("engine-banners")).toBe(true);
+    resetEngineStore();
   });
 });

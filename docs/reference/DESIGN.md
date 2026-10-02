@@ -186,14 +186,20 @@ swipe-up.
 problems: `--rose` text on rose-tint background, e.g. *"Browser online, but
 JBrain server unreachable — retrying…"*. Auto-dismisses on recovery. Never
 use modals for connectivity.
-The **engine banner** (`components/EngineBanner.tsx`, under every `TopBar`) is the
-same strip for the on-box engine, and the one place the strip is *not* only for
+The **engine banner** (`components/EngineBanner.tsx`) is the same strip for the on-box
+engine, and it rides **every** screen: under every `TopBar`, and under the own header of
+each full-screen overlay that brings one (Automations, Image, Radio, Tasks, jcode,
+jlaunch, pet Control, jpanel, Room endpoints) — a switch pauses local AI on all of them,
+so "only on the screens with the shared bar" would hide it exactly where a long-running
+local job lives. It is and the one place the strip is *not* only for
 problems: **steel** *"Flash-Next active · since HH:MM · Switch back"* while Flash-Next
 serves (a standing mode the owner chose, so it informs rather than alarms), **amber**
 while something holds the engine (a switch, a desired-≠-effective fallback, the
 perplexity one-shot, admission closed by a debug job), **rose** after a rollback or a
-failed switch — dismissable, per switch. Its text is the live region, not the strip,
-so its own buttons are not re-announced on every poll. See "Ops Local engine card".
+failed switch — dismissable, per switch. When the latest read failed it keeps the last
+reading and says so (*"· can't reach the engine"*) rather than going silent or stale
+without a word. Its text is the live region, not the strip, so its own buttons are not
+re-announced on every poll. See "Ops Local engine card".
 
 **Status dot** — 8px circle: green=healthy, amber=degraded/retrying,
 rose=error, `--text-3`=unknown. Used in the composer footer. It no longer
@@ -613,18 +619,32 @@ F3a). Switches the box between **Standard** (the `local-llm` gateway) and **Flas
   tapping the other segment expands an **inline confirm** that states the consequence
   (pause, drain, what the per-task picks do, automatic rollback) with Cancel / Switch.
   When the server's `guard` says now is a bad time (the nightly window, a workflow run)
-  the confirm says so and the only way through is an explicit **Switch anyway** (rose,
-  `force: true`); with no guard there is no force control at all.
+  the confirm says so, and **Switch anyway** (rose, `force: true`) stays disabled until a
+  separate **"I understand — nightly jobs may fail"** box is ticked; the tick is bound to
+  that guard's text. Force must never land under a finger: if a guard appears while a
+  confirm is open, the *same* button turns disabled — it is never swapped for an enabled
+  one under the tap. With no guard there is no force control at all. A confirm armed
+  against one engine is dropped if the serving engine changes under it.
+- **"Keep" is a confirm too.** On a fallback, *Keep {effective}* is offered only when the
+  box is cleanly on that engine (nothing would stop or reload) and its confirm says so;
+  on an inconsistent box it is named and confirmed as the switch it really is.
+- **Cancel only while draining** (*"Cancel — nothing has stopped yet"*), and only while the
+  server offers the route; a server without it stops being offered it.
 - **Progress is phased text + a five-step list with timestamps + the notes tail** —
   Drain → Stop → Start → Load → Smoke — the Server-update register, no fake bar.
 - **Disabled states say why**: Flash-Next not installed (with *Install in On-box
   models*), a supervisor one-shot running, no container yet, a switch in flight.
 - **Readouts are the System card's label rows** — Engine (desired vs effective),
   Memory (GTT used / pool, host free), Decode, Last smoke (per-probe chips), Engine
-  log. Anything the api does not report reads **—**, never a guess.
+  log. Anything the api does not report reads **—**, never a guess (`decode_tps`,
+  `effective_since` and `fallback_reason` render when the server sends them). A failed
+  read keeps the last reading under *"Can't reach the engine · last read HH:MM"*.
 - **One shared store** (`engineState.ts`) feeds the card and the banner: the shell
-  polls on a 30 s idle beat and every 2 s while a switch runs, so the two can never
-  disagree about whether a switch is happening, and a top bar costs no request.
+  polls on a 30 s idle beat and every 2 s while a switch runs, backs off 2 → 4 → … → 30 s
+  on failed reads (reset on success), pauses while the app is hidden, and stops only on a
+  403 — until the next foreground signal (a 404 is transient: mid-update the api is briefly
+  an older build). The two can never disagree about whether a switch is happening, and a
+  header costs no request.
 - **LLM settings follows the engine**: an off-engine model keeps its **Stage** label but
   is disabled with the server's `blocked_reason` beneath it ("Runs on the Flash-Next
   engine — switch engines to load it"); a remapped pick is marked with its

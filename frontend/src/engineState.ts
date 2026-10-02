@@ -34,11 +34,16 @@ const TERMINAL = new Set<EngineSwitchStage>(["done", "rolled_back", "failed"]);
  *  someone switches it, so a slow beat keeps the banner honest without load. */
 export const ENGINE_POLL_FAST_MS = 2000;
 export const ENGINE_POLL_IDLE_MS = 30000;
+/** A failed read retries at 2 s, doubling to the idle beat — fast enough to notice the api
+ *  coming back after a restart, without hammering one that stays down. */
+export const ENGINE_BACKOFF_FIRST_MS = 2000;
 
 export interface EngineSnapshot {
   state: EngineState | null;
   /** The last read's failure, or null. A failed read keeps the previous state. */
   error: string | null;
+  /** Epoch ms of the last successful read, so a stale state can say how stale it is. */
+  lastOk: number | null;
   /** The engine the owner asked to switch to from elsewhere (the banner's "Switch back"),
    *  which the Ops card picks up as an armed confirm. */
   armed: EngineId | null;
@@ -61,6 +66,7 @@ function loadDismissed(): Set<string> {
 let snapshot: EngineSnapshot = {
   state: null,
   error: null,
+  lastOk: null,
   armed: null,
   dismissed: loadDismissed(),
 };
@@ -92,9 +98,13 @@ export function switchInFlight(state: EngineState | null): boolean {
   return state.switching || (state.switch !== null && !TERMINAL.has(state.switch.stage));
 }
 
-// The api answering 403/404 means this principal or this server has no engine surface;
-// polling it every few seconds would only fill the log.
-let unsupported = false;
+// A 403 means this principal has no engine surface; polling it would only fill the log. It
+// is latched until the next foreground signal, not forever — a session can be re-authorised
+// underneath a running app. A 404 is NOT latched: during an update the api is briefly an
+// older or half-started build, and treating that as "no such feature" would silence the
+// banner for good on exactly the occasion it matters.
+let forbidden = false;
+let failures = 0;
 let inflight: Promise<void> | null = null;
 
 /** Read the engine state now. Concurrent callers share one request. */
@@ -102,9 +112,11 @@ export function refreshEngine(): Promise<void> {
   inflight ??= (async () => {
     try {
       const state = await api.getEngineState();
-      set({ state, error: null });
+      failures = 0;
+      set({ state, error: null, lastOk: Date.now() });
     } catch (err) {
-      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) unsupported = true;
+      failures += 1;
+      if (err instanceof ApiError && err.status === 403) forbidden = true;
       set({ error: err instanceof Error ? err.message : String(err) });
     } finally {
       inflight = null;
@@ -117,12 +129,18 @@ let pollers = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let stopSignals: (() => void) | null = null;
 
+/** How long until the next read: backing off after failures, else the state's own pace. */
+export function nextDelay(): number {
+  if (failures > 0)
+    return Math.min(ENGINE_BACKOFF_FIRST_MS * 2 ** (failures - 1), ENGINE_POLL_IDLE_MS);
+  return switchInFlight(snapshot.state) ? ENGINE_POLL_FAST_MS : ENGINE_POLL_IDLE_MS;
+}
+
 function schedule(delay?: number): void {
   if (timer !== null) clearTimeout(timer);
   timer = null;
-  if (pollers === 0 || unsupported) return;
-  const wait =
-    delay ?? (switchInFlight(snapshot.state) ? ENGINE_POLL_FAST_MS : ENGINE_POLL_IDLE_MS);
+  if (pollers === 0 || forbidden) return;
+  const wait = delay ?? nextDelay();
   timer = setTimeout(() => {
     timer = null;
     if (!isForeground()) return; // resumes on the next foreground signal
@@ -144,7 +162,9 @@ export function useEnginePolling(enabled = true): void {
     pollers += 1;
     if (pollers === 1) {
       stopSignals = onForegroundSignals(() => {
-        if (isForeground()) schedule(0);
+        if (!isForeground()) return;
+        forbidden = false;
+        schedule(0);
       });
     }
     schedule(0);
@@ -225,16 +245,17 @@ export function resetEngineStore(): void {
   pollers = 0;
   stopSignals?.();
   stopSignals = null;
-  unsupported = false;
+  forbidden = false;
+  failures = 0;
   inflight = null;
   navigator_ = null;
-  snapshot = { state: null, error: null, armed: null, dismissed: new Set() };
+  snapshot = { state: null, error: null, lastOk: null, armed: null, dismissed: new Set() };
   for (const l of listeners) l();
 }
 
 /** Seed the store directly (tests, and the card after a POST answers). */
 export function setEngineState(state: EngineState | null): void {
-  set({ state, error: null });
+  set({ state, error: null, lastOk: Date.now() });
 }
 
 /** `HH:MM` local time of an ISO timestamp, or null when absent/unparseable. */
@@ -268,6 +289,8 @@ export function switchSteps(
 
 /** When Flash-Next became the serving engine, if the last switch says so. */
 export function activeSince(state: EngineState): string | null {
+  // The server's own record wins when it has one; the last switch is the fallback.
+  if (state.effective_since) return hhmm(state.effective_since);
   const sw = state.switch;
   if (sw && sw.stage === "done" && sw.target === state.effective) return hhmm(sw.ended_at);
   return null;

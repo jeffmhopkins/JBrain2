@@ -6,6 +6,7 @@
 
 import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
+import { EngineBanner } from "../components/EngineBanner";
 import { Sheet } from "../components/Sheet";
 import {
   ChevronLeftIcon,
@@ -235,6 +236,7 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
           </button>
         )}
       </header>
+      <EngineBanner />
 
       {state.kind === "disabled" ? (
         <p className="jcode-empty">Code mode isn't enabled on this server.</p>

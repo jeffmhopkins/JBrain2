@@ -103,6 +103,10 @@ export function engineBanners(snap: EngineSnapshot): EngineBannerItem[] {
       action: details,
     });
   }
+  // A strip read from a state the api can no longer confirm must say so, or a finished
+  // switch keeps reading "Switching…" while the api restarts beneath it.
+  const first = out[0];
+  if (snap.error !== null && first) first.detail += " · can't reach the engine";
   return out;
 }
 

@@ -944,6 +944,21 @@ export interface EngineState {
   guard: string | null;
   /** The in-flight switch, else the last one. */
   switch: EngineSwitchStatus | null;
+  /** Why the last start fell back to the other engine (desired ≠ effective), when known.
+   * Absent from a server that predates it. */
+  fallback_reason?: string | null | undefined;
+  /** When the effective engine started serving (ISO), when known. */
+  effective_since?: string | null | undefined;
+  /** The serving engine's last decode rate (tok/s), null while none serves. */
+  decode_tps?: number | null | undefined;
+}
+
+/** The server has no cancel route for an engine switch (it predates it). */
+export class EngineCancelUnsupported extends Error {
+  constructor() {
+    super("This server can't cancel a switch");
+    this.name = "EngineCancelUnsupported";
+  }
 }
 
 // ----- Per-task LLM routing (GET/PUT /api/settings/llm) -----
@@ -3506,6 +3521,25 @@ export const api = {
   async switchEngine(engine: EngineId, force = false): Promise<EngineSwitchStatus> {
     const response = await request("/api/settings/llm/engine", jsonInit("POST", { engine, force }));
     return (await response.json()) as EngineSwitchStatus;
+  },
+
+  /** Cancel a switch while it is still draining (nothing has stopped yet). Tries the cancel
+   * route, then the DELETE form; a server with neither throws EngineCancelUnsupported so the
+   * card can stop offering it. A 409 (past draining) surfaces as an ApiError. */
+  async cancelEngineSwitch(): Promise<void> {
+    for (const [path, method] of [
+      ["/api/settings/llm/engine/cancel", "POST"],
+      ["/api/settings/llm/engine/switch", "DELETE"],
+    ] as const) {
+      try {
+        await request(path, { method });
+        return;
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 404 || err.status === 405)) continue;
+        throw err;
+      }
+    }
+    throw new EngineCancelUnsupported();
   },
 
   /** Evict one local model from the gateway's memory; returns what's still resident. */

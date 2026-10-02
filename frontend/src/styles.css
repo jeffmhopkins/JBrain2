@@ -28906,3 +28906,36 @@ button.wf-sigpill {
   color: var(--steel);
   margin: 2px 0 0;
 }
+
+.engine-prog-title {
+  font-weight: 500;
+}
+
+.engine-cancel {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.engine-stale {
+  display: block;
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--amber);
+}
+
+.engine-ack {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-top: 6px;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+
+.engine-ack input {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  accent-color: var(--rose);
+}

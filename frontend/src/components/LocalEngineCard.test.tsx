@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineState } from "../api/client";
@@ -6,8 +6,10 @@ import {
   armEngineSwitch,
   hhmmss,
   peekEngineSnapshot,
+  refreshEngine,
   resetEngineStore,
   setEngineNavigator,
+  setEngineState,
 } from "../engineState";
 import { LocalEngineCard } from "./LocalEngineCard";
 import { engineState, switchStatus } from "./engineFixtures";
@@ -185,22 +187,6 @@ describe("LocalEngineCard", () => {
     expect(alert).toHaveTextContent(/could not be confirmed stopped/);
   });
 
-  it("shows desired ≠ effective as a fallback with Retry now / Keep", async () => {
-    const ctl = stubEngine(engineState({ desired: "flash-next" }));
-    render(<LocalEngineCard />);
-    expect(await screen.findAllByText(/Flash-Next selected · Standard serving/)).not.toHaveLength(
-      0,
-    );
-    expect(screen.getByRole("button", { name: /Local engine/ })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Retry now" }));
-    expect(screen.getByText("Switch to Flash-Next?")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Keep Standard" }));
-    await waitFor(() => expect(ctl.posts).toEqual([{ engine: "standard", force: false }]));
-  });
-
   it("disables Flash-Next when it isn't installed and links to On-box models", async () => {
     stubEngine(engineState({ installed: { standard: true, "flash-next": false } }));
     const models = vi.fn();
@@ -222,7 +208,54 @@ describe("LocalEngineCard", () => {
     expect(seg("Flash-Next")).toBeDisabled();
   });
 
-  it("offers force only when the guard blocks, as an explicit Switch anyway", async () => {
+  it("shows desired ≠ effective as a fallback; Keep goes through the confirm", async () => {
+    const ctl = stubEngine(
+      engineState({ desired: "flash-next", fallback_reason: "weights incomplete — 71 of 95 GB" }),
+    );
+    render(<LocalEngineCard />);
+    expect(await screen.findAllByText(/Flash-Next selected · Standard serving/)).not.toHaveLength(
+      0,
+    );
+    expect(screen.getByRole("button", { name: /Local engine/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // The server's reason, when it gives one.
+    expect(screen.getAllByText(/weights incomplete — 71 of 95 GB/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Retry now" }));
+    expect(screen.getByText("Switch to Flash-Next?")).toBeInTheDocument();
+
+    // Keep never POSTs from the notice: it arms a confirm that says nothing stops.
+    fireEvent.click(screen.getByRole("button", { name: "Keep Standard" }));
+    expect(ctl.posts).toEqual([]);
+    const confirm = screen.getByRole("region", { name: "Confirm engine switch" });
+    expect(within(confirm).getByText("Keep Standard?")).toBeInTheDocument();
+    expect(confirm).toHaveTextContent(/nothing stops or reloads/);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Keep Standard" }));
+    await waitFor(() => expect(ctl.posts).toEqual([{ engine: "standard", force: false }]));
+  });
+
+  it("on an inconsistent box, Keep becomes a confirmed switch with the consequence", async () => {
+    const ctl = stubEngine(
+      engineState({
+        desired: "flash-next",
+        running: ["standard", "flash-next"],
+        consistent: false,
+      }),
+    );
+    render(<LocalEngineCard />);
+    await screen.findAllByText(/Flash-Next selected · Standard serving/);
+    expect(screen.queryByRole("button", { name: "Keep Standard" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Standard" }));
+    const confirm = screen.getByRole("region", { name: "Confirm engine switch" });
+    expect(within(confirm).getByText("Switch to Standard?")).toBeInTheDocument();
+    expect(confirm).toHaveTextContent(/Local AI pauses/);
+    expect(confirm).toHaveTextContent(/Flash-Next stops/);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Switch" }));
+    await waitFor(() => expect(ctl.posts).toEqual([{ engine: "standard", force: false }]));
+  });
+
+  it("behind a guard, force needs a separate acknowledgement", async () => {
     const ctl = stubEngine(engineState({ guard: "inside the nightly window (02:00–05:00)" }));
     render(<LocalEngineCard />);
     await openCard();
@@ -230,9 +263,147 @@ describe("LocalEngineCard", () => {
     fireEvent.click(seg("Flash-Next"));
     const confirm = screen.getByRole("region", { name: "Confirm engine switch" });
     expect(confirm).toHaveTextContent(/Not now: inside the nightly window/);
-    expect(within(confirm).queryByRole("button", { name: "Switch" })).toBeNull();
-    fireEvent.click(within(confirm).getByRole("button", { name: "Switch anyway" }));
+    const anyway = within(confirm).getByRole("button", { name: "Switch anyway" });
+    expect(anyway).toBeDisabled();
+    fireEvent.click(anyway);
+    expect(ctl.posts).toEqual([]);
+    fireEvent.click(within(confirm).getByRole("checkbox", { name: /I understand/ }));
+    expect(anyway).toBeEnabled();
+    fireEvent.click(anyway);
     await waitFor(() => expect(ctl.posts).toEqual([{ engine: "flash-next", force: true }]));
+  });
+
+  it("a guard appearing under an armed confirm disables the button, never sends force", async () => {
+    const ctl = stubEngine(engineState());
+    render(<LocalEngineCard />);
+    await openCard();
+    await screen.findByText("Standard serving");
+    fireEvent.click(seg("Flash-Next"));
+    const button = within(screen.getByRole("region", { name: "Confirm engine switch" })).getByRole(
+      "button",
+      { name: "Switch" },
+    );
+    // The next poll brings a guard while the finger is on its way to the button.
+    act(() => setEngineState(engineState({ guard: "a workflow run is executing" })));
+    // Same element, now disabled and relabelled — a tap lands on nothing.
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Switch anyway");
+    fireEvent.click(button);
+    expect(ctl.posts).toEqual([]);
+    // An acknowledgement belongs to one guard text: a new reason needs a new tick.
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    expect(button).toBeEnabled();
+    act(() => setEngineState(engineState({ guard: "inside the nightly window" })));
+    expect(button).toBeDisabled();
+  });
+
+  it("drops an armed confirm when the serving engine changes under it", async () => {
+    stubEngine(engineState());
+    render(<LocalEngineCard />);
+    await openCard();
+    await screen.findByText("Standard serving");
+    fireEvent.click(seg("Flash-Next"));
+    expect(screen.getByRole("region", { name: "Confirm engine switch" })).toBeInTheDocument();
+    act(() =>
+      setEngineState(
+        engineState({ desired: "flash-next", effective: "flash-next", running: ["flash-next"] }),
+      ),
+    );
+    expect(screen.queryByRole("region", { name: "Confirm engine switch" })).toBeNull();
+  });
+
+  it("sends one POST however fast the Switch is tapped", async () => {
+    const ctl = stubEngine(engineState());
+    render(<LocalEngineCard />);
+    await openCard();
+    await screen.findByText("Standard serving");
+    fireEvent.click(seg("Flash-Next"));
+    const button = screen.getByRole("button", { name: "Switch" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(ctl.posts).toHaveLength(1));
+  });
+
+  it("makes only the step headline live", async () => {
+    stubEngine(engineState({ switching: true, switch: switchStatus({ stage: "stopping" }) }));
+    const { container } = render(<LocalEngineCard />);
+    const headline = await screen.findByText(/Step 2 of 5 · Stop Standard/);
+    expect(headline.tagName).toBe("OUTPUT");
+    expect(container.querySelector("[aria-live]")).toBeNull();
+  });
+
+  it("offers Cancel only while draining, and stops offering it if the server has no route", async () => {
+    const ctl = stubEngine(
+      engineState({ switching: true, switch: switchStatus({ stage: "draining" }) }),
+    );
+    const calls: string[] = [];
+    const base = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        if (path.includes("/cancel") || path.endsWith("/engine/switch")) {
+          calls.push(`${init?.method} ${path}`);
+          return json({ detail: "Not Found" }, 404);
+        }
+        return base(input, init);
+      }),
+    );
+    render(<LocalEngineCard />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Cancel — nothing has stopped yet/ }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/can't cancel a switch/);
+    expect(calls).toEqual([
+      "POST /api/settings/llm/engine/cancel",
+      "DELETE /api/settings/llm/engine/switch",
+    ]);
+    expect(screen.queryByRole("button", { name: /Cancel — nothing has stopped yet/ })).toBeNull();
+    // Past draining there is never a cancel.
+    act(() =>
+      setEngineState(engineState({ switching: true, switch: switchStatus({ stage: "starting" }) })),
+    );
+    expect(screen.queryByRole("button", { name: /nothing has stopped yet/ })).toBeNull();
+    expect(ctl.posts).toEqual([]);
+  });
+
+  it("cancels a draining switch through the route when there is one", async () => {
+    stubEngine(engineState({ switching: true, switch: switchStatus({ stage: "draining" }) }));
+    const base = globalThis.fetch;
+    const cancel = vi.fn(async () => json({ stage: "rolled_back" }, 202));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) =>
+        String(input).endsWith("/engine/cancel") ? cancel() : base(input, init),
+      ),
+    );
+    render(<LocalEngineCard />);
+    fireEvent.click(await screen.findByRole("button", { name: /nothing has stopped yet/ }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a decode rate only when the server reports one", async () => {
+    stubEngine(engineState({ decode_tps: 38.24 }));
+    render(<LocalEngineCard />);
+    await openCard();
+    expect(await screen.findByText("38.2 tok/s")).toBeInTheDocument();
+  });
+
+  it("says when it can't reach the engine, keeping the last reading", async () => {
+    const ctl = stubEngine(engineState());
+    render(<LocalEngineCard />);
+    await openCard();
+    await screen.findByText("Standard serving");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ detail: "supervisor unreachable" }, 502)),
+    );
+    await act(async () => {
+      await refreshEngine();
+    });
+    expect(screen.getByText(/Can't reach the engine · last read \d\d:\d\d/)).toBeInTheDocument();
+    expect(screen.getByText("Standard serving")).toBeInTheDocument();
+    expect(ctl.posts).toEqual([]);
   });
 
   it("surfaces a refused POST's detail", async () => {
