@@ -23,7 +23,7 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
 from jbrain.api.notes import MAX_ATTACHMENT_BYTES, ctx_for
 from jbrain.llm.providers import supports_vision_for_spec
-from jbrain.llm.router import TASK_DEFAULTS, context_window_for_spec
+from jbrain.llm.router import TASK_DEFAULTS, context_window_for_spec, spec_on_engine
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 
@@ -189,13 +189,18 @@ async def chat_capabilities(
     """Whether the agent.turn model supports vision, after live per-task overrides —
     so the chat composer offers image upload only when the model can read it — and
     whether analyze_image is wired, the paperclip's other justification."""
-    overrides = await store.llm_task_overrides(ctx_for(principal))
+    ctx = ctx_for(principal)
+    overrides = await store.llm_task_overrides(ctx)
     spec = (overrides.get("agent.turn") or {}).get("spec") or TASK_DEFAULTS["agent.turn"]
+    # The model the turn will RUN on: a pick of the other engine's model is remapped (or falls
+    # back to the default), so the paperclip and the meter describe that model.
+    engine = await store.llm_local_engine_effective(ctx)
+    spec = spec_on_engine(spec, engine, TASK_DEFAULTS["agent.turn"])
     return ChatCapabilities(
-        supports_vision=supports_vision_for_spec(settings, spec),
+        supports_vision=supports_vision_for_spec(settings, spec, engine),
         # Set at startup from the tool registry's actual handler set (main.py) —
         # reported rather than assumed, so a box whose analyze wiring ever regains a
         # gate degrades the paperclip honestly instead of offering a dead attach.
         can_analyze_images=bool(getattr(request.app.state, "chat_can_analyze_images", False)),
-        context_window=context_window_for_spec(spec),
+        context_window=context_window_for_spec(spec, engine),
     )

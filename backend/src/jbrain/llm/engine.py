@@ -46,6 +46,20 @@ CONFIG_FILE: Mapping[Engine, str] = {
 UP_STATES = frozenset({"running", "paused", "restarting", "removing"})
 
 
+# What the owner reads for each engine — one spelling for the snapshot, the 409s and the
+# switch's box events.
+LABEL: Mapping[Engine, str] = {STANDARD: "Standard", FLASH_NEXT: "Flash-Next"}
+
+
+def blocked_reason(own: Engine, active: Engine) -> str | None:
+    """Why a model of engine `own` cannot be loaded while `active` serves, or None when it
+    can. The one text the settings snapshot's `blocked_reason`, the load route's 409 and
+    residency's refusal all carry, so the PWA never shows a bare status code."""
+    if own == active:
+        return None
+    return f"Runs on the {LABEL[own]} engine — switch engines to load it"
+
+
 def holds_memory(state: str) -> bool:
     return state in UP_STATES
 

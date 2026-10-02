@@ -102,6 +102,11 @@ KV_PREFIX_RESTORED = "kv_prefix_restored"
 # surface, are the complete record.
 KV_PREFIX_MISSED = "kv_prefix_missed"
 
+# A local engine switch (jbrain.llm.engine_switch) reached its outcome — switched (`ok`), or
+# rolled back / failed (`failed`) with the reason. The owner's history and banner for a switch
+# that ran in the background while the GPU went quiet and then busy again.
+ENGINE_SWITCH = "engine_switch"
+
 # How long rows are kept. The surface's widest window is fifteen minutes; a day gives the
 # debug console something to read back after the fact without the table ever mattering.
 RETENTION = timedelta(days=1)

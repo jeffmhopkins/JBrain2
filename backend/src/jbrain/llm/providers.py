@@ -118,8 +118,18 @@ def provider_choices(
     return (*cloud, *_local_choices(settings, engine))
 
 
+def _every_choice(settings: Settings) -> tuple[ProviderChoice, ...]:
+    """Every engine's choices. For REVERSE mapping a stored pick, which must keep naming its
+    model whichever engine serves — the forward list (`provider_choices`) is what is pickable."""
+    seen: dict[str, ProviderChoice] = {}
+    for engine in engines.ENGINES:
+        for choice in provider_choices(settings, engine):
+            seen.setdefault(choice.id, choice)
+    return tuple(seen.values())
+
+
 def _by_id(settings: Settings) -> Mapping[str, ProviderChoice]:
-    return {c.id: c for c in provider_choices(settings)}
+    return {c.id: c for c in _every_choice(settings)}
 
 
 def spec_for_id(settings: Settings, provider_id: str) -> str | None:
@@ -131,7 +141,7 @@ def spec_for_id(settings: Settings, provider_id: str) -> str | None:
 def id_for_spec(settings: Settings, spec: str) -> str | None:
     """Reverse map a spec to its UI id; None when no curated choice matches
     (e.g. an env pin to an off-menu model) so callers surface the raw spec."""
-    for choice in provider_choices(settings):
+    for choice in _every_choice(settings):
         if choice.spec == spec:
             return choice.id
     return None
@@ -142,15 +152,22 @@ def supports_reasoning(settings: Settings, provider_id: str) -> bool:
     return bool(choice and choice.supports_reasoning)
 
 
-def supports_vision_for_spec(settings: Settings, spec: str) -> bool:
+def supports_vision_for_spec(settings: Settings, spec: str, engine: engines.Engine) -> bool:
     """Whether the model behind a raw "provider:model" spec is vision-capable.
 
     Prefers a curated choice (the UI's authoritative flag); for an off-menu spec —
     an env pin or a local model not in the provisioned selection — falls back to the
     provider: the two cloud providers are multi-modal, and a `local:` spec matched
     against the catalog (text-only local models are not). Unknown/malformed → False
-    (fail closed: never claim a capability we can't confirm)."""
-    for choice in provider_choices(settings):
+    (fail closed: never claim a capability we can't confirm).
+
+    `engine` is the active engine, explicit because this is module-level: a local spec of the
+    other engine is judged as the model it is remapped onto (Flash-Next sees images even when
+    the stored pick was text-only gpt-oss — plan §4c)."""
+    provider, _, model = spec.partition(":")
+    if provider == local_catalog.LOCAL_PROVIDER:
+        spec = f"{provider}:{local_catalog.remap_for_engine(model, engine) or model}"
+    for choice in _every_choice(settings):
         if choice.spec == spec:
             return choice.supports_vision
     provider, _, model = spec.partition(":")

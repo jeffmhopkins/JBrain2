@@ -1315,6 +1315,36 @@ def get_by_served(served_model: str) -> LocalModel | None:
     return _BY_SERVED.get(served_model)
 
 
+def engine_of(served_model: str) -> engines.Engine:
+    """The engine that serves `served_model`. A name outside the catalog is an operator-served
+    model on the standard gateway, the only one an unlisted model can be added to."""
+    model = _BY_SERVED.get(served_model)
+    return engines.parse(model.engine) if model is not None else engines.STANDARD
+
+
+def sole_model(engine: engines.Engine) -> LocalModel | None:
+    """The one model `engine` serves for every local call, or None for an engine that serves a
+    roster. Flash-Next is a single model (plan §4c: every local call remaps to it); the
+    standard gateway has many, so there is nothing to remap onto."""
+    if engine == engines.STANDARD:
+        return None
+    return next((m for m in CATALOG if engines.parse(m.engine) == engine), None)
+
+
+def remap_for_engine(served_model: str, active: engines.Engine) -> str | None:
+    """The served name a local call for `served_model` must use while `active` serves.
+
+    Its own name when it belongs to `active`; the active engine's sole model when that engine
+    has one (Flash-Next on: every local call goes to it); None when the active engine has a
+    roster and the name is not on it (a Flash-Next pick while Standard serves) — the caller
+    then falls back to its own default instead of refusing. Stored picks are never rewritten;
+    this is applied per call (FLASH_NEXT_ENGINE_PLAN §4c)."""
+    if engine_of(served_model) == active:
+        return served_model
+    sole = sole_model(active)
+    return sole.served_model if sole is not None else None
+
+
 # The context length KV estimates are normalized to: kv_gb_per_128k is the KV cache at
 # 131072 tokens, and KV scales linearly with the served window. (Defined near the top, beside
 # the runtime-overhead and vision terms, because load_footprint_gb needs them.)
