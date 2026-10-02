@@ -10,6 +10,8 @@ import type {
   ContainerStatus,
   DeviceSummary,
   EgoGraph,
+  EngineId,
+  EngineState,
   EntityListItem,
   EntityOut,
   FactOut,
@@ -393,6 +395,32 @@ const SETTINGS: AppSettings = {
 
 // The box's installed Kokoro voices, for the read-aloud voice picker mock.
 const BRAIN_VOICES = ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
+
+// The on-box engine (GET/POST /api/settings/llm/engine): Standard serving, both installed.
+const ENGINE_STATE: EngineState = {
+  desired: "standard",
+  effective: "standard",
+  services: {
+    standard: { service: "local-llm", state: "running" },
+    "flash-next": { service: "flash-next", state: "exited" },
+  },
+  running: ["standard"],
+  consistent: true,
+  installed: { standard: true, "flash-next": true },
+  oneshot: null,
+  perplexity_running: false,
+  switching: false,
+  admission: { closed: false, reason: null, until: null },
+  memory: {
+    gtt_used_gb: 81.9,
+    gtt_total_gb: 120,
+    gtt_free_gb: 38.1,
+    host_total_gb: 121.2,
+    host_used_gb: 94.9,
+  },
+  guard: null,
+  switch: null,
+};
 
 // Per-task LLM routing fixture (GET/PUT /api/settings/llm). Only grok carries
 // a reasoning level; reasoning_effort is null for any task off grok, mirroring
@@ -4283,6 +4311,34 @@ export const mockFetch: typeof fetch = async (input, init) => {
       status: 202,
       headers: { "Content-Type": "application/json" },
     });
+  }
+  // The engine switch: mock dev switches instantly (no stages to watch), so the card's
+  // idle/serving states and the global banner can be exercised without a box.
+  if (path === "/api/settings/llm/engine" && method === "GET") return json(ENGINE_STATE);
+  if (path === "/api/settings/llm/engine" && method === "POST") {
+    const body = JSON.parse(String(init?.body)) as { engine: EngineId; force?: boolean };
+    const now = new Date().toISOString();
+    const previous = ENGINE_STATE.effective;
+    ENGINE_STATE.desired = body.engine;
+    ENGINE_STATE.effective = body.engine;
+    ENGINE_STATE.running = [body.engine];
+    ENGINE_STATE.switch = {
+      id: `mock-${Date.now()}`,
+      source: "owner",
+      target: body.engine,
+      previous,
+      force: body.force ?? false,
+      stage: "done",
+      reason: null,
+      started_at: now,
+      updated_at: now,
+      ended_at: now,
+      stages: [{ stage: "done", at: now }],
+      model: null,
+      smoke: [],
+      notes: ["mock: switched instantly"],
+    };
+    return json(ENGINE_STATE.switch, 202);
   }
   if (path === "/api/settings/llm" && method === "GET") return json(LLM_SETTINGS);
   if (path === "/api/settings/llm" && method === "PUT") {

@@ -1,0 +1,274 @@
+// The on-box engine's state, shared by every surface that shows it.
+//
+// One store and one poller, because two surfaces read the same fact at once: the global
+// engine banner (under every top bar) and the Ops "Local engine" card. Each polling on its
+// own would double the supervisor reads during a switch, and worse, could disagree for a
+// beat about whether a switch is running. The banner never fetches — it only subscribes —
+// so a screen rendered in isolation (a test, a share app) costs no request.
+//
+// Binding mock: docs/mocks/engine-switch/a-segmented-toggle.html.
+
+import { useEffect, useSyncExternalStore } from "react";
+import {
+  ApiError,
+  type EngineId,
+  type EngineState,
+  type EngineSwitchStage,
+  api,
+} from "./api/client";
+import { isForeground, onForegroundSignals } from "./visibility";
+
+export const ENGINE_LABEL: Record<EngineId, string> = {
+  standard: "Standard",
+  "flash-next": "Flash-Next",
+};
+
+export const OTHER_ENGINE: Record<EngineId, EngineId> = {
+  standard: "flash-next",
+  "flash-next": "standard",
+};
+
+const TERMINAL = new Set<EngineSwitchStage>(["done", "rolled_back", "failed"]);
+
+/** While a switch runs the stages turn over in seconds; idle, the engine changes only when
+ *  someone switches it, so a slow beat keeps the banner honest without load. */
+export const ENGINE_POLL_FAST_MS = 2000;
+export const ENGINE_POLL_IDLE_MS = 30000;
+
+export interface EngineSnapshot {
+  state: EngineState | null;
+  /** The last read's failure, or null. A failed read keeps the previous state. */
+  error: string | null;
+  /** The engine the owner asked to switch to from elsewhere (the banner's "Switch back"),
+   *  which the Ops card picks up as an armed confirm. */
+  armed: EngineId | null;
+  /** Switch ids whose rollback/failure the owner dismissed. */
+  dismissed: ReadonlySet<string>;
+}
+
+const DISMISS_KEY = "jbrain.engine.dismissed";
+
+function loadDismissed(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(DISMISS_KEY);
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+let snapshot: EngineSnapshot = {
+  state: null,
+  error: null,
+  armed: null,
+  dismissed: loadDismissed(),
+};
+const listeners = new Set<() => void>();
+
+function set(patch: Partial<EngineSnapshot>): void {
+  snapshot = { ...snapshot, ...patch };
+  for (const l of listeners) l();
+}
+
+function subscribe(l: () => void): () => void {
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
+
+/** The current snapshot outside React (tests, imperative callers). */
+export function peekEngineSnapshot(): EngineSnapshot {
+  return snapshot;
+}
+
+export function useEngineSnapshot(): EngineSnapshot {
+  return useSyncExternalStore(subscribe, () => snapshot);
+}
+
+/** True while a switch is in flight — read off both signals, since `switching` is the api
+ *  process's own lock and the stage is what any process recorded. */
+export function switchInFlight(state: EngineState | null): boolean {
+  if (state === null) return false;
+  return state.switching || (state.switch !== null && !TERMINAL.has(state.switch.stage));
+}
+
+// The api answering 403/404 means this principal or this server has no engine surface;
+// polling it every few seconds would only fill the log.
+let unsupported = false;
+let inflight: Promise<void> | null = null;
+
+/** Read the engine state now. Concurrent callers share one request. */
+export function refreshEngine(): Promise<void> {
+  inflight ??= (async () => {
+    try {
+      const state = await api.getEngineState();
+      set({ state, error: null });
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) unsupported = true;
+      set({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
+
+let pollers = 0;
+let timer: ReturnType<typeof setTimeout> | null = null;
+let stopSignals: (() => void) | null = null;
+
+function schedule(delay?: number): void {
+  if (timer !== null) clearTimeout(timer);
+  timer = null;
+  if (pollers === 0 || unsupported) return;
+  const wait =
+    delay ?? (switchInFlight(snapshot.state) ? ENGINE_POLL_FAST_MS : ENGINE_POLL_IDLE_MS);
+  timer = setTimeout(() => {
+    timer = null;
+    if (!isForeground()) return; // resumes on the next foreground signal
+    void refreshEngine().then(() => schedule());
+  }, wait);
+}
+
+/** Re-arm the poll at the pace the current state wants — called after a POST so the first
+ *  stage shows within two seconds rather than the idle beat. */
+export function kickEnginePoll(): void {
+  schedule(0);
+}
+
+/** Keep the store polled while the calling component is mounted. Reference-counted, so the
+ *  shell and the Ops card together still make one request per beat. */
+export function useEnginePolling(enabled = true): void {
+  useEffect(() => {
+    if (!enabled) return;
+    pollers += 1;
+    if (pollers === 1) {
+      stopSignals = onForegroundSignals(() => {
+        if (isForeground()) schedule(0);
+      });
+    }
+    schedule(0);
+    return () => {
+      pollers -= 1;
+      if (pollers === 0) {
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+        stopSignals?.();
+        stopSignals = null;
+      }
+    };
+  }, [enabled]);
+}
+
+export function armEngineSwitch(engine: EngineId | null): void {
+  set({ armed: engine });
+}
+
+let disarmTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** The card's mount/unmount pair for the armed confirm: an armed switch belongs to one visit
+ *  to Ops, so leaving drops it — but deferred a tick, because StrictMode unmounts and
+ *  remounts every effect once in dev, and a synchronous clear there would eat the arm the
+ *  banner's "Switch back" just set. */
+export function holdEngineArm(): () => void {
+  if (disarmTimer !== null) clearTimeout(disarmTimer);
+  disarmTimer = null;
+  return () => {
+    disarmTimer = setTimeout(() => {
+      disarmTimer = null;
+      armEngineSwitch(null);
+    }, 0);
+  };
+}
+
+export function dismissEngineSwitch(id: string): void {
+  const next = new Set(snapshot.dismissed);
+  next.add(id);
+  try {
+    window.localStorage.setItem(DISMISS_KEY, JSON.stringify([...next].slice(-20)));
+  } catch {
+    // Private mode: the dismissal holds for this app-open only.
+  }
+  set({ dismissed: next });
+}
+
+export interface EngineNavigator {
+  /** Open the Ops screen (where the Local engine card lives). */
+  ops: () => void;
+  /** Open LLM settings' On-box models, where Flash-Next's weights are installed. */
+  models: () => void;
+}
+
+let navigator_: EngineNavigator | null = null;
+
+/** The shell registers how to reach Ops and On-box models; the banner and the card are
+ *  rendered far from the router and have no other way there. */
+export function setEngineNavigator(nav: EngineNavigator | null): void {
+  navigator_ = nav;
+}
+
+export function openEngineCard(arm?: EngineId): void {
+  if (arm !== undefined) armEngineSwitch(arm);
+  navigator_?.ops();
+}
+
+export function openOnBoxModels(): void {
+  navigator_?.models();
+}
+
+/** Reset every module-level piece (tests only). */
+export function resetEngineStore(): void {
+  if (timer !== null) clearTimeout(timer);
+  timer = null;
+  if (disarmTimer !== null) clearTimeout(disarmTimer);
+  disarmTimer = null;
+  pollers = 0;
+  stopSignals?.();
+  stopSignals = null;
+  unsupported = false;
+  inflight = null;
+  navigator_ = null;
+  snapshot = { state: null, error: null, armed: null, dismissed: new Set() };
+  for (const l of listeners) l();
+}
+
+/** Seed the store directly (tests, and the card after a POST answers). */
+export function setEngineState(state: EngineState | null): void {
+  set({ state, error: null });
+}
+
+/** `HH:MM` local time of an ISO timestamp, or null when absent/unparseable. */
+export function hhmm(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+export function hhmmss(iso: string | null | undefined): string | null {
+  const base = hhmm(iso);
+  if (base === null || !iso) return null;
+  return `${base}:${String(new Date(iso).getSeconds()).padStart(2, "0")}`;
+}
+
+/** The forward steps of a switch, in order, with the owner's label for each. */
+export function switchSteps(
+  from: EngineId,
+  to: EngineId,
+  model: string | null,
+): { stage: EngineSwitchStage; label: string }[] {
+  return [
+    { stage: "draining", label: "Drain local calls" },
+    { stage: "stopping", label: `Stop ${ENGINE_LABEL[from]}` },
+    { stage: "starting", label: `Start ${ENGINE_LABEL[to]}` },
+    { stage: "loading", label: model ? `Load ${model}` : "Load the test model" },
+    { stage: "smoke", label: "Smoke test" },
+  ];
+}
+
+/** When Flash-Next became the serving engine, if the last switch says so. */
+export function activeSince(state: EngineState): string | null {
+  const sw = state.switch;
+  if (sw && sw.stage === "done" && sw.target === state.effective) return hhmm(sw.ended_at);
+  return null;
+}
