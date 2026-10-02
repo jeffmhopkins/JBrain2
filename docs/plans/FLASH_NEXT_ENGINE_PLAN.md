@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-02 · **Waves:** F1✅ F2◻️ F3a◻️ F3b◻️ F4◻️ F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-02 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4◻️ F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -372,7 +372,7 @@ sidecar patch, which the flash-next image only gets in F4, so it is F4's first c
 **Exit gate:** measured resident ≤ 90 GiB with 8 checkpoints per slot, every check above
 passes, and no check needed a host shell. Fail → the plan parks with the numbers recorded.
 
-### F3a — The owner switch and the remap ◻️
+### F3a — The owner switch and the remap ✅
 Split from F3 on 2026-10-02, after F1 ran live: while Flash-Next was effective, every task
 still routed to a standard model (gpt-oss-120b, qwen3.8-27b-q4, …) was refused by residency's
 off-engine gate, so the nightly workflows did nothing; and the PWA's Load button for

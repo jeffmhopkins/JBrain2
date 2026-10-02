@@ -613,7 +613,9 @@ W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropi
 **In progress:** Flash-Next engine (build plan: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`) — Qwen3.8-Flash-Next
 (text + image) as a switchable second local-LLM engine in its own container, either/or with the standard
 gateway and operated entirely from the PWA. F1 shipped (engine-aware container, provisioning, one-engine
-guards, no-terminal debug tooling); F2, the on-box spike that gates everything after it, is next.
+guards, no-terminal debug tooling) and F3a (the owner's Ops engine switch, drain, remap of every
+local call). F2's on-box spike is mostly measured (memory fit, speed, tools, JSON, prefix reuse,
+perplexity, a clean 30-min soak); vision and the full soak remain. F3b (reserved 512k pool) is next.
 
 **In progress:** Tool catalog (build plan: `docs/plans/TOOL_CATALOG_PLAN.md`) — a scalable tool
 surface for jerv's growing tool count: DISCOVERY (compact menu) split from INVOCATION-SCHEMA
