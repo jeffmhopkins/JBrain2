@@ -882,7 +882,9 @@ export type EngineSwitchStage =
   | "smoke"
   | "done"
   | "rolled_back"
-  | "failed";
+  | "failed"
+  /** The owner cancelled while it was still draining — nothing was stopped. */
+  | "cancelled";
 
 export interface EngineSmokeResult {
   probe: string;
@@ -909,6 +911,9 @@ export interface EngineSwitchStatus {
   model: string | null;
   smoke: EngineSmokeResult[];
   notes: string[];
+  /** Set on a `failed` switch that left NO local engine running (neither the target nor the
+   * previous engine could be brought up). Absent from a server that predates it. */
+  no_engine_up?: boolean | undefined;
 }
 
 export interface EngineState {
@@ -3523,23 +3528,17 @@ export const api = {
     return (await response.json()) as EngineSwitchStatus;
   },
 
-  /** Cancel a switch while it is still draining (nothing has stopped yet). Tries the cancel
-   * route, then the DELETE form; a server with neither throws EngineCancelUnsupported so the
-   * card can stop offering it. A 409 (past draining) surfaces as an ApiError. */
-  async cancelEngineSwitch(): Promise<void> {
-    for (const [path, method] of [
-      ["/api/settings/llm/engine/cancel", "POST"],
-      ["/api/settings/llm/engine/switch", "DELETE"],
-    ] as const) {
-      try {
-        await request(path, { method });
-        return;
-      } catch (err) {
-        if (err instanceof ApiError && (err.status === 404 || err.status === 405)) continue;
-        throw err;
-      }
+  /** Cancel a switch while it is still draining (nothing has stopped yet); poll for the
+   * `cancelled` stage. A server without the route (404) throws EngineCancelUnsupported so the
+   * card stops offering it; a 409 (past draining, or no switch) surfaces as an ApiError. */
+  async cancelEngineSwitch(): Promise<EngineSwitchStatus> {
+    try {
+      const response = await request("/api/settings/llm/engine/cancel", { method: "POST" });
+      return (await response.json()) as EngineSwitchStatus;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) throw new EngineCancelUnsupported();
+      throw err;
     }
-    throw new EngineCancelUnsupported();
   },
 
   /** Evict one local model from the gateway's memory; returns what's still resident. */

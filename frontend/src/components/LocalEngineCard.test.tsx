@@ -3,8 +3,10 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineState } from "../api/client";
 import {
+  ENGINE_POLL_IDLE_MS,
   armEngineSwitch,
   hhmmss,
+  nextDelay,
   peekEngineSnapshot,
   refreshEngine,
   resetEngineStore,
@@ -354,10 +356,7 @@ describe("LocalEngineCard", () => {
       await screen.findByRole("button", { name: /Cancel — nothing has stopped yet/ }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(/can't cancel a switch/);
-    expect(calls).toEqual([
-      "POST /api/settings/llm/engine/cancel",
-      "DELETE /api/settings/llm/engine/switch",
-    ]);
+    expect(calls).toEqual(["POST /api/settings/llm/engine/cancel"]);
     expect(screen.queryByRole("button", { name: /Cancel — nothing has stopped yet/ })).toBeNull();
     // Past draining there is never a cancel.
     act(() =>
@@ -367,10 +366,21 @@ describe("LocalEngineCard", () => {
     expect(ctl.posts).toEqual([]);
   });
 
-  it("cancels a draining switch through the route when there is one", async () => {
-    stubEngine(engineState({ switching: true, switch: switchStatus({ stage: "draining" }) }));
+  it("cancels a draining switch, ends neutral, and can be re-armed", async () => {
+    const ctl = stubEngine(
+      engineState({ switching: true, switch: switchStatus({ id: "sw-c", stage: "draining" }) }),
+    );
     const base = globalThis.fetch;
-    const cancel = vi.fn(async () => json({ stage: "rolled_back" }, 202));
+    const cancelled = switchStatus({
+      id: "sw-c",
+      stage: "cancelled",
+      reason: "cancelled while draining — nothing was stopped; standard serves",
+      ended_at: "2026-10-02T09:41:20Z",
+    });
+    const cancel = vi.fn(async () => {
+      ctl.current = engineState({ switching: false, switch: cancelled });
+      return json(cancelled, 202);
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn<typeof fetch>(async (input, init) =>
@@ -380,6 +390,66 @@ describe("LocalEngineCard", () => {
     render(<LocalEngineCard />);
     fireEvent.click(await screen.findByRole("button", { name: /nothing has stopped yet/ }));
     await waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText(/Switch cancelled — Standard still serving/),
+    ).toBeInTheDocument();
+    // Neutral: no alert, no progress, and the control is live again.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/Step \d of 5/)).toBeNull();
+    expect(seg("Flash-Next")).toBeEnabled();
+    fireEvent.click(seg("Flash-Next"));
+    expect(screen.getByRole("region", { name: "Confirm engine switch" })).toBeInTheDocument();
+    // The store's beat is back to idle.
+    expect(nextDelay()).toBe(ENGINE_POLL_IDLE_MS);
+  });
+
+  it("shows a cancel refused past draining as the server's error", async () => {
+    stubEngine(engineState({ switching: true, switch: switchStatus({ stage: "draining" }) }));
+    const base = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) =>
+        String(input).endsWith("/engine/cancel")
+          ? json({ detail: "only a switch that is still draining can be cancelled" }, 409)
+          : base(input, init),
+      ),
+    );
+    render(<LocalEngineCard />);
+    fireEvent.click(await screen.findByRole("button", { name: /nothing has stopped yet/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/still draining can be cancelled/);
+    // A 409 is not "unsupported": the button stays on offer while it is draining.
+    expect(screen.getByRole("button", { name: /nothing has stopped yet/ })).toBeInTheDocument();
+  });
+
+  it("says prominently when no local engine is up, with a way to start one", async () => {
+    const ctl = stubEngine(
+      engineState({
+        running: [],
+        consistent: false,
+        services: {
+          standard: { service: "local-llm", state: "exited" },
+          "flash-next": { service: "flash-next", state: "exited" },
+        },
+        switch: switchStatus({
+          stage: "failed",
+          no_engine_up: true,
+          reason: "flash-next did not report running; standard could NOT be put back",
+        }),
+      }),
+    );
+    render(<LocalEngineCard />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/No local engine is up — flash-next did not report running/);
+    expect(screen.getByRole("button", { name: /Local engine/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // Starting the recorded (effective) engine is a real, confirmed switch here.
+    fireEvent.click(within(alert).getByRole("button", { name: "Start Standard" }));
+    const confirm = screen.getByRole("region", { name: "Confirm engine switch" });
+    expect(within(confirm).getByText("Switch to Standard?")).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Switch" }));
+    await waitFor(() => expect(ctl.posts).toEqual([{ engine: "standard", force: false }]));
   });
 
   it("shows a decode rate only when the server reports one", async () => {

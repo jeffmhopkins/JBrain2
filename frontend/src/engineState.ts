@@ -28,7 +28,26 @@ export const OTHER_ENGINE: Record<EngineId, EngineId> = {
   "flash-next": "standard",
 };
 
-const TERMINAL = new Set<EngineSwitchStage>(["done", "rolled_back", "failed"]);
+const TERMINAL = new Set<EngineSwitchStage>(["done", "rolled_back", "failed", "cancelled"]);
+
+/** Whether a switch stage is an ending. The ONE definition every surface uses: a stage
+ *  missing here reads as "still switching" forever — a 2 s poll, an amber banner and a
+ *  card that cannot be re-armed. */
+export function isTerminal(stage: EngineSwitchStage): boolean {
+  return TERMINAL.has(stage);
+}
+
+/** A switch left NO local engine up, and that is still true now. The flag stays on the last
+ *  switch record after a later update brings an engine back, so it is read against what is
+ *  actually running. */
+export function noEngineUp(state: EngineState | null): boolean {
+  return (
+    state !== null &&
+    state.switch?.no_engine_up === true &&
+    !switchInFlight(state) &&
+    state.running.length === 0
+  );
+}
 
 /** While a switch runs the stages turn over in seconds; idle, the engine changes only when
  *  someone switches it, so a slow beat keeps the banner honest without load. */
@@ -95,7 +114,7 @@ export function useEngineSnapshot(): EngineSnapshot {
  *  process's own lock and the stage is what any process recorded. */
 export function switchInFlight(state: EngineState | null): boolean {
   if (state === null) return false;
-  return state.switching || (state.switch !== null && !TERMINAL.has(state.switch.stage));
+  return state.switching || (state.switch !== null && !isTerminal(state.switch.stage));
 }
 
 // A 403 means this principal has no engine surface; polling it would only fill the log. It
