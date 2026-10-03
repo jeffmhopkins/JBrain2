@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import external_llm
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
+from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotRole
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
 
@@ -228,9 +229,56 @@ def test_openai_chat_completions_forwards_pins_and_meters(
     assert sent["base_url"] == "http://gw:8080/v1"
     assert sent["path"] == "/chat/completions"
     assert sent["payload"]["model"] == "qwen3-coder-next"  # type: ignore[index]
+    assert "id_slot" not in sent["payload"]  # type: ignore[operator]  # no pool, no pin
     # OpenAI-shaped usage was metered onto the session.
     listed = owner.get("/api/jcode/external").json()[0]
     assert (listed["in_tokens"], listed["out_tokens"], listed["requests"]) == (40, 60, 1)
+
+
+@pytest.mark.parametrize("asked", [None, 0])
+def test_a_pooled_coder_is_pinned_to_the_jcode_slot(
+    app_repo: tuple[FastAPI, FakeAuthRepo], monkeypatch: pytest.MonkeyPatch, asked: int | None
+) -> None:
+    # A remote coder is jcode traffic: on a pooled model it takes the jcode slot whatever the
+    # caller asked for, since any other slot holds some role's primed prefix.
+    app, repo = app_repo
+    owner = _owner(app, repo)
+    minted = owner.post("/api/jcode/external", json={}).json()
+    sent: dict[str, object] = {}
+
+    class _Stream:
+        async def __aenter__(self) -> "_Stream":
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+        async def aiter_raw(self):  # noqa: ANN202
+            yield b"{}"
+
+    class _Client:
+        def __init__(self, *a: object, **k: object) -> None:
+            pass
+
+        def stream(self, _method: str, _path: str, *, json: object):  # noqa: ANN202
+            sent["payload"] = json
+            return _Stream()
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(external_llm.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(external_llm.local_catalog, "pool_of", lambda _m: FLASH_NEXT_POOL)
+    body: dict[str, object] = {"messages": [{"role": "user", "content": "hi"}]}
+    if asked is not None:
+        body["id_slot"] = asked
+    r = TestClient(app).post(
+        f"/api/ext/llm/{minted['id']}/v1/chat/completions",
+        json=body,
+        headers={"Authorization": f"Bearer {minted['token']}"},
+    )
+    assert r.status_code == 200
+    assert sent["payload"]["id_slot"] == FLASH_NEXT_POOL.slot(SlotRole.JCODE)  # type: ignore[index]
 
 
 def test_openai_models_lists_pinned_coder_and_is_gated(

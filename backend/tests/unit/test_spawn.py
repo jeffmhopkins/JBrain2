@@ -21,6 +21,7 @@ from jbrain.agent.tree import (
     child_steps_for,
 )
 from jbrain.db.session import SessionContext
+from jbrain.llm.slot_roles import SlotRole
 
 
 def _review_brief(artifact: str = "the material") -> dict:
@@ -102,6 +103,7 @@ class _FakeRouter:
 
     def __init__(self, provider: str = "xai") -> None:
         self.provider = provider
+        self.window_roles: list[object] = []
 
     async def effective_reasoning_effort(self, task):  # noqa: ANN001
         return "high"
@@ -109,8 +111,9 @@ class _FakeRouter:
     async def effective_spec(self, task, strength=None):  # noqa: ANN001
         return (self.provider, "model-x")
 
-    async def context_window(self, task):  # noqa: ANN001
+    async def context_window(self, task, slot_role=None):  # noqa: ANN001
         # The child's meter denominator — a fixed window for the fake.
+        self.window_roles.append(slot_role)
         return 131_072
 
 
@@ -120,9 +123,11 @@ class _FakeLoop:
 
     calls: list[dict] = []
     last_guardrails: object = None
+    last_slot_role: object = None
 
     def __init__(self, *_a, **_k) -> None:
         _FakeLoop.last_guardrails = _k.get("guardrails")
+        _FakeLoop.last_slot_role = _k.get("slot_role")
 
     async def run(self, **kw):  # noqa: ANN003
         _FakeLoop.calls.append(kw)
@@ -478,6 +483,18 @@ async def test_child_brief_and_answer_persisted_to_its_own_transcript(
     # so reopening the sub-agent replays its "Worked" list + thinking and it's debuggable.
     assert [t["name"] for t in ex["tools"]] == ["search"]
     assert ex["reasoning"] == "thinking about it"
+
+
+async def test_a_child_runs_in_the_research_slot(service: SpawnService) -> None:
+    # Children run under the shared agent.turn task; on a pooled model they would otherwise
+    # land in jerv's interactive slot and evict the prefix the parent turn reuses next.
+    _FakeLoop.last_slot_role = None
+    await service.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert _FakeLoop.last_slot_role == SlotRole.RESEARCH
+    router: _FakeRouter = service._router  # type: ignore[assignment]
+    assert router.window_roles == [SlotRole.RESEARCH]
 
 
 async def test_high_effort_child_gets_a_larger_step_cap(service: SpawnService) -> None:

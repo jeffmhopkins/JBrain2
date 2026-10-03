@@ -32,6 +32,7 @@ from jbrain.intake.materialize import materialize_submission
 from jbrain.intake.persona import brief_from_snapshot, build_intake_system_prompt
 from jbrain.intake.service import IntakeLinkConfig, IntakeRepo, IntakeSessionState
 from jbrain.llm import LlmRouter
+from jbrain.llm.slot_roles import SlotRole
 
 log = structlog.get_logger()
 
@@ -458,9 +459,9 @@ async def intake_chat(
     profile = agent_for_intake("intake")  # fail-closed: only ever the intake persona
     system = build_intake_system_prompt(brief_from_snapshot(state.config_snapshot))
     effort = await router_llm.effective_reasoning_effort("agent.turn")
-    context_window = await router_llm.context_window("agent.turn")
+    context_window = await router_llm.context_window("agent.turn", slot_role=SlotRole.WORKSHOP)
     guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier)
-    loop = AgentLoop(router_llm, registry, guardrails=guardrails)
+    loop = AgentLoop(router_llm, registry, guardrails=guardrails, slot_role=SlotRole.WORKSHOP)
     conversation = turn.conversation_from_transcript(state.transcript, body.message)
 
     async def gen() -> AsyncIterator[bytes]:

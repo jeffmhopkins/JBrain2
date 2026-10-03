@@ -32,6 +32,7 @@ from jbrain.agent.spawn import _ChildResult
 from jbrain.llm import LlmRouter
 from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmTurn, ReasoningChunk, TextChunk, UserMessage
 from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import WebFetcher, WebFetchError
@@ -505,6 +506,8 @@ class DailyBriefingBuilder:
                 system=_SYNTH.render(),
                 messages=[UserMessage(text=user_text)],
                 max_tokens=_WRITER_MAX_TOKENS,
+                # A scheduled background write: never jerv's interactive slot.
+                slot_role=SlotRole.SCHEDULED,
             ):
                 if isinstance(part, TextChunk):
                     if part.text:

@@ -49,6 +49,7 @@ from jbrain import box_events, host_metrics
 from jbrain.llm import gpu_guard, local_catalog, local_weights, openai_compat, prefill
 from jbrain.llm.admission import Outcome, Phase
 from jbrain.llm.ledger import ReservationLedger
+from jbrain.llm.slot_roles import PROBE_ROLE, WARM_ROLE, SlotRole
 
 log = structlog.get_logger()
 
@@ -134,6 +135,15 @@ STATE_STOPPING = "stopping"
 # left watching a spinner.
 STOP_SETTLE_TIMEOUT_S = 60.0
 STOP_SETTLE_POLL_S = 0.5
+
+
+def _pin_slot(body: dict[str, object], served_model: str, role: SlotRole) -> None:
+    """Pin a direct gateway request to its role's slot on a pooled model. Unpinned, llama-server
+    hands it the least-recently-used idle slot, so a one-token probe would evict some role's
+    primed prefix. Other models get the body untouched."""
+    pool = local_catalog.pool_of(served_model)
+    if pool is not None:
+        body["id_slot"] = pool.slot(role)
 
 
 class LocalGatewayError(Exception):
@@ -1322,6 +1332,7 @@ class LocalGatewayClient:
         }
         if tools:
             body["tools"] = tools
+        _pin_slot(body, served_model, WARM_ROLE)
         # The SAME reasoning encoding a real routed turn carries (openai_compat): the chat
         # template renders it into the prompt's leading tokens, so omitting it here primed a
         # DIFFERENT prefix from the one every turn actually sends — a warm that warmed
@@ -1409,6 +1420,7 @@ class LocalGatewayClient:
             "max_tokens": 1,
             "stream": False,
         }
+        _pin_slot(body, served_model, PROBE_ROLE)
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 120.0), transport=self._transport
@@ -1454,6 +1466,7 @@ class LocalGatewayClient:
             "stream": False,
         }
         openai_compat.apply_local_reasoning(body, "none")
+        _pin_slot(body, served_model, PROBE_ROLE)
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 180.0), transport=self._transport

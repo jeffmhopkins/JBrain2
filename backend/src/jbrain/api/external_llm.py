@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.auth import service
 from jbrain.llm import local_catalog
+from jbrain.llm.slot_roles import JCODE_ROLE
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -231,6 +232,11 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
     payload["model"] = served  # pin to the on-box coder; ignore the caller's choice
+    # A remote coder is a jcode workload: on a pooled model it takes the jcode slot, never the
+    # caller's pick or llama-server's LRU choice, either of which would evict a primed role.
+    pool = local_catalog.pool_of(served)
+    if pool is not None:
+        payload["id_slot"] = pool.slot(JCODE_ROLE)
     client = httpx.AsyncClient(base_url=gateway_url.rstrip("/"), timeout=httpx.Timeout(600.0))
 
     captured: list[bytes] = []
