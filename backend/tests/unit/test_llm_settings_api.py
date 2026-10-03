@@ -568,7 +568,9 @@ def test_disk_gb_reports_the_real_footprint_when_provisioned(tmp_path: Any) -> N
     # Lay down real weights for one provisioned model; the other isn't on disk.
     qwen = tmp_path / "qwen3-vl-30b"
     qwen.mkdir()
-    (qwen / "model.gguf").write_bytes(b"\0" * (2 * 1024**3))
+    # Sparse: the size is read from the inode, and a real 2 GiB write fills CI and dev disks.
+    with (qwen / "model.gguf").open("wb") as f:
+        f.truncate(2 * 1024**3)
     settings = _cloud_settings(
         local_llm_enabled=True,
         local_models=["qwen3-vl-30b", "gpt-oss-120b"],
@@ -672,7 +674,7 @@ def test_drawer_reports_parallel_slots_default_of_one() -> None:
     c, _ = _authed_client(_local_settings())
     by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
     # Every unconfigured model serves its catalog default: one slot, except an entry whose
-    # catalog sets more (Flash-Next's four role-pinned slots).
+    # catalog sets more (Flash-Next's eight role-pinned pool slots).
     assert all(
         m["parallel_slots"] == local_catalog.get(mid).default_slots  # type: ignore[union-attr]
         for mid, m in by_id.items()

@@ -620,6 +620,8 @@ def test_slots_route_goes_through_the_owner_settings_path(
 
 
 def test_slots_route_sets_and_bounds_a_local_models_slot_count() -> None:
+    """The debug twin shares the owner route's rules: a standard model takes 1..2, and a pooled
+    model (Flash-Next) only a no-op, refusing a change with the same 409 reason."""
     flash = "qwen3.8-flash-next"
     app = create_app(_settings(local_llm_enabled=True, local_models=["gpt-oss-120b", flash]))
     repo = FakeAuthRepo()
@@ -629,19 +631,22 @@ def test_slots_route_sets_and_bounds_a_local_models_slot_count() -> None:
         app.state.settings_store = store
         app.state.local_gateway = FakeLocalGateway()
         key, _ = asyncio.run(auth_service.mint_capability(repo, "claude", ttl_hours=24))
-        url = f"/api/debug/llm/local-models/{flash}/parallel-slots"
-        resp = client.put(url, headers=_auth(key), json={"slots": 1})
-        assert resp.status_code == 200, resp.text
-        row = {m["id"]: m for m in resp.json()["local_models"]}[flash]
-        assert row["parallel_slots"] == 1
-        assert store.values["llm_local_parallel_slots"] == {flash: 1}
-        for bad in (0, 5):
-            assert client.put(url, headers=_auth(key), json={"slots": bad}).status_code == 422
-        assert store.values["llm_local_parallel_slots"] == {flash: 1}
-        resp = client.put(url, headers=_auth(key), json={"slots": None})
-        assert {m["id"]: m for m in resp.json()["local_models"]}[flash]["parallel_slots"] == 4
         gpt = "/api/debug/llm/local-models/gpt-oss-120b/parallel-slots"
-        assert client.put(gpt, headers=_auth(key), json={"slots": 3}).status_code == 422
+        resp = client.put(gpt, headers=_auth(key), json={"slots": 2})
+        assert resp.status_code == 200, resp.text
+        assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
+        for bad in (0, 3):
+            assert client.put(gpt, headers=_auth(key), json={"slots": bad}).status_code == 422
+        url = f"/api/debug/llm/local-models/{flash}/parallel-slots"
+        for change in (1, 4, 9):
+            resp = client.put(url, headers=_auth(key), json={"slots": change})
+            assert resp.status_code == 409 and "slot count is fixed" in resp.json()["detail"]
+        assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
+        resp = client.put(url, headers=_auth(key), json={"slots": 8})
+        assert {m["id"]: m for m in resp.json()["local_models"]}[flash]["parallel_slots"] == 8
+        window = f"/api/debug/llm/local-models/{flash}/context-window"
+        resp = client.put(window, headers=_auth(key), json={"context_window": 65536})
+        assert resp.status_code == 409 and "context window is fixed" in resp.json()["detail"]
 
 
 # --- read-only SQL guard ----------------------------------------------------

@@ -2777,6 +2777,252 @@ fieldset.settings-field > legend {
   margin-left: auto;
 }
 
+/* A pool model's KV pool (DESIGN.md "KV pool view", GUI gate F3b variant C): one quiet row
+   line in place of the window/slot selects, and a Sheet listing the role-pinned slots.
+   Role hues come in pairs by job family; the second slot of a pair is lighter. */
+.kvp-line {
+  gap: 10px;
+}
+.kvp-sum {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.kvp-sum b {
+  color: var(--text);
+  font-weight: 600;
+}
+.kvp-ticks {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.kvp-ticks i {
+  display: block;
+  width: 7px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.kvp-open {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  color: var(--steel);
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  min-height: 44px;
+  padding: 0 2px;
+}
+.kvp-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.kvp-lede {
+  margin: 6px 0 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.kvp-stats {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+.kvp-stats > div {
+  flex: 1;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.kvp-k {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.kvp-v {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.kvp-v small {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-weight: 400;
+}
+.kvp-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.kvp-slot {
+  --kvp-c: var(--text-2);
+  --kvp-tint: var(--surface-2);
+  --kvp-o: 0.7;
+  border-top: 1px solid var(--border);
+}
+.kvp-slot:first-child {
+  border-top: 0;
+}
+.kvp-slot.hl {
+  background: var(--steel-tint);
+  border-radius: 10px;
+}
+.kvp-role-interactive {
+  --kvp-c: var(--steel);
+  --kvp-tint: var(--steel-tint);
+  --kvp-o: 1;
+}
+.kvp-role-ingest,
+.kvp-role-scheduled {
+  --kvp-c: var(--amber);
+  --kvp-tint: var(--amber-tint);
+  --kvp-o: 1;
+}
+.kvp-role-research,
+.kvp-role-jcode {
+  --kvp-c: var(--violet);
+  --kvp-tint: var(--violet-tint);
+  --kvp-o: 1;
+}
+.kvp-role-workshop,
+.kvp-role-pet {
+  --kvp-c: var(--green);
+  --kvp-tint: var(--green-tint);
+  --kvp-o: 1;
+}
+.kvp-role-scheduled,
+.kvp-role-jcode,
+.kvp-role-pet {
+  --kvp-o: 0.6;
+}
+.kvp-slot-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 10px 2px;
+  text-align: left;
+  min-height: 56px;
+}
+.kvp-num {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.kvp-mid {
+  flex: 1;
+  min-width: 0;
+}
+.kvp-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.kvp-label {
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.kvp-rchip {
+  font-family: var(--font-mono);
+  flex: none;
+  color: var(--kvp-c);
+  background: var(--kvp-tint);
+}
+.kvp-capbar {
+  display: block;
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  margin-top: 7px;
+  overflow: hidden;
+}
+.kvp-capbar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-pill);
+  background: var(--kvp-c);
+  opacity: calc(var(--kvp-o) * 0.85);
+}
+.kvp-val {
+  flex: none;
+  text-align: right;
+  font-size: var(--fs-secondary);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  min-width: 58px;
+}
+.kvp-val small {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.kvp-exp {
+  padding: 0 2px 11px 34px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.kvp-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--steel);
+  font-size: inherit;
+  font-weight: 500;
+}
+.kvp-foot {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.kvp-foot svg {
+  color: var(--text-3);
+  margin-top: 1px;
+  flex: none;
+}
+.kvp-done {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 12px;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
 /* ---- On-box models redesign: one card, a shared always-visible meter, and two
    independently-collapsible sections (On-box LLMs / Image models). Reuses the
    .llm-mem* meter chrome and the .llm-local-* row internals; only the card shell,

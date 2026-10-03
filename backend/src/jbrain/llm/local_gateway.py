@@ -49,6 +49,7 @@ from jbrain import box_events, host_metrics
 from jbrain.llm import gpu_guard, local_catalog, local_weights, openai_compat, prefill
 from jbrain.llm.admission import Outcome, Phase
 from jbrain.llm.ledger import ReservationLedger
+from jbrain.llm.slot_roles import PROBE_ROLE, WARM_ROLE, SlotRole
 
 log = structlog.get_logger()
 
@@ -632,6 +633,41 @@ class LocalGatewayClient:
         body = await self._upstream_get(served_model, "props", "/props")
         return body if isinstance(body, dict) else {}
 
+    async def slot_for(self, served_model: str, role: SlotRole) -> int | None:
+        """The slot id a direct request for `role` should pin on `served_model`, or None to send
+        it unpinned: the model has no pool, or its LIVE layout is not the catalog's. A config
+        stamped before the pool (fewer slots) is live until the next re-stamp, and llama-server
+        WRAPS an `id_slot` past its slot count onto some other slot, silently evicting that
+        role's prefix — so a mismatch, or a layout that cannot be read, is never pinned.
+
+        The same live read and rule as the router's pool guard (`KvPoolGuard.placed`); read
+        fresh each time, since the probes and warms that ask are rare."""
+        pool = local_catalog.pool_of(served_model)
+        if pool is None:
+            return None
+        try:
+            live = len(await self.slots(served_model))
+        except LocalGatewayError as exc:
+            log.warning("llm.slot_read_failed", model=served_model, error=str(exc))
+            return None
+        if live != pool.n_slots:
+            log.warning(
+                "llm.slot_layout_mismatch",
+                model=served_model,
+                live_slots=live,
+                pool_slots=pool.n_slots,
+            )
+            return None
+        return pool.slot(role)
+
+    async def _pin_slot(self, body: dict[str, object], served_model: str, role: SlotRole) -> None:
+        """Pin a direct request to its role's slot. Unpinned, llama-server hands it the least
+        recently used idle slot, so a one-token probe would evict some role's prefix. A model
+        without a pool gets the body untouched."""
+        slot = await self.slot_for(served_model, role)
+        if slot is not None:
+            body["id_slot"] = slot
+
     async def slots(self, served_model: str) -> list[dict[str, object]]:
         """llama-server's `/slots` for one RESIDENT model — per-slot state, and on a
         speculative build the `speculative` object that says whether drafting is actually
@@ -684,6 +720,27 @@ class LocalGatewayClient:
             {"filename": filename},
         )
         return body if isinstance(body, dict) else {}
+
+    async def erase_slot(self, served_model: str, slot_id: int) -> bool:
+        """Clear one slot's KV (and recurrent state) so the pool guard can free cells in its
+        own order (jbrain.llm.kv_pool_guard). False when the server cannot erase at all —
+        llama-server answers 501 unless it was started with `--slot-save-path`, even though
+        an erase writes nothing there."""
+        await self._require_resident(served_model, "slots-erase")
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 180.0), transport=self._transport
+            ) as client:
+                resp = await client.post(
+                    f"{self._root}/upstream/{served_model}/slots/{slot_id}?action=erase",
+                    json={},
+                )
+            if resp.status_code == httpx.codes.NOT_IMPLEMENTED:
+                return False
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LocalGatewayError(str(exc)) from exc
+        return True
 
     async def _upstream_post(
         self, served_model: str, what: str, path: str, payload: dict
@@ -1322,6 +1379,9 @@ class LocalGatewayClient:
         }
         if tools:
             body["tools"] = tools
+        # A bare warm (no persona: a restore, a smoke load, an engine switch) is a probe, and in
+        # jerv's slot it would overwrite the persona prefix a later prime or restore put there.
+        await self._pin_slot(body, served_model, WARM_ROLE if system else PROBE_ROLE)
         # The SAME reasoning encoding a real routed turn carries (openai_compat): the chat
         # template renders it into the prompt's leading tokens, so omitting it here primed a
         # DIFFERENT prefix from the one every turn actually sends — a warm that warmed
@@ -1409,6 +1469,7 @@ class LocalGatewayClient:
             "max_tokens": 1,
             "stream": False,
         }
+        await self._pin_slot(body, served_model, PROBE_ROLE)
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 120.0), transport=self._transport
@@ -1454,6 +1515,7 @@ class LocalGatewayClient:
             "stream": False,
         }
         openai_compat.apply_local_reasoning(body, "none")
+        await self._pin_slot(body, served_model, PROBE_ROLE)
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 180.0), transport=self._transport

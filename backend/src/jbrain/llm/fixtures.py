@@ -237,6 +237,7 @@ class FixtureLlmClient:
         images: Sequence[LlmImage] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        id_slot: int | None = None,
     ) -> LlmResult:
         prompt = _complete_prompt(
             model=model,
@@ -259,6 +260,7 @@ class FixtureLlmClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        id_slot: int | None = None,
     ) -> LlmTurn:
         prompt = _converse_prompt(model=model, system=system, messages=messages, tools=tools)
         key = _key(prompt)
@@ -273,6 +275,7 @@ class FixtureLlmClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        id_slot: int | None = None,
     ) -> AsyncIterator[StreamPart]:
         turn = await self.converse(
             model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens

@@ -13,7 +13,6 @@ refactor — docs/reference/ANALYSIS.md "Privacy routing".
 """
 
 import contextlib
-import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
@@ -24,11 +23,13 @@ import structlog
 from jbrain import box_events
 from jbrain.config import Settings
 from jbrain.llm import engine as engines
+from jbrain.llm import kv_pool_guard as kv_pool_guard_mod
 from jbrain.llm import kv_prefix as kv_prefix_mod
-from jbrain.llm import local_catalog, model_sampling, prefill
+from jbrain.llm import local_catalog, model_sampling, prefill, slot_roles
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError, LlmStreamTruncatedError
 from jbrain.llm.openai_compat import OpenAiCompatClient
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     AssistantMessage,
@@ -45,7 +46,6 @@ from jbrain.llm.types import (
     TextChunk,
     ToolResultMessage,
     UsageRecorder,
-    UserMessage,
 )
 
 log = structlog.get_logger()
@@ -193,6 +193,10 @@ CONTEXT_WINDOWS: dict[str, int] = {
     "grok-4.3": 256_000,
 }
 
+# Below this a prompt is mostly chat-template overhead, whose tokens have no characters behind
+# them in the estimate; calibrating on it would skew the ratio for the long prompts caps guard.
+_MIN_CALIBRATION_TOKENS = 2048
+
 JSON_NUDGE = (
     "\n\nYour previous reply was not valid JSON."
     " Return only valid JSON matching the requested schema — no prose, no code fences."
@@ -227,7 +231,12 @@ def context_window_for_spec(spec: str, engine: engines.Engine) -> int:
     the other engine reads as the model it is remapped onto (plan §4c)."""
     provider, _, model = spec.partition(":")
     if provider == "local":
-        return local_catalog.context_window(local_catalog.remap_for_engine(model, engine) or model)
+        served = local_catalog.remap_for_engine(model, engine) or model
+        pool = local_catalog.pool_of(served)
+        if pool is not None:
+            # The spec seeds the chat's meter, and the chat runs in the interactive slot.
+            return pool.cap(slot_roles.SlotRole.INTERACTIVE)
+        return local_catalog.context_window(served)
     return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
 
 
@@ -349,34 +358,6 @@ def _reading(messages: Sequence[LlmMessage]) -> str:
     return "what the tool returned" if len(last.results) == 1 else "what the tools returned"
 
 
-def _prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[LlmTool]) -> int:
-    """Roughly how much text this turn puts in front of the model, in characters.
-
-    The input to `prefill`'s token estimate, so it wants to be proportional to the real
-    prompt rather than exactly equal to it — a constant factor washes out in the calibration
-    (`prefill.calibrate`), a MISSING TERM does not. Hence tools and tool results are counted:
-    on this box the rendered tool schemas are the bulk of a primed prefix (27,787 tokens
-    measured), and a turn deep in a tool loop is mostly its own transcript.
-
-    Images are counted as their encoded size deliberately not at all: a vision model prices
-    them per tile, not per byte, so their characters would swamp the estimate."""
-    total = len(system)
-    for message in messages:
-        if isinstance(message, UserMessage):
-            total += len(message.text)
-        elif isinstance(message, AssistantMessage):
-            total += len(message.text) + sum(
-                len(call.name) + len(json.dumps(call.arguments, default=str))
-                for call in message.tool_calls
-            )
-        elif isinstance(message, ToolResultMessage):
-            total += sum(len(str(result.content)) for result in message.results)
-    for tool in tools:
-        total += len(tool.name) + len(tool.description)
-        total += len(json.dumps(tool.input_schema, default=str))
-    return total
-
-
 class LlmRouter:
     """The single entry point for application LLM calls.
 
@@ -400,8 +381,14 @@ class LlmRouter:
         kv_prefix: "kv_prefix_mod.KvPrefixStore | None" = None,
         engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
         admission_gate: Callable[[], Awaitable[bool]] | None = None,
+        pool_guard: kv_pool_guard_mod.KvPoolGuard | None = None,
     ):
         self._clients = clients
+        # Keeps a shared KV pool (Flash-Next) from overrunning under a pinned call, and
+        # checks the live slot layout before an `id_slot` is trusted (jbrain.llm.kv_pool_guard).
+        # None on a bare test router: pool calls are then pinned and capped off the catalog
+        # alone.
+        self._pool_guard = pool_guard
         # The EFFECTIVE on-box engine, read per resolution (TTL-cached by the caller's
         # ActiveEngine). While Flash-Next serves, every `local:*` route is remapped onto it;
         # while Standard serves, a Flash-Next pick falls back to the task's own route
@@ -747,7 +734,11 @@ class LlmRouter:
         return resolved
 
     async def context_window(
-        self, task: str, strength: str | None = None, spec_override: str | None = None
+        self,
+        task: str,
+        strength: str | None = None,
+        spec_override: str | None = None,
+        slot_role: SlotRole | None = None,
     ) -> int:
         """The total context window (tokens) the `task` will actually run against
         after live overrides — the denominator for the PWA's context-usage meter. A
@@ -758,6 +749,11 @@ class LlmRouter:
         the model the turn will actually run on, not the resolved default."""
         provider, model, _ = await self._resolve_live(task, strength, spec_override)
         if provider == "local":
+            pool = local_catalog.pool_of(model)
+            if pool is not None:
+                # A pooled model's window is the call's slot cap, whatever a stored `-c`
+                # override says — one saved before the pool existed would overstate it.
+                return pool.cap(slot_roles.role_for(task, slot_role))
             if self._local_windows_loader is not None:
                 windows = await self._local_windows_loader()
                 cat_id = local_catalog.id_for_served(model)
@@ -850,6 +846,52 @@ class LlmRouter:
         except Exception as exc:  # noqa: BLE001 - accounting must never fail or slow a call
             log.warning("llm.usage_record_failed", task=task, error=repr(exc))
 
+    @contextlib.asynccontextmanager
+    async def _slot_pin(
+        self,
+        task: str,
+        slot_role: SlotRole | None,
+        provider: str,
+        model: str,
+        *,
+        chars: int,
+        n_images: int,
+        max_tokens: int,
+    ) -> AsyncIterator[tuple[int | None, int]]:
+        """The slot to pin and the output budget to send, held for the duration of the call.
+
+        Only a pooled local model is pinned. Its call is admitted against its role's cap first
+        — `SlotCapError` before anything is sent, or the output clamped — then the pool guard
+        makes room for it and checks the live layout (unpinned on a mismatch)."""
+        pool = local_catalog.pool_of(model) if provider == local_catalog.LOCAL_PROVIDER else None
+        if pool is None:
+            yield None, max_tokens
+            return
+        role = slot_roles.role_for(task, slot_role)
+        prompt_tokens = slot_roles.estimate_prompt_tokens(model, chars=chars, n_images=n_images)
+        if self._pool_guard is None:
+            admission = slot_roles.admit(
+                pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens
+            )
+            yield admission.slot, admission.max_tokens
+            return
+        async with self._pool_guard.placed(
+            model, pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens
+        ) as placement:
+            yield placement.slot, placement.max_tokens
+
+    @staticmethod
+    def _calibrate(provider: str, model: str, chars: int, n_images: int, usage: LlmUsage) -> None:
+        # Every local call's real prompt size tightens the estimate the slot caps are checked
+        # with. An image's tokens have no characters behind them, and on a short prompt the
+        # chat template's fixed overhead dominates the ratio, so those calls are skipped.
+        if (
+            provider == local_catalog.LOCAL_PROVIDER
+            and n_images == 0
+            and usage.input_tokens >= _MIN_CALIBRATION_TOKENS
+        ):
+            prefill.calibrate(model, chars, usage.input_tokens)
+
     async def complete(
         self,
         task: str,
@@ -862,6 +904,7 @@ class LlmRouter:
         strength: str | None = None,
         spec_override: str | None = None,
         sampling: Sampling | None = None,
+        slot_role: SlotRole | None = None,
     ) -> LlmResult:
         # `spec_override` is the per-call model pick (the omnibox's per-conversation
         # agent model) — same precedence as in converse_stream, so a background
@@ -874,37 +917,52 @@ class LlmRouter:
         # block); it merges over the resolved model's recommended defaults.
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
+        chars = len(system) + len(user_text)
         start = time.perf_counter()
-        result = await client.complete(
-            model=model,
-            system=system,
-            user_text=user_text,
-            images=images,
-            json_schema=json_schema,
+        async with self._slot_pin(
+            task,
+            slot_role,
+            provider,
+            model,
+            chars=chars,
+            n_images=len(images),
             max_tokens=max_tokens,
-            reasoning_effort=reasoning_effort,
-            sampling=resolved_sampling,
-        )
-        # Recorded per provider call (the re-ask spends tokens too): the
-        # ledger tracks what was billed, not what was usable.
-        await self._record(task, provider, model, result.usage)
-        if json_schema is not None and result.parsed is None:
-            log.warning("llm.json_reask", task=task, provider=provider, model=model)
+        ) as (id_slot, max_tokens):
+            # Only when pinned: test fakes and older clients do not take the keyword.
+            slot_kw: dict[str, int] = {} if id_slot is None else {"id_slot": id_slot}
             result = await client.complete(
                 model=model,
                 system=system,
-                user_text=user_text + JSON_NUDGE,
+                user_text=user_text,
                 images=images,
                 json_schema=json_schema,
                 max_tokens=max_tokens,
                 reasoning_effort=reasoning_effort,
                 sampling=resolved_sampling,
+                **slot_kw,
             )
+            self._calibrate(provider, model, chars, len(images), result.usage)
+            # Recorded per provider call (the re-ask spends tokens too): the
+            # ledger tracks what was billed, not what was usable.
             await self._record(task, provider, model, result.usage)
-            if result.parsed is None:
-                raise LlmBadResponseError(
-                    f"{provider}: invalid JSON for task {task!r} after re-ask"
+            if json_schema is not None and result.parsed is None:
+                log.warning("llm.json_reask", task=task, provider=provider, model=model)
+                result = await client.complete(
+                    model=model,
+                    system=system,
+                    user_text=user_text + JSON_NUDGE,
+                    images=images,
+                    json_schema=json_schema,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                    sampling=resolved_sampling,
+                    **slot_kw,
                 )
+                await self._record(task, provider, model, result.usage)
+                if result.parsed is None:
+                    raise LlmBadResponseError(
+                        f"{provider}: invalid JSON for task {task!r} after re-ask"
+                    )
         elapsed = time.perf_counter() - start
         log.info(
             "llm.complete",
@@ -933,6 +991,7 @@ class LlmRouter:
         effort_override: str | None = None,
         spec_override: str | None = None,
         sampling: Sampling | None = None,
+        slot_role: SlotRole | None = None,
     ) -> LlmTurn:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
@@ -953,17 +1012,30 @@ class LlmRouter:
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
+        chars = slot_roles.prompt_chars(system, messages, tools)
+        n_images = slot_roles.image_count(messages)
         start = time.perf_counter()
-        turn = await client.converse(
-            model=model,
-            system=system,
-            messages=messages,
-            tools=tools,
+        async with self._slot_pin(
+            task,
+            slot_role,
+            provider,
+            model,
+            chars=chars,
+            n_images=n_images,
             max_tokens=max_tokens,
-            reasoning_effort=reasoning_effort,
-            sampling=resolved_sampling,
-        )
+        ) as (id_slot, max_tokens):
+            turn = await client.converse(
+                model=model,
+                system=system,
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+                sampling=resolved_sampling,
+                **({} if id_slot is None else {"id_slot": id_slot}),
+            )
         elapsed = time.perf_counter() - start
+        self._calibrate(provider, model, chars, n_images, turn.usage)
         self._note_agent_turn(
             task,
             provider,
@@ -1000,6 +1072,7 @@ class LlmRouter:
         effort_override: str | None = None,
         spec_override: str | None = None,
         sampling: Sampling | None = None,
+        slot_role: SlotRole | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks
@@ -1025,10 +1098,20 @@ class LlmRouter:
         # it (`prefill._fraction`).
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
-        prompt_chars = _prompt_chars(system, messages, tools)
+        prompt_chars = slot_roles.prompt_chars(system, messages, tools)
+        n_images = slot_roles.image_count(messages)
         # The row is opened by the first fraction that shows a wait, so a turn that answers
         # off a primed prefix — which is most of them — writes nothing at all.
         async with (
+            self._slot_pin(
+                task,
+                slot_role,
+                provider,
+                model,
+                chars=prompt_chars,
+                n_images=n_images,
+                max_tokens=max_tokens,
+            ) as (id_slot, max_tokens),
             box_events.lazy_span(box_events.PREFILL, model, detail=_reading(messages)) as (
                 publish,
                 prefill_done,
@@ -1038,8 +1121,10 @@ class LlmRouter:
                 model,
                 prompt_chars=prompt_chars,
                 on_progress=publish if probe is not None else None,
+                slot_id=id_slot,
             ) as streaming,
         ):
+            slot_kw: dict[str, int] = {} if id_slot is None else {"id_slot": id_slot}
             # Tracked so a truncated stream can be recovered ONLY when nothing visible has
             # been shown yet: re-issuing after answer text has streamed would replay it to
             # the reader. Reasoning chunks don't count — they are a scratch channel the PWA
@@ -1055,6 +1140,7 @@ class LlmRouter:
                     max_tokens=max_tokens,
                     reasoning_effort=reasoning_effort,
                     sampling=resolved_sampling,
+                    **slot_kw,
                 ):
                     if first_part:
                         first_part = False
@@ -1089,6 +1175,7 @@ class LlmRouter:
                     max_tokens=max_tokens,
                     reasoning_effort=reasoning_effort,
                     sampling=resolved_sampling,
+                    **slot_kw,
                 )
                 if first_part:
                     first_part = False
@@ -1120,8 +1207,7 @@ class LlmRouter:
             elapsed = time.perf_counter() - start
             # The exact token count for the characters we just sent — the only free, exact
             # calibration this box offers, and it arrives on every turn.
-            if probe is not None:
-                prefill.calibrate(model, prompt_chars, final.usage.input_tokens)
+            self._calibrate(provider, model, prompt_chars, n_images, final.usage)
             self._note_agent_turn(
                 task,
                 provider,
@@ -1159,6 +1245,7 @@ def build_router(
     kv_prefix: "kv_prefix_mod.KvPrefixStore | None" = None,
     engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
     admission_gate: Callable[[], Awaitable[bool]] | None = None,
+    pool_guard: kv_pool_guard_mod.KvPoolGuard | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
@@ -1188,7 +1275,12 @@ def build_router(
 
     `engine_loader` (the process's ActiveEngine) turns on the engine remap (plan §4c) and
     `admission_gate` the engine switch's drain (jbrain.llm.drain); both production callers
-    pass the same instances their residency coordinator reads."""
+    pass the same instances their residency coordinator reads.
+
+    `pool_guard` (jbrain.llm.kv_pool_guard) keeps a pooled model's shared KV from overrunning
+    and catches a stale slot layout. One per process, shared with anything else that pins slots
+    there (the api's jcode proxy), so its decisions serialize and its pending calls are seen.
+    Without it a pooled model's calls are still pinned and capped, off the catalog alone."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -1217,4 +1309,5 @@ def build_router(
         kv_prefix=kv_prefix,
         engine_loader=engine_loader,
         admission_gate=admission_gate,
+        pool_guard=pool_guard,
     )

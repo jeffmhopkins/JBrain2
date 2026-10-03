@@ -118,6 +118,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.ingest.extract import KIND_TEXT_LAYER, CachedExtract, Segment, image_segments
 from jbrain.llm import LlmRouter, UserMessage
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import AssistantMessage, LlmMessage
 from jbrain.models.note_conversation import (
     NOTE_TURN_WALL_CLOCK,
@@ -1054,7 +1055,11 @@ def note_converse_handler(
             writes_graph=not note_owned_by_emr(note),
         )
         return NoteTurnTools(
-            executor=LoopTurnExecutor(router, note_registry(tools_dir, toolset.handlers())),
+            executor=LoopTurnExecutor(
+                router,
+                note_registry(tools_dir, toolset.handlers()),
+                slot_role=SlotRole.WORKSHOP,
+            ),
             # The settle reads this pass's closing reading off it once the turn ends.
             writer=writer,
         )
@@ -1068,7 +1073,7 @@ def note_converse_handler(
         # Never used once `executor_for_note` is set, which the line below always does.
         # An EMPTY registry keeps the fallback inert rather than accidentally permissive:
         # a fallback holding the tools would be a second, unbound path to them.
-        executor=LoopTurnExecutor(router, ToolRegistry(())),
+        executor=LoopTurnExecutor(router, ToolRegistry(()), slot_role=SlotRole.WORKSHOP),
         owner_principal_id=lambda: _owner_principal_id(maker),
         executor_for_note=executor_for_note,
         # The SAME pipeline the write tools commit through, so the end-of-pass settle
