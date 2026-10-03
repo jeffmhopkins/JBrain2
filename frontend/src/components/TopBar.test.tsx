@@ -8,7 +8,7 @@ import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { resetEngineStore, setEngineState } from "../engineState";
 import { TopBar } from "./TopBar";
-import { engineState } from "./engineFixtures";
+import { engineState, switchStatus } from "./engineFixtures";
 
 describe("the top bar's radio icon", () => {
   it("is absent when no radio is held", () => {
@@ -65,13 +65,11 @@ describe("the engine banner under the top bar", () => {
     const { container } = render(<TopBar title="Ops" syncStatus="synced" />);
     expect(container.querySelector(".engine-banners")).toBeNull();
     act(() =>
-      setEngineState(
-        engineState({ desired: "flash-next", effective: "flash-next", running: ["flash-next"] }),
-      ),
+      setEngineState(engineState({ switching: true, switch: switchStatus({ stage: "stopping" }) })),
     );
     const bar = container.querySelector(".top-bar");
     expect(bar?.nextElementSibling?.classList.contains("engine-banners")).toBe(true);
-    expect(screen.getByText("Flash-Next active")).toBeInTheDocument();
+    expect(screen.getByText("Switching to Flash-Next")).toBeInTheDocument();
     resetEngineStore();
   });
 });

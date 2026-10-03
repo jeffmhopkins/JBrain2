@@ -2,16 +2,16 @@
 // that has one (DESIGN.md "Status banner"; binding mock
 // docs/mocks/engine-switch/a-segmented-toggle.html).
 //
-// It exists because the engine changes what every local answer runs on, and the owner
-// should never have to open Ops to learn that. Steel while Flash-Next serves (a standing
-// mode, not a problem), amber while something holds the engine (a switch, a fallback, a
-// debug/perplexity job), rose after a rollback until dismissed. It reads the shared store
+// It exists because a switch or a failure changes what every local answer runs on, and the
+// owner should never have to open Ops to learn that. Problems and transitions only: amber
+// while something holds the engine (a switch, a fallback, a debug/perplexity job), rose after
+// a rollback until dismissed. Flash-Next serving normally shows nothing — the owner removed
+// that steel strip (2026-10-03); Ops → Local engine says which engine serves. It reads the shared store
 // only — the shell polls — so rendering a top bar never costs a request.
 
 import {
   ENGINE_LABEL,
   type EngineSnapshot,
-  activeSince,
   dismissEngineSwitch,
   noEngineUp,
   openEngineCard,
@@ -83,15 +83,6 @@ export function engineBanners(snap: EngineSnapshot): EngineBannerItem[] {
       title: `${ENGINE_LABEL[s.desired]} selected`,
       detail: `${ENGINE_LABEL[s.effective]} serving (fallback)`,
       action: details,
-    });
-  } else if (s.effective === "flash-next") {
-    const since = activeSince(s);
-    out.push({
-      key: "flash",
-      tone: "steel",
-      title: "Flash-Next active",
-      detail: since ? `since ${since}` : "every local pick runs on it",
-      action: { label: "Switch back", run: () => openEngineCard("standard") },
     });
   }
   if (s.perplexity_running || s.oneshot === "perplexity") {

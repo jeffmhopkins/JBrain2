@@ -191,9 +191,9 @@ engine, and it rides **every** screen: under every `TopBar`, and under the own h
 each full-screen overlay that brings one (Automations, Image, Radio, Tasks, jcode,
 jlaunch, pet Control, jpanel, Room endpoints) — a switch pauses local AI on all of them,
 so "only on the screens with the shared bar" would hide it exactly where a long-running
-local job lives. It is and the one place the strip is *not* only for
-problems: **steel** *"Flash-Next active · since HH:MM · Switch back"* while Flash-Next
-serves (a standing mode the owner chose, so it informs rather than alarms), **amber**
+local job lives. Like the status banner it is for problems and transitions only — the
+steel *"Flash-Next active"* strip it first carried was removed at the owner's request
+(2026-10-03); Ops → Local engine says which engine serves. **Amber**
 while something holds the engine (a switch, a desired-≠-effective fallback, the
 perplexity one-shot, admission closed by a debug job), **rose** after a rollback or a
 failed switch — dismissable, per switch. When the latest read failed it keeps the last
