@@ -235,12 +235,13 @@ def test_openai_chat_completions_forwards_pins_and_meters(
     assert (listed["in_tokens"], listed["out_tokens"], listed["requests"]) == (40, 60, 1)
 
 
-@pytest.mark.parametrize("asked", [None, 0])
-def test_a_pooled_coder_is_pinned_to_the_jcode_slot(
-    app_repo: tuple[FastAPI, FakeAuthRepo], monkeypatch: pytest.MonkeyPatch, asked: int | None
+@pytest.mark.parametrize("live", [4, None])
+def test_a_pooled_coder_is_pinned_to_the_jcode_slot_and_never_the_callers(
+    app_repo: tuple[FastAPI, FakeAuthRepo], monkeypatch: pytest.MonkeyPatch, live: int | None
 ) -> None:
     # A remote coder is jcode traffic: on a pooled model it takes the jcode slot whatever the
-    # caller asked for, since any other slot holds some role's primed prefix.
+    # caller asked for, and goes unpinned when the gateway says the live layout cannot be
+    # trusted. Generation-size knobs the caller sent never reach the engine.
     app, repo = app_repo
     owner = _owner(app, repo)
     minted = owner.post("/api/jcode/external", json={}).json()
@@ -269,16 +270,32 @@ def test_a_pooled_coder_is_pinned_to_the_jcode_slot(
 
     monkeypatch.setattr(external_llm.httpx, "AsyncClient", _Client)
     monkeypatch.setattr(external_llm.local_catalog, "pool_of", lambda _m: FLASH_NEXT_POOL)
-    body: dict[str, object] = {"messages": [{"role": "user", "content": "hi"}]}
-    if asked is not None:
-        body["id_slot"] = asked
+    asked_roles: list[SlotRole] = []
+
+    async def slot_for(_served: str, role: SlotRole) -> int | None:
+        asked_roles.append(role)
+        return live
+
+    app.state.local_gateway.slot_for = slot_for
+    body: dict[str, object] = {
+        "messages": [{"role": "user", "content": "hi"}],
+        "id_slot": 0,
+        "slot_id": 0,
+        "n_predict": -1,
+        "n": 3,
+        "n_cmpl": 3,
+    }
     r = TestClient(app).post(
         f"/api/ext/llm/{minted['id']}/v1/chat/completions",
         json=body,
         headers={"Authorization": f"Bearer {minted['token']}"},
     )
     assert r.status_code == 200
-    assert sent["payload"]["id_slot"] == FLASH_NEXT_POOL.slot(SlotRole.JCODE)  # type: ignore[index]
+    payload = sent["payload"]
+    assert isinstance(payload, dict)
+    assert asked_roles == [SlotRole.JCODE]
+    assert payload.get("id_slot") == live
+    assert not {"slot_id", "n_predict", "n", "n_cmpl"} & payload.keys()
 
 
 def test_openai_models_lists_pinned_coder_and_is_gated(

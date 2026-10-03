@@ -38,6 +38,7 @@ import contextlib
 import json
 import os
 import struct
+import time
 import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Protocol
@@ -137,13 +138,10 @@ STOP_SETTLE_TIMEOUT_S = 60.0
 STOP_SETTLE_POLL_S = 0.5
 
 
-def _pin_slot(body: dict[str, object], served_model: str, role: SlotRole) -> None:
-    """Pin a direct gateway request to its role's slot on a pooled model. Unpinned, llama-server
-    hands it the least-recently-used idle slot, so a one-token probe would evict some role's
-    primed prefix. Other models get the body untouched."""
-    pool = local_catalog.pool_of(served_model)
-    if pool is not None:
-        body["id_slot"] = pool.slot(role)
+# How long a pooled model's live slot count is trusted. It only changes on a reload, and a
+# stale read costs at most one unpinned request, so a short cache spares a /slots round trip
+# per probe without letting a re-stamped layout go unnoticed for long.
+SLOT_LAYOUT_TTL_S = 30.0
 
 
 class LocalGatewayError(Exception):
@@ -188,6 +186,8 @@ class LocalGatewayClient:
         self._root = base_url.rstrip("/").removesuffix("/v1")
         self._transport = transport
         self._timeout = timeout
+        # served model -> (monotonic read time, live slot count), for `slot_for`.
+        self._slot_layouts: dict[str, tuple[float, int]] = {}
         # Device-memory probe for the load guard. It lives HERE, on the client, rather than in
         # the residency coordinator, because `load()` is the single chokepoint every path to
         # committing GPU memory must pass through. Guarding a wrapper only protects the callers
@@ -641,6 +641,44 @@ class LocalGatewayClient:
         (through residency) and reads second."""
         body = await self._upstream_get(served_model, "props", "/props")
         return body if isinstance(body, dict) else {}
+
+    async def slot_for(self, served_model: str, role: SlotRole) -> int | None:
+        """The slot id a direct request for `role` should pin on `served_model`, or None to send
+        it unpinned: the model has no pool, or its LIVE layout is not the catalog's. A config
+        stamped before the pool (fewer slots) is live until the next re-stamp, and llama-server
+        WRAPS an `id_slot` past its slot count onto some other slot, silently evicting that
+        role's prefix — so a mismatch, or a layout that cannot be read, is never pinned."""
+        pool = local_catalog.pool_of(served_model)
+        if pool is None:
+            return None
+        cached = self._slot_layouts.get(served_model)
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < SLOT_LAYOUT_TTL_S:
+            live = cached[1]
+        else:
+            try:
+                live = len(await self.slots(served_model))
+            except LocalGatewayError as exc:
+                log.info("llm.slot_layout_unreadable", model=served_model, error=str(exc))
+                return None
+            self._slot_layouts[served_model] = (now, live)
+        if live != pool.n_slots:
+            log.warning(
+                "llm.slot_layout_mismatch",
+                model=served_model,
+                live_slots=live,
+                pool_slots=pool.n_slots,
+            )
+            return None
+        return pool.slot(role)
+
+    async def _pin_slot(self, body: dict[str, object], served_model: str, role: SlotRole) -> None:
+        """Pin a direct request to its role's slot. Unpinned, llama-server hands it the least
+        recently used idle slot, so a one-token probe would evict some role's prefix. A model
+        without a pool gets the body untouched."""
+        slot = await self.slot_for(served_model, role)
+        if slot is not None:
+            body["id_slot"] = slot
 
     async def slots(self, served_model: str) -> list[dict[str, object]]:
         """llama-server's `/slots` for one RESIDENT model — per-slot state, and on a
@@ -1332,7 +1370,9 @@ class LocalGatewayClient:
         }
         if tools:
             body["tools"] = tools
-        _pin_slot(body, served_model, WARM_ROLE)
+        # A bare warm (no persona: a restore, a smoke load, an engine switch) is a probe, and in
+        # jerv's slot it would overwrite the persona prefix a later prime or restore put there.
+        await self._pin_slot(body, served_model, WARM_ROLE if system else PROBE_ROLE)
         # The SAME reasoning encoding a real routed turn carries (openai_compat): the chat
         # template renders it into the prompt's leading tokens, so omitting it here primed a
         # DIFFERENT prefix from the one every turn actually sends — a warm that warmed
@@ -1420,7 +1460,7 @@ class LocalGatewayClient:
             "max_tokens": 1,
             "stream": False,
         }
-        _pin_slot(body, served_model, PROBE_ROLE)
+        await self._pin_slot(body, served_model, PROBE_ROLE)
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 120.0), transport=self._transport
@@ -1466,7 +1506,7 @@ class LocalGatewayClient:
             "stream": False,
         }
         openai_compat.apply_local_reasoning(body, "none")
-        _pin_slot(body, served_model, PROBE_ROLE)
+        await self._pin_slot(body, served_model, PROBE_ROLE)
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 180.0), transport=self._transport

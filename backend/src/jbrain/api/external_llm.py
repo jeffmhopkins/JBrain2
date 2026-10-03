@@ -143,6 +143,9 @@ async def revoke_external(sid: str, _owner: OwnerDep, repo: AuthRepoDep) -> None
 # --- The public, token-gated proxy (NO owner gate — the bearer is the credential) ---
 
 
+_CALLER_ONLY_KEYS = ("n", "n_cmpl", "n_predict", "id_slot", "slot_id")
+
+
 def _served_model(model_id: str) -> str:
     """The gateway's served-model name for a catalog id (they match for the coder, but
     resolve via the catalog to be correct)."""
@@ -232,11 +235,17 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
     payload["model"] = served  # pin to the on-box coder; ignore the caller's choice
-    # A remote coder is a jcode workload: on a pooled model it takes the jcode slot, never the
-    # caller's pick or llama-server's LRU choice, either of which would evict a primed role.
-    pool = local_catalog.pool_of(served)
-    if pool is not None:
-        payload["id_slot"] = pool.slot(JCODE_ROLE)
+    # The slot and the generation size are the box's to choose, never a remote caller's: a
+    # caller-picked slot evicts whichever role holds it, and parallel choices or an unbounded
+    # n_predict would grow past the cap the slot is sized for.
+    for key in _CALLER_ONLY_KEYS:
+        payload.pop(key, None)
+    # A remote coder is jcode traffic: on a pooled model it takes the jcode slot. Unpinned it
+    # would land in llama-server's least-recently-used slot and evict some role's prefix.
+    if local_catalog.pool_of(served) is not None:
+        slot = await gateway.slot_for(served, JCODE_ROLE)
+        if slot is not None:
+            payload["id_slot"] = slot
     client = httpx.AsyncClient(base_url=gateway_url.rstrip("/"), timeout=httpx.Timeout(600.0))
 
     captured: list[bytes] = []

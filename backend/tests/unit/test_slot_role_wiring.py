@@ -68,6 +68,82 @@ def test_every_loop_turn_executor_construction_is_accounted_for() -> None:
     assert _constructions("LoopTurnExecutor") == EXECUTOR_ROLES
 
 
+# Router calls whose task is not a literal yet need no role, each with why: the task can only
+# be one that `TASK_ROLES` already maps to a non-interactive slot.
+ROUTER_CALL_ALLOWLIST = {
+    ("api/debug.py", "_run_vision"),  # body.task is checked against the vision tasks first
+    ("wiki/lint.py", "_verify_batch"),  # always a wiki.lint.* task
+}
+_ROUTER_METHODS = {"complete", "converse", "converse_stream", "context_window"}
+
+
+def _agent_turn_names(tree: ast.Module) -> set[str]:
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            value = node.value
+            if isinstance(value, ast.Constant) and value.value == "agent.turn":
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names |= {t.id for t in targets if isinstance(t, ast.Name)}
+    return names
+
+
+def _names_a_role(call: ast.Call) -> bool:
+    # `slot_role=...`, or a `**` mapping whose expression says it carries the slot role (the
+    # callers that pass it only when set, so an unset role keeps the old call shape).
+    return any(
+        kw.arg == "slot_role" or (kw.arg is None and "slot" in ast.unparse(kw.value))
+        for kw in call.keywords
+    )
+
+
+def test_every_agent_turn_router_call_names_its_slot_role() -> None:
+    """A router call under `agent.turn` (a literal, a module constant bound to it, or a task
+    the call site does not fix) lands in jerv's slot unless it names a role."""
+    missing: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        turn_names = _agent_turn_names(tree)
+        rel = path.relative_to(SRC).as_posix()
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for node in ast.walk(fn):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                    continue
+                if node.func.attr not in _ROUTER_METHODS or not node.args:
+                    continue
+                if "router" not in ast.unparse(node.func.value).lower():
+                    continue
+                task = node.args[0]
+                if isinstance(task, ast.Constant) and task.value != "agent.turn":
+                    continue
+                if isinstance(task, ast.Name) and task.id.isupper() and task.id not in turn_names:
+                    continue
+                if _names_a_role(node) or (rel, fn.name) in ROUTER_CALL_ALLOWLIST:
+                    continue
+                missing.append(f"{rel}:{node.lineno} {fn.name}({ast.unparse(task)})")
+    assert missing == []
+
+
+def test_every_gateway_completion_post_is_pinned() -> None:
+    """A direct POST to a model's completions endpoint bypasses the router, so it must pin its
+    own slot or it evicts whichever role's prefix llama-server's LRU pick lands on."""
+    path = SRC / "llm" / "local_gateway.py"
+    unpinned: list[str] = []
+    for fn in ast.walk(ast.parse(path.read_text())):
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        posts = any(
+            isinstance(n, ast.Constant) and isinstance(n.value, str) and "/completion" in n.value
+            for n in ast.walk(fn)
+        )
+        pins = any(isinstance(n, ast.Attribute) and n.attr == "_pin_slot" for n in ast.walk(fn))
+        if posts and not pins:
+            unpinned.append(fn.name)
+    assert unpinned == []
+
+
 def test_the_executor_default_is_the_scheduled_slot() -> None:
     from jbrain.tasks.runner import LoopTurnExecutor
 
@@ -140,11 +216,17 @@ async def test_the_loop_streams_a_child_turn_with_its_role() -> None:
 # --- direct gateway requests to a pooled model are pinned --------------------------------
 
 
-def _gateway(bodies: list[dict[str, Any]]) -> LocalGatewayClient:
+def _gateway(
+    bodies: list[dict[str, Any]], *, live_slots: int = 8, slot_reads: list[int] | None = None
+) -> LocalGatewayClient:
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/running":
             running = [{"model": m, "state": "ready"} for m in (FN, STANDARD)]
             return httpx.Response(200, json={"running": running})
+        if request.url.path.endswith("/slots"):
+            if slot_reads is not None:
+                slot_reads.append(1)
+            return httpx.Response(200, json=[{"id": i} for i in range(live_slots)])
         if request.method == "POST" and request.url.path.endswith("/chat/completions"):
             bodies.append(json.loads(request.content))
         return httpx.Response(
@@ -157,6 +239,10 @@ def _gateway(bodies: list[dict[str, Any]]) -> LocalGatewayClient:
 
 async def _warm(gw: LocalGatewayClient, served: str) -> None:
     await gw._warm(served, system="you are jerv", tools=[])
+
+
+async def _bare_warm(gw: LocalGatewayClient, served: str) -> None:
+    await gw._warm(served)
 
 
 async def _tool_probe(gw: LocalGatewayClient, served: str) -> None:
@@ -173,6 +259,9 @@ async def _image_probe(gw: LocalGatewayClient, served: str) -> None:
 
 _SENDERS: list[tuple[Callable[[LocalGatewayClient, str], Any], SlotRole]] = [
     (_warm, WARM_ROLE),
+    # A warm without a persona (a restore, a smoke load, an engine switch) is a probe: in
+    # jerv's slot it would overwrite the persona prefix.
+    (_bare_warm, PROBE_ROLE),
     (_tool_probe, PROBE_ROLE),
     (_text_probe, PROBE_ROLE),
     (_image_probe, PROBE_ROLE),
@@ -195,3 +284,52 @@ async def test_a_standard_model_request_carries_no_slot(
     bodies: list[dict[str, Any]] = []
     await send(_gateway(bodies), STANDARD)
     assert bodies and all("id_slot" not in b for b in bodies)
+
+
+@pytest.mark.parametrize(("send", "role"), _SENDERS)
+async def test_a_stale_live_layout_sends_unpinned_rather_than_wrapping(
+    send: Callable[[LocalGatewayClient, str], Any], role: SlotRole
+) -> None:
+    # A config stamped before the pool serves four slots; llama-server would wrap id_slot 7
+    # onto slot 3 and evict that role's prefix, so the request goes unpinned instead.
+    bodies: list[dict[str, Any]] = []
+    await send(_gateway(bodies, live_slots=4), FN)
+    assert bodies and all("id_slot" not in b for b in bodies)
+
+
+async def test_the_live_layout_is_read_once_per_window() -> None:
+    bodies: list[dict[str, Any]] = []
+    reads: list[int] = []
+    gw = _gateway(bodies, slot_reads=reads)
+    assert await gw.slot_for(FN, PROBE_ROLE) == FLASH_NEXT_POOL.slot(PROBE_ROLE)
+    assert await gw.slot_for(FN, WARM_ROLE) == FLASH_NEXT_POOL.slot(WARM_ROLE)
+    assert len(reads) == 1
+    assert await gw.slot_for(STANDARD, PROBE_ROLE) is None
+    assert len(reads) == 1  # no pool, no read
+
+
+async def test_an_unreadable_layout_sends_unpinned() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": FN, "state": "ready"}]})
+        return httpx.Response(500)
+
+    gw = LocalGatewayClient("http://gw/v1", transport=httpx.MockTransport(handle))
+    assert await gw.slot_for(FN, PROBE_ROLE) is None
+
+
+@pytest.mark.parametrize(
+    ("task", "asked", "pin"),
+    [
+        ("agent.turn", None, {"slot_role": SlotRole.WORKSHOP}),
+        ("debug.complete", None, {}),
+        ("entity.disambiguate", None, {}),
+        ("agent.turn", SlotRole.INTERACTIVE, {"slot_role": SlotRole.INTERACTIVE}),
+    ],
+)
+def test_a_console_call_stays_out_of_jervs_slot_unless_asked(
+    task: str, asked: SlotRole | None, pin: dict[str, SlotRole]
+) -> None:
+    from jbrain.api.debug import _slot_pin
+
+    assert _slot_pin(task, asked) == pin

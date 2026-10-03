@@ -64,11 +64,6 @@ from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
-from jbrain.analysis.entities import (
-    DISAMBIGUATE_STRENGTH,
-    DISAMBIGUATE_SYSTEM,
-    DISAMBIGUATE_TASK,
-)
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
 from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
@@ -185,8 +180,7 @@ from jbrain.llm.residency import (
     pg_box_lock,
     pg_box_try_lock,
 )
-from jbrain.llm.slot_roles import SlotRole
-from jbrain.llm.warm_keeper import RolePrime, WarmKeeper
+from jbrain.llm.warm_keeper import WarmKeeper
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
@@ -1484,15 +1478,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Restore-before-prime and save-after-prime: the same store the router uses
             # inline, so a boot re-prime is ~1 s off a saved slot instead of a ~60 s prefill.
             kv_prefix=app.state.kv_prefix,
-            # On a pooled model, the stable prefixes of the other busy roles, each primed into
-            # its own slot: the batched disambiguation every ingest runs, and the kid pet's
-            # persona (its conversation history is appended after it, so the prefix holds).
-            role_primes=(
-                RolePrime(
-                    SlotRole.INGEST, DISAMBIGUATE_TASK, DISAMBIGUATE_SYSTEM, DISAMBIGUATE_STRENGTH
-                ),
-                RolePrime(SlotRole.PET, "pet.turn", endpoint_api.PANEL_CONVERSATION_PROMPT),
-            ),
         )
         warm_keeper_task = asyncio.create_task(app.state.warm_keeper.run())
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to

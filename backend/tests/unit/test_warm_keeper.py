@@ -15,7 +15,7 @@ from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmTool, LlmTurn, LlmUsage
-from jbrain.llm.warm_keeper import RolePrime, WarmKeeper
+from jbrain.llm.warm_keeper import WarmKeeper
 
 _DEFAULT = object()  # "argument not given", distinct from an explicit None
 
@@ -573,183 +573,32 @@ async def test_the_prime_generates_exactly_one_token() -> None:
     assert router.max_tokens == [1], "a prime that generates more can never be identified"
 
 
-# --- a pooled model: one prime per role, each pinned through the router ---------------------
+class _PinRecordingRouter(_FakeRouter):
+    def __init__(self, served: str) -> None:
+        super().__init__(served)
+        self.pins: list[object] = []
 
-_FN = "qwen3.8-flash-next"
-
-
-class _PoolGateway(_FakeGateway):
-    def __init__(self) -> None:
-        super().__init__(running={_FN})
-        self.busy = False
-        self.slots_fail = False
-
-    async def slots(self, served_model: str) -> list[dict]:
-        if self.slots_fail:
-            raise RuntimeError("slots unreadable")
-        return [{"id": i, "is_processing": self.busy and i == 3} for i in range(8)]
-
-
-class _PoolRouter(_FakeRouter):
-    """Records every prime's role. Routes every task to the pooled model unless a test sends
-    one elsewhere."""
-
-    def __init__(self) -> None:
-        super().__init__(_FN)
-        self.primes: list[tuple[str, object]] = []
-        self.elsewhere: set[str] = set()
-        self.role_fail = False
-
-    async def effective_spec(self, task: str, strength: str | None = None):
-        return ("xai", "grok-4.3") if task in self.elsewhere else ("local", _FN)
-
-    async def effective_reasoning_effort(self, task: str, strength: str | None = None):
-        return self.effort
-
-    async def converse(
-        self, task: str, *, system: str, messages, tools=(), max_tokens=4096, slot_role=None
-    ):
-        self.primes.append((task, slot_role))
+    async def converse(self, task: str, *, system: str, messages, tools=(), max_tokens=4096, **kw):
+        self.pins.append(kw.get("slot_role", "absent"))
         return await super().converse(
             task, system=system, messages=messages, tools=tools, max_tokens=max_tokens
         )
 
-    async def complete(
-        self,
-        task: str,
-        *,
-        system: str,
-        user_text: str,
-        max_tokens: int,
-        strength=None,
-        slot_role=None,
-    ):
-        assert max_tokens == 1 and user_text == "warmup"
-        if self.role_fail:
-            raise RuntimeError("no room")
-        self.primes.append((task, slot_role))
-        return LlmTurn(text="", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1))
 
-
-def _pool_keeper(router: _PoolRouter, gateway: _PoolGateway) -> WarmKeeper:
-    async def no_hold() -> Collection[str]:
-        return ()
-
-    return WarmKeeper(
-        gateway=cast(LocalGatewayClient, gateway),
-        registry=cast(ToolRegistry, _Registry()),
-        router=cast(LlmRouter, router),
-        hold_loader=no_hold,
-        interval_ready=0.01,
-        interval_wait=0.01,
-        role_primes=(
-            RolePrime(SlotRole.INGEST, "entity.disambiguate", "disambiguate", "cheap"),
-            RolePrime(SlotRole.PET, "pet.turn", "a small robot pet"),
-        ),
-    )
-
-
-async def test_a_pooled_model_primes_each_role_once_one_per_tick() -> None:
-    r, gw = _PoolRouter(), _PoolGateway()
-    keeper = _pool_keeper(r, gw)
-    for _ in range(6):
+async def test_a_pooled_model_primes_only_jerv_s_slot_and_names_it() -> None:
+    # On a pooled model an unpinned prime would land in whichever slot llama-server picks and
+    # evict some other role's prefix; the router pins it from the role named here. No other
+    # role is primed.
+    fn = "qwen3.8-flash-next"
+    r = _PinRecordingRouter(fn)
+    keeper = _keeper(router=r, gateway=_FakeGateway(running={fn}))
+    for _ in range(3):
         assert await keeper.reconcile_once() is True
-    assert r.primes == [
-        ("agent.turn", SlotRole.INTERACTIVE),
-        ("agent.turn", SlotRole.SCHEDULED),
-        ("entity.disambiguate", SlotRole.INGEST),
-        ("pet.turn", SlotRole.PET),
-    ]
-    assert keeper._roles_pending is False
+    assert r.pins == [SlotRole.INTERACTIVE]
 
 
-async def test_role_primes_wait_while_any_slot_is_processing() -> None:
-    r, gw = _PoolRouter(), _PoolGateway()
-    keeper = _pool_keeper(r, gw)
-    assert await keeper.reconcile_once() is True  # slot 0
-    gw.busy = True
-    assert await keeper.reconcile_once() is True
-    assert r.primes == [("agent.turn", SlotRole.INTERACTIVE)]
-    assert keeper._roles_pending is True  # poll eagerly until the box is idle
-    gw.busy = False
-    await keeper.reconcile_once()
-    assert r.primes[-1] == ("agent.turn", SlotRole.SCHEDULED)
-
-
-async def test_an_unreadable_slots_probe_reads_as_busy() -> None:
-    r, gw = _PoolRouter(), _PoolGateway()
-    gw.slots_fail = True
-    keeper = _pool_keeper(r, gw)
-    for _ in range(3):
-        await keeper.reconcile_once()
-    assert r.primes == [("agent.turn", SlotRole.INTERACTIVE)]
-
-
-async def test_a_lost_prefix_re_primes_every_role() -> None:
-    r, gw = _PoolRouter(), _PoolGateway()
-    keeper = _pool_keeper(r, gw)
-    for _ in range(4):
-        await keeper.reconcile_once()
-    assert len(r.primes) == 4
-    keeper.note_prefix_lost(_FN)
-    for _ in range(4):
-        await keeper.reconcile_once()
-    assert r.primes[4:] == r.primes[:4]
-
-
-async def test_an_evicted_model_forgets_its_role_primes() -> None:
-    r, gw = _PoolRouter(), _PoolGateway()
-    keeper = _pool_keeper(r, gw)
-    for _ in range(4):
-        await keeper.reconcile_once()
-    gw._running.clear()
-    await keeper.reconcile_once()  # cold: reloads and re-primes slot 0
-    assert keeper._roles_primed == {}
-
-
-async def test_a_role_re_primes_when_its_prefix_changes() -> None:
-    r, gw = _PoolRouter(), _PoolGateway()
-    keeper = _pool_keeper(r, gw)
-    for _ in range(4):
-        await keeper.reconcile_once()
-    # A changed prompt is a changed prefix: the pet's memo no longer matches.
-    keeper._role_primes[SlotRole.PET] = RolePrime(SlotRole.PET, "pet.turn", "a new persona")
-    await keeper.reconcile_once()
-    assert r.primes[-1] == ("pet.turn", SlotRole.PET) and len(r.primes) == 5
-
-
-async def test_a_role_routed_off_the_pooled_model_is_skipped() -> None:
-    # Priming through a cloud route would spend money warming a slot nothing will reuse.
-    r, gw = _PoolRouter(), _PoolGateway()
-    r.elsewhere = {"entity.disambiguate"}
-    keeper = _pool_keeper(r, gw)
-    for _ in range(5):
-        await keeper.reconcile_once()
-    assert [role for _, role in r.primes] == [
-        SlotRole.INTERACTIVE,
-        SlotRole.SCHEDULED,
-        SlotRole.PET,
-    ]
-    assert keeper._roles_pending is False
-
-
-async def test_a_failed_role_prime_falls_back_to_the_steady_cadence() -> None:
-    r, gw = _PoolRouter(), _PoolGateway()
-    keeper = _pool_keeper(r, gw)
-    await keeper.reconcile_once()
-    await keeper.reconcile_once()  # scheduled
-    r.role_fail = True
-    assert await keeper.reconcile_once() is True  # the interactive prefix is still settled
-    assert keeper._roles_pending is False
-    r.role_fail = False
-    await keeper.reconcile_once()
-    assert r.primes[-1] == ("entity.disambiguate", SlotRole.INGEST)
-
-
-async def test_a_non_pool_model_never_primes_roles() -> None:
-    r = _FakeRouter("gpt-oss-120b")
+async def test_a_standard_model_prime_names_no_slot_role() -> None:
+    r = _PinRecordingRouter("gpt-oss-120b")
     keeper = _keeper(router=r, gateway=_FakeGateway(running={"gpt-oss-120b"}))
-    for _ in range(3):
-        await keeper.reconcile_once()
-    assert len(r.converses) == 1
-    assert keeper._roles_pending is False
+    assert await keeper.reconcile_once() is True
+    assert r.pins == ["absent"]

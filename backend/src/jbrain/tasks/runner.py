@@ -106,9 +106,10 @@ class LoopTurnExecutor:
 
     router: LlmRouter
     registry: ToolRegistry
-    # Scheduled tasks, plan continuations and jmolt night share the scheduled slot; a note
-    # conversation names the workshop slot. Never the interactive one: a background turn there
-    # would evict the jerv prefix the owner's next chat turn reuses.
+    # Scheduled tasks (whichever agent they run as), plan continuations and jmolt night all
+    # share the scheduled slot, so they evict each other's prefixes there; a note conversation
+    # names the workshop slot. Never the interactive one: a background turn there would evict
+    # the jerv prefix the owner's next chat turn reuses.
     slot_role: SlotRole = SlotRole.SCHEDULED
 
     async def run_turn(

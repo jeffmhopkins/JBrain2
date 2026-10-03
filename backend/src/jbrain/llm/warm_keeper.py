@@ -25,12 +25,6 @@ resides and warms it. Two subtleties it handles:
     once; it no-ops only after it has primed the current (model, hidden) — so a real jerv turn's
     growing conversation KV is never clobbered by a redundant re-prime.
 
-On a POOLED model (Flash-Next's eight role-pinned slots, `jbrain.llm.slot_roles`) slot 0 is only
-jerv's. The keeper then also primes the other roles whose prefix is stable — scheduled tasks
-(jerv's prefix again, in their own slot), ingest (the disambiguation prompt) and the kid pet — one
-role per tick and only while no slot is processing, so a prime never queues behind, or slows,
-real work. Every prime goes through the router with its `slot_role`, which is what pins it.
-
 Best-effort throughout: a down gateway, a full box, the code-mode hold, or a failed prime is
 logged and retried on the next tick, never raised into boot or a turn.
 """
@@ -39,10 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
-import json
-from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Collection
 from typing import TypedDict
 
 import structlog
@@ -53,8 +44,8 @@ from jbrain.llm import local_catalog
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.slot_roles import WARM_ROLE, KvPool, SlotRole
-from jbrain.llm.types import LlmTool, UserMessage
+from jbrain.llm.slot_roles import WARM_ROLE, SlotRole
+from jbrain.llm.types import UserMessage
 
 log = structlog.get_logger()
 
@@ -64,39 +55,8 @@ log = structlog.get_logger()
 AGENT_TURN_TASK = "agent.turn"
 
 
-@dataclass(frozen=True)
-class RolePrime:
-    """A one-shot completion whose system prompt is the stable prefix of a pooled role's real
-    calls. Built by the app (the prompts live in modules this one must not import) and primed
-    with the same task and strength those calls route with, so the rendered prefix matches."""
-
-    role: SlotRole
-    task: str
-    system: str
-    strength: str | None = None
-
-
-# Roles with no stable prefix to prime, listed so the omission reads as decided:
-#  - RESEARCH: each sub-agent's system and tool allowlist come from its persona and the fan's
-#    plan, and the children of one fan overwrite each other in the slot; the synthesis prompt
-#    runs only after them, so a prime of either is gone before anything could reuse it.
-#  - WORKSHOP: the wiki editor, note conversations and guided intake share the slot with
-#    prompts that differ per article, per note and per interview brief.
-#  - JCODE, SMALL: the coding client owns its prompt; small calls are one-shot by design.
-_ROLE_PRIME_ORDER: tuple[SlotRole, ...] = (SlotRole.SCHEDULED, SlotRole.INGEST, SlotRole.PET)
-
-
-class _Pin(TypedDict, total=False):
+class _SlotPin(TypedDict, total=False):
     slot_role: SlotRole
-
-
-def _prefix_digest(system: str, tools: Sequence[LlmTool], effort: str | None) -> str:
-    h = hashlib.sha256()
-    h.update(system.encode())
-    schemas = [[t.name, t.description, t.input_schema] for t in tools]
-    h.update(json.dumps(schemas, sort_keys=True).encode())
-    h.update(str(effort).encode())
-    return h.hexdigest()
 
 
 class WarmKeeper:
@@ -111,7 +71,6 @@ class WarmKeeper:
         kv_prefix: KvPrefixStore | None = None,
         interval_ready: float = 60.0,
         interval_wait: float = 5.0,
-        role_primes: Sequence[RolePrime] = (),
     ):
         self._gateway = gateway
         self._registry = registry
@@ -168,15 +127,6 @@ class WarmKeeper:
         # longer overwritten by that prime's completion — a 60-200 s window in which the model
         # could be evicted and bare-reloaded, leaving it resident, cold, and marked primed.
         self._generation = 0
-        # Pooled models only: the one-shot primes for roles other than slot 0, and what each
-        # role was last primed with as (served, digest of system + tools + effort). A changed
-        # digest re-primes that role; a lost prefix clears them all along with `_primed`.
-        self._role_primes = {p.role: p for p in role_primes}
-        self._roles_primed: dict[SlotRole, tuple[str, str]] = {}
-        # True while a pooled model still has a role to prime and the last attempt did not
-        # fail, so the run loop polls at the eager cadence until they are done rather than
-        # one role per steady minute.
-        self._roles_pending = False
 
     async def _auto_restore_allowed(self) -> bool:
         """Default OPEN when unwired (no loader) or on a settings read failure: this gate only
@@ -199,16 +149,10 @@ class WarmKeeper:
         edge-triggered half of that invalidation."""
         if self._primed is not None and self._primed[0] == served_model:
             self._primed = None
-        self._forget_roles(served_model)
         # Invalidate any prime currently in flight: it was priming a slot that no longer
         # exists, and letting it record success would re-assert the memo this just cleared.
         self._generation += 1
         self._wake.set()
-
-    def _forget_roles(self, served_model: str) -> None:
-        self._roles_primed = {
-            role: memo for role, memo in self._roles_primed.items() if memo[0] != served_model
-        }
 
     async def reconcile_once(self) -> bool:
         """Bring the target model to resident+primed if it isn't already. Returns True when
@@ -229,11 +173,8 @@ class WarmKeeper:
         except Exception:  # noqa: BLE001 — running() already swallows, but be defensive
             running = set()
         cold = served not in running
-        pool = local_catalog.pool_of(served)
-        self._roles_pending = False
         if cold:
             self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
-            self._forget_roles(served)
             if not await self._auto_restore_allowed():
                 # Off: the operator asked for nothing to be loaded behind their back. SETTLED,
                 # not "retry soon" — returning False here would spin the eager 5s cadence
@@ -268,8 +209,6 @@ class WarmKeeper:
                     )
                 except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
                     log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
-            if pool is not None:
-                await self._prime_next_role(served, pool, system, tools)
             return True  # already primed with the current tool set — leave any live conversation be
         # Bring the WEIGHTS up before priming, when the model is cold.
         #
@@ -328,8 +267,13 @@ class WarmKeeper:
         # prime's own completion re-asserting `_primed` — leaving the model resident, cold, and
         # believed primed, which is the exact state that hook exists to prevent.
         generation = self._generation
-        # Named only on a pool: elsewhere the call stays exactly what it always was.
-        pin: _Pin = {"slot_role": WARM_ROLE} if pool is not None else {}
+        # On a pooled model the prime is pinned to jerv's slot by naming its role. Only there:
+        # elsewhere the call keeps exactly its old shape. No other role is primed — their
+        # stable prefixes are a few hundred tokens, or a long prefill nobody is waiting on that
+        # would compete with the owner's first turn after boot.
+        slot_pin: _SlotPin = (
+            {"slot_role": WARM_ROLE} if local_catalog.pool_of(served) is not None else {}
+        )
         try:
             prime_turn = await self._router.converse(
                 AGENT_TURN_TASK,
@@ -337,7 +281,7 @@ class WarmKeeper:
                 messages=[UserMessage(text="warmup")],
                 tools=tools,
                 max_tokens=1,
-                **pin,
+                **slot_pin,
             )
         except Exception as exc:  # noqa: BLE001 — gateway down/cold/no-room: retry, never raise
             log.info("warm_keeper.prime_failed", model=served, error=str(exc))
@@ -364,109 +308,6 @@ class WarmKeeper:
             tool_count=len(tools),
             hidden=sorted(hidden),
         )
-        # The other roles start next tick: this one already spent its prefill.
-        self._roles_pending = pool is not None and self._next_role(served, pool) is not None
-        return True
-
-    def _candidates(self, pool: KvPool) -> list[SlotRole]:
-        pooled = {r.role for r in pool.reservations}
-        return [
-            role
-            for role in _ROLE_PRIME_ORDER
-            if role in pooled and (role == SlotRole.SCHEDULED or role in self._role_primes)
-        ]
-
-    def _next_role(self, served: str, pool: KvPool) -> SlotRole | None:
-        """The first role in prime order with no memo for `served`. A digest change is caught
-        when the role's turn comes round, since its digest needs a route read."""
-        for role in self._candidates(pool):
-            memo = self._roles_primed.get(role)
-            if memo is None or memo[0] != served:
-                return role
-        return None
-
-    async def _idle(self, served: str) -> bool:
-        """No slot of the model is processing. A pinned prime sent to a busy slot would queue
-        behind real work, and one beside it slows that work down; neither is worth a warm
-        prefix. An unreadable /slots reads as busy."""
-        try:
-            slots = await self._gateway.slots(served)
-        except Exception:  # noqa: BLE001 — a probe hiccup only postpones the prime
-            return False
-        return not any(s.get("is_processing") for s in slots)
-
-    async def _prime_next_role(
-        self, served: str, pool: KvPool, jerv_system: str, jerv_tools: list[LlmTool]
-    ) -> None:
-        """Prime at most one pooled role this tick — the first whose memo is stale — and set
-        `_roles_pending` for the run loop's cadence."""
-        for role in self._candidates(pool):
-            if role == SlotRole.SCHEDULED:
-                # Scheduled tasks and plan continuations run jerv's persona and tool set
-                # (tasks/runner.py hides the same model-gated tools the chat does), so their
-                # slot wants the very prefix slot 0 holds.
-                task, system, tools, strength = AGENT_TURN_TASK, jerv_system, jerv_tools, None
-            else:
-                spec = self._role_primes[role]
-                task, system, tools, strength = spec.task, spec.system, [], spec.strength
-            try:
-                provider, model = await self._router.effective_spec(task, strength)
-                effort = await self._router.effective_reasoning_effort(task, strength)
-            except Exception:  # noqa: BLE001 — a routing hiccup postpones this role
-                log.info("warm_keeper.role_route_failed", model=served, role=role, exc_info=True)
-                return
-            if provider != local_catalog.LOCAL_PROVIDER or model != served:
-                # Routed elsewhere (a cloud model, another local one): this model's slot would
-                # hold a prefix no call of the role sends here, and priming through that route
-                # would spend on, or load, the other model.
-                continue
-            digest = _prefix_digest(system, tools, effort)
-            if self._roles_primed.get(role) == (served, digest):
-                continue
-            if not await self._idle(served):
-                self._roles_pending = True
-                return
-            if await self._prime_role(served, role, task, system, tools, strength):
-                self._roles_primed[role] = (served, digest)
-                self._roles_pending = self._next_role(served, pool) is not None
-            return
-
-    async def _prime_role(
-        self,
-        served: str,
-        role: SlotRole,
-        task: str,
-        system: str,
-        tools: list[LlmTool],
-        strength: str | None,
-    ) -> bool:
-        generation = self._generation
-        try:
-            if tools:
-                await self._router.converse(
-                    task,
-                    system=system,
-                    messages=[UserMessage(text="warmup")],
-                    tools=tools,
-                    max_tokens=1,
-                    slot_role=role,
-                )
-            else:
-                await self._router.complete(
-                    task,
-                    system=system,
-                    user_text="warmup",
-                    max_tokens=1,
-                    strength=strength,
-                    slot_role=role,
-                )
-        except Exception as exc:  # noqa: BLE001 — a failed role prime waits for a later tick
-            log.info("warm_keeper.role_prime_failed", model=served, role=role, error=str(exc))
-            return False
-        if generation != self._generation:
-            log.info("warm_keeper.role_prime_superseded", model=served, role=role)
-            return False
-        log.info("warm_keeper.role_primed", model=served, role=role, task=task)
         return True
 
     def _retry_delay(self) -> float:
@@ -492,12 +333,7 @@ class WarmKeeper:
                 log.warning("warm_keeper.tick_failed", exc_info=True)
                 settled = False
             self._failures = 0 if settled else self._failures + 1
-            if not settled:
-                delay = self._retry_delay()
-            elif self._roles_pending:
-                delay = self._interval_wait
-            else:
-                delay = self._interval_ready
+            delay = self._interval_ready if settled else self._retry_delay()
             # Wait for the delay OR for a reported loss, whichever comes first. The hook's
             # main caller is the end-of-turn restore, so it fires just after the owner sends a
             # message — and sleeping out the rest of the interval is what made their NEXT

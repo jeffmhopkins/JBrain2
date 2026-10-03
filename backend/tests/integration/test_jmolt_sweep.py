@@ -43,7 +43,9 @@ class _FakeRouter:
     def __init__(self, reply: str = "15.00") -> None:
         self.reply = reply
 
-    async def complete(self, task: str, *, system: str, user_text: str, max_tokens: int) -> _Result:
+    async def complete(
+        self, task: str, *, system: str, user_text: str, max_tokens: int, slot_role=None
+    ) -> _Result:  # noqa: ANN001
         return _Result(text=self.reply)
 
 
