@@ -204,7 +204,7 @@ def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str])
     operator's copy appended afterwards is the ONLY occurrence.
 
     Also applied to a catalog entry's own `extra_server_args` against the shared command, for
-    the same invariant one layer down: Flash-Next's `--load-mode mmap` must REMOVE the shared
+    the same invariant one layer down: Flash-Next's `--load-mode none` must REMOVE the shared
     `--no-mmap`, not sit beside it relying on argv order. No standard entry's flags overlap
     the shared command, so for them this is a no-op and their lines are unchanged.
 
@@ -328,8 +328,9 @@ def render(
         gguf = resolve_weight(root, model_id, str(m["gguf_include"]))
         # A pooled entry's shape is the pool, whatever window or slot count is saved for it:
         # an override from before the pool (F2 stored some for Flash-Next) would otherwise
-        # re-split the cells and break the role-to-slot pinning the router relies on.
-        pool = slot_roles.pool_shape(m)
+        # re-split the cells and break the role-to-slot pinning the router relies on. The one
+        # saved value it honours is a pool size from the entry's own choices (`KvPool.resized`).
+        pool = slot_roles.pool_shape(m, windows.get(model_id))
         window = windows.get(model_id, int(cast(int, m["context_window"])))
         catalog_args = tuple(
             str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ())
@@ -764,32 +765,11 @@ def served_shape_from_config(
     the caller falls back to catalog defaults, which is the prior behaviour. Reads `engine`'s
     config file."""
     shapes: dict[str, tuple[int, int]] = {}
-    path = engines.config_path(root, engine)
-    try:
-        with open(path) as handle:
-            parsed = yaml.safe_load(handle)
-    except (OSError, yaml.YAMLError):
-        return shapes
-    if not isinstance(parsed, dict):
-        return shapes
-    for name, spec in (parsed.get("models") or {}).items():
-        cmd = spec.get("cmd") if isinstance(spec, dict) else None
-        if isinstance(cmd, str):
-            cmd = cmd.split()
-        if not isinstance(cmd, list):
-            continue
-        flags = [str(token) for token in cmd]
-
-        def _flag(flag: str, tokens: list[str] = flags) -> int | None:
-            try:
-                return int(tokens[tokens.index(flag) + 1])
-            except (ValueError, IndexError):
-                return None
-
-        cells = _flag("-c")
+    for name, flags in _served_commands(root, engine).items():
+        cells = _int_flag(flags, "-c")
         if cells is None or cells <= 0:
             continue
-        slots = _flag("-np") or 1
+        slots = _int_flag(flags, "-np") or 1
         slots = max(1, slots)
         if "--kv-unified" in flags:
             # Any one slot may grow to the whole pool, capped by what the model was trained on
@@ -801,6 +781,49 @@ def served_shape_from_config(
             continue
         shapes[str(name)] = (max(1, cells // slots), slots)
     return shapes
+
+
+def served_pool_cells_from_config(
+    root: str, engine: engines.Engine = engines.STANDARD
+) -> dict[str, int]:
+    """The `-c` of every `--kv-unified` (pooled) model in `engine`'s rendered config, keyed by
+    served name — the pool size actually served, which `served_shape_from_config` cannot carry
+    because a pooled model's per-sequence window is capped at its training length. For a
+    caller with no database (the update smoketest) to size a pooled load at the pool the
+    operator chose rather than the catalog default. Best-effort: unreadable -> empty."""
+    cells: dict[str, int] = {}
+    for name, flags in _served_commands(root, engine).items():
+        c = _int_flag(flags, "-c")
+        if "--kv-unified" in flags and c is not None and c > 0:
+            cells[name] = c
+    return cells
+
+
+def _served_commands(root: str, engine: engines.Engine) -> dict[str, list[str]]:
+    """Each served model's command tokens from `engine`'s rendered config; empty on any read
+    or parse failure."""
+    out: dict[str, list[str]] = {}
+    try:
+        with open(engines.config_path(root, engine)) as handle:
+            parsed = yaml.safe_load(handle)
+    except (OSError, yaml.YAMLError):
+        return out
+    if not isinstance(parsed, dict):
+        return out
+    for name, spec in (parsed.get("models") or {}).items():
+        cmd = spec.get("cmd") if isinstance(spec, dict) else None
+        if isinstance(cmd, str):
+            cmd = cmd.split()
+        if isinstance(cmd, list):
+            out[str(name)] = [str(token) for token in cmd]
+    return out
+
+
+def _int_flag(tokens: list[str], flag: str) -> int | None:
+    try:
+        return int(tokens[tokens.index(flag) + 1])
+    except (ValueError, IndexError):
+        return None
 
 
 class OverridesUnavailable(RuntimeError):

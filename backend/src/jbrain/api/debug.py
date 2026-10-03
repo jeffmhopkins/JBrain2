@@ -1601,13 +1601,15 @@ async def drop_page_cache(
     syscall is unavailable — it is blocked by the container's seccomp profile on this box),
     not that nothing was freed.
 
-    File-backed weights are SKIPPED (`local_weights`, FLASH_NEXT_ENGINE_PLAN §3): Flash-Next
-    serves its engram (PLE) table memory-mapped from disk, so that file's page cache is the
-    working set the model reads from, not residue — evicting it would turn every decode into
-    disk reads. A catalog entry with `file_backed_gb` reports less freed than its size."""
+    A RESIDENT file-backed model gets a range-aware drop (`local_weights
+    .drop_weights_page_cache_except_mapped`, FLASH_NEXT_ENGINE_PLAN §3): Flash-Next serves its
+    engram (PLE) table memory-mapped from disk, so that tensor's pages are the working set and
+    stay, while the rest of its shards' cache — the residue of uploading the GPU weights — is
+    dropped. It therefore reports less freed than its size, by design."""
     request.state.debug_detail = f"drop page cache ({models or 'all'})"
     ids = [m.strip() for m in models.split(",") if m.strip()] if models else None
-    freed = _gateway(request).drop_page_cache(ids)
+    # In a thread: a resident Flash-Next's range-aware drop parses GGUF headers first.
+    freed = await asyncio.to_thread(_gateway(request).drop_page_cache, ids)
     measured = [v for v in freed.values() if v is not None]
     return {
         "models": freed,
@@ -3229,7 +3231,8 @@ async def model_props(
     would make the gateway load it outside the residency budget, the path that froze this
     host. Load it first (which evicts to make room), then read its props."""
     request.state.debug_detail = model_id
-    return await llm_settings.gateway_props(model_id, settings, _gateway(request))
+    windows = await _store(request).llm_local_context_windows(_OWNER_CTX)
+    return await llm_settings.gateway_props(model_id, settings, _gateway(request), windows)
 
 
 @router.get("/llm/local-models/{model_id}/slots")

@@ -1402,16 +1402,31 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
 4. **Backing out:** switch back to Standard the same way, then **Uninstall** it in On-box
    models. The next Ops → Update removes its container and image.
 
-Its memory shape is fixed: one shared pool of 524,288 tokens (`-c 524288 -np 8
+Its memory shape is one shared pool of 524,288 tokens by default (`-c 524288 -np 8
 --kv-unified`) across eight slots, each kept for one kind of work (chat, ingest, scheduled
 tasks, research, jcode, wiki/notes, the pet, small prompts) so their cached prompts stop
-evicting each other. Its context-window and slot controls do not apply — a change is refused
-with the reason — and each kind of work has its own limit inside the pool. Budgeted at the F2
-measurement (plan §3a): ~74 GiB on the GPU, plus up to 7 GiB of host-side prompt checkpoints
-that appear only as slots fill (~81 GiB in all). A switch admits the load on the GPU figure, so
-it needs ~80 GiB free (74 + the 6 GiB floor). A unified pool allocates all of its cells at load:
-the 1M pool first shipped drove host free memory under the load guard's floor and was aborted
-on every load, which is why the pool is 512k.
+evicting each other. Its slot control does not apply — a change is refused with the reason —
+and each kind of work has its own limit inside the pool. Budgeted at the F2 measurement (plan
+§3a): ~74 GiB on the GPU, plus up to 7 GiB of host-side prompt checkpoints that appear only as
+slots fill (~81 GiB in all). A switch admits the load on the GPU figure, so it needs ~80 GiB
+free (74 + the 6 GiB floor).
+
+The pool size is selectable without a release: 524,288 (default) or 1,048,576, set through the
+model's context-window route (debug console: `PUT
+/api/debug/llm/local-models/qwen3.8-flash-next/context-window` with `{"context_window":
+1048576}`, or `524288` to go back — docs/runbooks/DEBUG_ACCESS.md); the next load serves it, and
+1M books ~14 GiB more (~88 on the GPU). A unified pool allocates all of its cells at load: the
+1M pool first shipped drove host free memory under the load guard's floor and was aborted, which
+is why 512k is the default.
+
+Flash-Next loads with `--load-mode none` (buffered read of the GPU weights; the 26.8 GiB engram
+tensor stays memory-mapped because it is lazy and CPU-pinned). Measured at 512k: 27 s per load
+against mmap's 41, steady host free memory 25.8 GB against 16.5. The read still fills page cache
+as it streams (it peaked at 52 GiB once), so the gateway drops it **by byte range** — every range
+of the shards except the engram tensor, read from the GGUF headers — during the load, after it,
+and from `POST /api/debug/llm/drop-page-cache`. The load guard also drops it the moment host
+free memory comes within 4 GB of its 6 GB floor (at most once per 10 s, bounded to 2 s); the
+floor itself is unchanged — any reading under it aborts the load.
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come

@@ -290,9 +290,19 @@ async def _local_llm_smoketest(engine: str = "standard") -> int:
         for served, shape in _shapes.items()
         if (model := local_catalog.get_by_served(served)) is not None
     }
+    # A pooled model's "window" is its pool size (`local_catalog.effective_pool`), which the
+    # per-sequence shape above cannot carry; read it off the rendered `-c` too, so a 1M pool is
+    # sized as one rather than as the catalog's 512k default.
+    _pool_cells = {
+        model.id: cells
+        for served, cells in llama_swap_config.served_pool_cells_from_config(
+            settings.local_models_dir, active
+        ).items()
+        if (model := local_catalog.get_by_served(served)) is not None
+    }
 
     async def _windows() -> dict[str, int]:
-        return {mid: shape[0] for mid, shape in _by_id.items()}
+        return {mid: _pool_cells.get(mid, shape[0]) for mid, shape in _by_id.items()}
 
     async def _slots() -> dict[str, int]:
         return {mid: shape[1] for mid, shape in _by_id.items()}
@@ -308,7 +318,9 @@ async def _local_llm_smoketest(engine: str = "standard") -> int:
         # model in turn" as this comment used to claim — see jbrain.llm.smoketest.)
         models_dir=settings.local_models_dir,
     )
-    ok, messages = await run_smoketest(settings.local_models, gateway, engine=active)
+    ok, messages = await run_smoketest(
+        settings.local_models, gateway, engine=active, pool_cells=_pool_cells
+    )
     for message in messages:
         print(f"[smoketest] {message}")
     return 0 if ok else 1

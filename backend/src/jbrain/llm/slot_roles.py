@@ -14,6 +14,7 @@ a call would overrun the pool — never silently in the engine's own order.
 Imports nothing from `local_catalog`, which embeds `FLASH_NEXT_POOL`, so there is no cycle.
 """
 
+import dataclasses
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -65,8 +66,14 @@ class KvPool:
     n_ctx: int
     reservations: tuple[RoleReservation, ...]
     ctx_train: int = FLASH_NEXT_CTX_TRAIN
+    # The pool sizes an operator may pick without a release (`resized`); `n_ctx` is the default.
+    # Empty = fixed. Kept to sizes measured or worth measuring on the box, never free-form: a
+    # unified pool allocates every cell at load, so a typo here is a load the guard aborts.
+    cell_choices: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.cell_choices and self.n_ctx not in self.cell_choices:
+            raise ValueError("the default pool size must be one of its choices")
         slots = [r.slot for r in self.reservations]
         if slots != list(range(len(slots))):
             raise ValueError("pool slots must be 0..n-1 in order")
@@ -105,13 +112,29 @@ class KvPool:
         """Slot ids, the first to free when the pool needs room first."""
         return [r.slot for r in sorted(self.reservations, key=lambda r: r.eviction_rank)]
 
+    def resized(self, cells: int | None) -> "KvPool":
+        """This pool at a saved size, or unchanged when `cells` is not one of its choices.
+
+        The saved size rides in the per-model context-window override map (catalog id ->
+        tokens), which for a pooled model has no other meaning. Anything else stored there (F2
+        saved per-sequence windows before the pool existed) reads as the default rather than
+        re-sizing the pool to a number nobody chose for it."""
+        if cells is None or cells == self.n_ctx or cells not in self.cell_choices:
+            return self
+        return dataclasses.replace(self, n_ctx=cells)
+
 
 # Eight slots, one per frequently-used prefix, so the hot prompts stop evicting each other (owner,
-# 2026-10-03). 512k cells, not the 1M first shipped: a unified pool allocates all its cells at load,
-# and on the box the 1M load drove host free memory to 5.3 GB, under the load guard's 6 GB floor,
-# so it was aborted every time. 512k is the 2 x 262k size F2 measured loading cleanly (74.2 GiB).
+# 2026-10-03). 512k cells by default, not the 1M first shipped: a unified pool allocates all its
+# cells at load, and on the box the 1M load drove host free memory to 5.3 GB, under the load
+# guard's 6 GB floor, so it was aborted every time. 512k is the 2 x 262k size F2 measured loading
+# cleanly (74.2 GiB). 1M stays selectable without a release (FLASH_NEXT_ENGINE_PLAN §3a): that
+# abort was page cache from the mmap load, which `--load-mode none` and the range-aware drop
+# (local_weights) now take away, so it earns another measured attempt from the debug console.
+FLASH_NEXT_POOL_CELLS: Final = (524_288, 1_048_576)
 FLASH_NEXT_POOL: Final = KvPool(
     n_ctx=524_288,
+    cell_choices=FLASH_NEXT_POOL_CELLS,
     reservations=(
         RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 7, "jerv (chat, omnibox)"),
         RoleReservation(SlotRole.INGEST, 1, 131_072, 6, "Ingest and analysis"),
@@ -246,9 +269,10 @@ def estimate_prompt_tokens(served_model: str, *, chars: int, n_images: int = 0) 
     return int(prefill.estimate_tokens(served_model, chars)) + n_images * IMAGE_TOKENS_CHARGE
 
 
-def pool_shape(manifest: Mapping[str, object]) -> tuple[int, int] | None:
+def pool_shape(manifest: Mapping[str, object], saved: int | None = None) -> tuple[int, int] | None:
     """(n_ctx, n_slots) of a catalog entry read back from its `asdict` manifest, or None for an
-    entry without a pool."""
+    entry without a pool. `saved` is the operator's stored size, honoured only when it is one of
+    the entry's `cell_choices` — the same rule as `KvPool.resized`."""
     pool = manifest.get("kv_pool")
     if not isinstance(pool, Mapping):
         return None
@@ -256,6 +280,9 @@ def pool_shape(manifest: Mapping[str, object]) -> tuple[int, int] | None:
     n_ctx = pool.get("n_ctx")
     if not isinstance(n_ctx, int) or not isinstance(reservations, Sequence):
         return None
+    choices = pool.get("cell_choices")
+    if saved is not None and isinstance(choices, Sequence) and saved in choices:
+        n_ctx = saved
     return n_ctx, len(reservations)
 
 

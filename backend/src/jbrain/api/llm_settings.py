@@ -760,6 +760,10 @@ def _local_model_info(
     disk_gb = _disk_gb(settings, m.id)
     override = None if m.kv_pool is not None else windows.get(m.id)
     effective_window = override if override is not None else m.context_window
+    # A pooled model's saved window is its pool size; footprint_gb resolves it the same way.
+    pool = local_catalog.effective_pool(m, windows)
+    if pool is not None:
+        effective_window = pool.n_ctx
     # What the gateway will REALLY serve: a speculative model is pinned to one slot whatever
     # override is stored, so the drawer shows the served value rather than a saved one the
     # engine ignores (and sizes its KV bar off the same number).
@@ -801,7 +805,7 @@ def _local_model_info(
         slots_drop_disk_cache=bool(m.recurrent and m.is_mtp_speculative),
         parallel_slots_max=slots_max(m),
         default_slots=m.default_slots,
-        kv_pool=_kv_pool_out(m.kv_pool),
+        kv_pool=_kv_pool_out(pool),
         engine=m.engine,
         loadable_now=blocked is None,
         blocked_reason=blocked,
@@ -1070,6 +1074,43 @@ def gateway_config_error() -> str | None:
     """Why llama-swap is serving flags that do not match the saved settings, or None when it
     is up to date. Read by `_snapshot` for the settings screen."""
     return _last_regen_error
+
+
+async def _unload_for_pool_resize(
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+    model: local_catalog.LocalModel,
+    stored: int | None,
+    before: slot_roles.KvPool,
+) -> None:
+    """Unload a resident pooled model whose saved pool size just changed, or undo the change.
+
+    Unlike `_unload_if_loaded` this cannot be best-effort. A unified pool allocates its cells
+    at load, so a model left resident keeps serving the OLD size while every budget reader
+    (residency, the load charge, the pool guard) prices the new one — 14 GiB wrong in either
+    direction between 512k and 1M. So a failed unload restores the previous stored size and
+    says so, rather than leaving the settings describing a pool the box is not serving."""
+    try:
+        # The strict read: `running()` turns a failed read into "nothing loaded", which would
+        # save the new size over a resident model still serving the old one.
+        states = await gateway.running_states()
+        if states is None:
+            raise LocalGatewayError("the gateway's loaded-model list could not be read")
+        if model.served_model not in states:
+            return
+        with box_events.because("its memory pool was resized — it reloads at the new size"):
+            await gateway.unload(model.served_model)
+    except LocalGatewayError as exc:
+        await store.set_llm_local_context_window(ctx, model_id=model.id, window=stored)
+        log.warning("llm_settings.pool_resize_unload_failed", model=model.id, error=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{model.label} is loaded and could not be unloaded to resize its pool ({exc}), "
+                f"so it stays at {before.n_ctx:,} tokens. Unload it, then set the size again."
+            ),
+        ) from exc
 
 
 async def _unload_if_loaded(
@@ -1358,10 +1399,19 @@ async def set_local_context_window_value(
     model = _require_provisioned(settings, model_id)
     pool = model.kv_pool
     if pool is not None:
-        if window not in (None, model.context_window):
+        # A pooled model's window override IS its pool size (`local_catalog.effective_pool`):
+        # one of the pool's `cell_choices`, chosen without a release. Anything else is the
+        # per-sequence window, which the pool fixes.
+        if window not in (None, model.context_window, *pool.cell_choices):
             raise HTTPException(status_code=409, detail=_pool_fixed_reason(model, pool, "window"))
-        # The no-op still clears a stale stored override, so nothing reads it back later.
-        await store.set_llm_local_context_window(ctx, model_id=model_id, window=None)
+        stored = (await store.llm_local_context_windows(ctx)).get(model_id)
+        before = pool.resized(stored)
+        # Only a non-default size is stored, so null, the per-sequence window and the default
+        # size all clear the row — a stale pre-pool override included.
+        saved = window if window in pool.cell_choices and window != pool.n_ctx else None
+        await store.set_llm_local_context_window(ctx, model_id=model_id, window=saved)
+        if before.n_ctx != pool.resized(saved).n_ctx:
+            await _unload_for_pool_resize(store, ctx, gateway, model, stored, before)
         return await _snapshot(settings, store, ctx, gateway)
     ceiling = model.max_context_window
     if window is not None and not (1 <= window <= ceiling):
@@ -1420,10 +1470,17 @@ def _pool_fixed_reason(
 ) -> str:
     """Why a pooled model refuses a window or slot change, in the owner's terms."""
     what = "context window" if knob == "window" else "slot count"
+    sizes = ""
+    if knob == "window" and pool.cell_choices:
+        sizes = (
+            " The pool's own size may be set to "
+            + " or ".join(f"{c:,}" for c in pool.cell_choices)
+            + " tokens."
+        )
     return (
         f"{model.label} serves one shared {pool.n_ctx:,}-token memory pool across "
         f"{pool.n_slots} slots, each kept for one kind of work, so its {what} is fixed. "
-        "Each kind of work has its own limit inside the pool instead."
+        f"Each kind of work has its own limit inside the pool instead.{sizes}"
     )
 
 
@@ -2144,18 +2201,22 @@ async def set_local_extra_args(
 
 
 async def gateway_props(
-    model_id: str, settings: Settings, gateway: LocalGatewayClient
+    model_id: str,
+    settings: Settings,
+    gateway: LocalGatewayClient,
+    windows: Mapping[str, int] | None = None,
 ) -> dict[str, object]:
     """llama-server's `/props` for one model — build identity, real `n_ctx`, slot count.
 
     On a pooled model llama-server's `n_ctx` is the most ONE slot may grow to, not the pool,
-    so the pool and its role caps ride along as `kv_pool` for whoever reads the number."""
+    so the pool and its role caps ride along as `kv_pool` for whoever reads the number — at
+    the saved pool size when `windows` (the per-model overrides) is given."""
     model = _require_provisioned(settings, model_id)
     try:
         props = await gateway.props(model.served_model)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway props failed: {exc}") from exc
-    pool = _kv_pool_out(model.kv_pool)
+    pool = _kv_pool_out(local_catalog.effective_pool(model, windows))
     return props if pool is None else {**props, "kv_pool": pool.model_dump()}
 
 

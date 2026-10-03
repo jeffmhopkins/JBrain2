@@ -99,6 +99,20 @@ RUNAWAY_MULTIPLE = 1.75
 # process — so this is a hard floor, held even when a load's own prediction says it fits.
 MIN_FREE_GTT_GB = 6.0
 
+# The warning band above the host floor in which a guarded load drops its own page cache
+# (`guarded_load`'s `relieve`) BEFORE the floor is reached. Proactive on purpose: a sample under
+# the floor is fatal, so the drop has to land while there is still room to land it in.
+RELIEF_BAND_GB = 4.0
+
+# At most one proactive drop per window: a load whose read refills the cache faster than the
+# drops drain it is a load the floor should stop, not one to keep rescuing.
+RELIEF_INTERVAL_S = 10.0
+
+# The longest the watchdog waits on one drop. Relief runs while memory is already tight, and a
+# drop wedged in the kernel must not stop the watchdog sampling: past this it carries on and the
+# floor decides.
+RELIEF_TIMEOUT_S = 2.0
+
 
 @dataclass(frozen=True)
 class GpuMem:
@@ -351,6 +365,8 @@ async def guarded_load(
     target: str,
     abort: Callable[[], Awaitable[None]],
     sample_interval_s: float = SAMPLE_INTERVAL_S,
+    relieve: Callable[[], Awaitable[None]] | None = None,
+    relief_interval_s: float = RELIEF_INTERVAL_S,
 ) -> None:
     """Run `load()` while watching device memory, and abort it if GTT runs away.
 
@@ -374,7 +390,19 @@ async def guarded_load(
     Degrades cleanly: if the probe can't read the pool (no amdgpu, supervisor down), the
     load runs exactly as it does today, unwatched — a box that can't measure must still be
     able to serve. Aborting is best-effort too, and it is deliberately attempted before the
-    raise: on a runaway the priority is getting the allocation released, not a tidy error."""
+    raise: on a runaway the priority is getting the allocation released, not a tidy error.
+
+    `relieve`, when given, drops the load's own page-cache residue PROACTIVELY, when host free
+    memory enters the `RELIEF_BAND_GB` band above the floor. MEASURED 2026-10-03: two 1M-pool
+    Flash-Next loads were aborted at 5.3 and 5.9 GB free with tens of GB of the read's clean
+    cache on the box — memory the floor counts as used (rightly: the 2026-08-19 livelock was
+    ~39 GiB of such cache that `MemAvailable` called free) and that nothing had dropped.
+    Relief never rescues a sample already under the floor — that sample is fatal, as it always
+    was — so the floor and the accounting are exactly as strict as before; relief only makes it
+    less likely the floor is reached. At most one drop per `relief_interval_s`, each bounded by
+    `RELIEF_TIMEOUT_S` (or two samples, if shorter) so a wedged drop cannot stall the watchdog.
+    After a drop both host memory and the device pool are re-read, so the checks below judge
+    the box as it is after the drop, not the sample from before it."""
     baseline = await probe.sample()
     if baseline is None:
         log.info("gpu_guard.unwatched_load", model=target, reason="no device-memory probe")
@@ -384,6 +412,8 @@ async def guarded_load(
     ceiling_gb = baseline.gtt_used_gb + max(projected_gb * RUNAWAY_MULTIPLE, projected_gb + 2.0)
     task = asyncio.ensure_future(load())
     breach: str | None = None
+    loop = asyncio.get_running_loop()
+    last_relief: float | None = None
     try:
         while not task.done():
             done, _ = await asyncio.wait({task}, timeout=sample_interval_s)
@@ -393,6 +423,30 @@ async def guarded_load(
             if now is None:
                 continue  # lost the probe mid-load: fall back to running unwatched
             host_free = _host_free_gb()
+            if (
+                host_free is not None
+                and MIN_FREE_GTT_GB <= host_free < MIN_FREE_GTT_GB + RELIEF_BAND_GB
+                and relieve is not None
+                and (last_relief is None or loop.time() - last_relief >= relief_interval_s)
+            ):
+                last_relief = loop.time()
+                low = host_free
+                # Bounded and best-effort: a drop that fails or hangs leaves the floor to decide.
+                # A timed-out drop keeps running in its thread; only the wait is abandoned.
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        relieve(), timeout=min(RELIEF_TIMEOUT_S, 2 * sample_interval_s)
+                    )
+                host_free = _host_free_gb()
+                # Re-sampled so the ceiling and device-floor checks read the box after the drop,
+                # not the sample taken before it (the drop's wait can be seconds long).
+                now = await probe.sample() or now
+                log.info(
+                    "gpu_guard.host_floor_relief",
+                    model=target,
+                    free_before_gb=low,
+                    free_after_gb=host_free,
+                )
             if host_free is not None and host_free < MIN_FREE_GTT_GB:
                 # THE FLOOR THAT CAN ACTUALLY FIRE ON THIS BOX. `gtt_free` is not a second
                 # opinion here: `strix-halo-host-setup.sh` sets `amdgpu.gttsize` to 124 GiB on a

@@ -760,7 +760,13 @@ async def run() -> None:
         slots_probe=llm_gateway.slots,
         # Frees a pooled model's idle slots in our eviction order before a job's call would
         # overrun the shared KV pool. Per process; `/slots` is what the api and worker share.
-        pool_guard=KvPoolGuard(llm_gateway.slots, llm_gateway.erase_slot),
+        pool_guard=KvPoolGuard(
+            llm_gateway.slots,
+            llm_gateway.erase_slot,
+            windows_loader=lambda: worker_settings_store.llm_local_context_windows(
+                queue.SYSTEM_CTX
+            ),
+        ),
         # The same engine read and drain gate as this process's coordinator, so a nightly
         # job's `local:gpt-oss-120b` runs on Flash-Next while it serves instead of being
         # refused (FLASH_NEXT_ENGINE_PLAN §4c).

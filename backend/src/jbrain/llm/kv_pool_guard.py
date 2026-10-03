@@ -40,6 +40,7 @@ from typing import Final
 
 import structlog
 
+from jbrain.llm import local_catalog
 from jbrain.llm.errors import LlmTransientError
 from jbrain.llm.prefill import SlotsReader
 from jbrain.llm.slot_roles import (
@@ -52,6 +53,10 @@ from jbrain.llm.slot_roles import (
 )
 
 log = structlog.get_logger()
+
+# How long a read of the saved pool size is trusted (`KvPoolGuard._sized`). A resize also
+# unloads the model, so the window where a stale size could matter is a reload, not a call.
+POOL_SIZE_TTL_S: Final = 10.0
 
 # Erase one slot of a served model. False means the server cannot erase at all (501: it was
 # started without `--slot-save-path`, i.e. a stale config); any other failure raises.
@@ -161,8 +166,16 @@ class KvPoolGuard:
         erase_timeout_s: float = ERASE_TIMEOUT_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
+        windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
     ) -> None:
         self._read = read
+        # The saved per-model overrides, where a pooled model's pool size lives
+        # (`local_catalog.effective_pool`). Without it the guard holds calls to the catalog
+        # default, which on a box serving a larger pool only frees idle slots sooner.
+        self._windows_loader = windows_loader
+        # (read at, overrides) — the size changes only on an owner/debug PUT, so a short TTL
+        # spares a settings read on every pinned call.
+        self._windows_cache: tuple[float, Mapping[str, int]] | None = None
         self._erase = erase
         self._wait_s = wait_s
         self._poll_s = poll_s
@@ -201,6 +214,25 @@ class KvPoolGuard:
         self._layout_seen.pop(model, None)
         return None
 
+    async def _sized(self, model: str, pool: KvPool) -> KvPool:
+        """`pool` at the size `model` is actually served with. A failed read keeps the catalog
+        default: the smaller pool, so the guard errs toward evicting early, never overrunning."""
+        if self._windows_loader is None or not pool.cell_choices:
+            return pool
+        model_id = local_catalog.id_for_served(model)
+        if model_id is None:
+            return pool
+        cached = self._windows_cache
+        if cached is not None and self._clock() - cached[0] < POOL_SIZE_TTL_S:
+            return pool.resized(cached[1].get(model_id))
+        try:
+            windows = await self._windows_loader()
+        except Exception:  # noqa: BLE001 — a settings hiccup must not fail the call
+            log.warning("llm.pool_size_unread", model=model, exc_info=True)
+            return pool
+        self._windows_cache = (self._clock(), dict(windows))
+        return pool.resized(windows.get(model_id))
+
     def _layout_recent(self, model: str) -> bool:
         seen = self._layout_seen.get(model)
         return seen is not None and self._clock() - seen < LAYOUT_TTL_S
@@ -222,6 +254,7 @@ class KvPoolGuard:
         Raises `SlotCapError` (permanent) before anything else when the call cannot fit its
         cap, and `KvPoolBusyError` (transient) when busy slots hold the room it needs for
         longer than `wait_s` (the guard's default when None)."""
+        pool = await self._sized(model, pool)
         admission = admit(pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens)
         read = await self._slots(model)
         ticket = next(self._tickets)
