@@ -14,7 +14,6 @@ Pure data and a cache; the SQL lives in `settings_store` (RLS-scoped, like every
 the router makes) and the tier of a task in `router.task_tier`.
 """
 
-import contextlib
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Mapping
@@ -48,6 +47,18 @@ def levels_for(engine: engines.Engine) -> tuple[str, ...]:
     if model.hybrid_thinking:
         honored.add("none")
     return tuple(level for level in ALL_LEVELS if level in honored)
+
+
+def model_default(engine: engines.Engine) -> str | None:
+    """The level, in OUR terms, `engine`'s sole model runs at when a call sends no level — what
+    an unset task really gets. The template's own default (`template_default_effort`) mapped
+    back through `thinking_effort_map`: Qwen3.8's `xhigh` reads as our `high`. None when the
+    catalog does not say, or the default has no level of ours."""
+    model = local_catalog.sole_model(engine)
+    if model is None or not model.template_default_effort:
+        return None
+    ours = [k for k, v in model.thinking_effort_map.items() if v == model.template_default_effort]
+    return ours[0] if ours else None
 
 
 @dataclass(frozen=True)
@@ -98,17 +109,32 @@ class EngineEffortCache:
         self._clock = clock
         self._value = EMPTY
         self._read_at: float | None = None
+        # Bumped by every invalidate. A read that began before one may have seen the rows
+        # before the write, so it must not be stored as fresh — it would hide the owner's
+        # change for a whole TTL.
+        self._generation = 0
         _LIVE.add(self)
 
     async def get(self) -> EngineEfforts:
         now = self._clock()
         if self._read_at is None or now - self._read_at >= self._ttl_s:
-            with contextlib.suppress(Exception):
-                self._value = await self._load()
+            started = self._generation
+            try:
+                value = await self._load()
+            except Exception:  # noqa: BLE001 — keep the last value; retry after the TTL
+                if started == self._generation:
+                    self._read_at = now
+                return self._value
+            if started != self._generation:
+                # Invalidated mid-read: answer this call with what it read, but leave the
+                # cache stale so the next call reads again.
+                return value
+            self._value = value
             self._read_at = now
         return self._value
 
     def invalidate(self) -> None:
+        self._generation += 1
         self._read_at = None
 
 

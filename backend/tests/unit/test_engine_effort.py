@@ -15,7 +15,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jbrain.api import llm_settings
+from jbrain.api.deps import current_principal
 from jbrain.auth import service as auth_service
+from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
 from jbrain.llm import FakeLlmClient, engine_effort
 from jbrain.llm import engine as engines
@@ -37,6 +39,11 @@ _DB = "postgresql+asyncpg://nobody@localhost:1/none"
 
 
 # --- the levels and the resolution -----------------------------------------------------------
+
+
+def test_the_model_default_is_the_template_default_in_our_terms() -> None:
+    assert engine_effort.model_default(FLASH) == "high"
+    assert engine_effort.model_default(engines.STANDARD) is None
 
 
 def test_flash_next_takes_the_four_levels_and_standard_takes_none() -> None:
@@ -256,6 +263,34 @@ async def test_the_cache_holds_for_its_ttl_and_a_write_invalidates_it() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_read_racing_a_write_is_not_kept_as_fresh() -> None:
+    """A load that began before an invalidate saw the rows before the write; storing it would
+    hide the owner's change for a whole TTL."""
+    rows: dict[tuple[str, str, str], str] = {}
+    entered, release = asyncio.Event(), asyncio.Event()
+    reads: list[int] = []
+
+    async def _load() -> EngineEfforts:
+        snapshot = dict(rows)
+        reads.append(1)
+        if len(reads) == 1:
+            entered.set()
+            await release.wait()
+        return EngineEfforts(snapshot)
+
+    cache = EngineEffortCache(_load, ttl_s=60.0, clock=_Clock())
+    slow = asyncio.create_task(cache.get())
+    await entered.wait()
+    rows[(FLASH, "task", "agent.turn")] = "low"  # the owner writes while the read is out
+    cache.invalidate()
+    release.set()
+    assert (await slow).rows == {}  # that call answers with what it read...
+    # ...but the next one reads again rather than trusting the stale value for the TTL.
+    assert (await cache.get()).level(FLASH, "task", "agent.turn") == "low"
+    assert len(reads) == 2
+
+
+@pytest.mark.asyncio
 async def test_the_cache_keeps_the_last_value_when_a_read_fails() -> None:
     clock = _Clock()
     value: dict[str, Any] = {"rows": {(FLASH, "tier", "low"): "none"}}
@@ -319,6 +354,8 @@ def test_the_snapshot_reports_levels_tiers_and_tasks(
     assert set(client.get("/api/settings/llm").json()["engine_efforts"]) == {"flash-next"}
     assert flash["label"] == "Flash-Next" and flash["active"] is False
     assert flash["levels"] == ["none", "low", "medium", "high"]
+    # Unset sends no level, and Qwen3.8's template then thinks at xhigh — our "high".
+    assert flash["model_default"] == "high"
     assert {t["id"]: (t["level"], t["default"]) for t in flash["tiers"]} == {
         "high": (None, "high"),
         "medium": (None, None),  # medium is sent as no level: the model's own default
@@ -417,12 +454,30 @@ def test_invalid_changes_are_422_and_write_nothing(
     assert store.engine_effort_rows == {}
 
 
-def test_the_routes_need_the_owner() -> None:
+def test_the_routes_need_a_session() -> None:
     app = create_app(Settings(secure_cookies=False, database_url=_DB))
     with TestClient(app) as anon:
         assert anon.put(f"{_BASE}/tier/medium", json={"effort": "low"}).status_code == 401
         assert anon.delete(f"{_BASE}/tier/medium").status_code == 401
         assert anon.put(_BASE, json={}).status_code == 401
+
+
+@pytest.mark.parametrize("kind", ["device_key", "jcode_share_link", "capability_token"])
+def test_a_non_owner_session_is_refused_and_writes_nothing(
+    box: tuple[TestClient, FakeSettingsStore, str], kind: str
+) -> None:
+    client, store, _ = box
+    app: Any = client.app
+    app.dependency_overrides[current_principal] = lambda: PrincipalInfo(
+        id="other", kind=kind, label="not the owner", jcode_session_id="s1"
+    )
+    try:
+        assert client.put(f"{_BASE}/tier/medium", json={"effort": "low"}).status_code == 403
+        assert client.delete(f"{_BASE}/tier/medium").status_code == 403
+        assert client.put(_BASE, json={"tiers": {"medium": "low"}}).status_code == 403
+    finally:
+        app.dependency_overrides.pop(current_principal, None)
+    assert store.engine_effort_rows == {}
 
 
 def test_the_debug_twin_shares_the_validation_and_the_write(

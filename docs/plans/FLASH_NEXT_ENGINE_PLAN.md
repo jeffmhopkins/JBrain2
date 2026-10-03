@@ -554,16 +554,22 @@ unless it has its own:
 - A new table, `app.llm_engine_effort` (engine, scope `task`|`tier`, key, effort; unique per
   engine/scope/key; owner-only RLS plus the jmolt deny, no principal column — the router reads
   under the system context, as with `app.settings`), kept apart from `llm_task_overrides` so
-  switching back to Standard restores everything untouched. `engine` is general; only
-  `flash-next` has levels (its catalog `thinking_effort_map` keys plus the hybrid's `none`).
+  switching back to Standard restores everything untouched. `engine` is a column, CHECKed to
+  `flash-next` today (the only engine with levels: its catalog `thinking_effort_map` keys plus
+  the hybrid's `none`); another engine widens that CHECK.
 - The router, after the remap and before the capability gate: a call whose model runs on a
   non-Standard engine takes the task row, else the tier row, else today's effort; a per-call
   `effort_override` still wins. Standard calls never read the table. A 5 s cache, invalidated
-  in-process on a write. The load-time warm-up folds in the same level.
-- Owner API: the snapshot's `engine_efforts["flash-next"]` (levels; each tier's level and
-  default; each task's level, fallback and its source, effective level, and whether it applies
-  now); `PUT`/`DELETE /api/settings/llm/engine-effort/{engine}/{scope}/{key}` and a batch
-  `PUT /api/settings/llm/engine-effort/{engine}`; the debug twin is the batch route.
+  in-process on a write (a read already in flight when the write lands is not kept as fresh).
+  The load-time warm-up folds in the same level.
+- Owner API: the snapshot's `engine_efforts["flash-next"]` (levels; `model_default`, what an
+  unset task really runs at; each tier's level and default; each task's level, fallback and
+  its source, effective level, and whether it applies now); owner-only (`OwnerDep`, a non-owner
+  session is a 403) `PUT`/`DELETE /api/settings/llm/engine-effort/{engine}/{scope}/{key}` and a
+  batch `PUT /api/settings/llm/engine-effort/{engine}`; the debug twin is the batch route.
+- **Open question (owner):** unset on Flash-Next runs at the template default (high/xhigh),
+  including vision/OCR — owner to decide whether unset should send an explicit level. Routing
+  is unchanged until then; the snapshot's `model_default` says so truthfully.
 - PWA: per-tier and per-task controls on the LLM settings screen — mocks first (`PROCESS.md`).
 - Tests: resolution precedence, Standard unchanged, the override still winning, the cache,
   the warm-up, API validation and snapshot shape; the table's RLS isolation on real Postgres.
