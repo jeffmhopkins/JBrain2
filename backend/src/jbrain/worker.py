@@ -56,6 +56,7 @@ from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gateway_regen, gpu_guard
 from jbrain.llm.drain import AdmissionGate
 from jbrain.llm.engine import ActiveEngine
+from jbrain.llm.engine_effort import EngineEffortCache
 from jbrain.llm.kv_pool_guard import KvPoolBusyError, KvPoolGuard
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -772,6 +773,11 @@ async def run() -> None:
         # refused (FLASH_NEXT_ENGINE_PLAN §4c).
         engine_loader=worker_engine.get,
         admission_gate=worker_admission.wait_open,
+        # The owner's Flash-Next reasoning levels. The api invalidates its own cache on a
+        # write; this process sees one through the TTL.
+        engine_efforts_loader=EngineEffortCache(
+            lambda: worker_settings_store.llm_engine_efforts(queue.SYSTEM_CTX)
+        ).get,
     )
     # The report display-title job (external.report_titler): one LLM one-shot per
     # report, so it takes the router rather than the embed container.

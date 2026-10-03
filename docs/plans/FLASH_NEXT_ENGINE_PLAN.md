@@ -546,6 +546,28 @@ with per-slot caps and a pool guard (§4a).
   slot selection per task and caller, every pool-model request pinned, engine-aware jcode
   power-on.
 
+#### F3b follow-on — Flash-Next's own reasoning levels (backend built 2026-10-03; PWA after the mock)
+Owner request 2026-10-03. The §4c remap re-gates each task's Standard effort onto Flash-Next,
+so a level chosen for gpt-oss or Grok was what Flash-Next ran at. Now the owner sets the level
+used ON Flash-Next per tier (the screen's role groups) and per task, which inherits its tier
+unless it has its own:
+- A new table, `app.llm_engine_effort` (engine, scope `task`|`tier`, key, effort; unique per
+  engine/scope/key; owner-only RLS plus the jmolt deny, no principal column — the router reads
+  under the system context, as with `app.settings`), kept apart from `llm_task_overrides` so
+  switching back to Standard restores everything untouched. `engine` is general; only
+  `flash-next` has levels (its catalog `thinking_effort_map` keys plus the hybrid's `none`).
+- The router, after the remap and before the capability gate: a call whose model runs on a
+  non-Standard engine takes the task row, else the tier row, else today's effort; a per-call
+  `effort_override` still wins. Standard calls never read the table. A 5 s cache, invalidated
+  in-process on a write. The load-time warm-up folds in the same level.
+- Owner API: the snapshot's `engine_efforts["flash-next"]` (levels; each tier's level and
+  default; each task's level, fallback and its source, effective level, and whether it applies
+  now); `PUT`/`DELETE /api/settings/llm/engine-effort/{engine}/{scope}/{key}` and a batch
+  `PUT /api/settings/llm/engine-effort/{engine}`; the debug twin is the batch route.
+- PWA: per-tier and per-task controls on the LLM settings screen — mocks first (`PROCESS.md`).
+- Tests: resolution precedence, Standard unchanged, the override still winning, the cache,
+  the warm-up, API validation and snapshot shape; the table's RLS isolation on real Postgres.
+
 ### F4 — Per-role disk prefix cache ◻️
 Begins with the check moved out of F2, and gated on it:
 - Re-validate the sidecar patch against the new pin (anchors fail hard on drift, by

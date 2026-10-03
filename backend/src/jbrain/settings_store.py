@@ -20,6 +20,10 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm.engine import Engine
 from jbrain.llm.engine import invalidate_cached as invalidate_engine_cache
 from jbrain.llm.engine import parse as parse_engine
+from jbrain.llm.engine_effort import ALL_LEVELS as ENGINE_EFFORT_LEVELS
+from jbrain.llm.engine_effort import SCOPES as ENGINE_EFFORT_SCOPES
+from jbrain.llm.engine_effort import EngineEfforts, RowKey
+from jbrain.llm.engine_effort import invalidate_cached as invalidate_engine_effort_cache
 from jbrain.sdr.roles import GAIN_CHOICES, GENERAL, UPCONVERTER_MAX_HZ, Radio
 
 ImageAnalysisMode = Literal["full", "ocr"]
@@ -1468,3 +1472,52 @@ class SqlSettingsStore:
         self, ctx: SessionContext, status: dict[str, Any]
     ) -> None:
         await self.upsert(ctx, LLM_LOCAL_ENGINE_SWITCH_KEY, status)
+
+    async def llm_engine_efforts(self, ctx: SessionContext) -> EngineEfforts:
+        """Every per-engine reasoning level (`app.llm_engine_effort`, not `app.settings`: the
+        Standard picks and these must never share a write). Defensive on read like
+        `llm_task_overrides` — the router applies these on every call, so a row outside the
+        known scopes or levels is dropped rather than sent."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text("SELECT engine, scope, key, effort FROM app.llm_engine_effort")
+                )
+            ).all()
+        return EngineEfforts(
+            {
+                (engine, scope, key): effort
+                for engine, scope, key, effort in rows
+                if scope in ENGINE_EFFORT_SCOPES and effort in ENGINE_EFFORT_LEVELS
+            }
+        )
+
+    async def set_llm_engine_efforts(
+        self, ctx: SessionContext, changes: dict[RowKey, str | None]
+    ) -> None:
+        """Apply `changes` in ONE transaction — a level upserts, None deletes — so a tier set
+        together with clearing its tasks never shows half-applied to a call in between. The
+        caller validates; the table's CHECKs are the backstop."""
+        async with scoped_session(self._maker, ctx) as session:
+            for (engine, scope, key), effort in changes.items():
+                params = {"engine": engine, "scope": scope, "key": key}
+                if effort is None:
+                    await session.execute(
+                        text(
+                            "DELETE FROM app.llm_engine_effort"
+                            " WHERE engine = :engine AND scope = :scope AND key = :key"
+                        ),
+                        params,
+                    )
+                    continue
+                await session.execute(
+                    text(
+                        "INSERT INTO app.llm_engine_effort (engine, scope, key, effort)"
+                        " VALUES (:engine, :scope, :key, :effort)"
+                        " ON CONFLICT (engine, scope, key) DO UPDATE"
+                        " SET effort = excluded.effort, updated_at = now()"
+                    ),
+                    {**params, "effort": effort},
+                )
+        # This process's router sees the change on its next call; the worker's by TTL.
+        invalidate_engine_effort_cache()
