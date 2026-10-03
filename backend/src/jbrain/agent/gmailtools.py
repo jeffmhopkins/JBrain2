@@ -16,6 +16,7 @@ rather than a full HTML body per message.
 """
 
 import asyncio
+import json
 import re
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -50,6 +51,9 @@ _SCAN_CONTEXT = 50
 # bounded so a wide query can't fetch hundreds of bodies.
 _SCAN_DEFAULT = 10
 _SCAN_MAX = 25
+# How deep `offset` may page. Gmail's messages.list returns at most 500 ids per call, and
+# the page is fetched in one call (offset + limit ids), so this keeps it one request.
+_SCAN_OFFSET_MAX = 475
 # Bodies are fetched concurrently in small chunks, like the sender breakdown's metadata
 # reads — one slow id-at-a-time loop over 25 messages is a visibly stalled turn.
 _SCAN_FETCH_CHUNK = 5
@@ -101,6 +105,44 @@ def _clip(text: str, limit: int = 32) -> str:
     """One line on a phone; the full text is in the step's result."""
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "\u2026"
+
+
+def _memoized(name: str, handler: ToolHandler) -> ToolHandler:
+    """Answer an exact repeat of a read from this turn's memo instead of re-running it.
+
+    The repeat is still answered — with the same result — so nothing the model needed is
+    withheld, but the note in front of it tells the model that this exact call has been made
+    and that rewording or answering is the only way forward. Only a ToolOutput is kept: a
+    bare string is a usage message or a GmailError, and a transient error must stay
+    retryable."""
+
+    async def run(arguments: dict, ctx: ToolContext) -> str:
+        key = name + json.dumps(arguments, sort_keys=True, default=str)
+        if (prior := ctx.read_memo.get(key)) is not None:
+            return ToolOutput(
+                f"[REPEAT: you already made this exact {name} call this turn, and it cannot"
+                " return anything different now. Do not run it again. Change the approach —"
+                " a different query, an older `offset`, a different sender — or answer with"
+                " what you have, saying what you searched.]\n\n" + prior,
+                result_brief="repeat of an earlier call",
+            )
+        out = await handler(arguments, ctx)
+        if isinstance(out, ToolOutput):
+            ctx.read_memo[key] = str(out)
+        return out
+
+    return run
+
+
+def _clears_memo(handler: ToolHandler) -> ToolHandler:
+    """A write can change what a read returns (a label: search after labelling), so the
+    turn's read memo is dropped whenever one runs."""
+
+    async def run(arguments: dict, ctx: ToolContext) -> str:
+        ctx.read_memo.clear()
+        return await handler(arguments, ctx)
+
+    return run
 
 
 def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler]:
@@ -229,16 +271,26 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         if bad := _bad_regex(find):
             return bad
         try:
-            limit = max(
-                1, min(int(arguments.get("limit", _SCAN_DEFAULT) or _SCAN_DEFAULT), _SCAN_MAX)
-            )
+            asked = int(arguments.get("limit", _SCAN_DEFAULT) or _SCAN_DEFAULT)
         except (TypeError, ValueError):
-            limit = _SCAN_DEFAULT
+            asked = _SCAN_DEFAULT
+        limit = max(1, min(asked, _SCAN_MAX))
+        try:
+            offset = max(0, min(int(arguments.get("offset", 0) or 0), _SCAN_OFFSET_MAX))
+        except (TypeError, ValueError):
+            offset = 0
         try:
             client = await get_client()
-            ids = await client.search(query, max_results=limit)
+            found = await client.search(query, max_results=offset + limit)
+            if not found:
+                return ToolOutput(f"No Gmail messages match '{query}'.", result_brief="no messages")
+            ids = found[offset:]
             if not ids:
-                return f"No Gmail messages match '{query}'."
+                return ToolOutput(
+                    f"Only {len(found)} message(s) match '{query}' — offset={offset} is past"
+                    " the last of them, so every match has already been scanned.",
+                    result_brief="past the end",
+                )
             msgs: list[GmailMessage] = []
             for start in range(0, len(ids), _SCAN_FETCH_CHUNK):
                 chunk = ids[start : start + _SCAN_FETCH_CHUNK]
@@ -273,24 +325,30 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
                 + "\n".join(lines)
                 + more
             )
+        span = f"matches {offset + 1}–{offset + len(msgs)}, newest first"
         head = (
-            f"Regex '{find}' across the {len(msgs)} message(s) matching '{query}' —"
+            f"Regex '{find}' across {len(msgs)} message(s) matching '{query}' ({span}) —"
             f" {hits} with a match:"
         )
         tail = ""
         if empty:
             tail = f"\n\n[No match in {len(empty)}: " + ", ".join(empty[:10])
             tail += ", …]" if len(empty) > 10 else "]"
-        if len(ids) >= limit:
+        # Says how to reach the rest, because the old wording ("raise `limit`") named a knob
+        # capped at 25: the model asked for 100 and 200 a dozen times, got the same 25 newest
+        # messages each time, and never scanned the older orders it was looking for.
+        if len(found) >= offset + limit and offset + limit <= _SCAN_OFFSET_MAX:
             tail += (
-                f"\n[Scanned the {limit} most recent matches — run gmail_count on the query to"
-                " see whether more exist, and narrow it or raise `limit` to cover them.]"
+                f"\n[More messages may match. Call again with offset={offset + limit} to scan"
+                f" the next {limit} (older) — run gmail_count first to see how many there are.]"
             )
+        if asked > _SCAN_MAX:
+            tail += f"\n[`limit` is at most {_SCAN_MAX}; page with `offset` to scan further.]"
         if not blocks:
             return ToolOutput(
                 f"No match for regex '{find}' in any of the {len(msgs)} message(s) matching"
-                f" '{query}'. Check the pattern (it is case-insensitive over the whole body),"
-                " or gmail_read one of them to see the actual wording." + tail,
+                f" '{query}' ({span}). Check the pattern (it is case-insensitive over the"
+                " whole body), or gmail_read one of them to see the actual wording." + tail,
                 result_brief=f"0 of {len(msgs)} matched",
             )
         # The HIT RATE, which is the answer to "did that pattern work": a scan of 40 messages
@@ -482,15 +540,20 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
             )
         return ToolOutput(result, result_brief=f"{len(ids):,} updated")
 
-    return {
+    reads = {
         "gmail_search": gmail_search,
         "gmail_read": gmail_read,
         "gmail_extract": gmail_extract,
         "gmail_list_labels": gmail_list_labels,
+        "gmail_count": gmail_count,
+        "gmail_sender_breakdown": gmail_sender_breakdown,
+    }
+    writes = {
         "gmail_create_label": gmail_create_label,
         "gmail_label": gmail_label,
         "gmail_archive": gmail_archive,
-        "gmail_count": gmail_count,
-        "gmail_sender_breakdown": gmail_sender_breakdown,
         "gmail_bulk_label": gmail_bulk_label,
+    }
+    return {name: _memoized(name, h) for name, h in reads.items()} | {
+        name: _clears_memo(h) for name, h in writes.items()
     }
