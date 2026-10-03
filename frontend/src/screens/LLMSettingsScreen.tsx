@@ -11,6 +11,7 @@ import type {
   ReasoningEffort,
 } from "../api/client";
 import { ApiError, api } from "../api/client";
+import { KvPoolLine } from "../components/KvPoolSheet";
 import { useForeground } from "../visibility";
 import { AiUsageCard } from "./aiUsage";
 
@@ -1974,63 +1975,77 @@ function LlmModelRow({
           </span>
         ))}
       </div>
-      <div className="llm-local-ctx">
-        <label className="llm-local-ctx-label" htmlFor={`ctx-${m.id}`}>
-          context window
-        </label>
-        <select
-          id={`ctx-${m.id}`}
-          className="llm-local-ctx-select"
-          value={String(effWindow)}
-          disabled={!editable || isBusy}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            // The catalog default is "no override" — store null for it so a
-            // redundant override row is never persisted.
-            onSetWindow(m.id, v === m.context_window ? null : v);
-          }}
-        >
-          {windowOpts.map((w) => (
-            <option key={w} value={w}>
-              {fmtTokens(w)}
-            </option>
-          ))}
-        </select>
-        {m.loaded ? (
-          <span className="llm-local-ctx-hint">🔒 unload to change</span>
-        ) : (
-          <span className="llm-local-ctx-meta">KV ~{m.kv_gb} GB</span>
-        )}
-      </div>
-      <div className="llm-local-ctx">
-        <label className="llm-local-ctx-label" htmlFor={`slots-${m.id}`}>
-          {multiSlot ? "slots" : "interactive slot"}
-        </label>
-        <select
-          id={`slots-${m.id}`}
-          className="llm-local-ctx-select"
-          value={String(m.parallel_slots)}
-          disabled={!editable || isBusy}
-          title={
-            m.slots_drop_disk_cache
-              ? "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server falls back to the least-recently-used one, which is the idle prefix slot — so it buys headroom, not immunity. On THIS model it also turns OFF the saved-to-disk copy of the prefix (the speculative decoding it needs is dropped above one slot, and a restore without it would restore garbage), so a restart pays the full ~2 min read again. Doubles the model's KV cost."
-              : "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server routes by longest matching prefix and otherwise to the least-recently-used slot, which is the idle prefix slot — so it buys headroom, not immunity. The saved-to-disk copy is what actually makes a lost prefix cheap (~100 ms). Doubles the model's KV cost."
-          }
-          // Sent as chosen: the server clears a count equal to the model's default, so the
-          // default never persists as a redundant override and 1 still means 1 on a model
-          // served wider by default.
-          onChange={(e) => onSetSlots(m.id, Number(e.target.value))}
-        >
-          {slotOpts.map((n) => (
-            <option key={n} value={n}>
-              {slotLabel(n)}
-            </option>
-          ))}
-        </select>
-        {!m.loaded && !multiSlot && (
-          <span className="llm-local-ctx-meta">keeps chat instant after restart</span>
-        )}
-      </div>
+      {/* A pool model's window and slots belong to the engine (the server 409s a change), so
+          its row trades both selects for the read-only pool line and its Sheet. */}
+      {m.kv_pool ? (
+        <KvPoolLine
+          pool={m.kv_pool}
+          title={m.engine === "flash-next" ? "Flash-Next KV pool" : "KV pool"}
+          engine={m.engine}
+          loaded={m.loaded}
+          blockedReason={m.blocked_reason}
+        />
+      ) : (
+        <>
+          <div className="llm-local-ctx">
+            <label className="llm-local-ctx-label" htmlFor={`ctx-${m.id}`}>
+              context window
+            </label>
+            <select
+              id={`ctx-${m.id}`}
+              className="llm-local-ctx-select"
+              value={String(effWindow)}
+              disabled={!editable || isBusy}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                // The catalog default is "no override" — store null for it so a
+                // redundant override row is never persisted.
+                onSetWindow(m.id, v === m.context_window ? null : v);
+              }}
+            >
+              {windowOpts.map((w) => (
+                <option key={w} value={w}>
+                  {fmtTokens(w)}
+                </option>
+              ))}
+            </select>
+            {m.loaded ? (
+              <span className="llm-local-ctx-hint">🔒 unload to change</span>
+            ) : (
+              <span className="llm-local-ctx-meta">KV ~{m.kv_gb} GB</span>
+            )}
+          </div>
+          <div className="llm-local-ctx">
+            <label className="llm-local-ctx-label" htmlFor={`slots-${m.id}`}>
+              {multiSlot ? "slots" : "interactive slot"}
+            </label>
+            <select
+              id={`slots-${m.id}`}
+              className="llm-local-ctx-select"
+              value={String(m.parallel_slots)}
+              disabled={!editable || isBusy}
+              title={
+                m.slots_drop_disk_cache
+                  ? "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server falls back to the least-recently-used one, which is the idle prefix slot — so it buys headroom, not immunity. On THIS model it also turns OFF the saved-to-disk copy of the prefix (the speculative decoding it needs is dropped above one slot, and a restore without it would restore garbage), so a restart pays the full ~2 min read again. Doubles the model's KV cost."
+                  : "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server routes by longest matching prefix and otherwise to the least-recently-used slot, which is the idle prefix slot — so it buys headroom, not immunity. The saved-to-disk copy is what actually makes a lost prefix cheap (~100 ms). Doubles the model's KV cost."
+              }
+              // Sent as chosen: the server clears a count equal to the model's default, so the
+              // default never persists as a redundant override and 1 still means 1 on a model
+              // served wider by default.
+              onChange={(e) => onSetSlots(m.id, Number(e.target.value))}
+            >
+              {slotOpts.map((n) => (
+                <option key={n} value={n}>
+                  {slotLabel(n)}
+                </option>
+              ))}
+            </select>
+            {!m.loaded && !multiSlot && (
+              <span className="llm-local-ctx-meta">keeps chat instant after restart</span>
+            )}
+          </div>
+        </>
+      )}
       <div className="llm-local-ctx">
         <label className="llm-local-ctx-label" htmlFor={`keep-${m.id}`}>
           keep loaded
