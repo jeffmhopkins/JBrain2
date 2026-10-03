@@ -1140,15 +1140,16 @@ def test_standard_entries_are_never_unified(tmp_path: Path) -> None:
 
 def test_served_shape_of_a_unified_pool_is_the_per_sequence_window(tmp_path: Path) -> None:
     """llama-server reports n_ctx = min(pool, n_ctx_train) per slot under --kv-unified; the
-    even split (`-c / -np` = 131072) would under-report what one slot can hold."""
+    even split (`-c / -np` = 131072) would under-report what one slot can hold. A unified model
+    outside the catalog has no known training length, so its pool bounds it."""
     (tmp_path / "llama-swap.yaml").write_text(
         "models:\n"
-        "  big:\n    cmd: llama-server -c 1048576 -np 8 --kv-unified\n"
-        "  small:\n    cmd: llama-server -c 65536 -np 2 --kv-unified\n"
+        "  qwen3.8-flash-next:\n    cmd: llama-server -c 1048576 -np 8 --kv-unified\n"
+        "  unlisted:\n    cmd: llama-server -c 65536 -np 2 --kv-unified\n"
     )
     assert llama_swap_config.served_shape_from_config(str(tmp_path)) == {
-        "big": (262144, 8),
-        "small": (65536, 2),
+        "qwen3.8-flash-next": (262144, 8),
+        "unlisted": (65536, 2),
     }
 
 

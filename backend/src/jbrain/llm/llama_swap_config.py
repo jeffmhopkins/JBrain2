@@ -793,8 +793,11 @@ def served_shape_from_config(
         slots = max(1, slots)
         if "--kv-unified" in flags:
             # Any one slot may grow to the whole pool, capped by what the model was trained on
-            # — the per-sequence window llama-server itself reports on /props.
-            shapes[str(name)] = (min(cells, slot_roles.FLASH_NEXT_CTX_TRAIN), slots)
+            # — the per-sequence window llama-server itself reports on /props. A unified model
+            # outside the catalog has no known training length, so the pool is its bound.
+            pool = local_catalog.pool_of(str(name))
+            ctx_train = pool.ctx_train if pool is not None else cells
+            shapes[str(name)] = (min(cells, ctx_train), slots)
             continue
         shapes[str(name)] = (max(1, cells // slots), slots)
     return shapes

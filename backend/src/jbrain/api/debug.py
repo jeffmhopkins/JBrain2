@@ -3186,9 +3186,9 @@ async def set_parallel_slots(
 ) -> LlmSettingsOut:
     """Set one model's served slot count (llama-server `-np`), the PWA control mirrored here.
 
-    The other half of the window knob: `-c` is slots × window, so a layout (Flash-Next's
-    4 × 262144 against 1 × 262144 or 2 × 65536) is these two calls. The PWA caps its control at
-    two slots, so without this a measured layout below a model's default was unreachable."""
+    The other half of the window knob: `-c` is slots × window on a standard model. Flash-Next
+    serves a fixed shared pool, so for it this accepts only a no-op (null or 8) and answers 409
+    otherwise, exactly as the owner route does."""
     request.state.debug_detail = f"{model_id}: {body.slots}"
     return await llm_settings.set_local_parallel_slots_value(
         model_id, body.slots, settings, _store(request), _OWNER_CTX, _gateway(request)
@@ -3437,9 +3437,10 @@ async def cancel_engine_switch(request: Request, _p: DebugDep) -> engine_api.Swi
 
 
 # --- Slot save/restore probe (F4's first check) ------------------------------------------
-# Usable from F4 on: the flash-next config renders no --slot-save-path and the checkpoint
-# sidecar patch is off until F4 turns it on for this image, so before then the save step
-# fails with llama-server's own error rather than measuring anything.
+# Meaningful from F4 on. The flash-next config now renders --slot-save-path (the pool needs it
+# for slot erase), so the save step runs, but the checkpoint sidecar patch stays off until F4
+# turns it on for this image: until then a restore carries no context checkpoints, and the
+# probe measures that known gap rather than F4's fix.
 # Whether a saved-then-restored slot computes the SAME next token distribution as the slot
 # it was saved from. Greedy token equality is too coarse (it can differ legitimately and
 # agree by luck), so this returns the top-n log-probabilities side by side and the largest

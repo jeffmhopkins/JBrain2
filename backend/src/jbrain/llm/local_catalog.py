@@ -161,22 +161,28 @@ CTX_CHECKPOINTS_UNMEASURED = 2
 # MOVES WITH THE SERVING FLAG: `-ctk`/`-ctv q8_0` on the entry and this number are one decision.
 _FLASH_NEXT_KV_GB_PER_128K = 3.5
 
-# Everything a Flash-Next load pins beyond weights, KV and the vision buffer: nothing extra.
-# The fit's fixed term (60.2 GiB, which already holds compute buffers, recurrent state and the
-# projector) is BELOW what the weights term alone books (88.1 on disk - 26.8 file-backed = 61.3),
-# so the overstatement there covers it; and the per-slot recurrent state the derivation counted
-# did not show — the slot count moved GTT by noise. Charging the derived 1.5 GiB of compute plus
-# 0.11 per slot on top would put the 1M pool ~4 GiB above the measurement for no reading.
-# Booked: 61.3 weights + 28.0 KV (1M cells) + 0.47 vision = 89.8 device against the fit's 88.2,
-# then 7.0 host-only checkpoints (8 per slot x 8 slots x 0.11) — ~96.8 total, which also covers
-# the one unexplained 4 x 262k reading of 96.9 (§3a).
+# Everything a Flash-Next load pins beyond weights, KV and the vision buffer: nothing. The fit's
+# fixed term (60.2 GiB) already holds compute buffers, recurrent state and the projector, and
+# the slot count moved GTT by noise, so the derived 1.5 GiB compute + 0.11 per slot would book
+# memory no reading showed.
 _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
 
-# The Flash-Next engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB —
-# which the engine serves memory-mapped and pinned to CPU (`--load-mode mmap`,
-# `-ot per_layer_token_embd=CPU`). It exceeds Vulkan's 4 GiB binding limit, so it cannot be
-# device-resident anyway, and its working set is a few GB of page cache the kernel can reclaim.
-_FLASH_NEXT_FILE_BACKED_GB = 26.8
+# What of the GGUF on disk the GPU never holds, MEASURED rather than taken from the header. The
+# engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB — is served
+# memory-mapped and pinned to CPU (`--load-mode mmap`, `-ot per_layer_token_embd=CPU`; it
+# exceeds Vulkan's 4 GiB binding limit anyway), its working set a few GB of reclaimable page
+# cache. The F2 fit (§3a) shows ~1.6 GiB more stays off the GPU than the engram alone: its
+# fixed term is 60.2 GiB INCLUDING the projector and vision workspace, against 61.3 GiB of
+# on-disk weights less the engram. Booking the measured share keeps the device column on the
+# fit instead of 1.6 GiB above it, without dropping the vision term the other entries carry:
+#
+#   88.1 on disk - 28.4 = 59.7 weights + 0.47 vision = 60.2 fixed (the fit's)
+#   + 28.0 KV for the 1M pool (3.5 x 8)               = 88.2 device (the fit's 88.2)
+#   + 7.0 host-only checkpoints (8 per slot x 8 x 0.11) = 95.2 footprint (eviction and meter)
+#
+# A load is admitted on the device figure alone — see `_lazy_checkpoints` — so with the 6 GiB
+# floor it needs ~94.2 GiB free.
+_FLASH_NEXT_FILE_BACKED_GB = 28.4
 
 
 def ctx_checkpoints(checkpoint_gb: float | None, served: int | None = 0) -> int:
@@ -1206,7 +1212,8 @@ CATALOG: tuple[LocalModel, ...] = (
         "reasoner meant to replace the gpt-oss-120b + Qwen3.8-27B pair on its own engine "
         "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container as one shared "
         "1M-token pool across eight role-pinned slots; never co-resident with the standard "
-        "gateway. ~88 GiB on disk, ~88 GiB GPU-resident (measured fit, plan §3a).",
+        "gateway. ~88 GiB on disk; booked at the measured ~88 GiB on the GPU plus up to 7 GiB "
+        "of host-side prompt checkpoints (~95 GiB in all), and a load needs ~94 GiB free.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
@@ -1361,7 +1368,7 @@ def remap_for_engine(served_model: str, active: engines.Engine) -> str | None:
 # the runtime-overhead and vision terms, because load_footprint_gb needs them.)
 
 
-def _resident_weights_gb(model: LocalModel, disk_gb: float | None) -> float:
+def resident_weights_gb(model: LocalModel, disk_gb: float | None) -> float:
     """The weights a load pins: the measured on-disk size when known, else the nominal
     `size_gb`, less whatever the engine serves memory-mapped from disk (`file_backed_gb`).
 
@@ -1418,9 +1425,9 @@ def footprint_gb(
     with a larger override saved — matching what the gateway will really serve rather than
     reserving for slots the engine won't allocate. None means the catalog's `default_slots`.
 
-    Weights exclude the file-backed share (`_resident_weights_gb`)."""
+    Weights exclude the file-backed share (`resident_weights_gb`)."""
     slots = _slots_or_default(model, slots)
-    weights = _resident_weights_gb(model, disk_gb)
+    weights = resident_weights_gb(model, disk_gb)
     # `--swa-full` doubling lives in `_kv_gb`: omitting it under-reported the model by several
     # GB in both the meter and the eviction budget — on a box that has hard-locked under
     # memory pressure.
@@ -1500,7 +1507,7 @@ def load_footprint_gb(
     served_window = model.context_window if window is None else window
     n_slots = _slots_or_default(model, slots)
     total = (
-        _resident_weights_gb(model, None)
+        resident_weights_gb(model, None)
         + _kv_gb(model, served_window, n_slots)
         + _runtime_overhead_gb(model)
     )
@@ -1541,13 +1548,28 @@ def declared_gb(
     vision model from its first real image onward."""
     slots = _slots_or_default(model, slots)
     device = (
-        _resident_weights_gb(model, disk_gb)
+        resident_weights_gb(model, disk_gb)
         + _kv_gb(model, window, slots)
         + _runtime_overhead_gb(model)
         + _vision_resident_gb(model)
     )
-    host_only = _checkpoints_gb(model, slots) + CACHE_RAM_GB
+    checkpoints = 0.0 if _lazy_checkpoints(model) else _checkpoints_gb(model, slots)
+    host_only = checkpoints + CACHE_RAM_GB
     return round(device + host_only, 2), round(device, 2)
+
+
+def _lazy_checkpoints(model: LocalModel) -> bool:
+    """Whether a load's admission charge leaves the context checkpoints out.
+
+    Only for a pooled model. Checkpoints are host RAM allocated lazily — a slot makes one only
+    after it has seen `CHECKPOINT_MIN_STEP`-spaced prompt growth, and most of Flash-Next's eight
+    slots hold short prompts — so charging all 64 at intent (7 GiB) refused a switch onto a box
+    that fits the model with room to spare. They stay in `footprint_gb` (eviction and the meter
+    count them once they can exist), and once allocated they show in the measured free memory
+    that every later admission takes the minimum against (`admission._available_gb`). The
+    gap is a load's own growth after admission, bounded at the 7 GiB this leaves out. Every
+    standard entry keeps the old charge, byte for byte."""
+    return model.kv_pool is not None
 
 
 def recommended_ids() -> tuple[str, ...]:

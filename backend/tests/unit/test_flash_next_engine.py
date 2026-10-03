@@ -14,7 +14,9 @@ import pytest
 
 from jbrain.api import llm_settings
 from jbrain.llm import (
+    admission,
     engine,
+    gpu_guard,
     llama_swap_config,
     local_catalog,
     local_gateway,
@@ -29,6 +31,8 @@ from tests.unit.fakes import FakeLocalGateway
 from tests.unit.test_llm_settings_api import _authed_client, _cloud_settings
 
 FLASH_ID = "qwen3.8-flash-next"
+# A catalog model the prompt cache saves for, so its fingerprint is not gated off.
+SAVER = "qwen3-vl-30b-a3b"
 
 
 def _flash() -> local_catalog.LocalModel:
@@ -61,7 +65,8 @@ def test_the_entry_is_a_flash_next_engine_model_with_an_eight_slot_pool() -> Non
     assert m.sampling == qwen.sampling and m.sampling_thinking == qwen.sampling_thinking
     # GiB, the catalog's unit: 93.7 decimal GB of shards + the 0.84 GiB projector.
     assert m.size_gb == pytest.approx(93.7e9 / 1024**3 + 0.84, abs=0.1)
-    assert m.file_backed_gb == pytest.approx(26.8)
+    # The 26.82 GiB engram table plus the ~1.6 GiB more the F2 fit shows never reaches the GPU.
+    assert m.file_backed_gb == pytest.approx(28.4)
 
 
 def test_every_standard_entry_keeps_one_default_slot_and_no_file_backed_weights() -> None:
@@ -87,23 +92,17 @@ def test_checkpoints_are_pinned_at_eight_per_slot() -> None:
 
 
 def test_device_footprint_lands_on_the_f2_fit_for_the_1m_pool() -> None:
-    """§3a fit: GTT ≈ 60.2 + 7.0 per 262,144 cells = 88.2 GiB for the 1M pool. The device column
-    may sit a little above (the weights term overstates the fixed cost), never below."""
+    """§3a fit: GTT ≈ 60.2 + 7.0 per 262,144 cells = 88.2 GiB for the 1M pool. The fixed 60.2
+    already holds the projector and vision workspace, so the booking must not add them twice."""
     m = _flash()
     fit = 60.2 + 7.0 * 1_048_576 / 262_144
     _host, device = local_catalog.declared_gb(m, 262144)
-    assert fit <= device <= fit + 2.0
-    # The parts, so a drift is attributable: weights less the engram table, the pool's KV once,
-    # 8 checkpoints per pool slot (host-only), no flat overhead, and the vision workspace.
-    expected = (
-        (m.size_gb - m.file_backed_gb)
-        + m.kv_gb_per_128k * 1_048_576 / 131072
-        + 0.11 * 8 * 8
-        + local_catalog.vision_attn_buffer_gb()
-    )
-    assert local_catalog.footprint_gb(m, 262144) == pytest.approx(expected, abs=0.02)
-    # The total also covers the one unexplained 4 x 262k reading (96.9 GiB, §3a).
-    assert local_catalog.footprint_gb(m, 262144) == pytest.approx(96.9, abs=0.5)
+    assert device == pytest.approx(fit, abs=0.1)
+    fixed = (m.size_gb - m.file_backed_gb) + local_catalog.vision_attn_buffer_gb()
+    assert fixed == pytest.approx(60.2, abs=0.1)
+    # Eviction and the meter add the 64 host-only checkpoints (8 per pool slot) on top.
+    footprint = local_catalog.footprint_gb(m, 262144)
+    assert footprint == pytest.approx(device + 0.11 * 8 * 8, abs=0.02)
 
 
 def test_file_backed_weights_are_subtracted_from_the_measured_disk_size() -> None:
@@ -113,16 +112,52 @@ def test_file_backed_weights_are_subtracted_from_the_measured_disk_size() -> Non
     assert at_disk - local_catalog.footprint_gb(m, 262144, disk_gb=89.0) == pytest.approx(1.0)
     no_backing = dataclasses.replace(m, file_backed_gb=0.0)
     assert at_disk == pytest.approx(
-        local_catalog.footprint_gb(no_backing, 262144, disk_gb=90.0 - 26.8), abs=0.01
+        local_catalog.footprint_gb(no_backing, 262144, disk_gb=90.0 - m.file_backed_gb),
+        abs=0.01,
     )
     # A partial download can never drive the weights term negative.
     assert local_catalog.footprint_gb(m, 262144, disk_gb=1.0) == local_catalog.footprint_gb(
         m, 262144, disk_gb=0.0
     )
-    host, device = local_catalog.declared_gb(m, 262144, disk_gb=90.0)
-    assert host == pytest.approx(at_disk, abs=0.02)
-    assert host - device == pytest.approx(0.11 * 8 * 8, abs=0.02)
     assert local_catalog.load_footprint_gb(m) < m.size_gb + m.kv_gb_per_128k * 8
+
+
+def test_admission_leaves_the_lazy_checkpoints_out_for_the_pool_only() -> None:
+    """Checkpoints are host RAM made lazily, slot by slot, so a load's charge is the device
+    figure; the footprint (eviction, meter) still counts them. Standard entries are unchanged:
+    their host column still carries their checkpoints."""
+    m = _flash()
+    host, device = local_catalog.declared_gb(m, 262144, disk_gb=90.0)
+    assert host == device
+    assert local_catalog.footprint_gb(m, 262144, disk_gb=90.0) == pytest.approx(
+        host + 0.11 * 8 * 8, abs=0.02
+    )
+    qwen = local_catalog.get("qwen3.8-27b")
+    assert qwen is not None and qwen.checkpoint_gb > 0
+    q_host, q_device = local_catalog.declared_gb(qwen, qwen.context_window)
+    assert q_host - q_device == pytest.approx(
+        local_catalog._checkpoints_gb(qwen, 1) + local_catalog.CACHE_RAM_GB, abs=0.02
+    )
+
+
+def test_a_flash_next_load_is_admitted_on_a_lightly_used_128gb_box() -> None:
+    """The live box reads ~121 GiB total with ~15 GiB in use before a switch (§3a). Booked at
+    the fit with the checkpoints left out, the load is admitted on both pools with room; the
+    first cut of the pool (device over-booked, all 64 checkpoints charged) needed ~102.8 GiB
+    free and rolled the switch back on any slightly busy box."""
+    m = _flash()
+    host_gb, device_gb = local_catalog.declared_gb(m, 262144)
+    reserve = gpu_guard.MIN_FREE_GTT_GB
+    free = 121.0 - 15.0
+    request = admission.Reservation(
+        "i", m.served_model, admission.Phase.PLANNED, host_gb, device_gb
+    )
+    pool = admission.Pool(total_gb=121.0, reserve_gb=reserve, measured_free_gb=free)
+    decision = admission.admit(request, [], host=pool, device=pool)
+    assert decision.outcome is admission.Outcome.ADMIT, decision.reason
+    assert host_gb + reserve <= 94.5
+    # The headroom left is real, not a rounding margin.
+    assert free - reserve - host_gb >= 11.0
 
 
 def test_the_pool_is_charged_once_whatever_window_or_slots_are_saved() -> None:
@@ -265,19 +300,21 @@ async def test_smoketest_tries_only_the_engine_under_test(tmp_path: Path) -> Non
 
 
 def test_kv_prefix_fingerprints_the_active_engines_launch_line(tmp_path: Path) -> None:
-    save = " --slot-save-path /models/.kvslots/m"
-    (tmp_path / "llama-swap.yaml").write_text(f"models:\n  m:\n    cmd: llama-server -c 1{save}\n")
+    save = " --slot-save-path /models/.kvslots/qwen3-vl-30b-a3b"
+    (tmp_path / "llama-swap.yaml").write_text(
+        f"models:\n  {SAVER}:\n    cmd: llama-server -c 1{save}\n"
+    )
     flash_cfg = tmp_path / "llama-swap.flash-next.yaml"
-    flash_cfg.write_text(f"models:\n  m:\n    cmd: llama-server -c 2{save}\n")
+    flash_cfg.write_text(f"models:\n  {SAVER}:\n    cmd: llama-server -c 2{save}\n")
     store = KvPrefixStore(object(), str(tmp_path))  # type: ignore[arg-type]
-    standard_fp = store.identity_of("m", "sys", [], None)
+    standard_fp = store.identity_of(SAVER, "sys", [], None)
     store.set_engine(engine.FLASH_NEXT)
-    flash_fp = store.identity_of("m", "sys", [], None)
+    flash_fp = store.identity_of(SAVER, "sys", [], None)
     assert standard_fp is not None and flash_fp is not None and standard_fp != flash_fp
     built = KvPrefixStore(object(), str(tmp_path), engine=engine.FLASH_NEXT)  # type: ignore[arg-type]
-    assert built.identity_of("m", "sys", [], None) == flash_fp
+    assert built.identity_of(SAVER, "sys", [], None) == flash_fp
     flash_cfg.unlink()
-    assert store.identity_of("m", "sys", [], None) is None
+    assert store.identity_of(SAVER, "sys", [], None) is None
 
 
 @pytest.mark.asyncio
@@ -304,6 +341,11 @@ async def test_the_pools_slot_save_path_does_not_make_kv_prefix_save_or_restore(
         assert store._ineligible_reason(FLASH_ID).startswith("recurrent")
         assert not await store.save_after_prime(FLASH_ID, "sys", [], 50_000)
         assert not await store.restore_if_lost(FLASH_ID, "sys", [])
+        # Nothing hashes a prefix for it either, and the snapshot names the refusal.
+        assert store.identity_of(FLASH_ID, "sys", [], None) is None
+        snap = await store.snapshot([(FLASH_ID, "sys", [], None)])
+        row = snap["models"][0]  # type: ignore[index]
+        assert row["state"] == "ineligible" and row["eligible"] is False
 
 
 # --- the page-cache drop -----------------------------------------------------------------
@@ -475,7 +517,13 @@ def test_the_snapshot_describes_the_pool_and_hides_stale_overrides() -> None:
     pool = slot_roles.FLASH_NEXT_POOL
     assert row["kv_pool"]["n_ctx"] == 1_048_576
     assert row["kv_pool"]["slots"] == [
-        {"slot": r.slot, "role": r.role.value, "label": r.label, "cap": r.cap_tokens}
+        {
+            "slot": r.slot,
+            "role": r.role.value,
+            "label": r.label,
+            "cap": r.cap_tokens,
+            "overflow": r.overflow.value if r.overflow is not None else None,
+        }
         for r in pool.reservations
     ]
     assert row["kv_pool"]["slots"][0] == {
@@ -483,10 +531,20 @@ def test_the_snapshot_describes_the_pool_and_hides_stale_overrides() -> None:
         "role": "interactive",
         "label": "jerv (chat, omnibox)",
         "cap": 262144,
+        "overflow": None,
     }
+    by_role = {s["role"]: s for s in row["kv_pool"]["slots"]}
+    assert by_role["pet"]["overflow"] == "small"
     assert row["parallel_slots"] == 8 and row["context_window_override"] is None
     # The pool's KV once, whatever is saved.
     assert row["kv_gb"] == local_catalog.footprint_gb(_flash(), 262144, disk_gb=0.0)
+    # The memory bar's weights segment leaves out what the GPU never holds.
+    assert row["resident_weights_gb"] == pytest.approx(
+        local_catalog.resident_weights_gb(_flash(), row["disk_gb"]), abs=0.01
+    )
+    assert row["resident_weights_gb"] < row["size_gb"] - 28
+    gpt = rows["gpt-oss-120b"]
+    assert gpt["resident_weights_gb"] == pytest.approx(gpt["disk_gb"] or gpt["size_gb"], abs=0.01)
     assert rows["gpt-oss-120b"]["kv_pool"] is None
 
 
@@ -822,10 +880,12 @@ def test_the_up_predicate_counts_a_crash_looping_engine() -> None:
 
 @pytest.mark.asyncio
 async def test_kv_prefix_follows_an_engine_switch_without_a_restart(tmp_path: Path) -> None:
-    save = " --slot-save-path /models/.kvslots/m"
-    (tmp_path / "llama-swap.yaml").write_text(f"models:\n  m:\n    cmd: llama-server -c 1{save}\n")
+    save = " --slot-save-path /models/.kvslots/qwen3-vl-30b-a3b"
+    (tmp_path / "llama-swap.yaml").write_text(
+        f"models:\n  {SAVER}:\n    cmd: llama-server -c 1{save}\n"
+    )
     (tmp_path / "llama-swap.flash-next.yaml").write_text(
-        f"models:\n  m:\n    cmd: llama-server -c 2{save}\n"
+        f"models:\n  {SAVER}:\n    cmd: llama-server -c 2{save}\n"
     )
     current = {"engine": "standard"}
 
@@ -835,10 +895,10 @@ async def test_kv_prefix_follows_an_engine_switch_without_a_restart(tmp_path: Pa
     source = engine.ActiveEngine(_load, ttl_s=0.0)
     store = KvPrefixStore(object(), str(tmp_path), engine=source)  # type: ignore[arg-type]
     await store._refresh_engine()
-    standard_fp = store.identity_of("m", "sys", [], None)
+    standard_fp = store.identity_of(SAVER, "sys", [], None)
     current["engine"] = "flash-next"  # the debug route flips it on the live api
     await store._refresh_engine()
-    flash_fp = store.identity_of("m", "sys", [], None)
+    flash_fp = store.identity_of(SAVER, "sys", [], None)
     assert standard_fp is not None and flash_fp is not None and standard_fp != flash_fp
 
 

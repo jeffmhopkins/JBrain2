@@ -203,6 +203,8 @@ class KvPoolSlotOut(BaseModel):
     role: str
     label: str
     cap: int
+    # The role a call goes to when this one's slot is busy and that one is idle, or null.
+    overflow: str | None = None
 
 
 class KvPoolOut(BaseModel):
@@ -219,7 +221,13 @@ def _kv_pool_out(pool: slot_roles.KvPool | None) -> KvPoolOut | None:
     return KvPoolOut(
         n_ctx=pool.n_ctx,
         slots=[
-            KvPoolSlotOut(slot=r.slot, role=r.role.value, label=r.label, cap=r.cap_tokens)
+            KvPoolSlotOut(
+                slot=r.slot,
+                role=r.role.value,
+                label=r.label,
+                cap=r.cap_tokens,
+                overflow=r.overflow.value if r.overflow is not None else None,
+            )
             for r in pool.reservations
         ],
     )
@@ -270,6 +278,10 @@ class LocalModelInfo(BaseModel):
     # install-progress bar: download_gb / size_gb is the percentage while a queued
     # model is being provisioned by an update.
     download_gb: float | None
+    # The weights a load actually pins: `disk_gb` (else `size_gb`) less what the engine serves
+    # memory-mapped from disk (Flash-Next's engram table). The memory bar's weights segment —
+    # `disk_gb` alone would add ~28 GiB the GPU never holds.
+    resident_weights_gb: float
     note: str
     # The model's catalog default context window — the gateway's `-c` absent an
     # override (the size picker's "no override" value).
@@ -745,6 +757,7 @@ def _local_model_info(
         blocked = SWITCHING_REASON
     # A pooled model serves its pool whatever window is saved, so a stale override (F2 stored
     # some for Flash-Next) is not reported as if it were in force.
+    disk_gb = _disk_gb(settings, m.id)
     override = None if m.kv_pool is not None else windows.get(m.id)
     effective_window = override if override is not None else m.context_window
     # What the gateway will REALLY serve: a speculative model is pinned to one slot whatever
@@ -776,8 +789,9 @@ def _local_model_info(
         tiers=list(m.tiers),
         quant=m.quant,
         size_gb=m.size_gb,
-        disk_gb=_disk_gb(settings, m.id),
+        disk_gb=disk_gb,
         download_gb=_download_gb(settings, m.id),
+        resident_weights_gb=round(local_catalog.resident_weights_gb(m, disk_gb), 2),
         note=m.note,
         context_window=m.context_window,
         max_context_window=m.max_context_window,

@@ -1407,7 +1407,9 @@ Its memory shape is fixed: one shared pool of 1,048,576 tokens (`-c 1048576 -np 
 tasks, research, jcode, wiki/notes, the pet, small prompts) so their cached prompts stop
 evicting each other. Its context-window and slot controls do not apply — a change is refused
 with the reason — and each kind of work has its own limit inside the pool. Budgeted at the F2
-measurement (~88 GiB on the GPU, plan §3a).
+measurement (plan §3a): ~88 GiB on the GPU, plus up to 7 GiB of host-side prompt checkpoints
+that appear only as slots fill (~95 GiB in all). A switch admits the load on the GPU figure, so
+it needs ~94 GiB free (88 + the 6 GiB floor) — a box at ~121 GiB with ~15 GiB in use has room.
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come
