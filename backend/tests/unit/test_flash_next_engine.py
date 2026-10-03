@@ -1116,3 +1116,12 @@ async def test_props_carry_the_pool_beside_the_per_slot_n_ctx() -> None:
     assert isinstance(pool, dict) and pool["n_ctx"] == 1_048_576 and len(pool["slots"]) == 8
     gpt = await llm_settings.gateway_props("gpt-oss-120b", settings, gw)  # type: ignore[arg-type]
     assert "kv_pool" not in gpt
+
+
+def test_tool_round_text_is_analysis_only_for_a_harmony_reasoner() -> None:
+    """Flash-Next's `<think>` thinking is split onto its own channel, so its tool-round text is
+    narration; gpt-oss's harmony content on a tool round is leaked analysis. A served name
+    outside the catalog keeps the old harmony assumption."""
+    assert not local_catalog.tool_round_text_is_analysis("qwen3.8-flash-next")
+    assert local_catalog.tool_round_text_is_analysis("gpt-oss-120b")
+    assert local_catalog.tool_round_text_is_analysis("not-in-the-catalog")

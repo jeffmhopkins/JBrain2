@@ -1313,6 +1313,19 @@ def supports_vision(served_model: str) -> bool:
     return model.supports_vision if model else False
 
 
+def tool_round_text_is_analysis(served_model: str) -> bool:
+    """Whether a tool-call round's `content` from this model is leaked thinking rather
+    than something it meant the owner to read. True for a harmony reasoner (gpt-oss), which
+    has no user-facing preamble and sometimes puts a tool round's analysis on the content
+    channel. False for a `<think>`-tag model served with `--reasoning-format deepseek`
+    (the Qwen family): llama.cpp already splits its thinking onto `reasoning_content`, so
+    what is left in `content` is narration the owner should keep seeing — treating it as
+    analysis is what made Qwen's answer text vanish into the trace mid-turn. A served name
+    outside the catalog keeps the harmony assumption (the prior behaviour)."""
+    model = _BY_SERVED.get(served_model)
+    return model is None or model.reasoning_format != "deepseek"
+
+
 def id_for_served(served_model: str) -> str | None:
     """Catalog id for a served-model name (the gateway loads/reports served names,
     but per-model settings — overrides, staging — key off the catalog id), or None

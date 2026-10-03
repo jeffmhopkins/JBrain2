@@ -262,9 +262,11 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       break;
     case "reasoning_delta":
       next.reasoning += event.text;
-      // Live "thinking" only until the answer's first token; later reasoning (a
-      // multi-step turn) appends to the trace without reopening the disclosure.
-      next.thinking = next.text === "";
+      // Reasoning is live thinking whenever it arrives — also AFTER answer text has
+      // streamed. A model that interleaves the two (Qwen Flash-Next narrates, thinks, then
+      // narrates again) re-opens the disclosure here while its answer so far stays on screen;
+      // the next text_delta collapses it again.
+      next.thinking = true;
       break;
     case "reasoning_reclassify":
       // The local (harmony) route streamed a tool-call round's leaked analysis into the

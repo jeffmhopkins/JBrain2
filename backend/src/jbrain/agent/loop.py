@@ -70,6 +70,7 @@ from jbrain.llm import (
     ToolResult,
     ToolResultMessage,
     UserMessage,
+    local_catalog,
 )
 from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
@@ -707,7 +708,7 @@ class AgentLoop:
             log.warning("agent.hidden_tools_probe_failed", exc_info=True)
             return ()
 
-    async def _hide_tool_round_text(self) -> bool:
+    async def _hide_tool_round_text(self, *, keep_narration: bool = False) -> bool:
         """Whether a tool-call round's `content` on THIS route is leaked thinking to hide, not
         the answer. The local gpt-oss harmony route (served via llama.cpp) sometimes emits a
         tool-call round's ANALYSIS on the `content` channel instead of `reasoning_content` — seen
@@ -720,12 +721,22 @@ class AgentLoop:
         content still streams live as the answer and is reclassified to thinking at round end
         (a `ReasoningReclassify` event) once the tool call is known, so the answer no longer
         stalls into one lump; the non-streaming path buffers and routes it directly. Never
-        raises — a routing hiccup degrades to keeping the text (the prior behaviour)."""
+        raises — a routing hiccup degrades to keeping the text (the prior behaviour).
+
+        `keep_narration` is set on the owner-facing turn: there a `<think>`-tag local model
+        (Qwen, `--reasoning-format deepseek`) is narrating for real between tools — its thinking
+        is already on its own channel — and moving that text into the trace made the answer
+        the owner was reading vanish mid-turn. A sub-agent keeps hiding it, because its
+        tool-round narration would otherwise be glued into the result its parent synthesizes."""
         try:
-            provider, _model = await self._router.effective_spec(self._task, SYSTEM_STRENGTH)
+            provider, model = await self._router.effective_spec(
+                self._task, SYSTEM_STRENGTH, self._model_override
+            )
         except Exception:  # noqa: BLE001 - a routing hiccup must never break a turn
             return False
-        return provider == "local"
+        if provider != "local":
+            return False
+        return not keep_narration or local_catalog.tool_round_text_is_analysis(model)
 
     @staticmethod
     def _tree_exhausted(tree: TreeState | None, depth: int) -> bool:
@@ -1197,7 +1208,7 @@ class AgentLoop:
         # route each round's content streams live but is reclassified into the thinking trace at
         # round end if the round called a tool (see `_hide_tool_round_text`). A hosted model keeps
         # its live per-chunk stream byte-for-byte with no reclassification.
-        hide_tool_round_text = await self._hide_tool_round_text()
+        hide_tool_round_text = await self._hide_tool_round_text(keep_narration=True)
 
         for _step in range(self._g.max_steps):
             turn: LlmTurn | None = None
@@ -1689,7 +1700,7 @@ class AgentLoop:
         spent = 0
         # Local gpt-oss route: a tool-call round's content is leaked harmony analysis, not the
         # answer — route it to the thinking trace (see `_hide_tool_round_text`).
-        hide_tool_round_text = await self._hide_tool_round_text()
+        hide_tool_round_text = await self._hide_tool_round_text(keep_narration=True)
 
         for _step in range(self._g.max_steps):
             turn = await self._router.converse(
