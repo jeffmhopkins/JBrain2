@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-02 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4◻️ F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-03 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4◻️ F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -76,6 +76,18 @@ fixed cost (weights without the engram table, compute, vision) is ~60 GiB as der
   25–45 GiB and is reclaimable (the engram really is paged from disk).
 - Speed (sitting 1, 4×262k): load 50 s; decode 23.5 tok/s at short context; prefill 580 → 373
   tok/s over a 37,916-token prompt. First decode with full offload is clean (#29028 fixed in the pin).
+
+Correctness and stability (sitting 2, 2026-10-02; vision 2026-10-03):
+
+| Check | Result |
+|---|---|
+| WikiText-2 perplexity (100 chunks) | 3.42 ± 0.05 — no converter norm bug |
+| Tool-call round-trip | ✅ well-formed `web_search` call |
+| JSON-mode output against a schema | ✅ parses, correct |
+| Prefix reuse, 31k-token prompt | 84 s cold → 2 s warm (22 new tokens re-processed) |
+| Pet-sized prompts | first token 0.6 s warm / 1.7 s cold, 24 tok/s |
+| Mainline-Vulkan vision | ✅ owner photo through the PWA, read correctly, Flash-Next serving (after F3a) |
+| Soak | 30 of 60 min: 214 mixed calls, all succeeded, GTT flat at 74.23 GiB, no device-loss or engine restart. Stopped early (it overlapped the nightly window); the remainder is the last open F2 check |
 
 **Consequence for §4a (owner decision 2026-10-01):** slots stay role-pinned but share one
 `--kv-unified` pool of **512k cells** (agent 256k + ingest 64k + research/jcode 128k + 2 × 32k
