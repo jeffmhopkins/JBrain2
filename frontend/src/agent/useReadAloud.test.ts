@@ -73,6 +73,27 @@ describe("useReadAloud", () => {
     await waitFor(() => expect(result.current.available).toBe(true));
   });
 
+  it("retries a failed settings read so one dropped request does not hide the control", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      getSettings.mockRejectedValueOnce(new Error("tunnel blip"));
+      const { result } = renderHook(() => useReadAloud());
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(result.current.available).toBe(false);
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+        await Promise.resolve();
+      });
+      vi.useRealTimers();
+      await waitFor(() => expect(result.current.available).toBe(true));
+      expect(getSettings).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is unavailable when the setting is off", async () => {
     getSettings.mockResolvedValue({ brain_read_aloud: false });
     const { result } = renderHook(() => useReadAloud());
