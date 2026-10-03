@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ImageSettings, LlmSettings, LocalModelInfo } from "../api/client";
+import type { EngineState, ImageSettings, LlmSettings, LocalModelInfo } from "../api/client";
+import { fmtTokens } from "../components/KvPoolSheet";
+import { resetEngineStore, setEngineState } from "../engineState";
 import { LLMSettingsScreen } from "./LLMSettingsScreen";
 
 // Build a LocalModelInfo with sensible defaults; tests override what they assert on.
@@ -2041,5 +2043,242 @@ describe("engine-aware staging (Flash-Next F3a)", () => {
     fireEvent.click(within(medium).getByRole("button", { name: /Per-task overrides/ }));
     const member = within(medium).getByText("Agent turn").closest(".llm-member") as HTMLElement;
     expect(within(member).getByText("→ Flash-Next (engine active)")).toBeInTheDocument();
+  });
+});
+
+describe("KV pool view (Flash-Next F3b, GUI gate C)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetEngineStore();
+  });
+
+  // Only `effective` is read by the pool view.
+  const serving = (effective: "standard" | "flash-next") =>
+    setEngineState({ effective } as EngineState);
+
+  const POOL = {
+    n_ctx: 1048576,
+    slots: [
+      { slot: 0, role: "interactive", label: "jerv (chat, omnibox)", cap: 262144 },
+      { slot: 1, role: "ingest", label: "Ingest and analysis", cap: 131072 },
+      { slot: 2, role: "scheduled", label: "Scheduled tasks", cap: 262144 },
+      { slot: 3, role: "research", label: "Research and sub-agents", cap: 262144 },
+      { slot: 4, role: "jcode", label: "jcode", cap: 262144 },
+      { slot: 5, role: "workshop", label: "Wiki, notes, intake", cap: 131072 },
+      { slot: 6, role: "pet", label: "Kid pet", cap: 32768 },
+      { slot: 7, role: "small", label: "Small prompts", cap: 65536 },
+    ],
+  };
+
+  function poolSeed(over: Partial<LocalModelInfo> = {}): LlmSettings {
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    seed.host_memory = { total_gb: 128, used_gb: 10 };
+    seed.local_models = [
+      lm({
+        id: "qwen3.8-flash-next",
+        label: "Qwen3.8 Flash-Next",
+        enabled: true,
+        loaded: true,
+        size_gb: 88,
+        disk_gb: 88,
+        context_window: 262144,
+        max_context_window: 262144,
+        parallel_slots: 8,
+        parallel_slots_max: 8,
+        default_slots: 8,
+        engine: "flash-next",
+        kv_pool: POOL,
+        ...over,
+      }),
+      lm({ id: "gpt-oss-120b", label: "GPT-OSS 120B", enabled: true, size_gb: 63, kv_pool: null }),
+    ];
+    return seed;
+  }
+
+  async function poolRow(): Promise<HTMLElement> {
+    return (await screen.findByText("Qwen3.8 Flash-Next")).closest(".llm-local-row") as HTMLElement;
+  }
+
+  it("renders the quiet pool line instead of the window and slot selects", async () => {
+    stubLlmFetch(poolSeed());
+    render(<LLMSettingsScreen />);
+    const row = await poolRow();
+    expect(within(row).queryByLabelText("context window")).toBeNull();
+    expect(within(row).queryByLabelText("slots")).toBeNull();
+    expect(within(row).getByText("KV pool")).toBeInTheDocument();
+    expect(within(row).getByText(/shared · 8 slots/)).toBeInTheDocument();
+    expect(row.querySelectorAll(".kvp-ticks i")).toHaveLength(8);
+    expect(within(row).getByRole("button", { name: /View slots/ })).toBeInTheDocument();
+    // Keep loaded is unchanged by the pool: it stays.
+    expect(within(row).getByLabelText("keep loaded")).toBeInTheDocument();
+  });
+
+  it("keeps the selects on a standard model's row", async () => {
+    stubLlmFetch(poolSeed());
+    render(<LLMSettingsScreen />);
+    const std = (await screen.findByText("GPT-OSS 120B")).closest(".llm-local-row") as HTMLElement;
+    expect(within(std).getByLabelText("context window")).toBeInTheDocument();
+    expect(within(std).getByLabelText("interactive slot")).toBeInTheDocument();
+    expect(within(std).queryByRole("button", { name: /View slots/ })).toBeNull();
+  });
+
+  it("opens a sheet listing all eight slots with their caps, set by the engine", async () => {
+    stubLlmFetch(poolSeed());
+    render(<LLMSettingsScreen />);
+    const row = await poolRow();
+    fireEvent.click(within(row).getByRole("button", { name: /View slots/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Flash-Next KV pool" });
+    expect(within(sheet).getAllByRole("button", { expanded: false })).toHaveLength(8);
+    expect(within(sheet).getByText("jerv (chat, omnibox)")).toBeInTheDocument();
+    expect(within(sheet).getByText("interactive")).toBeInTheDocument();
+    expect(within(sheet).getAllByText("256k")).toHaveLength(4);
+    expect(within(sheet).getAllByText("128k")).toHaveLength(2);
+    expect(within(sheet).getByText("32k")).toBeInTheDocument();
+    expect(within(sheet).getByText("64k")).toBeInTheDocument();
+    expect(within(sheet).getByText("set by the engine")).toBeInTheDocument();
+    // Caps only: no in-use reading invented while the API has none.
+    expect(within(sheet).getByText("Caps total")).toBeInTheDocument();
+    expect(within(sheet).queryByText(/in use/i)).toBeNull();
+    // The light oversubscription note: 1.34M of caps over a 1M pool.
+    expect(within(sheet).getByText(/come to 1\.34M, more than the 1M pool/)).toBeInTheDocument();
+    // Nothing in the sheet is editable.
+    expect(within(sheet).queryByRole("combobox")).toBeNull();
+
+    fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("expands a slot to what it serves, and links the pet's overflow to small prompts", async () => {
+    stubLlmFetch(poolSeed());
+    render(<LLMSettingsScreen />);
+    fireEvent.click(within(await poolRow()).getByRole("button", { name: /View slots/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Flash-Next KV pool" });
+
+    fireEvent.click(within(sheet).getByRole("button", { name: /jerv \(chat, omnibox\)/ }));
+    expect(within(sheet).getByText("Your chat turns and the omnibox.")).toBeInTheDocument();
+
+    const pet = within(sheet).getByRole("button", { name: /Kid pet/ });
+    fireEvent.click(pet);
+    expect(pet).toHaveAttribute("aria-expanded", "true");
+    expect(within(sheet).getByText(/its prompts spill to Small prompts/)).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Show Small prompts" }));
+    const small = within(sheet).getByRole("button", { name: /^7\s*Small prompts/ });
+    expect(small).toHaveAttribute("aria-expanded", "true");
+    expect(within(sheet).getByText("Short one-off prompts.")).toBeInTheDocument();
+    // The tapped link unmounts with its row; focus lands on the slot it pointed at.
+    await waitFor(() => expect(document.activeElement).toBe(small));
+  });
+
+  it("shows the caps it will use when the pool model is off-engine", async () => {
+    stubLlmFetch(
+      poolSeed({
+        loaded: false,
+        loadable_now: false,
+        blocked_reason: "Runs on the Flash-Next engine — switch engines to load it",
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    const row = await poolRow();
+    expect(within(row).getByText("off-engine")).toBeInTheDocument();
+    expect(within(row).queryByLabelText("context window")).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: /View slots/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Flash-Next KV pool" });
+    expect(within(sheet).getByText(/these are the caps it will use/)).toBeInTheDocument();
+    expect(within(sheet).getAllByText("cap")).toHaveLength(8);
+  });
+
+  async function openSheet(name = "Flash-Next KV pool"): Promise<HTMLElement> {
+    fireEvent.click(within(await poolRow()).getByRole("button", { name: /View slots/ }));
+    return screen.findByRole("dialog", { name });
+  }
+
+  it("reads off-engine from the engine store: Standard serving says the engine is stopped", async () => {
+    serving("standard");
+    stubLlmFetch(poolSeed({ loaded: false }));
+    render(<LLMSettingsScreen />);
+    const sheet = await openSheet();
+    expect(within(sheet).getByText(/these are the caps it will use/)).toBeInTheDocument();
+  });
+
+  it("does not call a non-engine block 'the engine is stopped'", async () => {
+    // No engine state yet: only the load route's own off-engine sentence may imply it.
+    stubLlmFetch(
+      poolSeed({ loaded: false, loadable_now: false, blocked_reason: "Local hosting is off" }),
+    );
+    render(<LLMSettingsScreen />);
+    const sheet = await openSheet();
+    expect(within(sheet).queryByText(/caps it will use/)).toBeNull();
+  });
+
+  it("does not call it stopped while its own engine serves, even if blocked otherwise", async () => {
+    serving("flash-next");
+    stubLlmFetch(
+      poolSeed({ loaded: false, loadable_now: false, blocked_reason: "Not installed on this box" }),
+    );
+    render(<LLMSettingsScreen />);
+    const sheet = await openSheet();
+    expect(within(sheet).queryByText(/caps it will use/)).toBeNull();
+  });
+
+  it("does not call a loaded pool model stopped", async () => {
+    serving("standard");
+    stubLlmFetch(poolSeed({ loaded: true }));
+    render(<LLMSettingsScreen />);
+    const sheet = await openSheet();
+    expect(within(sheet).queryByText(/caps it will use/)).toBeNull();
+  });
+
+  it("marks View slots as opening a dialog", async () => {
+    stubLlmFetch(poolSeed());
+    render(<LLMSettingsScreen />);
+    const btn = within(await poolRow()).getByRole("button", { name: /View slots/ });
+    expect(btn).toHaveAttribute("aria-haspopup", "dialog");
+  });
+
+  it("titles a non-Flash-Next pool plainly, explains an unknown role, follows the server's overflow", async () => {
+    stubLlmFetch(
+      poolSeed({
+        engine: undefined,
+        kv_pool: {
+          n_ctx: 524288,
+          slots: [
+            { slot: 0, role: "archive", label: "Archive", cap: 262144, overflow: "tiny" },
+            { slot: 1, role: "tiny", label: "Tiny prompts", cap: 65536, overflow: null },
+            // The server says no overflow: the frontend's pet fallback must not apply.
+            { slot: 2, role: "pet", label: "Kid pet", cap: 32768, overflow: null },
+          ],
+        },
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    const sheet = await openSheet("KV pool");
+    fireEvent.click(within(sheet).getByRole("button", { name: /Archive/ }));
+    expect(within(sheet).getByText(/Serves the archive role\./)).toBeInTheDocument();
+    expect(within(sheet).getByText(/spill to Tiny prompts/)).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Show Tiny prompts" })).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByRole("button", { name: /Kid pet/ }));
+    expect(within(sheet).queryByText(/spill to/)).toBeNull();
+  });
+
+  it("keeps the selects for an older server that sends no kv_pool at all", async () => {
+    const seed = poolSeed();
+    // Rebuilt without the key, so the JSON the screen reads has no kv_pool at all.
+    seed.local_models = seed.local_models.map(({ kv_pool: _, ...rest }) => rest);
+    stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    const row = await poolRow();
+    expect(within(row).getByLabelText("context window")).toBeInTheDocument();
+    expect(within(row).getByLabelText("slots")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: /View slots/ })).toBeNull();
+  });
+
+  it("formats pool sizes in binary steps without a just-under-1M '1024k'", () => {
+    expect(fmtTokens(1_048_576)).toBe("1M");
+    expect(fmtTokens(1_409_024)).toBe("1.34M");
+    expect(fmtTokens(262_144)).toBe("256k");
+    expect(fmtTokens(1_048_500)).toBe("1M");
+    expect(fmtTokens(1_048_000)).toBe("1023k");
+    expect(fmtTokens(512)).toBe("512");
   });
 });

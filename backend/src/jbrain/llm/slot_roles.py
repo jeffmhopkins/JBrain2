@@ -14,6 +14,7 @@ a call would overrun the pool — never silently in the engine's own order.
 Imports nothing from `local_catalog`, which embeds `FLASH_NEXT_POOL`, so there is no cycle.
 """
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -21,6 +22,13 @@ from typing import Final
 
 from jbrain.llm import prefill
 from jbrain.llm.errors import LlmContextOverflowError
+from jbrain.llm.types import (
+    AssistantMessage,
+    LlmMessage,
+    LlmTool,
+    ToolResultMessage,
+    UserMessage,
+)
 
 # No single sequence may exceed what the model was trained on, whatever the pool holds.
 FLASH_NEXT_CTX_TRAIN: Final = 262_144
@@ -106,7 +114,17 @@ FLASH_NEXT_POOL: Final = KvPool(
         RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 7, "jerv (chat, omnibox)"),
         RoleReservation(SlotRole.INGEST, 1, 131_072, 6, "Ingest and analysis"),
         RoleReservation(SlotRole.SCHEDULED, 2, 262_144, 5, "Scheduled tasks"),
-        RoleReservation(SlotRole.RESEARCH, 3, 262_144, 3, "Research and sub-agents"),
+        # A research run and a scheduled news run share this slot; spilling to the workshop
+        # slot keeps the second from queueing behind the first inside llama-server, where the
+        # wait counts against the HTTP timeout.
+        RoleReservation(
+            SlotRole.RESEARCH,
+            3,
+            262_144,
+            3,
+            "Research and sub-agents",
+            overflow=SlotRole.WORKSHOP,
+        ),
         RoleReservation(SlotRole.JCODE, 4, 262_144, 4, "jcode"),
         RoleReservation(SlotRole.WORKSHOP, 5, 131_072, 2, "Wiki, notes, intake"),
         RoleReservation(SlotRole.PET, 6, 32_768, 1, "Kid pet", overflow=SlotRole.SMALL),
@@ -221,3 +239,35 @@ def pool_shape(manifest: Mapping[str, object]) -> tuple[int, int] | None:
     if not isinstance(n_ctx, int) or not isinstance(reservations, Sequence):
         return None
     return n_ctx, len(reservations)
+
+
+def prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[LlmTool]) -> int:
+    """Roughly how much text this turn puts in front of the model, in characters.
+
+    The input to `prefill`'s token estimate, so it wants to be proportional to the real
+    prompt rather than exactly equal to it — a constant factor washes out in the calibration
+    (`prefill.calibrate`), a MISSING TERM does not. Hence tools and tool results are counted:
+    on this box the rendered tool schemas are the bulk of a primed prefix (27,787 tokens
+    measured), and a turn deep in a tool loop is mostly its own transcript.
+
+    Images are counted as their encoded size deliberately not at all: a vision model prices
+    them per tile, not per byte, so their characters would swamp the estimate."""
+    total = len(system)
+    for message in messages:
+        if isinstance(message, UserMessage):
+            total += len(message.text)
+        elif isinstance(message, AssistantMessage):
+            total += len(message.text) + sum(
+                len(call.name) + len(json.dumps(call.arguments, default=str))
+                for call in message.tool_calls
+            )
+        elif isinstance(message, ToolResultMessage):
+            total += sum(len(str(result.content)) for result in message.results)
+    for tool in tools:
+        total += len(tool.name) + len(tool.description)
+        total += len(json.dumps(tool.input_schema, default=str))
+    return total
+
+
+def image_count(messages: Sequence[LlmMessage]) -> int:
+    return sum(len(m.images) for m in messages if isinstance(m, UserMessage))

@@ -53,6 +53,7 @@ class FakeLlmClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,
     ) -> LlmResult:
         self.calls.append(
             {
@@ -64,6 +65,7 @@ class FakeLlmClient:
                 "max_tokens": max_tokens,
                 "reasoning_effort": reasoning_effort,
                 "sampling": sampling,
+                "id_slot": id_slot,
             }
         )
         text = self._responses[min(len(self.calls) - 1, len(self._responses) - 1)]
@@ -80,6 +82,7 @@ class FakeLlmClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,
     ) -> LlmTurn:
         self.converse_calls.append(
             {
@@ -90,6 +93,7 @@ class FakeLlmClient:
                 "max_tokens": max_tokens,
                 "reasoning_effort": reasoning_effort,
                 "sampling": sampling,
+                "id_slot": id_slot,
             }
         )
         if not self._turns:
@@ -108,6 +112,7 @@ class FakeLlmClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,
     ) -> AsyncIterator[StreamPart]:
         self.stream_calls.append(
             {
@@ -118,6 +123,7 @@ class FakeLlmClient:
                 "max_tokens": max_tokens,
                 "reasoning_effort": reasoning_effort,
                 "sampling": sampling,
+                "id_slot": id_slot,
             }
         )
         idx = len(self.stream_calls) - 1

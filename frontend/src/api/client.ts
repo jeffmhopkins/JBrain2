@@ -1086,6 +1086,29 @@ export interface LocalModelInfo {
    * older server — read as loadable. */
   loadable_now?: boolean | undefined;
   blocked_reason?: string | null | undefined;
+  /** The engine's one shared KV pool and its role-pinned slots, for a model served that way
+   * (Flash-Next); null for a standard model. A pool model's window and slot count are the
+   * engine's, so the server refuses changes to them (409) and the row shows the pool
+   * read-only instead. Absent from an older server — read as null. */
+  kv_pool?: KvPool | null | undefined;
+}
+
+/** One role-pinned slot of a shared KV pool: which job it serves and its per-slot token cap. */
+export interface KvPoolSlot {
+  slot: number;
+  role: string;
+  label: string;
+  cap: number;
+  /** The role whose slot takes this one's calls when it is busy (the pet spills to small),
+   * or null. Absent from an older server — the frontend falls back to the engine's rule. */
+  overflow?: string | null | undefined;
+}
+
+/** A shared KV pool: `n_ctx` tokens split across role-pinned slots. The caps may add up to
+ * more than the pool — the router frees an idle slot when the pool would overrun. */
+export interface KvPool {
+  n_ctx: number;
+  slots: KvPoolSlot[];
 }
 
 /** One model a staged load would evict — catalog id, label, and resident footprint (GB),

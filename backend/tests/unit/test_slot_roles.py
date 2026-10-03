@@ -46,6 +46,10 @@ def test_pet_overflows_to_small() -> None:
     assert FLASH_NEXT_POOL.reservation(SlotRole.PET).overflow is SlotRole.SMALL
 
 
+def test_research_overflows_to_workshop() -> None:
+    assert FLASH_NEXT_POOL.reservation(SlotRole.RESEARCH).overflow is SlotRole.WORKSHOP
+
+
 def _pool(*caps: int, n_ctx: int = 65_536) -> KvPool:
     return KvPool(
         n_ctx,
