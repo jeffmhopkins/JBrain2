@@ -74,7 +74,7 @@ def test_search_spreads_across_several_engines() -> None:
     # sources are enabled so one engine's 429 (suspended_time) can't blank a query.
     settings = _settings()
     engines = {e["name"]: e for e in settings.get("engines", [])}
-    for name in ("duckduckgo", "brave", "bing", "mojeek", "qwant", "startpage"):
+    for name in ("brave", "bing", "mojeek", "qwant", "startpage"):
         assert name in engines, f"{name} must be enabled to spread search load"
         assert engines[name].get("disabled") is not True, f"{name} must not be disabled"
 
@@ -92,12 +92,12 @@ def test_a_broken_engine_is_disabled_explicitly_not_merely_omitted() -> None:
     )
 
 
-def test_duckduckgo_is_de_weighted_so_it_is_not_the_sole_primary() -> None:
-    # The observed failure: a deep-research fan's volume got DuckDuckGo rate-limited while
-    # it carried most results. De-weighting it makes it one source among many.
+def test_duckduckgo_is_disabled_explicitly() -> None:
+    """DuckDuckGo CAPTCHAs every query from this box and SearXNG never benches it
+    (`suspended_time=0`), so it is turned off — explicitly, since an omitted engine keeps its
+    enabled built-in definition (see the test above)."""
     engines = {e["name"]: e for e in _settings().get("engines", [])}
-    ddg_weight = engines["duckduckgo"].get("weight", 1.0)
-    assert ddg_weight < 1.0, "DuckDuckGo must be de-weighted below the default 1.0"
+    assert engines.get("duckduckgo", {}).get("disabled") is True
 
 
 def test_arxiv_has_a_raised_per_engine_timeout() -> None:

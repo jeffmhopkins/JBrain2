@@ -14,7 +14,7 @@ from jbrain.agent.webtools import build_web_handlers
 from jbrain.db.session import SessionContext
 from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import SearchFormError, WebFetcher, WebFetchError
-from jbrain.web.search import SearxngClient, WebSearchError
+from jbrain.web.search import SearchHit, SearxngClient, TavilySearch, WebSearchError
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
 
@@ -263,6 +263,226 @@ async def test_unresponsive_engines_tolerates_a_junk_shape() -> None:
         client = _searx(lambda r, b=body: httpx.Response(200, json=b))
         result = await client.search("q")
         assert result.hits, f"a junk unresponsive_engines ({junk!r}) must not break the search"
+
+
+# --- Degraded search + hosted fallback ---------------------------------------
+
+# The 2026-10-03 shape: every scraper engine blocked, Bing alone answering.
+_SEARX_DEGRADED = {
+    "results": [
+        {
+            "title": "Epic Games",
+            "url": "https://epicgames.com/",
+            "content": "games",
+            "engines": ["bing"],
+        },
+    ],
+    "unresponsive_engines": [
+        ["duckduckgo", "CAPTCHA"],
+        ["brave", "Suspended: too many requests"],
+        ["qwant", "Suspended: access denied"],
+    ],
+}
+_SEARX_HEALTHY = {
+    "results": [
+        {"title": "A", "url": "https://a.example/1", "content": "x", "engines": ["bing", "brave"]},
+        {"title": "B", "url": "https://b.example/2", "content": "y", "engines": ["mojeek"]},
+    ],
+    "unresponsive_engines": [["duckduckgo", "CAPTCHA"]],
+}
+_TAVILY_OK = {
+    "results": [
+        {
+            "title": "EPIC Theatres Titusville",
+            "url": "https://epictheatres.example/t",
+            "content": "now playing",
+        },
+        {"title": "no url", "url": "", "content": "dropped"},
+    ]
+}
+
+
+def _fallback_spy(hits: list[SearchHit]):  # type: ignore[no-untyped-def]
+    calls: list[tuple[str, int]] = []
+
+    async def fallback(query: str, limit: int) -> list[SearchHit]:
+        calls.append((query, limit))
+        return hits
+
+    return fallback, calls
+
+
+def _searx_fb(body: dict, fallback) -> SearxngClient:  # type: ignore[no-untyped-def]
+    return SearxngClient(
+        "http://searxng:8080",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)),
+        fallback=fallback,
+    )
+
+
+async def test_search_reports_engine_health_and_flags_a_single_survivor_as_degraded() -> None:
+    result = await _searx(lambda r: httpx.Response(200, json=_SEARX_DEGRADED)).search("epic")
+    assert result.engines_down == ("duckduckgo", "brave", "qwant")
+    assert result.engines_answered == ("bing",)
+    assert result.degraded is True
+
+
+async def test_search_with_several_engines_answering_is_not_degraded() -> None:
+    """One engine down while three answer is the normal blend, not a crippled index."""
+    result = await _searx(lambda r: httpx.Response(200, json=_SEARX_HEALTHY)).search("q")
+    assert result.engines_answered == ("bing", "brave", "mojeek")
+    assert result.degraded is False
+
+
+async def test_search_with_no_failed_engines_is_never_degraded() -> None:
+    """Rows without an `engines` field (older upstreams) must not read as a crippled search."""
+    result = await _searx(lambda r: httpx.Response(200, json=_SEARX_OK)).search("q")
+    assert result.degraded is False
+
+
+async def test_a_degraded_result_is_not_cached() -> None:
+    """Caching it pinned one index's off-topic hits to the query for an hour after recovery."""
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_DEGRADED)
+
+    client = _searx(handle)
+    await client.search("epic")
+    await client.search("epic")
+    assert len(calls) == 2
+
+
+async def test_degraded_search_swaps_in_the_fallback_hits() -> None:
+    fallback, calls = _fallback_spy([SearchHit("T", "https://t.example/", "s")])
+    result = await _searx_fb(_SEARX_DEGRADED, fallback).search("epic theatres titusville", 4)
+    assert calls == [("epic theatres titusville", 4)]
+    assert [h.url for h in result.hits] == ["https://t.example/"]
+    assert result.fallback == "tavily" and result.engines_down  # health rides along
+
+
+async def test_empty_search_falls_back() -> None:
+    fallback, calls = _fallback_spy([SearchHit("T", "https://t.example/", "s")])
+    result = await _searx_fb({"results": []}, fallback).search("zzz")
+    assert len(calls) == 1 and result.fallback == "tavily"
+
+
+async def test_healthy_search_never_calls_the_fallback() -> None:
+    """The fallback costs a credit per call — a working metasearch must not spend one."""
+    fallback, calls = _fallback_spy([SearchHit("T", "https://t.example/", "s")])
+    result = await _searx_fb(_SEARX_HEALTHY, fallback).search("q")
+    assert calls == [] and result.fallback == ""
+
+
+async def test_a_fallback_that_finds_nothing_leaves_the_degraded_result() -> None:
+    fallback, _ = _fallback_spy([])
+    result = await _searx_fb(_SEARX_DEGRADED, fallback).search("epic")
+    assert (
+        result.fallback == "" and result.degraded and result.hits[0].url == "https://epicgames.com/"
+    )
+
+
+def _tavily(handler, enabled: bool = True, key: str = "tvly-k", **kw) -> TavilySearch:  # type: ignore[no-untyped-def]
+    async def settings() -> tuple[bool, str]:
+        return enabled, key
+
+    return TavilySearch("https://api.tavily.example", settings, httpx.MockTransport(handler), **kw)
+
+
+async def test_tavily_search_posts_the_query_with_a_bearer_key_and_parses_hits() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_TAVILY_OK)
+
+    hits = await _tavily(handle).search("epic titusville", 5)
+    assert [h.url for h in hits] == ["https://epictheatres.example/t"]
+    req = seen[0]
+    assert req.url.path == "/search" and req.headers["Authorization"] == "Bearer tvly-k"
+    body = json.loads(req.content)
+    assert body["query"] == "epic titusville" and body["max_results"] == 5
+    assert "api_key" not in body
+
+
+async def test_tavily_search_is_silent_when_off_or_keyless() -> None:
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no call may leave the box when the tier is off or keyless")
+
+    assert await _tavily(boom, enabled=False).search("q", 3) == []
+    assert await _tavily(boom, key="").search("q", 3) == []
+    assert await TavilySearch("", _never_settings).search("q", 3) == []
+
+
+async def _never_settings() -> tuple[bool, str]:
+    raise AssertionError("an unwired fallback must not read settings")
+
+
+async def test_tavily_search_swallows_errors_and_unreadable_settings() -> None:
+    assert await _tavily(lambda r: httpx.Response(429)).search("q", 3) == []
+    assert await _tavily(lambda r: httpx.Response(200, text="nope")).search("q", 3) == []
+
+    async def broken() -> tuple[bool, str]:
+        raise RuntimeError("db down")
+
+    client = TavilySearch(
+        "https://api.tavily.example",
+        broken,
+        httpx.MockTransport(lambda r: httpx.Response(200, json=_TAVILY_OK)),
+    )
+    assert await client.search("q", 3) == []
+
+
+async def test_tavily_search_caches_a_hit_but_not_an_empty_result() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_TAVILY_OK if len(calls) > 1 else {"results": []})
+
+    client = _tavily(handle)
+    assert await client.search("q", 3) == []
+    assert await client.search("q", 3)
+    assert await client.search("q", 3)
+    assert len(calls) == 2
+
+
+async def test_web_search_tool_tells_the_agent_the_search_is_degraded() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_DEGRADED)), WebFetcher()
+    )
+    text = str(await handlers["web_search"]({"query": "epic theatres titusville"}, CTX))
+    assert "SEARCH DEGRADED: 3 search engine(s) failed" in text
+    assert "duckduckgo, brave, qwant" in text and "came from bing alone" in text
+    assert "rephrasing will not fix it" in text
+
+
+async def test_web_search_tool_says_degraded_even_with_no_hits() -> None:
+    body = {"results": [], "unresponsive_engines": [["bing", "timeout"], ["brave", "429"]]}
+    handlers = build_web_handlers(_searx(lambda r: httpx.Response(200, json=body)), WebFetcher())
+    text = str(await handlers["web_search"]({"query": "q"}, CTX))
+    assert "No web results" in text and "no engine answered at all" in text
+
+
+async def test_web_search_tool_names_the_fallback_and_cites_its_hits() -> None:
+    fallback, _ = _fallback_spy([SearchHit("EPIC", "https://t.example/", "now playing")])
+    handlers = build_web_handlers(_searx_fb(_SEARX_DEGRADED, fallback), WebFetcher())
+    out = await handlers["web_search"]({"query": "epic"}, CTX)
+    text = str(out)
+    assert "come from the hosted Tavily search instead" in text
+    assert "SEARCH DEGRADED" not in text
+    assert isinstance(out, ToolOutput) and [w.url for w in out.web_sources] == [
+        "https://t.example/"
+    ]
+
+
+async def test_web_search_tool_adds_no_health_note_when_search_is_healthy() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_HEALTHY)), WebFetcher()
+    )
+    text = str(await handlers["web_search"]({"query": "q"}, CTX))
+    assert "SEARCH DEGRADED" not in text and "Search note" not in text
 
 
 async def test_search_retries_without_a_window_that_blanked_it() -> None:

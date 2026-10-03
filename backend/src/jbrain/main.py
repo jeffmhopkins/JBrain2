@@ -225,6 +225,7 @@ from jbrain.web import (
     NppesClient,
     NwsClient,
     SearxngClient,
+    TavilySearch,
     WeatherClient,
     WeatherHistoryClient,
     WebFetcher,
@@ -677,7 +678,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tavily_first_hosts=domain_skips.tavily_first_hosts,
             record_solver_failed=domain_skips.record_solver_failed,
         )
-        searxng = SearxngClient(settings.searxng_url)
+        # Tavily's Search API backs web_search when SearXNG's scrapers are blocked down to one
+        # index — the same live toggle + key as the fetch tier, so the Tavily panel governs both.
+        searxng = SearxngClient(
+            settings.searxng_url,
+            fallback=TavilySearch(settings.tavily_url, _tavily_settings).search,
+        )
         # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool
         # (docs/plans/NEWS_FEED_PLAN.md). Fetches feed bytes through the shared SSRF-guarded
         # web_fetcher (all egress in one place) and parses them offline; the pinned feed map

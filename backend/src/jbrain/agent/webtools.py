@@ -351,6 +351,32 @@ def _present_search_extras(result: "SearchResult") -> str:
     return header + "\n\n".join(parts) + "\n\n———\n\n"
 
 
+def _search_health_note(result: "SearchResult") -> str:
+    """Tell the model when the search itself was crippled, or "" when it was not. Without this
+    the agent reads a single surviving index's off-topic hits as a wording problem: on
+    2026-10-03 it reworded one cinema query twenty times against Bing alone while every other
+    engine was CAPTCHA'd or 403'd, and the failures were only ever in a log it cannot read."""
+    if result.fallback:
+        return (
+            f"\n\n[Search note: the box's own search engines are blocked right now, so these"
+            f" results come from the hosted {result.fallback.capitalize()} search instead.]"
+        )
+    if not result.degraded:
+        return ""
+    down = ", ".join(result.engines_down)
+    source = (
+        f"these results came from {result.engines_answered[0]} alone"
+        if result.engines_answered
+        else "no engine answered at all"
+    )
+    return (
+        f"\n\n[SEARCH DEGRADED: {len(result.engines_down)} search engine(s) failed this query"
+        f" ({down}); {source}. Off-topic or missing results here reflect a crippled index, NOT"
+        " your wording — rephrasing will not fix it. Go to a source directly instead: web_fetch"
+        " a site you already know or a link from a page you have read.]"
+    )
+
+
 def _with_budget_note(out: str, note: str) -> str:
     """Append a tool-budget note to a handler result while preserving a ToolOutput's
     `web_sources` (a fetched page stays citable). Plain-str results just get the text
@@ -490,17 +516,18 @@ def build_web_handlers(
         # instant answers. These ARE a direct answer (not an unverified lead), so they lead the
         # reply; still shown even when the hit list is thin or fully pruned.
         extras = _present_search_extras(result)
+        health_note = _search_health_note(result)
         hits = result.hits
         if not hits:
             if extras:
-                return ToolOutput(extras + window_note + budget_note)
+                return ToolOutput(extras + window_note + health_note + budget_note)
             # A window that blanked the search has ALREADY been retried away, so rewording the
             # query is the only thing left to vary — say that, or the model spends its whole
             # turn rephrasing against a filter that was never the problem.
             tried = (
                 f" (searched the last {window}, then again with no time limit)" if window else ""
             )
-            return f"No web results for '{query}'{tried}." + budget_note
+            return f"No web results for '{query}'{tried}." + health_note + budget_note
         # Drop hits on a host recently found paywalled/bot-walled/unreadable (the 24h skip
         # list) — reading one would only waste a fetch on a wall — and tell the model how many
         # were hidden so it knows the result set was pruned, not thin.
@@ -512,11 +539,12 @@ def build_web_handlers(
         )
         if not kept:
             if extras:
-                return ToolOutput(extras + note + window_note + budget_note)
+                return ToolOutput(extras + note + window_note + health_note + budget_note)
             return (
                 f"No usable web results for '{query}': all {hidden} were on sites recently found"
                 " paywalled or inaccessible (skipped for the next day). Try a different query."
                 + window_note
+                + health_note
                 + budget_note
             )
         lines = [f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in kept]
@@ -532,7 +560,14 @@ def build_web_handlers(
             " read the page before reporting or citing anything from it):"
         )
         return ToolOutput(
-            extras + header + "\n" + "\n".join(lines) + note + window_note + budget_note,
+            extras
+            + header
+            + "\n"
+            + "\n".join(lines)
+            + note
+            + window_note
+            + health_note
+            + budget_note,
             web_sources=web_sources,
         )
 

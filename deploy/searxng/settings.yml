@@ -44,10 +44,16 @@ outgoing:
 # results in the blended RANKING only — it does NOT reduce how often DDG is queried (it is
 # still hit every search), so DDG can still get rate-limited; the point is just that its
 # results no longer dominate now that there are five other sources.
+#
+# DuckDuckGo is now OFF: from this box's IP it answers every single query with a CAPTCHA (39
+# in one day on 2026-10-03, on every query of a research turn), and because its engine raises
+# with `suspended_time=0` SearXNG never benches it — it contributes nothing and is retried
+# forever. What stands in when the rest are blocked too is web_search's hosted Tavily
+# fallback (SearxngClient `fallback`), not more scraper engines on the same IP. Re-enable it
+# with `disabled: false` if a `web.search_engines_down` line ever shows it answering again.
 engines:
   - name: duckduckgo
-    disabled: false
-    weight: 0.6
+    disabled: true
   - name: brave
     disabled: false
   - name: bing
