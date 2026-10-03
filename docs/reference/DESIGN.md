@@ -752,10 +752,11 @@ untouched.
   provider. A tier with no local task is left out.
 - **A tier's level leaves task levels in place.** The tier counts them (*1 task · 1 set*), and
   **Reset to tier** clears them in one batch write.
-- **The tier cards are unchanged.** Their *→ Flash-Next (engine active)* marker gains a
-  **reasoning ↑** link (named *Set {tier} levels on Flash-Next*). It goes to the engine row
-  that the group's remapped tasks really sit in, so the Other card links to Low. It opens the
-  card and that row, scrolls to it, and flashes the row once (no flash under reduced motion).
+- **The Standard tier cards hide while Flash-Next serves** (owner, 2026-10-03): every local
+  task runs on Flash-Next then, so the Standard routing would only describe a stopped
+  gateway, and this card is the one that applies. They return as soon as Standard serves.
+- **On-box LLMs starts collapsed** on a new device (owner, 2026-10-03) and remembers the
+  owner's choice per device (`localStorage`, best-effort).
 - **No optimistic state.** Every write (PUT/DELETE one row, or the batch) returns the whole
   snapshot. Only its `engine_efforts` is taken, so the rest of a snapshot cannot revert a
   Standard edit made meanwhile. A select is locked while its own write is out. A refusal

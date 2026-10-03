@@ -13,7 +13,7 @@ import type {
 } from "../api/client";
 import { fmtTokens } from "../components/KvPoolSheet";
 import { resetEngineStore, setEngineState } from "../engineState";
-import { LLMSettingsScreen } from "./LLMSettingsScreen";
+import { LLMSettingsScreen, LLM_OPEN_KEY } from "./LLMSettingsScreen";
 
 // Build a LocalModelInfo with sensible defaults; tests override what they assert on.
 function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">): LocalModelInfo {
@@ -249,7 +249,11 @@ function stubLlmFetch(seed?: LlmSettings) {
   };
 }
 
-beforeEach(() => stubLlmFetch());
+beforeEach(() => {
+  stubLlmFetch();
+  // Most tests drive the On-box LLMs list, which starts collapsed for a new device.
+  localStorage.setItem(LLM_OPEN_KEY, "1");
+});
 afterEach(() => vi.unstubAllGlobals());
 
 async function group(name: string): Promise<HTMLElement> {
@@ -261,6 +265,16 @@ async function group(name: string): Promise<HTMLElement> {
 }
 
 describe("LLMSettingsScreen", () => {
+  it("starts On-box LLMs collapsed on a new device and remembers it once opened", async () => {
+    localStorage.removeItem(LLM_OPEN_KEY);
+    render(<LLMSettingsScreen />);
+    const toggle = await screen.findByRole("button", { name: /On-box LLMs/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(localStorage.getItem(LLM_OPEN_KEY)).toBe("1");
+  });
+
   it("renders the tiers from fetched data", async () => {
     render(<LLMSettingsScreen />);
     expect(await screen.findByText("High reasoning")).toBeInTheDocument();
@@ -2752,29 +2766,18 @@ describe("Flash-Next reasoning card (GUI gate B)", () => {
     expect(await within(fxRow(fx, "medium")).findByRole("alert")).toHaveTextContent("not now");
   });
 
-  it("jumps from a tier card's remap marker to that tier in the card", async () => {
-    stubFx(fxSeed());
+  it("hides the Standard routing cards while Flash-Next serves", async () => {
+    stubFx(fxSeed(true));
     render(<LLMSettingsScreen />);
-    const fx = await card();
-    fireEvent.click(within(fx).getByRole("button", { name: /Flash-Next reasoning/ }));
-    expect(within(fx).queryByLabelText("High reasoning on Flash-Next")).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Set High reasoning levels on Flash-Next" }),
-    );
-    expect(within(fx).getByLabelText("Fact adjudicate on Flash-Next")).toBeInTheDocument();
+    await card();
+    expect(screen.queryAllByText("Per-task overrides")).toHaveLength(0);
   });
 
-  it("links the Other tier card to the engine row its tasks really sit in", async () => {
-    stubFx(fxSeed());
+  it("shows the Standard routing cards while Standard serves", async () => {
+    stubFx(fxSeed(false));
     render(<LLMSettingsScreen />);
-    const fx = await card();
-    fireEvent.click(await screen.findByRole("button", { name: "Set Other levels on Flash-Next" }));
-    const low = fxRow(fx, "low");
-    expect(within(low).getByRole("button", { name: /Low reasoning/ })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    expect(within(low).getByLabelText("JPet — reply on Flash-Next")).toBeInTheDocument();
+    await card();
+    expect((await screen.findAllByText("Per-task overrides")).length).toBeGreaterThan(0);
   });
 
   it("renders nothing for an older server that sends no engine levels", async () => {
@@ -2786,7 +2789,6 @@ describe("Flash-Next reasoning card (GUI gate B)", () => {
       0,
     );
     expect(screen.queryByRole("region", { name: "Flash-Next reasoning" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /levels on Flash-Next/ })).toBeNull();
   });
 
   describe("live poll", () => {

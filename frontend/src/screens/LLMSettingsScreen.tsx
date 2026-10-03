@@ -182,7 +182,9 @@ export function LLMSettingsScreen() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // The On-box card's two independently-collapsible sections + their omnibox tabs.
   // LLMs open by default (the common case); the image section opens on demand.
-  const [llmOpen, setLlmOpen] = useState(true);
+  // Collapsed by default: the model list is long and rarely the reason the screen was opened.
+  // Remembered per device once toggled; storage can be missing or throw (private mode).
+  const [llmOpen, setLlmOpen] = useState(readLlmOpen);
   const [imgOpen, setImgOpen] = useState(false);
   // Reversed order (live first, broadest last): Resident · Available · Catalogue. The
   // Available tab is the default — it's where staging (the load preview) lives.
@@ -217,23 +219,9 @@ export function LLMSettingsScreen() {
   const fxEpoch = useRef(0);
 
   // The engine-reasoning card: open per engine once the owner toggles it (until then it
-  // follows whether that engine serves), which of its tier rows are open, and the row the
-  // "reasoning ↑" link just jumped to.
+  // follows whether that engine serves), and which of its tier rows are open.
   const [fxOpen, setFxOpen] = useState<Record<string, boolean>>({});
   const [fxTiers, setFxTiers] = useState<Set<string>>(new Set());
-  const [fxTarget, setFxTarget] = useState<string | null>(null);
-  useEffect(() => {
-    if (fxTarget === null) return;
-    const el = document.getElementById(fxTarget);
-    setFxTarget(null);
-    if (!el) return;
-    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    el.scrollIntoView?.({ block: "start", behavior: still ? "auto" : "smooth" });
-    el.classList.add("llm-fx-flash");
-    el.addEventListener("animationend", () => el.classList.remove("llm-fx-flash"), {
-      once: true,
-    });
-  }, [fxTarget]);
 
   // Live runtime state: while the drawer is open and hosting is on, refresh the
   // loaded flags every few seconds. Merge ONLY local_models so a poll can't
@@ -777,24 +765,13 @@ export function LLMSettingsScreen() {
     });
   }
 
-  // The tier card's "reasoning ↑": open the card and that tier's row, then jump to it.
-  function goToFxTier(engine: string, tier: string) {
-    setFxOpen((prev) => ({ ...prev, [engine]: true }));
-    setFxTiers((prev) => new Set(prev).add(`${engine}:${tier}`));
-    setFxTarget(fxRowId(engine, tier));
-  }
-
   const engineEfforts = Object.entries(settings.engine_efforts ?? {});
-  // Only the serving engine remaps picks, so the tier cards' link goes to its card.
-  const servingFx = engineEfforts.find(([, info]) => info.active);
+  // While another engine serves every local task, the Standard routing cards only describe a
+  // gateway that is stopped; its reasoning card is the one that applies (owner, 2026-10-03).
+  const flashServing = engineEfforts.some(([, info]) => info.active);
   const localIds = new Set(settings.local_models.map((m) => m.id));
   // Local providers: the generic "local" id or a catalog model's own id.
   const isLocalProvider = (id: string) => id === LOCAL_PROVIDER || localIds.has(id);
-  // The engine card's tier rows for the serving engine, so a tier card links only to a row
-  // that is there.
-  const servingRows = servingFx
-    ? new Set(fxTierRows(servingFx[1], settings.tasks, isLocalProvider).map((r) => r.id))
-    : new Set<string>();
 
   function toggleExpanded(key: string) {
     setExpanded((prev) => {
@@ -815,7 +792,12 @@ export function LLMSettingsScreen() {
       <OnBoxModelsCard
         llmOpen={llmOpen}
         imgOpen={imgOpen}
-        onToggleLlm={() => setLlmOpen((v) => !v)}
+        onToggleLlm={() =>
+          setLlmOpen((v) => {
+            writeLlmOpen(!v);
+            return !v;
+          })
+        }
         onToggleImg={() => setImgOpen((v) => !v)}
         llmTab={llmTab}
         imgTab={imgTab}
@@ -877,198 +859,178 @@ export function LLMSettingsScreen() {
         />
       ))}
 
-      {groups.map((group) => {
-        const provider = sharedProvider(group.tasks);
-        const reasoning = sharedReasoning(group.tasks, reasonOn);
-        const reasoningOn = provider !== "mixed" && reasonOn(provider);
-        const isOpen = expanded.has(group.key);
-        const groupVision = group.accent === "vision";
-        // The current provider may not be in the (filtered) option list — e.g. a
-        // task pinned to a local model after hosting was turned off. Surface it as
-        // a disabled option so the select shows the truth and can't be silently
-        // overwritten (mirrors the `mixed` handling).
-        const optMissing =
-          provider !== "mixed" && !providersFor(groupVision).some((p) => p.id === provider);
-        // Claude gets its own wording; any other non-reasoning provider (local
-        // models) shares the generic note; reasoning-capable or mixed → no note.
-        const naNote =
-          provider === "claude"
-            ? "Claude manages thinking on its own."
-            : reasoningOn || provider === "mixed"
-              ? null
-              : "This model takes no reasoning level.";
+      {!flashServing &&
+        groups.map((group) => {
+          const provider = sharedProvider(group.tasks);
+          const reasoning = sharedReasoning(group.tasks, reasonOn);
+          const reasoningOn = provider !== "mixed" && reasonOn(provider);
+          const isOpen = expanded.has(group.key);
+          const groupVision = group.accent === "vision";
+          // The current provider may not be in the (filtered) option list — e.g. a
+          // task pinned to a local model after hosting was turned off. Surface it as
+          // a disabled option so the select shows the truth and can't be silently
+          // overwritten (mirrors the `mixed` handling).
+          const optMissing =
+            provider !== "mixed" && !providersFor(groupVision).some((p) => p.id === provider);
+          // Claude gets its own wording; any other non-reasoning provider (local
+          // models) shares the generic note; reasoning-capable or mixed → no note.
+          const naNote =
+            provider === "claude"
+              ? "Claude manages thinking on its own."
+              : reasoningOn || provider === "mixed"
+                ? null
+                : "This model takes no reasoning level.";
 
-        return (
-          <section key={group.key} className={`llm-group llm-${group.accent}`}>
-            <div className="llm-group-head">
-              <div className="llm-group-title">
-                <span className="llm-group-name">{group.name}</span>
-                <span className="llm-group-count">{group.tasks.length} tasks</span>
-              </div>
-              <p className="llm-group-desc">{group.desc}</p>
-
-              <span className="llm-field-tag">Provider</span>
-              <select
-                className="llm-select"
-                aria-label={`${group.name} provider`}
-                value={provider}
-                onChange={(e) => setGroupProvider(group, e.target.value as LlmProviderId)}
-              >
-                {provider === "mixed" && (
-                  <option value="mixed" disabled>
-                    Mixed
-                  </option>
-                )}
-                {optMissing && (
-                  <option value={provider} disabled>
-                    {provider} (unavailable)
-                  </option>
-                )}
-                {providersFor(groupVision).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-
-              {(() => {
-                // The engine remaps picks without rewriting them; say so where the pick shows.
-                const remapped = group.tasks.filter((t) => t.remapped && t.remap_note);
-                const note = remapped[0]?.remap_note;
-                if (!note) return null;
-                // The server's tier for the group's remapped tasks, which can differ from the
-                // card's own grouping (JPet sits in Other here, in Low on the server).
-                const fxTier =
-                  servingFx &&
-                  remapped
-                    .map((t) => servingFx[1].tasks.find((x) => x.id === t.id))
-                    .find((x) => x !== undefined);
-                const fxRow = fxTier ? (fxTier.tier ?? OTHER_TIER) : null;
-                return (
-                  <p className="llm-remap">
-                    {note}
-                    {remapped.length < group.tasks.length
-                      ? ` · ${remapped.length} of ${group.tasks.length} tasks`
-                      : ""}
-                    {fxRow !== null && servingFx && servingRows.has(fxRow) && (
-                      <>
-                        {" · "}
-                        <button
-                          type="button"
-                          className="llm-fx-link"
-                          aria-label={`Set ${group.name} levels on ${servingFx[1].label}`}
-                          onClick={() => goToFxTier(servingFx[0], fxRow)}
-                        >
-                          reasoning ↑
-                        </button>
-                      </>
-                    )}
-                  </p>
-                );
-              })()}
-
-              <span className="llm-field-tag">Reasoning</span>
-              {reasoningOn ? (
-                <fieldset className="seg-row llm-seg-row" aria-label={`${group.name} reasoning`}>
-                  {efforts.map((effort) => (
-                    <button
-                      key={effort}
-                      type="button"
-                      className={`seg${reasoning === effort ? " seg-on" : ""}`}
-                      aria-pressed={reasoning === effort}
-                      onClick={() => setGroupReasoning(group, effort)}
-                    >
-                      {REASONING_LABEL[effort]}
-                    </button>
-                  ))}
-                </fieldset>
-              ) : (
-                <p className="llm-na-note">{naNote}</p>
-              )}
-            </div>
-
-            <div className="llm-expand">
-              <button
-                type="button"
-                className="llm-exp-toggle"
-                aria-expanded={isOpen}
-                onClick={() => toggleExpanded(group.key)}
-              >
-                <span>Per-task overrides</span>
-                <span
-                  className={`llm-exp-caret${isOpen ? " llm-exp-open" : ""}`}
-                  aria-hidden="true"
-                >
-                  ›
-                </span>
-              </button>
-              {isOpen && (
-                <div className="llm-members">
-                  {group.tasks.map((task) => {
-                    const taskReasons = reasonOn(task.provider);
-                    const taskOpts = providersFor(isVisionTask(task.id));
-                    const taskMissing = !taskOpts.some((p) => p.id === task.provider);
-                    return (
-                      <div key={task.id} className="llm-member">
-                        <div className="llm-member-name">
-                          {task.label}
-                          <span className="llm-member-id">{task.id}</span>
-                          {task.remapped && task.remap_note && (
-                            <span className="llm-remap">{task.remap_note}</span>
-                          )}
-                        </div>
-                        <div className="llm-member-controls">
-                          <select
-                            className="llm-select llm-member-select"
-                            aria-label={`${task.label} provider`}
-                            value={task.provider}
-                            onChange={(e) =>
-                              setTaskProvider(task.id, e.target.value as LlmProviderId)
-                            }
-                          >
-                            {taskMissing && (
-                              <option value={task.provider} disabled>
-                                {task.provider} (unavailable)
-                              </option>
-                            )}
-                            {taskOpts.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.label}
-                              </option>
-                            ))}
-                          </select>
-                          {taskReasons ? (
-                            <fieldset
-                              className="seg-row llm-seg-row llm-member-seg"
-                              aria-label={`${task.label} reasoning`}
-                            >
-                              {efforts.map((effort) => (
-                                <button
-                                  key={effort}
-                                  type="button"
-                                  className={`seg${task.reasoning_effort === effort ? " seg-on" : ""}`}
-                                  aria-pressed={task.reasoning_effort === effort}
-                                  aria-label={REASONING_LABEL[effort]}
-                                  title={REASONING_LABEL[effort]}
-                                  onClick={() => setTaskReasoning(task.id, effort)}
-                                >
-                                  {REASONING_ABBR[effort]}
-                                </button>
-                              ))}
-                            </fieldset>
-                          ) : (
-                            <span className="llm-member-na">n/a</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+          return (
+            <section key={group.key} className={`llm-group llm-${group.accent}`}>
+              <div className="llm-group-head">
+                <div className="llm-group-title">
+                  <span className="llm-group-name">{group.name}</span>
+                  <span className="llm-group-count">{group.tasks.length} tasks</span>
                 </div>
-              )}
-            </div>
-          </section>
-        );
-      })}
+                <p className="llm-group-desc">{group.desc}</p>
+
+                <span className="llm-field-tag">Provider</span>
+                <select
+                  className="llm-select"
+                  aria-label={`${group.name} provider`}
+                  value={provider}
+                  onChange={(e) => setGroupProvider(group, e.target.value as LlmProviderId)}
+                >
+                  {provider === "mixed" && (
+                    <option value="mixed" disabled>
+                      Mixed
+                    </option>
+                  )}
+                  {optMissing && (
+                    <option value={provider} disabled>
+                      {provider} (unavailable)
+                    </option>
+                  )}
+                  {providersFor(groupVision).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+
+                {(() => {
+                  // The engine remaps picks without rewriting them; say so where the pick shows.
+                  const remapped = group.tasks.filter((t) => t.remapped && t.remap_note);
+                  const note = remapped[0]?.remap_note;
+                  if (!note) return null;
+                  return (
+                    <p className="llm-remap">
+                      {note}
+                      {remapped.length < group.tasks.length
+                        ? ` · ${remapped.length} of ${group.tasks.length} tasks`
+                        : ""}
+                    </p>
+                  );
+                })()}
+
+                <span className="llm-field-tag">Reasoning</span>
+                {reasoningOn ? (
+                  <fieldset className="seg-row llm-seg-row" aria-label={`${group.name} reasoning`}>
+                    {efforts.map((effort) => (
+                      <button
+                        key={effort}
+                        type="button"
+                        className={`seg${reasoning === effort ? " seg-on" : ""}`}
+                        aria-pressed={reasoning === effort}
+                        onClick={() => setGroupReasoning(group, effort)}
+                      >
+                        {REASONING_LABEL[effort]}
+                      </button>
+                    ))}
+                  </fieldset>
+                ) : (
+                  <p className="llm-na-note">{naNote}</p>
+                )}
+              </div>
+
+              <div className="llm-expand">
+                <button
+                  type="button"
+                  className="llm-exp-toggle"
+                  aria-expanded={isOpen}
+                  onClick={() => toggleExpanded(group.key)}
+                >
+                  <span>Per-task overrides</span>
+                  <span
+                    className={`llm-exp-caret${isOpen ? " llm-exp-open" : ""}`}
+                    aria-hidden="true"
+                  >
+                    ›
+                  </span>
+                </button>
+                {isOpen && (
+                  <div className="llm-members">
+                    {group.tasks.map((task) => {
+                      const taskReasons = reasonOn(task.provider);
+                      const taskOpts = providersFor(isVisionTask(task.id));
+                      const taskMissing = !taskOpts.some((p) => p.id === task.provider);
+                      return (
+                        <div key={task.id} className="llm-member">
+                          <div className="llm-member-name">
+                            {task.label}
+                            <span className="llm-member-id">{task.id}</span>
+                            {task.remapped && task.remap_note && (
+                              <span className="llm-remap">{task.remap_note}</span>
+                            )}
+                          </div>
+                          <div className="llm-member-controls">
+                            <select
+                              className="llm-select llm-member-select"
+                              aria-label={`${task.label} provider`}
+                              value={task.provider}
+                              onChange={(e) =>
+                                setTaskProvider(task.id, e.target.value as LlmProviderId)
+                              }
+                            >
+                              {taskMissing && (
+                                <option value={task.provider} disabled>
+                                  {task.provider} (unavailable)
+                                </option>
+                              )}
+                              {taskOpts.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.label}
+                                </option>
+                              ))}
+                            </select>
+                            {taskReasons ? (
+                              <fieldset
+                                className="seg-row llm-seg-row llm-member-seg"
+                                aria-label={`${task.label} reasoning`}
+                              >
+                                {efforts.map((effort) => (
+                                  <button
+                                    key={effort}
+                                    type="button"
+                                    className={`seg${task.reasoning_effort === effort ? " seg-on" : ""}`}
+                                    aria-pressed={task.reasoning_effort === effort}
+                                    aria-label={REASONING_LABEL[effort]}
+                                    title={REASONING_LABEL[effort]}
+                                    onClick={() => setTaskReasoning(task.id, effort)}
+                                  >
+                                    {REASONING_ABBR[effort]}
+                                  </button>
+                                ))}
+                              </fieldset>
+                            ) : (
+                              <span className="llm-member-na">n/a</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })}
 
       {/* Code mode sits at the bottom, under the role tiers (it's a single-model
           choice, not a per-task tier), styled to match them. */}
@@ -1704,6 +1666,24 @@ function OmniTabs<T extends string>({
       ))}
     </div>
   );
+}
+
+export const LLM_OPEN_KEY = "jbrain.llmSettings.onboxLlmsOpen";
+
+function readLlmOpen(): boolean {
+  try {
+    return localStorage.getItem(LLM_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeLlmOpen(open: boolean): void {
+  try {
+    localStorage.setItem(LLM_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // Not remembered; the section still toggles.
+  }
 }
 
 // One section header in the card: an accent rail, its name, a live meta count, and
