@@ -568,7 +568,9 @@ def test_disk_gb_reports_the_real_footprint_when_provisioned(tmp_path: Any) -> N
     # Lay down real weights for one provisioned model; the other isn't on disk.
     qwen = tmp_path / "qwen3-vl-30b"
     qwen.mkdir()
-    (qwen / "model.gguf").write_bytes(b"\0" * (2 * 1024**3))
+    # Sparse: the size is read from the inode, and a real 2 GiB write fills CI and dev disks.
+    with (qwen / "model.gguf").open("wb") as f:
+        f.truncate(2 * 1024**3)
     settings = _cloud_settings(
         local_llm_enabled=True,
         local_models=["qwen3-vl-30b", "gpt-oss-120b"],

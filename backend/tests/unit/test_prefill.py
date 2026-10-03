@@ -210,6 +210,15 @@ async def test_no_reader_starts_no_task() -> None:
     assert published == []
 
 
+def test_a_pinned_turn_reads_its_own_slot_not_the_first_busy_one() -> None:
+    # On a pooled model a background job can be busy in slot 0 while this turn prefills in 3.
+    other = {**_BUSY, "id": 0, "n_prompt_tokens_processed": 8000}
+    mine = {**_BUSY, "id": 3}
+    expected = 4096 / (12286 - 146)
+    assert prefill._fraction([other, mine], 12286, slot_id=3) == pytest.approx(expected)
+    assert prefill._fraction([other], 12286, slot_id=3) is None
+
+
 def _collect(sink: list[float]):  # noqa: ANN202 - a two-line test helper
     async def publish(value: float) -> None:
         sink.append(value)

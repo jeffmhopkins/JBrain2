@@ -685,6 +685,27 @@ class LocalGatewayClient:
         )
         return body if isinstance(body, dict) else {}
 
+    async def erase_slot(self, served_model: str, slot_id: int) -> bool:
+        """Clear one slot's KV (and recurrent state) so the pool guard can free cells in its
+        own order (jbrain.llm.kv_pool_guard). False when the server cannot erase at all —
+        llama-server answers 501 unless it was started with `--slot-save-path`, even though
+        an erase writes nothing there."""
+        await self._require_resident(served_model, "slots-erase")
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 180.0), transport=self._transport
+            ) as client:
+                resp = await client.post(
+                    f"{self._root}/upstream/{served_model}/slots/{slot_id}?action=erase",
+                    json={},
+                )
+            if resp.status_code == httpx.codes.NOT_IMPLEMENTED:
+                return False
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LocalGatewayError(str(exc)) from exc
+        return True
+
     async def _upstream_post(
         self, served_model: str, what: str, path: str, payload: dict
     ) -> object:
