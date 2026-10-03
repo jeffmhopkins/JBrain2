@@ -297,15 +297,11 @@ async def test_a_stale_live_layout_sends_unpinned_rather_than_wrapping(
     assert bodies and all("id_slot" not in b for b in bodies)
 
 
-async def test_the_live_layout_is_read_once_per_window() -> None:
-    bodies: list[dict[str, Any]] = []
+async def test_a_model_without_a_pool_never_reads_slots() -> None:
     reads: list[int] = []
-    gw = _gateway(bodies, slot_reads=reads)
-    assert await gw.slot_for(FN, PROBE_ROLE) == FLASH_NEXT_POOL.slot(PROBE_ROLE)
-    assert await gw.slot_for(FN, WARM_ROLE) == FLASH_NEXT_POOL.slot(WARM_ROLE)
-    assert len(reads) == 1
+    gw = _gateway([], slot_reads=reads)
     assert await gw.slot_for(STANDARD, PROBE_ROLE) is None
-    assert len(reads) == 1  # no pool, no read
+    assert reads == []
 
 
 async def test_an_unreadable_layout_sends_unpinned() -> None:

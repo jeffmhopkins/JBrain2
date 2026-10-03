@@ -25,13 +25,18 @@ from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.auth import service
 from jbrain.llm import local_catalog
-from jbrain.llm.slot_roles import JCODE_ROLE
+from jbrain.llm.openai_slot_fit import (
+    context_length_exceeded,
+    fit_openai_request,
+    pinned_request,
+)
+from jbrain.llm.slot_roles import JCODE_ROLE, SlotCapError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -143,7 +148,7 @@ async def revoke_external(sid: str, _owner: OwnerDep, repo: AuthRepoDep) -> None
 # --- The public, token-gated proxy (NO owner gate — the bearer is the credential) ---
 
 
-_CALLER_ONLY_KEYS = ("n", "n_cmpl", "n_predict", "id_slot", "slot_id")
+_PARALLEL_KEYS = ("n", "n_cmpl")
 
 
 def _served_model(model_id: str) -> str:
@@ -235,24 +240,27 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
     payload["model"] = served  # pin to the on-box coder; ignore the caller's choice
-    # The slot and the generation size are the box's to choose, never a remote caller's: a
-    # caller-picked slot evicts whichever role holds it, and parallel choices or an unbounded
-    # n_predict would grow past the cap the slot is sized for.
-    for key in _CALLER_ONLY_KEYS:
+    # Parallel choices multiply what one request holds in the slot past the cap it is fitted
+    # to; the slot and output-length fields are dropped by `fit_openai_request` itself.
+    for key in _PARALLEL_KEYS:
         payload.pop(key, None)
-    # A remote coder is jcode traffic: on a pooled model it takes the jcode slot. Unpinned it
-    # would land in llama-server's least-recently-used slot and evict some role's prefix.
-    if local_catalog.pool_of(served) is not None:
-        slot = await gateway.slot_for(served, JCODE_ROLE)
-        if slot is not None:
-            payload["id_slot"] = slot
+    # A remote coder is jcode traffic: on a pooled model it is held to the jcode slot's cap and
+    # pinned to that slot through the shared pool guard, exactly as the jcode proxy is.
+    try:
+        prompt_tokens = fit_openai_request(served, payload, JCODE_ROLE)
+    except SlotCapError as exc:
+        return JSONResponse(status_code=400, content=context_length_exceeded(exc))
+    pool_guard = getattr(request.app.state, "kv_pool_guard", None)
     client = httpx.AsyncClient(base_url=gateway_url.rstrip("/"), timeout=httpx.Timeout(600.0))
 
     captured: list[bytes] = []
 
     async def relay() -> AsyncIterator[bytes]:
         try:
-            async with client.stream("POST", upstream_path, json=payload) as upstream:
+            async with (
+                pinned_request(pool_guard, served, payload, prompt_tokens, JCODE_ROLE),
+                client.stream("POST", upstream_path, json=payload) as upstream,
+            ):
                 async for chunk in upstream.aiter_raw():
                     if meter:
                         captured.append(chunk)

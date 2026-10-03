@@ -38,7 +38,6 @@ import contextlib
 import json
 import os
 import struct
-import time
 import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Protocol
@@ -138,12 +137,6 @@ STOP_SETTLE_TIMEOUT_S = 60.0
 STOP_SETTLE_POLL_S = 0.5
 
 
-# How long a pooled model's live slot count is trusted. It only changes on a reload, and a
-# stale read costs at most one unpinned request, so a short cache spares a /slots round trip
-# per probe without letting a re-stamped layout go unnoticed for long.
-SLOT_LAYOUT_TTL_S = 30.0
-
-
 class LocalGatewayError(Exception):
     """A load/unload call the gateway rejected or couldn't be reached for."""
 
@@ -186,8 +179,6 @@ class LocalGatewayClient:
         self._root = base_url.rstrip("/").removesuffix("/v1")
         self._transport = transport
         self._timeout = timeout
-        # served model -> (monotonic read time, live slot count), for `slot_for`.
-        self._slot_layouts: dict[str, tuple[float, int]] = {}
         # Device-memory probe for the load guard. It lives HERE, on the client, rather than in
         # the residency coordinator, because `load()` is the single chokepoint every path to
         # committing GPU memory must pass through. Guarding a wrapper only protects the callers
@@ -647,21 +638,18 @@ class LocalGatewayClient:
         it unpinned: the model has no pool, or its LIVE layout is not the catalog's. A config
         stamped before the pool (fewer slots) is live until the next re-stamp, and llama-server
         WRAPS an `id_slot` past its slot count onto some other slot, silently evicting that
-        role's prefix — so a mismatch, or a layout that cannot be read, is never pinned."""
+        role's prefix — so a mismatch, or a layout that cannot be read, is never pinned.
+
+        The same live read and rule as the router's pool guard (`KvPoolGuard.placed`); read
+        fresh each time, since the probes and warms that ask are rare."""
         pool = local_catalog.pool_of(served_model)
         if pool is None:
             return None
-        cached = self._slot_layouts.get(served_model)
-        now = time.monotonic()
-        if cached is not None and now - cached[0] < SLOT_LAYOUT_TTL_S:
-            live = cached[1]
-        else:
-            try:
-                live = len(await self.slots(served_model))
-            except LocalGatewayError as exc:
-                log.info("llm.slot_layout_unreadable", model=served_model, error=str(exc))
-                return None
-            self._slot_layouts[served_model] = (now, live)
+        try:
+            live = len(await self.slots(served_model))
+        except LocalGatewayError as exc:
+            log.warning("llm.slot_read_failed", model=served_model, error=str(exc))
+            return None
         if live != pool.n_slots:
             log.warning(
                 "llm.slot_layout_mismatch",
