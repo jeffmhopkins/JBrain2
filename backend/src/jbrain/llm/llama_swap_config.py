@@ -51,7 +51,7 @@ from typing import cast
 import yaml
 
 from jbrain.llm import engine as engines
-from jbrain.llm import launch_flags, local_catalog
+from jbrain.llm import launch_flags, local_catalog, slot_roles
 
 # Concrete, distinct upstream ports — llama-swap's ${PORT} macro isn't substituted
 # by every build, and the non-swapping group runs models concurrently so they can't
@@ -326,6 +326,10 @@ def render(
         port = UPSTREAM_PORT_BASE + i
         model_id = str(m["id"])
         gguf = resolve_weight(root, model_id, str(m["gguf_include"]))
+        # A pooled entry's shape is the pool, whatever window or slot count is saved for it:
+        # an override from before the pool (F2 stored some for Flash-Next) would otherwise
+        # re-split the cells and break the role-to-slot pinning the router relies on.
+        pool = slot_roles.pool_shape(m)
         window = windows.get(model_id, int(cast(int, m["context_window"])))
         catalog_args = tuple(
             str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ())
@@ -342,9 +346,11 @@ def render(
             operator_args = ()
             if rejected is not None:
                 rejected[model_id] = reason
-        # Absent an operator count, the catalog's `default_slots` (1 everywhere but Flash-Next,
-        # whose four slots are role-pinned prefix caches — FLASH_NEXT_ENGINE_PLAN §4a).
+        # Absent an operator count, the catalog's `default_slots` (1 on every standard entry).
         n_slots = max(1, slots.get(model_id, int(cast(int, m.get("default_slots") or 1))))
+        cells = window * n_slots
+        if pool is not None:
+            cells, n_slots = pool
         # Either source can turn speculation on: the catalog's static flags, or an operator
         # trying `--spec-type` remotely via the extra-args route. Both must pin the model to
         # one slot, so the test reads the flags actually going on the command line.
@@ -373,9 +379,10 @@ def render(
             str(port),
             # Total KV cells: llama-server splits `-c` evenly across `-np` slots, so
             # `window * n_slots` keeps each slot at `window` — the value the router reports
-            # to the meter. n_slots==1 leaves this exactly `window` (unchanged behaviour).
+            # to the meter. n_slots==1 leaves this exactly `window` (unchanged behaviour). A
+            # pooled entry serves its pool's cells, shared by every slot (`--kv-unified` below).
             "-c",
-            str(window * n_slots),
+            str(cells),
             # Tool calling needs the model's own chat template: --jinja makes
             # llama-server render the embedded (Hermes-style for Qwen) tool-use
             # template and parse `<tool_call>` blocks back into structured
@@ -525,6 +532,13 @@ def render(
         # in-RAM prompt cache to fall back on when a slot IS taken. Sized and described in
         # docs/plans/PROMPT_CACHE_HARDENING_PLAN.md P2; the owner-facing text says the same.
         cmd += ["-np", str(n_slots)]
+        if pool is not None:
+            # One shared pool: each slot grows into whatever cells are free (up to n_ctx_train)
+            # instead of a fixed `-c / -np` share. The save path is not for kv_prefix (which
+            # gates on the catalog and still rejects this entry): `POST /slots/{id}?action=erase`
+            # answers 501 without it, and erasing idle slots in OUR order is how the router keeps
+            # the pool from filling (jbrain.llm.slot_roles).
+            cmd += ["--kv-unified", "--slot-save-path", f"/models/{KVSLOT_DIR}/{model_id}"]
         # KV-slot save/restore target (jbrain.llm.kv_prefix). Attention models get the flag;
         # a plain recurrent model's slot cannot be restored (the path clears the context
         # checkpoints that are its only prefix-reuse mechanism), and an EXTERNAL-draft
@@ -536,7 +550,7 @@ def render(
         # reusable. The FLAG alone causes no saves (KvPrefixStore._eligible gates those on
         # the owner's patch setting); without it the store's _resolve finds no save dir and
         # silently declines, which is how the toggle shipped inert on 2026-08-24.
-        if (
+        if pool is None and (
             m.get("kv_slot_restorable")
             or (not m.get("recurrent") and not speculative)
             or (m.get("recurrent") and _is_mtp_speculative(catalog_args + operator_args))
@@ -666,6 +680,7 @@ def write(
         static_args = tuple(str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ()))
         if (
             m.get("kv_slot_restorable")
+            or slot_roles.pool_shape(m) is not None
             or not m.get("recurrent")
             or _is_mtp_speculative(
                 static_args + tuple((extra_args or {}).get(str(m.get("id")), ()))
@@ -776,6 +791,11 @@ def served_shape_from_config(
             continue
         slots = _flag("-np") or 1
         slots = max(1, slots)
+        if "--kv-unified" in flags:
+            # Any one slot may grow to the whole pool, capped by what the model was trained on
+            # — the per-sequence window llama-server itself reports on /props.
+            shapes[str(name)] = (min(cells, slot_roles.FLASH_NEXT_CTX_TRAIN), slots)
+            continue
         shapes[str(name)] = (max(1, cells // slots), slots)
     return shapes
 

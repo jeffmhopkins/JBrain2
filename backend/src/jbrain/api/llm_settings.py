@@ -36,6 +36,7 @@ from jbrain.llm import (
     llama_swap_config,
     local_catalog,
     local_weights,
+    slot_roles,
 )
 from jbrain.llm import engine as engines
 from jbrain.llm import kv_prefix as kv_prefix_mod
@@ -195,6 +196,35 @@ class TaskInfo(BaseModel):
     remap_note: str | None = None
 
 
+class KvPoolSlotOut(BaseModel):
+    """One slot of a shared KV pool: the role pinned to it and the most that role may hold."""
+
+    slot: int
+    role: str
+    label: str
+    cap: int
+
+
+class KvPoolOut(BaseModel):
+    """A model's shared `--kv-unified` pool (FLASH_NEXT_ENGINE_PLAN §4a) — the served shape the
+    window and slot controls cannot change, so the drawer shows it instead of them."""
+
+    n_ctx: int
+    slots: list[KvPoolSlotOut]
+
+
+def _kv_pool_out(pool: slot_roles.KvPool | None) -> KvPoolOut | None:
+    if pool is None:
+        return None
+    return KvPoolOut(
+        n_ctx=pool.n_ctx,
+        slots=[
+            KvPoolSlotOut(slot=r.slot, role=r.role.value, label=r.label, cap=r.cap_tokens)
+            for r in pool.reservations
+        ],
+    )
+
+
 class LocalModelInfo(BaseModel):
     """A catalog model for the 'Manage local models' drawer — what it is, whether
     it is offered for routing, and (for an un-provisioned model) whether the operator
@@ -271,11 +301,14 @@ class LocalModelInfo(BaseModel):
     # "configured"). Surfaced so the screen can say so before the owner spends the trade.
     slots_drop_disk_cache: bool
     # The largest `parallel_slots` the PUT accepts for this model (`slots_max`): 2 for a
-    # standard entry, the catalog's `default_slots` where that is higher (Flash-Next's 4).
+    # standard entry; a pooled model's slot count, the only value it accepts.
     parallel_slots_max: int = 2
     # The catalog's own slot count — what `parallel_slots` reads when no override is saved (1
-    # everywhere but Flash-Next's 4), so the drawer can mark which option is the default.
+    # everywhere but Flash-Next's pool), so the drawer can mark which option is the default.
     default_slots: int = 1
+    # The shared pool and its role-pinned slots, or null for a model whose slots split `-c`
+    # evenly. When set, the window and slot overrides are fixed (their PUTs refuse a change).
+    kv_pool: KvPoolOut | None = None
     # Which on-box engine serves this model (jbrain.llm.engine). A model of the engine that is
     # not running cannot be loaded or picked; the drawer still lists it so its weights can be
     # installed and removed from the PWA (FLASH_NEXT_ENGINE_PLAN §5).
@@ -710,7 +743,9 @@ def _local_model_info(
     blocked = _load_blocked(settings, m, enabled=enabled, available=available, engine=engine)
     if blocked is None and switching:
         blocked = SWITCHING_REASON
-    override = windows.get(m.id)
+    # A pooled model serves its pool whatever window is saved, so a stale override (F2 stored
+    # some for Flash-Next) is not reported as if it were in force.
+    override = None if m.kv_pool is not None else windows.get(m.id)
     effective_window = override if override is not None else m.context_window
     # What the gateway will REALLY serve: a speculative model is pinned to one slot whatever
     # override is stored, so the drawer shows the served value rather than a saved one the
@@ -752,6 +787,7 @@ def _local_model_info(
         slots_drop_disk_cache=bool(m.recurrent and m.is_mtp_speculative),
         parallel_slots_max=slots_max(m),
         default_slots=m.default_slots,
+        kv_pool=_kv_pool_out(m.kv_pool),
         engine=m.engine,
         loadable_now=blocked is None,
         blocked_reason=blocked,
@@ -1306,6 +1342,13 @@ async def set_local_context_window_value(
     """The window edit itself, shared by the owner screen and the debug console — so the two
     surfaces cannot drift on validation, regeneration or eviction."""
     model = _require_provisioned(settings, model_id)
+    pool = model.kv_pool
+    if pool is not None:
+        if window not in (None, model.context_window):
+            raise HTTPException(status_code=409, detail=_pool_fixed_reason(model, pool, "window"))
+        # The no-op still clears a stale stored override, so nothing reads it back later.
+        await store.set_llm_local_context_window(ctx, model_id=model_id, window=None)
+        return await _snapshot(settings, store, ctx, gateway)
     ceiling = model.max_context_window
     if window is not None and not (1 <= window <= ceiling):
         raise HTTPException(status_code=422, detail=f"context window must be 1..{ceiling}")
@@ -1358,11 +1401,23 @@ async def set_local_image_min_tokens(
     return await _snapshot(settings, store, ctx, gateway)
 
 
+def _pool_fixed_reason(
+    model: local_catalog.LocalModel, pool: slot_roles.KvPool, knob: Literal["window", "slots"]
+) -> str:
+    """Why a pooled model refuses a window or slot change, in the owner's terms."""
+    what = "context window" if knob == "window" else "slot count"
+    return (
+        f"{model.label} serves one shared {pool.n_ctx:,}-token memory pool across "
+        f"{pool.n_slots} slots, each kept for one kind of work, so its {what} is fixed. "
+        "Each kind of work has its own limit inside the pool instead."
+    )
+
+
 class ParallelSlotsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # null restores the catalog default (one slot everywhere but Flash-Next's four); otherwise
-    # 1..slots_max(model). On a single-slot model 2 opts into the interactive keep-warm slot.
+    # null restores the catalog default; otherwise 1..slots_max(model). On a single-slot model
+    # 2 opts into the interactive keep-warm slot. A pooled model accepts only null or its count.
     slots: int | None = None
 
 
@@ -1374,11 +1429,13 @@ PARALLEL_SLOTS_MAX = 2
 def slots_max(model: local_catalog.LocalModel) -> int:
     """The largest `-np` the operator may set for `model`.
 
-    PARALLEL_SLOTS_MAX for a standard entry. A model the catalog serves with MORE slots by
-    default (Flash-Next's four role-pinned prefix caches, FLASH_NEXT_ENGINE_PLAN §4a) is capped
-    at that default instead: a cap below it would refuse the count the model already runs at,
-    and going above it would put slots on the box that the derived budget — computed at the
-    default — never accounted for."""
+    PARALLEL_SLOTS_MAX for a standard entry. A pooled model (Flash-Next's role-pinned slots,
+    FLASH_NEXT_ENGINE_PLAN §4a) serves exactly its pool's count — the router pins roles by slot
+    id, so any other count would send calls to the wrong slot. A model the catalog serves with
+    more slots by default is capped at that default: a cap below it would refuse the count it
+    already runs at."""
+    if model.kv_pool is not None:
+        return model.kv_pool.n_slots
     return max(PARALLEL_SLOTS_MAX, model.default_slots)
 
 
@@ -1393,9 +1450,9 @@ async def set_local_parallel_slots(
 ) -> LlmSettingsOut:
     """Set (or clear, with null) one model's llama-server `-np` slot count — on a single-slot
     model the operator's opt-in to a dedicated interactive keep-warm slot, so a primed jerv
-    prefix isn't evicted by title/background traffic (docs/runbooks/STRIX_HALO_SETUP.md); on
-    Flash-Next the layout under measurement (FLASH_NEXT_ENGINE_PLAN F2). 409 when hosting is
-    off; 404 for an unprovisioned id; 422 outside 1..slots_max. Each slot carries the full
+    prefix isn't evicted by title/background traffic (docs/runbooks/STRIX_HALO_SETUP.md). 409
+    when hosting is off, or for any change on a pooled model (Flash-Next), whose slot count is
+    its pool's; 404 for an unprovisioned id; 422 outside 1..slots_max. Each slot carries the full
     window's KV — persists the override (the meter reflects it at once) and unloads the model
     if resident so its next load re-stamps the config with the new `-np`/`-c`."""
     return await set_local_parallel_slots_value(
@@ -1414,11 +1471,18 @@ async def set_local_parallel_slots_value(
     """The slot edit itself, shared by the owner screen and the debug console — so the two
     surfaces cannot drift on validation or eviction.
 
-    1 is accepted on every model. On a model whose catalog default is above one slot it is
-    stored EXPLICITLY (the store clears only a count equal to the default), because the store
-    used to record 1 as an absence and an absence reads back as Flash-Next's four — so the
-    single-slot layout F2 needs to measure was unreachable and the PUT had to refuse it."""
+    1 is accepted on every standard model, and stored EXPLICITLY where the catalog default is
+    above one slot (the store clears only a count equal to the default). A pooled model takes
+    only a no-op — null or its own count — which clears any stale stored count."""
     model = _require_provisioned(settings, model_id)
+    pool = model.kv_pool
+    if pool is not None:
+        if slots not in (None, pool.n_slots):
+            raise HTTPException(status_code=409, detail=_pool_fixed_reason(model, pool, "slots"))
+        await store.set_llm_local_parallel_slots(
+            ctx, model_id=model_id, slots=None, default=model.default_slots
+        )
+        return await _snapshot(settings, store, ctx, gateway)
     high = slots_max(model)
     if slots is not None and not (1 <= slots <= high):
         raise HTTPException(status_code=422, detail=f"slots must be 1..{high}")
@@ -2068,12 +2132,17 @@ async def set_local_extra_args(
 async def gateway_props(
     model_id: str, settings: Settings, gateway: LocalGatewayClient
 ) -> dict[str, object]:
-    """llama-server's `/props` for one model — build identity, real `n_ctx`, slot count."""
+    """llama-server's `/props` for one model — build identity, real `n_ctx`, slot count.
+
+    On a pooled model llama-server's `n_ctx` is the most ONE slot may grow to, not the pool,
+    so the pool and its role caps ride along as `kv_pool` for whoever reads the number."""
     model = _require_provisioned(settings, model_id)
     try:
-        return await gateway.props(model.served_model)
+        props = await gateway.props(model.served_model)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway props failed: {exc}") from exc
+    pool = _kv_pool_out(model.kv_pool)
+    return props if pool is None else {**props, "kv_pool": pool.model_dump()}
 
 
 async def gateway_slots(

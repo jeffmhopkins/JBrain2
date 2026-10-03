@@ -1080,7 +1080,8 @@ def _value(tokens: list[str], flag: str) -> str:
 
 def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
     """FLASH_NEXT_ENGINE_PLAN §4 "Serving flags", flag by flag: the engram table mapped and on
-    CPU, four non-unified 262k slots, q8_0 KV, 8 checkpoints per slot, no speculation."""
+    CPU, one unified 1M pool across eight slots, q8_0 KV, 8 checkpoints per slot, no
+    speculation."""
     entry = _flash_next_on_disk(tmp_path)
     text = llama_swap_config.render([entry], str(tmp_path), engine=engine.FLASH_NEXT)
     tokens = _cmd(text, "qwen3.8-flash-next")
@@ -1090,8 +1091,9 @@ def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
     assert _value(tokens, "-ot") == "per_layer_token_embd=CPU"
     assert _value(tokens, "--lazy-mode") == "on"
     assert _value(tokens, "-ngl") == "999"
-    assert _value(tokens, "-np") == "4"
-    assert _value(tokens, "-c") == str(4 * 262144) == "1048576"
+    assert _value(tokens, "-np") == "8"
+    assert _value(tokens, "-c") == "1048576"
+    assert tokens.count("--kv-unified") == 1
     assert _value(tokens, "-ctk") == "q8_0" and _value(tokens, "-ctv") == "q8_0"
     assert _value(tokens, "-fa") == "1"
     assert _value(tokens, "-cram") == "0"
@@ -1102,17 +1104,52 @@ def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
     assert _value(tokens, "--image-min-tokens") == "2048"
     assert _value(tokens, "-m").endswith("-00001-of-00002.gguf")
     assert not any(t.startswith("--spec") for t in tokens)
-    # A hybrid without the sidecar patch: no cache-reuse crash path, no slot files (F4).
-    assert "--cache-reuse" not in tokens and "--slot-save-path" not in tokens
+    # A hybrid: no cache-reuse crash path. The save path is there only so the router can erase
+    # idle slots (501 without it); kv_prefix still refuses the entry (test below).
+    assert "--cache-reuse" not in tokens
+    assert _value(tokens, "--slot-save-path") == "/models/.kvslots/qwen3.8-flash-next"
 
 
-def test_flash_next_slot_override_rescales_c(tmp_path: Path) -> None:
+def test_flash_next_ignores_saved_window_and_slot_overrides(tmp_path: Path) -> None:
+    """F2 stored overrides for Flash-Next; re-splitting the pool would move every role off the
+    slot the router pins it to, so the pool is served whatever is saved."""
     entry = _flash_next_on_disk(tmp_path)
     text = llama_swap_config.render(
-        [entry], str(tmp_path), engine=engine.FLASH_NEXT, slots={"qwen3.8-flash-next": 2}
+        [entry],
+        str(tmp_path),
+        engine=engine.FLASH_NEXT,
+        slots={"qwen3.8-flash-next": 2},
+        windows={"qwen3.8-flash-next": 65536},
     )
     tokens = _cmd(text, "qwen3.8-flash-next")
-    assert _value(tokens, "-np") == "2" and _value(tokens, "-c") == "524288"
+    assert _value(tokens, "-np") == "8" and _value(tokens, "-c") == "1048576"
+    assert "--kv-unified" in tokens
+
+
+def test_write_creates_the_pool_slot_save_dir(tmp_path: Path) -> None:
+    llama_swap_config.write(
+        str(tmp_path), [_flash_next_on_disk(tmp_path)], engine=engine.FLASH_NEXT
+    )
+    assert (tmp_path / ".kvslots" / "qwen3.8-flash-next").is_dir()
+
+
+def test_standard_entries_are_never_unified(tmp_path: Path) -> None:
+    _lay_down(tmp_path)
+    assert "--kv-unified" not in llama_swap_config.render(_manifest(), str(tmp_path))
+
+
+def test_served_shape_of_a_unified_pool_is_the_per_sequence_window(tmp_path: Path) -> None:
+    """llama-server reports n_ctx = min(pool, n_ctx_train) per slot under --kv-unified; the
+    even split (`-c / -np` = 131072) would under-report what one slot can hold."""
+    (tmp_path / "llama-swap.yaml").write_text(
+        "models:\n"
+        "  big:\n    cmd: llama-server -c 1048576 -np 8 --kv-unified\n"
+        "  small:\n    cmd: llama-server -c 65536 -np 2 --kv-unified\n"
+    )
+    assert llama_swap_config.served_shape_from_config(str(tmp_path)) == {
+        "big": (262144, 8),
+        "small": (65536, 2),
+    }
 
 
 def test_each_engine_renders_only_its_own_models(tmp_path: Path) -> None:
@@ -1152,7 +1189,7 @@ def test_readers_resolve_the_engine_they_are_given(tmp_path: Path) -> None:
     assert llama_swap_config.launch_line(root, "gpt-oss-120b", engine.FLASH_NEXT) is None
     assert llama_swap_config.launch_line(root, "gpt-oss-120b", engine.STANDARD) is not None
     assert llama_swap_config.served_shape_from_config(root, engine.FLASH_NEXT) == {
-        "qwen3.8-flash-next": (262144, 4)
+        "qwen3.8-flash-next": (262144, 8)
     }
     assert "qwen3.8-flash-next" not in llama_swap_config.served_shape_from_config(
         root, engine.STANDARD
@@ -1197,6 +1234,8 @@ def test_cli_engine_flag_writes_that_engines_file(
     assert llama_swap_config._main(["--engine", "flash-next", str(tmp_path)]) == 0
     text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
     assert "qwen3.8-flash-next" in text and "gpt-oss-120b" not in text
+    # The pool survives the JSON manifest round-trip the deploy CLI reads.
+    assert "-c 1048576" in text and "-np 8 --kv-unified" in text
     assert not (tmp_path / "llama-swap.yaml").exists()
     assert llama_swap_config._main(["--engine", "standard", str(tmp_path)]) == 0
     assert "qwen3.8-flash-next" not in (tmp_path / "llama-swap.yaml").read_text()
