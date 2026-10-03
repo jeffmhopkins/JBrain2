@@ -22,6 +22,7 @@
 // four-year-old cannot type, and a parent at work cannot play audio out loud.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { EngineBanner } from "../components/EngineBanner";
 
 import {
   ApiError,
@@ -1312,6 +1313,7 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
         </button>
         <h1>jpanel</h1>
       </header>
+      <EngineBanner />
 
       <div className="jp-seg" role="tablist" aria-label="Messages, Panels or Flash">
         <button

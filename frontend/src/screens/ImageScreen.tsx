@@ -31,6 +31,7 @@ import {
   api,
   generatedImageUrl,
 } from "../api/client";
+import { EngineBanner } from "../components/EngineBanner";
 import { ChevronLeftIcon, ImageIcon, PlusIcon, XIcon } from "../components/icons";
 import { useArmed } from "../review/useArmed";
 
@@ -363,6 +364,7 @@ export function ImageScreen({ onClose }: { onClose: () => void }): ReactNode {
           </button>
         </div>
       </header>
+      <EngineBanner />
 
       <div className="screen-body imgscreen-body">
         <div className="imgscreen-residency">

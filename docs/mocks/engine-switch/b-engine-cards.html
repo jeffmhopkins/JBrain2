@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Engine switch · B — engine cards</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  [data-theme="light"] body{background:#DADAD6;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+  button{font:inherit;color:inherit;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+
+  /* ---- reviewer chrome (outside the phone) ---- */
+  .caption{max-width:390px;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;vertical-align:middle;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .sim{max-width:390px;width:100%;padding:10px 12px;margin:0 16px;background:var(--surface);border:1px dashed var(--border);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);width:58px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;cursor:pointer;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel);font-weight:600;}
+  .sim button.fail[aria-pressed="true"]{background:var(--rose-tint);color:var(--rose);}
+  .sim button.warn[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber);}
+
+  /* ---- the phone ---- */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  [data-theme="light"] .phone{border-color:#C9C9C4;}
+  @media (max-width:430px){
+    body{padding-top:12px;}
+    .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;}
+  }
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 10px 0 4px;border-bottom:1px solid var(--border);flex:none;padding-top:env(safe-area-inset-top);}
+  .bar .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .bar .ttl{font-size:var(--fs-screen);font-weight:500;}
+  .bar .wm{font-size:22px;font-weight:700;padding-left:12px;}
+  .bar .wm i{font-style:normal;color:var(--steel);}
+  .vitals{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:11px;font-variant-numeric:tabular-nums;}
+  .vitals .cols{display:flex;align-items:flex-end;gap:2px;height:20px;width:48px;}
+  .vitals .cols i{display:block;width:2px;background:var(--text-3);border-radius:1px;}
+  .vitals b{color:var(--text-2);font-weight:500;}
+
+  /* global engine banner (DESIGN "Status banner": full-width strip under the top bar) */
+  .gbanner{flex:none;display:flex;flex-direction:column;}
+  .gb{display:flex;align-items:center;gap:9px;padding:0 6px 0 14px;min-height:44px;font-size:13px;border-bottom:1px solid var(--border);}
+  .gb .d{width:8px;height:8px;border-radius:999px;background:currentColor;flex:none;}
+  .gb .gt{flex:1;min-width:0;color:var(--text);line-height:1.3;padding:7px 0;}
+  .gb .gt b{font-weight:600;}
+  .gb .gt span{color:var(--text-2);}
+  .gb .ga{appearance:none;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;min-height:44px;padding:0 10px;color:inherit;white-space:nowrap;}
+  .gb .gx{appearance:none;border:none;background:none;color:var(--text-3);width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:-8px;}
+  .gb.steel{background:var(--steel-tint);color:var(--steel);}
+  .gb.amber{background:var(--amber-tint);color:var(--amber);}
+  .gb.rose{background:var(--rose-tint);color:var(--rose);}
+  .gb.amber .d.live{animation:pulse 1.4s ease-in-out infinite;}
+
+  .body{flex:1;overflow-y:auto;padding:12px 14px 28px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:4px 2px 8px;}
+
+  /* Ops scaffolding (from the B3 reference mock) */
+  .toprow{display:flex;gap:8px;margin-bottom:12px;}
+  .ibtn{flex:1;appearance:none;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border-radius:var(--r-pill);
+    min-height:44px;padding:9px 12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);}
+  .ibtn.danger{color:var(--rose);background:var(--rose-tint);border-color:transparent;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:12px;overflow:hidden;}
+  .chead{width:100%;appearance:none;display:flex;align-items:center;gap:10px;background:transparent;border:0;min-height:48px;
+    padding:12px 14px;color:var(--text);cursor:pointer;text-align:left;}
+  .chead .cname{font-size:var(--fs-secondary);font-weight:600;flex:none;}
+  .chead .gname{text-transform:uppercase;letter-spacing:.06em;}
+  .chead .summary{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;display:flex;align-items:center;gap:6px;justify-content:flex-end;}
+  .chead .summary b{color:var(--text);font-weight:600;}
+  .chead .caret{color:var(--text-3);transition:transform .15s ease-out;flex:none;}
+  .chead[aria-expanded="true"] .caret{transform:rotate(90deg);}
+  .vrow{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--border);}
+  .vrow .vk{width:74px;flex:none;font-size:var(--fs-secondary);font-weight:600;}
+  .vrow .vmid{flex:1;min-width:0;}
+  .vv{font-size:var(--fs-secondary);color:var(--text);font-variant-numeric:tabular-nums;}
+  .vv small{color:var(--text-2);font-size:12px;}
+  .sub{font-size:var(--fs-micro);color:var(--text-3);margin-top:3px;}
+  .vrow .vend{margin-left:auto;text-align:right;font-size:var(--fs-micro);color:var(--text-2);flex:none;}
+  .meter{height:6px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;margin-top:7px;max-width:190px;}
+  .meter > i{display:block;height:100%;background:var(--ok);transition:width .18s ease-out;}
+  .meter > i.warn{background:var(--warn);} .meter > i.danger{background:var(--danger);}
+  .grow{display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid var(--border);font-size:var(--fs-secondary);}
+  .grow .sdot{width:9px;height:9px;border-radius:999px;flex:none;}
+  .grow .gm{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .gstate{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-micro);}
+
+  /* shared atoms */
+  .dot{width:8px;height:8px;border-radius:999px;display:inline-block;flex:none;}
+  .dot.ok{background:var(--ok);} .dot.warn{background:var(--warn);} .dot.err{background:var(--danger);} .dot.info{background:var(--steel);} .dot.off{background:var(--text-3);}
+  .dot.hollow{background:none;border:1.5px solid var(--text-3);}
+  .dot.live{animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 9px;border-radius:999px;white-space:nowrap;}
+  .badge.ok{background:var(--green-tint);color:var(--green);} .badge.warn{background:var(--amber-tint);color:var(--amber);}
+  .badge.err{background:var(--rose-tint);color:var(--rose);} .badge.info{background:var(--steel-tint);color:var(--steel);}
+  .badge.off{background:var(--surface-2);color:var(--text-2);}
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 16px;border-radius:12px;
+    border:1px solid transparent;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s ease-out,color .15s ease-out;}
+  .btn.primary{background:var(--steel-tint);color:var(--steel);}
+  .btn.secondary{background:var(--surface-2);border-color:var(--border);color:var(--text);}
+  .btn.danger{background:var(--rose-tint);color:var(--rose);}
+  .btn.ghost{background:none;color:var(--text-2);}
+  .btn:disabled{background:var(--surface-2);border-color:var(--border);color:var(--text-3);cursor:not-allowed;}
+  .btn.wide{width:100%;}
+  .link{appearance:none;background:none;border:none;color:var(--steel);font-size:inherit;cursor:pointer;padding:0;text-decoration:none;font-weight:500;}
+  .link.hit{min-height:44px;display:inline-flex;align-items:center;}
+  .mono{font-family:var(--font-mono);}
+  .num{font-variant-numeric:tabular-nums;}
+  .note{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .note b{color:var(--text);font-weight:500;}
+  .notice{border-radius:12px;padding:11px 12px;font-size:13px;line-height:1.45;display:flex;gap:10px;align-items:flex-start;}
+  .notice svg{margin-top:1px;}
+  .notice .nt{flex:1;min-width:0;color:var(--text);}
+  .notice .nt span{color:var(--text-2);}
+  .notice.warn{background:var(--amber-tint);} .notice.warn svg{color:var(--amber);}
+  .notice.err{background:var(--rose-tint);} .notice.err svg{color:var(--rose);}
+  .notice.ok{background:var(--green-tint);} .notice.ok svg{color:var(--green);}
+  .notice.off{background:var(--surface-2);border:1px solid var(--border);} .notice.off svg{color:var(--text-3);}
+  .notice .acts{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;}
+  .log{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-input);padding:9px 10px;font-family:var(--font-mono);font-size:11px;
+    color:var(--text-2);white-space:pre-wrap;max-height:150px;overflow:auto;line-height:1.55;}
+  .log .e{color:var(--rose);} .log .w{color:var(--amber);} .log .k{color:var(--green);}
+  .checks{display:flex;gap:6px;flex-wrap:wrap;}
+  .chk{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 8px 2px 6px;border-radius:999px;background:var(--surface-2);color:var(--text-2);}
+  .chk.ok{background:var(--green-tint);color:var(--green);} .chk.err{background:var(--rose-tint);color:var(--rose);}
+  .chk.run{background:var(--amber-tint);color:var(--amber);}
+  .chk svg{width:12px;height:12px;stroke-width:2;}
+
+  /* modal shells — one Sheet, one Dialog (DESIGN "Modal system") */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:opacity .16s ease-out;z-index:20;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;
+    transform:translateY(100%);transition:transform .18s ease-out;z-index:21;padding:0 16px calc(16px + env(safe-area-inset-bottom));max-height:86%;overflow:auto;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:32px;height:4px;border-radius:999px;background:var(--border);margin:10px auto 14px;}
+  .sheet h3{font-size:18px;font-weight:500;margin-bottom:8px;}
+  .dialog{position:absolute;left:24px;right:24px;top:50%;transform:translateY(-46%);opacity:0;pointer-events:none;background:var(--surface);
+    border:1px solid var(--border);border-radius:16px;padding:18px 16px 14px;z-index:21;transition:opacity .15s ease-out,transform .15s ease-out;}
+  .dialog.show{opacity:1;pointer-events:auto;transform:translateY(-50%);}
+  .dialog h3{font-size:18px;font-weight:500;margin-bottom:8px;}
+  .dialog p{font-size:14px;color:var(--text-2);line-height:1.5;}
+  .dialog .dacts{display:flex;gap:10px;margin-top:16px;}
+  .dialog .dacts .btn{flex:1;}
+
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(16px);background:var(--surface-2);border:1px solid var(--border);
+    border-radius:999px;padding:10px 16px;font-size:12.5px;color:var(--text);opacity:0;pointer-events:none;transition:.18s ease-out;max-width:88%;z-index:30;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  /* LLM settings screen */
+  .lcard{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px;}
+  .lhead{display:flex;align-items:center;gap:10px;padding:12px 14px;}
+  .lhead .lt{font-size:var(--fs-secondary);font-weight:600;}
+  .lhead .lr{margin-left:auto;font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px;}
+  .ltabs{display:flex;gap:2px;margin:0 14px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:3px;}
+  .ltabs span{flex:1;text-align:center;font-size:13px;padding:7px 4px;border-radius:9px;color:var(--text-2);}
+  .ltabs span.on{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .pick{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--border);min-height:44px;font-size:13.5px;}
+  .pick .pk{width:76px;flex:none;color:var(--text-2);}
+  .pick .pv{flex:1;min-width:0;}
+  .pick .pv .remap{color:var(--steel);font-size:12px;display:block;margin-top:1px;}
+  .pick .pv s{color:var(--text-3);}
+  .mgroup{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);padding:10px 14px 6px;border-top:1px solid var(--border);display:flex;align-items:center;gap:7px;}
+  .mrow{padding:12px 14px;border-top:1px solid var(--border);}
+  .mgroup + .mrow{border-top:none;}
+  .mtop{display:flex;align-items:flex-start;gap:10px;}
+  .mname{flex:1;min-width:0;font-size:14.5px;font-weight:500;}
+  .mmeta{display:block;font-size:12px;color:var(--text-3);font-weight:400;margin-top:2px;}
+  .mright{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none;}
+  .mbtn{appearance:none;min-height:36px;min-width:72px;padding:0 13px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;position:relative;}
+  .mbtn::after{content:"";position:absolute;inset:-4px;}
+  .mbtn.stage{background:var(--steel-tint);border-color:transparent;color:var(--steel);}
+  .mbtn:disabled{color:var(--text-3);background:var(--surface-2);border-color:var(--border);cursor:not-allowed;}
+  .mstate{font-size:11.5px;color:var(--text-3);}
+  .mstate.on{color:var(--green);} .mstate.off{color:var(--text-3);}
+  .mchips{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;}
+  .mchips span{font-size:11px;padding:2px 7px;border-radius:999px;background:var(--surface-2);color:var(--text-2);}
+  .offeng{display:flex;gap:8px;align-items:flex-start;margin-top:9px;font-size:12.5px;color:var(--text-2);line-height:1.4;background:var(--surface-2);border-radius:10px;padding:8px 10px;}
+  .offeng svg{color:var(--text-3);margin-top:1px;width:15px;height:15px;}
+  .offeng .link{font-size:12.5px;}
+  .mrow.hl{background:var(--steel-tint);}
+
+  /* home stub */
+  .seg3{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:3px;margin-bottom:12px;}
+  .seg3 span{flex:1;text-align:center;font-size:13px;padding:8px 4px;border-radius:9px;color:var(--text-2);min-height:36px;}
+  .seg3 span.on{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px 12px;font-size:14px;margin-bottom:8px;}
+  .bubble small{display:block;color:var(--text-3);font-size:11.5px;margin-top:4px;}
+  .composer{margin-top:14px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px;}
+  .composer .ph{color:var(--text-3);font-size:16px;min-height:44px;}
+  .composer .cf{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);}
+  .statusline{font-size:12.5px;color:var(--text-2);display:flex;align-items:center;gap:7px;margin-top:12px;}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important;}
+  }
+
+  /* ---- variant B ---- */
+  .bbody{padding:2px 14px 14px;display:flex;flex-direction:column;gap:12px;}
+  .egrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;position:relative;}
+  .etile{appearance:none;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:11px 11px 10px;
+    cursor:pointer;display:flex;flex-direction:column;gap:6px;min-width:0;min-height:168px;transition:border-color .15s ease-out,background .15s ease-out;}
+  .etile .et-name{font-size:17px;font-weight:500;color:var(--text);}
+  .etile .et-sub{font-size:11.5px;color:var(--text-3);line-height:1.35;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:31px;}
+  .etile .et-figs{display:flex;flex-direction:column;gap:1px;font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums;margin-top:auto;}
+  .etile .et-figs b{font-size:15px;font-weight:500;color:var(--text);}
+  .etile .et-figs.exp b{color:var(--text-2);}
+  .etile .et-foot{font-size:11.5px;color:var(--text-3);border-top:1px solid var(--border);padding-top:7px;display:flex;align-items:center;gap:5px;min-height:24px;}
+  .etile .et-foot .link{font-size:11.5px;}
+  .etile.active{background:var(--steel-tint);border-color:var(--steel);}
+  .etile.active .et-foot{border-color:rgba(127,167,201,.3);}
+  .etile.target{border-color:var(--amber);background:var(--amber-tint);}
+  .etile.failed{border-color:var(--rose);}
+  .etile.wanted{border-color:var(--amber);border-style:dashed;}
+  .etile.locked{cursor:not-allowed;}
+  .etile.locked .et-name{color:var(--text-2);}
+  .eswap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:999px;background:var(--surface);
+    border:1px solid var(--amber);color:var(--amber);display:flex;align-items:center;justify-content:center;}
+  .hstep{display:flex;gap:4px;}
+  .hstep .hs{flex:1;display:flex;flex-direction:column;gap:5px;align-items:stretch;min-width:0;}
+  .hstep .hs i{display:block;height:4px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);}
+  .hstep .hs span{font-size:10.5px;color:var(--text-3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .hstep .hs.done i{background:var(--green);border-color:transparent;}
+  .hstep .hs.run i{background:var(--amber);border-color:transparent;animation:pulse 1.4s ease-in-out infinite;}
+  .hstep .hs.run span{color:var(--text);}
+  .hstep .hs.fail i{background:var(--rose);border-color:transparent;} .hstep .hs.fail span{color:var(--rose);}
+  .hcur{font-size:13px;color:var(--text);display:flex;align-items:baseline;gap:8px;}
+  .hcur span{color:var(--text-2);font-size:12.5px;}
+  .hcur .el{margin-left:auto;font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums;flex:none;}
+  .rbtag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);display:flex;align-items:center;gap:6px;}
+  .memrow{display:flex;align-items:flex-end;gap:10px;}
+  .memrow .ml{flex:1;min-width:0;}
+  .memrow .meter{max-width:none;}
+  .lrow{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--border);}
+  .lrow .lk{font-size:13px;color:var(--text-2);width:74px;flex:none;}
+
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Engine switch · B — two engine cards, tap to make active</span>
+    <span class="toggle" role="group" aria-label="theme"><button id="c-dark" aria-pressed="true" onclick="sim('theme','dark')">dark</button><button id="c-light" aria-pressed="false" onclick="sim('theme','light')">light</button></span><br/>
+    The Ops <b>Local engine</b> card holds <b>two half-width engine cards</b> (the settled status-card grid). Each shows what it would cost and deliver; <b>tap the stopped one</b> to make it active — a <b>center confirm dialog</b> states the consequence. During the switch both cards narrate their side (draining → stopped / starting → smoke) over a <b>five-step stepper</b>. Turn on <b>Fail next switch</b> for the rollback. LLM settings groups models <b>by engine</b>. Timings ~12× faster.
+
+  </div>
+  <div class="sim" id="sim" aria-label="Mock scenario controls"></div>
+
+  <div class="phone">
+    <div class="bar" id="top"></div>
+    <div class="gbanner" id="banner"></div>
+    <div class="body" id="screen"></div>
+    <div class="scrim" id="scrim" onclick="closeModal()"></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+    <div class="dialog" id="dialog" role="alertdialog" aria-modal="true"></div>
+    <div id="toast" role="status"></div>
+  </div>
+
+<script>
+// ===== shared mock model — identical across A/B/C so only the interaction differs =====
+const ENG={
+  standard:{id:'standard',name:'Standard',models:['gpt-oss-120b','Qwen3.8-27B'],more:2,gtt:81.9,free:26.3,tps:38.2,
+    eta:'about 4 min',loadReal:150,blurb:'gateway · gpt-oss-120b, Qwen3.8-27B +2'},
+  flash:{id:'flash',name:'Flash-Next',models:['Qwen3.8-Flash-Next'],more:0,gtt:74.2,free:34.7,tps:23.5,
+    eta:'about 2 min',loadReal:50,blurb:'one model · Qwen3.8-Flash-Next · own container'},
+};
+const OTHER={standard:'flash',flash:'standard'};
+const GTT_TOTAL=120;
+const FAIL_REASON='image check — the reply never named the object in the test image (empty content after 1,024 tokens)';
+const FALLBACK_REASON='weights incomplete — 71.2 of 94.6 GB on disk';
+
+const S={
+  theme:(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark',
+  screen:'ops', open:{system:true,engine:false,core:false,ai:false,infra:false,log:false,last:false},
+  desired:'standard', effective:'standard', fallback:null, since:null,
+  phase:'idle', from:null, target:null, stages:[], si:0, willFail:false, rolledBack:false, failReason:null,
+  failNext:false, installed:true, oneshot:null, debugJob:false,
+  armed:null, modal:null, highlight:null, dismissed:false,
+  clock:9*3600+41*60+5,
+  lastSmoke:{engine:'standard',ok:true,at:'00:24',checks:[['text','1.1 s'],['image','3.4 s'],['tool call','2.0 s']]},
+  result:null,
+  log:[['00:21:40','engine  switch → standard requested (owner)'],['00:24:02','engine  standard up · smoke passed (text 1.1 s · image 3.4 s · tool 2.0 s)','k']],
+};
+
+// ---- clock + formatting ----
+const pad=n=>String(n).padStart(2,'0');
+const hhmm=s=>`${pad(Math.floor(s/3600)%24)}:${pad(Math.floor(s/60)%60)}`;
+const hhmmss=s=>`${hhmm(s)}:${pad(Math.floor(s)%60)}`;
+const dur=s=>{s=Math.max(0,Math.round(s));return `${Math.floor(s/60)}:${pad(s%60)}`;};
+function log(msg,cls){S.log.push([hhmmss(S.clock),msg,cls||'']);if(S.log.length>40)S.log.shift();}
+
+// ---- icons (Lucide-style outline, 1.5px) ----
+const I={
+  back:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+  caret:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+  check:'<svg width="14" height="14" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  x:'<svg width="14" height="14" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  close:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  alert:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.5v.01"/></svg>',
+  undo:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>',
+  lock:'<svg width="16" height="16" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  swap:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"/><path d="M3 8h14"/><path d="M17 20l4-4-4-4"/><path d="M21 16H7"/></svg>',
+  chip:'<svg width="16" height="16" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>',
+  info:'<svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg>',
+  download:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  arrow:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  ok:'<svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>',
+};
+
+// ---- derived readings ----
+const switching=()=>S.phase==='switching';
+const curStage=()=>S.stages[S.si];
+function blockedReason(to){
+  if(S.oneshot==='update')return{k:'oneshot',text:'A server update is running — the switch waits until it finishes.'};
+  if(S.oneshot==='perplexity')return{k:'oneshot',text:'The perplexity test (a debug one-shot) is running on the engine — the switch waits until it finishes.'};
+  if(to==='flash'&&!S.installed)return{k:'install',text:"Flash-Next isn't installed — its 94.6 GB of weights aren't on the box."};
+  return null;
+}
+// Live GTT while switching: the stopping engine drains to ~0, the starting one climbs to its footprint.
+function gttNow(){
+  if(!switching())return ENG[S.effective].gtt;
+  const st=curStage();
+  const stopping=st.eng, p=st.p;
+  switch(st.k){
+    case 'drain':return ENG[S.from].gtt;
+    case 'stop':return ENG[stopping].gtt*(1-0.15*p);
+    case 'settle':return ENG[st.eng].gtt*0.85*(1-p)+0.1;
+    case 'start':return 0.1+ENG[st.eng].gtt*p;
+    default:return ENG[st.eng].gtt;
+  }
+}
+function freeNow(){
+  if(!switching())return ENG[S.effective].free;
+  const g=gttNow();return Math.max(4,Math.min(112.4,108.2-g));
+}
+function tpsNow(){return switching()?null:ENG[S.effective].tps;}
+function meterCls(pct){return pct>92?'danger':pct>80?'warn':'';}
+const fmtTps=v=>v==null?'—':`${v.toFixed(1)} tok/s`;
+function engineLine(){
+  if(switching())return{head:`Switching to ${ENG[S.target].name}`,sub:S.rolledBack?`rolling back to ${ENG[S.from].name}`:`${ENG[S.from].name} → ${ENG[S.target].name}`,tone:'warn'};
+  if(S.desired!==S.effective)return{head:`${ENG[S.desired].name} selected · ${ENG[S.effective].name} serving`,sub:`fallback: ${S.fallback}`,tone:'warn'};
+  return{head:`${ENG[S.effective].name} serving`,sub:S.since?`since ${S.since}`:'since 00:24',tone:'ok'};
+}
+function elapsedReal(){return S.stages.reduce((a,s)=>a+(s.real||0)*(s.p||0),0);}
+function smokeLine(sm){
+  return `<div class="checks">${sm.checks.map(([n,v,st])=>`<span class="chk ${st||'ok'}">${st==='err'?I.x:I.check}${n}${v?' · '+v:''}</span>`).join('')}</div>`;
+}
+
+// ---- the switch state machine (timings compressed ~12× for review) ----
+function plan(from,to){
+  return[
+    {k:'drain',label:'Drain local calls',ms:1600,real:9,eng:from},
+    {k:'stop',label:`Stop ${ENG[from].name}`,ms:1100,real:7,eng:from},
+    {k:'settle',label:'Let memory settle',ms:1500,real:14,eng:from},
+    {k:'start',label:`Start ${ENG[to].name}`,ms:3200,real:ENG[to].loadReal,eng:to},
+    {k:'smoke',label:'Smoke test',ms:2700,real:21,eng:to},
+  ].map(s=>({...s,status:'pending',p:0}));
+}
+function rollbackPlan(failed,back){
+  return[
+    {k:'stop',label:`Stop ${ENG[failed].name}`,ms:900,real:6,eng:failed,rb:true},
+    {k:'settle',label:'Let memory settle',ms:1200,real:12,eng:failed,rb:true},
+    {k:'start',label:`Restart ${ENG[back].name}`,ms:2600,real:ENG[back].loadReal,eng:back,rb:true},
+    {k:'smoke',label:`Smoke test ${ENG[back].name}`,ms:1800,real:19,eng:back,rb:true},
+  ].map(s=>({...s,status:'pending',p:0}));
+}
+function smokeChecks(st){
+  const names=['text','image','tool call'];
+  const failing=S.willFail&&!st.rb;
+  return names.map((n,i)=>{
+    const at=(i+1)/3;
+    if(failing&&i===1&&st.p>=0.66)return[n,'',st.status==='fail'?'err':'run'];
+    if(failing&&i===2&&st.status==='fail')return[n,'skipped','off'];
+    if(st.p>=at-0.001||st.status==='done')return[n,['1.2 s','3.9 s','2.2 s'][i],'ok'];
+    if(st.p>=at-1/3)return[n,'','run'];
+    return[n,'','off'];
+  });
+}
+function stageDetail(st){
+  const p=st.p;
+  switch(st.k){
+    case 'drain':{
+      if(st.status==='done')return'2 calls finished · new local calls held';
+      const n=p<.45?2:p<.85?1:0;return`${n} in flight · new local calls wait · up to 90 s`;}
+    case 'stop':return st.status==='done'?'stopped · ledger discharged':`unloading ${ENG[st.eng].models.join(', ')}`;
+    case 'settle':{
+      if(st.status==='done')return'GTT 0.1 GiB · host free 108.1 GiB';
+      return`GTT ${gttNow().toFixed(1)} GiB → 0.1`;}
+    case 'start':{
+      if(st.status==='done')return`up in ${dur(st.real)}`;
+      if(st.status==='pending')return`~${dur(st.real)} to load`;
+      return`loading weights · ${dur(p*st.real)} of ~${dur(st.real)}`;}
+    case 'smoke':{
+      if(st.status==='pending')return'text · image · tool call';
+      if(st.status==='fail')return'image check failed';
+      if(st.status==='done')return'passed';
+      return'running checks';}
+  }
+  return'';
+}
+let timer=null;
+function startSwitch(to){
+  if(switching()||blockedReason(to))return;
+  S.armed=null;S.modal=null;S.result=null;S.dismissed=false;
+  S.phase='switching';S.from=S.effective;S.target=to;S.rolledBack=false;S.failReason=null;
+  S.willFail=S.failNext;S.stages=plan(S.from,to);S.si=0;S.stages[0].status='run';
+  S.open.engine=true;
+  log(`engine  switch → ${to==='flash'?'flash-next':'standard'} requested (owner)`);
+  log('engine  drain: local admission closed · 2 in flight');
+  clearInterval(timer);timer=setInterval(tick,150);render();
+}
+function cancelSwitch(){
+  if(!switching()||curStage().k!=='drain')return;
+  clearInterval(timer);S.phase='idle';S.stages=[];log('engine  switch cancelled during drain — nothing was stopped','w');
+  toast(`Switch cancelled — ${ENG[S.effective].name} kept serving`);render();
+}
+function tick(){
+  const st=curStage();st.p=Math.min(1,st.p+150/st.ms);
+  S.clock+=st.real*150/st.ms;
+  if(st.k==='smoke'&&S.willFail&&!st.rb&&st.p>=0.72){
+    st.status='fail';S.failReason=FAIL_REASON;S.rolledBack=true;
+    log(`smoke   ${ENG[S.target].name}: ${FAIL_REASON}`,'e');
+    log(`engine  rolling back → ${S.from==='flash'?'flash-next':'standard'}`,'w');
+    S.stages=S.stages.concat(rollbackPlan(S.target,S.from));S.si++;S.stages[S.si].status='run';
+    render();return;
+  }
+  if(st.p>=1){
+    st.status='done';
+    log(`engine  ${st.label.toLowerCase()} — ${stageDetail(st)}`,st.k==='smoke'?'k':'');
+    S.si++;
+    if(S.si>=S.stages.length){finish();return;}
+    S.stages[S.si].status='run';
+  }
+  render();
+}
+function finish(){
+  clearInterval(timer);
+  const now=hhmm(S.clock);
+  if(S.rolledBack){
+    S.effective=S.from;
+    S.result={ok:false,target:S.target,back:S.from,reason:S.failReason,at:now,took:elapsedReal()};
+    S.lastSmoke={engine:S.target,ok:false,at:now,checks:[['text','1.2 s','ok'],['image','failed','err'],['tool call','skipped','off']]};
+    log(`engine  rolled back · ${ENG[S.from].name} serving again`,'w');
+    toast(`Switch failed — rolled back to ${ENG[S.from].name}`);
+  }else{
+    S.desired=S.effective=S.target;S.fallback=null;S.since=now;
+    S.result={ok:true,target:S.target,at:now,took:elapsedReal()};
+    S.lastSmoke={engine:S.target,ok:true,at:now,checks:[['text','1.2 s'],['image','3.9 s'],['tool call','2.2 s']]};
+    log(`engine  ${S.target==='flash'?'flash-next':'standard'} serving · persisted as desired + effective`,'k');
+    toast(`${ENG[S.target].name} is serving — smoke test passed`);
+  }
+  S.phase='idle';S.since=S.since||'00:24';render();
+}
+
+// ---- scenario controls ----
+function sim(k,v){
+  if(switching()&&k!=='failNext'&&k!=='debugJob'&&k!=='theme'&&k!=='screen'){toast('Wait for the switch to finish');return;}
+  if(k==='theme')S.theme=v;
+  else if(k==='screen'){S.screen=v;S.modal=null;}
+  else if(k==='failNext')S.failNext=!S.failNext;
+  else if(k==='installed'){S.installed=!S.installed;if(!S.installed&&S.effective==='flash'){S.effective=S.desired='standard';}}
+  else if(k==='oneshot')S.oneshot=S.oneshot===v?null:v;
+  else if(k==='debugJob')S.debugJob=!S.debugJob;
+  else if(k==='fallback'){S.installed=true;S.desired='flash';S.effective='standard';S.fallback=FALLBACK_REASON;S.result=null;
+    log('update  FALLBACK flash-next wanted but '+FALLBACK_REASON+' — standard started','w');S.open.engine=true;S.screen='ops';}
+  else if(k==='onflash'){S.installed=true;S.desired=S.effective='flash';S.fallback=null;S.since='00:24';S.result=null;
+    S.lastSmoke={engine:'flash',ok:true,at:'00:24',checks:[['text','1.2 s'],['image','3.9 s'],['tool call','2.2 s']]};}
+  else if(k==='reset'){location.reload();return;}
+  render();
+}
+function renderSim(){
+  const b=(k,v,label,on,cls)=>`<button class="${cls||''}" aria-pressed="${on}" onclick="sim('${k}','${v}')">${label}</button>`;
+  document.getElementById('sim').innerHTML=`
+    <div class="srow"><span class="sl">Screen</span>${b('screen','ops','Ops',S.screen==='ops')}${b('screen','llm','LLM settings',S.screen==='llm')}${b('screen','home','Home',S.screen==='home')}</div>
+    <div class="srow"><span class="sl">Simulate</span>${b('failNext','','Fail next switch',S.failNext,'fail')}${b('installed','','Flash-Next installed',S.installed)}${b('debugJob','','Debug job',S.debugJob,'warn')}</div>
+    <div class="srow"><span class="sl">One-shot</span>${b('oneshot','update','Update running',S.oneshot==='update','warn')}${b('oneshot','perplexity','Perplexity running',S.oneshot==='perplexity','warn')}</div>
+    <div class="srow"><span class="sl">Start as</span>${b('onflash','','On Flash-Next',false)}${b('fallback','','Deploy fallback',false)}${b('reset','','Reset',false)}</div>`;
+  document.getElementById('c-dark').setAttribute('aria-pressed',String(S.theme==='dark'));
+  document.getElementById('c-light').setAttribute('aria-pressed',String(S.theme==='light'));
+}
+
+// ---- global banner: on every screen while Flash-Next serves, a switch runs, or a test job holds the engine ----
+function banners(){
+  const out=[];
+  if(switching()){
+    const st=curStage();
+    out.push({tone:'amber',live:true,html:`<b>${S.rolledBack?'Rolling back':'Switching engine'}</b> <span>· ${st.label.toLowerCase()} · local AI paused</span>`,act:'Details',fn:'goEngine()'});
+  }else if(S.result&&!S.result.ok&&!S.dismissed){
+    out.push({tone:'rose',html:`<b>${ENG[S.result.target].name} failed its smoke test</b> <span>· rolled back to ${ENG[S.result.back].name}</span>`,act:'Details',fn:'goEngine()',x:true});
+  }else if(S.desired!==S.effective){
+    out.push({tone:'amber',html:`<b>${ENG[S.desired].name} selected</b> <span>· ${ENG[S.effective].name} serving (fallback)</span>`,act:'Details',fn:'goEngine()'});
+  }else if(S.effective==='flash'){
+    out.push({tone:'steel',html:`<b>Flash-Next active</b> <span>· since ${S.since||'00:24'}</span>`,act:'Switch back',fn:"V.requestSwitch('standard')"});
+  }
+  if(S.oneshot==='perplexity')out.push({tone:'amber',live:true,html:`<b>Perplexity test running</b> <span>· debug one-shot · engine busy</span>`,act:'Details',fn:'goEngine()'});
+  if(S.debugJob)out.push({tone:'amber',live:true,html:`<b>Debug job running</b> <span>· tool-probe sweep via debug token</span>`,act:'Details',fn:'goEngine()'});
+  return out;
+}
+function renderBanner(){
+  document.getElementById('banner').innerHTML=banners().map(b=>`
+    <div class="gb ${b.tone}" role="status"><span class="d${b.live?' live':''}"></span><span class="gt">${b.html}</span>
+      <button class="ga" onclick="${b.fn}">${b.act}</button>
+      ${b.x?`<button class="gx" aria-label="Dismiss" onclick="S.dismissed=true;render()">${I.close}</button>`:''}</div>`).join('');
+}
+function goEngine(){S.screen='ops';S.open.engine=true;S.modal=null;render();
+  const el=document.getElementById('engine');if(el)el.scrollIntoView({block:'start',behavior:'smooth'});}
+
+// ---- top bar ----
+function renderTop(){
+  const t=S.screen==='ops'?'Ops':S.screen==='llm'?'LLM':null;
+  const busy=switching()?[8,10,12,14,16,18,17,16,15,18,19,18]:S.effective==='flash'?[2,2,3,5,4,3,2,2,3,2,2,3]:[2,3,2,4,3,2,2,3,2,2,3,2];
+  document.getElementById('top').innerHTML=`${t?`<button class="back" aria-label="Back" onclick="sim('screen','home')">${I.back}</button><span class="ttl">${t}</span>`:`<span class="wm">JBrain<i>.</i></span>`}
+    <span class="vitals" aria-label="GPU busy"><span class="cols">${busy.map((h,i)=>`<i style="height:${h}px;opacity:${.35+i*.055}"></i>`).join('')}</span><b>${switching()?'71%':'9%'}</b></span>`;
+}
+
+// ---- Ops scaffolding shared by every variant ----
+function opsToprow(){return`<div class="toprow"><button class="ibtn" onclick="toast('Opening Runs…')">Runs</button><button class="ibtn" onclick="toast('Refreshing…')">Refresh</button><button class="ibtn danger" onclick="toast('Restart all skips the stopped engine')">Restart all</button></div>`;}
+function card(id,title,summary,body,opts){
+  opts=opts||{};const open=S.open[id];
+  return`<section class="card" ${opts.anchor?`id="${opts.anchor}"`:''}>
+    <button class="chead" aria-expanded="${open}" onclick="S.open.${id}=!S.open.${id};render()">
+      <span class="cname${opts.group?' gname':''}">${title}</span><span class="summary">${open&&!opts.keepSummary?'':summary}</span><span class="caret">${I.caret}</span></button>
+    ${open?`<div class="cbody">${body}</div>`:''}</section>`;
+}
+function systemCard(){
+  const used=switching()?Math.round(14+gttNow()*.42):S.effective==='flash'?51:58;
+  return card('system','System',`mem <b>${used}%</b> · disk <b>${S.installed?19:14}%</b> · load <b>0.55</b>`,`
+    <div class="vrow"><span class="vk">Memory</span><div class="vmid"><span class="vv">${(used*1.212).toFixed(1)} GB <small>/ 121.2 GB</small></span>
+      <div class="meter"><i class="${meterCls(used)}" style="width:${used}%"></i></div></div><span class="vend">swap 292 KB</span></div>
+    <div class="vrow"><span class="vk">Disk</span><div class="vmid"><span class="vv">${S.installed?'370.5':'275.9'} GB <small>/ 1875.7 GB</small></span>
+      <div class="meter"><i style="width:${S.installed?19:14}%"></i></div></div><span class="vend">${S.installed?19:14}% used</span></div>
+    <div class="vrow"><span class="vk">Load</span><div class="vmid"><span class="vv">0.55 · 0.64 · 0.62</span><div class="sub">up 5h 40m · kernel 6.18.5</div></div><span class="vend">${S.oneshot==='update'?'<span class="badge warn">updating</span>':'healthy'}</span></div>`);
+}
+function groupCards(){
+  const flashUp=switching()?(curStage().eng==='flash'&&['start','smoke'].includes(curStage().k)):S.effective==='flash';
+  const stdUp=switching()?(curStage().eng==='standard'&&curStage().k!=='settle'):S.effective==='standard';
+  const row=(n,up,meta,mem)=>`<div class="grow"><span class="sdot" style="background:${up?'var(--green)':'var(--text-3)'}"></span><span>${n}</span><span class="badge ${up?'ok':'off'}">${up?'running':'stopped'}</span><span class="gm">${meta}${mem?' · '+mem:''}</span></div>`;
+  const st=(t,cls)=>`<span class="gstate" style="color:var(--${cls})"><span class="dot" style="background:var(--${cls})"></span>${t}</span>`;
+  return card('core','Core',`<span style="color:var(--text-3)">3 services</span>${st('all up','green')}`,
+      row('api',true,'',`87 MB`)+row('worker',true,'','72 MB')+row('supervisor',true,'','50 MB'),{group:true,keepSummary:true})
+    +card('ai','AI',`<span style="color:var(--text-3)">${S.installed?4:3} services</span>${switching()?st('switching','amber'):st('all up','green')}`,
+      row('local-llm',stdUp,'standard',stdUp?'2.6 GB':'')+(S.installed?row('flash-next',flashUp,'engine',flashUp?'1.9 GB':''):'')+row('embed',true,'','454 MB')+row('tts-stt',true,'','1.1 GB'),{group:true,keepSummary:true})
+    +card('infra','Infra',`<span style="color:var(--text-3)">3 services</span>${st('all up','green')}`,
+      row('proxy',true,'','20 MB')+row('searxng',true,'','159 MB')+row('cloudflared',true,'','46 MB'),{group:true,keepSummary:true});
+}
+function logBlock(n){const lines=S.log.slice(-(n||7));return`<pre class="log">${lines.map(([t,m,c])=>`<span class="${c}">${t} ${m}</span>`).join('\n')}</pre>`;}
+function copyLog(){toast(`Copied engine log · ${S.log.length} lines`);}
+
+// ---- LLM settings: the model rows that belong to the other engine ----
+const MODELS=[
+  {id:'gpt',label:'gpt-oss-120b',eng:'standard',meta:'MXFP4 · 63.4 GB',chips:['tools','reasoning','128k'],resident:true},
+  {id:'q27',label:'Qwen3.8-27B',eng:'standard',meta:'Q6_K · 22.5 GB',chips:['vision','tools','256k'],resident:true},
+  {id:'coder',label:'Qwen3-Coder-30B-A3B',eng:'standard',meta:'Q5_K_M · 21.7 GB',chips:['tools','256k'],resident:false},
+  {id:'fn',label:'Qwen3.8-Flash-Next',eng:'flash',meta:'UD-IQ4_XS · 94.6 GB · 26.8 GB file-backed',chips:['vision','tools','512k pool · 5 slots'],resident:false},
+];
+function modelRow(m){
+  const engActive=S.effective;
+  const hl=S.highlight===m.id?' hl':'';
+  if(m.eng==='flash'&&!S.installed){
+    return`<div class="mrow${hl}" id="m-${m.id}"><div class="mtop"><div class="mname">${m.label}<span class="mmeta">UD-IQ4_XS · 94.6 GB to download · disk free 1.5 TB</span></div>
+      <div class="mright"><button class="mbtn stage" onclick="toast('Queued — the next update downloads 94.6 GB')">Install</button><span class="mstate">not installed</span></div></div>
+      <div class="offeng">${I.info}<span>Runs on its own engine. Once installed, switch to it in <button class="link" onclick="goEngine()">Ops → Local engine</button>.</span></div></div>`;
+  }
+  let btn,state,note='';
+  if(switching()){
+    btn=`<button class="mbtn" disabled>Stage</button>`;state=`<span class="mstate">waiting</span>`;
+    note=`<div class="offeng">${I.lock}<span>The engine is switching — loads wait until it's done.</span></div>`;
+  }else if(m.eng!==engActive){
+    btn=`<button class="mbtn" disabled aria-describedby="why-${m.id}">Stage</button>`;state=`<span class="mstate off">off-engine</span>`;
+    note=`<div class="offeng" id="why-${m.id}">${I.lock}<span>Runs on the ${ENG[m.eng].name} engine — <button class="link" onclick="V.requestSwitch('${m.eng}')">switch engines</button> to load it.</span></div>`;
+  }else{
+    const res=m.eng==='flash'?true:m.resident;
+    btn=res?`<button class="mbtn" onclick="toast('Unloaded ${m.label}')">Unload</button>`:`<button class="mbtn stage" onclick="toast('Staged — preview shows what it evicts')">Stage</button>`;
+    state=`<span class="mstate ${res?'on':''}">${res?'resident':'available'}</span>`;
+  }
+  return`<div class="mrow${hl}" id="m-${m.id}"><div class="mtop"><div class="mname">${m.label}<span class="mmeta">${m.meta}</span></div><div class="mright">${btn}${state}</div></div>
+    <div class="mchips">${m.chips.map(c=>`<span>${c}</span>`).join('')}</div>${note}</div>`;
+}
+function llmScreen(){
+  const fl=S.effective==='flash'&&!switching();
+  const pk=(k,v)=>`<div class="pick"><span class="pk">${k}</span><span class="pv">${fl?`<s>${v}</s><span class="remap">→ Flash-Next (engine active)</span>`:v}</span></div>`;
+  const rows=V.groupModelsByEngine
+    ?['standard','flash'].map(e=>`<div class="mgroup"><span class="dot ${e===S.effective&&!switching()?'ok':'off'}"></span>${ENG[e].name} engine · ${switching()?'switching':e===S.effective?'serving':'stopped'}</div>${MODELS.filter(m=>m.eng===e).map(modelRow).join('')}`).join('')
+    :MODELS.map(modelRow).join('');
+  return`<div class="sect">Task models</div>
+    <div class="lcard"><div class="lhead"><span class="lt">Per-task picks</span><span class="lr">local · cloud</span></div>
+      ${pk('Agent','gpt-oss-120b')}${pk('Ingest','Qwen3.8-27B')}${pk('Research','gpt-oss-120b')}${pk('Vision','Qwen3.8-27B')}</div>
+    <div class="sect">On-box models</div>
+    <div class="lcard"><div class="lhead"><span class="lt">Local models</span><span class="lr"><span class="dot ${switching()?'warn live':'ok'}"></span>${switching()?'engine switching':`${ENG[S.effective].name} engine`}</span></div>
+      <div class="ltabs"><span class="on">All</span><span>Resident</span><span>Available</span></div>${rows}</div>
+    <p class="note" style="padding:2px 4px">Picks are never rewritten — while Flash-Next serves, every local pick runs on it and comes back when you switch to Standard.</p>`;
+}
+
+// ---- home (to prove the banner rides every screen) ----
+function homeScreen(){
+  return`<div class="seg3"><span>Entry</span><span>Research</span><span class="on">Full Brain</span></div>
+    <div class="bubble">What did the cardiologist say about the beta blocker dose?<small>Full Brain · 08:12</small></div>
+    <div class="bubble">Summarise this week's notes on the garage build<small>Full Brain · yesterday</small></div>
+    <div class="statusline"><span class="dot ${switching()?'warn live':'ok'}"></span>${switching()?'Local engine switching — local answers wait; cloud models still answer':`Local answers on ${ENG[S.effective].name}`}</div>
+    <div class="composer"><div class="ph">Ask anything about your notes…</div><div class="cf"><span class="dot ok"></span>Full Brain · reads only</div></div>`;
+}
+
+// ---- modal + toast ----
+function renderModal(){
+  const m=S.modal;const scrim=document.getElementById('scrim'),sh=document.getElementById('sheet'),dg=document.getElementById('dialog');
+  scrim.classList.toggle('show',!!m);
+  sh.classList.toggle('show',!!m&&m.kind==='sheet');dg.classList.toggle('show',!!m&&m.kind==='dialog');
+  if(m&&m.kind==='sheet')sh.innerHTML=`<div class="grip"></div>${m.html}`;
+  if(m&&m.kind==='dialog')dg.innerHTML=m.html;
+}
+function closeModal(){S.modal=null;render();}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&S.modal)closeModal();});
+
+function render(){
+  document.documentElement.dataset.theme=S.theme;
+  renderSim();renderTop();renderBanner();
+  const scr=document.getElementById('screen');const y=scr.scrollTop;
+  scr.innerHTML=S.screen==='ops'?V.ops():S.screen==='llm'?llmScreen():homeScreen();
+  scr.scrollTop=y;renderModal();
+}
+
+// ===== variant B =====
+const V={
+  groupModelsByEngine:true,
+  requestSwitch(to){
+    if(switching())return goEngine();
+    if(to===S.effective&&S.desired===S.effective)return;
+    const r=blockedReason(to);if(r){goEngine();toast(r.text);return;}
+    S.screen='ops';S.open.engine=true;
+    const from=S.effective,toF=to==='flash';
+    S.modal={kind:'dialog',html:`<h3>Make ${ENG[to].name} the active engine?</h3>
+      <p>Local AI pauses for ${ENG[to].eta} while ${ENG[from].name} stops and ${ENG[to].name} loads — if its smoke test fails, ${ENG[from].name} comes back on its own.</p>
+      <div class="dacts"><button class="btn secondary" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="startSwitch('${to}')">Switch</button></div>`};
+    render();
+  },
+  ops(){return opsToprow()+systemCard()+engineCardB()+groupCards();},
+};
+function tileState(e){
+  // badge text/tone + footer for one engine card
+  if(switching()){
+    const st=curStage();
+    if(e===S.from){
+      if(!st.rb){
+        if(st.k==='drain')return{b:'draining',t:'warn',live:1,f:'finishing 2 calls'};
+        if(st.k==='stop')return{b:'stopping',t:'warn',live:1,f:'unloading'};
+        return{b:'stopped',t:'off',f:'memory released'};
+      }
+      if(st.k==='start')return{b:'restarting',t:'warn',live:1,f:stageDetail(st)};
+      if(st.k==='smoke')return{b:'smoke test',t:'warn',live:1,f:'checking it came back'};
+      return{b:'stopped',t:'off',f:'waiting to restart'};
+    }
+    if(!st.rb){
+      if(st.k==='start')return{b:'starting',t:'warn',live:1,f:stageDetail(st)};
+      if(st.k==='smoke')return{b:'smoke test',t:'warn',live:1,f:'text · image · tool call'};
+      return{b:'waiting',t:'off',f:'starts after memory settles'};
+    }
+    return{b:'failed',t:'err',f:st.k==='stop'?'stopping':'stopped'};
+  }
+  if(e==='flash'&&!S.installed)return{b:'not installed',t:'off',f:`<button class="link" onclick="event.stopPropagation();S.screen='llm';S.highlight='fn';render()">Install in On-box models</button>`,locked:1};
+  if(e===S.effective)return{b:'serving',t:'ok',f:`since ${S.since||'00:24'}`};
+  const r=blockedReason(e);
+  if(r)return{b:'stopped',t:'off',f:`${I.lock}waits for the ${S.oneshot==='update'?'update':'perplexity test'}`,locked:1};
+  if(S.desired===e)return{b:'selected',t:'warn',f:'not serving — tap to retry'};
+  if(S.result&&!S.result.ok&&S.result.target===e)return{b:'failed smoke',t:'err',f:'tap to try again'};
+  return{b:'stopped',t:'off',f:'Tap to make active'};
+}
+function tile(e){
+  const s=tileState(e),eng=ENG[e];
+  const active=!switching()&&e===S.effective;
+  const target=switching()&&((S.target===e&&!S.rolledBack)||(S.from===e&&S.rolledBack));
+  const failed=(switching()&&S.rolledBack&&S.target===e)||(!switching()&&S.result&&!S.result.ok&&S.result.target===e&&S.effective!==e);
+  const wanted=!switching()&&S.desired===e&&S.desired!==S.effective;
+  const live=active||(switching()&&((curStage().eng===e)&&['start','smoke'].includes(curStage().k)));
+  const g=switching()?(curStage().eng===e?gttNow():0.0):active?eng.gtt:0;
+  const figs=live||(switching()&&g>0.2)
+    ?`<div class="et-figs"><div><b>${g.toFixed(1)}</b> GiB GTT</div><div><b>${active?eng.tps.toFixed(1):'—'}</b> tok/s</div></div>`
+    :`<div class="et-figs exp"><div>needs <b>~${Math.round(eng.gtt)}</b> GiB</div><div>about <b>${Math.round(eng.tps)}</b> tok/s</div></div>`;
+  const cls=['etile',active?'active':'',target?'target':'',failed?'failed':'',wanted?'wanted':'',s.locked?'locked':''].join(' ');
+  return`<div class="${cls}" role="button" tabindex="0" aria-pressed="${active}" ${switching()||s.locked?'aria-disabled="true"':''} onclick="tapTile('${e}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();tapTile('${e}')}">
+    <span><span class="badge ${s.t}">${s.live?'<span class="dot warn live"></span>':''}${s.b}</span></span>
+    <span class="et-name">${eng.name}</span><span class="et-sub">${eng.blurb}</span>${figs}
+    <span class="et-foot">${s.f}</span></div>`;
+}
+function tapTile(e){
+  if(switching()){toast('Switching — the engine cards follow along');return;}
+  if(e===S.effective&&S.desired===S.effective){toast(`${ENG[e].name} is already serving`);return;}
+  if(e==='flash'&&!S.installed){S.screen='llm';S.highlight='fn';render();return;}
+  const r=blockedReason(e);if(r){toast(r.text);return;}
+  V.requestSwitch(e);
+}
+function stepper(){
+  const st=curStage();
+  const list=S.stages.filter(s=>!!s.rb===!!st.rb);
+  const short={drain:'Drain',stop:'Stop',settle:'Settle',start:'Start',smoke:'Smoke'};
+  const n=list.indexOf(st)+1;
+  const head=st.rb?`<div class="rbtag">${I.undo}Smoke test failed — rolling back to ${ENG[S.from].name}</div>`:'';
+  const smoke=st.k==='smoke'?smokeLine({checks:smokeChecks(st)}):'';
+  return`${head}<div class="hstep">${list.map(s=>`<div class="hs ${s.status}"><i></i><span>${short[s.k]}</span></div>`).join('')}</div>
+    <div class="hcur" aria-live="polite"><b style="font-weight:500">${n}/${list.length} · ${st.label}</b><span>${stageDetail(st)}</span><span class="el">${dur(elapsedReal())}</span></div>${smoke}
+    ${st.k==='drain'?`<button class="btn ghost wide" onclick="cancelSwitch()">Cancel — nothing has stopped yet</button>`:''}`;
+}
+function notices(){
+  if(switching())return'';
+  const r=S.result;let out='';
+  if(r&&!r.ok)out+=`<div class="notice err">${I.undo}<div class="nt">${ENG[r.target].name} failed its smoke test at ${r.at} — ${ENG[r.back].name} is serving again.<span style="display:block;margin-top:4px">Reason: ${r.reason}.</span>
+      <div class="acts"><button class="btn secondary" onclick="V.requestSwitch('${r.target}')">Try again</button><button class="btn ghost" onclick="S.open.log=true;render()">Show log</button></div></div></div>`;
+  else if(r&&r.ok)out+=`<div class="notice ok">${I.ok}<div class="nt">${ENG[r.target].name} is serving <span>— smoke passed, switched in ${dur(r.took)}.</span></div></div>`;
+  if(S.desired!==S.effective)out+=`<div class="notice warn">${I.alert}<div class="nt">${ENG[S.desired].name} selected · ${ENG[S.effective].name} serving <span>(fallback: ${S.fallback}). The next update tries again.</span>
+      <div class="acts"><button class="btn secondary" onclick="V.requestSwitch('${S.desired}')">Retry ${ENG[S.desired].name}</button><button class="btn ghost" onclick="S.desired=S.effective;S.fallback=null;render()">Keep ${ENG[S.effective].name}</button></div></div></div>`;
+  const b=blockedReason(OTHER[S.effective]);
+  if(b&&b.k==='oneshot')out+=`<div class="notice off">${I.lock}<div class="nt">${b.text}</div></div>`;
+  return out;
+}
+function engineCardB(){
+  const attn=switching()||(S.result&&!S.result.ok)||S.desired!==S.effective;if(attn)S.open.engine=true;
+  const pill=e=>{const on=!switching()&&S.effective===e;return`<span class="dot ${on?'ok':switching()&&S.target===e?'warn live':'hollow'}"></span>${on?`<b>${ENG[e].name}</b>`:ENG[e].name}`;};
+  const g=gttNow(),pct=g/GTT_TOTAL*100,sm=S.lastSmoke;
+  const body=`<div class="bbody">
+      <div class="egrid">${tile('standard')}${tile('flash')}${switching()?`<span class="eswap" aria-hidden="true">${I.arrow.replace('<svg','<svg style="transform:'+((S.target==='flash')!==S.rolledBack?'none':'scaleX(-1)')+'"')}</span>`:''}</div>
+      ${switching()?stepper():''}${notices()}
+      <div class="memrow"><div class="ml"><div class="vv num">${g.toFixed(1)} GiB <small>GTT used of ${GTT_TOTAL} · one engine at a time</small></div>
+        <div class="meter"><i class="${meterCls(pct)}" style="width:${pct}%"></i></div></div><div class="vend num" style="font-size:12px;color:var(--text-2);text-align:right">host free<br/>${freeNow().toFixed(1)} GiB</div></div>
+    </div>
+    <div class="lrow" style="align-items:flex-start"><span class="lk">Last smoke</span><div style="flex:1;min-width:0"><div class="vv" style="font-size:13px">${sm.ok?'passed':'failed'} <small>· ${ENG[sm.engine].name} · ${sm.at}</small></div><div style="margin-top:6px">${smokeLine(sm)}</div></div></div>
+    <button class="chead" style="border-top:1px solid var(--border)" aria-expanded="${S.open.log}" onclick="S.open.log=!S.open.log;render()"><span class="cname" style="font-weight:500;color:var(--text-2);font-size:13px">Engine log</span><span class="summary">${S.log.length} lines</span><span class="caret">${I.caret}</span></button>
+    ${S.open.log?`<div style="padding:0 14px 14px">${logBlock(8)}<button class="btn ghost" style="margin-top:6px" onclick="copyLog()">Copy log</button></div>`:''}`;
+  return card('engine','Local engine',`${pill('standard')}<span style="color:var(--text-3)">·</span>${pill('flash')}`,body,{anchor:'engine'});
+}
+
+render();
+</script>
+</body>
+</html>

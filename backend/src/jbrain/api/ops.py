@@ -6,6 +6,7 @@ only the supervisor's fixed command set.
 """
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict
@@ -26,11 +27,13 @@ from jbrain.agent.prompt_capture import prompt_for
 from jbrain.agent.runlog import RunLogReader
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
+from jbrain.api.engine import refuse_while_switching
 from jbrain.api.settings import get_settings_store
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
 from jbrain.host_settings import check_host_settings as host_settings_check
+from jbrain.llm.engine import SERVICE as _ENGINE_SERVICE
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.tasks.schedule import FREQS
 from jbrain.usage import usage_summary
@@ -345,6 +348,20 @@ async def host_settings() -> dict[str, object]:
     }
 
 
+def _pass_refusal(resp: httpx.Response) -> None:
+    """The supervisor's 409 (the one-engine guard, a switch hold, a one-shot) with its own
+    sentence, rather than a bare 500 from raise_for_status."""
+    if resp.status_code == 409:
+        detail = "refused by the supervisor"
+        with contextlib.suppress(ValueError):
+            detail = str(resp.json().get("detail", detail))
+        raise HTTPException(status_code=409, detail=detail)
+
+
+# Engine containers: starting or restarting one is refused while an engine switch runs.
+ENGINE_SERVICES = frozenset(_ENGINE_SERVICE.values())
+
+
 class RestartRequest(BaseModel):
     service: str
 
@@ -353,11 +370,16 @@ class RestartRequest(BaseModel):
 async def restart(
     body: RestartRequest, request: Request, settings: SettingsDep
 ) -> dict[str, object]:
+    # `api` too: the switch runs in this process, so restarting it mid-switch would end it
+    # half-done (the boot reset then cleans up, but nothing finishes the switch).
+    if body.service in ("all", "api") or body.service in ENGINE_SERVICES:
+        refuse_while_switching(request, f"restart {body.service}")
     resp = await _client(request).post(
         "/restart", json={"service": body.service}, headers=_headers(settings)
     )
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="unknown service")
+    _pass_refusal(resp)
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())
 
@@ -373,6 +395,7 @@ async def _lifecycle(
     )
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="unknown service")
+    _pass_refusal(resp)
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())
 
@@ -381,6 +404,8 @@ async def _lifecycle(
 async def start_service(
     body: RestartRequest, request: Request, settings: SettingsDep
 ) -> dict[str, object]:
+    if body.service in ENGINE_SERVICES:
+        refuse_while_switching(request, f"start {body.service}")
     return await _lifecycle("start", body.service, request, settings)
 
 
@@ -1125,6 +1150,7 @@ async def llm_usage(
 
 @router.post("/update", status_code=202)
 async def start_update(request: Request, settings: SettingsDep) -> dict[str, object]:
+    refuse_while_switching(request, "update")
     resp = await _client(request).post("/update", headers=_headers(settings))
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail="update already running")
@@ -1155,6 +1181,7 @@ class RebuildRequest(BaseModel):
 async def start_rebuild(
     body: RebuildRequest, request: Request, settings: SettingsDep
 ) -> dict[str, object]:
+    refuse_while_switching(request, f"rebuild {body.service}")
     resp = await _client(request).post(
         "/rebuild", json={"service": body.service}, headers=_headers(settings)
     )
@@ -1184,6 +1211,7 @@ async def rebuild_status(request: Request, settings: SettingsDep) -> dict[str, o
 
 @router.post("/local-provision", status_code=202)
 async def start_local_provision(request: Request, settings: SettingsDep) -> dict[str, object]:
+    refuse_while_switching(request, "download models")
     resp = await _client(request).post("/provision", headers=_headers(settings))
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail="another operation is running")
@@ -1212,6 +1240,7 @@ def _shelf(request: Request) -> BackupShelf:
 
 @router.post("/export", status_code=202)
 async def start_export(request: Request, settings: SettingsDep) -> dict[str, object]:
+    refuse_while_switching(request, "export")
     resp = await _client(request).post("/export", headers=_headers(settings))
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail="another operation is running")
@@ -1264,6 +1293,7 @@ class ImportStartRequest(BaseModel):
 async def start_import(
     body: ImportStartRequest, request: Request, settings: SettingsDep
 ) -> dict[str, object]:
+    refuse_while_switching(request, "import")
     resp = await _client(request).post(
         "/import", json={"archive": body.archive}, headers=_headers(settings)
     )
@@ -1292,6 +1322,7 @@ async def import_status(request: Request, settings: SettingsDep) -> dict[str, ob
 
 @router.post("/reset", status_code=202)
 async def start_reset(request: Request, settings: SettingsDep) -> dict[str, object]:
+    refuse_while_switching(request, "reset")
     resp = await _client(request).post("/reset", headers=_headers(settings))
     if resp.status_code == 409:
         raise HTTPException(status_code=409, detail="another operation is running")

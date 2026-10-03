@@ -34,6 +34,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
+from jbrain import queue
 from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, local_catalog
@@ -69,18 +70,51 @@ def _authorize(request: Request) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
+async def _engine(request: Request) -> engines.Engine:
+    active = getattr(request.app.state, "active_engine", None)
+    return await active.get() if active is not None else engines.DEFAULT_ENGINE
+
+
 async def _models(request: Request) -> tuple[local_catalog.LocalModel, ...]:
     """The jcode-capable models of the ACTIVE engine, read per request (TTL-cached on
     app.state). A list fixed to the standard engine would offer gpt-oss after a switch to
     Flash-Next, and residency then refuses every completion for it."""
     settings = request.app.state.settings
-    active = getattr(request.app.state, "active_engine", None)
-    engine = await active.get() if active is not None else engines.DEFAULT_ENGINE
     return local_catalog.jcode_models(
         getattr(settings, "local_llm_enabled", False),
         getattr(settings, "local_models", []),
-        engine,
+        await _engine(request),
     )
+
+
+async def _served_on_engine(
+    request: Request, requested: str, models: tuple[local_catalog.LocalModel, ...]
+) -> str:
+    """The model a sandbox request actually runs on (FLASH_NEXT_ENGINE_PLAN §4c).
+
+    The sandbox's grok config was rendered for whichever engine served when the session
+    started, so after a switch it keeps naming the other engine's model. While Flash-Next
+    serves, any of those names runs on Flash-Next; while Standard serves, a Flash-Next name
+    falls back to the configured jcode model (else the first offered one) — never a 400 for a
+    model the owner picked in good faith. A name outside the catalog is returned unchanged
+    and refused by the allow-list."""
+    offered = {m.served_model for m in models}
+    if requested in offered or local_catalog.get_by_served(requested) is None:
+        return requested
+    mapped = local_catalog.remap_for_engine(requested, await _engine(request))
+    if mapped is not None:
+        return mapped
+    settings = request.app.state.settings
+    store = getattr(request.app.state, "settings_store", None)
+    configured = ""
+    if store is not None:
+        with contextlib.suppress(Exception):
+            configured = await store.jcode_model(queue.SYSTEM_CTX)
+    configured = configured or getattr(settings, "jcode_model", "")
+    picked = local_catalog.get(configured)
+    if picked is not None and picked.served_model in offered:
+        return picked.served_model
+    return models[0].served_model if models else requested
 
 
 # Short, unique `/model` handles for the sandbox's grok CLI, keyed by served name. grok's
@@ -152,9 +186,11 @@ async def chat_completions(request: Request) -> Response:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
 
-    served = str(payload.get("model") or "")
-    if served not in {m.served_model for m in await _models(request)}:
+    models = await _models(request)
+    served = await _served_on_engine(request, str(payload.get("model") or ""), models)
+    if served not in {m.served_model for m in models}:
         raise HTTPException(status_code=400, detail=f"unknown or unavailable model: {served!r}")
+    payload["model"] = served
 
     residency = getattr(request.app.state, "residency", None)
     # One model loading/serving at a time on the box: hold the swap lock across BOTH the
@@ -179,7 +215,11 @@ async def chat_completions(request: Request) -> Response:
                 # fail this swap than crash the box loading a model that can't fit.
                 if residency is not None:
                     try:
-                        await residency.ensure_room(served)
+                        # Send what was ADMITTED: a switch between our engine read and
+                        # residency's would otherwise admit one model and send another.
+                        admitted = await residency.ensure_room(served)
+                        if admitted:
+                            payload["model"] = admitted
                     except (ResidencyError, gpu_guard.GpuBudgetError):
                         # GpuBudgetError joins ResidencyError here, and the omission was the
                         # worst kind: it is not a subclass, so it fell to the blanket arm,

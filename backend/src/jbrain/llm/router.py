@@ -23,6 +23,7 @@ import structlog
 
 from jbrain import box_events
 from jbrain.config import Settings
+from jbrain.llm import engine as engines
 from jbrain.llm import kv_prefix as kv_prefix_mod
 from jbrain.llm import local_catalog, model_sampling, prefill
 from jbrain.llm.anthropic import AnthropicClient
@@ -198,7 +199,21 @@ JSON_NUDGE = (
 )
 
 
-def context_window_for_spec(spec: str) -> int:
+def spec_on_engine(spec: str, engine: engines.Engine, fallback_spec: str) -> str:
+    """The spec a stored/default `spec` actually runs as on `engine` — the module-level twin
+    of `LlmRouter._on_engine` for callers that resolve a spec without a router (the chat
+    capabilities read). A local spec of the other engine becomes the active engine's sole
+    model, or `fallback_spec` (the task default) when it has none."""
+    provider, _, model = spec.partition(":")
+    if provider != local_catalog.LOCAL_PROVIDER:
+        return spec
+    mapped = local_catalog.remap_for_engine(model, engine)
+    if mapped is not None:
+        return f"{provider}:{mapped}"
+    return fallback_spec
+
+
+def context_window_for_spec(spec: str, engine: engines.Engine) -> int:
     """The total context window for a raw "provider:model" spec, WITHOUT resolving
     live overrides — the spec-based twin of LlmRouter.context_window. The capabilities
     endpoint uses it to seed the composer's context meter before the first turn, so the
@@ -206,10 +221,13 @@ def context_window_for_spec(spec: str) -> int:
     A local window comes from the catalog default; a live per-model `-c` override only
     takes effect once a turn actually streams (the meter corrects itself then). Cloud
     windows come from CONTEXT_WINDOWS, with the conservative default for an unlisted
-    model so the meter degrades gracefully rather than misreports."""
+    model so the meter degrades gracefully rather than misreports.
+
+    `engine` is the active engine, explicit because this is module-level: a local spec of
+    the other engine reads as the model it is remapped onto (plan §4c)."""
     provider, _, model = spec.partition(":")
     if provider == "local":
-        return local_catalog.context_window(model)
+        return local_catalog.context_window(local_catalog.remap_for_engine(model, engine) or model)
     return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
 
 
@@ -298,7 +316,7 @@ class LocalAdmitter(Protocol):
     coordinator on a cloud-only box — so a local load can never bypass admission and
     co-load past the unified-memory budget."""
 
-    async def ensure_room(self, served_model: str) -> None: ...
+    async def ensure_room(self, served_model: str) -> str | None: ...
 
 
 def _reading(messages: Sequence[LlmMessage]) -> str:
@@ -380,8 +398,19 @@ class LlmRouter:
         local_enabled: bool = True,
         slots_probe: prefill.SlotsReader | None = None,
         kv_prefix: "kv_prefix_mod.KvPrefixStore | None" = None,
+        engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
+        admission_gate: Callable[[], Awaitable[bool]] | None = None,
     ):
         self._clients = clients
+        # The EFFECTIVE on-box engine, read per resolution (TTL-cached by the caller's
+        # ActiveEngine). While Flash-Next serves, every `local:*` route is remapped onto it;
+        # while Standard serves, a Flash-Next pick falls back to the task's own route
+        # (FLASH_NEXT_ENGINE_PLAN §4c). None -> no remap (tests, cloud-only).
+        self._engine_loader = engine_loader
+        # The cross-process local-admission gate (jbrain.llm.drain): a local call waits while
+        # an engine switch drains, then RE-RESOLVES, because the engine may have changed under
+        # it. None -> always open.
+        self._admission_gate = admission_gate
         self._tasks = tasks
         # The disk layer for the agent-turn prefix (jbrain.llm.kv_prefix). The router is
         # where a turn is late enough to know its model and early enough to fix the cache:
@@ -501,11 +530,34 @@ class LlmRouter:
             fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
             self._kv_prefix.note_prefix_used(model, fingerprint)
 
-    async def _admit_local(self, provider: str, model: str) -> None:
+    async def _admit_local(self, provider: str, model: str) -> str:
+        """Admit a local model; the served name residency actually admitted (it differs only
+        when the engine changed under the call — a remap). None from a fake means "as asked"."""
         if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
-            await self._residency.ensure_room(model)
+            return await self._residency.ensure_room(model) or model
+        return model
 
-    async def admit_local_load(self, served_model: str) -> None:
+    async def _admitted(
+        self,
+        task: str,
+        strength: str | None,
+        spec_override: str | None,
+        resolved: tuple[str, str, str | None],
+    ) -> tuple[str, str, str | None]:
+        """Admit the resolved route and return the one to SEND. When residency admitted a
+        different model than the router resolved (the engine switched between the two reads),
+        resolve again — the route now sees the same engine — and if the two still disagree, send
+        the admitted name with the effort re-gated on it. Never send one name and admit another."""
+        provider, model, effort = resolved
+        admitted = await self._admit_local(provider, model)
+        if admitted == model:
+            return resolved
+        again = await self._resolve_live(task, strength, spec_override)
+        if again[:2] == (provider, admitted):
+            return again
+        return provider, admitted, effort if _reasoning_capable(provider, admitted) else None
+
+    async def admit_local_load(self, served_model: str) -> str:
         """Make room for a local model a CALLER is about to load itself, through the same
         admission a routed completion gets.
 
@@ -513,8 +565,9 @@ class LlmRouter:
         (a cold model has no slots to restore into) and so cannot let the priming completion be
         what loads it. Without this it would either skip admission — co-loading past the
         unified-memory budget, on a box that hard-locks when that happens — or reach into
-        `_admit_local`, which is the same bypass with extra steps."""
-        await self._admit_local(local_catalog.LOCAL_PROVIDER, served_model)
+        `_admit_local`, which is the same bypass with extra steps. Returns the served name
+        admitted, which is the one to load."""
+        return await self._admit_local(local_catalog.LOCAL_PROVIDER, served_model)
 
     def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
         """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
@@ -546,7 +599,41 @@ class LlmRouter:
             except Exception:  # noqa: BLE001 — a settings read hiccup must not wedge the keeper
                 overrides = {}
         provider, model = self._followed_primary_model(overrides)
+        provider, model = await self._on_engine(_PRIMARY_MODEL_TASK, None, provider, model)
         return model if provider == local_catalog.LOCAL_PROVIDER else None
+
+    async def _active_engine(self) -> engines.Engine | None:
+        if self._engine_loader is None:
+            return None
+        try:
+            return await self._engine_loader()
+        except Exception:  # noqa: BLE001 — a settings hiccup reads as the engine every box runs
+            return engines.DEFAULT_ENGINE
+
+    async def _on_engine(
+        self, task: str, strength: str | None, provider: str, model: str
+    ) -> tuple[str, str]:
+        """The (provider, model) a resolved route actually runs on with the active engine.
+
+        A local route of the other engine is remapped onto the active engine's sole model
+        (Flash-Next on: everything local goes to it). When the active engine has no sole model
+        (Standard on, Flash-Next picked) the task falls back to its STATIC route — env pin,
+        tier or default — never refused. Stored picks are untouched; this is per call."""
+        if provider != local_catalog.LOCAL_PROVIDER:
+            return provider, model
+        active = await self._active_engine()
+        if active is None:
+            return provider, model
+        mapped = local_catalog.remap_for_engine(model, active)
+        if mapped is not None:
+            return provider, mapped
+        fallback_provider, fallback_model = self._resolve(task, strength)
+        if fallback_provider != local_catalog.LOCAL_PROVIDER:
+            return fallback_provider, fallback_model
+        fallback_mapped = local_catalog.remap_for_engine(fallback_model, active)
+        # Even the static route is the other engine's: leave it, and residency refuses it with
+        # the "switch engines" sentence rather than this guessing a model.
+        return provider, fallback_mapped or model
 
     def _followed_primary_model(
         self, overrides: Mapping[str, Mapping[str, str]]
@@ -640,9 +727,24 @@ class LlmRouter:
                     log.warning("llm.local_call_override_ignored", task=task, spec=spec_override)
                 else:
                     provider, model = sp, sm
+        # After every selector, so a stored pick, an env pin and a per-call override are all
+        # remapped alike, and BEFORE the effort gate, so the effort is judged on the model
+        # that will actually run (Flash-Next reasons; a remapped vision model did not).
+        provider, model = await self._on_engine(task, strength, provider, model)
         if not _reasoning_capable(provider, model):
             reasoning_effort = None
         return provider, model, reasoning_effort
+
+    async def _route(
+        self, task: str, strength: str | None, spec_override: str | None
+    ) -> tuple[str, str, str | None]:
+        """`_resolve_live`, held at the local-admission gate. A local call that had to wait
+        for an engine switch resolves again: the engine it resolved against may be gone."""
+        resolved = await self._resolve_live(task, strength, spec_override)
+        gate = self._admission_gate
+        if resolved[0] == local_catalog.LOCAL_PROVIDER and gate is not None and await gate():
+            resolved = await self._resolve_live(task, strength, spec_override)
+        return resolved
 
     async def context_window(
         self, task: str, strength: str | None = None, spec_override: str | None = None
@@ -765,12 +867,13 @@ class LlmRouter:
         # agent model) — same precedence as in converse_stream, so a background
         # completion (e.g. the research-report titler) can run on the exact model the chat
         # turn will use, no separate route and no model swap.
-        provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
+        provider, model, reasoning_effort = await self._admitted(
+            task, strength, spec_override, await self._route(task, strength, spec_override)
+        )
         # `sampling` is the prompt's per-task override (its `.prompt` `config: sampling:`
         # block); it merges over the resolved model's recommended defaults.
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        await self._admit_local(provider, model)
         start = time.perf_counter()
         result = await client.complete(
             model=model,
@@ -842,12 +945,13 @@ class LlmRouter:
         `spec_override` steers the MODEL for this turn (the omnibox's per-conversation
         pick), outranking the resolved route; a malformed/can't-serve override is
         ignored."""
-        provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
+        provider, model, reasoning_effort = await self._admitted(
+            task, strength, spec_override, await self._route(task, strength, spec_override)
+        )
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        await self._admit_local(provider, model)
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         start = time.perf_counter()
         turn = await client.converse(
@@ -903,12 +1007,13 @@ class LlmRouter:
         model's reasoning for this turn (gated to reasoning-capable models, like
         `converse`); `spec_override` steers the MODEL (the per-conversation pick),
         outranking the resolved route."""
-        provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
+        provider, model, reasoning_effort = await self._admitted(
+            task, strength, spec_override, await self._route(task, strength, spec_override)
+        )
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        await self._admit_local(provider, model)
         final: LlmTurn | None = None
         first_part = True
         start = time.perf_counter()
@@ -1052,6 +1157,8 @@ def build_router(
     residency: LocalAdmitter,
     slots_probe: prefill.SlotsReader | None = None,
     kv_prefix: "kv_prefix_mod.KvPrefixStore | None" = None,
+    engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
+    admission_gate: Callable[[], Awaitable[bool]] | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
@@ -1077,7 +1184,11 @@ def build_router(
 
     `slots_probe` is the gateway's `/slots` reader, and is what turns the prefill diagnostic
     on (jbrain.llm.prefill). Optional in the way admission is NOT: this one only reads,
-    so a caller that omits it loses a log line, not the box."""
+    so a caller that omits it loses a log line, not the box.
+
+    `engine_loader` (the process's ActiveEngine) turns on the engine remap (plan §4c) and
+    `admission_gate` the engine switch's drain (jbrain.llm.drain); both production callers
+    pass the same instances their residency coordinator reads."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -1104,4 +1215,6 @@ def build_router(
         slots_probe=slots_probe,
         local_enabled=settings.local_llm_enabled,
         kv_prefix=kv_prefix,
+        engine_loader=engine_loader,
+        admission_gate=admission_gate,
     )

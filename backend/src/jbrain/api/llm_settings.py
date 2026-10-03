@@ -29,8 +29,15 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb, read_page_cache_gb
+from jbrain.llm import (
+    drain,
+    gpu_guard,
+    launch_flags,
+    llama_swap_config,
+    local_catalog,
+    local_weights,
+)
 from jbrain.llm import engine as engines
-from jbrain.llm import gpu_guard, launch_flags, llama_swap_config, local_catalog, local_weights
 from jbrain.llm import kv_prefix as kv_prefix_mod
 from jbrain.llm import router as llm_router
 from jbrain.llm.errors import LlmError
@@ -177,6 +184,15 @@ class TaskInfo(BaseModel):
     # Effort for a reasoning-capable provider (Grok or a local gpt-oss/GLM); null
     # for non-reasoning providers.
     reasoning_effort: str | None
+    # The "provider:model" the task actually RUNS on with the active engine. Equal to the pick
+    # unless the engine remaps it (FLASH_NEXT_ENGINE_PLAN §4c): every local pick runs on
+    # Flash-Next while it serves, and a Flash-Next pick runs on the task default while
+    # Standard serves. The stored pick is never rewritten; this is what to mark beside it.
+    effective_spec: str = ""
+    # True when `effective_spec` differs from the pick, with the owner's sentence for it
+    # ("→ Flash-Next (engine active)").
+    remapped: bool = False
+    remap_note: str | None = None
 
 
 class LocalModelInfo(BaseModel):
@@ -264,6 +280,11 @@ class LocalModelInfo(BaseModel):
     # not running cannot be loaded or picked; the drawer still lists it so its weights can be
     # installed and removed from the PWA (FLASH_NEXT_ENGINE_PLAN §5).
     engine: str = engines.STANDARD
+    # Whether the Load button can work RIGHT NOW, and if not, the sentence saying why — the
+    # same text the load route's 409 carries ("Runs on the Flash-Next engine — switch engines
+    # to load it"), so the button is disabled with a reason instead of failing silently.
+    loadable_now: bool = True
+    blocked_reason: str | None = None
     # Keep this model resident: the coordinator evicts pinned models LAST. The answer to a
     # 4.3 GB pet model displacing a 59 GB assistant, which no ranking by size could have got
     # right — see `LLM_LOCAL_KEEP_LOADED_KEY`. A last resort, not a lock: a model big enough
@@ -440,9 +461,44 @@ class LlmSettingsPut(BaseModel):
     tasks: dict[str, TaskOverrideIn]
 
 
-def _effective(settings: Settings, task: str, overrides: dict[str, dict[str, str]]) -> TaskInfo:
+def _remap_note(pick: str, runs: str, engine: engines.Engine) -> str | None:
+    """The owner's sentence for a pick the active engine remaps, or None when it runs as is."""
+    if runs == pick:
+        return None
+    if engine == engines.FLASH_NEXT:
+        return f"→ {engines.LABEL[engine]} (engine active)"
+    return f"→ task default ({engines.LABEL[engines.FLASH_NEXT]} is off)"
+
+
+def _effective(
+    settings: Settings,
+    task: str,
+    overrides: dict[str, dict[str, str]],
+    engine: engines.Engine = engines.STANDARD,
+) -> TaskInfo:
     """The EFFECTIVE provider/effort for a task after merging stored overrides
-    over the task default — the same precedence the router applies."""
+    over the task default — the same precedence the router applies — plus the model it
+    actually runs on with `engine` serving (the router's per-call remap)."""
+    info = _picked(settings, task, overrides)
+    pick = _picked_spec(task, overrides)
+    runs = llm_router.spec_on_engine(pick, engine, TASK_DEFAULTS[task])
+    note = _remap_note(pick, runs, engine)
+    return info.model_copy(
+        update={"effective_spec": runs, "remapped": note is not None, "remap_note": note}
+    )
+
+
+def _picked_spec(task: str, overrides: dict[str, dict[str, str]]) -> str:
+    entry = overrides.get(task) or {}
+    spec = entry.get("spec")
+    if spec is None and task in _FOLLOW_PRIMARY_MODEL:
+        agent_entry = overrides.get(_PRIMARY_MODEL_TASK) or {}
+        spec = agent_entry.get("spec") or TASK_DEFAULTS[_PRIMARY_MODEL_TASK]
+    return spec or TASK_DEFAULTS[task]
+
+
+def _picked(settings: Settings, task: str, overrides: dict[str, dict[str, str]]) -> TaskInfo:
+    """The pick itself (provider id + effort), as stored."""
     entry = overrides.get(task) or {}
     spec = entry.get("spec")
     if spec is None and task in _FOLLOW_PRIMARY_MODEL:
@@ -494,6 +550,7 @@ async def _snapshot(
     removing = set(await store.llm_local_remove_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
     engine = await store.llm_local_engine_effective(ctx)
+    switching = drain.closure_from(await store.llm_local_admission(ctx), time.time()) is not None
     return LlmSettingsOut(
         providers=[
             ProviderInfo(
@@ -507,7 +564,7 @@ async def _snapshot(
         reasoning_efforts=list(REASONING_EFFORTS),
         reasoning_default=REASONING_DEFAULT,
         tasks=[
-            _effective(settings, task, overrides)
+            _effective(settings, task, overrides, engine)
             for task in TASK_DEFAULTS
             if task not in _HIDDEN_TASKS
         ],
@@ -524,6 +581,8 @@ async def _snapshot(
                 m.id in keep_loaded,
                 m.id in requested,
                 m.id in removing,
+                engine=engine,
+                switching=switching,
             )
             for m in local_catalog.CATALOG
         ],
@@ -608,6 +667,28 @@ def _host_memory(settings: Settings) -> HostMemory | None:
     return HostMemory(total_gb=total, used_gb=used, cache_gb=read_page_cache_gb())
 
 
+SWITCHING_REASON = "The local engine is switching — load it once the switch finishes"
+
+
+def _load_blocked(
+    settings: Settings,
+    m: local_catalog.LocalModel,
+    *,
+    enabled: bool,
+    available: bool,
+    engine: engines.Engine,
+) -> str | None:
+    """Why the Load button cannot work for `m` right now, or None. The engine sentence is
+    `engines.blocked_reason`, the same text `gateway_load`'s 409 carries."""
+    if not settings.local_llm_enabled:
+        return "Local hosting is off"
+    if not enabled:
+        return "Not installed on this box — install it first"
+    if not available:
+        return "Turned off — switch Available on to load it"
+    return engines.blocked_reason(engines.parse(m.engine), engine)
+
+
 def _local_model_info(
     settings: Settings,
     m: local_catalog.LocalModel,
@@ -619,10 +700,16 @@ def _local_model_info(
     keep_loaded: bool,
     requested: bool,
     removing: bool,
+    *,
+    engine: engines.Engine = engines.STANDARD,
+    switching: bool = False,
 ) -> LocalModelInfo:
     enabled = settings.local_llm_enabled and m.id in settings.local_models
     # Effective-available: provisioned AND not toggled off by the operator.
     available = enabled and not unavailable
+    blocked = _load_blocked(settings, m, enabled=enabled, available=available, engine=engine)
+    if blocked is None and switching:
+        blocked = SWITCHING_REASON
     override = windows.get(m.id)
     effective_window = override if override is not None else m.context_window
     # What the gateway will REALLY serve: a speculative model is pinned to one slot whatever
@@ -666,6 +753,8 @@ def _local_model_info(
         parallel_slots_max=slots_max(m),
         default_slots=m.default_slots,
         engine=m.engine,
+        loadable_now=blocked is None,
+        blocked_reason=blocked,
         keep_loaded=keep_loaded,
         # Only meaningful with a projector: a floor on a text-only entry would never be read,
         # so the drawer gets None and renders no control rather than a dead one.
@@ -1175,6 +1264,7 @@ async def load_local_model(
         registry=registry,
         settings_store=store,
         kv_prefix=getattr(request.app.state, "kv_prefix", None),
+        ctx=ctx_for(principal),
     )
 
 
@@ -1725,6 +1815,24 @@ async def apply_overrides(
     return await _snapshot(settings, store, ctx, gateway)
 
 
+async def _refuse_off_engine(
+    store: SqlSettingsStore | None,
+    model: local_catalog.LocalModel,
+    ctx: SessionContext | None,
+) -> None:
+    """409 with the snapshot's own `blocked_reason` sentence when `model` belongs to the engine
+    that is not serving — checked before admission, because the PWA showed a bare 409 when
+    Flash-Next's Load was pressed while Standard served."""
+    if store is None:
+        return
+    # Under the caller's own (owner) context; the system context only for a caller that has
+    # none (a CLI), which still reads as the owner's box.
+    active = await store.llm_local_engine_effective(ctx or queue.SYSTEM_CTX)
+    blocked = engines.blocked_reason(engines.parse(model.engine), active)
+    if blocked is not None:
+        raise HTTPException(status_code=409, detail=blocked)
+
+
 async def _admit_or_409(residency: ResidencyCoordinator | None, served_model: str) -> None:
     """Evict-to-fit before a deliberate operator warm — load or prime — or refuse with a 409.
 
@@ -1824,6 +1932,7 @@ async def gateway_load(
     registry: ToolRegistry | None = None,
     settings_store: SqlSettingsStore | None = None,
     kv_prefix: "KvPrefixStore | None" = None,
+    ctx: SessionContext | None = None,
 ) -> LoadedModelsOut:
     """Warm one provisioned model into the gateway. Shared by the owner screen and
     the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects.
@@ -1845,6 +1954,7 @@ async def gateway_load(
     ends and the reuse misses. `registry` supplies those schemas (via `jerv_prime_spec`);
     without it — a build with no agent wired — the warm falls back to persona-only."""
     model = _require_provisioned(settings, model_id)
+    await _refuse_off_engine(settings_store, model, ctx)
     await _admit_or_409(residency, model.served_model)
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None
@@ -2125,6 +2235,7 @@ async def gateway_prime(
     registry: ToolRegistry | None = None,
     settings_store: SqlSettingsStore | None = None,
     kv_prefix: "KvPrefixStore | None" = None,
+    ctx: SessionContext | None = None,
 ) -> dict[str, object]:
     """Prime one model with the real jerv prefix and TIME it — the measurement instrument for
     prefill experiments. `elapsed_ms` is the number that matters: a cold prefill and a
@@ -2134,6 +2245,7 @@ async def gateway_prime(
     Admits through `residency` first, for the same reason `gateway_load` does: this reached
     `gateway.load` with no eviction at all, and it is reachable only from the debug console."""
     model = _require_provisioned(settings, model_id)
+    await _refuse_off_engine(settings_store, model, ctx)
     await _admit_or_409(residency, model.served_model)
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None

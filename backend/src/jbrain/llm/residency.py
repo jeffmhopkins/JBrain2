@@ -289,6 +289,10 @@ class ResidencyWiring:
     # for it (FLASH_NEXT_ENGINE_PLAN §4d). None -> every catalog model is admissible, the
     # behaviour before a second engine existed.
     engine_loader: Callable[[], Awaitable[engines.Engine]] | None
+    # The cross-process local-admission gate (`jbrain.llm.drain.AdmissionGate.wait_open`),
+    # closed while an engine switch drains: every admission waits for it, then refuses with a
+    # `LocalAdmissionClosedError`. None -> always open (tests, CLIs).
+    admission_gate: Callable[[], Awaitable[bool]] | None
 
     @classmethod
     def inert(
@@ -309,6 +313,7 @@ class ResidencyWiring:
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
         ledger: ReservationLedger | None = None,
         engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
+        admission_gate: Callable[[], Awaitable[bool]] | None = None,
     ) -> ResidencyWiring:
         """A gate wired to do nothing, for tests and cloud-only builds. Named rather than
         implied: production code may not call this, and a guard test holds that."""
@@ -328,6 +333,7 @@ class ResidencyWiring:
             gpu_probe=gpu_probe,
             ledger=ledger,
             engine_loader=engine_loader,
+            admission_gate=admission_gate,
         )
 
 
@@ -405,23 +411,45 @@ class ResidencyCoordinator:
         # nothing about personas or priming.
         self._on_prefix_lost = wiring.on_prefix_lost
         self._engine_loader = wiring.engine_loader
+        self._admission_gate = wiring.admission_gate
 
-    async def _off_engine(self, served_model: str) -> engines.Engine | None:
-        """The engine `served_model` belongs to when that is NOT the active one, else None.
+    async def _wait_admission(self) -> None:
+        """Wait out a closed local-admission gate (an engine switch draining), raising
+        `LocalAdmissionClosedError` if it stays closed — before any eviction or load."""
+        if self._admission_gate is not None:
+            await self._admission_gate()
 
-        None also for a name outside the catalog (nothing to say about it) and when the read
-        fails: a settings hiccup must not refuse every local load, and the standard engine is
-        what every box runs unless switched."""
+    async def _active_engine(self) -> engines.Engine | None:
+        """The active engine, or None when this coordinator is not engine-aware. A failed read
+        is the standard engine: a settings hiccup must not refuse every local load."""
         if self._engine_loader is None:
-            return None
-        model = local_catalog.get_by_served(served_model)
-        if model is None:
             return None
         active: engines.Engine = engines.DEFAULT_ENGINE
         with contextlib.suppress(Exception):
             active = await self._engine_loader()
+        return active
+
+    async def _off_engine(self, served_model: str) -> engines.Engine | None:
+        """The engine `served_model` belongs to when that is NOT the active one, else None.
+
+        None also for a name outside the catalog (nothing to say about it)."""
+        active = await self._active_engine()
+        model = local_catalog.get_by_served(served_model)
+        if active is None or model is None:
+            return None
         own = engines.parse(model.engine)
         return own if own != active else None
+
+    async def _for_active(self, served_model: str) -> str:
+        """The model a completion for `served_model` actually needs on the active engine
+        (FLASH_NEXT_ENGINE_PLAN §4c). While Flash-Next serves, a request still naming
+        gpt-oss-120b must make room for Flash-Next — never evict it, which is the only model
+        loaded, so the old name can be served. Unmappable names come back unchanged and are
+        refused by `_refuse_off_engine`."""
+        active = await self._active_engine()
+        if active is None:
+            return served_model
+        return local_catalog.remap_for_engine(served_model, active) or served_model
 
     async def _refuse_off_engine(self, served_model: str) -> None:
         """Raise ResidencyError before any eviction when `served_model` belongs to the engine
@@ -429,10 +457,8 @@ class ResidencyCoordinator:
         anyway, because the active gateway's config does not name it."""
         own = await self._off_engine(served_model)
         if own is not None:
-            raise ResidencyError(
-                f"{served_model} runs on the {own} engine, which is not the active local engine "
-                "— switch engines to use it."
-            )
+            other: engines.Engine = next(e for e in engines.ENGINES if e != own)
+            raise ResidencyError(engines.blocked_reason(own, other))
 
     def _prefix_lost(self, served_model: str) -> None:
         """Signal that `served_model`'s primed prefix is gone. Best-effort and synchronous —
@@ -895,7 +921,19 @@ class ResidencyCoordinator:
                 f"of {plan.total_gb:.0f} GB — refusing to load (it would run out of memory)."
             )
 
-    async def ensure_room(self, served_model: str) -> None:
+    async def ensure_room(self, served_model: str) -> str:
+        """Admit `served_model` for a completion and return the served name ACTUALLY admitted
+        — the active engine's model when the engine remaps it (FLASH_NEXT_ENGINE_PLAN §4c).
+        The caller sends that name, so a request resolved before an engine switch can never
+        be admitted as one model and sent as another."""
+        if not self._enabled:
+            return served_model
+        await self._wait_admission()
+        served_model = await self._for_active(served_model)
+        await self._admit(served_model)
+        return served_model
+
+    async def _admit(self, served_model: str) -> None:
         """Before `served_model` loads on the completion path, evict the fewest resident
         models needed to hold the free-RAM floor after it's resident, and record each
         eviction as a TRANSIENT displacement so the end-of-turn restore can put it back. A
@@ -910,8 +948,6 @@ class ResidencyCoordinator:
         against the same free memory. Without one, this is the original per-process
         evict-only path (the client triggers the load), so single-process/cloud/test
         callers are unchanged."""
-        if not self._enabled:
-            return
         await self._refuse_off_engine(served_model)
         # Code-mode exclusivity: while the box is reserved for code mode, refuse to load ANY
         # model outside its reserved set (jcode's executor + planner). A model already resident
@@ -1063,6 +1099,7 @@ class ResidencyCoordinator:
         the operator's own two surfaces."""
         if not self._enabled:
             return
+        await self._wait_admission()
         await self._refuse_off_engine(served_model)
         try:
             plan = await self._plan(served_model, narrate_skip=True)
@@ -1120,6 +1157,12 @@ class ResidencyCoordinator:
         # hold clears (jcode OFF clears the flag before it fires its own restore, so that path
         # is unaffected).
         if await self._held_names():
+            return
+        # An engine switch draining: a restore load now would land in the engine about to stop.
+        try:
+            await self._wait_admission()
+        except ResidencyError:
+            self._rearm_restore()
             return
         targets = set(self._displaced)
         if not targets:
@@ -1188,10 +1231,17 @@ class ResidencyCoordinator:
         # back the model the turn was actually using before a smaller one. A bare set would
         # restore an arbitrary subset.
         scored: list[tuple[float, str]] = []
-        for served in targets:
-            # A member of the engine that is no longer running cannot come back on this
-            # gateway; it stays displaced and restores once its engine is active again.
+        for member in targets:
+            # A member of the other engine comes back as the active engine's sole model when it
+            # has one (gpt-oss displaced, Flash-Next now serving: put Flash-Next back); else it
+            # cannot come back on this gateway and stays displaced until its engine is active.
+            served = await self._for_active(member)
             if await self._off_engine(served) is not None:
+                continue
+            if served != member:
+                self._displaced.discard(member)
+                self._displaced.add(served)
+            if any(name == served for _, name in scored):
                 continue
             scored.append((-await self._footprint(served, windows, slots), served))
         scored.sort()

@@ -1,11 +1,13 @@
-"""The Flash-Next F1 debug tooling (docs/plans/FLASH_NEXT_ENGINE_PLAN.md §5): the debug-only
-engine switch and its one-engine guarantee, the engine-aware log reads, the slot
-save/restore probe, and the allowlisted perplexity one-shot. The supervisor, the gateway
+"""The Flash-Next debug tooling (docs/plans/FLASH_NEXT_ENGINE_PLAN.md §5): the debug engine
+switch (since F3a a thin wrapper over the owner switch's ONE orchestration — drain, one-engine
+stop/start, smoke, rollback) and its one-engine guarantee, the engine-aware log reads, the
+slot save/restore probe, and the allowlisted perplexity one-shot. The supervisor, the gateway
 and llama-server's upstream are all faked; nothing here touches docker or a model."""
 
 import asyncio
 import dataclasses
 import math
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -15,9 +17,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jbrain.api import debug
+from jbrain.api import engine as engine_api
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm import local_catalog
+from jbrain.llm.engine_switch import EngineSwitcher, Timings
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
@@ -25,6 +29,10 @@ from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
 _UP = {"running", "restarting", "paused", "removing"}
 _ENGINE_SERVICES = ("local-llm", "flash-next")
+_FAST = Timings(
+    drain_s=0.0, settle_s=0.0, memory_settle_s=0.0, poll_s=0.0, gate_wait_s=0.0, engine_cache_s=0.0
+)
+_TERMINAL = {"done", "rolled_back", "failed"}
 
 
 class _Resp:
@@ -136,9 +144,13 @@ class _Gateway(FakeLocalGateway):
 
 
 @pytest.fixture(autouse=True)
-def _fast_polls(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(debug, "_ENGINE_SETTLE_S", 0.0)
-    monkeypatch.setattr(debug, "_ENGINE_POLL_S", 0.0)
+def _quiet_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No nightly window and no workflow run unless a test says otherwise."""
+
+    async def _quiet(maker: object, **_kw: object) -> None:
+        return None
+
+    monkeypatch.setattr(engine_api, "quiet_window_guard", _quiet)
 
 
 @pytest.fixture
@@ -151,6 +163,7 @@ def box(tmp_path: Path) -> Iterator[tuple[TestClient, str, Any]]:
         debug_access_enabled=True,
         supervisor_token="sek",
         local_models_dir=str(tmp_path),
+        local_models=["gpt-oss-120b", "qwen3.8-flash-next"],
     )
     app = create_app(settings)
     repo = FakeAuthRepo()
@@ -162,12 +175,34 @@ def box(tmp_path: Path) -> Iterator[tuple[TestClient, str, Any]]:
         app.state.supervisor_client = _Supervisor(
             events, {"api": "running", "local-llm": "running", "flash-next": "exited"}
         )
+        app.state.gpu_probe = None
+        app.state.engine_switcher = EngineSwitcher(_FAST)
         key, _ = asyncio.run(auth_service.mint_capability(repo, "claude", ttl_hours=24))
         yield client, key, app.state
 
 
 def _auth(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
+
+
+def _switch(
+    client: TestClient, key: str, engine: str, **extra: Any
+) -> tuple[httpx.Response, dict[str, Any] | None]:
+    """POST the debug switch; when it was accepted, poll until it ends and return the final
+    switch status (None for a refusal, which touched nothing)."""
+    resp = client.post(
+        "/api/debug/llm/engine", json={"engine": engine, **extra}, headers=_auth(key)
+    )
+    if resp.status_code != 202:
+        return resp, None
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
+        status = body.get("switch")
+        if status and status["id"] == resp.json()["id"] and status["stage"] in _TERMINAL:
+            return resp, status
+        time.sleep(0.005)
+    raise AssertionError("the switch never ended")
 
 
 # --- auth on every new route ------------------------------------------------------------
@@ -217,21 +252,37 @@ def test_engine_read_marks_an_unprovisioned_service_missing(
     assert body["services"]["flash-next"]["state"] == "missing"
 
 
-def test_switch_orders_unload_stop_wait_start_persist(box: tuple[TestClient, str, Any]) -> None:
+def test_switch_orders_drain_unload_stop_wait_start_smoke_persist(
+    box: tuple[TestClient, str, Any],
+) -> None:
     client, key, state = box
     sup = state.supervisor_client
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    resp, final = _switch(client, key, "flash-next")
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["source"] == "debug" and resp.json()["target"] == "flash-next"
+    assert final is not None and final["stage"] == "done", final
+    assert [s["stage"] for s in final["stages"]] == [
+        "draining",
+        "stopping",
+        "starting",
+        "loading",
+        "smoke",
+        "done",
+    ]
     assert sup.events == ["unload gpt-oss-120b", "stop local-llm", "start flash-next"]
     assert sup.violations == []
+    assert state.local_gateway.loaded == ["qwen3.8-flash-next"]
+    assert [s["probe"] for s in final["smoke"]] == ["text", "tool", "image"]
     assert state.settings_store.values["llm_local_engine"] == "flash-next"
     assert state.settings_store.values["llm_local_engine_effective"] == "flash-next"
-    body = resp.json()
+    # Admission was closed for the switch and is open again.
+    assert state.settings_store.values["llm_local_admission"] == {"closed": False}
+    body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
     assert body["desired"] == "flash-next" and body["effective"] == "flash-next"
-    assert body["running"] == ["flash-next"]
-    assert body["consistent"] is True
+    assert body["running"] == ["flash-next"] and body["consistent"] is True
+    assert body["switching"] is False and body["admission"]["closed"] is False
 
 
 def test_switch_back_to_standard_is_symmetric(box: tuple[TestClient, str, Any]) -> None:
@@ -242,10 +293,14 @@ def test_switch_back_to_standard_is_symmetric(box: tuple[TestClient, str, Any]) 
     state.settings_store.values["llm_local_engine_effective"] = "flash-next"
     state.local_gateway = _Gateway(sup.events, {"qwen3.8-flash-next"})
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "standard"}, headers=_auth(key))
+    _, final = _switch(client, key, "standard")
 
-    assert resp.status_code == 200
+    assert final is not None and final["stage"] == "done"
     assert sup.events == ["unload qwen3.8-flash-next", "stop flash-next", "start local-llm"]
+    # Standard has no sole model: the smoke runs on its smallest installed tool-capable one,
+    # and gpt-oss has no projector, so no image probe.
+    assert final["model"] == "gpt-oss-120b"
+    assert [s["probe"] for s in final["smoke"]] == ["text", "tool"]
     assert state.settings_store.values["llm_local_engine"] == "standard"
     assert state.settings_store.values["llm_local_engine_effective"] == "standard"
 
@@ -258,20 +313,23 @@ def test_switch_stops_both_others_when_the_box_is_already_inconsistent(
     sup = state.supervisor_client
     sup.states.update({"local-llm": "running", "flash-next": "running"})
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "standard"}, headers=_auth(key))
+    _, final = _switch(client, key, "standard")
 
-    assert resp.status_code == 200
+    assert final is not None and final["stage"] == "done"
     assert "stop flash-next" in sup.events
     assert "start local-llm" not in sup.events  # already the target and up
-    assert resp.json()["running"] == ["standard"]
+    body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
+    assert body["running"] == ["standard"]
 
 
 def test_switch_to_the_engine_already_up_is_a_noop(box: tuple[TestClient, str, Any]) -> None:
     client, key, state = box
     resp = client.post("/api/debug/llm/engine", json={"engine": "standard"}, headers=_auth(key))
-    assert resp.status_code == 200
+    assert resp.status_code == 202 and resp.json()["stage"] == "done"
     assert state.supervisor_client.events == []
     assert state.local_gateway.unloaded == []
+    # Never closed admission: nothing was drained.
+    assert "llm_local_admission" not in state.settings_store.values
 
 
 def test_switch_to_an_unprovisioned_engine_touches_nothing(
@@ -281,32 +339,34 @@ def test_switch_to_an_unprovisioned_engine_touches_nothing(
     sup = state.supervisor_client
     del sup.states["flash-next"]
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    resp, _ = _switch(client, key, "flash-next")
 
     assert resp.status_code == 409
     assert "not provisioned" in resp.json()["detail"]
     assert sup.events == []
     assert sup.states["local-llm"] == "running"
     assert "llm_local_engine" not in state.settings_store.values
+    assert "llm_local_admission" not in state.settings_store.values
 
 
 def test_switch_rolls_back_when_start_404s(box: tuple[TestClient, str, Any]) -> None:
     """The container vanished between /status and /start: the previous engine goes back
-    up, the setting is untouched, and the answer is a 409 that says so."""
+    up, the setting is untouched, and the status says so."""
     client, key, state = box
     sup = state.supervisor_client
     sup.start_404.add("flash-next")
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    _, final = _switch(client, key, "flash-next")
 
-    assert resp.status_code == 409
-    assert "standard was put back" in resp.json()["detail"]
+    assert final is not None and final["stage"] == "rolled_back"
+    assert "standard was put back" in final["reason"]
     assert sup.events[-1] == "start local-llm"
     assert sup.states["local-llm"] == "running"
     assert sup.violations == []
     assert "llm_local_engine" not in state.settings_store.values
     # The desire is untouched; what serves is recorded as the engine put back.
     assert state.settings_store.values["llm_local_engine_effective"] == "standard"
+    assert state.settings_store.values["llm_local_admission"] == {"closed": False}
 
 
 def test_switch_never_starts_the_target_while_the_other_is_still_up(
@@ -316,9 +376,10 @@ def test_switch_never_starts_the_target_while_the_other_is_still_up(
     sup = state.supervisor_client
     sup.stuck.add("local-llm")
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    _, final = _switch(client, key, "flash-next")
 
-    assert resp.status_code == 504
+    assert final is not None and final["stage"] == "failed"
+    assert "NOT started" in final["reason"]
     assert "start flash-next" not in sup.events
     assert sup.violations == []
     assert "llm_local_engine" not in state.settings_store.values
@@ -338,9 +399,10 @@ def test_switch_rolls_back_when_the_target_never_reports_running(
         return resp
 
     monkeypatch.setattr(sup, "post", start_but_crash)
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    _, final = _switch(client, key, "flash-next")
 
-    assert resp.status_code == 504
+    assert final is not None and final["stage"] == "rolled_back"
+    assert "did not report running" in final["reason"]
     assert sup.events[-2:] == ["stop flash-next", "start local-llm"]
     assert "llm_local_engine" not in state.settings_store.values
 
@@ -351,7 +413,7 @@ def test_switch_refuses_while_a_perplexity_run_owns_the_box(
     client, key, state = box
     state.supervisor_client.perplexity_state = "running"
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    resp, _ = _switch(client, key, "flash-next")
 
     assert resp.status_code == 409
     assert state.supervisor_client.events == []
@@ -363,11 +425,13 @@ def test_switch_aborts_before_stopping_anything_if_unload_fails(
     client, key, state = box
     state.local_gateway.fail_unload = True
 
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    _, final = _switch(client, key, "flash-next")
 
-    assert resp.status_code == 502
-    assert "Nothing was stopped" in resp.json()["detail"]
+    assert final is not None and final["stage"] == "failed"
+    assert "no engine was stopped" in final["reason"]
+    assert "already unloaded" in final["reason"]
     assert not any(e.startswith(("stop", "start")) for e in state.supervisor_client.events)
+    assert state.settings_store.values["llm_local_admission"] == {"closed": False}
 
 
 def test_switch_rejects_an_unknown_engine(box: tuple[TestClient, str, Any]) -> None:
@@ -803,24 +867,52 @@ def test_a_supervisor_without_the_perplexity_job_reads_as_not_running(
         return await real_get(url, params=params, headers=headers)
 
     monkeypatch.setattr(sup, "get", older)
+    sup.no_oneshot_route = True
     body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
     assert body["perplexity_running"] is False
 
 
-def test_a_supervisor_error_on_stop_is_a_502_and_nothing_starts(
+def test_perplexity_running_comes_from_the_one_oneshot_read(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, key, state = box
+    sup = state.supervisor_client
+    sup.perplexity_state = "running"
+    real_get = sup.get
+    reads: list[str] = []
+
+    async def counting(url: str, params: dict | None = None, headers: dict | None = None):
+        reads.append(url)
+        return await real_get(url, params=params, headers=headers)
+
+    monkeypatch.setattr(sup, "get", counting)
+    body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
+    assert body["perplexity_running"] is True and body["oneshot"] == "perplexity"
+    assert "/perplexity/status" not in reads
+
+
+def test_a_supervisor_error_on_stop_fails_the_switch_and_nothing_starts(
     box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, key, state = box
     sup = state.supervisor_client
 
+    real_post = sup.post
+
     async def refuse(url: str, json: dict | None = None, headers: dict | None = None):
-        sup.events.append(f"{url} refused")
-        return _Resp(500)
+        if url in ("/stop", "/start"):
+            sup.events.append(f"{url} refused")
+            return _Resp(500)
+        return await real_post(url, json=json, headers=headers)
 
     monkeypatch.setattr(sup, "post", refuse)
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 502
+    _, final = _switch(client, key, "flash-next")
+    assert final is not None and final["stage"] == "failed"
+    # Re-issued once, never confirmed — and the engine that is still up is recorded.
+    assert sup.events.count("/stop refused") == 2
+    assert "did not stop" in final["reason"] and "standard is serving" in final["reason"]
     assert "/start refused" not in sup.events
+    assert state.settings_store.values["llm_local_engine_effective"] == "standard"
 
 
 def test_the_switch_waits_for_a_slow_stop(
@@ -828,7 +920,7 @@ def test_the_switch_waits_for_a_slow_stop(
 ) -> None:
     """A stop the daemon reports a poll late is waited for, not mistaken for a failure."""
     client, key, state = box
-    monkeypatch.setattr(debug, "_ENGINE_SETTLE_S", 30.0)
+    state.engine_switcher = EngineSwitcher(dataclasses.replace(_FAST, settle_s=30.0))
     sup = state.supervisor_client
     sup.stuck.add("local-llm")
     real_get = sup.get
@@ -842,18 +934,19 @@ def test_the_switch_waits_for_a_slow_stop(
         return await real_get(url, params=params, headers=headers)
 
     monkeypatch.setattr(sup, "get", settle)
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 200
+    _, final = _switch(client, key, "flash-next")
+    assert final is not None and final["stage"] == "done"
     assert sup.violations == []
 
 
-def test_without_local_hosting_the_switch_skips_unload_and_the_probe_refuses(
+def test_without_local_hosting_the_switch_skips_unload_and_smoke_and_the_probe_refuses(
     box: tuple[TestClient, str, Any],
 ) -> None:
     client, key, state = box
     state.local_gateway = None
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 200
+    _, final = _switch(client, key, "flash-next")
+    assert final is not None and final["stage"] == "done"
+    assert final["smoke"] == [] and "smoke test skipped" in " ".join(final["notes"])
     assert _probe(client, key).status_code == 409
 
 
@@ -877,9 +970,7 @@ def test_switch_refuses_while_any_oneshot_runs(box: tuple[TestClient, str, Any])
     client, key, state = box
     for kind in ("update", "refresh", "provision"):
         state.supervisor_client.oneshot = kind
-        resp = client.post(
-            "/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key)
-        )
+        resp, _ = _switch(client, key, "flash-next")
         assert resp.status_code == 409 and kind in resp.json()["detail"]
     assert state.supervisor_client.events == []
     assert state.local_gateway.unloaded == []
@@ -892,28 +983,27 @@ def test_switch_against_an_older_supervisor_still_sees_a_perplexity_run(
     sup = state.supervisor_client
     sup.no_oneshot_route = True
     sup.perplexity_state = "running"
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    resp, _ = _switch(client, key, "flash-next")
     assert resp.status_code == 409
     sup.perplexity_state = "exited"
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 200
+    resp, final = _switch(client, key, "flash-next")
+    assert resp.status_code == 202 and final is not None and final["stage"] == "done"
 
 
 def test_a_concurrent_switch_is_refused_not_interleaved(
     box: tuple[TestClient, str, Any],
 ) -> None:
     client, key, state = box
+    switcher: EngineSwitcher = state.engine_switcher
 
     async def hold() -> None:
-        await debug._ENGINE_LOCK.acquire()
+        await switcher._lock.acquire()
 
     asyncio.run(hold())
     try:
-        resp = client.post(
-            "/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key)
-        )
+        resp, _ = _switch(client, key, "flash-next")
     finally:
-        debug._ENGINE_LOCK.release()
+        switcher._lock.release()
     assert resp.status_code == 409 and "in progress" in resp.json()["detail"]
     assert state.supervisor_client.events == []
 
@@ -929,8 +1019,8 @@ def test_a_crash_looping_engine_is_stopped_before_the_other_starts(
     sup.states.update({"local-llm": "exited", "flash-next": "restarting"})
     body = client.get("/api/debug/llm/engine", headers=_auth(key)).json()
     assert body["running"] == ["flash-next"]
-    resp = client.post("/api/debug/llm/engine", json={"engine": "standard"}, headers=_auth(key))
-    assert resp.status_code == 200
+    _, final = _switch(client, key, "standard")
+    assert final is not None and final["stage"] == "done"
     assert sup.events.index("stop flash-next") < sup.events.index("start local-llm")
     assert sup.violations == []
 
@@ -959,10 +1049,12 @@ def test_logs_follow_the_effective_engine_not_the_desired_one(
 def test_rollback_restores_nothing_when_the_target_will_not_stop(
     box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Target started but never reported running, and its stop then fails: putting the
-    previous engine back would make two. One down is recoverable; two up is a freeze."""
+    """Target up (crash-looping counts) but its load fails, and its stop then fails:
+    putting the previous engine back would make two. One down is recoverable; two up is a
+    freeze. What IS up is recorded as effective."""
     client, key, state = box
     sup = state.supervisor_client
+    state.local_gateway.fail_load = True
     real_post = sup.post
 
     async def crash_then_refuse_stop(
@@ -974,14 +1066,16 @@ def test_rollback_restores_nothing_when_the_target_will_not_stop(
             return _Resp(500)
         resp = await real_post(url, json=json, headers=headers)
         if url == "/start" and service == "flash-next":
-            sup.states["flash-next"] = "created"  # never reports running
+            sup.states["flash-next"] = "restarting"  # up, holding memory, unstoppable
         return resp
 
     monkeypatch.setattr(sup, "post", crash_then_refuse_stop)
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
+    _, final = _switch(client, key, "flash-next")
 
-    assert resp.status_code == 504
-    assert "nothing was restored" in resp.json()["detail"]
+    assert final is not None and final["stage"] == "failed"
+    assert "nothing was restored" in final["reason"]
+    assert "flash-next is serving" in final["reason"]
+    assert state.settings_store.values["llm_local_engine_effective"] == "flash-next"
     assert "start local-llm" not in sup.events
     assert sup.violations == []
 
@@ -1002,9 +1096,9 @@ def test_rollback_restores_nothing_when_the_target_stop_is_not_confirmed(
         return resp
 
     monkeypatch.setattr(sup, "post", flaky)
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 504
-    assert "nothing was restored" in resp.json()["detail"]
+    _, final = _switch(client, key, "flash-next")
+    assert final is not None and final["stage"] == "failed"
+    assert "nothing was restored" in final["reason"]
     assert "start local-llm" not in sup.events
 
 
@@ -1022,9 +1116,9 @@ def test_rollback_when_the_start_itself_errors(
         return await real_post(url, json=json, headers=headers)
 
     monkeypatch.setattr(sup, "post", start_500)
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 502
-    assert "standard was put back" in resp.json()["detail"]
+    _, final = _switch(client, key, "flash-next")
+    assert final is not None and final["stage"] == "rolled_back"
+    assert "standard was put back" in final["reason"]
     assert sup.events[-1] == "start local-llm"
     assert sup.violations == []
 
@@ -1043,9 +1137,9 @@ def test_rollback_reports_a_restore_that_failed(
         return await real_post(url, json=json, headers=headers)
 
     monkeypatch.setattr(sup, "post", restore_fails)
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 409
-    assert "could NOT be put back" in resp.json()["detail"]
+    _, final = _switch(client, key, "flash-next")
+    assert final is not None and final["stage"] == "failed"
+    assert "could NOT be put back" in final["reason"]
 
 
 def test_rollback_with_nothing_previously_up(box: tuple[TestClient, str, Any]) -> None:
@@ -1053,9 +1147,9 @@ def test_rollback_with_nothing_previously_up(box: tuple[TestClient, str, Any]) -
     sup = state.supervisor_client
     sup.states["local-llm"] = "exited"
     sup.start_404.add("flash-next")
-    resp = client.post("/api/debug/llm/engine", json={"engine": "flash-next"}, headers=_auth(key))
-    assert resp.status_code == 409
-    assert "none was put back" in resp.json()["detail"]
+    _, final = _switch(client, key, "flash-next")
+    assert final is not None and final["stage"] == "rolled_back"
+    assert "none was put back" in final["reason"]
 
 
 def test_slot_probe_never_defaults_to_slot_zero(
@@ -1098,3 +1192,31 @@ def test_perplexity_checks_for_a_oneshot_before_unloading(
     assert resp.status_code == 409 and "update" in resp.json()["detail"]
     assert state.local_gateway.unloaded == []
     assert state.supervisor_client.perplexity_posts == []
+
+
+def test_debug_engine_affecting_routes_refuse_while_a_switch_runs(
+    box: tuple[TestClient, str, Any],
+) -> None:
+    client, key, state = box
+    switcher: EngineSwitcher = state.engine_switcher
+    asyncio.run(switcher._lock.acquire())
+    try:
+        for path, body in (
+            ("/api/debug/update", None),
+            ("/api/debug/backup", None),
+            ("/api/debug/refresh?service=api", None),
+            ("/api/debug/llm/perplexity", {}),
+        ):
+            resp = client.post(path, json=body, headers=_auth(key))
+            assert resp.status_code == 409, (path, resp.text)
+            assert "engine switch is in progress" in resp.json()["detail"]
+    finally:
+        switcher._lock.release()
+    assert state.supervisor_client.perplexity_posts == []
+
+
+def test_debug_cancel_is_409_outside_draining(box: tuple[TestClient, str, Any]) -> None:
+    client, key, _ = box
+    resp = client.post("/api/debug/llm/engine/cancel", headers=_auth(key))
+    assert resp.status_code == 409 and "draining" in resp.json()["detail"]
+    assert client.post("/api/debug/llm/engine/cancel").status_code == 401

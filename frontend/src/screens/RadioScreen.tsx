@@ -30,6 +30,7 @@ import {
   receiverHealth,
 } from "../aprsLog";
 import { AprsStations } from "../components/AprsStations";
+import { EngineBanner } from "../components/EngineBanner";
 import { SdrRadiosTab } from "../components/SdrRadiosTab";
 import { SdrRecordingsTab } from "../components/SdrRecordingsTab";
 import { sessionFor, useSdrSession } from "../sdrSession";
@@ -132,6 +133,7 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
         </button>
         <h1 className="radio-title">Radio</h1>
       </div>
+      <EngineBanner />
       <div className="radio-body">
         {/* The SAME control as the idle/listen/aprs/spectrum row inside a radio
             (`.seg-row`/`.seg`, steel `--mode`): two tab-shaped rows a thumb apart on one

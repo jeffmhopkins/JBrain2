@@ -122,6 +122,9 @@ from jbrain.api import (
 from jbrain.api import (
     endpoint as endpoint_api,
 )
+from jbrain.api import (
+    engine as engine_api,
+)
 from jbrain.api import gmail_settings as gmail_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import jpanel as jpanel_api
@@ -166,7 +169,7 @@ from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
-from jbrain.llm import build_router, gpu_guard
+from jbrain.llm import build_router, drain, engine_switch, gpu_guard
 from jbrain.llm import engine as engine_mod
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.ledger import ReservationLedger
@@ -503,6 +506,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.active_engine = engine_mod.ActiveEngine(
             lambda: settings_store.llm_local_engine_effective(SYSTEM_CTX)
         )
+        # The engine switch's drain (jbrain.llm.drain): closed while a switch swaps engines,
+        # read by this process's router and coordinator (the worker reads the same row).
+        app.state.admission_gate = drain.AdmissionGate(
+            lambda: settings_store.llm_local_admission(SYSTEM_CTX)
+        )
+        # The switch's memory-settle wait and the engine card read device memory through it.
+        app.state.gpu_probe = gpu_probe
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,
             ResidencyWiring(
@@ -549,6 +559,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ledger=api_reservations,
                 # Only the active engine's models are loaded or restored (§4d).
                 engine_loader=app.state.active_engine.get,
+                admission_gate=app.state.admission_gate.wait_open,
             ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
@@ -597,6 +608,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # in ~2 s where a turn (or the keeper's prime) would otherwise pay a ~60 s
             # prefill. Shares the models volume with the weights (jbrain.llm.kv_prefix).
             kv_prefix=app.state.kv_prefix,
+            # The engine remap (plan §4c) and the switch's drain, read through the same
+            # instances the coordinator above uses.
+            engine_loader=app.state.active_engine.get,
+            admission_gate=app.state.admission_gate.wait_open,
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.
@@ -1471,6 +1486,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.supervisor_client = httpx.AsyncClient(
             base_url=settings.supervisor_url, timeout=30.0
         )
+        # The engine switch runs in this process, so a restart ended any switch in flight:
+        # reopen local admission, mark that switch interrupted, and release its supervisor
+        # hold — otherwise every engine start and one-shot stays refused until it lapses.
+        await engine_switch.reset_after_restart(
+            settings_store,
+            SYSTEM_CTX,
+            engine_api.HttpSupervisor(app.state.supervisor_client, settings.supervisor_token),
+        )
         yield
         # Finalize a recording that is still running, before anything else is torn down.
         # An Ops → Update while the tape deck is going would otherwise take the clip's
@@ -1602,6 +1625,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(debug.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
+    app.include_router(engine_api.router, prefix="/api")
     app.include_router(jpanel_api.router, prefix="/api")
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")

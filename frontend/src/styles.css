@@ -28423,3 +28423,519 @@ button.wf-sigpill {
 .fb-shell .fb-answer-line + .fb-answer-line {
   margin-top: calc(8px * var(--font-scale));
 }
+
+/* ===== Local engine switch (Ops card + global banner + LLM settings marks) =====
+   Binding mock: docs/mocks/engine-switch/a-segmented-toggle.html. */
+
+/* Global engine banner — DESIGN.md "Status banner": a full-width strip under the top bar.
+   Steel = Flash-Next serving (a mode, not a problem); amber = something holds the engine;
+   rose = a switch rolled back. */
+.engine-banners {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+.engine-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 0 6px 0 14px;
+  font-size: var(--fs-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.engine-banner.steel {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+.engine-banner.amber {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+
+.engine-banner.rose {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.engine-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+  flex: none;
+}
+
+.engine-banner-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  line-height: 1.3;
+  padding: 7px 0;
+}
+
+.engine-banner-text b {
+  font-weight: 600;
+}
+
+.engine-banner-text span {
+  color: var(--text-2);
+}
+
+.engine-banner-act {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.engine-banner-x {
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.engine-dot.live,
+.engine-banner-dot.live {
+  animation: engine-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes engine-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .engine-dot.live,
+  .engine-banner-dot.live {
+    animation: none;
+  }
+}
+
+/* The Ops card body */
+.engine-anchor {
+  scroll-margin-top: 12px;
+}
+
+.engine-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px 14px;
+}
+
+.engine-seg {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  gap: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 3px;
+}
+
+.engine-seg button {
+  flex: 1;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 9px;
+  min-height: 52px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-2);
+  font: inherit;
+  transition: background 0.15s ease-out;
+}
+
+.engine-seg button[aria-pressed="true"] {
+  background: var(--steel-tint);
+  color: var(--text);
+}
+
+.engine-seg button.armed {
+  border: 1px dashed var(--steel);
+}
+
+.engine-seg button.target {
+  background: var(--amber-tint);
+  color: var(--text);
+}
+
+.engine-seg button.wanted {
+  border: 1px dashed var(--amber);
+}
+
+.engine-seg button:disabled {
+  cursor: not-allowed;
+}
+
+.engine-seg button:disabled .engine-sn {
+  color: var(--text-3);
+}
+
+.engine-seg button[aria-pressed="true"]:disabled .engine-sn,
+.engine-seg button.target:disabled .engine-sn {
+  color: var(--text);
+}
+
+.engine-sn {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.engine-ss {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.engine-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  display: inline-block;
+  flex: none;
+  background: var(--text-3);
+}
+
+.engine-dot.on {
+  background: var(--steel);
+}
+
+.engine-dot.warn {
+  background: var(--warn);
+}
+
+.engine-confirm {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--r-input);
+  padding: 12px;
+}
+
+.engine-confirm-title {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  margin-bottom: 5px;
+}
+
+.engine-confirm p {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.engine-confirm p b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.engine-confirm .engine-guard {
+  margin-top: 8px;
+  color: var(--amber);
+}
+
+.engine-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.engine-confirm .engine-acts .engine-btn {
+  flex: 1;
+}
+
+.engine-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: var(--r-input);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.engine-btn.primary {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+.engine-btn.secondary {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.engine-btn.danger {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.engine-btn.ghost {
+  background: none;
+  color: var(--text-2);
+}
+
+.engine-btn:disabled {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.engine-prog {
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 11px 12px;
+}
+
+.engine-prog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-secondary);
+}
+
+.engine-prog-head b {
+  font-weight: 500;
+}
+
+.engine-prog-el {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.engine-prog-detail {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin: 3px 0 10px 16px;
+}
+
+.engine-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.engine-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  min-height: 24px;
+}
+
+.engine-steps li.done {
+  color: var(--text-2);
+}
+
+.engine-steps li.done .engine-si {
+  color: var(--green);
+}
+
+.engine-steps li.run {
+  color: var(--text);
+}
+
+.engine-steps li.run .engine-si {
+  color: var(--amber);
+}
+
+.engine-si {
+  width: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.engine-sd {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.engine-checks {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0 4px;
+}
+
+.engine-chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-micro);
+  padding: 2px 8px 2px 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.engine-chk.ok {
+  background: var(--green-tint);
+  color: var(--green);
+}
+
+.engine-chk.err {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.engine-notice {
+  border-radius: var(--r-input);
+  padding: 11px 12px;
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.engine-notice span {
+  color: var(--text-2);
+}
+
+.engine-notice.ok {
+  background: var(--green-tint);
+}
+
+.engine-notice.warn {
+  background: var(--amber-tint);
+}
+
+.engine-notice.err {
+  background: var(--rose-tint);
+}
+
+.engine-notice.off {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.engine-reason {
+  display: block;
+  margin-top: 4px;
+}
+
+.engine-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--steel);
+  font-weight: 500;
+  min-height: 44px;
+}
+
+.ops-vsub.warn {
+  color: var(--amber);
+}
+
+.ops-card-summary.bad {
+  color: var(--danger);
+}
+
+.engine-logrow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.engine-loghead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.engine-log {
+  font-family: var(--font-mono);
+  max-height: 150px;
+}
+
+/* LLM settings: an off-engine model's Stage is disabled with its reason; a remapped
+   task pick says where it really runs. */
+.llm-local-blocked {
+  margin: 8px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.4;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.llm-local-error {
+  color: var(--danger);
+}
+
+.llm-remap {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--steel);
+  margin: 2px 0 0;
+}
+
+.engine-prog-title {
+  font-weight: 500;
+}
+
+.engine-cancel {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.engine-stale {
+  display: block;
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--amber);
+}
+
+.engine-ack {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-top: 6px;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+
+.engine-ack input {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  accent-color: var(--rose);
+}

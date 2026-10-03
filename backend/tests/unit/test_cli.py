@@ -260,3 +260,16 @@ def test_local_engine_defaults_to_standard_when_unset_or_malformed(
     patched_store.values["llm_local_engine"] = "gpt-9"
     assert cli.main(["local-engine"]) == 0
     assert capsys.readouterr().out.strip() == "standard"
+
+
+def test_set_local_engine_effective_records_the_fallback_reason(
+    patched_store: FakeSettingsStore,
+) -> None:
+    why = "the Flash-Next engine did not start"
+    assert cli.main(["set-local-engine-effective", "standard", "--reason", why]) == 0
+    assert patched_store.values["llm_local_engine_effective"] == "standard"
+    meta = patched_store.values["llm_local_engine_effective_meta"]
+    assert isinstance(meta, dict) and meta["reason"] == why and meta["since"]
+    assert cli.main(["set-local-engine-effective", "flash-next"]) == 0
+    meta = patched_store.values["llm_local_engine_effective_meta"]
+    assert isinstance(meta, dict) and meta["reason"] is None

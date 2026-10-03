@@ -1916,3 +1916,130 @@ describe("image detail floor", () => {
     await waitFor(() => expect(imageFloorPuts).toEqual([null, 4096]));
   });
 });
+
+describe("engine-aware staging (Flash-Next F3a)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const OFF_ENGINE = "Runs on the Flash-Next engine — switch engines to load it";
+
+  function engineSeed(): LlmSettings {
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    seed.host_memory = { total_gb: 128, used_gb: 10 };
+    seed.local_models = [
+      lm({ id: "gpt-oss-120b", label: "GPT-OSS 120B", enabled: true, size_gb: 63 }),
+      lm({
+        id: "qwen3.8-flash-next",
+        label: "Qwen3.8 Flash-Next",
+        enabled: true,
+        size_gb: 94,
+        engine: "flash-next",
+        loadable_now: false,
+        blocked_reason: OFF_ENGINE,
+      }),
+    ];
+    return seed;
+  }
+
+  it("disables Stage on an off-engine model and says why, keeping the label", async () => {
+    stubLlmFetch(engineSeed());
+    render(<LLMSettingsScreen />);
+    const row = (await screen.findByText("Qwen3.8 Flash-Next")).closest(
+      ".llm-local-row",
+    ) as HTMLElement;
+    const stage = within(row).getByRole("button", { name: "Stage" });
+    expect(stage).toBeDisabled();
+    expect(within(row).getByText(OFF_ENGINE)).toBeInTheDocument();
+    expect(stage).toHaveAttribute("aria-describedby", "why-qwen3.8-flash-next");
+    expect(within(row).getByText("off-engine")).toBeInTheDocument();
+
+    // The on-engine model is untouched.
+    const std = (await screen.findByText("GPT-OSS 120B")).closest(".llm-local-row") as HTMLElement;
+    expect(within(std).getByRole("button", { name: "Stage" })).toBeEnabled();
+  });
+
+  it("surfaces a load 409's detail under the row instead of failing silently", async () => {
+    const seed = engineSeed();
+    const conflict = "The local engine is switching — load it once the switch finishes";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(seed), { status: 200 });
+        if (path.endsWith("/gpt-oss-120b/plan-load"))
+          return new Response(
+            JSON.stringify({
+              model_id: "gpt-oss-120b",
+              measured: true,
+              already_resident: false,
+              fits: true,
+              over: false,
+              over_box: false,
+              victims: [],
+              resident_gb: 0,
+              projected_gb: 63,
+              ceiling_gb: 100,
+              total_gb: 128,
+            }),
+            { status: 200 },
+          );
+        if (path.endsWith("/gpt-oss-120b/load"))
+          return new Response(JSON.stringify({ detail: conflict }), { status: 409 });
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    const row = (await screen.findByText("GPT-OSS 120B")).closest(".llm-local-row") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Stage" }));
+    fireEvent.click(await within(row).findByRole("button", { name: "Load now" }));
+    expect(await within(row).findByRole("alert")).toHaveTextContent(conflict);
+  });
+
+  it("surfaces a stage (plan-load) refusal too", async () => {
+    const seed = engineSeed();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(seed), { status: 200 });
+        if (path.endsWith("/plan-load"))
+          return new Response(JSON.stringify({ detail: "local hosting is not enabled" }), {
+            status: 409,
+          });
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    const row = (await screen.findByText("GPT-OSS 120B")).closest(".llm-local-row") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Stage" }));
+    expect(await within(row).findByRole("alert")).toHaveTextContent("local hosting is not enabled");
+  });
+
+  it("marks a remapped task pick with where it really runs", async () => {
+    const seed = initialSettings();
+    seed.tasks = seed.tasks.map((t) =>
+      t.id === "agent.turn"
+        ? {
+            ...t,
+            provider: "local",
+            effective_spec: "local:qwen3.8-flash-next",
+            remapped: true,
+            remap_note: "→ Flash-Next (engine active)",
+          }
+        : t,
+    );
+    stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    // On the tier head, with the share of the tier it covers.
+    expect(await screen.findByText(/→ Flash-Next \(engine active\) · 1 of/)).toBeInTheDocument();
+    // And on the task's own row once the tier is expanded.
+    const medium = screen.getByText("Medium reasoning").closest("section") as HTMLElement;
+    fireEvent.click(within(medium).getByRole("button", { name: /Per-task overrides/ }));
+    const member = within(medium).getByText("Agent turn").closest(".llm-member") as HTMLElement;
+    expect(within(member).getByText("→ Flash-Next (engine active)")).toBeInTheDocument();
+  });
+});

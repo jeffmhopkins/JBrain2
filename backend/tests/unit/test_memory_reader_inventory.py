@@ -54,6 +54,11 @@ _APPROVED: dict[str, set[str]] = {
     # list rather than exempt from it because "it only displays" is how a reader stops being
     # only a display.
     "api/llm_settings.py": {"read_memory_gb", "read_page_cache_gb"},
+    # The engine card's memory gauge (display), and the engine switch's settle-wait after it
+    # stops an engine — which only DELAYS the next start until device memory stops falling. It
+    # admits and budgets nothing: the target's load still passes the ledger and the device
+    # pre-flight like every other load.
+    "api/engine.py": {"read_memory_gb", "sample"},
 }
 
 # `read_page_cache_gb` is here because it was MISSED, and the miss was in the load path: the

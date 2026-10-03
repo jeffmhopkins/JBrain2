@@ -175,9 +175,17 @@ local_engine_release() {
   return 0
 }
 
-# Record the engine that is actually up as the EFFECTIVE engine, for the api. Best-effort: an
+# Record the engine that is actually up as the EFFECTIVE engine, for the api, with $2 (when
+# set) the reason it is not the selected one — the engine card shows it. Best-effort: an
 # unreachable DB leaves the last value, and the next start writes it again.
 local_engine_set_effective() {
+  if [ -n "${2:-}" ]; then
+    # shellcheck disable=SC2086  # the runner is a deliberately word-split command prefix.
+    $LOCAL_ENGINE_RUNNER docker compose run --rm --no-deps -T api \
+      python -m jbrain.cli set-local-engine-effective "$1" --reason "$2" >/dev/null 2>&1 \
+      || local_engine_say "WARNING: could not record $1 as the effective engine"
+    return 0
+  fi
   # shellcheck disable=SC2086  # the runner is a deliberately word-split command prefix.
   $LOCAL_ENGINE_RUNNER docker compose run --rm --no-deps -T api \
     python -m jbrain.cli set-local-engine-effective "$1" >/dev/null 2>&1 \
@@ -204,8 +212,10 @@ local_engine_set_effective() {
 local_engine_start() {
   _le_engine="${1:-standard}"
   _le_fn="${2:-}"
+  _le_why=''
   LOCAL_ENGINE_STARTED=''
   if [ "$_le_engine" = flash-next ] && [ "$_le_fn" != 1 ]; then
+    _le_why='Flash-Next is selected but not installed or has no image'
     local_engine_say "Flash-Next is the selected engine but is not installed or has no image — starting the standard engine instead (install it from Settings -> On-box models, then Ops -> Update)"
     _le_engine=standard
   fi
@@ -220,6 +230,7 @@ local_engine_start() {
       return 0
     fi
     local_engine_say "WARNING: the Flash-Next engine did not start — falling back to the standard engine"
+    _le_why='the Flash-Next engine did not start on the last update'
   fi
   if [ "${1:-standard}" = flash-next ]; then
     local_engine_say "FALLBACK: Flash-Next stays SELECTED (the next update retries it) but the standard engine serves — the api routes to standard until then"
@@ -232,7 +243,7 @@ local_engine_start() {
   LOCAL_ENGINE_STARTED=standard
   _le_rc=0
   docker compose --profile local-llm up -d --no-build local-llm || _le_rc=$?
-  local_engine_set_effective standard
+  local_engine_set_effective standard "$_le_why"
   return "$_le_rc"
 }
 

@@ -193,6 +193,17 @@ export function LLMSettingsScreen() {
   // Catalog ids with a per-model action (stage/load/unload/window) in flight — the
   // row's controls show a pending state and lock out a second concurrent action.
   const [busy, setBusy] = useState<Set<string>>(new Set());
+  // The server's refusal for a row's last Stage/Load (a 409 names why — another engine
+  // serves, the box is switching, it would not fit), shown under that row. These used to
+  // fail silently: the button just came back.
+  const [rowErrors, setRowErrors] = useState<Map<string, string>>(new Map());
+  const setRowError = (id: string, err: unknown) =>
+    setRowErrors((prev) => {
+      const next = new Map(prev);
+      if (err === null) next.delete(id);
+      else next.set(id, err instanceof Error ? err.message : String(err));
+      return next;
+    });
 
   // Live runtime state: while the drawer is open and hosting is on, refresh the
   // loaded flags every few seconds. Merge ONLY local_models so a poll can't
@@ -236,8 +247,24 @@ export function LLMSettingsScreen() {
                             remove_queued: f.remove_queued,
                             disk_gb: f.disk_gb,
                             download_gb: f.download_gb,
+                            // An engine switch flips which models can load at all.
+                            engine: f.engine,
+                            loadable_now: f.loadable_now,
+                            blocked_reason: f.blocked_reason,
                           }
                         : m;
+                    }),
+                    // Only the engine's remap marks, never the picks: those may be mid-edit.
+                    tasks: prev.tasks.map((t) => {
+                      const f = fresh.tasks.find((x) => x.id === t.id);
+                      return f
+                        ? {
+                            ...t,
+                            effective_spec: f.effective_spec,
+                            remapped: f.remapped,
+                            remap_note: f.remap_note,
+                          }
+                        : t;
                     }),
                   }
                 : prev,
@@ -309,13 +336,14 @@ export function LLMSettingsScreen() {
   // warms the model. Reconcile the resident set and clear the preview.
   function loadModel(id: string) {
     mark(id);
+    setRowError(id, null);
     api
       .loadLocalModel(id)
       .then((res) => {
         reconcileLoaded(res);
         clearPreview();
       })
-      .catch(() => {})
+      .catch((err: unknown) => setRowError(id, err))
       .finally(() => unmark(id));
   }
 
@@ -323,13 +351,14 @@ export function LLMSettingsScreen() {
   // and hold it as the transient preview. No side effects until the operator commits.
   function previewStage(id: string) {
     mark(id);
+    setRowError(id, null);
     api
       .planLoadLocalModel(id)
       .then((p) => {
         setStagedId(id);
         setPlan(p);
       })
-      .catch(() => {})
+      .catch((err: unknown) => setRowError(id, err))
       .finally(() => unmark(id));
   }
 
@@ -685,6 +714,7 @@ export function LLMSettingsScreen() {
         autoRestoreBusy={busy.has("auto-restore")}
         image={image}
         busy={busy}
+        rowErrors={rowErrors}
         stagedId={stagedId}
         plan={plan}
         onUnload={unloadModel}
@@ -760,6 +790,21 @@ export function LLMSettingsScreen() {
                 ))}
               </select>
 
+              {(() => {
+                // The engine remaps picks without rewriting them; say so where the pick shows.
+                const remapped = group.tasks.filter((t) => t.remapped && t.remap_note);
+                const note = remapped[0]?.remap_note;
+                if (!note) return null;
+                return (
+                  <p className="llm-remap">
+                    {note}
+                    {remapped.length < group.tasks.length
+                      ? ` · ${remapped.length} of ${group.tasks.length} tasks`
+                      : ""}
+                  </p>
+                );
+              })()}
+
               <span className="llm-field-tag">Reasoning</span>
               {reasoningOn ? (
                 <fieldset className="seg-row llm-seg-row" aria-label={`${group.name} reasoning`}>
@@ -806,6 +851,9 @@ export function LLMSettingsScreen() {
                         <div className="llm-member-name">
                           {task.label}
                           <span className="llm-member-id">{task.id}</span>
+                          {task.remapped && task.remap_note && (
+                            <span className="llm-remap">{task.remap_note}</span>
+                          )}
                         </div>
                         <div className="llm-member-controls">
                           <select
@@ -1244,6 +1292,7 @@ function OnBoxModelsCard({
   autoRestoreBusy,
   image,
   busy,
+  rowErrors,
   stagedId,
   plan,
   onUnload,
@@ -1284,6 +1333,7 @@ function OnBoxModelsCard({
   autoRestoreBusy: boolean;
   image: ImageSettings | null;
   busy: Set<string>;
+  rowErrors: Map<string, string>;
   stagedId: string | null;
   plan: LoadPlan | null;
   onUnload: (id: string) => void;
@@ -1637,6 +1687,7 @@ function OnBoxModelsCard({
                     key={m.id}
                     model={m}
                     busy={busy.has(m.id)}
+                    error={rowErrors.get(m.id) ?? null}
                     staged={stagedId === m.id}
                     isVictim={victimIds.has(m.id)}
                     previewing={stagedId !== null}
@@ -1745,6 +1796,7 @@ function OnBoxModelsCard({
 function LlmModelRow({
   model: m,
   busy: isBusy,
+  error,
   staged,
   isVictim,
   previewing,
@@ -1760,6 +1812,8 @@ function LlmModelRow({
 }: {
   model: LocalModelInfo;
   busy: boolean;
+  // The server's refusal for this row's last Stage/Load, verbatim (its 409 detail).
+  error: string | null;
   // This row is the model currently being previewed (transient stage).
   staged: boolean;
   // This resident model would be evicted by the current preview.
@@ -1777,6 +1831,11 @@ function LlmModelRow({
   onSetKeepLoaded: (id: string, keep: boolean) => void;
   onSetImageFloor: (id: string, tokens: number | null) => void;
 }) {
+  // The server says whether a load can work right now (another engine serves, the box is
+  // switching) and why — the same sentence its 409 carries — so the control is disabled with
+  // a reason rather than offered and refused. An older server omits it: loadable.
+  const blocked =
+    m.loadable_now === false ? (m.blocked_reason ?? "Can't be loaded right now") : null;
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
   const stateText = isVictim
@@ -1785,8 +1844,18 @@ function LlmModelRow({
       ? "resident"
       : staged
         ? "staged"
-        : "available";
-  const stateCls = isVictim ? " evicting" : m.loaded ? " on" : staged ? " staged" : " avail";
+        : blocked !== null
+          ? "off-engine"
+          : "available";
+  const stateCls = isVictim
+    ? " evicting"
+    : m.loaded
+      ? " on"
+      : staged
+        ? " staged"
+        : blocked !== null
+          ? ""
+          : " avail";
   // When this row is staged, the load's consequence (from the server dry-run) shown inline
   // beside its Load / Cancel — a too-big model can't be loaded (the server would 409).
   const tooBig = staged && plan?.over_box === true;
@@ -1876,7 +1945,8 @@ function LlmModelRow({
               <button
                 type="button"
                 className="llm-local-btn stage"
-                disabled={isBusy || previewing}
+                disabled={isBusy || previewing || blocked !== null}
+                aria-describedby={blocked !== null ? `why-${m.id}` : undefined}
                 onClick={() => onStage(m.id)}
               >
                 {isBusy ? "…" : "Stage"}
@@ -1887,6 +1957,16 @@ function LlmModelRow({
         </div>
       </div>
       {stagedNote && <p className="llm-local-note">{stagedNote}</p>}
+      {blocked !== null && !m.loaded && (
+        <p className="llm-local-blocked" id={`why-${m.id}`}>
+          {blocked}
+        </p>
+      )}
+      {error && (
+        <p className="llm-local-note llm-local-error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="llm-local-chips">
         {capabilityChips(m).map((c) => (
           <span key={c.key} className={`llm-chip llm-chip-${c.cls}`}>

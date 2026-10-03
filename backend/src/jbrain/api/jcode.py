@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from jbrain import box_events, queue
 from jbrain.api.deps import JcodeAccessDep, OwnerDep
+from jbrain.api.engine import refuse_while_switching
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
 from jbrain.llm import engine as llm_engine
@@ -382,6 +383,7 @@ async def warm_model(owner: OwnerDep, request: Request) -> dict[str, object]:
     """Explicitly warm the coder onto the box (evict the other resident models, then load
     it), and report the fresh status. The session screen calls this only after the owner
     confirms the swap — so the eviction is never a surprise."""
+    refuse_while_switching(request, "warm the coder")
     model_id = await _resolve_model(request, owner.id)
     _warm_coder(request, model_id)
     return await _model_payload(request, owner.id)
@@ -566,6 +568,7 @@ async def set_power(body: PowerBody, owner: OwnerDep, request: Request) -> dict[
     chat and vision keep working. Best-effort per service; an unprovisioned service is
     skipped."""
     if body.on:
+        refuse_while_switching(request, "power code mode on")
         await _toggle_services(request, "start", await _power_on_services(request, owner.id))
         # Reserve the unified-memory box for CODE MODE'S OWN models while it is ON: residency
         # then refuses to load any OTHER model and the worker pauses its background jobs, so

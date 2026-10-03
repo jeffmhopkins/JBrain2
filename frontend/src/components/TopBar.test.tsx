@@ -4,9 +4,11 @@
 // for; these pin where it lives now and, more importantly, that it still means exactly
 // one thing.
 
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { resetEngineStore, setEngineState } from "../engineState";
 import { TopBar } from "./TopBar";
+import { engineState } from "./engineFixtures";
 
 describe("the top bar's radio icon", () => {
   it("is absent when no radio is held", () => {
@@ -54,5 +56,22 @@ describe("the top bar's radio icon", () => {
     const { container } = render(<TopBar syncStatus="synced" radio={{ onOpen: vi.fn() }} />);
 
     expect(container.querySelector(".foot-icons")).toBeNull();
+  });
+});
+
+describe("the engine banner under the top bar", () => {
+  it("rides every top bar, directly beneath it, once the engine store has a reading", () => {
+    resetEngineStore();
+    const { container } = render(<TopBar title="Ops" syncStatus="synced" />);
+    expect(container.querySelector(".engine-banners")).toBeNull();
+    act(() =>
+      setEngineState(
+        engineState({ desired: "flash-next", effective: "flash-next", running: ["flash-next"] }),
+      ),
+    );
+    const bar = container.querySelector(".top-bar");
+    expect(bar?.nextElementSibling?.classList.contains("engine-banners")).toBe(true);
+    expect(screen.getByText("Flash-Next active")).toBeInTheDocument();
+    resetEngineStore();
   });
 });
