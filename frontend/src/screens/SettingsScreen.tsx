@@ -1227,7 +1227,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
 
       <section className="settings-card">
         <div className="settings-cardhead">
-          <h2 className="settings-label">Tavily web fetch</h2>
+          <h2 className="settings-label">Tavily web search &amp; fetch</h2>
           <span
             className={`settings-pill${tavily?.effective ? " on" : ""}`}
             aria-label="Tavily status"
@@ -1238,17 +1238,30 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               : !tavily.wired
                 ? "Unavailable"
                 : tavily.effective
-                  ? "Active"
+                  ? tavily.health === "quota"
+                    ? "Out of credits"
+                    : tavily.health === "key_rejected"
+                      ? "Key rejected"
+                      : "Active"
                   : tavily.enabled
                     ? "No key"
                     : "Off"}
           </span>
         </div>
         <p className="settings-meta">
-          a hosted fallback that reads pages the box can't — bot walls, paywalls, JavaScript-only
-          sites — only when the on-box readers fail. Paste your Tavily API key and Save &amp; test.
-          The key is stored on the server and never shown again.
+          the primary web search (the box's own engines are the fallback), and a hosted reader for
+          pages the box can't — bot walls, paywalls, JavaScript-only sites. Paste your Tavily API
+          key and Save &amp; test. The key is stored on the server and never shown again.
         </p>
+        {tavily?.effective && tavily.health !== "ok" && (
+          <p className="settings-meta settings-error" aria-label="Tavily health">
+            {tavily.health_detail || "Tavily is failing"}
+            {tavily.health_since && ` since ${new Date(tavily.health_since).toLocaleString()}`}.{" "}
+            {tavily.health === "rate_limited"
+              ? "It should clear within a minute."
+              : "Web search is using the box's own engines until this clears."}
+          </p>
+        )}
         <div className="settings-switch-row">
           <span className="settings-meta" style={{ margin: 0 }}>
             Enable the tier

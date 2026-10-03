@@ -1,5 +1,5 @@
-"""Web search via a self-hosted SearXNG instance (docs/reference/ASSISTANT.md "Agent
-selection").
+"""Web search: Tavily's hosted index first, the self-hosted SearXNG instance behind it
+(docs/reference/ASSISTANT.md "Agent selection").
 
 SearXNG is a metasearch engine the owner runs on their own box, so a jerv search
 leaves the box only as far as SearXNG's own upstreams — the same local-first
@@ -12,12 +12,14 @@ policy itself — the handler does.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 
 import httpx
 import structlog
 from cachetools import TTLCache
+
+from jbrain.web.tavily_health import TavilyHealth
 
 log = structlog.get_logger()
 
@@ -49,6 +51,66 @@ class SearchHit:
     title: str
     url: str
     snippet: str
+    # The page's publish/update date when the index reported one ("" otherwise) — Tavily's
+    # `published_date`; SearXNG's general category carries none.
+    published: str = ""
+
+
+_MAX_SITES = 10  # domains per include/exclude list — a filter, not a crawl list
+
+
+@dataclass(frozen=True)
+class SearchOptions:
+    """The agent's search controls beyond the query (docs.tavily.com best practices). Tavily
+    honours all of them; the SearXNG fallback honours the site filters as `site:` operators and
+    ignores the rest.
+
+    `depth` is Tavily's `search_depth`: `basic` (1 credit) or `advanced` (2 credits — higher
+    relevance on niche, local or multi-faceted queries, and up to three relevant passages per
+    page instead of one generic summary). `include_domains` restricts to those sites (a
+    business's own site, an official source); `exclude_domains` drops sites; `exact` returns
+    only pages containing the query's quoted phrase(s) — for a proper name a general index
+    would otherwise drown in look-alikes ("Epic Theatres" vs Epic Games)."""
+
+    depth: str = "basic"
+    include_domains: tuple[str, ...] = ()
+    exclude_domains: tuple[str, ...] = ()
+    exact: bool = False
+
+    def searxng_query(self, query: str) -> str:
+        """The query with the site filters spelled as operators the scraper engines accept."""
+        parts = [query]
+        if len(self.include_domains) == 1:
+            parts.append(f"site:{self.include_domains[0]}")
+        elif self.include_domains:
+            parts.append("(" + " OR ".join(f"site:{d}" for d in self.include_domains) + ")")
+        parts += [f"-site:{d}" for d in self.exclude_domains]
+        return " ".join(parts)
+
+
+DEPTHS = ("basic", "advanced")
+
+
+def normalize_domain(raw: object) -> str:
+    """A bare lowercase host from whatever the model wrote ("https://www.X.com/path" -> "x.com"),
+    or "" when nothing host-like is left."""
+    text = str(raw or "").strip().lower()
+    for prefix in ("https://", "http://"):
+        text = text.removeprefix(prefix)
+    text = text.split("/", 1)[0].split("?", 1)[0].removeprefix("www.").strip(".")
+    if not text or "." not in text or any(c.isspace() for c in text):
+        return ""
+    return text
+
+
+def domain_list(raw: object) -> tuple[str, ...]:
+    """A capped, de-duplicated tuple of hosts from a list or a comma-separated string."""
+    items = raw if isinstance(raw, list) else str(raw or "").split(",")
+    seen: dict[str, None] = {}
+    for item in items:
+        if host := normalize_domain(item):
+            seen.setdefault(host, None)
+    return tuple(seen)[:_MAX_SITES]
 
 
 @dataclass(frozen=True)
@@ -76,11 +138,29 @@ class SearchResult:
     infobox: Infobox | None = None
     answers: tuple[str, ...] = ()
     window_dropped: bool = False
+    # Engine health for THIS query: the engines SearXNG reported failing (suspended ones
+    # included) and the ones whose results actually came back.
+    engines_down: tuple[str, ...] = ()
+    engines_answered: tuple[str, ...] = ()
+    # `source` is where the hits came from: "tavily" (the primary) or "searxng". When the
+    # primary was tried and FAILED, `hosted_failure` says why, so the agent knows it is reading
+    # the weaker fallback and the owner's quota problem is not mistaken for an empty web.
+    source: str = "searxng"
+    hosted_failure: str = ""
 
     @property
     def is_empty(self) -> bool:
         """Nothing to show at all — no hits, no panel, no instant answer."""
         return not (self.hits or self.infobox or self.answers)
+
+    @property
+    def degraded(self) -> bool:
+        """Engines failed AND at most one answered — the metasearch is down to a single index.
+        Measured 2026-10-03: with DuckDuckGo, Brave, Qwant, Startpage and Mojeek all blocked,
+        Bing alone ranked every "Epic" brand above the cinema the owner asked about, on twenty
+        rewordings in a row. A single surviving index is not a blend, and its off-topic
+        results are not a wording problem the agent can fix."""
+        return bool(self.engines_down) and len(self.engines_answered) <= 1
 
 
 @dataclass(frozen=True)
@@ -177,7 +257,7 @@ def _join_authors(raw: object) -> str:
     return str(raw or "").strip()
 
 
-def _unresponsive_engines(body: dict[str, object]) -> list[str]:
+def _unresponsive_rows(body: dict[str, object]) -> list[tuple[str, str]]:
     """The engines that FAILED this query, as SearXNG reported them in `unresponsive_engines`
     — rows of `[engine, human-readable reason]` (`webutils.get_json_response`). This is the only
     machine-readable per-engine health signal the JSON API gives us, and it was discarded.
@@ -195,7 +275,7 @@ def _unresponsive_engines(body: dict[str, object]) -> list[str]:
     raw = body.get("unresponsive_engines")
     if not isinstance(raw, list):
         return []
-    out: list[str] = []
+    out: list[tuple[str, str]] = []
     for row in raw:
         if isinstance(row, str):
             name, reason = row.strip(), ""
@@ -205,8 +285,151 @@ def _unresponsive_engines(body: dict[str, object]) -> list[str]:
         else:
             continue
         if name:
-            out.append(f"{name}: {reason}" if reason else name)
+            out.append((name, reason))
     return out
+
+
+def _unresponsive_engines(body: dict[str, object]) -> list[str]:
+    """`_unresponsive_rows` rendered for the log line: `name: reason`, or a bare name."""
+    return [f"{n}: {r}" if r else n for n, r in _unresponsive_rows(body)]
+
+
+def _answered_engines(body: dict[str, object]) -> tuple[str, ...]:
+    """The engines whose results came back, read off every result row's `engines` list (all
+    rows, not just the ones a caller keeps — a hit trimmed by `limit` still proves its engine
+    answered). Order of first appearance; empty when rows carry no `engines` field."""
+    rows = body.get("results")
+    if not isinstance(rows, list):
+        return ()
+    seen: dict[str, None] = {}
+    for r in rows:
+        engines = r.get("engines") if isinstance(r, dict) else None
+        if isinstance(engines, list):
+            for e in engines:
+                if isinstance(e, str) and e.strip():
+                    seen.setdefault(e.strip(), None)
+    return tuple(seen)
+
+
+@dataclass(frozen=True)
+class HostedOutcome:
+    """One primary-search attempt: the hits, and `failure` — a human reason when the call
+    FAILED (quota, rate limit, rejected key, transport), "" when it was simply off, keyless,
+    cooling down after a known failure, or found nothing."""
+
+    hits: list[SearchHit]
+    failure: str = ""
+
+
+HostedSearch = Callable[..., Awaitable[HostedOutcome]]
+
+_TAVILY_SEARCH_TIMEOUT = 20.0
+
+
+class TavilySearch:
+    """Tavily's hosted Search API — `web_search`'s PRIMARY index, because it does not share the
+    box's residential IP, which is what the scraper engines behind SearXNG block (2026-10-03:
+    DuckDuckGo, Brave, Qwant, Startpage and Mojeek all refused it, leaving Bing alone). Reads the
+    SAME live toggle + key as the Tavily fetch tier (`settings` -> (enabled, key)), so the PWA's
+    Tavily panel governs both and an unkeyed box goes straight to SearXNG. One basic search is
+    one credit; a successful result is cached for the TTL so a research fan's repeats collapse to
+    one call. Failures feed `health` (quota/rate/key state, the owner's notice, a cooldown). Only
+    the query text and the owner's key travel."""
+
+    def __init__(
+        self,
+        base_url: str,
+        settings: Callable[[], Awaitable[tuple[bool, str]]],
+        transport: httpx.AsyncBaseTransport | None = None,
+        *,
+        health: TavilyHealth | None = None,
+        cache_ttl_s: float = _CACHE_TTL_S,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self._base_url = base_url.rstrip("/")
+        self._settings = settings
+        self._transport = transport
+        self._health = health
+        self._cache: TTLCache[tuple[str, str, int, SearchOptions], list[SearchHit]] | None = (
+            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
+            if cache_ttl_s > 0
+            else None
+        )
+
+    async def search(
+        self,
+        query: str,
+        limit: int,
+        *,
+        time_range: str = "",
+        options: SearchOptions | None = None,
+    ) -> HostedOutcome:
+        if not self._base_url:
+            return HostedOutcome([])
+        opts = options or SearchOptions()
+        tr = time_range if time_range in TIME_RANGES else ""
+        key = (query.strip(), tr, limit, opts)
+        if self._cache is not None and (cached := self._cache.get(key)) is not None:
+            return HostedOutcome(cached)
+        try:
+            enabled, api_key = await self._settings()
+        except Exception:  # noqa: BLE001 — a settings hiccup must not fail the search it backs
+            log.warning("web.tavily_search_settings_unreadable", exc_info=True)
+            return HostedOutcome([])
+        if not enabled or not api_key:
+            return HostedOutcome([])
+        if self._health is not None and self._health.cooling_down():
+            return HostedOutcome([], (await self._health.current()).detail or "Tavily is failing")
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        depth = opts.depth if opts.depth in DEPTHS else "basic"
+        payload: dict[str, object] = {
+            "query": query,
+            "max_results": max(1, limit),
+            "search_depth": depth,
+            # Free, and the freshness signal a lead otherwise lacks.
+            "include_published_date": True,
+        }
+        if depth == "advanced":
+            payload["chunks_per_source"] = 3  # the page's most relevant passages, not a summary
+        if tr:
+            payload["time_range"] = tr
+        if opts.include_domains:
+            payload["include_domains"] = list(opts.include_domains)
+        if opts.exclude_domains:
+            payload["exclude_domains"] = list(opts.exclude_domains)
+        if opts.exact:
+            payload["exact_match"] = True
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TAVILY_SEARCH_TIMEOUT, transport=self._transport
+            ) as client:
+                resp = await client.post(f"{self._base_url}/search", json=payload, headers=headers)
+                resp.raise_for_status()
+                body = resp.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            log.warning("web.tavily_search_failed", status=status)
+            reason = await self._health.failed(status, "search") if self._health else ""
+            return HostedOutcome([], reason or f"Tavily returned HTTP {status}")
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("web.tavily_search_failed", error=repr(exc))
+            return HostedOutcome([], "Tavily could not be reached")
+        if self._health is not None:
+            await self._health.succeeded("search")
+        rows = body.get("results") if isinstance(body, dict) else None
+        hits = [
+            SearchHit(
+                title=str(r.get("title") or "").strip() or str(r["url"]).strip(),
+                url=str(r["url"]).strip(),
+                snippet=str(r.get("content") or "").strip(),
+                published=str(r.get("published_date") or "").strip(),
+            )
+            for r in (rows if isinstance(rows, list) else [])[: max(limit, 0)]
+            if isinstance(r, dict) and str(r.get("url") or "").strip()
+        ]
+        if self._cache is not None and hits:
+            self._cache[key] = hits
+        return HostedOutcome(hits)
 
 
 class SearxngClient:
@@ -220,9 +443,13 @@ class SearxngClient:
         *,
         cache_ttl_s: float = _CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
+        hosted: HostedSearch | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._transport = transport
+        # The primary index for a general search; SearXNG answers only when it is off, failed
+        # or found nothing (news and science stay on SearXNG's category engines).
+        self._hosted = hosted
         # One repeat-search cache per client (the client is an app-lifetime singleton),
         # keyed on (query, time_range, limit). cachetools.TTLCache supplies the TTL + LRU
         # eviction; `timer` threads our injectable clock for deterministic expiry tests. None
@@ -302,9 +529,15 @@ class SearxngClient:
         ]
 
     async def search(
-        self, query: str, limit: int = _DEFAULT_LIMIT, *, time_range: str = ""
+        self,
+        query: str,
+        limit: int = _DEFAULT_LIMIT,
+        *,
+        time_range: str = "",
+        options: SearchOptions | None = None,
     ) -> SearchResult:
-        """A general web search. Returns a SearchResult: the ranked hits PLUS the zero-click
+        """A general web search: the hosted primary (Tavily) first when wired, SearXNG when it is
+        off, failed or found nothing. Returns a SearchResult: the ranked hits PLUS the zero-click
         extras SearXNG returns in the same response — a Wikidata/Wikipedia `infobox` and any
         instant `answers` (definitions, conversions, calculations) — so a plain fact can be
         answered without a web_fetch. `time_range` (one of TIME_RANGES; anything else = no
@@ -320,12 +553,20 @@ class SearxngClient:
         while the same query with no window returned ten — the agent burned a whole turn
         rewording the query because the filter, not the wording, was the problem."""
         tr = time_range if time_range in TIME_RANGES else ""
+        opts = options or SearchOptions()
+        hosted_failure = ""
+        if self._hosted is not None:
+            outcome = await self._hosted(query, limit, time_range=tr, options=opts)
+            if outcome.hits:
+                return SearchResult(hits=outcome.hits, source="tavily")
+            hosted_failure = outcome.failure
+        query = opts.searxng_query(query)
         result = await self._search_window(query, limit, tr)
         if tr and result.is_empty:
             widened = await self._search_window(query, limit, "")
             if not widened.is_empty:
-                return replace(widened, window_dropped=True)
-        return result
+                result = replace(widened, window_dropped=True)
+        return replace(result, hosted_failure=hosted_failure) if hosted_failure else result
 
     async def _search_window(self, query: str, limit: int, tr: str) -> SearchResult:
         """One general search at one (already validated) recency window, through the cache."""
@@ -341,10 +582,18 @@ class SearxngClient:
             )
             for r in self._rows(body, limit)
         ]
-        result = SearchResult(hits=hits, infobox=_parse_infobox(body), answers=_parse_answers(body))
+        result = SearchResult(
+            hits=hits,
+            infobox=_parse_infobox(body),
+            answers=_parse_answers(body),
+            engines_down=tuple(n for n, _ in _unresponsive_rows(body)),
+            engines_answered=_answered_engines(body),
+        )
         # Cache only a result that carried SOMETHING (hits or an extra): an all-empty result is
         # often a transient throttle we should retry, not a real "nothing", for the whole TTL.
-        if self._cache is not None and not result.is_empty:
+        # A degraded one is the same throttle with one engine left standing — caching it pinned
+        # a single index's off-topic hits to that query for an hour after the engines recovered.
+        if self._cache is not None and not result.is_empty and not result.degraded:
             self._cache[key] = result
         return result
 

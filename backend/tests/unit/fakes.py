@@ -451,6 +451,12 @@ class FakeSettingsStore:
     async def set_tavily_api_key(self, ctx: object, api_key: str) -> None:
         self.values["tavily_api_key"] = api_key
 
+    async def tavily_health(self, ctx: object) -> object:
+        return self.values.get("tavily_health")
+
+    async def set_tavily_health(self, ctx: object, record: dict[str, str]) -> None:
+        self.values["tavily_health"] = record
+
     async def moltbook_api_key(self, ctx: object) -> str:
         raw = self.values.get("moltbook_api_key", "")
         return raw if isinstance(raw, str) else ""

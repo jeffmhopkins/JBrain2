@@ -190,7 +190,7 @@ from jbrain.media import ffmpeg_available
 from jbrain.models.images import GeneratedImageRepo
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.notes.repo import SqlNotesRepo
-from jbrain.notify import NotifyBus
+from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.push import SqlFcmTokenRepo
 from jbrain.pysandbox import PySandboxClient
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
@@ -225,12 +225,15 @@ from jbrain.web import (
     NppesClient,
     NwsClient,
     SearxngClient,
+    TavilySearch,
     WeatherClient,
     WeatherHistoryClient,
     WebFetcher,
     WikidataClient,
 )
 from jbrain.web.portals import FlDfsResolver, FlSunbizResolver
+from jbrain.web.tavily_health import NOTIFY_KIND as TAVILY_NOTIFY_KIND
+from jbrain.web.tavily_health import TavilyHealth
 from jbrain.web.youtube import youtube_page
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.lint import WIKI_LINT_SPEC
@@ -667,6 +670,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the fetcher) so those two thin callbacks can be injected; also shared on app.state below
         # for the 24h paywall/bot-wall skip list the web handlers consult.
         domain_skips = DomainSkipRepo(maker)
+
+        # One record of whether the owner's Tavily key still works, shared by search and fetch:
+        # a spent free-tier allowance is announced on his devices and shown in Settings, never
+        # left to a log line he cannot read.
+        def _tavily_notice(title: str, body: str) -> None:
+            notify_owner(
+                app.state.notify_bus,
+                Notification(kind=TAVILY_NOTIFY_KIND, title=title, body=body),
+            )
+
+        tavily_health = TavilyHealth(
+            load=lambda: settings_store.tavily_health(SYSTEM_CTX),
+            save=lambda record: settings_store.set_tavily_health(SYSTEM_CTX, record),
+            notify=_tavily_notice,
+        )
+        app.state.tavily_health = tavily_health
         web_fetcher = WebFetcher(
             reader_url=settings.reader_url,
             solver_url=settings.solver_url,
@@ -676,8 +695,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tavily_settings=_tavily_settings,
             tavily_first_hosts=domain_skips.tavily_first_hosts,
             record_solver_failed=domain_skips.record_solver_failed,
+            tavily_health=tavily_health,
         )
-        searxng = SearxngClient(settings.searxng_url)
+        # Tavily's Search API is web_search's primary index and SearXNG the fallback: the
+        # scraper engines block this box's IP. Same live toggle + key as the fetch tier, so the
+        # Tavily panel governs both.
+        searxng = SearxngClient(
+            settings.searxng_url,
+            hosted=TavilySearch(settings.tavily_url, _tavily_settings, health=tavily_health).search,
+        )
         # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool
         # (docs/plans/NEWS_FEED_PLAN.md). Fetches feed bytes through the shared SSRF-guarded
         # web_fetcher (all egress in one place) and parses them offline; the pinned feed map

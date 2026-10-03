@@ -1363,10 +1363,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
             6,
             "430a0a9a9c1f31f3a2f8c826ff795f68093042657514776b4d44c84469f28b8b",
         ),
+        # v5: Tavily became the primary index, so the tool exposes its controls — `sites`,
+        # `exclude_sites`, `exact`, `depth` — and teaches when to reach for each instead of
+        # rewording (the 2026-10-03 Titusville turn reworded one query twenty times).
         "web_search.tool": (
             "web_search",
-            4,
-            "dc5d5ed259a7fb0fa7f78dd94c6a48b53293a54effb6d00dd181cb9dc39bab9b",
+            5,
+            "ea9b223ce7e66ea7350299cb1d0b52a41d4e7d02654c54355fc11f4f1d704a47",
         ),
         "news_search.tool": (
             "news_search",

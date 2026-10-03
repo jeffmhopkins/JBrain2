@@ -32,6 +32,7 @@ function stubSettingsFetch(
     lexicon: opts.lexicon ?? {},
     tavilyEnabled: true,
     tavilyKeySet: false,
+    tavilyHealth: "ok",
     callsign: null as string | null,
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
@@ -119,6 +120,12 @@ function stubSettingsFetch(
           key_set: state.tavilyKeySet,
           wired: true,
           effective: state.tavilyEnabled && state.tavilyKeySet,
+          health: state.tavilyHealth,
+          health_since: state.tavilyHealth === "ok" ? "" : "2026-10-03T15:00:00+00:00",
+          health_detail:
+            state.tavilyHealth === "quota"
+              ? "Tavily's plan credit limit is used up (HTTP 432)"
+              : "",
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -252,6 +259,29 @@ describe("SettingsScreen Tavily web-fetch panel", () => {
     expect(toggle).toHaveAttribute("aria-checked", "true");
     fireEvent.click(toggle);
     await waitFor(() => expect(tavilyPuts).toContainEqual({ enabled: false }));
+  });
+});
+
+describe("SettingsScreen Tavily health", () => {
+  it("says plainly when the plan's credits are spent", async () => {
+    const { state } = stubSettingsFetch();
+    state.tavilyKeySet = true;
+    state.tavilyHealth = "quota";
+    setup();
+    const status = await screen.findByLabelText("Tavily status");
+    await waitFor(() => expect(status).toHaveTextContent("Out of credits"));
+    const health = await screen.findByLabelText("Tavily health");
+    expect(health).toHaveTextContent("credit limit is used up");
+    expect(health).toHaveTextContent("using the box's own engines");
+  });
+
+  it("shows no warning while the key is healthy", async () => {
+    const { state } = stubSettingsFetch();
+    state.tavilyKeySet = true;
+    setup();
+    const status = await screen.findByLabelText("Tavily status");
+    await waitFor(() => expect(status).toHaveTextContent("Active"));
+    expect(screen.queryByLabelText("Tavily health")).toBeNull();
   });
 });
 

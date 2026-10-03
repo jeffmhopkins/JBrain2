@@ -209,6 +209,9 @@ GMAIL_REFRESH_TOKEN_KEY = "gmail_refresh_token"
 TAVILY_ENABLED_KEY = "tavily_enabled"
 TAVILY_ENABLED_DEFAULT = True
 TAVILY_API_KEY_KEY = "tavily_api_key"
+# The key's last observed health (jbrain.web.tavily_health): ok / quota / rate_limited /
+# key_rejected, when it began and why — written on a change of state, read by the Settings panel.
+TAVILY_HEALTH_KEY = "tavily_health"
 
 # Moltbook (docs/plans/JMOLT_PLAN.md) — the jmolt persona's account credential + operating
 # switches, all in owner-only `app.settings` so NO agent tool can read or write them (M7/M17):
@@ -665,6 +668,13 @@ class SqlSettingsStore:
         fallback. The value is never echoed back on read (the API reports only whether one
         is set), like the Gmail client secret."""
         await self.upsert(ctx, TAVILY_API_KEY_KEY, api_key)
+
+    async def tavily_health(self, ctx: SessionContext) -> object:
+        """The stored Tavily health record (raw; `HealthState.parse` sanitizes it), or None."""
+        return await self.get(ctx, TAVILY_HEALTH_KEY, None)
+
+    async def set_tavily_health(self, ctx: SessionContext, record: dict[str, str]) -> None:
+        await self.upsert(ctx, TAVILY_HEALTH_KEY, record)
 
     async def moltbook_api_key(self, ctx: SessionContext) -> str:
         """The stored Moltbook bearer key, or "" when unset — the caller falls back to the

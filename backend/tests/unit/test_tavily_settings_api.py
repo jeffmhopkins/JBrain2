@@ -78,7 +78,15 @@ def test_starts_enabled_and_keyless(client: tuple[TestClient, FastAPI, FakeSetti
     test_client, _, _ = client
     body = test_client.get("/api/settings/tavily").json()
     # Default: enabled ON (single-owner box), no key yet, wired but not effective until a key.
-    assert body == {"enabled": True, "key_set": False, "wired": True, "effective": False}
+    assert body == {
+        "enabled": True,
+        "key_set": False,
+        "wired": True,
+        "effective": False,
+        "health": "ok",
+        "health_since": "",
+        "health_detail": "",
+    }
 
 
 def test_saving_a_key_sets_it_without_echoing(
@@ -155,3 +163,29 @@ def test_test_key_probe_when_disabled_says_so(
     test_client.put("/api/settings/tavily", json={"api_key": "tvly-secret", "enabled": False})
     body = test_client.post("/api/settings/tavily/test", json={}).json()
     assert body["ok"] is False and "off" in body["detail"]  # names the disabled tier, not a miss
+
+
+def test_reports_a_recorded_quota_failure(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    """A spent free-tier allowance is what the owner must be able to SEE without a terminal."""
+    test_client, _, store = client
+    assert test_client.get("/api/settings/tavily").json()["health"] == "ok"
+    store.values["tavily_health"] = {
+        "state": "quota",
+        "since": "2026-10-03T15:00:00+00:00",
+        "detail": "Tavily's plan credit limit is used up (HTTP 432)",
+        "leg": "search",
+    }
+    body = test_client.get("/api/settings/tavily").json()
+    assert body["health"] == "quota"
+    assert body["health_since"] == "2026-10-03T15:00:00+00:00"
+    assert "credit limit" in body["health_detail"]
+
+
+def test_junk_health_record_reads_as_ok(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    store.values["tavily_health"] = {"state": "on fire"}
+    assert test_client.get("/api/settings/tavily").json()["health"] == "ok"
