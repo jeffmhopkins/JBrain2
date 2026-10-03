@@ -43,6 +43,11 @@ _URL_KEEP = 100
 # length test so `](https://…)` and `see https://….` collapse cleanly.
 _URL_TAIL = ").,;:!?'\"»>"
 _URL_RE = re.compile(r"https?://[^\s<>\]]+")
+# A plain part shorter than this fraction of the rendered HTML is a stub, not an honest
+# alternative. Generous on purpose: a real plain alternative is the same prose without the
+# layout and lands near the HTML's rendered length, while a stub ("." from DigiKey, a
+# 199-char thank-you from Mouser) is a few percent of it.
+_STUB_RATIO = 0.5
 
 
 def collapse_tracking_urls(text: str) -> str:
@@ -59,13 +64,25 @@ def collapse_tracking_urls(text: str) -> str:
     return _URL_RE.sub(_shorten, text)
 
 
+def _render(raw: str) -> str:
+    """One part as clean text: HTML rendered to markdown, tracking URLs collapsed."""
+    if _HTML_HINT.search(raw):
+        raw = html_to_markdown(raw) or raw
+    return collapse_tracking_urls(raw).strip()
+
+
 def render_body(msg: GmailMessage) -> str:
     """The message body as clean text: HTML rendered to markdown, tracking URLs collapsed.
+
+    The plain-text part wins unless it is a stub of the HTML one: a sender whose plain
+    alternative carries a fraction of what its HTML renders to (an order confirmation with
+    the line items only in the HTML) is read from the HTML, because otherwise every search
+    of that sender's bodies comes back empty and the agent rewords its query forever.
 
     Falls back to the raw body if the markdown pass yields nothing (a malformed part), and
     to the Gmail snippet when there is no body at all — never to an empty string where the
     message had content."""
-    body = msg.body or ""
-    if _HTML_HINT.search(body):
-        body = html_to_markdown(body) or body
-    return collapse_tracking_urls(body).strip() or (msg.snippet or "").strip()
+    body = _render(msg.body or "")
+    if msg.html and len(body) < _STUB_RATIO * len(html := _render(msg.html)):
+        body = html
+    return body or (msg.snippet or "").strip()

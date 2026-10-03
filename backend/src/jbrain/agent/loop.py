@@ -313,6 +313,13 @@ class ToolContext:
     # loop reuses one ToolContext for a whole turn, and the default_factory gives each turn
     # its own memo, so the scope is exactly "this run"; only failed fetches ever land here.
     failed_fetches: dict[str, int] = field(default_factory=dict)
+    # Per-turn memo of read results (call key → the observation it returned), for a tool
+    # whose identical call cannot return anything new within a turn. The handler answers a
+    # repeat from here with a note saying so, because a model that got nothing will
+    # otherwise re-run the same search, reworded or not at all, until it is stopped (an
+    # archivist turn made 74 Gmail calls, a quarter of them exact repeats). A tool that
+    # writes clears it, since a write can change what the same read returns.
+    read_memo: dict[str, str] = field(default_factory=dict)
     # Hard per-run tool-call ceilings (None = uncapped, the default for every persona but the
     # scout). The web_search / web_fetch handlers count calls against these, refuse once spent,
     # and append the remaining count to each result. Mutated in place (like `failed_fetches`) —

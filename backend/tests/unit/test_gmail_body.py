@@ -69,3 +69,43 @@ def test_the_shared_windowing_honours_a_caller_sized_window() -> None:
     assert len(result.text) == 12_000
     assert result.total_chars == 50_000
     assert len(window_text("y" * 50_000, url="", title="t").text) == 30_000  # web default
+
+
+def _alt(plain: str, html: str) -> GmailMessage:
+    return GmailMessage(
+        id="m1",
+        thread_id="t",
+        sender="orders@mouser.com",
+        to="me@y.com",
+        subject="Confirmation of your order",
+        date="2026-01-01",
+        snippet="",
+        body=plain,
+        html=html,
+    )
+
+
+_ORDER_HTML = (
+    "<table><tr><td>Mouser #</td><td>Description</td><td>Qty</td></tr>"
+    "<tr><td>841-MPXV7002DP</td><td>Board Mount Pressure Sensors</td><td>2</td></tr>"
+    "<tr><td>538-10-89-7103</td><td>Headers &amp; Wire Housings</td><td>4</td></tr></table>"
+    "<p>Thank you for your order. Order Date: OCT 18, 2025. Customer Number: 1-354DA.</p>"
+)
+
+
+def test_a_stub_plain_part_yields_to_the_html() -> None:
+    """The box's real miss: DigiKey's plain alternative is ".", Mouser's a one-line thank
+    you, and the line items live only in the HTML — so no search of them could match."""
+    for stub in (".", "Thank you for your order."):
+        out = render_body(_alt(stub, _ORDER_HTML))
+        assert "841-MPXV7002DP" in out
+        assert "<td" not in out
+
+
+def test_an_honest_plain_part_is_kept_over_the_html() -> None:
+    plain = (
+        "Mouser # 841-MPXV7002DP Board Mount Pressure Sensors qty 2\n"
+        "Mouser # 538-10-89-7103 Headers and Wire Housings qty 4\n"
+        "Thank you for your order. Order Date: OCT 18, 2025."
+    )
+    assert render_body(_alt(plain, _ORDER_HTML)) == plain
