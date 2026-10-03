@@ -174,6 +174,17 @@ async def test_tavily_settings_default_on_keyless_and_round_trip(
     await store.upsert(OWNER, TAVILY_API_KEY_KEY, 123)
     assert await store.tavily_api_key(OWNER) == ""
 
+    # The health record round-trips as the raw dict the tracker wrote (parsed by its reader).
+    assert await store.tavily_health(OWNER) is None
+    record = {
+        "state": "quota",
+        "since": "2026-10-03T15:00:00+00:00",
+        "detail": "d",
+        "leg": "search",
+    }
+    await store.set_tavily_health(OWNER, record)
+    assert await store.tavily_health(OWNER) == record
+
 
 async def test_tavily_settings_are_owner_only(
     maker: async_sessionmaker[AsyncSession],

@@ -356,25 +356,26 @@ def _search_health_note(result: "SearchResult") -> str:
     the agent reads a single surviving index's off-topic hits as a wording problem: on
     2026-10-03 it reworded one cinema query twenty times against Bing alone while every other
     engine was CAPTCHA'd or 403'd, and the failures were only ever in a log it cannot read."""
-    if result.fallback:
-        return (
-            f"\n\n[Search note: the box's own search engines are blocked right now, so these"
-            f" results come from the hosted {result.fallback.capitalize()} search instead.]"
+    notes: list[str] = []
+    if result.hosted_failure:
+        notes.append(
+            f"[Search note: the primary search (Tavily) failed — {result.hosted_failure} — so"
+            " these results come from the box's own fallback engines, which are less reliable.]"
         )
-    if not result.degraded:
-        return ""
-    down = ", ".join(result.engines_down)
-    source = (
-        f"these results came from {result.engines_answered[0]} alone"
-        if result.engines_answered
-        else "no engine answered at all"
-    )
-    return (
-        f"\n\n[SEARCH DEGRADED: {len(result.engines_down)} search engine(s) failed this query"
-        f" ({down}); {source}. Off-topic or missing results here reflect a crippled index, NOT"
-        " your wording — rephrasing will not fix it. Go to a source directly instead: web_fetch"
-        " a site you already know or a link from a page you have read.]"
-    )
+    if result.degraded:
+        down = ", ".join(result.engines_down)
+        source = (
+            f"these results came from {result.engines_answered[0]} alone"
+            if result.engines_answered
+            else "no engine answered at all"
+        )
+        notes.append(
+            f"[SEARCH DEGRADED: {len(result.engines_down)} search engine(s) failed this query"
+            f" ({down}); {source}. Off-topic or missing results here reflect a crippled index,"
+            " NOT your wording — rephrasing will not fix it. Go to a source directly instead:"
+            " web_fetch a site you already know or a link from a page you have read.]"
+        )
+    return "".join(f"\n\n{n}" for n in notes)
 
 
 def _with_budget_note(out: str, note: str) -> str:

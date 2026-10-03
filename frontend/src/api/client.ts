@@ -634,6 +634,11 @@ export interface TavilySettings {
   key_set: boolean;
   wired: boolean;
   effective: boolean;
+  /** The key's last observed health: `ok`, `quota` (plan credits spent), `rate_limited` or
+   * `key_rejected`. `health_since` (ISO) is when it began, `health_detail` why. */
+  health: "ok" | "quota" | "rate_limited" | "key_rejected";
+  health_since: string;
+  health_detail: string;
 }
 
 /** Partial Tavily write — omit a field to leave it unchanged. Send a non-empty `api_key`

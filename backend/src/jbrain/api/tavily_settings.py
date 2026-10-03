@@ -21,6 +21,7 @@ from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.web.fetch import WebFetcher
+from jbrain.web.tavily_health import HealthState
 
 log = structlog.get_logger()
 
@@ -43,6 +44,12 @@ class TavilyStatusOut(BaseModel):
     key_set: bool
     wired: bool
     effective: bool
+    # The key's last observed health (jbrain.web.tavily_health): `ok`, `quota` (the plan's
+    # credits are spent), `rate_limited` or `key_rejected`; `since` is when that began (ISO),
+    # `detail` why, `leg` which of search/fetch saw it. Empty `since` = never failed.
+    health: str = "ok"
+    health_since: str = ""
+    health_detail: str = ""
 
 
 class TavilyPatch(BaseModel):
@@ -76,11 +83,15 @@ async def _status(
     stored = await store.tavily_api_key(ctx)
     key_present = bool(stored or settings.tavily_api_key)
     fetcher = _fetcher(request)
+    health = HealthState.parse(await store.tavily_health(ctx))
     return TavilyStatusOut(
         enabled=enabled,
         key_set=key_present,
         wired=fetcher.tavily_wired,
         effective=fetcher.tavily_wired and enabled and key_present,
+        health=health.state,
+        health_since=health.since,
+        health_detail=health.detail,
     )
 
 

@@ -14,7 +14,14 @@ from jbrain.agent.webtools import build_web_handlers
 from jbrain.db.session import SessionContext
 from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import SearchFormError, WebFetcher, WebFetchError
-from jbrain.web.search import SearchHit, SearxngClient, TavilySearch, WebSearchError
+from jbrain.web.search import (
+    HostedOutcome,
+    SearchHit,
+    SearxngClient,
+    TavilySearch,
+    WebSearchError,
+)
+from jbrain.web.tavily_health import TavilyHealth
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
 
@@ -302,21 +309,21 @@ _TAVILY_OK = {
 }
 
 
-def _fallback_spy(hits: list[SearchHit]):  # type: ignore[no-untyped-def]
-    calls: list[tuple[str, int]] = []
+def _hosted_spy(outcome: HostedOutcome):  # type: ignore[no-untyped-def]
+    calls: list[tuple[str, int, str]] = []
 
-    async def fallback(query: str, limit: int) -> list[SearchHit]:
-        calls.append((query, limit))
-        return hits
+    async def hosted(query: str, limit: int, *, time_range: str = "") -> HostedOutcome:
+        calls.append((query, limit, time_range))
+        return outcome
 
-    return fallback, calls
+    return hosted, calls
 
 
-def _searx_fb(body: dict, fallback) -> SearxngClient:  # type: ignore[no-untyped-def]
+def _searx_hosted(body: dict, hosted) -> SearxngClient:  # type: ignore[no-untyped-def]
     return SearxngClient(
         "http://searxng:8080",
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)),
-        fallback=fallback,
+        hosted=hosted,
     )
 
 
@@ -354,33 +361,52 @@ async def test_a_degraded_result_is_not_cached() -> None:
     assert len(calls) == 2
 
 
-async def test_degraded_search_swaps_in_the_fallback_hits() -> None:
-    fallback, calls = _fallback_spy([SearchHit("T", "https://t.example/", "s")])
-    result = await _searx_fb(_SEARX_DEGRADED, fallback).search("epic theatres titusville", 4)
-    assert calls == [("epic theatres titusville", 4)]
+async def test_the_hosted_primary_answers_first_and_searxng_is_not_asked() -> None:
+    searx_calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        searx_calls.append(request)
+        return httpx.Response(200, json=_SEARX_HEALTHY)
+
+    hosted, calls = _hosted_spy(HostedOutcome([SearchHit("T", "https://t.example/", "s")]))
+    client = SearxngClient("http://searxng:8080", httpx.MockTransport(handle), hosted=hosted)
+    result = await client.search("epic theatres titusville", 4, time_range="week")
+    assert calls == [("epic theatres titusville", 4, "week")]
     assert [h.url for h in result.hits] == ["https://t.example/"]
-    assert result.fallback == "tavily" and result.engines_down  # health rides along
+    assert result.source == "tavily" and searx_calls == []
 
 
-async def test_empty_search_falls_back() -> None:
-    fallback, calls = _fallback_spy([SearchHit("T", "https://t.example/", "s")])
-    result = await _searx_fb({"results": []}, fallback).search("zzz")
-    assert len(calls) == 1 and result.fallback == "tavily"
+async def test_an_empty_primary_falls_through_to_searxng_silently() -> None:
+    """Off, keyless or nothing found is not a failure — SearXNG answers, no note."""
+    hosted, _ = _hosted_spy(HostedOutcome([]))
+    result = await _searx_hosted(_SEARX_HEALTHY, hosted).search("q")
+    assert result.source == "searxng" and result.hosted_failure == ""
+    assert [h.url for h in result.hits] == ["https://a.example/1", "https://b.example/2"]
 
 
-async def test_healthy_search_never_calls_the_fallback() -> None:
-    """The fallback costs a credit per call — a working metasearch must not spend one."""
-    fallback, calls = _fallback_spy([SearchHit("T", "https://t.example/", "s")])
-    result = await _searx_fb(_SEARX_HEALTHY, fallback).search("q")
-    assert calls == [] and result.fallback == ""
+async def test_a_failed_primary_is_carried_onto_the_searxng_result() -> None:
+    hosted, _ = _hosted_spy(HostedOutcome([], "Tavily's plan credit limit is used up (HTTP 432)"))
+    result = await _searx_hosted(_SEARX_DEGRADED, hosted).search("epic")
+    assert result.source == "searxng"
+    assert result.hosted_failure.startswith("Tavily's plan credit limit")
+    assert result.degraded
 
 
-async def test_a_fallback_that_finds_nothing_leaves_the_degraded_result() -> None:
-    fallback, _ = _fallback_spy([])
-    result = await _searx_fb(_SEARX_DEGRADED, fallback).search("epic")
-    assert (
-        result.fallback == "" and result.degraded and result.hits[0].url == "https://epicgames.com/"
+def _health(**kw):  # type: ignore[no-untyped-def]
+    saved: list[dict] = []
+    notices: list[tuple[str, str]] = []
+    clock = kw.pop("clock", lambda: 1000.0)
+
+    async def load() -> object:
+        return kw.get("stored")
+
+    async def save(record: dict) -> None:
+        saved.append(record)
+
+    health = TavilyHealth(
+        load=load, save=save, notify=lambda t, b: notices.append((t, b)), clock=clock
     )
+    return health, saved, notices
 
 
 def _tavily(handler, enabled: bool = True, key: str = "tvly-k", **kw) -> TavilySearch:  # type: ignore[no-untyped-def]
@@ -397,41 +423,45 @@ async def test_tavily_search_posts_the_query_with_a_bearer_key_and_parses_hits()
         seen.append(request)
         return httpx.Response(200, json=_TAVILY_OK)
 
-    hits = await _tavily(handle).search("epic titusville", 5)
-    assert [h.url for h in hits] == ["https://epictheatres.example/t"]
+    out = await _tavily(handle).search("epic titusville", 5, time_range="day")
+    assert [h.url for h in out.hits] == ["https://epictheatres.example/t"] and out.failure == ""
     req = seen[0]
     assert req.url.path == "/search" and req.headers["Authorization"] == "Bearer tvly-k"
     body = json.loads(req.content)
     assert body["query"] == "epic titusville" and body["max_results"] == 5
-    assert "api_key" not in body
+    assert body["time_range"] == "day" and "api_key" not in body
 
 
 async def test_tavily_search_is_silent_when_off_or_keyless() -> None:
     def boom(request: httpx.Request) -> httpx.Response:
         raise AssertionError("no call may leave the box when the tier is off or keyless")
 
-    assert await _tavily(boom, enabled=False).search("q", 3) == []
-    assert await _tavily(boom, key="").search("q", 3) == []
-    assert await TavilySearch("", _never_settings).search("q", 3) == []
+    assert await _tavily(boom, enabled=False).search("q", 3) == HostedOutcome([])
+    assert await _tavily(boom, key="").search("q", 3) == HostedOutcome([])
+    assert await TavilySearch("", _never_settings).search("q", 3) == HostedOutcome([])
 
 
 async def _never_settings() -> tuple[bool, str]:
-    raise AssertionError("an unwired fallback must not read settings")
+    raise AssertionError("an unwired search must not read settings")
 
 
-async def test_tavily_search_swallows_errors_and_unreadable_settings() -> None:
-    assert await _tavily(lambda r: httpx.Response(429)).search("q", 3) == []
-    assert await _tavily(lambda r: httpx.Response(200, text="nope")).search("q", 3) == []
+async def test_tavily_search_reports_failures_and_unreadable_settings() -> None:
+    assert (await _tavily(lambda r: httpx.Response(500)).search("q", 3)).failure == (
+        "Tavily returned HTTP 500"
+    )
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route")
+
+    assert (await _tavily(down).search("q", 3)).failure == "Tavily could not be reached"
 
     async def broken() -> tuple[bool, str]:
         raise RuntimeError("db down")
 
-    client = TavilySearch(
-        "https://api.tavily.example",
-        broken,
-        httpx.MockTransport(lambda r: httpx.Response(200, json=_TAVILY_OK)),
+    ok = httpx.MockTransport(lambda r: httpx.Response(200, json=_TAVILY_OK))
+    assert await TavilySearch("https://api.tavily.example", broken, ok).search("q", 3) == (
+        HostedOutcome([])
     )
-    assert await client.search("q", 3) == []
 
 
 async def test_tavily_search_caches_a_hit_but_not_an_empty_result() -> None:
@@ -442,10 +472,114 @@ async def test_tavily_search_caches_a_hit_but_not_an_empty_result() -> None:
         return httpx.Response(200, json=_TAVILY_OK if len(calls) > 1 else {"results": []})
 
     client = _tavily(handle)
-    assert await client.search("q", 3) == []
-    assert await client.search("q", 3)
-    assert await client.search("q", 3)
+    assert (await client.search("q", 3)).hits == []
+    assert (await client.search("q", 3)).hits
+    assert (await client.search("q", 3)).hits
     assert len(calls) == 2
+
+
+async def test_a_spent_quota_is_recorded_announced_once_and_cooled_down() -> None:
+    """The owner's ask: know when the free tier runs out. One notice, one stored state, and no
+    further calls until the cooldown lapses."""
+    now = [1000.0]
+    health, saved, notices = _health(clock=lambda: now[0])
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(432, json={"detail": {"error": "limit"}})
+
+    client = _tavily(handle, health=health)
+    first = await client.search("a", 3)
+    assert "credit limit" in first.failure
+    assert [r["state"] for r in saved] == ["quota"] and saved[0]["leg"] == "search"
+    assert len(notices) == 1 and notices[0][0] == "Tavily search is failing"
+
+    second = await client.search("b", 3)  # cooling down: no call, same reason, no new notice
+    assert len(calls) == 1 and "credit limit" in second.failure and len(notices) == 1
+
+    now[0] += 3601  # an hour on, it re-probes; still spent, still one notice
+    await client.search("c", 3)
+    assert len(calls) == 2 and len(notices) == 1 and len(saved) == 1
+
+
+async def test_recovery_is_recorded_and_announced() -> None:
+    stored = {"state": "quota", "since": "x", "detail": "d", "leg": "search"}
+    health, saved, notices = _health(stored=stored)
+    out = await _tavily(lambda r: httpx.Response(200, json=_TAVILY_OK), health=health).search(
+        "q", 3
+    )
+    assert out.hits
+    assert saved[-1]["state"] == "ok"
+    assert notices == [("Tavily search is working again", "Web search is back on Tavily.")]
+
+
+async def test_a_rate_limit_is_recorded_but_does_not_buzz_the_phone() -> None:
+    health, saved, notices = _health()
+    out = await _tavily(lambda r: httpx.Response(429), health=health).search("q", 3)
+    assert "rate-limiting" in out.failure
+    assert [r["state"] for r in saved] == ["rate_limited"] and notices == []
+
+
+async def test_a_rejected_key_is_announced_and_not_cooled() -> None:
+    health, saved, notices = _health()
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(401)
+
+    client = _tavily(handle, health=health)
+    await client.search("a", 3)
+    await client.search("b", 3)
+    assert len(calls) == 2  # the owner fixes the key in Settings; the next call must try it
+    assert [r["state"] for r in saved] == ["key_rejected"] and len(notices) == 1
+
+
+async def test_a_transient_error_changes_no_health_state() -> None:
+    health, saved, notices = _health()
+    await _tavily(lambda r: httpx.Response(502), health=health).search("q", 3)
+    assert saved == [] and notices == [] and not health.cooling_down()
+
+
+async def test_health_tracking_never_breaks_a_search() -> None:
+    async def load() -> object:
+        raise RuntimeError("db down")
+
+    async def save(record: dict) -> None:
+        raise RuntimeError("db down")
+
+    def notify(title: str, body: str) -> None:
+        raise RuntimeError("bus down")
+
+    health = TavilyHealth(load=load, save=save, notify=notify)
+    out = await _tavily(lambda r: httpx.Response(432), health=health).search("q", 3)
+    assert "credit limit" in out.failure
+
+
+async def test_the_fetch_tier_feeds_the_same_health_and_honours_its_cooldown() -> None:
+    health, saved, notices = _health()
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.tavily.example":
+            calls.append(request)
+            return httpx.Response(432)
+        return httpx.Response(403, text="blocked")
+
+    async def provider() -> tuple[bool, str]:
+        return True, "tvly-k"
+
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        tavily_url="https://api.tavily.example",
+        tavily_settings=provider,
+        tavily_health=health,
+    )
+    assert await fetcher.tavily("https://walled.example/a") is None
+    assert [r["state"] for r in saved] == ["quota"] and saved[0]["leg"] == "fetch"
+    assert await fetcher.tavily("https://walled.example/b") is None
+    assert len(calls) == 1 and len(notices) == 1
 
 
 async def test_web_search_tool_tells_the_agent_the_search_is_degraded() -> None:
@@ -465,13 +599,20 @@ async def test_web_search_tool_says_degraded_even_with_no_hits() -> None:
     assert "No web results" in text and "no engine answered at all" in text
 
 
-async def test_web_search_tool_names_the_fallback_and_cites_its_hits() -> None:
-    fallback, _ = _fallback_spy([SearchHit("EPIC", "https://t.example/", "now playing")])
-    handlers = build_web_handlers(_searx_fb(_SEARX_DEGRADED, fallback), WebFetcher())
+async def test_web_search_tool_names_a_failed_primary() -> None:
+    hosted, _ = _hosted_spy(HostedOutcome([], "Tavily's plan credit limit is used up (HTTP 432)"))
+    handlers = build_web_handlers(_searx_hosted(_SEARX_HEALTHY, hosted), WebFetcher())
+    text = str(await handlers["web_search"]({"query": "q"}, CTX))
+    assert "primary search (Tavily) failed — Tavily's plan credit limit" in text
+    assert "SEARCH DEGRADED" not in text
+
+
+async def test_web_search_tool_cites_primary_hits_without_a_note() -> None:
+    hosted, _ = _hosted_spy(HostedOutcome([SearchHit("EPIC", "https://t.example/", "now")]))
+    handlers = build_web_handlers(_searx_hosted(_SEARX_DEGRADED, hosted), WebFetcher())
     out = await handlers["web_search"]({"query": "epic"}, CTX)
     text = str(out)
-    assert "come from the hosted Tavily search instead" in text
-    assert "SEARCH DEGRADED" not in text
+    assert "Search note" not in text and "SEARCH DEGRADED" not in text
     assert isinstance(out, ToolOutput) and [w.url for w in out.web_sources] == [
         "https://t.example/"
     ]

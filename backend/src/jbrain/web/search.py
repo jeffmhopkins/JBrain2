@@ -1,5 +1,5 @@
-"""Web search via a self-hosted SearXNG instance (docs/reference/ASSISTANT.md "Agent
-selection").
+"""Web search: Tavily's hosted index first, the self-hosted SearXNG instance behind it
+(docs/reference/ASSISTANT.md "Agent selection").
 
 SearXNG is a metasearch engine the owner runs on their own box, so a jerv search
 leaves the box only as far as SearXNG's own upstreams — the same local-first
@@ -18,6 +18,8 @@ from dataclasses import dataclass, replace
 import httpx
 import structlog
 from cachetools import TTLCache
+
+from jbrain.web.tavily_health import TavilyHealth
 
 log = structlog.get_logger()
 
@@ -77,11 +79,14 @@ class SearchResult:
     answers: tuple[str, ...] = ()
     window_dropped: bool = False
     # Engine health for THIS query: the engines SearXNG reported failing (suspended ones
-    # included) and the ones whose results actually came back. `fallback` names the hosted
-    # search that replaced the hits when the metasearch was crippled ("" = SearXNG's own).
+    # included) and the ones whose results actually came back.
     engines_down: tuple[str, ...] = ()
     engines_answered: tuple[str, ...] = ()
-    fallback: str = ""
+    # `source` is where the hits came from: "tavily" (the primary) or "searxng". When the
+    # primary was tried and FAILED, `hosted_failure` says why, so the agent knows it is reading
+    # the weaker fallback and the owner's quota problem is not mistaken for an empty web.
+    source: str = "searxng"
+    hosted_failure: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -246,20 +251,30 @@ def _answered_engines(body: dict[str, object]) -> tuple[str, ...]:
     return tuple(seen)
 
 
-# A hosted search that stands in when the metasearch is crippled: (query, limit) -> hits,
-# returning [] (never raising) when it is off, keyless or failed.
-SearchFallback = Callable[[str, int], Awaitable[list[SearchHit]]]
+@dataclass(frozen=True)
+class HostedOutcome:
+    """One primary-search attempt: the hits, and `failure` — a human reason when the call
+    FAILED (quota, rate limit, rejected key, transport), "" when it was simply off, keyless,
+    cooling down after a known failure, or found nothing."""
+
+    hits: list[SearchHit]
+    failure: str = ""
+
+
+HostedSearch = Callable[..., Awaitable[HostedOutcome]]
 
 _TAVILY_SEARCH_TIMEOUT = 20.0
 
 
 class TavilySearch:
-    """Tavily's hosted Search API as `web_search`'s fallback — the leg that does not share the
-    box's residential IP, which is the thing the scraper engines block. Reads the SAME live
-    toggle + key as the Tavily fetch tier (`settings` -> (enabled, key)), so the PWA's Tavily
-    panel governs both and an unkeyed box never calls out. One basic search is one credit; a
-    successful result is cached for the TTL so a research fan's repeats collapse to one call.
-    Only the query text and the owner's key travel."""
+    """Tavily's hosted Search API — `web_search`'s PRIMARY index, because it does not share the
+    box's residential IP, which is what the scraper engines behind SearXNG block (2026-10-03:
+    DuckDuckGo, Brave, Qwant, Startpage and Mojeek all refused it, leaving Bing alone). Reads the
+    SAME live toggle + key as the Tavily fetch tier (`settings` -> (enabled, key)), so the PWA's
+    Tavily panel governs both and an unkeyed box goes straight to SearXNG. One basic search is
+    one credit; a successful result is cached for the TTL so a research fan's repeats collapse to
+    one call. Failures feed `health` (quota/rate/key state, the owner's notice, a cooldown). Only
+    the query text and the owner's key travel."""
 
     def __init__(
         self,
@@ -267,33 +282,44 @@ class TavilySearch:
         settings: Callable[[], Awaitable[tuple[bool, str]]],
         transport: httpx.AsyncBaseTransport | None = None,
         *,
+        health: TavilyHealth | None = None,
         cache_ttl_s: float = _CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
     ):
         self._base_url = base_url.rstrip("/")
         self._settings = settings
         self._transport = transport
-        self._cache: TTLCache[tuple[str, int], list[SearchHit]] | None = (
+        self._health = health
+        self._cache: TTLCache[tuple[str, str, int], list[SearchHit]] | None = (
             TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
             if cache_ttl_s > 0
             else None
         )
 
-    async def search(self, query: str, limit: int) -> list[SearchHit]:
+    async def search(self, query: str, limit: int, *, time_range: str = "") -> HostedOutcome:
         if not self._base_url:
-            return []
-        key = (query.strip(), limit)
+            return HostedOutcome([])
+        tr = time_range if time_range in TIME_RANGES else ""
+        key = (query.strip(), tr, limit)
         if self._cache is not None and (cached := self._cache.get(key)) is not None:
-            return cached
+            return HostedOutcome(cached)
         try:
             enabled, api_key = await self._settings()
         except Exception:  # noqa: BLE001 — a settings hiccup must not fail the search it backs
             log.warning("web.tavily_search_settings_unreadable", exc_info=True)
-            return []
+            return HostedOutcome([])
         if not enabled or not api_key:
-            return []
+            return HostedOutcome([])
+        if self._health is not None and self._health.cooling_down():
+            return HostedOutcome([], (await self._health.current()).detail or "Tavily is failing")
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {"query": query, "max_results": max(1, limit), "search_depth": "basic"}
+        payload: dict[str, object] = {
+            "query": query,
+            "max_results": max(1, limit),
+            "search_depth": "basic",
+        }
+        if tr:
+            payload["time_range"] = tr
         try:
             async with httpx.AsyncClient(
                 timeout=_TAVILY_SEARCH_TIMEOUT, transport=self._transport
@@ -301,9 +327,16 @@ class TavilySearch:
                 resp = await client.post(f"{self._base_url}/search", json=payload, headers=headers)
                 resp.raise_for_status()
                 body = resp.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            log.warning("web.tavily_search_failed", status=status)
+            reason = await self._health.failed(status, "search") if self._health else ""
+            return HostedOutcome([], reason or f"Tavily returned HTTP {status}")
         except (httpx.HTTPError, ValueError) as exc:
             log.warning("web.tavily_search_failed", error=repr(exc))
-            return []
+            return HostedOutcome([], "Tavily could not be reached")
+        if self._health is not None:
+            await self._health.succeeded("search")
         rows = body.get("results") if isinstance(body, dict) else None
         hits = [
             SearchHit(
@@ -316,7 +349,7 @@ class TavilySearch:
         ]
         if self._cache is not None and hits:
             self._cache[key] = hits
-        return hits
+        return HostedOutcome(hits)
 
 
 class SearxngClient:
@@ -330,12 +363,13 @@ class SearxngClient:
         *,
         cache_ttl_s: float = _CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
-        fallback: SearchFallback | None = None,
+        hosted: HostedSearch | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._transport = transport
-        # Consulted only for a general search that came back degraded or with no hits.
-        self._fallback = fallback
+        # The primary index for a general search; SearXNG answers only when it is off, failed
+        # or found nothing (news and science stay on SearXNG's category engines).
+        self._hosted = hosted
         # One repeat-search cache per client (the client is an app-lifetime singleton),
         # keyed on (query, time_range, limit). cachetools.TTLCache supplies the TTL + LRU
         # eviction; `timer` threads our injectable clock for deterministic expiry tests. None
@@ -417,7 +451,8 @@ class SearxngClient:
     async def search(
         self, query: str, limit: int = _DEFAULT_LIMIT, *, time_range: str = ""
     ) -> SearchResult:
-        """A general web search. Returns a SearchResult: the ranked hits PLUS the zero-click
+        """A general web search: the hosted primary (Tavily) first when wired, SearXNG when it is
+        off, failed or found nothing. Returns a SearchResult: the ranked hits PLUS the zero-click
         extras SearXNG returns in the same response — a Wikidata/Wikipedia `infobox` and any
         instant `answers` (definitions, conversions, calculations) — so a plain fact can be
         answered without a web_fetch. `time_range` (one of TIME_RANGES; anything else = no
@@ -433,30 +468,18 @@ class SearxngClient:
         while the same query with no window returned ten — the agent burned a whole turn
         rewording the query because the filter, not the wording, was the problem."""
         tr = time_range if time_range in TIME_RANGES else ""
+        hosted_failure = ""
+        if self._hosted is not None:
+            outcome = await self._hosted(query, limit, time_range=tr)
+            if outcome.hits:
+                return SearchResult(hits=outcome.hits, source="tavily")
+            hosted_failure = outcome.failure
         result = await self._search_window(query, limit, tr)
         if tr and result.is_empty:
             widened = await self._search_window(query, limit, "")
             if not widened.is_empty:
                 result = replace(widened, window_dropped=True)
-        return await self._with_fallback(query, limit, result)
-
-    async def _with_fallback(self, query: str, limit: int, result: SearchResult) -> SearchResult:
-        """Swap in the hosted fallback's hits when the metasearch is degraded or found nothing.
-        The SearXNG extras (infobox, answers) and the engine health ride along; a fallback that
-        is off or comes back empty leaves the result untouched, so the agent is still told the
-        search was degraded rather than handed nothing."""
-        if self._fallback is None or not (result.degraded or not result.hits):
-            return result
-        hits = await self._fallback(query, limit)
-        if not hits:
-            return result
-        log.info(
-            "web.search_fallback",
-            via="tavily",
-            engines_down=len(result.engines_down),
-            engines_answered=list(result.engines_answered),
-        )
-        return replace(result, hits=hits, fallback="tavily")
+        return replace(result, hosted_failure=hosted_failure) if hosted_failure else result
 
     async def _search_window(self, query: str, limit: int, tr: str) -> SearchResult:
         """One general search at one (already validated) recency window, through the cache."""

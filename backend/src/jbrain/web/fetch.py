@@ -59,6 +59,7 @@ import structlog
 from cachetools import TTLCache
 
 from jbrain.htmltext import extract_page
+from jbrain.web.tavily_health import TavilyHealth
 
 log = structlog.get_logger()
 
@@ -814,8 +815,12 @@ class WebFetcher:
         record_solver_failed: RecordSolverFailed | None = None,
         tavily_cache_ttl_s: float = _TAVILY_CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
+        tavily_health: TavilyHealth | None = None,
     ):
         self._transport = transport
+        # Shared with web_search's Tavily leg: a spent quota or rejected key observed here is
+        # the same owner-visible state, and a cooldown skips a call that would fail anyway.
+        self._tavily_health = tavily_health
         self._reader_url = reader_url.rstrip("/")
         # A pinned bot-challenge solver (Byparr / FlareSolverr-compatible) the fetch escalates
         # to when the reader itself returns a challenge interstitial. Empty = tier disabled.
@@ -1581,7 +1586,10 @@ class WebFetcher:
         if not enabled or not api_key:
             return None
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
+        health = self._tavily_health
         cached = self._tavily_cache.get(url) if self._tavily_cache is not None else None
+        if cached is None and health is not None and health.cooling_down():
+            return None
         if cached is not None:
             text, final_url = cached
             log.info("web.tavily_used", url=final_url, cached=True)
@@ -1590,7 +1598,11 @@ class WebFetcher:
                 text, final_url = await self._tavily_extract(url, api_key)
             except (httpx.HTTPError, ValueError, WebFetchError) as exc:
                 log.warning("web.tavily_failed", error=repr(exc))
+                if health is not None and isinstance(exc, httpx.HTTPStatusError):
+                    await health.failed(exc.response.status_code, "fetch")
                 return None
+            if health is not None:
+                await health.succeeded("fetch")
             if not text.strip():
                 return None
             # Tavily can hand back the origin's challenge/paywall wall rendered as clean text (it
