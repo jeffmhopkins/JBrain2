@@ -108,17 +108,6 @@ def test_admit_refuses_when_clamp_too_small() -> None:
     assert (err.role, err.cap, err.prompt_tokens) == (SlotRole.PET, 32_768, 32_000)
 
 
-def test_admit_refuses_without_clamp_permission() -> None:
-    with pytest.raises(SlotCapError):
-        admit(
-            FLASH_NEXT_POOL,
-            SlotRole.PET,
-            prompt_tokens=30_000,
-            max_tokens=8000,
-            allow_clamp=False,
-        )
-
-
 def test_admit_refuses_prompt_alone_over_cap() -> None:
     with pytest.raises(SlotCapError):
         admit(FLASH_NEXT_POOL, SlotRole.SMALL, prompt_tokens=70_000, max_tokens=10)
@@ -145,3 +134,21 @@ def test_standard_entries_have_no_pool() -> None:
     assert all(m.kv_pool is None for m in standard)
     assert pool_shape(asdict(standard[0])) is None
     assert local_catalog.pool_of("not-a-model") is None
+
+
+def test_slot_pin_names_a_role_or_nothing_at_all() -> None:
+    assert slot_roles.slot_pin(SlotRole.RESEARCH) == {"slot_role": SlotRole.RESEARCH}
+    assert slot_roles.slot_pin(None) == {}
+
+
+def test_layout_matches_only_the_pools_own_slot_count() -> None:
+    assert slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 8)
+    assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 4)
+    assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [])
+
+
+def test_tool_call_chars_reads_a_dict_and_its_json_string_alike() -> None:
+    args = {"query": "kv pool"}
+    assert slot_roles.tool_call_chars("search", args) == slot_roles.tool_call_chars(
+        "search", '{"query": "kv pool"}'
+    )

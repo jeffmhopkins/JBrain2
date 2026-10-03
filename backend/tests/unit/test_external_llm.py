@@ -7,6 +7,7 @@ against the real app with the upstream gateway faked.
 """
 
 import asyncio
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import external_llm
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
+from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotRole
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
@@ -312,6 +314,42 @@ def test_a_prompt_over_the_jcode_cap_is_an_openai_context_error(
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "context_length_exceeded"
     assert "payload" not in sent
+
+
+def test_a_busy_pool_streams_an_openai_error_then_done(
+    app_repo: tuple[FastAPI, FakeAuthRepo], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The 200 is already out when the guard gives up, so the reason rides in the stream
+    # rather than the client seeing it cut with nothing said.
+    app, repo = app_repo
+    minted = _owner(app, repo).post("/api/jcode/external", json={}).json()
+    sent: dict[str, object] = {}
+    _pooled_proxy(app, monkeypatch, sent)
+
+    async def full(model: str) -> list[dict[str, object]]:
+        return [
+            {
+                "id": i,
+                "is_processing": i != 4,
+                "n_prompt_tokens": 0 if i == 4 else 200_000,
+                "next_token": [{"n_remain": -1, "n_decoded": 1}],
+            }
+            for i in range(8)
+        ]
+
+    async def erase(model: str, slot: int) -> bool:
+        raise AssertionError("busy slots are never erased")
+
+    app.state.kv_pool_guard = KvPoolGuard(full, erase, wait_s=0.0)
+    r = TestClient(app).post(
+        f"/api/ext/llm/{minted['id']}/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "hi"}], "stream": True},
+        headers={"Authorization": f"Bearer {minted['token']}"},
+    )
+    assert r.status_code == 200 and "payload" not in sent
+    frames = [f for f in r.text.split("\n\n") if f]
+    assert frames[-1] == "data: [DONE]"
+    assert json.loads(frames[0].removeprefix("data: "))["error"]["code"] == "kv_pool_busy"
 
 
 def test_openai_models_lists_pinned_coder_and_is_gated(

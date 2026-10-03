@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 
-from jbrain.llm.kv_pool_guard import NO_ERASE_TTL_S, KvPoolBusyError, KvPoolGuard
+from jbrain.llm.kv_pool_guard import LAYOUT_TTL_S, NO_ERASE_TTL_S, KvPoolBusyError, KvPoolGuard
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotCapError, SlotRole
 
@@ -408,3 +408,170 @@ async def test_two_contending_calls_do_not_both_count_the_same_free_cells() -> N
     assert results[:3] == ["ok", "ok", "ok"]
     assert sorted(results[3:]) == ["busy", "ok"]
     assert guard._pending == {}  # every placement released on the way out
+
+
+class _FlakyReads:
+    """`/slots` that answers with `body` until `fail` is set, then raises (or hangs)."""
+
+    def __init__(self, body: list[dict[str, object]], *, hang: bool = False) -> None:
+        self.body = body
+        self.fail = False
+        self._hang = hang
+        self.erased: list[int] = []
+
+    async def read(self, model: str) -> list[dict[str, object]]:
+        if self.fail:
+            if self._hang:
+                await asyncio.Event().wait()
+            raise LocalGatewayError("down")
+        return self.body
+
+    async def erase(self, model: str, slot: int) -> bool:
+        self.erased.append(slot)
+        return True
+
+
+async def test_a_slots_read_that_hangs_is_bounded_and_reads_as_unreadable() -> None:
+    gw = _FlakyReads(_layout(), hang=True)
+    gw.fail = True
+    guard = KvPoolGuard(gw.read, gw.erase, read_timeout_s=0.01)
+    async with guard.placed(
+        MODEL, POOL, SlotRole.SMALL, prompt_tokens=100, max_tokens=100
+    ) as placed:
+        assert placed.slot is None  # never seen a matching layout: nothing to trust
+
+
+async def test_an_unreadable_read_after_a_recent_match_stays_pinned_until_the_ttl() -> None:
+    clock = _Clock()
+    gw = _FlakyReads(_layout())
+    guard = KvPoolGuard(gw.read, gw.erase, sleep=clock.sleep, clock=clock)
+    call: dict[str, Any] = {"prompt_tokens": 1_000, "max_tokens": 500}
+    async with guard.placed(MODEL, POOL, SlotRole.RESEARCH, **call) as placed:
+        assert placed.slot == POOL.slot(SlotRole.RESEARCH)
+    gw.fail = True
+    clock.now += LAYOUT_TTL_S - 1
+    async with guard.placed(MODEL, POOL, SlotRole.RESEARCH, **call) as placed:
+        # Pinned off the recent match, and recorded so the next decision counts it.
+        assert placed.slot == POOL.slot(SlotRole.RESEARCH)
+        assert guard._pending_on(MODEL, POOL.slot(SlotRole.RESEARCH)) == 1_500
+    assert gw.erased == []
+    clock.now += 2
+    async with guard.placed(MODEL, POOL, SlotRole.RESEARCH, **call) as placed:
+        assert placed.slot is None
+
+
+async def test_a_mismatched_read_forgets_the_last_good_layout() -> None:
+    gw = _FlakyReads(_layout())
+    guard = KvPoolGuard(gw.read, gw.erase)
+    call: dict[str, Any] = {"prompt_tokens": 1_000, "max_tokens": 500}
+    async with guard.placed(MODEL, POOL, SlotRole.SMALL, **call) as placed:
+        assert placed.slot == POOL.slot(SlotRole.SMALL)
+    gw.body = [_slot(i) for i in range(4)]
+    async with guard.placed(MODEL, POOL, SlotRole.SMALL, **call) as placed:
+        assert placed.slot is None
+    gw.fail = True
+    async with guard.placed(MODEL, POOL, SlotRole.SMALL, **call) as placed:
+        assert placed.slot is None
+
+
+async def test_a_slot_that_turns_busy_before_its_erase_is_skipped() -> None:
+    # The read that chose SMALL showed it idle; the read right before its erase shows it
+    # running, so the next candidate (PET) is erased instead.
+    now_busy = {**_crowded()[7], "is_processing": True, "next_token": [{"n_decoded": 5}]}
+    gw = _Gateway(_crowded(), [*_crowded()[:7], now_busy])
+    async with _guard(gw).placed(
+        MODEL, POOL, SlotRole.INTERACTIVE, prompt_tokens=190_000, max_tokens=10_000
+    ) as placed:
+        assert placed.slot == 0
+    assert gw.erased == [6]
+
+
+def _jerv_last_resort(*, jerv_busy: bool) -> list[dict[str, object]]:
+    # Busy slots 1-5 hold 960k; jerv's idle 250k is the only cell left to free.
+    held = {1: 125_000, 2: 230_000, 3: 230_000, 4: 250_000, 5: 125_000}
+    slots = {f"s{i}": _slot(i, n, busy=True, decoded=1) for i, n in held.items()}
+    return _layout(s0=_slot(0, 250_000, busy=jerv_busy, decoded=1), **slots)
+
+
+async def test_jervs_slot_is_erased_only_off_a_read_taken_just_before() -> None:
+    gw = _Gateway(_jerv_last_resort(jerv_busy=False), _jerv_last_resort(jerv_busy=True))
+    with pytest.raises(KvPoolBusyError):
+        async with _guard(gw, wait_s=0.0).placed(
+            MODEL, POOL, SlotRole.SMALL, prompt_tokens=50_000, max_tokens=10_000
+        ):
+            pass
+    assert gw.erased == []
+    idle = _Gateway(_jerv_last_resort(jerv_busy=False))
+    async with _guard(idle).placed(
+        MODEL, POOL, SlotRole.SMALL, prompt_tokens=50_000, max_tokens=10_000
+    ):
+        pass
+    assert idle.erased == [0]
+
+
+async def test_an_unreadable_pool_erases_nothing() -> None:
+    gw = _FlakyReads(_jerv_last_resort(jerv_busy=False))
+    real = gw.read
+
+    async def once_then_down(model: str) -> list[dict[str, object]]:
+        body = await real(model)
+        gw.fail = True
+        return body
+
+    # Jerv's slot would be freed, but the read before its erase fails: wait, never erase blind.
+    clock = _Clock()
+    guard = KvPoolGuard(once_then_down, gw.erase, wait_s=10.0, sleep=clock.sleep, clock=clock)
+    with pytest.raises(KvPoolBusyError):
+        async with guard.placed(
+            MODEL, POOL, SlotRole.SMALL, prompt_tokens=50_000, max_tokens=10_000
+        ):
+            pass
+    assert gw.erased == []
+
+
+async def test_the_pet_overflows_when_its_own_slot_holds_a_call_this_process_placed() -> None:
+    # The first call reads idle until llama-server picks it up; the second must not queue
+    # behind it in the same slot.
+    guard = _guard(_Gateway(_layout()))
+    call: dict[str, Any] = {"prompt_tokens": 2_000, "max_tokens": 500}
+    async with guard.placed(MODEL, POOL, SlotRole.PET, **call) as first:
+        assert first.slot == POOL.slot(SlotRole.PET)
+        async with guard.placed(MODEL, POOL, SlotRole.PET, **call) as second:
+            assert second.slot == POOL.slot(SlotRole.SMALL)
+
+
+async def test_a_call_of_ours_still_prefilling_is_charged_its_own_size_not_the_cap() -> None:
+    # Our jcode call (30k) is prefilling in slot 4. Charged its 256k cap, the 720k idle in
+    # slots 0/2/3 plus this 110k call would overrun and force an erase; charged 30k, it fits.
+    crowded = _layout(
+        s0=_slot(0, 240_000),
+        s2=_slot(2, 240_000),
+        s3=_slot(3, 240_000),
+        s4=_slot(4, 5_000, busy=True, remain=10_000),
+    )
+    gw = _Gateway(_layout(), crowded)
+    guard = _guard(gw, wait_s=0.0)
+    async with (
+        guard.placed(MODEL, POOL, SlotRole.JCODE, prompt_tokens=20_000, max_tokens=10_000),
+        guard.placed(
+            MODEL, POOL, SlotRole.INGEST, prompt_tokens=100_000, max_tokens=10_000
+        ) as placed,
+    ):
+        assert placed.slot == POOL.slot(SlotRole.INGEST)
+    assert gw.erased == []
+
+
+async def test_a_per_call_wait_overrides_the_guards_default() -> None:
+    clock = _Clock()
+    gw = _Gateway(_busy_pool())
+    with pytest.raises(KvPoolBusyError):
+        async with _guard(gw, wait_s=100.0, clock=clock).placed(
+            MODEL,
+            POOL,
+            SlotRole.INTERACTIVE,
+            prompt_tokens=50_000,
+            max_tokens=10_000,
+            wait_s=4.0,
+        ):
+            pass
+    assert clock.now <= 6.0

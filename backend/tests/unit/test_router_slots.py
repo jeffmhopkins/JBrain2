@@ -3,6 +3,7 @@ slot a call carries, its cap, the layout fallback, and that nothing else ever ca
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import Any, cast
@@ -13,7 +14,7 @@ import pytest
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, prefill
 from jbrain.llm import engine as engines
 from jbrain.llm.errors import LlmStreamTruncatedError
-from jbrain.llm.kv_pool_guard import KvPoolGuard
+from jbrain.llm.kv_pool_guard import INTERACTIVE_WAIT_S, KvPoolGuard
 from jbrain.llm.openai_compat import OpenAiCompatClient
 from jbrain.llm.router import context_window_for_spec
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotCapError, SlotRole
@@ -236,3 +237,24 @@ async def test_only_the_local_provider_puts_id_slot_on_the_wire() -> None:
     await _local_client(seen, "local").complete(model="m", system="s", user_text="u")
     await _local_client(seen, "xai").complete(model="m", system="s", user_text="u", id_slot=3)
     assert [body.get("id_slot") for body in seen] == [3, 4, None, None]
+
+
+class _WaitRecordingGuard(KvPoolGuard):
+    def __init__(self) -> None:
+        guard = _guard()
+        super().__init__(guard._read, guard._erase)
+        self.waits: list[float | None] = []
+
+    @contextlib.asynccontextmanager
+    async def placed(self, *args: Any, wait_s: float | None = None, **kw: Any):  # type: ignore[override]
+        self.waits.append(wait_s)
+        async with super().placed(*args, wait_s=wait_s, **kw) as placement:
+            yield placement
+
+
+async def test_only_the_interactive_role_gives_up_on_a_busy_pool_early() -> None:
+    guard = _WaitRecordingGuard()
+    router = _router(FakeLlmClient(), guard=guard)
+    await router.complete("research.title", system="s", user_text="u")
+    await router.converse("agent.turn", system="s", messages=[UserMessage("hi")])
+    assert guard.waits == [None, INTERACTIVE_WAIT_S]

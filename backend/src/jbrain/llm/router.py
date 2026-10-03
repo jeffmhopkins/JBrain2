@@ -875,8 +875,11 @@ class LlmRouter:
             )
             yield admission.slot, admission.max_tokens
             return
+        # The owner is watching the interactive turn; it gives up on a full pool far sooner
+        # than a background job, which the worker defers and retries anyway.
+        wait_s = kv_pool_guard_mod.INTERACTIVE_WAIT_S if role is SlotRole.INTERACTIVE else None
         async with self._pool_guard.placed(
-            model, pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens
+            model, pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens, wait_s=wait_s
         ) as placement:
             yield placement.slot, placement.max_tokens
 
@@ -885,6 +888,8 @@ class LlmRouter:
         # Every local call's real prompt size tightens the estimate the slot caps are checked
         # with. An image's tokens have no characters behind them, and on a short prompt the
         # chat template's fixed overhead dominates the ratio, so those calls are skipped.
+        # This applies on the Standard engine too, where only streamed turns calibrated before
+        # F3b: the same ratio drives its prefill bar, and more real samples only sharpen it.
         if (
             provider == local_catalog.LOCAL_PROVIDER
             and n_images == 0

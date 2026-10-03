@@ -93,6 +93,7 @@ const STOP_LABELS: Record<string, string> = {
   too_many_errors: "Stopped — tools kept failing",
   context_overflow:
     "This model ran out of context — raise its window in Settings or start a new chat",
+  kv_pool_busy: "The model's memory is busy — try again shortly",
   error: "Something went wrong",
 };
 

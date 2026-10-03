@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 from types import SimpleNamespace
 from typing import cast
 
@@ -16,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jbrain.api import jcode_llm
-from jbrain.llm import engine, local_catalog, prefill, slot_roles
+from jbrain.llm import engine, local_catalog, openai_slot_fit, prefill, slot_roles
 from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.openai_slot_fit import DEFAULT_OUTPUT_TOKENS
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, JCODE_ROLE
@@ -319,11 +320,62 @@ def test_a_remap_after_admission_is_fitted_to_the_model_actually_sent(
     assert payload["model"] == _FLASH and "n_predict" not in payload
     assert payload["id_slot"] == FLASH_NEXT_POOL.slot(JCODE_ROLE)
     assert payload["max_tokens"] == DEFAULT_OUTPUT_TOKENS
-    # Too long for the slot it was remapped to: too late for a 400, so nothing is forwarded.
+    # Too long for the slot it was remapped to: too late for a 400, so nothing is forwarded
+    # and the 200's body carries OpenAI's overflow error instead of being empty.
     sent.clear()
     long = {"model": "gpt-oss-120b", "messages": [{"role": "user", "content": "x" * 1_200_000}]}
     r = client.post(_COMPLETIONS, json=long, headers=_AUTH)
-    assert r.content == b"" and "payload" not in sent
+    assert r.json()["error"]["code"] == "context_length_exceeded" and "payload" not in sent
+
+
+def _busy_guard() -> KvPoolGuard:
+    # Every other slot busy decoding near its cap: no room for a jcode call, and no wait.
+    async def full(model: str) -> list[dict[str, object]]:
+        return [
+            {
+                "id": i,
+                "is_processing": i != 4,
+                "n_prompt_tokens": 0 if i == 4 else 200_000,
+                "next_token": [{"n_remain": -1, "n_decoded": 1}],
+            }
+            for i in range(8)
+        ]
+
+    async def erase(model: str, slot: int) -> bool:
+        raise AssertionError("busy slots are never erased")
+
+    return KvPoolGuard(full, erase, wait_s=0.0)
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+@pytest.mark.parametrize("stream", [True, False])
+def test_a_busy_pool_answers_with_an_openai_error_not_a_cut_stream(
+    monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    app = _flash_app()
+    app.state.kv_pool_guard = _busy_guard()
+    body = {"messages": [], "max_tokens": 1000, "stream": stream}
+    r, payload = _post(app, monkeypatch, body)
+    assert r.status_code == 200 and payload == {}
+    if stream:
+        frames = [f for f in r.text.split("\n\n") if f]
+        assert frames[-1] == "data: [DONE]"
+        error = json.loads(frames[0].removeprefix("data: "))["error"]
+    else:
+        error = r.json()["error"]
+    assert error["code"] == "kv_pool_busy" and error["type"] == "server_error"
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_parallel_choices_are_dropped_and_odd_budgets_read_as_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"messages": [], "n": 4, "n_cmpl": 4, "max_tokens": "800", "max_completion_tokens": None}
+    r, payload = _post(_flash_app(), monkeypatch, body)
+    assert r.status_code == 200
+    assert "n" not in payload and "n_cmpl" not in payload
+    # The fitted budget under both names: the client's null is never forwarded.
+    assert payload["max_tokens"] == payload["max_completion_tokens"] == 800
 
 
 @pytest.mark.usefixtures("_fresh_ratio")
@@ -395,3 +447,37 @@ def test_grok_is_told_the_jcode_slots_cap_as_a_pooled_models_window() -> None:
     assert jcode_llm._window(dataclasses.replace(model, kv_pool=None)) == model.context_window
     lines = TestClient(_flash_app()).get(f"{_MODELS}?format=lines", headers=_AUTH).text
     assert f"|{_FLASH}|" in lines and lines.strip().endswith(f"|{_JCODE_CAP}")
+
+
+def test_the_openai_estimate_counts_text_the_way_the_router_does() -> None:
+    # Content text, tool calls and tool schemas count; JSON punctuation and base64 image data
+    # do not (the image is charged flat instead).
+    schema = {"type": "object"}
+    payload = {
+        "messages": [
+            {"role": "system", "content": "s" * 100},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "t" * 50},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 9}},
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"function": {"name": "search", "arguments": '{"q": "x"}'}}],
+            },
+            {"role": "tool", "tool_call_id": "1", "content": "r" * 30},
+        ],
+        "tools": [{"type": "function", "function": {"name": "search", "parameters": schema}}],
+    }
+    chars, images = openai_slot_fit.prompt_chars(payload)
+    assert images == 1
+    assert chars == (
+        100
+        + 50
+        + slot_roles.tool_call_chars("search", {"q": "x"})
+        + 30
+        + slot_roles.tool_schema_chars("search", "", schema)
+    )

@@ -6,7 +6,7 @@
 // stay out until it is, rather than being drawn from numbers nobody measured.
 
 import { useEffect, useState } from "react";
-import type { KvPool, KvPoolSlot } from "../api/client";
+import type { KvPool } from "../api/client";
 import { useEngineSnapshot } from "../engineState";
 import { Sheet } from "./Sheet";
 import { ArrowRightIcon, InfoIcon, LockIcon } from "./icons";
@@ -25,18 +25,10 @@ export const SLOT_SERVES: ReadonlyMap<string, string> = new Map([
   ["small", "Short one-off prompts."],
 ]);
 
-// The engine's overflow routing, for a server that predates the per-slot `overflow` field.
-const OVERFLOW_FALLBACK: ReadonlyMap<string, string> = new Map([["pet", "small"]]);
-
-function overflowRole(s: KvPoolSlot): string | null {
-  if (s.overflow !== undefined) return s.overflow;
-  return OVERFLOW_FALLBACK.get(s.role) ?? null;
-}
-
 // Not the screen's fmtTokens: that one goes decimal at M, and the pool and its caps are
 // powers of two, so a decimal "1.4M" of caps beside a "1M" pool would misstate the
-// overcommit (the caps are 1.34× the pool). Binary throughout, and the k/M boundary is
-// taken after rounding so a just-under-1M count can never print as "1024k".
+// overcommit (the caps add up to more than the pool). Binary throughout, and the k/M boundary
+// is taken after rounding so a just-under-1M count can never print as "1024k".
 export function fmtTokens(n: number): string {
   if (n < 1024) return `${n}`;
   const k = Math.round(n / 1024);
@@ -169,7 +161,7 @@ export function KvPoolSheet({
       <ul className="kvp-list">
         {pool.slots.map((s) => {
           const open = sel === s.slot;
-          const spill = overflowRole(s);
+          const spill = s.overflow;
           const target = spill ? pool.slots.find((t) => t.role === spill) : undefined;
           return (
             <li

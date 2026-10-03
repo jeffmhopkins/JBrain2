@@ -224,6 +224,9 @@ async def process_one(
             # The same input lands in the same slot with the same cap on every attempt, so
             # retrying only burns the budget. A box event, because a directly-enqueued job has
             # no run step and its last_error reaches no owner surface. Sizes only, no text.
+            # Unlike the deferral arm below, this one runs `_after_exhaustion`: the failure is
+            # final, so an attachment job's note gets its body-only analysis fallback now,
+            # where a deferred job is still alive and will run again.
             exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
             log.error("worker.job_failed_slot_cap", job_id=job.id, kind=job.kind, error=repr(exc))
             await box_events.record(

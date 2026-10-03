@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequ
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol
 
 import structlog
 
@@ -73,7 +73,7 @@ from jbrain.llm import (
 )
 from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
-from jbrain.llm.slot_roles import SlotRole
+from jbrain.llm.slot_roles import SlotPin, SlotRole, slot_pin
 
 log = structlog.get_logger()
 
@@ -656,10 +656,6 @@ def _round_stop(turn: LlmTurn) -> str:
     return "end_turn"
 
 
-class _SlotPin(TypedDict, total=False):
-    slot_role: SlotRole
-
-
 class AgentLoop:
     def __init__(
         self,
@@ -697,7 +693,7 @@ class AgentLoop:
         # by the chat and every background agent, so the task name alone would land them all
         # in jerv's slot and evict its prefix. None keeps the task's default (interactive) and
         # the router call exactly as it was, so a caller that names no role changes nothing.
-        self._slot_pin: _SlotPin = {"slot_role": slot_role} if slot_role is not None else {}
+        self._slot_pin: SlotPin = slot_pin(slot_role)
 
     async def _hidden(self) -> Collection[str]:
         """Tool names hidden this turn by the runtime provider (empty when no provider

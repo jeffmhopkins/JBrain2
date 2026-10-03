@@ -2082,14 +2082,20 @@ describe("KV pool view (Flash-Next F3b, GUI gate C)", () => {
   const POOL = {
     n_ctx: 1048576,
     slots: [
-      { slot: 0, role: "interactive", label: "jerv (chat, omnibox)", cap: 262144 },
-      { slot: 1, role: "ingest", label: "Ingest and analysis", cap: 131072 },
-      { slot: 2, role: "scheduled", label: "Scheduled tasks", cap: 262144 },
-      { slot: 3, role: "research", label: "Research and sub-agents", cap: 262144 },
-      { slot: 4, role: "jcode", label: "jcode", cap: 262144 },
-      { slot: 5, role: "workshop", label: "Wiki, notes, intake", cap: 131072 },
-      { slot: 6, role: "pet", label: "Kid pet", cap: 32768 },
-      { slot: 7, role: "small", label: "Small prompts", cap: 65536 },
+      { slot: 0, role: "interactive", label: "jerv (chat, omnibox)", cap: 262144, overflow: null },
+      { slot: 1, role: "ingest", label: "Ingest and analysis", cap: 131072, overflow: null },
+      { slot: 2, role: "scheduled", label: "Scheduled tasks", cap: 262144, overflow: null },
+      {
+        slot: 3,
+        role: "research",
+        label: "Research and sub-agents",
+        cap: 262144,
+        overflow: "workshop",
+      },
+      { slot: 4, role: "jcode", label: "jcode", cap: 262144, overflow: null },
+      { slot: 5, role: "workshop", label: "Wiki, notes, intake", cap: 131072, overflow: null },
+      { slot: 6, role: "pet", label: "Kid pet", cap: 32768, overflow: "small" },
+      { slot: 7, role: "small", label: "Small prompts", cap: 65536, overflow: null },
     ],
   };
 
@@ -2268,7 +2274,7 @@ describe("KV pool view (Flash-Next F3b, GUI gate C)", () => {
           slots: [
             { slot: 0, role: "archive", label: "Archive", cap: 262144, overflow: "tiny" },
             { slot: 1, role: "tiny", label: "Tiny prompts", cap: 65536, overflow: null },
-            // The server says no overflow: the frontend's pet fallback must not apply.
+            // The server's word is the only overflow rule: a pet here spills nowhere.
             { slot: 2, role: "pet", label: "Kid pet", cap: 32768, overflow: null },
           ],
         },

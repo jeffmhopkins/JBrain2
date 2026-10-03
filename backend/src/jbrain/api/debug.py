@@ -22,7 +22,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, cast
 
 import httpx
 import structlog
@@ -64,7 +64,7 @@ from jbrain.llm import engine as llm_engine
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.slot_roles import SlotRole, role_for
+from jbrain.llm.slot_roles import SlotPin, SlotRole, role_for, slot_pin
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     AssistantMessage,
@@ -398,17 +398,11 @@ class CompleteOut(BaseModel):
 _MAX_STREAM_FRAMES = 400
 
 
-class _SlotPin(TypedDict, total=False):
-    slot_role: SlotRole
-
-
-def _slot_pin(task: str, asked: SlotRole | None) -> _SlotPin:
+def _slot_pin(task: str, asked: SlotRole | None) -> SlotPin:
     """The `slot_role` keyword a console call passes, or nothing (the task's own role)."""
-    if asked is not None:
-        return {"slot_role": asked}
-    if role_for(task) == SlotRole.INTERACTIVE:
-        return {"slot_role": SlotRole.WORKSHOP}
-    return {}
+    if asked is None and role_for(task) == SlotRole.INTERACTIVE:
+        return slot_pin(SlotRole.WORKSHOP)
+    return slot_pin(asked)
 
 
 async def _run_stream(

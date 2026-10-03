@@ -49,7 +49,7 @@ from jbrain import box_events, host_metrics
 from jbrain.llm import gpu_guard, local_catalog, local_weights, openai_compat, prefill
 from jbrain.llm.admission import Outcome, Phase
 from jbrain.llm.ledger import ReservationLedger
-from jbrain.llm.slot_roles import PROBE_ROLE, WARM_ROLE, SlotRole
+from jbrain.llm.slot_roles import PROBE_ROLE, WARM_ROLE, SlotRole, layout_matches
 
 log = structlog.get_logger()
 
@@ -640,21 +640,22 @@ class LocalGatewayClient:
         WRAPS an `id_slot` past its slot count onto some other slot, silently evicting that
         role's prefix — so a mismatch, or a layout that cannot be read, is never pinned.
 
-        The same live read and rule as the router's pool guard (`KvPoolGuard.placed`); read
-        fresh each time, since the probes and warms that ask are rare."""
+        The same layout rule as the router's pool guard (`slot_roles.layout_matches`), read
+        fresh each time and without the guard's last-good fallback: the probes and warms that
+        ask are rare, and one sent unpinned costs a prefix, not a turn."""
         pool = local_catalog.pool_of(served_model)
         if pool is None:
             return None
         try:
-            live = len(await self.slots(served_model))
+            live = await self.slots(served_model)
         except LocalGatewayError as exc:
             log.warning("llm.slot_read_failed", model=served_model, error=str(exc))
             return None
-        if live != pool.n_slots:
+        if not layout_matches(pool, live):
             log.warning(
                 "llm.slot_layout_mismatch",
                 model=served_model,
-                live_slots=live,
+                live_slots=len(live),
                 pool_slots=pool.n_slots,
             )
             return None

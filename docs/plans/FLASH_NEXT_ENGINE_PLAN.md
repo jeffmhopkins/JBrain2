@@ -28,7 +28,7 @@ upstream source and published measurements). §10 records what they changed.
 | Checkpoints | **8 per slot** to start; 16 only once F2 has measured their real cost (§3). |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector (904 MB). |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
-| Disk prefix cache | One primed prefix per slot role, restored into its own slot (§4b). |
+| Disk prefix cache | One primed prefix per slot role, restored into its own slot (§4b) — F4, not F3b: F3b primes only jerv's slot. |
 | Engine | Mainline llama.cpp on Vulkan first; a custom community engine is F5, adopted only on evidence. **halogen is excluded** (closed-source server; conflicts with pin-sources-by-commit). |
 
 ## 2. Prior work, and what each piece actually measured
@@ -183,8 +183,8 @@ pinned slot queues its own traffic; llama-server defers the task until the slot 
 
 Because the pool is shared, each role carries a **cap** (prompt + `max_tokens`): the router
 clamps a call's output or refuses it (`SlotCapError`, shown as a context overflow) when it would
-exceed its slot's cap. Caps are per slot, not reservations — they add up to ~1.34M against a 1M
-pool, because most slots hold small prompts most of the time.
+exceed its slot's cap. Caps are per slot, not reservations — together they add up to more than
+the pool, because most slots hold small prompts most of the time.
 
 What keeps the pool from overrunning is the router's **pool guard**. Verified in the pinned
 llama.cpp source (2026-10-03): idle slots keep their cells (last prompt + output) until reused,
@@ -194,8 +194,12 @@ their KV. So before a pinned call the guard projects occupancy from `GET /slots`
 `n_prompt_tokens`; busy: plus `n_remain`) and, if the call would overrun the pool, erases idle
 slots (`POST /slots/{id}?action=erase`, which needs `--slot-save-path` even though it writes
 nothing) in **our** eviction order — small prompts first, jerv's persona last — and waits,
-bounded, when only busy slots hold the cells. An `id_slot` beyond `-np` wraps silently, so the
-router checks the live slot count and sends unpinned (still capped) on a mismatch.
+bounded, when only busy slots hold the cells (two minutes for background work, ~15 s for the
+owner's chat, which then ends as "the model's memory is busy"). Each erase is preceded by a
+fresh `/slots` read that must still show the slot idle, so jerv's slot is only ever erased off a
+read taken just before; an erase that still reaches a busy slot is deferred by the server and
+may land after that slot's turn. An `id_slot` beyond `-np` wraps silently, so the router checks
+the live slot count and sends unpinned (still capped) on a mismatch.
 
 | Slot | Workload | Cap | Evicted |
 |---|---|---|---|
@@ -212,9 +216,14 @@ router checks the live slot count and sends unpinned (still capped) on a mismatc
 `agent.turn` is shared by the chat and every background agent, so the task name alone cannot
 pick the slot: background callers name their role (`slot_role`), and an unnamed `agent.turn`
 is jerv's. Every request to a pool model is pinned — an unpinned one lands on the
-least-recently-used idle slot and evicts whichever prefix lives there.
+least-recently-used idle slot and evicts whichever prefix lives there — with two exceptions:
+a live slot count that does not match the pool (a pre-pool config) sends unpinned, and so does an
+unreadable `/slots` unless that model's layout matched within the last minute, in which case the
+call is pinned and only the eviction projection is skipped.
 
 ### 4b. Disk prefix cache, one prefix per slot role
+
+F4's design, not F3b's: F3b primes only jerv's slot (see its wave entry).
 
 Today `jbrain.llm.kv_prefix` saves ONE prefix — the interactive model's persona + tools
 (~29k tokens) — after the warm keeper primes it, and restores it in ~100 ms page-cache-warm
@@ -475,7 +484,12 @@ with per-slot caps and a pool guard (§4a).
   ignored for it, the budget charging the pool once; the settings API refuses slot/window
   changes for it and reports the slot table.
 - Caps at the router and the jcode proxy (clamp or refuse, `SlotCapError`), the live slot-count
-  check, and the pool guard (evict idle slots in our order, bounded wait).
+  check, and the pool guard (evict idle slots in our order, bounded wait). A refusal the proxies
+  can only reach after their 200 headers (a busy pool, a cap re-checked after a remap) is
+  written into the body as an OpenAI error, never a cut stream.
+- The external remote-coder proxy (`external_llm`) is held to the jcode slot too, but its
+  `jcode_model` gets no engine remap — pre-existing: while Flash-Next serves it answers "not
+  loaded" for a standard coder rather than running on Flash-Next.
 - ~~Per-role prefix priming~~ — **dropped 2026-10-03** after review: the ingest and pet prefixes
   are ~400–500 tokens (under a second of prefill, and the slot keeps the last real call's prefix
   anyway), and the scheduled-task prime is a ~60 s jerv prefill nobody waits on that competed with

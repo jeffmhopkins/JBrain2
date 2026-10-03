@@ -27,6 +27,7 @@ from jbrain.api.agent import _MAX_CONCURRENT_TURNS, _LiveTurn
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage, TextChunk, ToolCall
+from jbrain.llm.kv_pool_guard import KvPoolBusyError
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
 
@@ -1637,6 +1638,34 @@ def test_chat_model_failure_emits_error_done_and_marks_run_failed(
     assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "error"}
     assert runlog.finished[-1]["status"] == "error"
     assert runlog.finished[-1]["stop_reason"] == "error"
+
+
+class PoolBusyStreamClient:
+    """A client whose call cannot be placed: busy slots hold the shared KV pool."""
+
+    async def converse_stream(self, **_kw):  # type: ignore[no-untyped-def]
+        raise KvPoolBusyError("the interactive slot needs ~60000 cells")
+        yield  # unreachable; makes this an async generator
+
+
+def test_chat_on_a_busy_kv_pool_ends_with_its_own_stop_reason(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+) -> None:
+    """A pool held by background slots is not "something went wrong": the PWA says the
+    model's memory is busy, so the owner knows to just send it again."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": cast(LlmClient, PoolBusyStreamClient())}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 200
+    assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "kv_pool_busy"}
+    assert runlog.finished[-1]["status"] == "error"
+    assert runlog.finished[-1]["stop_reason"] == "kv_pool_busy"
 
 
 def test_chat_turn_wall_clock_force_ends_a_runaway_turn(

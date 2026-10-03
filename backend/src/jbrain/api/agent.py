@@ -91,6 +91,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage, local_catalog
 from jbrain.llm.errors import LlmContextOverflowError
+from jbrain.llm.kv_pool_guard import KvPoolBusyError
 from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.llm.slot_roles import SlotRole
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
@@ -1591,6 +1592,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             log.info("agent.context_overflow", run_id=run_id, error=repr(exc))
             status, stop_reason = "error", "context_overflow"
             live.emit(b'data: {"type": "done", "stop_reason": "context_overflow"}\n\n')
+        except KvPoolBusyError as exc:
+            # The shared KV pool is held by busy background slots (a research run, a jcode
+            # turn) past the interactive wait. Not "something went wrong": the turn can simply
+            # be sent again shortly, and the UI says so.
+            log.info("agent.kv_pool_busy", run_id=run_id, error=repr(exc))
+            status, stop_reason = "error", "kv_pool_busy"
+            live.emit(b'data: {"type": "done", "stop_reason": "kv_pool_busy"}\n\n')
         except Exception as exc:  # noqa: BLE001 — surface a terminal event, never a 500 mid-stream
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
             live.emit(b'data: {"type": "done", "stop_reason": "error"}\n\n')
@@ -1615,7 +1623,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             try:
                 if (
                     not persisted
-                    and stop_reason in ("disconnected", "error", "turn_timeout", "context_overflow")
+                    and stop_reason
+                    in ("disconnected", "error", "turn_timeout", "context_overflow", "kv_pool_busy")
                     and (acc.answer_text.strip() or acc.tool_steps())
                 ):
                     with contextlib.suppress(Exception):

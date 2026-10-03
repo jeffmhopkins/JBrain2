@@ -18,7 +18,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from typing import Final, TypedDict
 
 from jbrain.llm import prefill
 from jbrain.llm.errors import LlmContextOverflowError
@@ -180,6 +180,23 @@ def role_for(task: str, override: SlotRole | None = None) -> SlotRole:
     return TASK_ROLES.get(task, UNKNOWN_TASK_ROLE)
 
 
+class SlotPin(TypedDict, total=False):
+    slot_role: SlotRole
+
+
+def slot_pin(role: SlotRole | None) -> SlotPin:
+    """The `slot_role` keyword for a router call, or none when no role is named — so a caller
+    that names none (and a test fake without the keyword) sees the call exactly as before."""
+    return {"slot_role": role} if role is not None else {}
+
+
+def layout_matches(pool: KvPool, slots: Sequence[object]) -> bool:
+    """Whether a live `/slots` read is this pool's layout. A server still on a pre-pool config
+    (fewer slots, until the next re-stamp) WRAPS an `id_slot` past its count onto some other
+    slot with no error, so nothing is pinned unless this holds."""
+    return len(slots) == pool.n_slots
+
+
 class SlotCapError(LlmContextOverflowError):
     """A call's prompt plus output would exceed its slot's cap. A context overflow to every
     caller (the chat already renders `context_overflow`), raised before anything is sent.
@@ -211,7 +228,6 @@ def admit(
     *,
     prompt_tokens: int,
     max_tokens: int,
-    allow_clamp: bool = True,
 ) -> SlotAdmission:
     """Fit a call into its role's cap: unchanged when it fits, output clamped when only the
     output overruns and enough of it survives, else `SlotCapError`."""
@@ -219,7 +235,7 @@ def admit(
     room = r.cap_tokens - prompt_tokens
     if max_tokens <= room:
         return SlotAdmission(r.slot, role, r.cap_tokens, max_tokens, clamped=False)
-    if allow_clamp and room >= max(MIN_CLAMPED_OUTPUT, max_tokens // 4):
+    if room >= max(MIN_CLAMPED_OUTPUT, max_tokens // 4):
         return SlotAdmission(r.slot, role, r.cap_tokens, room, clamped=True)
     raise SlotCapError(role, cap=r.cap_tokens, prompt_tokens=prompt_tokens, max_tokens=max_tokens)
 
@@ -241,6 +257,16 @@ def pool_shape(manifest: Mapping[str, object]) -> tuple[int, int] | None:
     return n_ctx, len(reservations)
 
 
+def tool_call_chars(name: str, arguments: object) -> int:
+    """A tool call's name and arguments, which OpenAI bodies carry as a JSON string."""
+    rendered = arguments if isinstance(arguments, str) else json.dumps(arguments, default=str)
+    return len(name) + len(rendered)
+
+
+def tool_schema_chars(name: str, description: str, schema: object) -> int:
+    return len(name) + len(description) + len(json.dumps(schema, default=str))
+
+
 def prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[LlmTool]) -> int:
     """Roughly how much text this turn puts in front of the model, in characters.
 
@@ -258,14 +284,12 @@ def prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[Ll
             total += len(message.text)
         elif isinstance(message, AssistantMessage):
             total += len(message.text) + sum(
-                len(call.name) + len(json.dumps(call.arguments, default=str))
-                for call in message.tool_calls
+                tool_call_chars(call.name, call.arguments) for call in message.tool_calls
             )
         elif isinstance(message, ToolResultMessage):
             total += sum(len(str(result.content)) for result in message.results)
     for tool in tools:
-        total += len(tool.name) + len(tool.description)
-        total += len(json.dumps(tool.input_schema, default=str))
+        total += tool_schema_chars(tool.name, tool.description, tool.input_schema)
     return total
 
 
