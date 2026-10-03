@@ -17,7 +17,7 @@ from jbrain.llm.slot_roles import (
 
 
 def test_flash_next_pool_shape() -> None:
-    assert FLASH_NEXT_POOL.n_ctx == 1_048_576
+    assert FLASH_NEXT_POOL.n_ctx == 524_288
     assert FLASH_NEXT_POOL.n_slots == 8
     assert {r.role for r in FLASH_NEXT_POOL.reservations} == set(SlotRole)
 
@@ -125,7 +125,7 @@ def test_catalog_carries_the_pool_and_it_survives_the_manifest() -> None:
     assert entry.kv_pool is FLASH_NEXT_POOL
     assert entry.default_slots == FLASH_NEXT_POOL.n_slots
     assert local_catalog.pool_of(entry.served_model) is FLASH_NEXT_POOL
-    assert pool_shape(asdict(entry)) == (1_048_576, 8)
+    assert pool_shape(asdict(entry)) == (524_288, 8)
 
 
 def test_standard_entries_have_no_pool() -> None:

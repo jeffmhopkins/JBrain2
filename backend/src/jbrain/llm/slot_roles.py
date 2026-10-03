@@ -106,10 +106,12 @@ class KvPool:
         return [r.slot for r in sorted(self.reservations, key=lambda r: r.eviction_rank)]
 
 
-# Owner decision 2026-10-03: a 1M pool (the same cells as the 4 x 262k layout measured live)
-# across eight slots, one per frequently-used prefix, so the hot prompts stop evicting each other.
+# Eight slots, one per frequently-used prefix, so the hot prompts stop evicting each other (owner,
+# 2026-10-03). 512k cells, not the 1M first shipped: a unified pool allocates all its cells at load,
+# and on the box the 1M load drove host free memory to 5.3 GB, under the load guard's 6 GB floor,
+# so it was aborted every time. 512k is the 2 x 262k size F2 measured loading cleanly (74.2 GiB).
 FLASH_NEXT_POOL: Final = KvPool(
-    n_ctx=1_048_576,
+    n_ctx=524_288,
     reservations=(
         RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 7, "jerv (chat, omnibox)"),
         RoleReservation(SlotRole.INGEST, 1, 131_072, 6, "Ingest and analysis"),

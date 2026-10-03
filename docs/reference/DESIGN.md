@@ -671,12 +671,12 @@ permanent block at the top of Ops when nothing is happening.
 Sheet**; binding mock `docs/mocks/kv-pool/c-slot-sheet.html`, rivals A "summary that
 expands to a table" and B "stacked bar of caps" kept beside it with the round record in
 `docs/mocks/kv-pool/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` F3b).
-Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 1M tokens) across **eight
+Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 512k tokens) across **eight
 role-pinned slots**, each with a per-slot cap. Its window and slot count are the engine's,
 and the server refuses changes to them (409), so the per-model selects were a lie for it.
 
 - **Pool models only** (`kv_pool` non-null): the *context window* and *slots* selects give
-  way to one line — *KV pool · **1M** shared · 8 slots*, a strip of **eight slot ticks**,
+  way to one line — *KV pool · **512k** shared · 8 slots*, a strip of **eight slot ticks**,
   and **View slots →**. Standard rows keep their selects; *keep loaded* and *image detail*
   are unchanged on both.
 - **The Sheet** (the shared `Sheet`, "Modal system") is read-only and says so: a lock and
@@ -691,9 +691,9 @@ and the server refuses changes to them (409), so the per-model selects were a li
   work (ingest, scheduled), violet for agents (research, jcode), green for writing
   (workshop, pet), grey for small; the second slot of a pair is lighter. An unknown role
   reads grey rather than failing.
-- **The overcommit is a light footer, not a warning**: the caps total 1.34M, more than the
-  1M pool, because not every job runs at once, and the router frees an idle slot when the
-  pool would overrun. Pool sizes format in binary steps (1M, 1.34M) so the overcommit is
+- **The overcommit is a light footer, not a warning**: the caps add up to more than the
+  pool, because not every job runs at once, and the router frees an idle slot when the
+  pool would overrun. Pool sizes format in binary steps (e.g. 512k, 1.34M) so the overcommit is
   stated truly.
 - **Off-engine** (Flash-Next not serving) the line and Sheet still render, with the row's
   existing off-engine reason above, and the Sheet adds *the engine is stopped, so these

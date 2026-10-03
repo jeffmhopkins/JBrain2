@@ -615,7 +615,7 @@ W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropi
 gateway and operated entirely from the PWA. F1 shipped (engine-aware container, provisioning, one-engine
 guards, no-terminal debug tooling) and F3a (the owner's Ops engine switch, drain, remap of every
 local call). F2's on-box spike is measured (memory fit, speed, tools, JSON, prefix reuse,
-perplexity, vision, a clean 30-min soak); only the second half of the soak remains. F3b (one 1M
+perplexity, vision, a clean 30-min soak); only the second half of the soak remains. F3b (one 512k
 `--kv-unified` pool over 8 role-pinned slots, per-slot caps, a router pool guard, the PWA pool view)
 is built; its on-box re-measure follows the merge.
 

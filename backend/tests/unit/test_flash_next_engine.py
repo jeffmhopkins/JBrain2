@@ -50,7 +50,7 @@ def test_the_entry_is_a_flash_next_engine_model_with_an_eight_slot_pool() -> Non
     pool = m.kv_pool
     assert pool is not None and pool is slot_roles.FLASH_NEXT_POOL
     assert m.default_slots == pool.n_slots == 8
-    assert pool.n_ctx == 1_048_576
+    assert pool.n_ctx == 524_288
     assert m.served_model == FLASH_ID and m.spec == f"local:{FLASH_ID}"
     assert m.hf_repo == "unsloth/Qwen3.8-Flash-Next-GGUF"
     assert m.quant == "UD-IQ4_XS" and "UD-IQ4_XS" in m.gguf_include
@@ -91,11 +91,11 @@ def test_checkpoints_are_pinned_at_eight_per_slot() -> None:
     assert local_catalog.ctx_checkpoints(m.checkpoint_gb) == local_catalog.CTX_CHECKPOINTS
 
 
-def test_device_footprint_lands_on_the_f2_fit_for_the_1m_pool() -> None:
-    """§3a fit: GTT ≈ 60.2 + 7.0 per 262,144 cells = 88.2 GiB for the 1M pool. The fixed 60.2
+def test_device_footprint_lands_on_the_f2_fit_for_the_pool() -> None:
+    """§3a fit: GTT ≈ 60.2 + 7.0 per 262,144 cells = 74.2 GiB for the 512k pool. The fixed 60.2
     already holds the projector and vision workspace, so the booking must not add them twice."""
     m = _flash()
-    fit = 60.2 + 7.0 * 1_048_576 / 262_144
+    fit = 60.2 + 7.0 * 524_288 / 262_144
     _host, device = local_catalog.declared_gb(m, 262144)
     assert device == pytest.approx(fit, abs=0.1)
     fixed = (m.size_gb - m.file_backed_gb) + local_catalog.vision_attn_buffer_gb()
@@ -176,7 +176,8 @@ def test_the_pool_is_charged_once_whatever_window_or_slots_are_saved() -> None:
     kv_only = local_catalog.footprint_gb(m, 262144, disk_gb=0.0) - local_catalog.footprint_gb(
         dataclasses.replace(m, kv_gb_per_128k=0.0), 262144, disk_gb=0.0
     )
-    assert kv_only == pytest.approx(m.kv_gb_per_128k * 8, abs=0.02)
+    assert m.kv_pool is not None
+    assert kv_only == pytest.approx(m.kv_gb_per_128k * m.kv_pool.n_ctx / 131072, abs=0.02)
 
 
 def test_served_slots_are_the_pool_slots() -> None:
@@ -467,7 +468,7 @@ def test_a_pooled_model_refuses_any_slot_change(slots: int) -> None:
     c, store = _api("flash-next")
     resp = c.put(f"/api/settings/llm/local-models/{FLASH_ID}/parallel-slots", json={"slots": slots})
     assert resp.status_code == 409
-    assert "shared 1,048,576-token memory pool across 8 slots" in resp.json()["detail"]
+    assert "shared 524,288-token memory pool across 8 slots" in resp.json()["detail"]
     assert "slot count is fixed" in resp.json()["detail"]
     assert FLASH_ID not in store.values.get("llm_local_parallel_slots", {})
 
@@ -515,7 +516,7 @@ def test_the_snapshot_describes_the_pool_and_hides_stale_overrides() -> None:
     rows = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
     row = rows[FLASH_ID]
     pool = slot_roles.FLASH_NEXT_POOL
-    assert row["kv_pool"]["n_ctx"] == 1_048_576
+    assert row["kv_pool"]["n_ctx"] == 524_288
     assert row["kv_pool"]["slots"] == [
         {
             "slot": r.slot,
@@ -628,7 +629,7 @@ async def test_a_saved_f2_layout_no_longer_reaches_the_flash_next_served_command
     )
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
-    assert " -c 1048576 " in text and " -np 8 --kv-unified " in text
+    assert " -c 524288 " in text and " -np 8 --kv-unified " in text
     served = _flash().served_model
     assert llama_swap_config_shape(tmp_path)[served] == (262144, 8)
 
@@ -652,7 +653,7 @@ async def test_a_dropped_stored_flag_is_named_on_the_settings_screen(
     try:
         await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
         text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
-        assert " -c 1048576 " in text and "--cache-ram" not in text
+        assert " -c 524288 " in text and "--cache-ram" not in text
         err = llm_settings.gateway_config_error()
         assert err is not None and FLASH_ID in err and "--cache-ram" in err
         assert f"/api/debug/llm/local-models/{FLASH_ID}/extra-args" in err
@@ -1113,7 +1114,7 @@ async def test_props_carry_the_pool_beside_the_per_slot_n_ctx() -> None:
     props = await llm_settings.gateway_props(FLASH_ID, settings, gw)  # type: ignore[arg-type]
     assert props["n_ctx"] == 262144
     pool = props["kv_pool"]
-    assert isinstance(pool, dict) and pool["n_ctx"] == 1_048_576 and len(pool["slots"]) == 8
+    assert isinstance(pool, dict) and pool["n_ctx"] == 524_288 and len(pool["slots"]) == 8
     gpt = await llm_settings.gateway_props("gpt-oss-120b", settings, gw)  # type: ignore[arg-type]
     assert "kv_pool" not in gpt
 

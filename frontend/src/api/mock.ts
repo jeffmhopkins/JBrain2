@@ -634,7 +634,7 @@ const LLM_SETTINGS: LlmSettings = {
       loadable_now: false,
       blocked_reason: "Runs on the Flash-Next engine — switch engines to load it",
       kv_pool: {
-        n_ctx: 1048576,
+        n_ctx: 524288,
         slots: [
           {
             slot: 0,
