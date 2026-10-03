@@ -1,13 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  type EngineSnapshot,
-  hhmm,
-  resetEngineStore,
-  setEngineNavigator,
-  setEngineState,
-  useEngineSnapshot,
-} from "../engineState";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type EngineSnapshot, resetEngineStore, setEngineState } from "../engineState";
 import { EngineBanner, engineBanners } from "./EngineBanner";
 import { engineState, switchStatus } from "./engineFixtures";
 
@@ -38,12 +31,8 @@ describe("engineBanners", () => {
     expect(engineBanners(snap({ state: null }))).toEqual([]);
   });
 
-  it("is steel while Flash-Next serves, with since and Switch back", () => {
-    const [b] = engineBanners(snap({ state: flashOn }));
-    expect(b?.tone).toBe("steel");
-    expect(b?.title).toBe("Flash-Next active");
-    expect(b?.detail).toBe(`since ${hhmm("2026-10-02T00:24:00Z")}`);
-    expect(b?.action.label).toBe("Switch back");
+  it("is silent while Flash-Next serves normally", () => {
+    expect(engineBanners(snap({ state: flashOn }))).toEqual([]);
   });
 
   it("is amber and live while a switch runs", () => {
@@ -111,10 +100,10 @@ describe("engineBanners", () => {
       }),
     );
     expect(held.map((b) => [b.tone, b.detail])).toEqual([["amber", "debug: tool-probe sweep"]]);
-    // Stacks under the engine strip rather than replacing it.
+    // Shows on its own while Flash-Next serves normally (that state has no strip).
     expect(
       engineBanners(snap({ state: { ...flashOn, perplexity_running: true } })).map((b) => b.tone),
-    ).toEqual(["steel", "amber"]);
+    ).toEqual(["amber"]);
   });
 });
 
@@ -122,27 +111,6 @@ describe("EngineBanner", () => {
   it("renders nothing until the store has a reading", () => {
     const { container } = render(<EngineBanner />);
     expect(container).toBeEmptyDOMElement();
-  });
-
-  it("Switch back opens Ops with the Standard switch armed", () => {
-    const ops = vi.fn();
-    setEngineNavigator({ ops, models: vi.fn() });
-    let armed: string | null = null;
-    function Probe() {
-      armed = useEngineSnapshot().armed;
-      return null;
-    }
-    render(
-      <>
-        <EngineBanner />
-        <Probe />
-      </>,
-    );
-    act(() => setEngineState(flashOn));
-    expect(screen.getByText("Flash-Next active")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Switch back" }));
-    expect(ops).toHaveBeenCalledTimes(1);
-    expect(armed).toBe("standard");
   });
 
   it("dismisses a rollback strip", () => {

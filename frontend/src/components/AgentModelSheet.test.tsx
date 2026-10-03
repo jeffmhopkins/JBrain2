@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { api } from "../api/client";
 import { AgentModelSheet } from "./AgentModelSheet";
 
 // The sheet reads the on-box models (and agent.turn's effective effort — the
@@ -146,5 +147,64 @@ describe("AgentModelSheet", () => {
     expect(onChooseEffort).toHaveBeenCalledWith("low");
     fireEvent.click(screen.getByRole("button", { name: /Medium/ }));
     expect(onChooseEffort).toHaveBeenLastCalledWith(null);
+  });
+
+  describe("while Flash-Next serves", () => {
+    function flashSettings(effective: string | null, applies = true, modelDefault?: string) {
+      return {
+        local_models: [
+          { id: "gpt-oss-120b", label: "GPT-OSS 120B", loaded: true, supports_reasoning: true },
+        ],
+        tasks: [{ id: "agent.turn", reasoning_effort: "medium" }],
+        reasoning_default: "low",
+        engine_efforts: {
+          "flash-next": {
+            label: "Flash-Next",
+            active: true,
+            levels: ["none", "low", "medium", "high"],
+            ...(modelDefault === undefined ? {} : { model_default: modelDefault }),
+            tiers: [],
+            tasks: [
+              {
+                id: "agent.turn",
+                tier: "medium",
+                level: effective,
+                fallback: null,
+                fallback_source: "standard",
+                effective,
+                applies,
+              },
+            ],
+          },
+        },
+      };
+    }
+
+    async function markedPill(settings: unknown) {
+      vi.mocked(api.getLlmSettings).mockResolvedValueOnce(settings as never);
+      render(
+        <AgentModelSheet
+          model={null}
+          effort={null}
+          onChooseModel={noop}
+          onChooseEffort={noop}
+          onClose={noop}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument());
+      return screen.getByRole("button", { name: /\(default\)/ });
+    }
+
+    it("marks the engine's level for agent.turn, not the Standard effort", async () => {
+      expect(await markedPill(flashSettings("low"))).toHaveTextContent("Low");
+    });
+
+    it("marks the model's own default when the engine sends no level", async () => {
+      expect(await markedPill(flashSettings(null, true, "high"))).toHaveTextContent("High");
+    });
+
+    it("keeps the Standard effort when agent.turn stays on a cloud model", async () => {
+      expect(await markedPill(flashSettings("low", false, "high"))).toHaveTextContent("Medium");
+    });
   });
 });

@@ -1657,7 +1657,9 @@ async def test_warm_identity_builds_matching_restore_and_save_hooks(
         return "PERSONA", [{"type": "function"}], frozenset()
 
     monkeypatch.setattr(mod, "jerv_prime_inputs", _inputs)
-    monkeypatch.setattr(mod.llm_router, "warm_reasoning_effort", lambda task, served, stored: "low")
+    monkeypatch.setattr(
+        mod.llm_router, "warm_reasoning_effort", lambda task, served, stored, level=None: "low"
+    )
     effort, before_warm, after_warm = await mod._warm_identity(
         "qwen3.8-27b-q4",
         settings_store=None,

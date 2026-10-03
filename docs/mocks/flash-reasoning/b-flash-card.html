@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Flash-Next reasoning · B — separate card</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  [data-theme="light"] body{background:#DADAD6;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+  button,select{font:inherit;color:inherit;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+
+  /* ---- reviewer chrome (outside the phone) ---- */
+  .caption{max-width:390px;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;vertical-align:middle;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .sim{max-width:390px;width:100%;padding:10px 12px;margin:0 16px;background:var(--surface);border:1px dashed var(--border);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);width:58px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;cursor:pointer;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel);font-weight:600;}
+  .sim .shint{font-size:11px;color:var(--text-3);line-height:1.45;}
+
+  /* ---- the phone ---- */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  [data-theme="light"] .phone{border-color:#C9C9C4;}
+  @media (max-width:430px){
+    body{padding-top:12px;}
+    .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;}
+  }
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 10px 0 4px;border-bottom:1px solid var(--border);flex:none;padding-top:env(safe-area-inset-top);}
+  .bar .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .bar .ttl{font-size:var(--fs-screen);font-weight:500;}
+  .vitals{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:11px;font-variant-numeric:tabular-nums;}
+  .vitals .cols{display:flex;align-items:flex-end;gap:2px;height:20px;width:48px;}
+  .vitals .cols i{display:block;width:2px;background:var(--text-3);border-radius:1px;}
+  .vitals b{color:var(--text-2);font-weight:500;}
+
+  /* global engine banner (from the engine-switch gate) */
+  .gb{display:flex;align-items:center;gap:9px;padding:0 6px 0 14px;min-height:44px;font-size:13px;border-bottom:1px solid var(--border);flex:none;}
+  .gb .d{width:8px;height:8px;border-radius:999px;background:currentColor;flex:none;}
+  .gb .gt{flex:1;min-width:0;color:var(--text);line-height:1.3;padding:7px 0;}
+  .gb .gt b{font-weight:600;}
+  .gb .gt span{color:var(--text-2);}
+  .gb .ga{appearance:none;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;min-height:44px;padding:0 10px;color:inherit;white-space:nowrap;}
+  .gb.steel{background:var(--steel-tint);color:var(--steel);}
+
+  .body{flex:1;overflow-y:auto;padding:12px 14px 28px;display:flex;flex-direction:column;gap:12px;}
+  .settings-meta{color:var(--text-2);font-size:var(--fs-secondary);margin:0;}
+
+  /* collapsed neighbour cards (On-box models, Code mode, AI usage) */
+  .stub{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);display:flex;align-items:center;gap:10px;min-height:48px;padding:12px 14px;flex:none;}
+  .stub .sn{font-size:var(--fs-secondary);font-weight:600;}
+  .stub .ss{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);display:flex;align-items:center;gap:6px;}
+  .stub .caret{color:var(--text-3);}
+
+  /* ---- LLM settings tier cards: mirrors styles.css .llm-group / .llm-member ---- */
+  .llm-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;flex:none;}
+  .llm-high{--llm-accent:var(--rose);--llm-accent-tint:var(--rose-tint);}
+  .llm-light{--llm-accent:var(--green);--llm-accent-tint:var(--green-tint);}
+  .llm-vision{--llm-accent:var(--amber);--llm-accent-tint:var(--amber-tint);}
+  .llm-other{--llm-accent:var(--text-3);--llm-accent-tint:var(--surface-2);}
+  .llm-group-head{padding:14px 16px;border-left:3px solid var(--llm-accent,var(--steel));}
+  .llm-group-title{display:flex;align-items:center;gap:8px;}
+  .llm-group-name{font-size:var(--fs-title);font-weight:500;}
+  .llm-group-count{font-size:var(--fs-micro);color:var(--text-3);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:1px 8px;}
+  .llm-group-desc{font-size:var(--fs-micro);color:var(--text-3);margin:3px 0 10px;}
+  .llm-field-tag{display:block;font-size:var(--fs-micro);letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin:12px 0 6px;}
+  .llm-field-tag.first{margin-top:0;}
+  .llm-select{width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:var(--r-input);padding:9px 10px;font-size:var(--fs-secondary);min-height:40px;}
+  .llm-remap{display:block;font-size:var(--fs-micro);color:var(--steel);margin:4px 0 0;}
+  .seg-row{display:flex;border:1px solid var(--border);overflow:hidden;flex:none;}
+  .seg{appearance:none;flex:1;display:flex;align-items:center;justify-content:center;min-height:44px;padding:0 4px;font-size:13px;font-weight:500;color:var(--text-2);
+    background:transparent;border:none;cursor:pointer;transition:background-color .15s ease-out;white-space:nowrap;}
+  .seg + .seg{border-left:1px solid var(--border);}
+  .llm-group .seg-on{color:var(--text);font-weight:600;background:var(--llm-accent-tint);box-shadow:inset 0 0 0 1px var(--llm-accent);}
+  .llm-na-note{font-size:var(--fs-micro);color:var(--text-3);}
+  .llm-expand{border-top:1px solid var(--border);}
+  .llm-exp-toggle{appearance:none;width:100%;display:flex;justify-content:space-between;align-items:center;padding:11px 16px;min-height:44px;background:transparent;border:none;font-size:var(--fs-micro);color:var(--text-2);cursor:pointer;}
+  .llm-exp-caret{transition:transform .2s ease-out;}
+  .llm-exp-caret.open{transform:rotate(90deg);}
+  .llm-members{background:var(--surface-2);}
+  .llm-member{padding:10px 16px;border-top:1px solid var(--border);}
+  .llm-member-row{display:flex;align-items:center;gap:8px;}
+  .llm-member-name{flex:1;min-width:0;font-size:var(--fs-secondary);}
+  .llm-member-id{display:block;font-size:var(--fs-micro);color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .llm-member-controls{display:flex;align-items:center;gap:8px;flex:none;}
+  .llm-member-select{width:auto;max-width:112px;flex:none;padding:5px 7px;font-size:var(--fs-micro);min-height:32px;border-radius:10px;}
+  .llm-member-seg .seg{min-width:26px;min-height:32px;padding:0;font-size:var(--fs-micro);}
+  .llm-member-na{font-size:var(--fs-micro);color:var(--text-3);min-width:54px;text-align:right;}
+
+  /* ---- shared Flash-Next additions (proposed) ---- */
+  .newmark{outline:1px dashed var(--steel);outline-offset:4px;border-radius:6px;}
+  .fx{--fx:var(--steel);--fx-tint:var(--steel-tint);}
+  .fx .seg-on, .llm-group .fx .seg-on{color:var(--text);font-weight:600;background:var(--steel-tint);box-shadow:inset 0 0 0 1px var(--steel);}
+  .fx-tag{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);letter-spacing:.05em;text-transform:uppercase;color:var(--steel);margin:12px 0 6px;}
+  .fx-tag .dot{background:var(--steel);}
+  .fx-res{font-size:var(--fs-micro);color:var(--text-2);margin-top:6px;line-height:1.45;}
+  .fx-res b{color:var(--text);font-weight:500;}
+  .fx-res .src{color:var(--text-3);}
+  .dot{width:8px;height:8px;border-radius:999px;display:inline-block;flex:none;}
+  .dot.ok{background:var(--ok);} .dot.info{background:var(--steel);} .dot.off{background:var(--text-3);}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 9px;border-radius:999px;white-space:nowrap;}
+  .badge.info{background:var(--steel-tint);color:var(--steel);} .badge.off{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);}
+  .lvl{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 5px;border-radius:5px;font-size:11px;font-weight:600;background:var(--steel-tint);color:var(--steel);}
+  .lvl.dim{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);}
+  .link{appearance:none;background:none;border:none;color:var(--steel);font-size:inherit;cursor:pointer;padding:0;font-weight:500;}
+  .muted{color:var(--text-3);}
+  .notice{border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.45;display:flex;gap:10px;align-items:flex-start;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);flex:none;}
+  .notice b{color:var(--text);font-weight:500;}
+  .notice svg{color:var(--steel);margin-top:1px;}
+  .notice.fxon{background:var(--steel-tint);border-color:transparent;}
+  .flash{animation:flash 1.2s ease-out 1;}
+  @keyframes flash{0%{box-shadow:0 0 0 2px var(--steel);}100%{box-shadow:0 0 0 0 transparent;}}
+
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(16px);background:var(--surface-2);border:1px solid var(--border);
+    border-radius:999px;padding:10px 16px;font-size:12.5px;color:var(--text);opacity:0;pointer-events:none;transition:.18s ease-out;max-width:88%;z-index:30;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important;}
+  }
+  /* ---- variant B ---- */
+  .llm-fxcard{--llm-accent:var(--steel);--llm-accent-tint:var(--steel-tint);outline-offset:3px;}
+  .fxc-head{appearance:none;width:100%;text-align:left;background:none;border:none;border-left:3px solid var(--steel);padding:14px 16px 12px;cursor:pointer;display:block;}
+  .fxc-t{display:flex;align-items:center;gap:8px;justify-content:space-between;}
+  .fxc-head .llm-group-desc b{color:var(--text-2);font-weight:500;}
+  .fxc-sum{display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:var(--fs-micro);color:var(--text-2);min-height:20px;}
+  .fxb{border-top:1px solid var(--border);padding-top:12px;}
+  .fxt{border-top:1px solid var(--border);}
+  .fxb > .fxt:first-of-type{border-top:none;}
+  .fxt-head{display:flex;align-items:center;gap:10px;padding:8px 16px 8px 8px;}
+  .fxt-name{appearance:none;background:none;border:none;flex:1;min-width:0;display:flex;align-items:center;gap:10px;text-align:left;cursor:pointer;min-height:44px;padding:0 0 0 8px;}
+  .fxt-rail{width:3px;align-self:stretch;border-radius:2px;background:var(--llm-accent);flex:none;}
+  .fxt-n{display:block;font-size:var(--fs-secondary);font-weight:500;}
+  .fxt-c{display:block;font-size:var(--fs-micro);color:var(--text-3);}
+  .fxt-name .llm-exp-caret{margin-left:auto;color:var(--text-3);}
+  .fx-sel{width:auto;flex:none;min-width:128px;max-width:150px;padding:7px 8px;font-size:13px;}
+  .fx-sel.fx-set{border-color:var(--steel);background:var(--steel-tint);}
+  .fxt-tasks{background:var(--surface-2);}
+  .fxk{display:flex;align-items:center;gap:10px;padding:9px 16px 9px 27px;border-top:1px solid var(--border);}
+  .fxk .llm-member-select{max-width:132px;min-width:118px;}
+  .fxt-cloud{padding:8px 16px 10px 27px;margin:0;border-top:1px solid var(--border);}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Flash-Next reasoning · B — its own card</span>
+    <span class="toggle" role="group" aria-label="theme"><button id="c-dark" aria-pressed="true" onclick="sim('theme','dark')">dark</button><button id="c-light" aria-pressed="false" onclick="sim('theme','light')">light</button></span><br/>
+    One new <b>Flash-Next reasoning</b> card above the tiers. The model is fixed, so it holds <b>reasoning selects only</b>: one per tier, and one per task when you open a tier. The tier cards below stay exactly as today, and their remap marker links up to the card. The card is <b>always there</b>: open and <i>In use</i> on Flash-Next, collapsed and <i>Next time it serves</i> on Standard. A dashed outline marks what is new.
+  </div>
+  <div class="sim" id="sim" aria-label="Mock scenario controls"></div>
+
+  <div class="phone">
+    <div class="bar" id="top"></div>
+    <div id="banner"></div>
+    <div class="body" id="screen"></div>
+    <div id="toast" role="status"></div>
+  </div>
+
+<script>
+// ===== shared mock model — identical across A/B/C so only the interaction differs =====
+const EFFORTS=['none','low','medium','high'];
+const LBL={none:'None',low:'Low',medium:'Med',high:'High',default:'Default'};
+const LONG={none:'None',low:'Low',medium:'Medium',high:'High'};
+const ABBR={none:'N',low:'L',medium:'M',high:'H',default:'D'};
+// Providers as the screen's select lists them. `reasons` is the wire's supports_reasoning;
+// `local` is what the engine remaps — a cloud pick keeps running in the cloud.
+const PROV={
+  grok:{label:'Grok 4.3',reasons:true,local:false,vision:true},
+  claude:{label:'Claude',reasons:false,local:false,vision:true},
+  oss:{label:'GPT-OSS 120B · reasoning',short:'GPT-OSS 120B',reasons:true,local:true},
+  q27:{label:'Qwen3.8 27B · vision + reasoning',short:'Qwen3.8 27B',reasons:true,local:true,vision:true},
+  vl30:{label:'Qwen3-VL 30B · vision',short:'Qwen3-VL 30B',reasons:false,local:true,vision:true,visionOnly:true},
+  q4b:{label:'Qwen3.5 4B · small',short:'Qwen3.5 4B',reasons:false,local:true},
+};
+// The real tiers (LLMSettingsScreen GROUP_DEFS) plus the synthesized "Other" the JPet tasks land in.
+const GROUPS=[
+  {key:'high',accent:'high',name:'High reasoning',desc:'Async, correctness-critical judgment — worth the deepest thinking.',
+    tasks:['fact.adjudicate','wiki.ground','wiki.lint.contradiction','wiki.lint.stale']},
+  {key:'medium',accent:'high',name:'Medium reasoning',desc:'The default — interactive turns, extraction, and summaries.',
+    tasks:['agent.turn','correction_note.extract','video.summarize','wiki.rewrite','intake.materialize']},
+  {key:'low',accent:'light',name:'Low reasoning',desc:'Cheap, frequent one-shots — classify & extract.',
+    tasks:['entity.disambiguate','triage.classify']},
+  {key:'vision',accent:'vision',name:'Vision',desc:'Anything that reads or describes images.',
+    tasks:['vision.ocr','vision.caption','agent.vision']},
+  {key:'other',accent:'other',name:'Other',desc:'Tasks not yet sorted into a tier.',
+    tasks:['pet.turn','pet.thought','pet.statue']},
+];
+// bucket = backend TASK_REASONING_BUCKET (null: no bucket → the model's own default, medium).
+const TASKS0={
+  'fact.adjudicate':{label:'Fact adjudicate',provider:'oss',effort:'high',bucket:'high'},
+  'wiki.ground':{label:'Wiki grounding',provider:'oss',effort:'high',bucket:'high'},
+  'wiki.lint.contradiction':{label:'Wiki lint — contradiction',provider:'oss',effort:'high',bucket:'high'},
+  'wiki.lint.stale':{label:'Wiki lint — stale claim',provider:'oss',effort:'high',bucket:'high'},
+  'agent.turn':{label:'Agent turn',provider:'oss',effort:'medium',bucket:'medium'},
+  'correction_note.extract':{label:'Correction extract',provider:'oss',effort:'medium',bucket:'medium'},
+  'video.summarize':{label:'Video summary',provider:'q27',effort:'medium',bucket:'medium'},
+  'wiki.rewrite':{label:'Wiki rewrite',provider:'oss',effort:'medium',bucket:'medium'},
+  'intake.materialize':{label:'Intake materialize',provider:'grok',effort:'medium',bucket:'medium'},
+  'entity.disambiguate':{label:'Entity disambiguate',provider:'oss',effort:'low',bucket:'low'},
+  'triage.classify':{label:'Inbox triage',provider:'oss',effort:'low',bucket:'low'},
+  'vision.ocr':{label:'Vision OCR',provider:'vl30',effort:null,bucket:null},
+  'vision.caption':{label:'Vision caption',provider:'vl30',effort:null,bucket:null},
+  'agent.vision':{label:'Agent image analysis',provider:'q27',effort:'low',bucket:null},
+  'pet.turn':{label:'JPet — reply',provider:'q4b',effort:null,bucket:'low'},
+  'pet.thought':{label:'JPet — idle thought',provider:'q4b',effort:null,bucket:'low'},
+  'pet.statue':{label:'JPet — statue sculptor',provider:'claude',effort:null,bucket:'high'},
+};
+const PRESETS={
+  none:{ft:{},fg:{},open:[],hint:'No Flash-Next levels set — every local task runs on Flash-Next at its <b>default</b>, which is today\'s behaviour.'},
+  task:{ft:{'vision.ocr':'none','agent.turn':'high'},fg:{},open:['medium','vision'],
+    hint:'Task overrides: <b>Vision OCR → None</b> (its default would be Medium) and <b>Agent turn → High</b>. Every other task stays on its default.'},
+  tier:{ft:{'wiki.ground':'high'},fg:{high:'medium',low:'none'},open:['high','low'],
+    hint:'Tier overrides: <b>High reasoning → Med</b> and <b>Low reasoning → None</b> on Flash-Next; <b>Wiki grounding</b> still overrides its tier with High.'},
+};
+
+const S={
+  theme:(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark',
+  engine:'flash', preset:'none',
+  tasks:JSON.parse(JSON.stringify(TASKS0)),
+  ft:{}, fg:{},              // Flash-Next levels: per task, per tier — stored apart from the Standard picks
+  expanded:new Set(), flashTarget:null,
+};
+
+const I={
+  back:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+  caret:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+  lock:'<svg width="14" height="14" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  info:'<svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg>',
+  cloud:'<svg width="13" height="13" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6 9.5 4.25 4.25 0 0 0 7 18z"/></svg>',
+  up:'<svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+};
+
+// ---- resolution: what Flash-Next actually runs each task at ----
+const flashOn=()=>S.engine==='flash';
+const T=id=>S.tasks[id];
+const groupOf=id=>GROUPS.find(g=>g.tasks.includes(id));
+const isVision=id=>id.startsWith('vision.')||id==='agent.vision';
+const remapped=id=>PROV[T(id).provider].local;
+const localTasks=g=>g.tasks.filter(remapped);
+// Today's behaviour, kept as "Default": the Standard pick's effort, re-gated on Flash-Next (which reasons).
+function derived(id){
+  const t=T(id),p=PROV[t.provider];
+  if(p.reasons&&t.effort)return{lvl:t.effort,src:'from the Standard pick',key:'std'};
+  if(t.bucket)return{lvl:t.bucket,src:`task default — ${p.short||p.label} takes no level`,key:'bucket'};
+  return{lvl:'medium',src:`Flash-Next's own default — ${p.short||p.label} takes no level`,key:'model'};
+}
+// Precedence: the task's own Flash-Next level > its tier's Flash-Next level > default.
+function flashOf(id){
+  if(S.ft[id])return{lvl:S.ft[id],src:'set on this task',key:'task'};
+  const g=groupOf(id);
+  if(S.fg[g.key])return{lvl:S.fg[g.key],src:`from the ${g.name} tier`,key:'tier'};
+  return derived(id);
+}
+// What a task's "Default" would resolve to (tier level when set, else derived).
+function inheritOf(id){const g=groupOf(id);return S.fg[g.key]?{lvl:S.fg[g.key],src:'tier',key:'tier'}:derived(id);}
+function tierDefaultSummary(g){
+  const ls=localTasks(g).map(id=>derived(id).lvl);
+  if(!ls.length)return null;
+  const uniq=[...new Set(ls)];
+  if(uniq.length===1)return{one:uniq[0],text:LONG[uniq[0]]};
+  const c={};ls.forEach(l=>c[l]=(c[l]||0)+1);
+  return{one:null,text:'mixed — '+EFFORTS.filter(e=>c[e]).reverse().map(e=>`${c[e]} ${LONG[e]}`).join(' · ')};
+}
+const overridesIn=g=>localTasks(g).filter(id=>S.ft[id]);
+const cloudIn=g=>g.tasks.filter(id=>!remapped(id));
+function flashSetCount(){return Object.keys(S.ft).length+Object.keys(S.fg).length;}
+
+// ---- Flash-Next level edits (persist immediately, like every pick on this screen) ----
+function setTaskFlash(id,v){if(v==='default')delete S.ft[id];else S.ft[id]=v;S.preset=null;
+  toast(`${T(id).label} on Flash-Next: ${v==='default'?'Default ('+LONG[inheritOf(id).lvl]+')':LONG[v]}${flashOn()?'':' — applies next time Flash-Next serves'}`);render();}
+function setTierFlash(key,v){if(v==='default')delete S.fg[key];else S.fg[key]=v;S.preset=null;
+  const g=GROUPS.find(x=>x.key===key);
+  toast(`${g.name} on Flash-Next: ${v==='default'?'Default (each task)':LONG[v]}${flashOn()?'':' — applies next time Flash-Next serves'}`);render();}
+function resetTierTasks(key){GROUPS.find(g=>g.key===key).tasks.forEach(id=>delete S.ft[id]);S.preset=null;toast('Tasks now follow the tier');render();}
+
+// ---- Standard picks (the real screen's controls, unchanged) ----
+function sharedProvider(g){const ps=g.tasks.map(id=>T(id).provider);return ps.every(p=>p===ps[0])?ps[0]:'mixed';}
+function sharedEffort(g){const ts=g.tasks.filter(id=>PROV[T(id).provider].reasons);if(!ts.length)return'mixed';
+  const f=T(ts[0]).effort;return ts.every(id=>T(id).effort===f)?f:'mixed';}
+function provOpts(vision){return Object.entries(PROV).filter(([k,p])=>vision?p.vision:!p.visionOnly);}
+function setGroupProvider(key,p){const g=GROUPS.find(x=>x.key===key);g.tasks.forEach(id=>{if(isVision(id)&&!PROV[p].vision)return;
+  const t=T(id);t.provider=p;t.effort=PROV[p].reasons?(t.effort||t.bucket||'medium'):null;});S.preset=null;toast(`${g.name}: ${PROV[p].label}`);render();}
+function setGroupEffort(key,e){const g=GROUPS.find(x=>x.key===key);g.tasks.forEach(id=>{if(PROV[T(id).provider].reasons)T(id).effort=e;});
+  toast(`${g.name} reasoning: ${LONG[e]}${flashOn()?' — used when Standard serves':''}`);render();}
+function setTaskProvider(id,p){const t=T(id);t.provider=p;t.effort=PROV[p].reasons?(t.effort||t.bucket||'medium'):null;toast(`${t.label}: ${PROV[p].label}`);render();}
+function setTaskEffort(id,e){T(id).effort=e;toast(`${T(id).label} reasoning: ${LONG[e]}${flashOn()?' — used when Standard serves':''}`);render();}
+function toggleExpanded(key){S.expanded.has(key)?S.expanded.delete(key):S.expanded.add(key);render();}
+
+// The tier head's real controls: Provider select, the remap marker, the Reasoning segments.
+function stdProvider(g,opts){
+  opts=opts||{};
+  const prov=sharedProvider(g);
+  const vis=g.key==='vision';
+  const rm=g.tasks.filter(remapped);
+  const remap=flashOn()&&rm.length&&!opts.noRemap?`<p class="llm-remap">→ Flash-Next (engine active)${rm.length<g.tasks.length?` · ${rm.length} of ${g.tasks.length} tasks`:''}${opts.remapExtra||''}</p>`:'';
+  return`<span class="llm-field-tag first">${opts.provTag||'Provider'}</span>
+    <select class="llm-select" aria-label="${g.name} provider" onchange="setGroupProvider('${g.key}',this.value)">
+      ${prov==='mixed'?'<option value="mixed" disabled selected>Mixed</option>':''}
+      ${provOpts(vis).map(([k,p])=>`<option value="${k}" ${k===prov?'selected':''}>${p.label}</option>`).join('')}</select>${remap}`;
+}
+function stdReasoning(g,opts){
+  opts=opts||{};
+  const prov=sharedProvider(g);
+  const on=prov!=='mixed'&&PROV[prov].reasons;
+  const eff=sharedEffort(g);
+  const na=prov==='claude'?'Claude manages thinking on its own.':(on||prov==='mixed')?'':'This model takes no reasoning level.';
+  return`<span class="llm-field-tag">${opts.tag||'Reasoning'}</span>${on
+    ?`<div class="seg-row" role="group" aria-label="${g.name} reasoning">${EFFORTS.map(e=>`<button class="seg${eff===e?' seg-on':''}" aria-pressed="${eff===e}" onclick="setGroupEffort('${g.key}','${e}')">${LBL[e]}</button>`).join('')}</div>`
+    :`<p class="llm-na-note">${na||'&nbsp;'}</p>`}${opts.after||''}`;
+}
+function stdMemberControls(id){
+  const t=T(id),p=PROV[t.provider];
+  return`<div class="llm-member-controls">
+    <select class="llm-select llm-member-select" aria-label="${t.label} provider" onchange="setTaskProvider('${id}',this.value)">
+      ${provOpts(isVision(id)).map(([k,q])=>`<option value="${k}" ${k===t.provider?'selected':''}>${q.short||q.label}</option>`).join('')}</select>
+    ${p.reasons?`<div class="seg-row llm-member-seg" role="group" aria-label="${t.label} reasoning">${EFFORTS.map(e=>`<button class="seg${t.effort===e?' seg-on':''}" aria-pressed="${t.effort===e}" title="${LONG[e]}" onclick="setTaskEffort('${id}','${e}')">${ABBR[e]}</button>`).join('')}</div>`
+      :`<span class="llm-member-na">n/a</span>`}</div>`;
+}
+function memberName(id,extra){
+  const t=T(id);
+  return`<div class="llm-member-name">${t.label}<span class="llm-member-id">${id}</span>${flashOn()&&remapped(id)?'<span class="llm-remap">→ Flash-Next (engine active)</span>':''}${extra||''}</div>`;
+}
+function groupCard(g,head,members,extraCls){
+  const open=S.expanded.has(g.key);
+  return`<section class="llm-group llm-${g.accent} ${extraCls||''}" id="g-${g.key}">
+    <div class="llm-group-head"><div class="llm-group-title"><span class="llm-group-name">${g.name}</span><span class="llm-group-count">${g.tasks.length} tasks</span></div>
+      <p class="llm-group-desc">${g.desc}</p>${head}</div>
+    <div class="llm-expand"><button class="llm-exp-toggle" aria-expanded="${open}" onclick="toggleExpanded('${g.key}')"><span>Per-task overrides</span><span class="llm-exp-caret${open?' open':''}" aria-hidden="true">›</span></button>
+      ${open?`<div class="llm-members">${g.tasks.map(members).join('')}</div>`:''}</div></section>`;
+}
+// Segmented Flash-Next level control: Default + None/Low/Med/High (compact = the per-task D/N/L/M/H form).
+// `mk(v)` builds the onclick for value v.
+function fxSeg(cur,mk,label,compact){
+  return`<div class="seg-row${compact?' llm-member-seg':''}" role="group" aria-label="${label}">${['default',...EFFORTS].map(v=>
+    `<button class="seg${cur===v?' seg-on':''}" aria-pressed="${cur===v}" title="${v==='default'?'Default':LONG[v]}" onclick="${mk(v)}">${compact?ABBR[v]:LBL[v]}</button>`).join('')}</div>`;
+}
+const tierMk=key=>v=>`setTierFlash('${key}','${v}')`;
+const taskMk=id=>v=>`setTaskFlash('${id}','${v}')`;
+const provNames=ids=>[...new Set(ids.map(id=>PROV[T(id).provider].label))].join(' / ');
+// The one-line "what Default means here / what runs" reading under a tier's Flash-Next control.
+function tierRes(g){
+  const loc=localTasks(g),cl=cloudIn(g);
+  if(!loc.length)return`<p class="fx-res">No task in this tier runs on a local model, so nothing here moves to Flash-Next.</p>`;
+  const ov=overridesIn(g).length;
+  const sum=tierDefaultSummary(g);
+  const ovTxt=ov?` · <b>${ov}</b> task${ov>1?'s':''} set individually`:'';
+  const line=S.fg[g.key]
+    ?`${loc.length===g.tasks.length?'Every task runs':`${loc.length} local tasks run`} at <b>${LONG[S.fg[g.key]]}</b> on Flash-Next${ovTxt}${ov?` <button class="link" onclick="resetTierTasks('${g.key}')">Reset to tier</button>`:''}.`
+    :`Default keeps each task's own level: <b>${sum.text}</b> <span class="src">(from the Standard picks)</span>${ovTxt}.`;
+  const cloud=cl.length?` <span class="src">${cl.map(id=>T(id).label).join(', ')} stay${cl.length>1?'':'s'} on ${provNames(cl)} — not on Flash-Next.</span>`:'';
+  return`<p class="fx-res">${line}${cloud}</p>`;
+}
+// Short reading for a task row: the level it runs at on Flash-Next and where that came from.
+const SRC={task:'set here',tier:'from tier',std:'Standard pick',bucket:'task default',model:'Flash-Next default'};
+function taskRes(id){
+  const r=flashOf(id);
+  return`<span class="lvl${r.key==='task'?'':' dim'}">${LBL[r.lvl]}</span> <span class="src">${SRC[r.key]}</span>`;
+}
+const stubs={
+  onbox:()=>`<div class="stub"><span class="sn">On-box models</span><span class="ss"><span class="dot ${flashOn()?'info':'ok'}"></span>${flashOn()?'Flash-Next engine':'Standard engine'}</span><span class="caret">${I.caret}</span></div>`,
+  tail:()=>`<div class="stub"><span class="sn">Code mode</span><span class="ss">Qwen3-Coder-Next 80B</span><span class="caret">${I.caret}</span></div>
+    <div class="stub"><span class="sn">AI usage</span><span class="ss">$4.12 this month</span><span class="caret">${I.caret}</span></div>`,
+};
+const META='Tasks are grouped by role. Set the provider and reasoning once per tier; expand a tier to fine-tune individual tasks that should diverge.';
+
+// ---- chrome ----
+function renderTop(){
+  const busy=flashOn()?[2,2,3,5,4,3,2,2,3,2,2,3]:[2,3,2,4,3,2,2,3,2,2,3,2];
+  document.getElementById('top').innerHTML=`<button class="back" aria-label="Back" onclick="toast('Back to Settings')">${I.back}</button><span class="ttl">LLM</span>
+    <span class="vitals" aria-label="GPU busy"><span class="cols">${busy.map((h,i)=>`<i style="height:${h}px;opacity:${.35+i*.055}"></i>`).join('')}</span><b>9%</b></span>`;
+  document.getElementById('banner').innerHTML=flashOn()
+    ?`<div class="gb steel" role="status"><span class="d"></span><span class="gt"><b>Flash-Next active</b> <span>· since 00:24</span></span><button class="ga" onclick="sim('engine','standard');toast('Switched back to Standard (the real switch runs from Ops → Local engine)')">Switch back</button></div>`:'';
+}
+function sim(k,v){
+  if(k==='theme')S.theme=v;
+  else if(k==='engine'){S.engine=v;if(V.onEngine)V.onEngine();}
+  else if(k==='preset'){const p=PRESETS[v];S.preset=v;S.ft={...p.ft};S.fg={...p.fg};p.open.forEach(x=>S.expanded.add(x));
+    if(V.onPreset)V.onPreset(v);}
+  else if(k==='reset'){location.reload();return;}
+  render();
+}
+function renderSim(){
+  const b=(k,v,label,on)=>`<button aria-pressed="${on}" onclick="sim('${k}','${v}')">${label}</button>`;
+  const hint=S.preset?PRESETS[S.preset].hint:`Edited by hand — <b>${flashSetCount()}</b> Flash-Next level${flashSetCount()===1?'':'s'} set.`;
+  document.getElementById('sim').innerHTML=`
+    <div class="srow"><span class="sl">Engine</span>${b('engine','flash','Flash-Next serving',S.engine==='flash')}${b('engine','standard','Standard serving',S.engine==='standard')}</div>
+    <div class="srow"><span class="sl">Levels</span>${b('preset','none','All default',S.preset==='none')}${b('preset','task','Task overrides',S.preset==='task')}${b('preset','tier','Tier override',S.preset==='tier')}${b('reset','','Reset',false)}</div>
+    <div class="shint">${hint}</div>`;
+  document.getElementById('c-dark').setAttribute('aria-pressed',String(S.theme==='dark'));
+  document.getElementById('c-light').setAttribute('aria-pressed',String(S.theme==='light'));
+}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
+function render(){
+  document.documentElement.dataset.theme=S.theme;
+  renderSim();renderTop();
+  const scr=document.getElementById('screen');const y=scr.scrollTop;
+  scr.innerHTML=V.screen();scr.scrollTop=y;
+  if(S.flashTarget){const el=document.getElementById(S.flashTarget);S.flashTarget=null;
+    if(el){el.scrollIntoView({block:'start',behavior:'smooth'});el.classList.add('flash');}}
+}
+
+// ===== variant B — a separate "Flash-Next reasoning" card: tiers + tasks, reasoning selects only =====
+const B={cardOpen:true,tiers:new Set()};
+const V={
+  onEngine(){B.cardOpen=flashOn();},
+  onPreset(v){B.cardOpen=true;PRESETS[v].open.forEach(k=>B.tiers.add(k));},
+  screen(){
+    return`<p class="settings-meta">${META}</p>${stubs.onbox()}${fxCard()}
+      ${GROUPS.map(g=>groupCard(g,stdProvider(g,{remapExtra:localTasks(g).length?` · <button class="link" onclick="goCard('${g.key}')">reasoning ↑</button>`:''})+stdReasoning(g),stdMember)).join('')}${stubs.tail()}`;
+  },
+};
+function goCard(key){B.cardOpen=true;B.tiers.add(key);S.flashTarget='fx-'+key;render();}
+function fxCard(){
+  const n=flashSetCount();
+  const badge=flashOn()?`<span class="badge info"><span class="dot info"></span>In use</span>`:`<span class="badge off">Next time it serves</span>`;
+  const body=B.cardOpen?`<div class="fxb">
+      ${!flashOn()?`<div class="notice" style="margin:0 16px 12px">${I.info}<div>Flash-Next isn't serving. These levels are kept and apply the next time it does — your Standard picks below are what runs now.</div></div>`:''}
+      ${GROUPS.map(fxTier).join('')}</div>`:'';
+  return`<section class="llm-group llm-fxcard newmark" id="fxcard">
+    <button class="fxc-head" aria-expanded="${B.cardOpen}" onclick="B.cardOpen=!B.cardOpen;render()">
+      <span class="fxc-t"><span class="llm-group-name">Flash-Next reasoning</span>${badge}</span>
+      <span class="llm-group-desc" style="margin:4px 0 0;display:block">While Flash-Next serves, every local task runs on <b>Qwen3.8 Flash-Next</b> — the model is fixed, so only the reasoning level is set here. Kept apart from your Standard picks.</span>
+      <span class="fxc-sum">${n?`${n} level${n>1?'s':''} set · everything else Default`:'All Default — the Standard pick\'s level carries over'}<span class="llm-exp-caret${B.cardOpen?' open':''}" aria-hidden="true">›</span></span>
+    </button>${body}</section>`;
+}
+function tierSelect(g){
+  const cur=S.fg[g.key]||'default';
+  const sum=tierDefaultSummary(g);
+  return`<select class="llm-select fx-sel" aria-label="${g.name} on Flash-Next" onchange="setTierFlash('${g.key}',this.value)">
+    <option value="default" ${cur==='default'?'selected':''}>Default · ${sum.one?LONG[sum.one]:'per task'}</option>
+    ${EFFORTS.map(e=>`<option value="${e}" ${cur===e?'selected':''}>${LONG[e]}</option>`).join('')}</select>`;
+}
+function fxTier(g){
+  const loc=localTasks(g),cl=cloudIn(g);
+  const open=B.tiers.has(g.key);
+  const ov=overridesIn(g).length;
+  if(!loc.length)return'';
+  return`<div class="fxt llm-${g.accent}" id="fx-${g.key}">
+    <div class="fxt-head">
+      <button class="fxt-name" aria-expanded="${open}" onclick="B.tiers.has('${g.key}')?B.tiers.delete('${g.key}'):B.tiers.add('${g.key}');render()">
+        <span class="fxt-rail"></span><span><span class="fxt-n">${g.name}</span><span class="fxt-c">${loc.length} task${loc.length>1?'s':''}${ov?` · ${ov} set`:''}</span></span>
+        <span class="llm-exp-caret${open?' open':''}" aria-hidden="true">›</span></button>
+      ${tierSelect(g)}</div>
+    ${open?`<div class="fxt-tasks">${loc.map(fxTask).join('')}
+      ${cl.length?`<p class="fx-res fxt-cloud">${I.cloud} ${cl.map(id=>T(id).label).join(', ')} stay${cl.length>1?'':'s'} on ${provNames(cl)} — not on Flash-Next.</p>`:''}
+      ${ov&&S.fg[g.key]?`<p class="fx-res fxt-cloud"><button class="link" onclick="resetTierTasks('${g.key}')">Reset to tier</button> <span class="src">— every task follows the tier</span></p>`:''}</div>`:''}
+  </div>`;
+}
+function fxTask(id){
+  const t=T(id),cur=S.ft[id]||'default',inh=inheritOf(id),r=flashOf(id);
+  const srcLong={task:'set on this task',tier:'from the tier',std:'from the Standard pick',bucket:'task default',model:'Flash-Next\'s own default'};
+  return`<div class="fxk">
+    <div class="llm-member-name">${t.label}<span class="llm-member-id">${r.key==='task'?`<span style="color:var(--steel)">Set · ${LONG[r.lvl]}</span> — default would be ${LONG[inh.lvl]}`:`${LONG[r.lvl]} · ${srcLong[r.key]}`}</span></div>
+    <select class="llm-select llm-member-select fx-sel${cur!=='default'?' fx-set':''}" aria-label="${t.label} on Flash-Next" onchange="setTaskFlash('${id}',this.value)">
+      <option value="default" ${cur==='default'?'selected':''}>Default · ${LONG[inh.lvl]}</option>
+      ${EFFORTS.map(e=>`<option value="${e}" ${cur===e?'selected':''}>${LONG[e]}</option>`).join('')}</select></div>`;
+}
+function stdMember(id){return`<div class="llm-member"><div class="llm-member-row">${memberName(id)}${stdMemberControls(id)}</div></div>`;}
+
+render();
+</script>
+</body>
+</html>

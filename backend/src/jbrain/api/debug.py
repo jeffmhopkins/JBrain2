@@ -3119,6 +3119,26 @@ async def switch_llm(
     )
 
 
+@router.put("/llm/engine-effort/{engine}")
+async def put_llm_engine_efforts(
+    engine: str,
+    body: llm_settings.EngineEffortsPut,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+) -> LlmSettingsOut:
+    """Set/clear per-engine reasoning levels (null clears) — the owner's batch route, same
+    validation and one write."""
+    # Validated first, so the audit line only ever names known tiers, tasks and levels.
+    changes = llm_settings.validate_engine_efforts(engine, body)
+    request.state.debug_detail = ", ".join(
+        f"{scope}:{key}→{level}" for (_engine, scope, key), level in changes.items()
+    )
+    return await llm_settings.apply_engine_efforts(
+        engine, body, settings, _store(request), _OWNER_CTX, _gateway(request)
+    )
+
+
 @router.post("/llm/local-models/{model_id}/load")
 async def load_model(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep

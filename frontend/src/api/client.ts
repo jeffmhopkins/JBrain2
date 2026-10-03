@@ -1210,6 +1210,59 @@ export interface LlmSettings {
   local_llm_timeout_s?: number | null;
   /** Code mode's model selector. Always present; `enabled` gates the card. */
   jcode: JcodeModelInfo;
+  /** The owner's reasoning levels per engine (today only "flash-next"), kept apart from the
+   * Standard picks above. Absent from an older server, and empty for an engine with no
+   * levels to offer. */
+  engine_efforts?: Record<string, EngineEffortInfo> | undefined;
+}
+
+/** A per-engine level on one role tier. `level` null = Default (each task keeps its own). */
+export interface EngineEffortTier {
+  id: string;
+  label: string;
+  level: ReasoningEffort | null;
+  /** What a task in this tier with no level of its own and no stored Standard effort runs at;
+   * null = no level is sent and the model uses its own default. */
+  default: ReasoningEffort | null;
+}
+
+/** One task's level on an engine and what it resolves to. */
+export interface EngineEffortTask {
+  id: string;
+  /** Its role tier, or null for a task in none (it can only be set on its own). */
+  tier: string | null;
+  /** The owner's level for this task, or null (Default — it inherits). */
+  level: ReasoningEffort | null;
+  /** What Default resolves to: the tier's level, else today's Standard effort. Null = no
+   * level is sent (the model's own default). */
+  fallback: ReasoningEffort | null;
+  fallback_source: "tier" | "standard";
+  /** `level` if set, else `fallback`. */
+  effective: ReasoningEffort | null;
+  /** The engine serves and this task's route is local, so the level is what it runs at now.
+   * A cloud-routed task never reads these levels. */
+  applies: boolean;
+}
+
+export interface EngineEffortInfo {
+  label: string;
+  /** This engine is serving now. */
+  active: boolean;
+  /** The levels its model honors, in display order. */
+  levels: ReasoningEffort[];
+  /** What the model really runs at when no level is sent (Flash-Next's template thinks hard
+   * by default), or null when unknown. Absent from an older server. */
+  model_default?: ReasoningEffort | null | undefined;
+  tiers: EngineEffortTier[];
+  tasks: EngineEffortTask[];
+}
+
+export type EngineEffortScope = "task" | "tier";
+
+/** A batch of level changes for one engine; null clears a row. Keys absent are left. */
+export interface EngineEffortsPatch {
+  tiers?: Record<string, ReasoningEffort | null>;
+  tasks?: Record<string, ReasoningEffort | null>;
 }
 
 /** One task's desired routing; reasoning_effort applies only to a reasoning-capable
@@ -2579,6 +2632,11 @@ function jsonInit(method: string, body: unknown): RequestInit {
   };
 }
 
+function engineEffortPath(engine: string, scope: EngineEffortScope, key: string): string {
+  const parts = [engine, scope, key].map(encodeURIComponent).join("/");
+  return `/api/settings/llm/engine-effort/${parts}`;
+}
+
 export function attachmentUrl(id: string): string {
   return `/api/attachments/${encodeURIComponent(id)}`;
 }
@@ -3541,6 +3599,41 @@ export const api = {
 
   async updateLlmSettings(patch: LlmSettingsPatch): Promise<LlmSettings> {
     const response = await request("/api/settings/llm", jsonInit("PUT", patch));
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Set one task's or tier's reasoning level on `engine`; returns the full snapshot. 422 (the
+   * detail as the ApiError message) for a level the engine's model does not honor. */
+  async setEngineEffort(
+    engine: string,
+    scope: EngineEffortScope,
+    key: string,
+    effort: ReasoningEffort,
+  ): Promise<LlmSettings> {
+    const response = await request(
+      engineEffortPath(engine, scope, key),
+      jsonInit("PUT", { effort }),
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Clear one task's or tier's level on `engine` (back to Default); returns the snapshot. */
+  async clearEngineEffort(
+    engine: string,
+    scope: EngineEffortScope,
+    key: string,
+  ): Promise<LlmSettings> {
+    const response = await request(engineEffortPath(engine, scope, key), { method: "DELETE" });
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Apply several level changes on `engine` in one write (all or nothing); returns the
+   * snapshot. */
+  async setEngineEfforts(engine: string, patch: EngineEffortsPatch): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/engine-effort/${encodeURIComponent(engine)}`,
+      jsonInit("PUT", patch),
+    );
     return (await response.json()) as LlmSettings;
   },
 

@@ -191,9 +191,9 @@ engine, and it rides **every** screen: under every `TopBar`, and under the own h
 each full-screen overlay that brings one (Automations, Image, Radio, Tasks, jcode,
 jlaunch, pet Control, jpanel, Room endpoints) — a switch pauses local AI on all of them,
 so "only on the screens with the shared bar" would hide it exactly where a long-running
-local job lives. It is and the one place the strip is *not* only for
-problems: **steel** *"Flash-Next active · since HH:MM · Switch back"* while Flash-Next
-serves (a standing mode the owner chose, so it informs rather than alarms), **amber**
+local job lives. Like the status banner it is for problems and transitions only — the
+steel *"Flash-Next active"* strip it first carried was removed at the owner's request
+(2026-10-03); Ops → Local engine says which engine serves. **Amber**
 while something holds the engine (a switch, a desired-≠-effective fallback, the
 perplexity one-shot, admission closed by a debug job), **rose** after a rollback or a
 failed switch — dismissable, per switch. When the latest read failed it keeps the last
@@ -713,6 +713,65 @@ one the modal system already has. A's inline table was dense on a phone and only
 the caps exceed the pool; B drew the overcommit best but was the tallest row (~330 px),
 added a new chart pattern to LLM settings, and left Kid pet a sliver reachable only from
 its legend.
+
+**Flash-Next reasoning card** (GUI gate settled 2026-10-03 — chosen **B, its own card
+above the tiers**; binding mock `docs/mocks/flash-reasoning/b-flash-card.html`, rivals A
+"a second control inline in each tier card" and C "a Standard | Flash-Next toggle that swaps
+what the tiers edit" kept beside it with the round record in
+`docs/mocks/flash-reasoning/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` §4c).
+While Flash-Next serves, every local pick runs on its one model. The owner sets the
+**reasoning level it runs at**, per tier and per task. These levels are stored apart from the
+Standard picks (`engine_efforts` on the LLM snapshot), so switching back restores those picks
+untouched.
+
+- **One card per engine with levels of its own**, above the tier cards. Today that is only
+  Flash-Next. It has a steel rail, **Flash-Next reasoning** and a badge: *In use* while the
+  engine serves, *Next time it serves* otherwise. The card is **always present**. It starts
+  open while the engine serves, and collapsed otherwise with a notice that the levels apply
+  next time. So the levels can be set before a switch.
+- **Selects only, since the model is fixed.** Each tier row has a select: *Default · resolved*
+  / None / Low / Medium / High, offering only the levels the engine's model honours
+  (`levels`). Tapping a tier opens one select per task. A task's Default option names only
+  what it resolves to (*Default · Medium*), so the closed select fits about 150 px at phone
+  width. The line under the name says where it comes from (*Medium · from the Standard pick*
+  or *· from the tier*), or *Set · High — default would be Medium*. A null level means none
+  is sent. When the server reports what the model then runs at (`model_default`, High for
+  Flash-Next, whose template thinks hard unasked), it reads *Default · High (model)*, with
+  the line *High · the model's own default — no level sent*. An older server without it
+  gets *Default · model's own*. A tier's Default names the tasks' shared
+  Standard level, or *per task* when they differ. With a tier level set, it names the tier's
+  bucket default (`default`) instead.
+- **Rows follow the server's tiers** (`tier`), not the tier cards' grouping. JPet's tasks sit
+  in Low here even though the tier cards put them in their synthesized Other group. Tasks the
+  server places in no tier sit in an **Other** row, which has no tier select. The header count
+  covers only the levels the card shows.
+- **Cloud tasks stay put.** Only local picks move to Flash-Next. A cloud-routed task gets no
+  select, just a cloud glyph and *Intake materialize stays on Grok 4.3 — not on Flash-Next*.
+  While the engine serves this comes from the server's `applies`. Otherwise it comes from the
+  task's current route (`effective_spec`), or failing that from whether its pick is a local
+  provider. A tier with no local task is left out.
+- **A tier's level leaves task levels in place.** The tier counts them (*1 task · 1 set*), and
+  **Reset to tier** clears them in one batch write.
+- **The tier cards are unchanged.** Their *→ Flash-Next (engine active)* marker gains a
+  **reasoning ↑** link (named *Set {tier} levels on Flash-Next*). It goes to the engine row
+  that the group's remapped tasks really sit in, so the Other card links to Low. It opens the
+  card and that row, scrolls to it, and flashes the row once (no flash under reduced motion).
+- **No optimistic state.** Every write (PUT/DELETE one row, or the batch) returns the whole
+  snapshot. Only its `engine_efforts` is taken, so the rest of a snapshot cannot revert a
+  Standard edit made meanwhile. A select is locked while its own write is out. A refusal
+  (422) shows its detail under that row, and a task's refusal reopens its tier so the error
+  stays in view.
+- **The live poll refreshes the levels too**, so an engine switch flips the badge. A read is
+  dropped for the levels if any write was sent or settled while it was out (a write epoch
+  bumped on both). Otherwise a stale read could put an old level back for a cycle.
+- **An older server** sends no `engine_efforts`. The card and the links are then absent.
+
+B won because it leaves the existing tier cards untouched and keeps the Flash-Next levels
+editable while Standard serves. Its cost is two places to look for "how hard does this task
+think", with the tier list appearing twice on one screen. The link from each tier's remap
+marker carries that cost. A grew every tier card by about 90 px and every task row by a line,
+and hid the levels on Standard. C added a mode, so an edit made in the wrong mode was easy to
+miss.
 
 **Ops Data card** (settled in a three-way review — inline card won over a
 backup-vault list and a guided transfer sheet): a "Data" section with two
@@ -1481,7 +1540,9 @@ local append with an amber "pending sync" chip until the outbox clears.
   reasons, the sheet adds a **Reasoning** radio pill row (None / Low / Medium / High,
   styled like the chat picker's Today/Older/Archived segments) — no separate "Auto":
   the route's effective default level carries a small **"(default)"** marker under its
-  label and reads selected while no override is set; tapping it clears the override so
+  label and reads selected while no override is set. While an engine with levels of its
+  own serves (Flash-Next) and `agent.turn` runs on it, that level is the engine's
+  `effective` level for `agent.turn`, else its `model_default`, not the Standard effort; tapping it clears the override so
   the route's own effort keeps applying. The reasoning level is an **independent**
   per-conversation override — **not** bundled into the model pick: tapping a level
   persists it immediately (without closing) whether or not a model is pinned, so the
