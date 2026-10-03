@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-02
+> **Status:** Living · **Last verified:** 2026-10-03
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -666,6 +666,48 @@ disruptive act) is carried by the confirm, which is why the confirm must state t
 consequence rather than ask "Are you sure?". B's side-by-side cards truncated at 390px
 and needed the heaviest (Dialog) confirm; C broke the collapsed-stack rule by spending a
 permanent block at the top of Ops when nothing is happening.
+
+**KV pool view** (GUI gate settled 2026-10-03 — chosen **C, a quiet row line + a slot
+Sheet**; binding mock `docs/mocks/kv-pool/c-slot-sheet.html`, rivals A "summary that
+expands to a table" and B "stacked bar of caps" kept beside it with the round record in
+`docs/mocks/kv-pool/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` F3b).
+Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 1M tokens) across **eight
+role-pinned slots**, each with a per-slot cap. Its window and slot count are the engine's,
+and the server refuses changes to them (409), so the per-model selects were a lie for it.
+
+- **Pool models only** (`kv_pool` non-null): the *context window* and *slots* selects give
+  way to one line — *KV pool · **1M** shared · 8 slots*, a strip of **eight slot ticks**,
+  and **View slots →**. Standard rows keep their selects; *keep loaded* and *image detail*
+  are unchanged on both.
+- **The Sheet** (the shared `Sheet`, "Modal system") is read-only and says so: a lock and
+  *set by the engine*. Three stat tiles (Pool, Slots, Caps total), then **one row per
+  slot** — number, label, a **role chip** and a **cap bar** scaled to the largest cap — and
+  **Done**. Tapping a slot adds one line on what it serves (a frontend role → sentence map;
+  the API carries only the label). Kid pet's line links to **Small prompts**, where it
+  spills when full, and the link selects and scrolls to that slot.
+- **Role hues pair by job family** — steel for you (interactive), amber for background
+  work (ingest, scheduled), violet for agents (research, jcode), green for writing
+  (workshop, pet), grey for small; the second slot of a pair is lighter. An unknown role
+  reads grey rather than failing.
+- **The overcommit is a light footer, not a warning**: the caps total 1.34M, more than the
+  1M pool, because not every job runs at once, and the router frees an idle slot when the
+  pool would overrun. Pool sizes format in binary steps (1M, 1.34M) so the overcommit is
+  stated truly.
+- **Off-engine** (Flash-Next not serving) the line and Sheet still render, with the row's
+  existing off-engine reason above, and the Sheet adds *the engine is stopped, so these
+  are the caps it will use*.
+- **Caps only until the API reports use.** The mock's live states (an *In use* tile, lit
+  ticks, filled bars, per-slot state dots, the router-freed-a-slot footer) are drawn only
+  from a real per-slot occupancy field; there is none yet, so the ticks stay unlit and the
+  third tile reads *Caps total*. Nothing is estimated.
+
+C won because it keeps the model row as short as its neighbours while the whole pool is
+one tap away, and gives the slots the most room and the friendliest labels. Its cost — the
+ticks are a hint, not a reading, and it adds a Sheet — is carried by the Sheet being the
+one the modal system already has. A's inline table was dense on a phone and only *said*
+the caps exceed the pool; B drew the overcommit best but was the tallest row (~330 px),
+added a new chart pattern to LLM settings, and left Kid pet a sliver reachable only from
+its legend.
 
 **Ops Data card** (settled in a three-way review — inline card won over a
 backup-vault list and a guided transfer sheet): a "Data" section with two
