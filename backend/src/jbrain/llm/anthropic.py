@@ -126,6 +126,7 @@ class AnthropicClient:
         # and ignore it (out of scope for this control surface).
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,  # a llama-server slot pin; ignored here
     ) -> LlmResult:
         content: list[dict[str, Any]] = [
             {
@@ -214,6 +215,7 @@ class AnthropicClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,  # ignored — see `complete`
         sampling: Sampling | None = None,
+        id_slot: int | None = None,  # a llama-server slot pin; ignored here
     ) -> LlmTurn:
         payload = self._converse_payload(
             model=model,
@@ -259,6 +261,7 @@ class AnthropicClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,  # ignored — see `complete`
         sampling: Sampling | None = None,
+        id_slot: int | None = None,  # a llama-server slot pin; ignored here
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over the Messages SSE events. Text deltas stream live;
         tool_use blocks arrive as `input_json_delta` fragments accumulated per

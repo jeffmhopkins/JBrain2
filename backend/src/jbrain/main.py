@@ -171,6 +171,7 @@ from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, drain, engine_switch, gpu_guard
 from jbrain.llm import engine as engine_mod
+from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -492,6 +493,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Lets a finished load drop the page-cache copy of the weights it just read.
             models_dir=settings.local_models_dir,
         )
+        # One per process: the router and the jcode proxy both pin slots on a pooled model, so
+        # they must share its lock and its record of calls placed but not yet running.
+        app.state.kv_pool_guard = KvPoolGuard(
+            app.state.local_gateway.slots, app.state.local_gateway.erase_slot
+        )
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (passed to build_router below as its
         # residency, so every local completion admits through this same instance),
@@ -604,6 +610,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Turns on the prefill diagnostic: on a local turn slow to say anything, this
             # reads `/slots` off the SAME gateway the coordinator drives.
             slots_probe=app.state.local_gateway.slots,
+            # Frees a pooled model's idle slots in our eviction order before a call would
+            # overrun the shared KV pool; the jcode proxy pins through the same instance.
+            pool_guard=app.state.kv_pool_guard,
             # The disk layer for the agent-turn prefix: restores jerv's saved prompt cache
             # in ~2 s where a turn (or the keeper's prime) would otherwise pay a ~60 s
             # prefill. Shares the models volume with the weights (jbrain.llm.kv_prefix).

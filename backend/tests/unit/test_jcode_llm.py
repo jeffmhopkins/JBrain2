@@ -6,7 +6,9 @@ swap. Runs the router on a bare app with a fake residency + a faked gateway (no 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from types import SimpleNamespace
+from typing import cast
 
 import httpx
 import pytest
@@ -14,6 +16,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jbrain.api import jcode_llm
+from jbrain.llm import engine, local_catalog, prefill, slot_roles
+from jbrain.llm.kv_pool_guard import KvPoolGuard
+from jbrain.llm.slot_roles import FLASH_NEXT_POOL, JCODE_ROLE
 
 _AUTH = {"Authorization": "Bearer sk-test"}
 
@@ -221,3 +226,113 @@ async def test_concurrent_different_model_requests_serialize() -> None:
         return not any(x.startswith("start:") for x in events[s + 1 : e])
 
     assert contiguous("gpt-oss-120b") and contiguous("qwen3-coder-next")
+
+
+# --- the pooled engine: jcode's slot, its cap, and the window grok is told -----------------
+
+_FLASH = "qwen3.8-flash-next"
+_JCODE_CAP = FLASH_NEXT_POOL.cap(JCODE_ROLE)
+
+
+@pytest.fixture
+def _fresh_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prefill, "_ratio", {})
+
+
+def _flash_app(*, residency: object | None = None) -> FastAPI:
+    app = _app(models=(_FLASH, "gpt-oss-120b"), residency=residency)
+
+    async def _load() -> str:
+        return "flash-next"
+
+    app.state.active_engine = engine.ActiveEngine(_load, ttl_s=0.0)
+    return app
+
+
+def _post(app: FastAPI, monkeypatch: pytest.MonkeyPatch, body: dict) -> tuple[httpx.Response, dict]:
+    sent: dict[str, object] = {}
+    _fake_gateway(monkeypatch, sent, chunks=(b"ok",))
+    r = TestClient(app).post(_COMPLETIONS, json={"model": _FLASH, **body}, headers=_AUTH)
+    return r, cast("dict", sent.get("payload", {}))
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_a_pooled_request_is_pinned_to_the_jcode_slot_with_its_budget_filled_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r, payload = _post(_flash_app(), monkeypatch, {"messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200
+    assert payload["id_slot"] == FLASH_NEXT_POOL.slot(JCODE_ROLE)
+    # Without a budget llama-server would generate until the slot hits the trained context.
+    assert 0 < payload["max_tokens"] < _JCODE_CAP
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_an_output_budget_past_the_cap_is_clamped_under_either_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt = "x" * int(200_000 * 3.7)
+    body = {"messages": [{"role": "user", "content": prompt}], "max_completion_tokens": 100_000}
+    r, payload = _post(_flash_app(), monkeypatch, body)
+    assert r.status_code == 200
+    assert payload["max_tokens"] == payload["max_completion_tokens"]
+    assert 50_000 < payload["max_tokens"] < 100_000
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_a_request_too_long_for_the_slot_is_refused_in_openais_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    res = _RecordingResidency()
+    prompt = "x" * int(300_000 * 3.7)
+    r, payload = _post(
+        _flash_app(residency=res), monkeypatch, {"messages": [{"role": "user", "content": prompt}]}
+    )
+    assert r.status_code == 400
+    error = r.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["code"] == "context_length_exceeded"
+    assert "jcode" in error["message"] and prompt[:50] not in error["message"]
+    # Refused before the swap lock: nothing was admitted or forwarded.
+    assert res.calls == [] and payload == {}
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_a_stale_slot_layout_sends_the_request_unpinned(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def four_slots(model: str) -> list[dict[str, object]]:
+        return [{"id": i, "is_processing": False} for i in range(4)]
+
+    async def erase(model: str, slot: int) -> bool:
+        raise AssertionError("nothing to erase")
+
+    app = _flash_app()
+    app.state.kv_pool_guard = KvPoolGuard(four_slots, erase)
+    r, payload = _post(app, monkeypatch, {"messages": [], "max_tokens": 1000})
+    assert r.status_code == 200
+    assert "id_slot" not in payload and payload["max_tokens"] == 1000
+
+
+def test_a_standard_engine_request_is_neither_pinned_nor_budgeted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: dict[str, object] = {}
+    _fake_gateway(monkeypatch, sent, chunks=(b"ok",))
+    body = {"model": "gpt-oss-120b", "messages": []}
+    assert TestClient(_app()).post(_COMPLETIONS, json=body, headers=_AUTH).status_code == 200
+    assert sent["payload"] == {"model": "gpt-oss-120b", "messages": []}
+
+
+def test_grok_is_told_the_jcode_slots_cap_as_a_pooled_models_window() -> None:
+    model = local_catalog.get_by_served(_FLASH)
+    assert model is not None
+    small = slot_roles.KvPool(
+        262_144,
+        tuple(
+            dataclasses.replace(r, cap_tokens=100_000) if r.role is JCODE_ROLE else r
+            for r in FLASH_NEXT_POOL.reservations
+        ),
+    )
+    assert jcode_llm._window(dataclasses.replace(model, kv_pool=small)) == 100_000
+    assert jcode_llm._window(dataclasses.replace(model, kv_pool=None)) == model.context_window
+    lines = TestClient(_flash_app()).get(f"{_MODELS}?format=lines", headers=_AUTH).text
+    assert f"|{_FLASH}|" in lines and lines.strip().endswith(f"|{_JCODE_CAP}")
