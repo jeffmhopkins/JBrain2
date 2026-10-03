@@ -714,6 +714,51 @@ the caps exceed the pool; B drew the overcommit best but was the tallest row (~3
 added a new chart pattern to LLM settings, and left Kid pet a sliver reachable only from
 its legend.
 
+**Flash-Next reasoning card** (GUI gate settled 2026-10-03 — chosen **B, its own card
+above the tiers**; binding mock `docs/mocks/flash-reasoning/b-flash-card.html`, rivals A
+"a second control inline in each tier card" and C "a Standard | Flash-Next toggle that swaps
+what the tiers edit" kept beside it with the round record in
+`docs/mocks/flash-reasoning/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` §4c).
+While Flash-Next serves, every local pick runs on its one model. The owner sets the
+**reasoning level it runs at**, per tier and per task. These levels are stored apart from the
+Standard picks (`engine_efforts` on the LLM snapshot), so switching back restores those picks
+untouched.
+
+- **One card per engine with levels of its own**, above the tier cards. Today that is only
+  Flash-Next. It has a steel rail, **Flash-Next reasoning** and a badge: *In use* while the
+  engine serves, *Next time it serves* otherwise. The card is **always present**. It starts
+  open while the engine serves, and collapsed otherwise with a notice that the levels apply
+  next time. So the levels can be set before a switch.
+- **Selects only, since the model is fixed.** Each tier row has a select: *Default · resolved*
+  / None / Low / Medium / High, offering only the levels the engine's model honours
+  (`levels`). Tapping a tier opens one select per task. A task's Default option names what it
+  resolves to and where that comes from: *Default · Medium (Standard)* or *(from tier)*. The
+  line under the name says the same, or *Set · High — default would be Medium*. A null level
+  means none is sent and reads *Model default*. A tier's Default names the tasks' shared
+  Standard level, or *per task* when they differ or a tier level is set. Tasks the server
+  places in no tier sit in an **Other** row, which has no tier select.
+- **Cloud tasks stay put.** Only local picks move to Flash-Next. A cloud-routed task gets no
+  select, just *Intake materialize stays on Grok 4.3 — not on Flash-Next*. While the engine
+  serves this comes from the server's `applies`; otherwise from the task's current route
+  (`effective_spec`). A tier with no local task is left out.
+- **A tier's level leaves task levels in place.** The tier counts them (*1 task · 1 set*), and
+  **Reset to tier** clears them in one batch write.
+- **The tier cards are unchanged.** Their *→ Flash-Next (engine active)* marker gains a
+  **reasoning ↑** link. It opens the card and that tier, scrolls to it, and flashes the row
+  once (no flash under reduced motion).
+- **No optimistic state.** Every write (PUT/DELETE one row, or the batch) returns the whole
+  snapshot, and the selects re-render from it. A refusal (422) shows its detail under that
+  row. The live poll refreshes the levels too, so an engine switch flips the badge, unless a
+  write went out while the read was in flight.
+- **An older server** sends no `engine_efforts`. The card and the links are then absent.
+
+B won because it leaves the existing tier cards untouched and keeps the Flash-Next levels
+editable while Standard serves. Its cost is two places to look for "how hard does this task
+think", with the tier list appearing twice on one screen. The link from each tier's remap
+marker carries that cost. A grew every tier card by about 90 px and every task row by a line,
+and hid the levels on Standard. C added a mode, so an edit made in the wrong mode was easy to
+miss.
+
 **Ops Data card** (settled in a three-way review — inline card won over a
 backup-vault list and a guided transfer sheet): a "Data" section with two
 inline buttons. **Export backup** runs a supervisor one-shot that bundles

@@ -1,6 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineState, ImageSettings, LlmSettings, LocalModelInfo } from "../api/client";
+import type {
+  EngineEffortTask,
+  EngineState,
+  ImageSettings,
+  LlmSettings,
+  LlmTask,
+  LocalModelInfo,
+  ReasoningEffort,
+} from "../api/client";
 import { fmtTokens } from "../components/KvPoolSheet";
 import { resetEngineStore, setEngineState } from "../engineState";
 import { LLMSettingsScreen } from "./LLMSettingsScreen";
@@ -2309,5 +2317,318 @@ describe("KV pool view (Flash-Next F3b, GUI gate C)", () => {
     expect(fmtTokens(1_048_500)).toBe("1M");
     expect(fmtTokens(1_048_000)).toBe("1023k");
     expect(fmtTokens(512)).toBe("512");
+  });
+});
+
+describe("Flash-Next reasoning card (GUI gate B)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const FLASH = "local:qwen3.8-flash-next";
+
+  function fxTask(
+    id: string,
+    tier: string | null,
+    fallback: ReasoningEffort | null,
+    applies: boolean,
+    level: ReasoningEffort | null = null,
+  ): EngineEffortTask {
+    return {
+      id,
+      tier,
+      level,
+      fallback,
+      fallback_source: "standard",
+      effective: level ?? fallback,
+      applies,
+    };
+  }
+
+  // Flash-Next serving: four local tasks remapped onto it, one cloud task left on Grok, one
+  // task in no tier, and Vision OCR already set to None.
+  function fxSeed(active = true): LlmSettings {
+    const seed = initialSettings();
+    const local = (id: string, label: string): LlmTask => ({
+      id,
+      label,
+      provider: "gpt-oss-120b",
+      reasoning_effort: "high",
+      effective_spec: active ? FLASH : "local:gpt-oss-120b",
+      remapped: active,
+      remap_note: active ? "→ Flash-Next (engine active)" : null,
+    });
+    seed.tasks = [
+      local("fact.adjudicate", "Fact adjudicate"),
+      local("agent.turn", "Agent turn"),
+      {
+        id: "intake.materialize",
+        label: "Intake materialize",
+        provider: "grok",
+        reasoning_effort: "medium",
+        effective_spec: "grok:grok-4.3",
+      },
+      local("vision.ocr", "Vision OCR"),
+      local("pet.turn", "JPet — reply"),
+    ];
+    seed.engine_efforts = {
+      "flash-next": {
+        label: "Flash-Next",
+        active,
+        levels: ["none", "low", "medium", "high"],
+        tiers: [
+          { id: "high", label: "High reasoning", level: null, default: "high" },
+          { id: "medium", label: "Medium reasoning", level: null, default: null },
+          { id: "low", label: "Low reasoning", level: null, default: "low" },
+          { id: "vision", label: "Vision", level: null, default: null },
+        ],
+        tasks: [
+          fxTask("fact.adjudicate", "high", "high", active),
+          fxTask("agent.turn", "medium", "medium", active),
+          fxTask("intake.materialize", "medium", null, false),
+          fxTask("vision.ocr", "vision", null, active, "none"),
+          fxTask("pet.turn", null, "low", active),
+        ],
+      },
+    };
+    return seed;
+  }
+
+  // Serves the seed and applies each engine-effort write the way the backend does (a task's
+  // Default falls back to its tier's level when one is set), echoing the whole snapshot.
+  function stubFx(seed: LlmSettings, refuse?: string) {
+    const writes: { method: string; path: string; body: unknown }[] = [];
+    const info = seed.engine_efforts?.["flash-next"];
+    const ok = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET") return ok(seed);
+        const m = path.match(/^\/api\/settings\/llm\/engine-effort\/flash-next(?:\/(\w+)\/(.+))?$/);
+        if (m && info) {
+          const body = init?.body ? (JSON.parse(String(init.body)) as unknown) : null;
+          writes.push({ method, path, body });
+          if (refuse)
+            return new Response(JSON.stringify({ detail: refuse }), {
+              status: 422,
+              headers: { "Content-Type": "application/json" },
+            });
+          const [, scope, key] = m;
+          const tiers: Record<string, ReasoningEffort | null> = {};
+          const tasks: Record<string, ReasoningEffort | null> = {};
+          if (scope === undefined) {
+            const batch = body as { tiers?: typeof tiers; tasks?: typeof tasks };
+            Object.assign(tiers, batch.tiers ?? {});
+            Object.assign(tasks, batch.tasks ?? {});
+          } else {
+            const level = method === "DELETE" ? null : (body as { effort: ReasoningEffort }).effort;
+            (scope === "tier" ? tiers : tasks)[decodeURIComponent(key ?? "")] = level;
+          }
+          for (const tier of info.tiers) if (tier.id in tiers) tier.level = tiers[tier.id] ?? null;
+          for (const t of info.tasks) {
+            if (t.id in tasks) t.level = tasks[t.id] ?? null;
+            const tierLevel = info.tiers.find((x) => x.id === t.tier)?.level ?? null;
+            if (tierLevel !== null) {
+              t.fallback = tierLevel;
+              t.fallback_source = "tier";
+            }
+            t.effective = t.level ?? t.fallback;
+          }
+          return ok(seed);
+        }
+        if (path === "/api/settings/image")
+          return ok({ enabled: false, reachable: false, models: [], memory: null });
+        if (path === "/api/ops/llm-usage") return ok(USAGE);
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    return writes;
+  }
+
+  const card = () => screen.findByRole("region", { name: "Flash-Next reasoning" });
+  const selectedText = (el: HTMLElement) =>
+    (el as HTMLSelectElement).selectedOptions[0]?.textContent ?? "";
+
+  async function openTier(name: RegExp) {
+    const fx = await card();
+    fireEvent.click(within(fx).getByRole("button", { name }));
+    return fx;
+  }
+
+  it("lists each tier and its tasks with what Default resolves to", async () => {
+    stubFx(fxSeed());
+    render(<LLMSettingsScreen />);
+    const fx = await card();
+    expect(within(fx).getByText("In use")).toBeInTheDocument();
+    expect(within(fx).getByRole("button", { name: /Flash-Next reasoning/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(selectedText(within(fx).getByLabelText("High reasoning on Flash-Next"))).toBe(
+      "Default · High",
+    );
+    // One set level is counted, and the task row says it overrides its default.
+    expect(within(fx).getByText("1 level set · everything else Default")).toBeInTheDocument();
+
+    fireEvent.click(within(fx).getByRole("button", { name: /Medium reasoning/ }));
+    const agent = within(fx).getByLabelText("Agent turn on Flash-Next");
+    expect(selectedText(agent)).toBe("Default · Medium (Standard)");
+    expect(within(fx).getByText("Medium · from the Standard pick")).toBeInTheDocument();
+
+    fireEvent.click(within(fx).getByRole("button", { name: /^Vision/ }));
+    expect(within(fx).getByLabelText("Vision OCR on Flash-Next")).toHaveValue("none");
+    expect(within(fx).getByText("Set · None")).toBeInTheDocument();
+
+    // A task in no tier sits in Other, which has no tier level to set.
+    fireEvent.click(within(fx).getByRole("button", { name: /^Other/ }));
+    expect(within(fx).getByLabelText("JPet — reply on Flash-Next")).toBeInTheDocument();
+    expect(within(fx).queryByLabelText("Other on Flash-Next")).toBeNull();
+  });
+
+  it("says a cloud-routed task stays on its cloud model and offers it no level", async () => {
+    stubFx(fxSeed());
+    render(<LLMSettingsScreen />);
+    const fx = await openTier(/Medium reasoning/);
+    expect(
+      within(fx).getByText("Intake materialize stays on Grok 4.3 — not on Flash-Next."),
+    ).toBeInTheDocument();
+    expect(within(fx).queryByLabelText("Intake materialize on Flash-Next")).toBeNull();
+    // The tier counts only the task that moves.
+    const row = fx.querySelector("#fx-flash-next-medium") as HTMLElement;
+    expect(within(row).getByText("1 task")).toBeInTheDocument();
+  });
+
+  it("sets a task's level and re-renders from the returned snapshot", async () => {
+    const writes = stubFx(fxSeed());
+    render(<LLMSettingsScreen />);
+    const fx = await openTier(/Medium reasoning/);
+    fireEvent.change(within(fx).getByLabelText("Agent turn on Flash-Next"), {
+      target: { value: "high" },
+    });
+    await waitFor(() => expect(within(fx).getByText("Set · High")).toBeInTheDocument());
+    expect(writes).toEqual([
+      {
+        method: "PUT",
+        path: "/api/settings/llm/engine-effort/flash-next/task/agent.turn",
+        body: { effort: "high" },
+      },
+    ]);
+    expect(within(fx).getByLabelText("Agent turn on Flash-Next")).toHaveValue("high");
+  });
+
+  it("clears a task's level back to Default with a DELETE", async () => {
+    const writes = stubFx(fxSeed());
+    render(<LLMSettingsScreen />);
+    const fx = await openTier(/^Vision/);
+    fireEvent.change(within(fx).getByLabelText("Vision OCR on Flash-Next"), {
+      target: { value: "default" },
+    });
+    await waitFor(() =>
+      expect(within(fx).getByLabelText("Vision OCR on Flash-Next")).toHaveValue("default"),
+    );
+    expect(writes).toEqual([
+      {
+        method: "DELETE",
+        path: "/api/settings/llm/engine-effort/flash-next/task/vision.ocr",
+        body: null,
+      },
+    ]);
+    expect(within(fx).getByText("The model's own default — no level sent")).toBeInTheDocument();
+  });
+
+  it("sets a tier's level, which its tasks' Default then follows", async () => {
+    const writes = stubFx(fxSeed());
+    render(<LLMSettingsScreen />);
+    const fx = await openTier(/High reasoning/);
+    fireEvent.change(within(fx).getByLabelText("High reasoning on Flash-Next"), {
+      target: { value: "medium" },
+    });
+    await waitFor(() =>
+      expect(selectedText(within(fx).getByLabelText("Fact adjudicate on Flash-Next"))).toBe(
+        "Default · Medium (from tier)",
+      ),
+    );
+    expect(writes[0]).toEqual({
+      method: "PUT",
+      path: "/api/settings/llm/engine-effort/flash-next/tier/high",
+      body: { effort: "medium" },
+    });
+    expect(within(fx).getByLabelText("High reasoning on Flash-Next")).toHaveValue("medium");
+  });
+
+  it("resets a tier's task overrides in one batch write", async () => {
+    const seed = fxSeed();
+    const info = seed.engine_efforts?.["flash-next"];
+    if (!info) throw new Error("no fixture");
+    info.tiers = info.tiers.map((t) => (t.id === "vision" ? { ...t, level: "low" } : t));
+    const writes = stubFx(seed);
+    render(<LLMSettingsScreen />);
+    const fx = await openTier(/^Vision/);
+    fireEvent.click(within(fx).getByRole("button", { name: "Reset to tier" }));
+    await waitFor(() =>
+      expect(within(fx).getByLabelText("Vision OCR on Flash-Next")).toHaveValue("default"),
+    );
+    expect(writes).toEqual([
+      {
+        method: "PUT",
+        path: "/api/settings/llm/engine-effort/flash-next",
+        body: { tasks: { "vision.ocr": null } },
+      },
+    ]);
+  });
+
+  it("starts collapsed, as next time it serves, while Standard serves", async () => {
+    stubFx(fxSeed(false));
+    render(<LLMSettingsScreen />);
+    const fx = await card();
+    expect(within(fx).getByText("Next time it serves")).toBeInTheDocument();
+    const head = within(fx).getByRole("button", { name: /Flash-Next reasoning/ });
+    expect(head).toHaveAttribute("aria-expanded", "false");
+    expect(within(fx).queryByLabelText("High reasoning on Flash-Next")).toBeNull();
+    fireEvent.click(head);
+    expect(within(fx).getByText(/Flash-Next isn't serving/)).toBeInTheDocument();
+    // The levels can be set ahead of a switch; the cloud task is still read off its route.
+    fireEvent.click(within(fx).getByRole("button", { name: /Medium reasoning/ }));
+    expect(within(fx).getByLabelText("Agent turn on Flash-Next")).toBeInTheDocument();
+    expect(within(fx).queryByLabelText("Intake materialize on Flash-Next")).toBeNull();
+  });
+
+  it("shows the server's refusal under the row", async () => {
+    stubFx(fxSeed(), "Flash-Next takes none, low, medium, high; not 'max'");
+    render(<LLMSettingsScreen />);
+    const fx = await card();
+    fireEvent.change(within(fx).getByLabelText("High reasoning on Flash-Next"), {
+      target: { value: "high" },
+    });
+    expect(await within(fx).findByRole("alert")).toHaveTextContent(
+      "Flash-Next takes none, low, medium, high; not 'max'",
+    );
+    expect(within(fx).getByLabelText("High reasoning on Flash-Next")).toHaveValue("default");
+  });
+
+  it("jumps from a tier card's remap marker to that tier in the card", async () => {
+    stubFx(fxSeed());
+    render(<LLMSettingsScreen />);
+    const fx = await card();
+    fireEvent.click(within(fx).getByRole("button", { name: /Flash-Next reasoning/ }));
+    expect(within(fx).queryByLabelText("High reasoning on Flash-Next")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "High reasoning reasoning on Flash-Next" }));
+    expect(within(fx).getByLabelText("Fact adjudicate on Flash-Next")).toBeInTheDocument();
+  });
+
+  it("renders nothing for an older server that sends no engine levels", async () => {
+    // Rebuilt without the key, so the JSON the screen reads has no engine_efforts at all.
+    const { engine_efforts: _, ...seed } = fxSeed();
+    stubFx(seed);
+    render(<LLMSettingsScreen />);
+    expect((await screen.findAllByText(/→ Flash-Next \(engine active\)/)).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByRole("region", { name: "Flash-Next reasoning" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reasoning on Flash-Next/ })).toBeNull();
   });
 });

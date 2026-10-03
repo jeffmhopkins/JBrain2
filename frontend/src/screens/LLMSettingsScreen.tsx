@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  EngineEffortInfo,
+  EngineEffortTask,
   ImageModelInfo,
   ImageSettings,
   JcodeModelInfo,
@@ -206,6 +208,30 @@ export function LLMSettingsScreen() {
       return next;
     });
 
+  // Sequence token so an earlier PUT's response can't clobber a later one (and a
+  // response after unmount is ignored). Shared across task + per-model writes —
+  // the server snapshot is the source of truth, so last response in wins.
+  const putSeq = useRef(0);
+
+  // The engine-reasoning card: open per engine once the owner toggles it (until then it
+  // follows whether that engine serves), which of its tier rows are open, and the row the
+  // "reasoning ↑" link just jumped to.
+  const [fxOpen, setFxOpen] = useState<Record<string, boolean>>({});
+  const [fxTiers, setFxTiers] = useState<Set<string>>(new Set());
+  const [fxTarget, setFxTarget] = useState<string | null>(null);
+  useEffect(() => {
+    if (fxTarget === null) return;
+    const el = document.getElementById(fxTarget);
+    setFxTarget(null);
+    if (!el) return;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    el.scrollIntoView?.({ block: "start", behavior: still ? "auto" : "smooth" });
+    el.classList.add("llm-fx-flash");
+    el.addEventListener("animationend", () => el.classList.remove("llm-fx-flash"), {
+      once: true,
+    });
+  }, [fxTarget]);
+
   // Live runtime state: while the drawer is open and hosting is on, refresh the
   // loaded flags every few seconds. Merge ONLY local_models so a poll can't
   // clobber an in-flight provider/reasoning edit. A backgrounded app suspends
@@ -220,6 +246,8 @@ export function LLMSettingsScreen() {
     let stop = false;
     const tick = () => {
       if (hostingEnabled) {
+        // A write that lands while this read is out carries the newer engine levels.
+        const seqAtRead = putSeq.current;
         api
           .getLlmSettings()
           .then((fresh) => {
@@ -267,6 +295,10 @@ export function LLMSettingsScreen() {
                           }
                         : t;
                     }),
+                    // An engine switch flips which levels are in use and which tasks they
+                    // reach.
+                    engine_efforts:
+                      putSeq.current === seqAtRead ? fresh.engine_efforts : prev.engine_efforts,
                   }
                 : prev,
             );
@@ -298,10 +330,6 @@ export function LLMSettingsScreen() {
       next.delete(id);
       return next;
     });
-  // Sequence token so an earlier PUT's response can't clobber a later one (and a
-  // response after unmount is ignored). Shared across task + per-model writes —
-  // the server snapshot is the source of truth, so last response in wins.
-  const putSeq = useRef(0);
 
   // load/unload return just the resident set; reconcile the loaded flags in place
   // (a poll-style merge) so an in-flight task edit isn't clobbered.
@@ -678,6 +706,61 @@ export function LLMSettingsScreen() {
     applyTasks(new Map([[taskId, { reasoning_effort: effort }]]));
   }
 
+  // Every engine-level write returns the whole snapshot; the select shows what the server
+  // stored, never a guess, and a refusal (422) shows its detail under the row.
+  function writeEngineEffort(rowKey: string, call: () => Promise<LlmSettings>) {
+    mark(rowKey);
+    setRowError(rowKey, null);
+    const seq = ++putSeq.current;
+    call()
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch((err: unknown) => setRowError(rowKey, err))
+      .finally(() => unmark(rowKey));
+  }
+
+  function setEngineLevel(
+    engine: string,
+    scope: "task" | "tier",
+    key: string,
+    level: ReasoningEffort | null,
+  ) {
+    writeEngineEffort(fxRowKey(engine, scope, key), () =>
+      level === null
+        ? api.clearEngineEffort(engine, scope, key)
+        : api.setEngineEffort(engine, scope, key, level),
+    );
+  }
+
+  function resetTierTasks(engine: string, tier: string, taskIds: string[]) {
+    const tasks = Object.fromEntries(taskIds.map((id) => [id, null]));
+    writeEngineEffort(fxRowKey(engine, "reset", tier), () =>
+      api.setEngineEfforts(engine, { tasks }),
+    );
+  }
+
+  function toggleFxTier(engine: string, tier: string) {
+    setFxTiers((prev) => {
+      const next = new Set(prev);
+      const key = `${engine}:${tier}`;
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // The tier card's "reasoning ↑": open the card and that tier's row, then jump to it.
+  function goToFxTier(engine: string, tier: string) {
+    setFxOpen((prev) => ({ ...prev, [engine]: true }));
+    setFxTiers((prev) => new Set(prev).add(`${engine}:${tier}`));
+    setFxTarget(fxRowId(engine, tier));
+  }
+
+  const engineEfforts = Object.entries(settings.engine_efforts ?? {});
+  // Only the serving engine remaps picks, so the tier cards' link goes to its card.
+  const servingFx = engineEfforts.find(([, info]) => info.active);
+
   function toggleExpanded(key: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -736,6 +819,27 @@ export function LLMSettingsScreen() {
         onStartImageService={startImageService}
         onStopImageService={stopImageService}
       />
+
+      {engineEfforts.map(([engine, info]) => (
+        <EngineEffortCard
+          key={engine}
+          engine={engine}
+          info={info}
+          tasks={settings.tasks}
+          modelLabel={settings.local_models.find((m) => m.engine === engine)?.label ?? null}
+          providerLabel={(id) => byId.get(id)?.label ?? id}
+          open={fxOpen[engine] ?? info.active}
+          onToggle={() =>
+            setFxOpen((prev) => ({ ...prev, [engine]: !(prev[engine] ?? info.active) }))
+          }
+          openTiers={fxTiers}
+          onToggleTier={(tier) => toggleFxTier(engine, tier)}
+          busy={busy}
+          errors={rowErrors}
+          onSetLevel={(scope, key, level) => setEngineLevel(engine, scope, key, level)}
+          onResetTier={(tier, ids) => resetTierTasks(engine, tier, ids)}
+        />
+      ))}
 
       {groups.map((group) => {
         const provider = sharedProvider(group.tasks);
@@ -796,12 +900,30 @@ export function LLMSettingsScreen() {
                 const remapped = group.tasks.filter((t) => t.remapped && t.remap_note);
                 const note = remapped[0]?.remap_note;
                 if (!note) return null;
+                const fxRow =
+                  servingFx !== undefined &&
+                  fxLocalTasks(servingFx[1], settings.tasks).some(
+                    (t) => (t.tier ?? OTHER_TIER) === group.key,
+                  );
                 return (
                   <p className="llm-remap">
                     {note}
                     {remapped.length < group.tasks.length
                       ? ` · ${remapped.length} of ${group.tasks.length} tasks`
                       : ""}
+                    {fxRow && servingFx && (
+                      <>
+                        {" · "}
+                        <button
+                          type="button"
+                          className="llm-fx-link"
+                          aria-label={`${group.name} reasoning on ${servingFx[1].label}`}
+                          onClick={() => goToFxTier(servingFx[0], group.key)}
+                        >
+                          reasoning ↑
+                        </button>
+                      </>
+                    )}
                   </p>
                 );
               })()}
@@ -922,6 +1044,353 @@ export function LLMSettingsScreen() {
 
       <AiUsageCard />
     </main>
+  );
+}
+
+// ---- Per-engine reasoning (the Flash-Next reasoning card, GUI gate B) ----
+
+// Tasks the server places in no tier ride in an "Other" row, matching the tier cards' own
+// synthesized group; they can be set one by one but have no tier level of their own.
+const OTHER_TIER = "other";
+
+const LEVEL_NAME: Record<ReasoningEffort, string> = {
+  none: "None",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+};
+
+// A null level means none is sent, so the model thinks at its own default.
+const levelName = (level: ReasoningEffort | null) =>
+  level === null ? "Model default" : LEVEL_NAME[level];
+
+const fxRowKey = (engine: string, scope: string, key: string) => `fx:${engine}:${scope}:${key}`;
+const fxRowId = (engine: string, tier: string) => `fx-${engine}-${tier}`;
+
+// Whether a task runs on the engine's model when it serves: only local picks move to it, a
+// cloud pick keeps its cloud model. While it serves the server says so outright (`applies`);
+// otherwise read the route the task runs on now. A task with no route reported counts as local.
+function runsOnEngine(info: EngineEffortInfo, task: EngineEffortTask, pick?: LlmTask): boolean {
+  if (info.active) return task.applies;
+  const spec = pick?.effective_spec;
+  return spec ? spec.startsWith("local:") : true;
+}
+
+function fxLocalTasks(info: EngineEffortInfo, tasks: LlmTask[]): EngineEffortTask[] {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  return info.tasks.filter((t) => runsOnEngine(info, t, byId.get(t.id)));
+}
+
+// The tier cards' task order, so a tier reads the same in both places.
+const TASK_ORDER = new Map(GROUP_DEFS.flatMap((g) => g.taskIds).map((id, i) => [id, i]));
+
+interface FxTierRow {
+  id: string;
+  label: string;
+  accent: GroupDef["accent"];
+  /** undefined for the Other row, which has no tier level to set. */
+  level: ReasoningEffort | null | undefined;
+  local: EngineEffortTask[];
+  cloud: EngineEffortTask[];
+}
+
+function fxTierRows(info: EngineEffortInfo, tasks: LlmTask[]): FxTierRow[] {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const rank = (t: EngineEffortTask) => TASK_ORDER.get(t.id) ?? Number.MAX_SAFE_INTEGER;
+  const members = (tier: string | null) =>
+    info.tasks.filter((t) => t.tier === tier).sort((a, b) => rank(a) - rank(b));
+  const split = (ts: EngineEffortTask[]) => ({
+    local: ts.filter((t) => runsOnEngine(info, t, byId.get(t.id))),
+    cloud: ts.filter((t) => !runsOnEngine(info, t, byId.get(t.id))),
+  });
+  const rows: FxTierRow[] = info.tiers.map((tier) => ({
+    id: tier.id,
+    label: tier.label,
+    accent: GROUP_DEFS.find((g) => g.key === tier.id)?.accent ?? "light",
+    level: tier.level,
+    ...split(members(tier.id)),
+  }));
+  rows.push({
+    id: OTHER_TIER,
+    label: "Other",
+    accent: "light",
+    level: undefined,
+    ...split(members(null)),
+  });
+  // A tier with nothing local has nothing to set: every task in it stays on its cloud model.
+  return rows.filter((r) => r.local.length > 0);
+}
+
+// What a tier's Default means: with no tier level each task keeps today's Standard level, so
+// name it when they agree. With a tier level set the tasks' own levels are not on the wire.
+function tierDefaultName(row: FxTierRow): string {
+  if (row.level) return "per task";
+  const levels = new Set(row.local.map((t) => t.fallback));
+  const [only] = levels;
+  return levels.size === 1 && only !== undefined ? levelName(only) : "per task";
+}
+
+function FxLevelSelect({
+  label,
+  value,
+  defaultText,
+  levels,
+  disabled,
+  compact,
+  onChange,
+}: {
+  label: string;
+  value: ReasoningEffort | null;
+  defaultText: string;
+  levels: ReasoningEffort[];
+  disabled: boolean;
+  compact: boolean;
+  onChange: (level: ReasoningEffort | null) => void;
+}) {
+  const offered = value === null || levels.includes(value) ? levels : [...levels, value];
+  return (
+    <select
+      className={`llm-select llm-fx-select${compact ? " llm-member-select" : ""}${value ? " llm-fx-set" : ""}`}
+      aria-label={label}
+      value={value ?? "default"}
+      disabled={disabled}
+      onChange={(e) =>
+        onChange(e.target.value === "default" ? null : (e.target.value as ReasoningEffort))
+      }
+    >
+      <option value="default">Default · {defaultText}</option>
+      {offered.map((level) => (
+        <option key={level} value={level}>
+          {LEVEL_NAME[level]}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function FxError({ text }: { text: string | undefined }) {
+  if (!text) return null;
+  return (
+    <p className="llm-local-note llm-local-error llm-fx-error" role="alert">
+      {text}
+    </p>
+  );
+}
+
+// One card per engine with levels of its own (today only Flash-Next), above the tier cards,
+// which stay exactly as they are. The engine's model is fixed, so the card holds reasoning
+// selects only: one per tier, and one per task once a tier is opened. Always present — open
+// and "In use" while the engine serves, collapsed and "Next time it serves" otherwise — so the
+// levels can be set ahead of a switch.
+function EngineEffortCard({
+  engine,
+  info,
+  tasks,
+  modelLabel,
+  providerLabel,
+  open,
+  onToggle,
+  openTiers,
+  onToggleTier,
+  busy,
+  errors,
+  onSetLevel,
+  onResetTier,
+}: {
+  engine: string;
+  info: EngineEffortInfo;
+  tasks: LlmTask[];
+  modelLabel: string | null;
+  providerLabel: (id: string) => string;
+  open: boolean;
+  onToggle: () => void;
+  openTiers: Set<string>;
+  onToggleTier: (tier: string) => void;
+  busy: Set<string>;
+  errors: Map<string, string>;
+  onSetLevel: (scope: "task" | "tier", key: string, level: ReasoningEffort | null) => void;
+  onResetTier: (tier: string, taskIds: string[]) => void;
+}) {
+  const picks = new Map(tasks.map((t) => [t.id, t]));
+  const taskLabel = (id: string) => picks.get(id)?.label ?? id;
+  const rows = fxTierRows(info, tasks);
+  const setCount =
+    info.tiers.filter((t) => t.level !== null).length +
+    info.tasks.filter((t) => t.level !== null).length;
+  const bodyId = `fx-${engine}-body`;
+
+  const cloudLine = (cloud: EngineEffortTask[]) => {
+    if (cloud.length === 0) return null;
+    const names = cloud.map((t) => taskLabel(t.id)).join(", ");
+    const where = [...new Set(cloud.map((t) => providerLabel(picks.get(t.id)?.provider ?? "")))];
+    return (
+      <p className="llm-fx-res llm-fx-cloud">
+        {names} {cloud.length > 1 ? "stay" : "stays"} on {where.join(" / ")} — not on {info.label}.
+      </p>
+    );
+  };
+
+  return (
+    <section className="llm-group llm-fxcard" aria-label={`${info.label} reasoning`}>
+      <button
+        type="button"
+        className="llm-fxc-head"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={onToggle}
+      >
+        <span className="llm-fxc-title">
+          <span className="llm-group-name">{info.label} reasoning</span>
+          {info.active ? (
+            <span className="badge info">
+              <span className="llm-fx-dot" aria-hidden="true" />
+              In use
+            </span>
+          ) : (
+            <span className="badge off">Next time it serves</span>
+          )}
+        </span>
+        <span className="llm-group-desc llm-fxc-desc">
+          While {info.label} serves, every local task runs on <b>{modelLabel ?? info.label}</b> —
+          the model is fixed, so only the reasoning level is set here. Kept apart from your Standard
+          picks.
+        </span>
+        <span className="llm-fxc-sum">
+          {setCount > 0
+            ? `${setCount} level${setCount > 1 ? "s" : ""} set · everything else Default`
+            : "All Default — the Standard pick's level carries over"}
+          <span className={`llm-exp-caret${open ? " llm-exp-open" : ""}`} aria-hidden="true">
+            ›
+          </span>
+        </span>
+      </button>
+      {open && (
+        <div className="llm-fxb" id={bodyId}>
+          {!info.active && (
+            <p className="llm-fx-notice">
+              {info.label} isn't serving. These levels are kept and apply the next time it does —
+              your Standard picks below are what runs now.
+            </p>
+          )}
+          {rows.map((row) => {
+            const tierOpen = openTiers.has(`${engine}:${row.id}`);
+            const overridden = row.local.filter((t) => t.level !== null);
+            const tierKey = fxRowKey(engine, "tier", row.id);
+            const resetKey = fxRowKey(engine, "reset", row.id);
+            return (
+              <div
+                key={row.id}
+                className={`llm-fxt llm-${row.accent}`}
+                id={fxRowId(engine, row.id)}
+              >
+                <div className="llm-fxt-head">
+                  <button
+                    type="button"
+                    className="llm-fxt-name"
+                    aria-expanded={tierOpen}
+                    onClick={() => onToggleTier(row.id)}
+                  >
+                    <span className="llm-fxt-rail" aria-hidden="true" />
+                    <span>
+                      <span className="llm-fxt-n">{row.label}</span>
+                      <span className="llm-fxt-c">
+                        {row.local.length} task{row.local.length > 1 ? "s" : ""}
+                        {overridden.length > 0 ? ` · ${overridden.length} set` : ""}
+                      </span>
+                    </span>
+                    <span
+                      className={`llm-exp-caret${tierOpen ? " llm-exp-open" : ""}`}
+                      aria-hidden="true"
+                    >
+                      ›
+                    </span>
+                  </button>
+                  {row.level !== undefined && (
+                    <FxLevelSelect
+                      label={`${row.label} on ${info.label}`}
+                      value={row.level}
+                      defaultText={tierDefaultName(row)}
+                      levels={info.levels}
+                      disabled={busy.has(tierKey)}
+                      compact={false}
+                      onChange={(level) => onSetLevel("tier", row.id, level)}
+                    />
+                  )}
+                </div>
+                <FxError text={errors.get(tierKey)} />
+                {tierOpen && (
+                  <div className="llm-fxt-tasks">
+                    {row.local.map((t) => {
+                      const key = fxRowKey(engine, "task", t.id);
+                      const from = t.fallback_source === "tier" ? "from tier" : "Standard";
+                      const reading =
+                        t.fallback === null
+                          ? "The model's own default — no level sent"
+                          : `${LEVEL_NAME[t.fallback]} · ${
+                              t.fallback_source === "tier"
+                                ? "from the tier"
+                                : "from the Standard pick"
+                            }`;
+                      return (
+                        <div key={t.id} className="llm-fxk-wrap">
+                          <div className="llm-fxk">
+                            <div className="llm-member-name">
+                              {taskLabel(t.id)}
+                              <span className="llm-member-id">
+                                {t.level !== null ? (
+                                  <>
+                                    <span className="llm-fx-setnote">
+                                      Set · {LEVEL_NAME[t.level]}
+                                    </span>{" "}
+                                    — default would be {levelName(t.fallback)}
+                                  </>
+                                ) : (
+                                  reading
+                                )}
+                              </span>
+                            </div>
+                            <FxLevelSelect
+                              label={`${taskLabel(t.id)} on ${info.label}`}
+                              value={t.level}
+                              defaultText={`${levelName(t.fallback)} (${from})`}
+                              levels={info.levels}
+                              disabled={busy.has(key)}
+                              compact
+                              onChange={(level) => onSetLevel("task", t.id, level)}
+                            />
+                          </div>
+                          <FxError text={errors.get(key)} />
+                        </div>
+                      );
+                    })}
+                    {cloudLine(row.cloud)}
+                    {row.level && overridden.length > 0 && (
+                      <p className="llm-fx-res llm-fx-cloud">
+                        <button
+                          type="button"
+                          className="llm-fx-link"
+                          disabled={busy.has(resetKey)}
+                          onClick={() =>
+                            onResetTier(
+                              row.id,
+                              overridden.map((t) => t.id),
+                            )
+                          }
+                        >
+                          Reset to tier
+                        </button>{" "}
+                        — every task follows the tier
+                      </p>
+                    )}
+                    <FxError text={errors.get(resetKey)} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

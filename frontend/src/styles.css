@@ -29185,3 +29185,197 @@ button.wf-sigpill {
   flex: none;
   accent-color: var(--rose);
 }
+
+/* LLM settings: the per-engine reasoning card (Flash-Next reasoning, GUI gate B — binding mock
+   docs/mocks/flash-reasoning/b-flash-card.html). A tier-card twin with a steel rail; its rows
+   carry reasoning selects only, since the engine's model is fixed. */
+.llm-fxcard {
+  --llm-accent: var(--steel);
+  --llm-accent-tint: var(--steel-tint);
+}
+.llm-fxc-head {
+  width: 100%;
+  display: block;
+  text-align: left;
+  background: none;
+  border: none;
+  border-left: 3px solid var(--steel);
+  padding: 14px 16px 12px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.llm-fxc-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.llm-fxc-desc {
+  display: block;
+  margin: 4px 0 0;
+}
+.llm-fxc-desc b {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.llm-fxc-sum {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  min-height: 20px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.badge.info {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+.badge.off {
+  white-space: nowrap;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.llm-fx-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+  flex: none;
+}
+.llm-fxb {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.llm-fx-notice {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.llm-fxt {
+  border-top: 1px solid var(--border);
+}
+.llm-fxb > .llm-fxt:first-of-type {
+  border-top: none;
+}
+.llm-fxt-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px 8px 8px;
+}
+.llm-fxt-name {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 0 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.llm-fxt-name .llm-exp-caret {
+  margin-left: auto;
+  color: var(--text-3);
+}
+.llm-fxt-rail {
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  background: var(--llm-accent);
+  flex: none;
+}
+.llm-fxt-n {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+.llm-fxt-c {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.llm-fx-select {
+  width: auto;
+  flex: none;
+  min-width: 128px;
+  max-width: 150px;
+  padding: 7px 8px;
+}
+.llm-fxk .llm-fx-select {
+  min-width: 118px;
+}
+.llm-fx-select.llm-fx-set {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+}
+.llm-fxt-tasks {
+  background: var(--surface-2);
+}
+.llm-fxk-wrap {
+  border-top: 1px solid var(--border);
+}
+.llm-fxk {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px 9px 27px;
+}
+.llm-fx-setnote {
+  color: var(--steel);
+}
+.llm-fx-res {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.45;
+  margin: 0;
+}
+.llm-fx-cloud {
+  padding: 8px 16px 10px 27px;
+  border-top: 1px solid var(--border);
+}
+.llm-fx-error {
+  margin: 0;
+  padding: 0 16px 8px 27px;
+}
+.llm-fx-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--steel);
+  cursor: pointer;
+}
+.llm-fx-flash {
+  animation: llm-fx-flash 1.2s ease-out 1;
+}
+@keyframes llm-fx-flash {
+  0% {
+    box-shadow: inset 0 0 0 2px var(--steel);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .llm-fx-flash {
+    animation: none;
+  }
+}
