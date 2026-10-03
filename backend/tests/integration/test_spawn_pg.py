@@ -52,7 +52,7 @@ class _FakeRouter:
     async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         return ("xai", "grok-4.3")  # non-local → the fan stays parallel
 
-    async def context_window(self, task: str) -> int:
+    async def context_window(self, task: str, slot_role=None) -> int:  # noqa: ANN001
         return 131_072  # the child meter's denominator
 
     async def converse(
@@ -66,6 +66,7 @@ class _FakeRouter:
         strength=None,
         effort_override=None,
         spec_override=None,
+        slot_role=None,
     ):  # noqa: ANN001, ANN003
         return LlmTurn(
             text="child summary", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(5, 5)
@@ -82,6 +83,7 @@ class _FakeRouter:
         strength=None,
         effort_override=None,
         spec_override=None,
+        slot_role=None,
     ):  # noqa: ANN001, ANN003
         yield TextChunk(text="child summary")
         yield LlmTurn(
@@ -173,6 +175,7 @@ class _FailingRouter(_FakeRouter):
         strength=None,
         effort_override=None,
         spec_override=None,
+        slot_role=None,
     ):  # noqa: ANN001, ANN003
         raise RuntimeError("model exploded")
         yield  # pragma: no cover - `yield` makes this an async generator that raises on use

@@ -15,6 +15,7 @@ import re
 import structlog
 
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.slot_roles import SlotRole
 
 log = structlog.get_logger()
 
@@ -37,7 +38,15 @@ async def solve_challenge(
         + str(challenge_text)[:_MAX_CHALLENGE]
     )
     try:
-        result = await router.complete(task, system=_SOLVE_SYSTEM, user_text=fenced, max_tokens=32)
+        # A one-shot 32-token answer with no reusable prefix: the small slot, not the
+        # interactive one whose jerv prefix it would overwrite.
+        result = await router.complete(
+            task,
+            system=_SOLVE_SYSTEM,
+            user_text=fenced,
+            max_tokens=32,
+            slot_role=SlotRole.SMALL,
+        )
     except Exception as exc:  # noqa: BLE001 — a solver failure is a skip, not a crash
         log.warning("moltbook_verify.solve_failed", error=type(exc).__name__)
         return None

@@ -13,6 +13,7 @@ from typing import cast
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmTool, LlmTurn, LlmUsage
 from jbrain.llm.warm_keeper import WarmKeeper
 
@@ -570,3 +571,34 @@ async def test_the_prime_generates_exactly_one_token() -> None:
     keeper, _gateway, router, _store = _kept_with_store()
     assert await keeper.reconcile_once() is True
     assert router.max_tokens == [1], "a prime that generates more can never be identified"
+
+
+class _PinRecordingRouter(_FakeRouter):
+    def __init__(self, served: str) -> None:
+        super().__init__(served)
+        self.pins: list[object] = []
+
+    async def converse(self, task: str, *, system: str, messages, tools=(), max_tokens=4096, **kw):
+        self.pins.append(kw.get("slot_role", "absent"))
+        return await super().converse(
+            task, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+        )
+
+
+async def test_a_pooled_model_primes_only_jerv_s_slot_and_names_it() -> None:
+    # On a pooled model an unpinned prime would land in whichever slot llama-server picks and
+    # evict some other role's prefix; the router pins it from the role named here. No other
+    # role is primed.
+    fn = "qwen3.8-flash-next"
+    r = _PinRecordingRouter(fn)
+    keeper = _keeper(router=r, gateway=_FakeGateway(running={fn}))
+    for _ in range(3):
+        assert await keeper.reconcile_once() is True
+    assert r.pins == [SlotRole.INTERACTIVE]
+
+
+async def test_a_standard_model_prime_names_no_slot_role() -> None:
+    r = _PinRecordingRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=_FakeGateway(running={"gpt-oss-120b"}))
+    assert await keeper.reconcile_once() is True
+    assert r.pins == ["absent"]

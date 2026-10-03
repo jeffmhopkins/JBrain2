@@ -34,14 +34,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Collection
+from typing import TypedDict
 
 import structlog
 
 from jbrain.agent.priming import jerv_prime_inputs
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.llm import local_catalog
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.slot_roles import WARM_ROLE, SlotRole
 from jbrain.llm.types import UserMessage
 
 log = structlog.get_logger()
@@ -50,6 +53,10 @@ log = structlog.get_logger()
 # The task the prime routes as — the interactive chat turn (jerv). Priming as this exact task
 # is what makes the primed prefix (model, effort, tools) match a real turn's, so the reuse lands.
 AGENT_TURN_TASK = "agent.turn"
+
+
+class _SlotPin(TypedDict, total=False):
+    slot_role: SlotRole
 
 
 class WarmKeeper:
@@ -260,6 +267,13 @@ class WarmKeeper:
         # prime's own completion re-asserting `_primed` — leaving the model resident, cold, and
         # believed primed, which is the exact state that hook exists to prevent.
         generation = self._generation
+        # On a pooled model the prime is pinned to jerv's slot by naming its role. Only there:
+        # elsewhere the call keeps exactly its old shape. No other role is primed — their
+        # stable prefixes are a few hundred tokens, or a long prefill nobody is waiting on that
+        # would compete with the owner's first turn after boot.
+        slot_pin: _SlotPin = (
+            {"slot_role": WARM_ROLE} if local_catalog.pool_of(served) is not None else {}
+        )
         try:
             prime_turn = await self._router.converse(
                 AGENT_TURN_TASK,
@@ -267,6 +281,7 @@ class WarmKeeper:
                 messages=[UserMessage(text="warmup")],
                 tools=tools,
                 max_tokens=1,
+                **slot_pin,
             )
         except Exception as exc:  # noqa: BLE001 — gateway down/cold/no-room: retry, never raise
             log.info("warm_keeper.prime_failed", model=served, error=str(exc))

@@ -10,6 +10,7 @@ from jbrain.agent.daily_briefing import (
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.db.session import SessionContext
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmTurn, LlmUsage, ReasoningChunk, TextChunk
 from jbrain.web.feeds import FeedItem
 from jbrain.web.fetch import FetchResult
@@ -55,9 +56,11 @@ class _FakeRouter:
         self._reasoning = reasoning
         self.prompts: list[str] = []
         self.max_tokens_seen: list[int] = []
+        self.slot_roles: list[object] = []
 
-    async def converse_stream(self, task, *, system, messages, max_tokens, **_kw):  # noqa: ANN001
+    async def converse_stream(self, task, *, system, messages, max_tokens, **kw):  # noqa: ANN001
         self.prompts.append(messages[0].text)
+        self.slot_roles.append(kw.get("slot_role"))
         self.max_tokens_seen.append(max_tokens)
         text = self._responses[min(len(self.prompts) - 1, len(self._responses) - 1)]
         if self._reasoning:
@@ -142,6 +145,8 @@ async def test_build_gathers_writes_and_marks_full_text_feeds_as_read_without_re
     assert "https://nasa.gov/a" not in fetcher.fetched
     assert "https://spacecoastdaily.com/b" not in fetcher.fetched
     assert "https://npr.org/n" in fetcher.fetched
+    # A background write under the shared agent.turn task: the scheduled slot, never jerv's.
+    assert router.slot_roles == [SlotRole.SCHEDULED]
     # The writer prompt carried the real article bodies under their section headings.
     prompt = router.prompts[0]
     assert (

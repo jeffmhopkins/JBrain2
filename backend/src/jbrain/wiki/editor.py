@@ -27,6 +27,7 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.db.session import SessionContext
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import AssistantMessage, LlmMessage, UserMessage
 
 log = structlog.get_logger()
@@ -108,7 +109,7 @@ async def run_editor_turn(
         f"Talk topic: {topic_title}."
     )
     tally = _ToolTally()
-    loop = AgentLoop(router, registry, recorder=tally)
+    loop = AgentLoop(router, registry, recorder=tally, slot_role=SlotRole.WORKSHOP)
     text = ""
     try:
         result = await asyncio.wait_for(

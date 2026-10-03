@@ -22,7 +22,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, TypedDict, cast
 
 import httpx
 import structlog
@@ -64,6 +64,7 @@ from jbrain.llm import engine as llm_engine
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.slot_roles import SlotRole, role_for
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     AssistantMessage,
@@ -357,6 +358,10 @@ class CompleteRequest(BaseModel):
     # buffered on the box and pulled from /jobs/{id}, because a stream held open across a
     # Cloudflare Tunnel dies at its request timeout exactly like a long completion does.
     stream: bool = False
+    # The pooled-engine slot to run in. Omitted: the task's own role, except that a task
+    # whose role is jerv's interactive slot runs in the workshop slot instead, so a console
+    # probe never overwrites the persona prefix the owner's next chat turn reuses.
+    slot_role: SlotRole | None = None
 
 
 class StreamFrame(BaseModel):
@@ -393,6 +398,19 @@ class CompleteOut(BaseModel):
 _MAX_STREAM_FRAMES = 400
 
 
+class _SlotPin(TypedDict, total=False):
+    slot_role: SlotRole
+
+
+def _slot_pin(task: str, asked: SlotRole | None) -> _SlotPin:
+    """The `slot_role` keyword a console call passes, or nothing (the task's own role)."""
+    if asked is not None:
+        return {"slot_role": asked}
+    if role_for(task) == SlotRole.INTERACTIVE:
+        return {"slot_role": SlotRole.WORKSHOP}
+    return {}
+
+
 async def _run_stream(
     router_: LlmRouter,
     body: CompleteRequest,
@@ -420,6 +438,7 @@ async def _run_stream(
         max_tokens=body.max_tokens,
         strength=strength,
         sampling=sampling,
+        **_slot_pin(task, body.slot_role),
     ):
         at = _stamp()
         if ttft_ms is None:
@@ -478,6 +497,7 @@ async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> Complete
             max_tokens=body.max_tokens,
             strength=strength,
             sampling=sampling,
+            **_slot_pin(task, body.slot_role),
         )
     except LlmError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -527,6 +547,10 @@ class ToolProbeRequest(BaseModel):
     # gateway's tool-grammar builder chokes on — impossible with registry names alone.
     raw_tools: list[dict[str, Any]] = Field(default_factory=list)
     max_tokens: int = Field(default=2048, ge=1, le=32768)
+    # The pooled-engine slot to run in. Omitted: the task's own role, except that a task
+    # whose role is jerv's interactive slot runs in the workshop slot instead, so a console
+    # probe never overwrites the persona prefix the owner's next chat turn reuses.
+    slot_role: SlotRole | None = None
 
 
 class ToolProbeOut(BaseModel):
@@ -581,6 +605,7 @@ async def tool_probe(body: ToolProbeRequest, request: Request, _p: DebugDep) -> 
             tools=llm_tools,
             max_tokens=body.max_tokens,
             strength=body.strength,
+            **_slot_pin(body.task, body.slot_role),
         )
     except LlmError as exc:
         return ToolProbeOut(
@@ -659,6 +684,10 @@ class ReplayRequest(BaseModel):
     fallback_result: str = "(no recorded result for this call)"
     max_steps: int = Field(default=8, ge=1, le=24)
     max_tokens: int = Field(default=2048, ge=1, le=32768)
+    # The pooled-engine slot to run in. Omitted: the task's own role, except that a task
+    # whose role is jerv's interactive slot runs in the workshop slot instead, so a console
+    # probe never overwrites the persona prefix the owner's next chat turn reuses.
+    slot_role: SlotRole | None = None
 
 
 class ReplayStep(BaseModel):
@@ -732,6 +761,7 @@ async def replay(body: ReplayRequest, request: Request, _p: DebugDep) -> ReplayO
                 tools=llm_tools,
                 max_tokens=body.max_tokens,
                 strength=body.strength,
+                **_slot_pin(body.task, body.slot_role),
             )
         except LlmError as exc:
             return ReplayOut(

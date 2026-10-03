@@ -90,6 +90,7 @@ from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmResult, LlmTurn, TextChunk, UserMessage
 from jbrain.web.federal_register import FederalRegisterClient, Notice
 from jbrain.web.feeds import FeedClient, FeedItem
@@ -113,6 +114,8 @@ _SYNTH = load_prompt(_PROMPTS / "deep_research_synthesize.prompt")
 # Deep-research runs reuse jerv's own agent route (deep_research is jerv doing agent
 # work) — one route, no separate router config or settings surface to maintain.
 _TASK = "agent.turn"
+# The research slot, shared with the sub-agents it fans out, not jerv's interactive one.
+_SLOT_ROLE = SlotRole.RESEARCH
 
 # Breadth knobs. Gather is capped below the per-parent fan cap so the later fans
 # (analyst, refill, critique) still fit under the tree-wide total-agents ceiling.
@@ -2409,6 +2412,7 @@ class DeepResearchService:
                 user_text=user_text,
                 json_schema=json_schema,
                 max_tokens=max_tokens,
+                slot_role=_SLOT_ROLE,
             )
         except LlmBadResponseError:
             log.warning("deep_research.json_degraded", task=_TASK)
@@ -2937,7 +2941,7 @@ class DeepResearchService:
         # report instead of a hard "ran out of context".
         findings_block = _fit_findings_to_window(
             _cited_findings_block(results, sources),
-            await self._router.context_window(_TASK),
+            await self._router.context_window(_TASK, slot_role=_SLOT_ROLE),
         )
         user_text = (
             objective_block
@@ -2978,6 +2982,7 @@ class DeepResearchService:
                 system=_SYNTH.render(),
                 messages=[UserMessage(text=user_text)],
                 max_tokens=_SYNTH_MAX_TOKENS,
+                slot_role=_SLOT_ROLE,
             ):
                 if isinstance(part, TextChunk):
                     if part.text:

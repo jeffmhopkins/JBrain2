@@ -41,6 +41,7 @@ from jbrain.agent.spawn import _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmBadResponseError
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
 from jbrain.web.feeds import FeedItem
 from jbrain.web.public_records import Record as _Record
@@ -131,8 +132,11 @@ class _FakeRouter:
         self._reflect_calls = 0
         self.calls: list[dict] = []
         self.synth_calls: list[str] = []
+        # Every call's slot role, by method — deep research must never use jerv's slot.
+        self.slot_roles: list[tuple[str, object]] = []
 
     async def complete(self, task, *, system, user_text, json_schema=None, **kw):  # noqa: ANN001
+        self.slot_roles.append(("complete", kw.get("slot_role")))
         self.calls.append({"system": system, "user_text": user_text, "json_schema": json_schema})
         usage = _Usage(10, 20)
         if "PLANNER" in system:
@@ -167,7 +171,8 @@ class _FakeRouter:
         # planner and the coverage check are the only structured `complete` calls.
         raise AssertionError(f"unexpected complete() for system: {system[:40]!r}")
 
-    async def context_window(self, task, strength=None, spec_override=None):  # noqa: ANN001
+    async def context_window(self, task, strength=None, spec_override=None, slot_role=None):  # noqa: ANN001
+        self.slot_roles.append(("context_window", slot_role))
         # A generous window so the synthesizer's findings block is never trimmed under test —
         # the trim itself is unit-tested directly (test_fit_findings_to_window_*).
         return 131072
@@ -177,6 +182,7 @@ class _FakeRouter:
         # chunks then a closing turn carrying usage, mirroring the real adapter contract.
         user_text = messages[0].text if messages else ""
         self.synth_calls.append(user_text)
+        self.slot_roles.append(("converse_stream", kw.get("slot_role")))
         # The forced zero-citation re-synth carries the hardened synthetic critique (its unique
         # "CRITICAL DEFECT" marker); a normal revise carries a real critique instead.
         forced = "CRITICAL DEFECT" in user_text
@@ -524,6 +530,17 @@ async def test_full_run_orchestrates_every_stage() -> None:
     assert len(router.synth_calls) == 2  # draft + revise
     assert "REVISED REPORT" in out
     assert "cross-checked" in out and "revised after critique" in out
+
+
+async def test_every_model_call_runs_in_the_research_slot() -> None:
+    # Deep research runs under the shared agent.turn task; its planner, coverage checks,
+    # window read and synthesis must all name the research slot, or on a pooled model they
+    # land in jerv's interactive slot and evict the persona prefix.
+    router = _FakeRouter(complexity="deep", covered=False, gaps=("gap one",))
+    await _svc(router, _FakeSpawn()).research(_ctx(), {"question": "how does X work?"})
+    methods = {m for m, _ in router.slot_roles}
+    assert {"complete", "context_window", "converse_stream"} <= methods
+    assert {role for _, role in router.slot_roles} == {SlotRole.RESEARCH}
 
 
 async def test_brief_output_skips_the_critique_and_revise_polish() -> None:
