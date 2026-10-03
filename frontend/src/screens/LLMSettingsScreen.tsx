@@ -1068,7 +1068,10 @@ const fmtTokens = (n: number) => {
   return n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`;
 };
 const barName = (m: LocalModelInfo) => m.label.split(" ")[0];
-const residentGbOf = (m: LocalModelInfo) => (m.disk_gb ?? m.size_gb) + m.kv_gb;
+// Weights a load pins: the server's figure leaves out what the engine maps from disk (Flash-Next's
+// engram table), which the GPU never holds; older servers lack it.
+const weightsGbOf = (m: LocalModelInfo) => m.resident_weights_gb ?? m.disk_gb ?? m.size_gb;
+const residentGbOf = (m: LocalModelInfo) => weightsGbOf(m) + m.kv_gb;
 
 // The On-box LLM section's omnibox tabs (reversed order: Resident · Available · Catalogue)
 // and the image section's; both reuse the shared `.seg-row` segmented control, accented per
@@ -1508,7 +1511,7 @@ function OnBoxModelsCard({
                 </div>
               )}
               {onBar.map((m, i) => {
-                const weights = m.disk_gb ?? m.size_gb;
+                const weights = weightsGbOf(m);
                 const res = weights + m.kv_gb;
                 const isStaged = stagedProjected !== null && m.id === stagedProjected.id;
                 const isVictim = victimIds.has(m.id);

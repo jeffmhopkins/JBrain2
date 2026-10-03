@@ -327,6 +327,29 @@ describe("LLMSettingsScreen", () => {
     expect(screen.getByText(/system 12 GB/)).toBeInTheDocument();
   });
 
+  it("counts only the weights a load pins, not what the engine maps from disk", async () => {
+    // Flash-Next's engram table is served memory-mapped; adding it put the model at ~124 GB
+    // on a 121 GB box.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 121, used_gb: 90 };
+    s.local_models = [
+      lm({
+        id: "qwen3.8-flash-next",
+        label: "Flash-Next",
+        enabled: true,
+        loaded: true,
+        size_gb: 88,
+        disk_gb: 88,
+        resident_weights_gb: 60,
+        kv_gb: 28,
+      }),
+    ];
+    stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    expect(await screen.findByText(/88 GB resident/)).toBeInTheDocument();
+  });
+
   it("warns when the gateway is serving stale flags", async () => {
     // The re-stamp now happens ONCE, immediately before a load, and is best-effort. The old
     // per-PUT regen got a free retry on the operator's next edit; this one does not. A

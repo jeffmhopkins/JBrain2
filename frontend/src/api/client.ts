@@ -1045,6 +1045,9 @@ export interface LocalModelInfo {
   max_context_window: number;
   /** The operator's per-model override (tokens), or null to use the default. */
   context_window_override: number | null;
+  /** GB of weights a load pins — disk_gb less what the engine maps from disk. Absent on
+   * older servers. */
+  resident_weights_gb?: number;
   /** Estimated KV-cache GB at the effective window AND slot count — a second slot doubles it. */
   kv_gb: number;
   /** llama-server `-np` slot count: 1 (single slot, default) or 2 (a second slot the primed
