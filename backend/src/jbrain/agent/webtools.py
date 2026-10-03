@@ -38,11 +38,14 @@ from jbrain.web.fetch import (
     window_text,
 )
 from jbrain.web.search import (
+    DEPTHS,
     NEWS_TIME_RANGES,
     TIME_RANGES,
+    SearchOptions,
     SearchResult,
     SearxngClient,
     WebSearchError,
+    domain_list,
 )
 
 log = structlog.get_logger()
@@ -496,10 +499,17 @@ def build_web_handlers(
         # A bad value is ignored (widest results) rather than erroring; blank = no window.
         since = str(arguments.get("since", "")).strip().lower()
         window = since if since in TIME_RANGES else ""
+        depth = str(arguments.get("depth", "") or "").strip().lower()
+        options = SearchOptions(
+            depth=depth if depth in DEPTHS else "basic",
+            include_domains=domain_list(arguments.get("sites")),
+            exclude_domains=domain_list(arguments.get("exclude_sites")),
+            exact=arguments.get("exact") is True,
+        )
         if emit:
             emit("web_search", query)
         try:
-            result = await search.search(query, limit, time_range=since)
+            result = await search.search(query, limit, time_range=since, options=options)
         except WebSearchError as exc:
             return str(exc) + budget_note
         # The client already retried a blanked window without it (search.py). Say so, because
@@ -548,7 +558,12 @@ def build_web_handlers(
                 + health_note
                 + budget_note
             )
-        lines = [f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in kept]
+        lines = [
+            f"- {h.title}\n  {h.url}"
+            + (f"\n  published {h.published}" if h.published else "")
+            + f"\n  {h.snippet}"
+            for h in kept
+        ]
         # The structured twin of the text: one citation source per hit, in the same
         # order the model reads them, so a `[^n]` marker resolves to a real URL the
         # search reached (and a favicon chip), never to a string the model invents.

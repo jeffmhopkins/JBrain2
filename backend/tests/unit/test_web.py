@@ -17,9 +17,11 @@ from jbrain.web.fetch import SearchFormError, WebFetcher, WebFetchError
 from jbrain.web.search import (
     HostedOutcome,
     SearchHit,
+    SearchOptions,
     SearxngClient,
     TavilySearch,
     WebSearchError,
+    domain_list,
 )
 from jbrain.web.tavily_health import TavilyHealth
 
@@ -312,7 +314,9 @@ _TAVILY_OK = {
 def _hosted_spy(outcome: HostedOutcome):  # type: ignore[no-untyped-def]
     calls: list[tuple[str, int, str]] = []
 
-    async def hosted(query: str, limit: int, *, time_range: str = "") -> HostedOutcome:
+    async def hosted(
+        query: str, limit: int, *, time_range: str = "", options: object = None
+    ) -> HostedOutcome:
         calls.append((query, limit, time_range))
         return outcome
 
@@ -430,6 +434,136 @@ async def test_tavily_search_posts_the_query_with_a_bearer_key_and_parses_hits()
     body = json.loads(req.content)
     assert body["query"] == "epic titusville" and body["max_results"] == 5
     assert body["time_range"] == "day" and "api_key" not in body
+
+
+async def test_tavily_search_sends_the_agents_controls() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "EPIC",
+                        "url": "https://epictheatres.com/t",
+                        "content": "now playing",
+                        "published_date": "2026-10-01",
+                    }
+                ]
+            },
+        )
+
+    opts = SearchOptions(
+        depth="advanced",
+        include_domains=("epictheatres.com",),
+        exclude_domains=("epicgames.com",),
+        exact=True,
+    )
+    out = await _tavily(handle).search('"Epic Theatres" Titusville', 5, options=opts)
+    body = json.loads(seen[0].content)
+    assert body["search_depth"] == "advanced" and body["chunks_per_source"] == 3
+    assert body["include_domains"] == ["epictheatres.com"]
+    assert body["exclude_domains"] == ["epicgames.com"]
+    assert body["exact_match"] is True and body["include_published_date"] is True
+    assert out.hits[0].published == "2026-10-01"
+
+
+async def test_tavily_basic_search_sends_no_optional_filters() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_TAVILY_OK)
+
+    await _tavily(handle).search("q", 3)
+    body = json.loads(seen[0].content)
+    assert body["search_depth"] == "basic"
+    for absent in ("chunks_per_source", "include_domains", "exclude_domains", "exact_match"):
+        assert absent not in body
+
+
+async def test_tavily_cache_is_keyed_on_the_options() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_TAVILY_OK)
+
+    client = _tavily(handle)
+    await client.search("q", 3)
+    await client.search("q", 3, options=SearchOptions(depth="advanced"))
+    await client.search("q", 3)
+    assert len(calls) == 2
+
+
+async def test_searxng_fallback_spells_the_site_filters_as_operators() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    opts = SearchOptions(include_domains=("a.com", "b.org"), exclude_domains=("c.net",))
+    await _searx(handle).search("showtimes", options=opts)
+    assert seen[0].url.params["q"] == "showtimes (site:a.com OR site:b.org) -site:c.net"
+    seen.clear()
+    await _searx(handle).search("showtimes", options=SearchOptions(include_domains=("a.com",)))
+    assert seen[0].url.params["q"] == "showtimes site:a.com"
+
+
+def test_domain_list_normalizes_and_caps() -> None:
+    assert domain_list(["https://www.EpicTheatres.com/our-theatres/x", "epictheatres.com"]) == (
+        "epictheatres.com",
+    )
+    assert domain_list("fda.gov, nih.gov") == ("fda.gov", "nih.gov")
+    assert domain_list(["not a host", "", None, "localhost"]) == ()
+    assert len(domain_list([f"s{i}.com" for i in range(30)])) == 10
+
+
+async def test_web_search_tool_passes_the_agents_controls_through() -> None:
+    hosted, calls = _hosted_spy(
+        HostedOutcome([SearchHit("E", "https://e.example/", "x", "2026-09-30")])
+    )
+    seen: list[SearchOptions | None] = []
+
+    async def spy(query: str, limit: int, *, time_range: str = "", options=None):  # type: ignore[no-untyped-def]
+        seen.append(options)
+        return await hosted(query, limit, time_range=time_range)
+
+    handlers = build_web_handlers(_searx_hosted(_SEARX_OK, spy), WebFetcher())
+    out = await handlers["web_search"](
+        {
+            "query": '"Epic Theatres" Titusville',
+            "sites": ["https://www.epictheatres.com/"],
+            "exclude_sites": "epicgames.com",
+            "exact": True,
+            "depth": "ADVANCED",
+        },
+        CTX,
+    )
+    assert seen == [
+        SearchOptions(
+            depth="advanced",
+            include_domains=("epictheatres.com",),
+            exclude_domains=("epicgames.com",),
+            exact=True,
+        )
+    ]
+    assert "published 2026-09-30" in str(out)
+
+
+async def test_web_search_tool_ignores_junk_controls() -> None:
+    seen: list[SearchOptions | None] = []
+
+    async def spy(query: str, limit: int, *, time_range: str = "", options=None):  # type: ignore[no-untyped-def]
+        seen.append(options)
+        return HostedOutcome([SearchHit("E", "https://e.example/", "x")])
+
+    handlers = build_web_handlers(_searx_hosted(_SEARX_OK, spy), WebFetcher())
+    await handlers["web_search"]({"query": "q", "depth": "ultra", "exact": "yes", "sites": 42}, CTX)
+    assert seen == [SearchOptions()]
 
 
 async def test_tavily_search_is_silent_when_off_or_keyless() -> None:

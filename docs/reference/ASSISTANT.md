@@ -974,6 +974,20 @@ the failed engines — and, when Tavily itself failed, why (`the primary search 
 …`). DuckDuckGo is **disabled** in `deploy/searxng/settings.yml`: it CAPTCHAs every query from
 this IP and is never benched (`suspended_time=0`).
 
+**`web_search` exposes Tavily's controls (tool v5), per Tavily's own best-practice guide.**
+`sites` / `exclude_sites` (Tavily `include_domains` / `exclude_domains`, up to 10 bare domains,
+normalized from whatever URL the model writes), `exact` (`exact_match`: only pages containing
+the query's double-quoted phrase — the fix for a proper name buried under look-alikes, which is
+what "Epic Theatres" vs Epic Games was), and `depth` (`basic`, 1 credit, the default; `advanced`,
+2 credits, sent with `chunks_per_source: 3` so a niche or local query gets each page's most
+relevant passages). Every Tavily search also asks for `include_published_date` (free), shown on
+each lead. The tool prose teaches the economics — every search spends a monthly allowance, so
+two misses mean change approach (`exact`, `sites`, `depth`, or fetch a page you can name), not
+wording. On the SearXNG fallback the site filters become `site:` / `-site:` operators and the
+rest is ignored. Deliberately NOT used: `include_answer` (an LLM-written summary the agent would
+be tempted to cite as fact), `include_raw_content` (search-then-`web_fetch` is the read path),
+and `auto_parameters` (2 credits a call to pick settings the agent now chooses itself).
+
 **A spent Tavily allowance is a state the owner sees, not a log line.** The box runs on Tavily's
 free plan, so the credits can run out mid-month. `jbrain.web.tavily_health.TavilyHealth`, shared
 by the search and fetch legs, maps Tavily's statuses to a state — **432/433 `quota`** (plan

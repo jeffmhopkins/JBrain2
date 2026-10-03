@@ -51,6 +51,66 @@ class SearchHit:
     title: str
     url: str
     snippet: str
+    # The page's publish/update date when the index reported one ("" otherwise) — Tavily's
+    # `published_date`; SearXNG's general category carries none.
+    published: str = ""
+
+
+_MAX_SITES = 10  # domains per include/exclude list — a filter, not a crawl list
+
+
+@dataclass(frozen=True)
+class SearchOptions:
+    """The agent's search controls beyond the query (docs.tavily.com best practices). Tavily
+    honours all of them; the SearXNG fallback honours the site filters as `site:` operators and
+    ignores the rest.
+
+    `depth` is Tavily's `search_depth`: `basic` (1 credit) or `advanced` (2 credits — higher
+    relevance on niche, local or multi-faceted queries, and up to three relevant passages per
+    page instead of one generic summary). `include_domains` restricts to those sites (a
+    business's own site, an official source); `exclude_domains` drops sites; `exact` returns
+    only pages containing the query's quoted phrase(s) — for a proper name a general index
+    would otherwise drown in look-alikes ("Epic Theatres" vs Epic Games)."""
+
+    depth: str = "basic"
+    include_domains: tuple[str, ...] = ()
+    exclude_domains: tuple[str, ...] = ()
+    exact: bool = False
+
+    def searxng_query(self, query: str) -> str:
+        """The query with the site filters spelled as operators the scraper engines accept."""
+        parts = [query]
+        if len(self.include_domains) == 1:
+            parts.append(f"site:{self.include_domains[0]}")
+        elif self.include_domains:
+            parts.append("(" + " OR ".join(f"site:{d}" for d in self.include_domains) + ")")
+        parts += [f"-site:{d}" for d in self.exclude_domains]
+        return " ".join(parts)
+
+
+DEPTHS = ("basic", "advanced")
+
+
+def normalize_domain(raw: object) -> str:
+    """A bare lowercase host from whatever the model wrote ("https://www.X.com/path" -> "x.com"),
+    or "" when nothing host-like is left."""
+    text = str(raw or "").strip().lower()
+    for prefix in ("https://", "http://"):
+        text = text.removeprefix(prefix)
+    text = text.split("/", 1)[0].split("?", 1)[0].removeprefix("www.").strip(".")
+    if not text or "." not in text or any(c.isspace() for c in text):
+        return ""
+    return text
+
+
+def domain_list(raw: object) -> tuple[str, ...]:
+    """A capped, de-duplicated tuple of hosts from a list or a comma-separated string."""
+    items = raw if isinstance(raw, list) else str(raw or "").split(",")
+    seen: dict[str, None] = {}
+    for item in items:
+        if host := normalize_domain(item):
+            seen.setdefault(host, None)
+    return tuple(seen)[:_MAX_SITES]
 
 
 @dataclass(frozen=True)
@@ -290,17 +350,25 @@ class TavilySearch:
         self._settings = settings
         self._transport = transport
         self._health = health
-        self._cache: TTLCache[tuple[str, str, int], list[SearchHit]] | None = (
+        self._cache: TTLCache[tuple[str, str, int, SearchOptions], list[SearchHit]] | None = (
             TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
             if cache_ttl_s > 0
             else None
         )
 
-    async def search(self, query: str, limit: int, *, time_range: str = "") -> HostedOutcome:
+    async def search(
+        self,
+        query: str,
+        limit: int,
+        *,
+        time_range: str = "",
+        options: SearchOptions | None = None,
+    ) -> HostedOutcome:
         if not self._base_url:
             return HostedOutcome([])
+        opts = options or SearchOptions()
         tr = time_range if time_range in TIME_RANGES else ""
-        key = (query.strip(), tr, limit)
+        key = (query.strip(), tr, limit, opts)
         if self._cache is not None and (cached := self._cache.get(key)) is not None:
             return HostedOutcome(cached)
         try:
@@ -313,13 +381,24 @@ class TavilySearch:
         if self._health is not None and self._health.cooling_down():
             return HostedOutcome([], (await self._health.current()).detail or "Tavily is failing")
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        depth = opts.depth if opts.depth in DEPTHS else "basic"
         payload: dict[str, object] = {
             "query": query,
             "max_results": max(1, limit),
-            "search_depth": "basic",
+            "search_depth": depth,
+            # Free, and the freshness signal a lead otherwise lacks.
+            "include_published_date": True,
         }
+        if depth == "advanced":
+            payload["chunks_per_source"] = 3  # the page's most relevant passages, not a summary
         if tr:
             payload["time_range"] = tr
+        if opts.include_domains:
+            payload["include_domains"] = list(opts.include_domains)
+        if opts.exclude_domains:
+            payload["exclude_domains"] = list(opts.exclude_domains)
+        if opts.exact:
+            payload["exact_match"] = True
         try:
             async with httpx.AsyncClient(
                 timeout=_TAVILY_SEARCH_TIMEOUT, transport=self._transport
@@ -343,6 +422,7 @@ class TavilySearch:
                 title=str(r.get("title") or "").strip() or str(r["url"]).strip(),
                 url=str(r["url"]).strip(),
                 snippet=str(r.get("content") or "").strip(),
+                published=str(r.get("published_date") or "").strip(),
             )
             for r in (rows if isinstance(rows, list) else [])[: max(limit, 0)]
             if isinstance(r, dict) and str(r.get("url") or "").strip()
@@ -449,7 +529,12 @@ class SearxngClient:
         ]
 
     async def search(
-        self, query: str, limit: int = _DEFAULT_LIMIT, *, time_range: str = ""
+        self,
+        query: str,
+        limit: int = _DEFAULT_LIMIT,
+        *,
+        time_range: str = "",
+        options: SearchOptions | None = None,
     ) -> SearchResult:
         """A general web search: the hosted primary (Tavily) first when wired, SearXNG when it is
         off, failed or found nothing. Returns a SearchResult: the ranked hits PLUS the zero-click
@@ -468,12 +553,14 @@ class SearxngClient:
         while the same query with no window returned ten — the agent burned a whole turn
         rewording the query because the filter, not the wording, was the problem."""
         tr = time_range if time_range in TIME_RANGES else ""
+        opts = options or SearchOptions()
         hosted_failure = ""
         if self._hosted is not None:
-            outcome = await self._hosted(query, limit, time_range=tr)
+            outcome = await self._hosted(query, limit, time_range=tr, options=opts)
             if outcome.hits:
                 return SearchResult(hits=outcome.hits, source="tavily")
             hosted_failure = outcome.failure
+        query = opts.searxng_query(query)
         result = await self._search_window(query, limit, tr)
         if tr and result.is_empty:
             widened = await self._search_window(query, limit, "")
