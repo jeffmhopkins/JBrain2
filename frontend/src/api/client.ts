@@ -1250,6 +1250,9 @@ export interface EngineEffortInfo {
   active: boolean;
   /** The levels its model honors, in display order. */
   levels: ReasoningEffort[];
+  /** What the model really runs at when no level is sent (Flash-Next's template thinks hard
+   * by default), or null when unknown. Absent from an older server. */
+  model_default?: ReasoningEffort | null | undefined;
   tiers: EngineEffortTier[];
   tasks: EngineEffortTask[];
 }

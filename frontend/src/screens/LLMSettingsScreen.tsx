@@ -1099,9 +1099,15 @@ const LEVEL_NAME: Record<ReasoningEffort, string> = {
   high: "High",
 };
 
-// A null level means none is sent, so the model thinks at its own default.
-const levelName = (level: ReasoningEffort | null) =>
-  level === null ? "model's own" : LEVEL_NAME[level];
+// A null level means none is sent, so the model thinks at its own default — named when the
+// server reports it (Flash-Next's template thinks hard unasked), kept short for the closed
+// select at phone width.
+const levelName = (level: ReasoningEffort | null, modelDefault: ReasoningEffort | null) =>
+  level !== null
+    ? LEVEL_NAME[level]
+    : modelDefault
+      ? `${LEVEL_NAME[modelDefault]} (model)`
+      : "model's own";
 
 const fxRowKey = (engine: string, scope: string, key: string) => `fx:${engine}:${scope}:${key}`;
 const fxRowId = (engine: string, tier: string) => `fx-${engine}-${tier}`;
@@ -1177,11 +1183,11 @@ function fxTierRows(
 // What a tier's Default means: with no tier level each task keeps today's Standard level, so
 // name it when they agree. With a tier level set the tasks' own levels are not on the wire, so
 // name the tier's bucket default — the level its tasks are sent unless set individually.
-function tierDefaultName(row: FxTierRow): string {
+function tierDefaultName(row: FxTierRow, modelDefault: ReasoningEffort | null): string {
   if (row.level) return row.standard ? LEVEL_NAME[row.standard] : "per task";
   const levels = new Set(row.local.map((t) => t.fallback));
   const [only] = levels;
-  return levels.size === 1 && only !== undefined ? levelName(only) : "per task";
+  return levels.size === 1 && only !== undefined ? levelName(only, modelDefault) : "per task";
 }
 
 function FxLevelSelect({
@@ -1270,6 +1276,7 @@ function EngineEffortCard({
   const picks = new Map(tasks.map((t) => [t.id, t]));
   const taskLabel = (id: string) => picks.get(id)?.label ?? id;
   const rows = fxTierRows(info, tasks, isLocalProvider);
+  const modelDefault = info.model_default ?? null;
   // Only what the card shows: a level on a row or task it hides cannot be seen or cleared here.
   const setCount = rows.reduce(
     (n, r) => n + (r.level ? 1 : 0) + r.local.filter((t) => t.level !== null).length,
@@ -1388,7 +1395,7 @@ function EngineEffortCard({
                     <FxLevelSelect
                       label={`${row.label} on ${info.label}`}
                       value={row.level}
-                      defaultText={tierDefaultName(row)}
+                      defaultText={tierDefaultName(row, modelDefault)}
                       levels={info.levels}
                       disabled={busy.has(tierKey)}
                       compact={false}
@@ -1403,7 +1410,9 @@ function EngineEffortCard({
                       const key = fxRowKey(engine, "task", t.id);
                       const reading =
                         t.fallback === null
-                          ? "The model's own default — no level sent"
+                          ? modelDefault
+                            ? `${LEVEL_NAME[modelDefault]} · the model's own default — no level sent`
+                            : "The model's own default — no level sent"
                           : `${LEVEL_NAME[t.fallback]} · ${
                               t.fallback_source === "tier"
                                 ? "from the tier"
@@ -1421,7 +1430,11 @@ function EngineEffortCard({
                                       Set · {LEVEL_NAME[t.level]}
                                     </span>{" "}
                                     — default would be{" "}
-                                    {t.fallback ? LEVEL_NAME[t.fallback] : "the model's own"}
+                                    {t.fallback
+                                      ? LEVEL_NAME[t.fallback]
+                                      : modelDefault
+                                        ? `${LEVEL_NAME[modelDefault]} (the model's own)`
+                                        : "the model's own"}
                                   </>
                                 ) : (
                                   reading
@@ -1431,7 +1444,7 @@ function EngineEffortCard({
                             <FxLevelSelect
                               label={`${taskLabel(t.id)} on ${info.label}`}
                               value={t.level}
-                              defaultText={levelName(t.fallback)}
+                              defaultText={levelName(t.fallback, modelDefault)}
                               levels={info.levels}
                               disabled={busy.has(key)}
                               compact

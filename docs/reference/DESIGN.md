@@ -735,7 +735,10 @@ untouched.
   what it resolves to (*Default · Medium*), so the closed select fits about 150 px at phone
   width. The line under the name says where it comes from (*Medium · from the Standard pick*
   or *· from the tier*), or *Set · High — default would be Medium*. A null level means none
-  is sent; it reads *Default · model's own*. A tier's Default names the tasks' shared
+  is sent. When the server reports what the model then runs at (`model_default`, High for
+  Flash-Next, whose template thinks hard unasked), it reads *Default · High (model)*, with
+  the line *High · the model's own default — no level sent*. An older server without it
+  gets *Default · model's own*. A tier's Default names the tasks' shared
   Standard level, or *per task* when they differ. With a tier level set, it names the tier's
   bucket default (`default`) instead.
 - **Rows follow the server's tiers** (`tier`), not the tier cards' grouping. JPet's tasks sit
@@ -1537,7 +1540,9 @@ local append with an amber "pending sync" chip until the outbox clears.
   reasons, the sheet adds a **Reasoning** radio pill row (None / Low / Medium / High,
   styled like the chat picker's Today/Older/Archived segments) — no separate "Auto":
   the route's effective default level carries a small **"(default)"** marker under its
-  label and reads selected while no override is set; tapping it clears the override so
+  label and reads selected while no override is set. While an engine with levels of its
+  own serves (Flash-Next) and `agent.turn` runs on it, that level is the engine's
+  `effective` level for `agent.turn`, else its `model_default`, not the Standard effort; tapping it clears the override so
   the route's own effort keeps applying. The reasoning level is an **independent**
   per-conversation override — **not** bundled into the model pick: tapping a level
   persists it immediately (without closing) whether or not a model is pinned, so the

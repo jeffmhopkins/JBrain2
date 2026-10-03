@@ -84,6 +84,16 @@ export function AgentModelSheet({
               reasons: m.supports_reasoning,
             })),
         );
+        // While an engine with levels of its own serves (Flash-Next) and agent.turn runs on
+        // it, a turn carries THAT engine's level, not the Standard effort — so the marked
+        // pill reads the engine's effective level, else what its model does with none sent.
+        const engine = Object.values(s.engine_efforts ?? {}).find((e) => e.active);
+        const onEngine = engine?.tasks.find((t) => t.id === "agent.turn" && t.applies);
+        if (engine && onEngine) {
+          setRouteReasons(engine.levels.length > 0);
+          setDefaultLevel(onEngine.effective ?? engine.model_default ?? FALLBACK_DEFAULT);
+          return;
+        }
         const turn = s.tasks?.find((t) => t.id === "agent.turn");
         setRouteReasons(turn?.reasoning_effort != null);
         setDefaultLevel(turn?.reasoning_effort ?? s.reasoning_default ?? FALLBACK_DEFAULT);

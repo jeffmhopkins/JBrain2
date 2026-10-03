@@ -2608,6 +2608,28 @@ describe("Flash-Next reasoning card (GUI gate B)", () => {
     expect(screen.queryByText("Renamed")).toBeNull();
   });
 
+  it("names what the model really runs at when no level is sent", async () => {
+    const seed = fxSeed();
+    fxInfo(seed).model_default = "high";
+    stubFx(seed);
+    render(<LLMSettingsScreen />);
+    const fx = await openTier(/^Vision/);
+    const ocr = within(fx).getByLabelText("Vision OCR on Flash-Next");
+    expect(within(ocr).getByRole("option", { name: /^Default/ })).toHaveTextContent(
+      "Default · High (model)",
+    );
+    expect(within(fx).getByText(/default would be High \(the model's own\)/)).toBeInTheDocument();
+    // The tier's Default names it too, since its only task sends no level.
+    expect(selectedText(within(fx).getByLabelText("Vision on Flash-Next"))).toBe(
+      "Default · High (model)",
+    );
+    fireEvent.change(ocr, { target: { value: "default" } });
+    expect(
+      await within(fx).findByText("High · the model's own default — no level sent"),
+    ).toBeInTheDocument();
+    expect(selectedText(ocr)).toBe("Default · High (model)");
+  });
+
   it("clears a task's level back to Default with a DELETE", async () => {
     const writes = stubFx(fxSeed());
     render(<LLMSettingsScreen />);

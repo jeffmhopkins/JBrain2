@@ -762,6 +762,8 @@ function mockEngineEfforts(): Record<string, EngineEffortInfo> {
       label: "Flash-Next",
       active,
       levels: ["none", "low", "medium", "high"],
+      // Qwen3.8's template thinks hard when no level is sent.
+      model_default: "high",
       tiers: MOCK_EFFORT_TIERS.map(([id, label]) => ({
         id,
         label,
