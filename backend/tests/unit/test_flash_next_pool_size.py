@@ -310,6 +310,27 @@ def test_a_failed_unload_restores_the_previous_size_and_says_so() -> None:
     assert store.values["llm_local_context_windows"] == {"gpt-oss-120b": 65536}
 
 
+def test_an_unreadable_loaded_list_restores_the_previous_size() -> None:
+    """A failed residency read is not "nothing loaded": saving the new size over a model that
+    may be resident at the old one would leave the budget 14 GiB wrong."""
+    gw = FakeLocalGateway(running={FLASH_ID})
+
+    async def unreadable() -> None:
+        return None
+
+    gw.running_states = unreadable  # type: ignore[method-assign]
+    c, store = _api(gw)
+    store.values["llm_local_context_windows"] = {"gpt-oss-120b": 65536}
+    resp = c.put(
+        f"/api/settings/llm/local-models/{FLASH_ID}/context-window",
+        json={"context_window": ONE_M},
+    )
+    assert resp.status_code == 502
+    assert "could not be read" in resp.json()["detail"]
+    assert store.values["llm_local_context_windows"] == {"gpt-oss-120b": 65536}
+    assert gw.unloaded == []
+
+
 # --- the update smoketest ------------------------------------------------------------------
 
 

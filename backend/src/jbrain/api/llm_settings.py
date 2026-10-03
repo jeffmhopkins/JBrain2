@@ -1092,7 +1092,12 @@ async def _unload_for_pool_resize(
     direction between 512k and 1M. So a failed unload restores the previous stored size and
     says so, rather than leaving the settings describing a pool the box is not serving."""
     try:
-        if model.served_model not in await gateway.running():
+        # The strict read: `running()` turns a failed read into "nothing loaded", which would
+        # save the new size over a resident model still serving the old one.
+        states = await gateway.running_states()
+        if states is None:
+            raise LocalGatewayError("the gateway's loaded-model list could not be read")
+        if model.served_model not in states:
             return
         with box_events.because("its memory pool was resized — it reloads at the new size"):
             await gateway.unload(model.served_model)
