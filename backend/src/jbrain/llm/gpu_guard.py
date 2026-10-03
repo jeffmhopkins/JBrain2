@@ -99,6 +99,12 @@ RUNAWAY_MULTIPLE = 1.75
 # process — so this is a hard floor, held even when a load's own prediction says it fits.
 MIN_FREE_GTT_GB = 6.0
 
+# How often a guarded load may try to drop page cache before the host floor aborts it
+# (`guarded_load`'s `relieve`). One attempt per window: a drop that did not lift free memory
+# back over the floor will not do better a second later, and a load whose read refills the
+# cache faster than the in-load sweep drains it is a load the floor should stop.
+RELIEF_INTERVAL_S = 10.0
+
 
 @dataclass(frozen=True)
 class GpuMem:
@@ -351,6 +357,8 @@ async def guarded_load(
     target: str,
     abort: Callable[[], Awaitable[None]],
     sample_interval_s: float = SAMPLE_INTERVAL_S,
+    relieve: Callable[[], Awaitable[None]] | None = None,
+    relief_interval_s: float = RELIEF_INTERVAL_S,
 ) -> None:
     """Run `load()` while watching device memory, and abort it if GTT runs away.
 
@@ -374,7 +382,16 @@ async def guarded_load(
     Degrades cleanly: if the probe can't read the pool (no amdgpu, supervisor down), the
     load runs exactly as it does today, unwatched — a box that can't measure must still be
     able to serve. Aborting is best-effort too, and it is deliberately attempted before the
-    raise: on a runaway the priority is getting the allocation released, not a tidy error."""
+    raise: on a runaway the priority is getting the allocation released, not a tidy error.
+
+    `relieve`, when given, is tried once before the HOST floor aborts: it drops the load's own
+    page-cache residue, and the floor is re-read and enforced on what is left. MEASURED
+    2026-10-03: two 1M-pool Flash-Next loads were aborted at 5.3 and 5.9 GB free with tens of
+    GB of the read's clean cache on the box — memory the floor counted as used (rightly: the
+    2026-08-19 livelock was ~39 GiB of such cache that `MemAvailable` called free) and nothing
+    had dropped. Dropping it and measuring again keeps the floor and the accounting exactly as
+    they are; only an abort that a drop would have prevented goes away. At most one attempt
+    per `relief_interval_s`, so a read outrunning every drop still meets the floor."""
     baseline = await probe.sample()
     if baseline is None:
         log.info("gpu_guard.unwatched_load", model=target, reason="no device-memory probe")
@@ -384,6 +401,8 @@ async def guarded_load(
     ceiling_gb = baseline.gtt_used_gb + max(projected_gb * RUNAWAY_MULTIPLE, projected_gb + 2.0)
     task = asyncio.ensure_future(load())
     breach: str | None = None
+    loop = asyncio.get_running_loop()
+    last_relief: float | None = None
     try:
         while not task.done():
             done, _ = await asyncio.wait({task}, timeout=sample_interval_s)
@@ -393,6 +412,25 @@ async def guarded_load(
             if now is None:
                 continue  # lost the probe mid-load: fall back to running unwatched
             host_free = _host_free_gb()
+            relieved = False
+            if (
+                host_free is not None
+                and host_free < MIN_FREE_GTT_GB
+                and relieve is not None
+                and (last_relief is None or loop.time() - last_relief >= relief_interval_s)
+            ):
+                last_relief = loop.time()
+                relieved = True
+                low = host_free
+                with contextlib.suppress(Exception):  # a failed drop leaves the floor to decide
+                    await relieve()
+                host_free = _host_free_gb()
+                log.info(
+                    "gpu_guard.host_floor_relief",
+                    model=target,
+                    free_before_gb=low,
+                    free_after_gb=host_free,
+                )
             if host_free is not None and host_free < MIN_FREE_GTT_GB:
                 # THE FLOOR THAT CAN ACTUALLY FIRE ON THIS BOX. `gtt_free` is not a second
                 # opinion here: `strix-halo-host-setup.sh` sets `amdgpu.gttsize` to 124 GiB on a
@@ -407,6 +445,7 @@ async def guarded_load(
                     f"free host memory fell to {host_free:.1f} GB while loading {target} "
                     f"(floor {MIN_FREE_GTT_GB:.0f} GB) — the reclaim livelock this box hangs "
                     "on starts here, not at the GTT cap"
+                    + (" (still under it after dropping the load's page cache)" if relieved else "")
                 )
             elif now.gtt_used_gb > ceiling_gb:
                 breach = (
