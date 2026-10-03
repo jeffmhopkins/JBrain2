@@ -31,6 +31,7 @@ from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb, read_page_cache_gb
 from jbrain.llm import (
     drain,
+    engine_effort,
     gpu_guard,
     launch_flags,
     llama_swap_config,
@@ -64,9 +65,12 @@ from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
 from jbrain.llm.router import (
     _FOLLOW_PRIMARY_MODEL,
     _PRIMARY_MODEL_TASK,
+    EFFORT_TIERS,
     TASK_DEFAULTS,
     TASK_REASONING_BUCKET,
+    TASK_REASONING_DEFAULTS,
     _split_spec,
+    task_tier,
 )
 from jbrain.llm.types import LlmTool
 from jbrain.settings_store import (
@@ -115,8 +119,7 @@ _HIDDEN_TASKS: frozenset[str] = frozenset({"research.title"})
 # Tasks that send image content to the model and so require a vision-capable provider:
 # the ingest vision.* tasks plus the agent's analyze_image route (agent.vision). The
 # screen filters these to vision choices; the PUT enforces it server-side.
-def is_vision_task(task: str) -> bool:
-    return task.startswith("vision.") or task == "agent.vision"
+is_vision_task = llm_router.is_vision_task
 
 
 # Provider ids are no longer a fixed set: enabling local hosting adds one id per
@@ -194,6 +197,56 @@ class TaskInfo(BaseModel):
     # ("→ Flash-Next (engine active)").
     remapped: bool = False
     remap_note: str | None = None
+
+
+# The screen's names for the role groups a per-engine level can be set on (router.EFFORT_TIERS).
+EFFORT_TIER_LABELS: dict[str, str] = {
+    "high": "High reasoning",
+    "medium": "Medium reasoning",
+    "low": "Low reasoning",
+    "vision": "Vision",
+}
+
+
+class EngineEffortTierOut(BaseModel):
+    id: str
+    label: str
+    # The owner's level for this tier on the engine, or null (its tasks keep today's effort).
+    level: str | None
+    # What a task in this tier with no row of its own and no stored Standard effort runs at
+    # when `level` is null — the bucket default the router sends; null = no level is sent and
+    # the model uses its own default.
+    default: str | None
+
+
+class EngineEffortTaskOut(BaseModel):
+    id: str
+    tier: str | None
+    # The owner's level for this task on the engine, or null (it inherits).
+    level: str | None
+    # What it runs at while `level` is null: its tier's level, else today's Standard effort
+    # (the stored per-task effort, else the bucket default). Null = no level is sent.
+    fallback: str | None
+    fallback_source: Literal["tier", "standard"]
+    # `level` if set, else `fallback` — what a call on this engine carries absent a per-call
+    # override (an agent turn's picked level still wins).
+    effective: str | None
+    # Whether the task runs on this engine right now (it is active and the task's effective
+    # route is local). A cloud-routed task never reads these levels.
+    applies: bool
+
+
+class EngineEffortOut(BaseModel):
+    """The owner's reasoning levels on one engine (jbrain.llm.engine_effort): per tier, and per
+    task overriding its tier. Independent of the Standard per-task efforts above."""
+
+    label: str
+    # The engine is the effective one, so these levels are what local calls carry now.
+    active: bool
+    # The levels the engine's model honors, in display order.
+    levels: list[str]
+    tiers: list[EngineEffortTierOut]
+    tasks: list[EngineEffortTaskOut]
 
 
 class KvPoolSlotOut(BaseModel):
@@ -484,6 +537,9 @@ class LlmSettingsOut(BaseModel):
     # with nothing saying the model was still working. An investigator has to be able to rule
     # that in or out before spending a day on the gateway.
     local_llm_timeout_s: float | None = None
+    # Per-engine reasoning levels, keyed by engine id — only engines whose sole model takes a
+    # level (today just "flash-next"). Set with PUT/DELETE /settings/llm/engine-effort/….
+    engine_efforts: dict[str, EngineEffortOut] = {}
 
 
 class TaskOverrideIn(BaseModel):
@@ -643,7 +699,70 @@ async def _snapshot(
         auto_restore=auto_restore,
         jcode=await _jcode_info(settings, store, ctx, engine),
         local_llm_timeout_s=settings.local_llm_timeout,
+        engine_efforts=await _engine_efforts_info(settings, store, ctx, overrides, engine),
     )
+
+
+def _standard_effort(task: str, overrides: dict[str, dict[str, str]]) -> str | None:
+    """The effort the router sends for `task` before any per-engine level — its stored Standard
+    effort, else its bucket default (`_resolve_live`'s fold; medium is sent as no level)."""
+    return (overrides.get(task) or {}).get("reasoning_effort") or TASK_REASONING_DEFAULTS.get(task)
+
+
+async def _engine_efforts_info(
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    overrides: dict[str, dict[str, str]],
+    active: engines.Engine,
+) -> dict[str, EngineEffortOut]:
+    stored = await store.llm_engine_efforts(ctx)
+    sent_defaults = set(TASK_REASONING_DEFAULTS.values())
+    out: dict[str, EngineEffortOut] = {}
+    for engine in engines.ENGINES:
+        levels = engine_effort.levels_for(engine)
+        if not levels:
+            continue
+        tiers = [
+            EngineEffortTierOut(
+                id=tier,
+                label=EFFORT_TIER_LABELS[tier],
+                level=stored.level(engine, "tier", tier),
+                # A bucket tier's own name is its level, except medium, which is sent as no
+                # level at all (TASK_REASONING_DEFAULTS); vision has no bucket.
+                default=tier if tier in sent_defaults else None,
+            )
+            for tier in EFFORT_TIERS
+        ]
+        tasks: list[EngineEffortTaskOut] = []
+        for task in TASK_DEFAULTS:
+            if task in _HIDDEN_TASKS:
+                continue
+            tier = task_tier(task)
+            tier_level = stored.level(engine, "tier", tier) if tier is not None else None
+            fallback = tier_level if tier_level is not None else _standard_effort(task, overrides)
+            level = stored.level(engine, "task", task)
+            runs = _effective(settings, task, overrides, active).effective_spec
+            tasks.append(
+                EngineEffortTaskOut(
+                    id=task,
+                    tier=tier,
+                    level=level,
+                    fallback=fallback,
+                    fallback_source="tier" if tier_level is not None else "standard",
+                    effective=level if level is not None else fallback,
+                    applies=engine == active
+                    and runs.partition(":")[0] == local_catalog.LOCAL_PROVIDER,
+                )
+            )
+        out[engine] = EngineEffortOut(
+            label=engines.LABEL[engine],
+            active=engine == active,
+            levels=list(levels),
+            tiers=tiers,
+            tasks=tasks,
+        )
+    return out
 
 
 def _jcode_options(settings: Settings, engine: engines.Engine) -> list[JcodeModelChoice]:
@@ -1950,6 +2069,69 @@ async def apply_overrides(
     return await _snapshot(settings, store, ctx, gateway)
 
 
+class EngineEffortsPut(BaseModel):
+    """A batch of per-engine level changes, applied together. A level sets the row; null clears
+    it (the task falls back to its tier, the tier to today's effort). Keys absent are left."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tiers: dict[str, str | None] = {}
+    tasks: dict[str, str | None] = {}
+
+
+class EngineEffortIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    effort: str
+
+
+async def apply_engine_efforts(
+    engine: str,
+    body: EngineEffortsPut,
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+) -> LlmSettingsOut:
+    """Validate every change, then write them in one transaction and return the snapshot.
+    Shared by the owner routes and the debug console. 422 — and nothing written — for an
+    engine without levels, an unknown tier or task (or the hidden title task, which follows
+    the chat model), or a level the engine's model does not honor."""
+    if engine not in engines.ENGINES:
+        raise HTTPException(status_code=422, detail=f"unknown engine: {engine}")
+    target = cast(engines.Engine, engine)
+    levels = engine_effort.levels_for(target)
+    if not levels:
+        raise HTTPException(
+            status_code=422,
+            detail=f"the {engines.LABEL[target]} engine has no per-engine reasoning levels",
+        )
+    changes: dict[engine_effort.RowKey, str | None] = {}
+    for scope, entries in (("tier", body.tiers), ("task", body.tasks)):
+        for key, level in entries.items():
+            if scope == "tier" and key not in EFFORT_TIERS:
+                raise HTTPException(status_code=422, detail=f"unknown tier: {key}")
+            if scope == "task" and (key not in TASK_DEFAULTS or key in _HIDDEN_TASKS):
+                raise HTTPException(status_code=422, detail=f"unknown task: {key}")
+            if level is not None and level not in levels:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{engines.LABEL[target]} takes {', '.join(levels)}; not {level!r}",
+                )
+            changes[(target, scope, key)] = level
+    if changes:
+        await store.set_llm_engine_efforts(ctx, changes)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+def _one_engine_effort(scope: str, key: str, level: str | None) -> EngineEffortsPut:
+    if scope == "tier":
+        return EngineEffortsPut(tiers={key: level})
+    if scope == "task":
+        return EngineEffortsPut(tasks={key: level})
+    raise HTTPException(status_code=422, detail=f"unknown scope: {scope} (task or tier)")
+
+
 async def _refuse_off_engine(
     store: SqlSettingsStore | None,
     model: local_catalog.LocalModel,
@@ -2028,13 +2210,27 @@ async def _warm_identity(
     once per fingerprint) ever gets; when the file already exists it is an LRU touch, not
     a rewrite. All hooks are best-effort and None-tolerant."""
     stored: str | None = None
+    engine_level: str | None = None
     if settings_store is not None:
         with contextlib.suppress(Exception):
             entry = (await settings_store.llm_task_overrides(queue.SYSTEM_CTX)).get(
                 kv_prefix_mod.AGENT_TURN_TASK
             ) or {}
             stored = entry.get("reasoning_effort")
-    effort = llm_router.warm_reasoning_effort(kv_prefix_mod.AGENT_TURN_TASK, served_model, stored)
+        # The level a routed turn would carry on this model's engine, so a Flash-Next warm
+        # renders the same leading tokens as the turn it warms for.
+        engine = local_catalog.engine_of(served_model)
+        if engine != engines.STANDARD:
+            with contextlib.suppress(Exception):
+                efforts = await settings_store.llm_engine_efforts(queue.SYSTEM_CTX)
+                engine_level, _scope = efforts.resolve(
+                    engine,
+                    kv_prefix_mod.AGENT_TURN_TASK,
+                    task_tier(kv_prefix_mod.AGENT_TURN_TASK),
+                )
+    effort = llm_router.warm_reasoning_effort(
+        kv_prefix_mod.AGENT_TURN_TASK, served_model, stored, engine_level
+    )
     before_warm: Callable[[], Awaitable[object]] | None = None
     after_warm: Callable[[int], Awaitable[object]] | None = None
     if kv_prefix is not None and registry is not None:
@@ -2483,3 +2679,47 @@ async def update_llm_settings(
     gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
     return await apply_overrides(body, settings, store, ctx_for(principal), gateway)
+
+
+@router.put("/settings/llm/engine-effort/{engine}")
+async def put_engine_efforts(
+    engine: str,
+    body: EngineEffortsPut,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Set and clear several tier/task levels on `engine` at once (null clears)."""
+    return await apply_engine_efforts(engine, body, settings, store, ctx_for(principal), gateway)
+
+
+@router.put("/settings/llm/engine-effort/{engine}/{scope}/{key}")
+async def put_engine_effort(
+    engine: str,
+    scope: str,
+    key: str,
+    body: EngineEffortIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Set one task's or tier's level on `engine` (scope `task` or `tier`)."""
+    one = _one_engine_effort(scope, key, body.effort)
+    return await apply_engine_efforts(engine, one, settings, store, ctx_for(principal), gateway)
+
+
+@router.delete("/settings/llm/engine-effort/{engine}/{scope}/{key}")
+async def delete_engine_effort(
+    engine: str,
+    scope: str,
+    key: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Clear one task's or tier's level on `engine`; clearing one that is not set is a no-op."""
+    one = _one_engine_effort(scope, key, None)
+    return await apply_engine_efforts(engine, one, settings, store, ctx_for(principal), gateway)

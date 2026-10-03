@@ -10,6 +10,8 @@ from datetime import UTC, datetime, timedelta
 from jbrain.auth.service import CapabilityToken, ExternalSession, PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import DeviceInfo, DeviceRole, DeviceScope
+from jbrain.llm.engine_effort import EngineEfforts
+from jbrain.llm.engine_effort import invalidate_cached as invalidate_engine_effort_cache
 from jbrain.locations.pairing import CODE_TTL, RedeemedDevice
 
 
@@ -423,6 +425,21 @@ class FakeSettingsStore:
     """In-memory app.settings: the same default semantics as the SQL store."""
 
     values: dict[str, object] = field(default_factory=dict)
+    # app.llm_engine_effort, which is its own table rather than a settings key.
+    engine_effort_rows: dict[tuple[str, str, str], str] = field(default_factory=dict)
+
+    async def llm_engine_efforts(self, ctx: object) -> EngineEfforts:
+        return EngineEfforts(dict(self.engine_effort_rows))
+
+    async def set_llm_engine_efforts(
+        self, ctx: object, changes: dict[tuple[str, str, str], str | None]
+    ) -> None:
+        for row, effort in changes.items():
+            if effort is None:
+                self.engine_effort_rows.pop(row, None)
+            else:
+                self.engine_effort_rows[row] = effort
+        invalidate_engine_effort_cache()
 
     async def get(self, ctx: object, key: str, default: object = None) -> object:
         return self.values.get(key, default)
