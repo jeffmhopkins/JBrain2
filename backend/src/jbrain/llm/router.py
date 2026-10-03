@@ -29,6 +29,7 @@ from jbrain.llm import local_catalog, model_sampling, prefill
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError, LlmStreamTruncatedError
 from jbrain.llm.openai_compat import OpenAiCompatClient
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     AssistantMessage,
@@ -747,7 +748,11 @@ class LlmRouter:
         return resolved
 
     async def context_window(
-        self, task: str, strength: str | None = None, spec_override: str | None = None
+        self,
+        task: str,
+        strength: str | None = None,
+        spec_override: str | None = None,
+        slot_role: SlotRole | None = None,
     ) -> int:
         """The total context window (tokens) the `task` will actually run against
         after live overrides — the denominator for the PWA's context-usage meter. A
@@ -862,6 +867,7 @@ class LlmRouter:
         strength: str | None = None,
         spec_override: str | None = None,
         sampling: Sampling | None = None,
+        slot_role: SlotRole | None = None,
     ) -> LlmResult:
         # `spec_override` is the per-call model pick (the omnibox's per-conversation
         # agent model) — same precedence as in converse_stream, so a background
@@ -933,6 +939,7 @@ class LlmRouter:
         effort_override: str | None = None,
         spec_override: str | None = None,
         sampling: Sampling | None = None,
+        slot_role: SlotRole | None = None,
     ) -> LlmTurn:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
@@ -1000,6 +1007,7 @@ class LlmRouter:
         effort_override: str | None = None,
         spec_override: str | None = None,
         sampling: Sampling | None = None,
+        slot_role: SlotRole | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks

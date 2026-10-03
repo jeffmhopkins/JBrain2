@@ -24,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 
 from jbrain.llm import engine as engines
+from jbrain.llm import slot_roles
 from jbrain.llm.types import Sampling
 
 # The router spec for a local model is always "local:<served_model>": the local
@@ -453,6 +454,11 @@ class LocalModel:
     # A catalog-pinned `--ctx-checkpoints` count, 0 for the measured/unmeasured rule in
     # `ctx_checkpoints()`. Set only where a plan fixed the count against a derived cost.
     served_ctx_checkpoints: int = 0
+    # One shared `--kv-unified` pool with a role pinned to each slot (FLASH_NEXT_ENGINE_PLAN
+    # §4a), or None for the even per-slot split every standard entry serves. When set, it — not
+    # the context window or slot count — is the served shape, and `default_slots` equals its
+    # slot count.
+    kv_pool: slot_roles.KvPool | None = None
 
     @property
     def spec(self) -> str:
@@ -1223,8 +1229,9 @@ CATALOG: tuple[LocalModel, ...] = (
         checkpoint_gb=0.11,
         served_ctx_checkpoints=8,
         engine=engines.FLASH_NEXT,
-        # Slots are role-pinned prefix caches here (persona, ingest, agents, jcode — §4a).
-        default_slots=4,
+        # Slots are role-pinned prefix caches over one shared pool (§4a).
+        default_slots=slot_roles.FLASH_NEXT_POOL.n_slots,
+        kv_pool=slot_roles.FLASH_NEXT_POOL,
         file_backed_gb=_FLASH_NEXT_FILE_BACKED_GB,
         extra_server_args=(
             # Map the GGUF instead of reading it: the engram table must stay file-backed.
@@ -1313,6 +1320,12 @@ def get_by_served(served_model: str) -> LocalModel | None:
     """The catalog entry a gateway `served_model` name maps to, or None for a served
     name outside the catalog (an operator serving something unlisted)."""
     return _BY_SERVED.get(served_model)
+
+
+def pool_of(served_model: str) -> slot_roles.KvPool | None:
+    """The shared KV pool `served_model` serves, or None when its slots split `-c` evenly."""
+    model = _BY_SERVED.get(served_model)
+    return model.kv_pool if model is not None else None
 
 
 def engine_of(served_model: str) -> engines.Engine:
