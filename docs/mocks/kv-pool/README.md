@@ -2,9 +2,11 @@
 
 > **Status:** Plan · **Last verified:** 2026-10-03
 >
-> **Awaiting owner pick** among A, B and C. The chosen mock becomes the binding spec and
-> the other two are kept as the rivals. The reasoning lands in `docs/reference/DESIGN.md`
-> with the F3b frontend. Behaviour source: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`.
+> **Decided 2026-10-03: C — one quiet row line with eight slot ticks and "View slots →",
+> opening a bottom sheet** is the binding spec (`c-slot-sheet.html`); A and B are kept as the
+> rivals. Chosen because it keeps the model row as short as its neighbours while the whole
+> pool is one tap away. The reasoning lands in `docs/reference/DESIGN.md` with the F3b
+> frontend. Behaviour source: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`.
 
 Three interactive mocks of the **Flash-Next row** in **LLM settings → On-box models**.
 Flash-Next serves **one shared 1,048,576-token KV pool** across **8 role-pinned slots**.
