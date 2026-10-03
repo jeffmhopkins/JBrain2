@@ -108,16 +108,55 @@ async def test_jmolts_context_sees_nothing_and_cannot_write(maker: async_session
     assert dict((await store.llm_engine_efforts(owner)).rows) == {(FLASH, "tier", "high"): "high"}
 
 
-async def test_the_checks_refuse_an_unknown_scope_or_level(maker: async_sessionmaker) -> None:
+def _intruders(owner: SessionContext) -> list[SessionContext]:
+    assert owner.principal_id is not None
+    return [NON_OWNER, jmolt_run_context(owner.principal_id)]
+
+
+async def test_an_intruder_cannot_overwrite_an_existing_row(maker: async_sessionmaker) -> None:
+    """The ON CONFLICT DO UPDATE path, on a key the owner already set: the conflicting row is
+    invisible to the intruder, so the upsert's insert half is what the policy sees — and
+    refuses. Either way the owner's level must survive."""
     owner = await _owner(maker)
-    for scope, effort in (("model", "low"), ("task", "xhigh")):
+    store = SqlSettingsStore(maker)
+    await store.set_llm_engine_efforts(owner, {(FLASH, "task", "agent.turn"): "high"})
+    for intruder in _intruders(owner):
+        with pytest.raises(ProgrammingError):
+            await store.set_llm_engine_efforts(intruder, {(FLASH, "task", "agent.turn"): "none"})
+    assert dict((await store.llm_engine_efforts(owner)).rows) == {
+        (FLASH, "task", "agent.turn"): "high"
+    }
+
+
+async def test_an_intruder_cannot_delete_a_row(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    store = SqlSettingsStore(maker)
+    await store.set_llm_engine_efforts(owner, {(FLASH, "tier", "medium"): "low"})
+    for intruder in _intruders(owner):
+        # RLS hides the row, so the DELETE matches nothing: a silent no-op, never a removal.
+        await store.set_llm_engine_efforts(intruder, {(FLASH, "tier", "medium"): None})
+        async with scoped_session(maker, intruder) as session:
+            gone = await session.execute(text("DELETE FROM app.llm_engine_effort"))
+        assert gone.rowcount == 0  # type: ignore[attr-defined]
+    assert dict((await store.llm_engine_efforts(owner)).rows) == {(FLASH, "tier", "medium"): "low"}
+
+
+async def test_the_checks_refuse_an_unknown_engine_scope_or_level(
+    maker: async_sessionmaker,
+) -> None:
+    owner = await _owner(maker)
+    for engine, scope, effort in (
+        ("standard", "task", "low"),
+        ("flash-next", "model", "low"),
+        ("flash-next", "task", "xhigh"),
+    ):
         with pytest.raises(DBAPIError):
             async with scoped_session(maker, owner) as session:
                 await session.execute(
                     text(
                         "INSERT INTO app.llm_engine_effort (engine, scope, key, effort)"
-                        " VALUES ('flash-next', :scope, 'agent.turn', :effort)"
+                        " VALUES (:engine, :scope, 'agent.turn', :effort)"
                     ),
-                    {"scope": scope, "effort": effort},
+                    {"engine": engine, "scope": scope, "effort": effort},
                 )
     assert await _count(maker, owner) == 0

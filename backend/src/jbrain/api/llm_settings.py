@@ -24,7 +24,7 @@ from jbrain import box_events, queue
 from jbrain.agent.agents import AGENTS
 from jbrain.agent.priming import jerv_prime_inputs, jerv_prime_spec
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.api.deps import PrincipalDep, SettingsDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
@@ -245,6 +245,10 @@ class EngineEffortOut(BaseModel):
     active: bool
     # The levels the engine's model honors, in display order.
     levels: list[str]
+    # What a task with NO level runs at on this engine: no level is sent, so the model's own
+    # template default applies (Flash-Next: thinking on, at our `high`). A null `effective`
+    # below means this, not "low" or "off". Null when the catalog does not say.
+    model_default: str | None = None
     tiers: list[EngineEffortTierOut]
     tasks: list[EngineEffortTaskOut]
 
@@ -759,6 +763,7 @@ async def _engine_efforts_info(
             label=engines.LABEL[engine],
             active=engine == active,
             levels=list(levels),
+            model_default=engine_effort.model_default(engine),
             tiers=tiers,
             tasks=tasks,
         )
@@ -2085,18 +2090,12 @@ class EngineEffortIn(BaseModel):
     effort: str
 
 
-async def apply_engine_efforts(
-    engine: str,
-    body: EngineEffortsPut,
-    settings: Settings,
-    store: SqlSettingsStore,
-    ctx: SessionContext,
-    gateway: LocalGatewayClient,
-) -> LlmSettingsOut:
-    """Validate every change, then write them in one transaction and return the snapshot.
-    Shared by the owner routes and the debug console. 422 — and nothing written — for an
-    engine without levels, an unknown tier or task (or the hidden title task, which follows
-    the chat model), or a level the engine's model does not honor."""
+def validate_engine_efforts(
+    engine: str, body: EngineEffortsPut
+) -> dict[engine_effort.RowKey, str | None]:
+    """The rows `body` would write on `engine`, or a 422 for the first bad entry: an engine
+    without levels, an unknown tier or task (or the hidden title task, which follows the chat
+    model), or a level the engine's model does not honor. Writes nothing."""
     if engine not in engines.ENGINES:
         raise HTTPException(status_code=422, detail=f"unknown engine: {engine}")
     target = cast(engines.Engine, engine)
@@ -2119,6 +2118,20 @@ async def apply_engine_efforts(
                     detail=f"{engines.LABEL[target]} takes {', '.join(levels)}; not {level!r}",
                 )
             changes[(target, scope, key)] = level
+    return changes
+
+
+async def apply_engine_efforts(
+    engine: str,
+    body: EngineEffortsPut,
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+) -> LlmSettingsOut:
+    """Validate every change, then write them in one transaction and return the snapshot.
+    Shared by the owner routes and the debug console; a 422 writes nothing."""
+    changes = validate_engine_efforts(engine, body)
     if changes:
         await store.set_llm_engine_efforts(ctx, changes)
     return await _snapshot(settings, store, ctx, gateway)
@@ -2685,7 +2698,7 @@ async def update_llm_settings(
 async def put_engine_efforts(
     engine: str,
     body: EngineEffortsPut,
-    principal: PrincipalDep,
+    principal: OwnerDep,
     settings: SettingsDep,
     store: SettingsStoreDep,
     gateway: LocalGatewayDep,
@@ -2700,7 +2713,7 @@ async def put_engine_effort(
     scope: str,
     key: str,
     body: EngineEffortIn,
-    principal: PrincipalDep,
+    principal: OwnerDep,
     settings: SettingsDep,
     store: SettingsStoreDep,
     gateway: LocalGatewayDep,
@@ -2715,7 +2728,7 @@ async def delete_engine_effort(
     engine: str,
     scope: str,
     key: str,
-    principal: PrincipalDep,
+    principal: OwnerDep,
     settings: SettingsDep,
     store: SettingsStoreDep,
     gateway: LocalGatewayDep,

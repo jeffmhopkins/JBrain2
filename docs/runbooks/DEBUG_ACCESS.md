@@ -186,7 +186,9 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   an unknown or hidden task, an unknown tier, or an engine without levels (`standard`). Applied
   only to a call that runs on Flash-Next; Standard routing never reads them, and a per-call
   `effort_override` (an agent turn's picked level) still wins. Read back in `GET /api/debug/llm`
-  → `engine_efforts["flash-next"]` (`levels`, `tiers[]` with `level`/`default`, `tasks[]` with
+  → `engine_efforts["flash-next"]` (`levels`, `model_default` — what an unset task really runs
+  at, since no level is sent and Qwen3.8's template then thinks at `xhigh`, our `high` —
+  `tiers[]` with `level`/`default`, `tasks[]` with
   `level`/`fallback`/`fallback_source`/`effective`/`applies`).
 - `GET /api/debug/llm` reports `local_llm_timeout_s`, the client-side ceiling on a local call.
   REPORTED, not settable (it is env-only). It is here because it masquerades as a hung model: a

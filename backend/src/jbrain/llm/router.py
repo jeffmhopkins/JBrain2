@@ -775,7 +775,7 @@ class LlmRouter:
             return effort
         try:
             efforts = await self._engine_efforts_loader()
-        except Exception:  # noqa: BLE001 — a settings hiccup must never fail a routed call
+        except Exception:  # noqa: BLE001 — EngineEffortCache never raises; a bare loader might
             return effort
         level, _scope = efforts.resolve(engine, task, task_tier(task))
         return level if level is not None else effort

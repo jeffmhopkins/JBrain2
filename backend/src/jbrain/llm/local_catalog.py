@@ -38,6 +38,8 @@ LOCAL_PROVIDER = "local"
 # four settings levels map onto its three: "none" is the toggle (thinking off, so it never
 # appears here) and the rest step up. Shared by the Qwen3.8 twins so they can't drift apart.
 QWEN38_EFFORT_LEVELS: dict[str, str] = {"low": "low", "medium": "medium", "high": "xhigh"}
+# The level that template applies when a call sends none (see above).
+QWEN38_TEMPLATE_DEFAULT_EFFORT = "xhigh"
 
 # Qwen3.8-27B is NOT a plain dense transformer: its config declares `full_attention_interval:
 # 4`, so of 64 layers only 16 are full attention and the other 48 are Gated DeltaNet (linear
@@ -318,6 +320,11 @@ class LocalModel:
     # that is still correct for the Qwen3.5/3.6-era hybrids, whose templates ignore the field.
     # Keys are our levels; "none" never appears — it turns thinking off via the toggle.
     thinking_effort_map: dict[str, str] = field(default_factory=dict)
+    # The template level a hybrid runs at when a call carries NO effort: the adapter then sends
+    # neither the toggle nor a level (`openai_compat.apply_local_reasoning`, a None effort is a
+    # no-op), so the chat template's own default applies — thinking on, at this level. Reported
+    # so the settings screen can say what "unset" really runs at; "" = unknown / not a hybrid.
+    template_default_effort: str = ""
     # This reasoner has NO real "reasoning off" — its lowest honored level is `low`, and a
     # routed "none" must be sent as `low` rather than "none". gpt-oss is the case: llama.cpp
     # turns `reasoning_effort:"none"` into `enable_thinking=false` + an ERASED effort, but the
@@ -794,6 +801,7 @@ CATALOG: tuple[LocalModel, ...] = (
         reasoning_format="deepseek",
         hybrid_thinking=True,
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
+        template_default_effort=QWEN38_TEMPLATE_DEFAULT_EFFORT,
         # Native 262k (YaRN-extensible to ~1M upstream); serves the conservative gateway
         # default with the native window as the picker's ceiling.
         native_context_window=262144,
@@ -875,6 +883,7 @@ CATALOG: tuple[LocalModel, ...] = (
         reasoning_format="deepseek",
         hybrid_thinking=True,
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
+        template_default_effort=QWEN38_TEMPLATE_DEFAULT_EFFORT,
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
@@ -959,6 +968,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # here: without it every thinking call runs at xhigh, and a wrong level is a hard error
         # rather than a silent ignore.
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
+        template_default_effort=QWEN38_TEMPLATE_DEFAULT_EFFORT,
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
@@ -1218,6 +1228,7 @@ CATALOG: tuple[LocalModel, ...] = (
         reasoning_format="deepseek",
         hybrid_thinking=True,
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
+        template_default_effort=QWEN38_TEMPLATE_DEFAULT_EFFORT,
         # The longest single sequence: any slot may grow to `n_ctx_train` inside the pool. The
         # served shape is `kv_pool`, which the window and slot overrides cannot change; each
         # role's own limit is its pool cap (slot_roles).
