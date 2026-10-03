@@ -108,7 +108,9 @@ def estimate_tokens(served_model: str, prompt_chars: int) -> float:
     return prompt_chars / _ratio.get(served_model, _DEFAULT_CHARS_PER_TOKEN)
 
 
-def _fraction(slots: Sequence[dict[str, object]], estimated_tokens: float) -> float | None:
+def _fraction(
+    slots: Sequence[dict[str, object]], estimated_tokens: float, slot_id: int | None = None
+) -> float | None:
     """The busy slot's prefill fraction, or None when nothing is prefilling.
 
     Both halves of the division are about the work THIS request has to do, which on an agent
@@ -134,10 +136,15 @@ def _fraction(slots: Sequence[dict[str, object]], estimated_tokens: float) -> fl
     None covers the states that all mean "do not draw a bar": no slot is busy, the busy one
     is already generating (`n_decoded` past zero), the body did not carry the counter (a
     build whose field names moved — this box floats on a digest off master, so the rename is
-    a when), or the prefix accounts for the whole prompt, which leaves nothing to divide by."""
+    a when), or the prefix accounts for the whole prompt, which leaves nothing to divide by.
+
+    `slot_id` names the slot a pinned turn runs in. On a pooled model several slots can be busy
+    at once, and the first busy one is as likely to be a background job as this turn."""
     if estimated_tokens <= 0:
         return None
     for slot in slots:
+        if slot_id is not None and slot.get("id") != slot_id:
+            continue
         if not slot.get("is_processing"):
             continue
         next_token = slot.get("next_token")
@@ -177,6 +184,7 @@ async def _poll(
     on_progress: Callable[[float], Awaitable[None]],
     arrived: asyncio.Event,
     first_delay: float,
+    slot_id: int | None = None,
 ) -> None:
     """Read `/slots` on a cadence until the turn produces something, publishing what it finds."""
     if await _answered_within(arrived, first_delay):
@@ -190,7 +198,7 @@ async def _poll(
             # from a box that never went slow, which is the failure this module exists to end.
             log.warning("llm.prefill_read_failed", model=served_model, exc_info=True)
             return
-        fraction = _fraction(slots, estimated_tokens)
+        fraction = _fraction(slots, estimated_tokens, slot_id)
         if fraction is not None:
             with contextlib.suppress(Exception):
                 await on_progress(fraction)
@@ -206,6 +214,7 @@ async def watch(
     prompt_chars: int,
     on_progress: Callable[[float], Awaitable[None]] | None = None,
     first_delay: float | None = None,
+    slot_id: int | None = None,
 ) -> AsyncIterator[Callable[[], None]]:
     """Publish how far `served_model` has got through its prompt, while it is still eating it.
 
@@ -229,6 +238,7 @@ async def watch(
             on_progress,
             arrived,
             _FIRST_DELAY_S if first_delay is None else first_delay,
+            slot_id,
         )
     )
     try:

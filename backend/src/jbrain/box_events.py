@@ -87,6 +87,11 @@ LEDGER_REFUSAL = "ledger_refusal"
 # failure otherwise exists only in `app.jobs.last_error`, which no owner surface projects.
 JOB_REFUSED_NO_ROOM = "job_refused_no_room"
 
+# A background job failed for good because its prompt plus output overruns the cap of the
+# slot its task is pinned to on a pooled model (jbrain.llm.slot_roles). Same reason to be a
+# row as the one above: it is the only trace the owner gets.
+JOB_TOO_LONG_FOR_SLOT = "job_too_long_for_slot"
+
 # The jerv prompt cache moving between a slot and disk (jbrain.llm.kv_prefix): a save is
 # rare (once per prefix change), a restore is the ~2 s that replaced a ~60 s prefill —
 # both owner-visible because the wait they explain lands on the owner's own turn.
