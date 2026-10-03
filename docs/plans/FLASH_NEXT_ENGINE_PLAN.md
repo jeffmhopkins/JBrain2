@@ -465,7 +465,7 @@ per-task marker follow the owner's choice of mock (the GUI gate).
   the active engine's model for an old name, `loadable_now`, the nightly guard (pure + real
   Postgres), the box event.
 
-### F3b — Slot affinity, the 1M shared pool, per-role prefix priming ◻️
+### F3b — Slot affinity, the 1M shared pool ◻️ (built; on-box re-measure pending)
 Scope changed 2026-10-03 (owner): the 512k/5-slot reservations became a 1M pool over 8 slots
 with per-slot caps and a pool guard (§4a).
 - Slot affinity: `id_slot` through the provider protocol and `openai_compat` (rule 1), chosen
@@ -476,7 +476,14 @@ with per-slot caps and a pool guard (§4a).
   changes for it and reports the slot table.
 - Caps at the router and the jcode proxy (clamp or refuse, `SlotCapError`), the live slot-count
   check, and the pool guard (evict idle slots in our order, bounded wait).
-- Per-role prefix priming into each pinned slot (the in-memory half; the disk layer is F4).
+- ~~Per-role prefix priming~~ — **dropped 2026-10-03** after review: the ingest and pet prefixes
+  are ~400–500 tokens (under a second of prefill, and the slot keeps the last real call's prefix
+  anyway), and the scheduled-task prime is a ~60 s jerv prefill nobody waits on that competed with
+  the owner right after a load. Only the interactive (slot 0) prime remains, now pinned; F4's disk
+  layer is where per-role prefixes would come back if a measured one earns it.
+- Load admission: booked at the F2 fit (~88 GiB on the GPU); context checkpoints (host-only,
+  lazily filled, up to ~7 GiB) stay in the footprint but out of the load charge, so a switch
+  needs ~94 GiB free — close to the 4×262k layout's ~89 GiB rather than ~103.
 - PWA: a read-only pool view replacing the window/slot pickers for a pool model — **three
   mocks** before code (`PROCESS.md`).
 - Re-measure on the box with every slot filled to its cap (the worst case, ~88 GiB predicted).

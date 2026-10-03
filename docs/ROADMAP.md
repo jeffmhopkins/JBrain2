@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-01
+> **Status:** Living · **Last verified:** 2026-10-03
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -614,8 +614,10 @@ W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropi
 (text + image) as a switchable second local-LLM engine in its own container, either/or with the standard
 gateway and operated entirely from the PWA. F1 shipped (engine-aware container, provisioning, one-engine
 guards, no-terminal debug tooling) and F3a (the owner's Ops engine switch, drain, remap of every
-local call). F2's on-box spike is mostly measured (memory fit, speed, tools, JSON, prefix reuse,
-perplexity, a clean 30-min soak); vision and the full soak remain. F3b (reserved 512k pool) is next.
+local call). F2's on-box spike is measured (memory fit, speed, tools, JSON, prefix reuse,
+perplexity, vision, a clean 30-min soak); only the second half of the soak remains. F3b (one 1M
+`--kv-unified` pool over 8 role-pinned slots, per-slot caps, a router pool guard, the PWA pool view)
+is built; its on-box re-measure follows the merge.
 
 **In progress:** Tool catalog (build plan: `docs/plans/TOOL_CATALOG_PLAN.md`) — a scalable tool
 surface for jerv's growing tool count: DISCOVERY (compact menu) split from INVOCATION-SCHEMA
