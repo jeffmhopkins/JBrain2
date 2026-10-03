@@ -15,7 +15,9 @@ from jbrain.llm.kv_pool_guard import LAYOUT_TTL_S, NO_ERASE_TTL_S, KvPoolBusyErr
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotCapError, SlotRole
 
-POOL = FLASH_NEXT_POOL
+# The guard's arithmetic is pinned to a fixed 1M pool so these numbers don't move when the
+# shipped pool is resized.
+POOL = dataclasses.replace(FLASH_NEXT_POOL, n_ctx=1_048_576)
 MODEL = "qwen3.8-flash-next"
 
 

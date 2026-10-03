@@ -24,7 +24,7 @@ upstream source and published measurements). §10 records what they changed.
 | Container | New `flash-next` compose profile, own image, own llama-swap config. Never co-resident with `local-llm`. |
 | Switching | PWA (Ops), no terminal. Drain → swap → smoke test → automatic rollback on failure. |
 | Routing | **Remap all calls**, inside the API — not by model-name aliases at the gateway (§4c). |
-| Slots | **8 role-pinned slots sharing one 1,048,576-cell (1M) `--kv-unified` pool**, each with a router-enforced per-slot **cap** (jerv 256k, ingest 128k, scheduled 256k, research 256k, jcode 256k, wiki/notes/intake 128k, pet 32k, small prompts 64k — §4a). Caps oversubscribe the pool; a router **pool guard** frees idle slots in a fixed eviction order before the pool could overrun. Slots exist to **keep each hot prompt's prefix warm**, not for concurrency. Decided 2026-10-03 (superseding the 2026-10-01 512k/5-slot layout): the same cells as the 4×262k layout run live, with one slot per frequently-used prefix. |
+| Slots | **8 role-pinned slots sharing one 524,288-cell (512k) `--kv-unified` pool**, each with a router-enforced per-slot **cap** (jerv 256k, ingest 128k, scheduled 256k, research 256k, jcode 256k, wiki/notes/intake 128k, pet 32k, small prompts 64k — §4a). Caps oversubscribe the pool; a router **pool guard** frees idle slots in a fixed eviction order before the pool could overrun. Slots exist to **keep each hot prompt's prefix warm**, not for concurrency. Decided 2026-10-03 (superseding the 2026-10-01 512k/5-slot layout): the same cells as the 4×262k layout run live, with one slot per frequently-used prefix. |
 | Checkpoints | **8 per slot** to start; 16 only once F2 has measured their real cost (§3). |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector (904 MB). |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
@@ -100,6 +100,13 @@ predicts ~88.2 GiB full, and sitting 1 read 96.9). The point is more warm prefix
 ones: slot count costs ~nothing, so each frequently-used prompt gets its own slot. F3b's
 re-measure fills every slot to its cap to settle the true worst case before it ships.
 
+**Resized to 512k on deploy (2026-10-03):** the 1M pool never loaded on the box. A
+`--kv-unified` pool allocates all its cells at load (the 4×262k layout grew into its cells as
+they filled), and with the GGUF streaming through page cache at the same time host free memory
+fell to 5.3 GB, under the load guard's 6 GB floor, so the guard aborted every load. 512k cells is
+the 2×262k size measured loading cleanly at 74.2 GiB; the 8 slots and their caps are unchanged —
+the caps now oversubscribe the pool further, which the pool guard is built for.
+
 ## 3. Memory budget (derived — F2 replaces it with a measurement)
 
 Read from the UD-IQ4_XS GGUF headers and llama.cpp master: 48 layers, 12 full-attention
@@ -155,7 +162,7 @@ from the measured `disk_gb`, and the page-cache drop skips mmapped tensors.
   this engine — catalog `extra_server_args` do not supersede base flags today; only
   operator args do), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
   4 GiB binding limit; GPU placement aborted for Soot/Silicon), `--lazy-mode on`,
-  `-np 8 --kv-unified -c 1048576 --slot-save-path …` (one shared pool; no single sequence may exceed
+  `-np 8 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
   `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
   `--ctx-checkpoints 8 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the
   existing `--image-min-tokens` floor.
@@ -163,7 +170,7 @@ from the measured `disk_gb`, and the page-cache drop skips mmapped tensors.
   context; our one-slot rule for speculation is our own (`llama_swap_config.py`), and the
   evidence on multi-slot MTP conflicts (#27836 reported cross-slot contamination and a net
   loss on Vulkan; a fork reported 40→47 tok/s). A later wave can measure it.
-- **Slots:** a catalog `kv_pool` (8 slots, 1M cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
+- **Slots:** a catalog `kv_pool` (8 slots, 512k cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
   `residency._slots` and the served shape. The settings cap `PARALLEL_SLOTS_MAX = 2`
   (`api/llm_settings.py`) becomes per-model.
 
@@ -211,7 +218,7 @@ the live slot count and sends unpinned (still capped) on a mismatch.
 | 5 | Wiki, note conversations, guided intake, video summaries, unknown tasks | 128k (131,072) | 3rd |
 | 6 | jpanel kid pet (`pet.*`); overflows to slot 7 when busy | 32k (32,768) | 2nd |
 | 7 | Small prompts: titles, `triage.classify`, one-shot vision reads, probes | 64k (65,536) | first |
-| | **Pool** | **1M (1,048,576)** | `--kv-unified -c 1048576` |
+| | **Pool** | **512k (524,288)** | `--kv-unified -c 524288` |
 
 `agent.turn` is shared by the chat and every background agent, so the task name alone cannot
 pick the slot: background callers name their role (`slot_role`), and an unnamed `agent.turn`
@@ -474,13 +481,13 @@ per-task marker follow the owner's choice of mock (the GUI gate).
   the active engine's model for an old name, `loadable_now`, the nightly guard (pure + real
   Postgres), the box event.
 
-### F3b — Slot affinity, the 1M shared pool ◻️ (built; on-box re-measure pending)
-Scope changed 2026-10-03 (owner): the 512k/5-slot reservations became a 1M pool over 8 slots
+### F3b — Slot affinity, the shared 512k pool ◻️ (shipped #1550; resized to 512k on deploy; on-box re-measure pending)
+Scope changed 2026-10-03 (owner): the 512k/5-slot reservations became a 1M pool over 8 slots (resized to 512k on deploy, §3a)
 with per-slot caps and a pool guard (§4a).
 - Slot affinity: `id_slot` through the provider protocol and `openai_compat` (rule 1), chosen
   by task name or the caller's `slot_role`; the jcode proxy pins slot 4; direct gateway calls
   (load prime, probes) pinned too.
-- The pool: `-np 8 --kv-unified -c 1048576 --slot-save-path …`, saved window/slot overrides
+- The pool: `-np 8 --kv-unified -c 524288 --slot-save-path …` (1M as first shipped; see §3a), saved window/slot overrides
   ignored for it, the budget charging the pool once; the settings API refuses slot/window
   changes for it and reports the slot table.
 - Caps at the router and the jcode proxy (clamp or refuse, `SlotCapError`), the live slot-count
@@ -495,12 +502,12 @@ with per-slot caps and a pool guard (§4a).
   anyway), and the scheduled-task prime is a ~60 s jerv prefill nobody waits on that competed with
   the owner right after a load. Only the interactive (slot 0) prime remains, now pinned; F4's disk
   layer is where per-role prefixes would come back if a measured one earns it.
-- Load admission: booked at the F2 fit (~88 GiB on the GPU); context checkpoints (host-only,
+- Load admission: booked at the F2 fit (~74 GiB on the GPU at 512k); context checkpoints (host-only,
   lazily filled, up to ~7 GiB) stay in the footprint but out of the load charge, so a switch
-  needs ~94 GiB free — close to the 4×262k layout's ~89 GiB rather than ~103.
+  needs ~80 GiB free (it was ~94 at 1M).
 - PWA: a read-only pool view replacing the window/slot pickers for a pool model — **three
   mocks** before code (`PROCESS.md`).
-- Re-measure on the box with every slot filled to its cap (the worst case, ~88 GiB predicted).
+- Re-measure on the box with every slot filled to its cap (the worst case, ~74 GiB predicted).
 - Tests: caps per role, clamp and refusal, eviction order, layout mismatch, pool flags rendered,
   slot selection per task and caller, every pool-model request pinned, engine-aware jcode
   power-on.

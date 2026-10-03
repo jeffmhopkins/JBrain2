@@ -1092,7 +1092,7 @@ def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
     assert _value(tokens, "--lazy-mode") == "on"
     assert _value(tokens, "-ngl") == "999"
     assert _value(tokens, "-np") == "8"
-    assert _value(tokens, "-c") == "1048576"
+    assert _value(tokens, "-c") == "524288"
     assert tokens.count("--kv-unified") == 1
     assert _value(tokens, "-ctk") == "q8_0" and _value(tokens, "-ctv") == "q8_0"
     assert _value(tokens, "-fa") == "1"
@@ -1122,7 +1122,7 @@ def test_flash_next_ignores_saved_window_and_slot_overrides(tmp_path: Path) -> N
         windows={"qwen3.8-flash-next": 65536},
     )
     tokens = _cmd(text, "qwen3.8-flash-next")
-    assert _value(tokens, "-np") == "8" and _value(tokens, "-c") == "1048576"
+    assert _value(tokens, "-np") == "8" and _value(tokens, "-c") == "524288"
     assert "--kv-unified" in tokens
 
 
@@ -1236,7 +1236,7 @@ def test_cli_engine_flag_writes_that_engines_file(
     text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
     assert "qwen3.8-flash-next" in text and "gpt-oss-120b" not in text
     # The pool survives the JSON manifest round-trip the deploy CLI reads.
-    assert "-c 1048576" in text and "-np 8 --kv-unified" in text
+    assert "-c 524288" in text and "-np 8 --kv-unified" in text
     assert not (tmp_path / "llama-swap.yaml").exists()
     assert llama_swap_config._main(["--engine", "standard", str(tmp_path)]) == 0
     assert "qwen3.8-flash-next" not in (tmp_path / "llama-swap.yaml").read_text()

@@ -177,11 +177,11 @@ _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
 # fit instead of 1.6 GiB above it, without dropping the vision term the other entries carry:
 #
 #   88.1 on disk - 28.4 = 59.7 weights + 0.47 vision = 60.2 fixed (the fit's)
-#   + 28.0 KV for the 1M pool (3.5 x 8)               = 88.2 device (the fit's 88.2)
-#   + 7.0 host-only checkpoints (8 per slot x 8 x 0.11) = 95.2 footprint (eviction and meter)
+#   + 14.0 KV for the 512k pool (3.5 x 4)             = 74.2 device (the fit's 74.2)
+#   + 7.0 host-only checkpoints (8 per slot x 8 x 0.11) = 81.2 footprint (eviction and meter)
 #
 # A load is admitted on the device figure alone — see `_lazy_checkpoints` — so with the 6 GiB
-# floor it needs ~94.2 GiB free.
+# floor it needs ~80 GiB free.
 _FLASH_NEXT_FILE_BACKED_GB = 28.4
 
 
@@ -1211,9 +1211,9 @@ CATALOG: tuple[LocalModel, ...] = (
         note="125B MoE (~6B active) + a 51B n-gram engram table, text + vision — a hybrid "
         "reasoner meant to replace the gpt-oss-120b + Qwen3.8-27B pair on its own engine "
         "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container as one shared "
-        "1M-token pool across eight role-pinned slots; never co-resident with the standard "
-        "gateway. ~88 GiB on disk; booked at the measured ~88 GiB on the GPU plus up to 7 GiB "
-        "of host-side prompt checkpoints (~95 GiB in all), and a load needs ~94 GiB free.",
+        "512k-token pool across eight role-pinned slots; never co-resident with the standard "
+        "gateway. ~88 GiB on disk; booked at the measured ~74 GiB on the GPU plus up to 7 GiB "
+        "of host-side prompt checkpoints (~81 GiB in all), and a load needs ~80 GiB free.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,

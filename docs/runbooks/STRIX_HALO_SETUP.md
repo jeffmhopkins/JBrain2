@@ -1402,14 +1402,16 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
 4. **Backing out:** switch back to Standard the same way, then **Uninstall** it in On-box
    models. The next Ops → Update removes its container and image.
 
-Its memory shape is fixed: one shared pool of 1,048,576 tokens (`-c 1048576 -np 8
+Its memory shape is fixed: one shared pool of 524,288 tokens (`-c 524288 -np 8
 --kv-unified`) across eight slots, each kept for one kind of work (chat, ingest, scheduled
 tasks, research, jcode, wiki/notes, the pet, small prompts) so their cached prompts stop
 evicting each other. Its context-window and slot controls do not apply — a change is refused
 with the reason — and each kind of work has its own limit inside the pool. Budgeted at the F2
-measurement (plan §3a): ~88 GiB on the GPU, plus up to 7 GiB of host-side prompt checkpoints
-that appear only as slots fill (~95 GiB in all). A switch admits the load on the GPU figure, so
-it needs ~94 GiB free (88 + the 6 GiB floor) — a box at ~121 GiB with ~15 GiB in use has room.
+measurement (plan §3a): ~74 GiB on the GPU, plus up to 7 GiB of host-side prompt checkpoints
+that appear only as slots fill (~81 GiB in all). A switch admits the load on the GPU figure, so
+it needs ~80 GiB free (74 + the 6 GiB floor). A unified pool allocates all of its cells at load:
+the 1M pool first shipped drove host free memory under the load guard's floor and was aborted
+on every load, which is why the pool is 512k.
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come
