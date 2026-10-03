@@ -731,25 +731,36 @@ untouched.
   next time. So the levels can be set before a switch.
 - **Selects only, since the model is fixed.** Each tier row has a select: *Default · resolved*
   / None / Low / Medium / High, offering only the levels the engine's model honours
-  (`levels`). Tapping a tier opens one select per task. A task's Default option names what it
-  resolves to and where that comes from: *Default · Medium (Standard)* or *(from tier)*. The
-  line under the name says the same, or *Set · High — default would be Medium*. A null level
-  means none is sent and reads *Model default*. A tier's Default names the tasks' shared
-  Standard level, or *per task* when they differ or a tier level is set. Tasks the server
-  places in no tier sit in an **Other** row, which has no tier select.
+  (`levels`). Tapping a tier opens one select per task. A task's Default option names only
+  what it resolves to (*Default · Medium*), so the closed select fits about 150 px at phone
+  width. The line under the name says where it comes from (*Medium · from the Standard pick*
+  or *· from the tier*), or *Set · High — default would be Medium*. A null level means none
+  is sent; it reads *Default · model's own*. A tier's Default names the tasks' shared
+  Standard level, or *per task* when they differ. With a tier level set, it names the tier's
+  bucket default (`default`) instead.
+- **Rows follow the server's tiers** (`tier`), not the tier cards' grouping. JPet's tasks sit
+  in Low here even though the tier cards put them in their synthesized Other group. Tasks the
+  server places in no tier sit in an **Other** row, which has no tier select. The header count
+  covers only the levels the card shows.
 - **Cloud tasks stay put.** Only local picks move to Flash-Next. A cloud-routed task gets no
-  select, just *Intake materialize stays on Grok 4.3 — not on Flash-Next*. While the engine
-  serves this comes from the server's `applies`; otherwise from the task's current route
-  (`effective_spec`). A tier with no local task is left out.
+  select, just a cloud glyph and *Intake materialize stays on Grok 4.3 — not on Flash-Next*.
+  While the engine serves this comes from the server's `applies`. Otherwise it comes from the
+  task's current route (`effective_spec`), or failing that from whether its pick is a local
+  provider. A tier with no local task is left out.
 - **A tier's level leaves task levels in place.** The tier counts them (*1 task · 1 set*), and
   **Reset to tier** clears them in one batch write.
 - **The tier cards are unchanged.** Their *→ Flash-Next (engine active)* marker gains a
-  **reasoning ↑** link. It opens the card and that tier, scrolls to it, and flashes the row
-  once (no flash under reduced motion).
+  **reasoning ↑** link (named *Set {tier} levels on Flash-Next*). It goes to the engine row
+  that the group's remapped tasks really sit in, so the Other card links to Low. It opens the
+  card and that row, scrolls to it, and flashes the row once (no flash under reduced motion).
 - **No optimistic state.** Every write (PUT/DELETE one row, or the batch) returns the whole
-  snapshot, and the selects re-render from it. A refusal (422) shows its detail under that
-  row. The live poll refreshes the levels too, so an engine switch flips the badge, unless a
-  write went out while the read was in flight.
+  snapshot. Only its `engine_efforts` is taken, so the rest of a snapshot cannot revert a
+  Standard edit made meanwhile. A select is locked while its own write is out. A refusal
+  (422) shows its detail under that row, and a task's refusal reopens its tier so the error
+  stays in view.
+- **The live poll refreshes the levels too**, so an engine switch flips the badge. A read is
+  dropped for the levels if any write was sent or settled while it was out (a write epoch
+  bumped on both). Otherwise a stale read could put an old level back for a cycle.
 - **An older server** sends no `engine_efforts`. The card and the links are then absent.
 
 B won because it leaves the existing tier cards untouched and keeps the Flash-Next levels

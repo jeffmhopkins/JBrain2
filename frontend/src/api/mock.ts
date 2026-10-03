@@ -741,7 +741,6 @@ const MOCK_TASK_TIER: Record<string, string> = {
   "fact.adjudicate": "high",
   "entity.disambiguate": "low",
   "correction_note.extract": "medium",
-  "session.title": "low",
   "vision.ocr": "vision",
   "vision.caption": "vision",
 };
@@ -769,21 +768,24 @@ function mockEngineEfforts(): Record<string, EngineEffortInfo> {
         level: MOCK_FLASH_ROWS.tiers[id] ?? null,
         default: bucket(id),
       })),
-      tasks: LLM_SETTINGS.tasks.map((t) => {
-        const tier = MOCK_TASK_TIER[t.id] ?? null;
-        const tierLevel = tier ? (MOCK_FLASH_ROWS.tiers[tier] ?? null) : null;
-        const fallback = tierLevel ?? t.reasoning_effort ?? bucket(tier);
-        const level = MOCK_FLASH_ROWS.tasks[t.id] ?? null;
-        return {
-          id: t.id,
-          tier,
-          level,
-          fallback,
-          fallback_source: tierLevel ? ("tier" as const) : ("standard" as const),
-          effective: level ?? fallback,
-          applies: active && t.provider === "local",
-        };
-      }),
+      // session.title is a mock-only leftover the real server no longer routes.
+      tasks: LLM_SETTINGS.tasks
+        .filter((t) => t.id !== "session.title")
+        .map((t) => {
+          const tier = MOCK_TASK_TIER[t.id] ?? null;
+          const tierLevel = tier ? (MOCK_FLASH_ROWS.tiers[tier] ?? null) : null;
+          const fallback = tierLevel ?? t.reasoning_effort ?? bucket(tier);
+          const level = MOCK_FLASH_ROWS.tasks[t.id] ?? null;
+          return {
+            id: t.id,
+            tier,
+            level,
+            fallback,
+            fallback_source: tierLevel ? ("tier" as const) : ("standard" as const),
+            effective: level ?? fallback,
+            applies: active && t.provider === "local",
+          };
+        }),
     },
   };
 }

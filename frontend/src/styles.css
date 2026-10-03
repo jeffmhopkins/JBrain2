@@ -4264,6 +4264,22 @@ button.small {
   background: var(--rose-tint);
 }
 
+.badge.info {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+
+.badge.off {
+  white-space: nowrap;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
 /* ===== Log viewer ===== */
 
 .log-viewer {
@@ -29228,20 +29244,6 @@ button.wf-sigpill {
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
-.badge.info {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  color: var(--steel);
-  background: var(--steel-tint);
-}
-.badge.off {
-  white-space: nowrap;
-  color: var(--text-2);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
 .llm-fx-dot {
   width: 8px;
   height: 8px;
@@ -29315,8 +29317,9 @@ button.wf-sigpill {
   width: auto;
   flex: none;
   min-width: 128px;
-  max-width: 150px;
+  max-width: 156px;
   padding: 7px 8px;
+  font-size: var(--fs-micro);
 }
 .llm-fxk .llm-fx-select {
   min-width: 118px;
@@ -29336,6 +29339,14 @@ button.wf-sigpill {
   align-items: center;
   gap: 10px;
   padding: 9px 16px 9px 27px;
+}
+.llm-fx-cloud-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -2px;
 }
 .llm-fx-setnote {
   color: var(--steel);

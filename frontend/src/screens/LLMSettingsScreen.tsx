@@ -212,6 +212,9 @@ export function LLMSettingsScreen() {
   // response after unmount is ignored). Shared across task + per-model writes —
   // the server snapshot is the source of truth, so last response in wins.
   const putSeq = useRef(0);
+  // Bumped when an engine-level write is sent AND when it settles: a poll read that began
+  // before either may predate the write, so it must not replace the levels the write returned.
+  const fxEpoch = useRef(0);
 
   // The engine-reasoning card: open per engine once the owner toggles it (until then it
   // follows whether that engine serves), which of its tier rows are open, and the row the
@@ -248,6 +251,7 @@ export function LLMSettingsScreen() {
       if (hostingEnabled) {
         // A write that lands while this read is out carries the newer engine levels.
         const seqAtRead = putSeq.current;
+        const epochAtRead = fxEpoch.current;
         api
           .getLlmSettings()
           .then((fresh) => {
@@ -298,7 +302,9 @@ export function LLMSettingsScreen() {
                     // An engine switch flips which levels are in use and which tasks they
                     // reach.
                     engine_efforts:
-                      putSeq.current === seqAtRead ? fresh.engine_efforts : prev.engine_efforts,
+                      putSeq.current === seqAtRead && fxEpoch.current === epochAtRead
+                        ? fresh.engine_efforts
+                        : prev.engine_efforts,
                   }
                 : prev,
             );
@@ -706,18 +712,32 @@ export function LLMSettingsScreen() {
     applyTasks(new Map([[taskId, { reasoning_effort: effort }]]));
   }
 
-  // Every engine-level write returns the whole snapshot; the select shows what the server
-  // stored, never a guess, and a refusal (422) shows its detail under the row.
-  function writeEngineEffort(rowKey: string, call: () => Promise<LlmSettings>) {
+  // Every engine-level write returns the whole snapshot, but only its levels are taken: the
+  // rest may predate a Standard edit still in flight. The select shows what the server stored,
+  // never a guess, and a refusal (422) shows its detail under the row — with `reveal` naming
+  // the tier row to open so a task's error is not left folded away.
+  function writeEngineEffort(
+    rowKey: string,
+    call: () => Promise<LlmSettings>,
+    reveal: string | null = null,
+  ) {
     mark(rowKey);
     setRowError(rowKey, null);
     const seq = ++putSeq.current;
+    fxEpoch.current++;
     call()
       .then((s) => {
-        if (seq === putSeq.current) setSettings(s);
+        if (seq === putSeq.current)
+          setSettings((prev) => (prev ? { ...prev, engine_efforts: s.engine_efforts } : prev));
       })
-      .catch((err: unknown) => setRowError(rowKey, err))
-      .finally(() => unmark(rowKey));
+      .catch((err: unknown) => {
+        setRowError(rowKey, err);
+        if (reveal !== null) setFxTiers((prev) => new Set(prev).add(reveal));
+      })
+      .finally(() => {
+        fxEpoch.current++;
+        unmark(rowKey);
+      });
   }
 
   function setEngineLevel(
@@ -726,10 +746,17 @@ export function LLMSettingsScreen() {
     key: string,
     level: ReasoningEffort | null,
   ) {
-    writeEngineEffort(fxRowKey(engine, scope, key), () =>
-      level === null
-        ? api.clearEngineEffort(engine, scope, key)
-        : api.setEngineEffort(engine, scope, key, level),
+    const tier =
+      scope === "task"
+        ? (settings?.engine_efforts?.[engine]?.tasks.find((t) => t.id === key)?.tier ?? OTHER_TIER)
+        : null;
+    writeEngineEffort(
+      fxRowKey(engine, scope, key),
+      () =>
+        level === null
+          ? api.clearEngineEffort(engine, scope, key)
+          : api.setEngineEffort(engine, scope, key, level),
+      tier === null ? null : `${engine}:${tier}`,
     );
   }
 
@@ -760,6 +787,14 @@ export function LLMSettingsScreen() {
   const engineEfforts = Object.entries(settings.engine_efforts ?? {});
   // Only the serving engine remaps picks, so the tier cards' link goes to its card.
   const servingFx = engineEfforts.find(([, info]) => info.active);
+  const localIds = new Set(settings.local_models.map((m) => m.id));
+  // Local providers: the generic "local" id or a catalog model's own id.
+  const isLocalProvider = (id: string) => id === LOCAL_PROVIDER || localIds.has(id);
+  // The engine card's tier rows for the serving engine, so a tier card links only to a row
+  // that is there.
+  const servingRows = servingFx
+    ? new Set(fxTierRows(servingFx[1], settings.tasks, isLocalProvider).map((r) => r.id))
+    : new Set<string>();
 
   function toggleExpanded(key: string) {
     setExpanded((prev) => {
@@ -828,6 +863,7 @@ export function LLMSettingsScreen() {
           tasks={settings.tasks}
           modelLabel={settings.local_models.find((m) => m.engine === engine)?.label ?? null}
           providerLabel={(id) => byId.get(id)?.label ?? id}
+          isLocalProvider={isLocalProvider}
           open={fxOpen[engine] ?? info.active}
           onToggle={() =>
             setFxOpen((prev) => ({ ...prev, [engine]: !(prev[engine] ?? info.active) }))
@@ -900,25 +936,28 @@ export function LLMSettingsScreen() {
                 const remapped = group.tasks.filter((t) => t.remapped && t.remap_note);
                 const note = remapped[0]?.remap_note;
                 if (!note) return null;
-                const fxRow =
-                  servingFx !== undefined &&
-                  fxLocalTasks(servingFx[1], settings.tasks).some(
-                    (t) => (t.tier ?? OTHER_TIER) === group.key,
-                  );
+                // The server's tier for the group's remapped tasks, which can differ from the
+                // card's own grouping (JPet sits in Other here, in Low on the server).
+                const fxTier =
+                  servingFx &&
+                  remapped
+                    .map((t) => servingFx[1].tasks.find((x) => x.id === t.id))
+                    .find((x) => x !== undefined);
+                const fxRow = fxTier ? (fxTier.tier ?? OTHER_TIER) : null;
                 return (
                   <p className="llm-remap">
                     {note}
                     {remapped.length < group.tasks.length
                       ? ` · ${remapped.length} of ${group.tasks.length} tasks`
                       : ""}
-                    {fxRow && servingFx && (
+                    {fxRow !== null && servingFx && servingRows.has(fxRow) && (
                       <>
                         {" · "}
                         <button
                           type="button"
                           className="llm-fx-link"
-                          aria-label={`${group.name} reasoning on ${servingFx[1].label}`}
-                          onClick={() => goToFxTier(servingFx[0], group.key)}
+                          aria-label={`Set ${group.name} levels on ${servingFx[1].label}`}
+                          onClick={() => goToFxTier(servingFx[0], fxRow)}
                         >
                           reasoning ↑
                         </button>
@@ -1062,26 +1101,32 @@ const LEVEL_NAME: Record<ReasoningEffort, string> = {
 
 // A null level means none is sent, so the model thinks at its own default.
 const levelName = (level: ReasoningEffort | null) =>
-  level === null ? "Model default" : LEVEL_NAME[level];
+  level === null ? "model's own" : LEVEL_NAME[level];
 
 const fxRowKey = (engine: string, scope: string, key: string) => `fx:${engine}:${scope}:${key}`;
 const fxRowId = (engine: string, tier: string) => `fx-${engine}-${tier}`;
 
+// The router's provider prefix for an on-box model (`local_catalog.LOCAL_PROVIDER`).
+const LOCAL_PROVIDER = "local";
+
 // Whether a task runs on the engine's model when it serves: only local picks move to it, a
 // cloud pick keeps its cloud model. While it serves the server says so outright (`applies`);
-// otherwise read the route the task runs on now. A task with no route reported counts as local.
-function runsOnEngine(info: EngineEffortInfo, task: EngineEffortTask, pick?: LlmTask): boolean {
+// otherwise read the route the task runs on now, or failing that its pick.
+function runsOnEngine(
+  info: EngineEffortInfo,
+  task: EngineEffortTask,
+  pick: LlmTask | undefined,
+  isLocalProvider: (id: string) => boolean,
+): boolean {
   if (info.active) return task.applies;
   const spec = pick?.effective_spec;
-  return spec ? spec.startsWith("local:") : true;
+  if (spec) return spec.startsWith(`${LOCAL_PROVIDER}:`);
+  return pick !== undefined && isLocalProvider(pick.provider);
 }
 
-function fxLocalTasks(info: EngineEffortInfo, tasks: LlmTask[]): EngineEffortTask[] {
-  const byId = new Map(tasks.map((t) => [t.id, t]));
-  return info.tasks.filter((t) => runsOnEngine(info, t, byId.get(t.id)));
-}
-
-// The tier cards' task order, so a tier reads the same in both places.
+// GROUP_DEFS order first, so the tasks both places share read in the same order; any other
+// task follows in the server's order. Rows themselves follow the server's tiers, which can
+// group a task differently from the tier cards.
 const TASK_ORDER = new Map(GROUP_DEFS.flatMap((g) => g.taskIds).map((id, i) => [id, i]));
 
 interface FxTierRow {
@@ -1090,24 +1135,31 @@ interface FxTierRow {
   accent: GroupDef["accent"];
   /** undefined for the Other row, which has no tier level to set. */
   level: ReasoningEffort | null | undefined;
+  /** The tier's bucket default — the Standard level a task with no stored effort runs at. */
+  standard: ReasoningEffort | null;
   local: EngineEffortTask[];
   cloud: EngineEffortTask[];
 }
 
-function fxTierRows(info: EngineEffortInfo, tasks: LlmTask[]): FxTierRow[] {
+function fxTierRows(
+  info: EngineEffortInfo,
+  tasks: LlmTask[],
+  isLocalProvider: (id: string) => boolean,
+): FxTierRow[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const rank = (t: EngineEffortTask) => TASK_ORDER.get(t.id) ?? Number.MAX_SAFE_INTEGER;
   const members = (tier: string | null) =>
     info.tasks.filter((t) => t.tier === tier).sort((a, b) => rank(a) - rank(b));
   const split = (ts: EngineEffortTask[]) => ({
-    local: ts.filter((t) => runsOnEngine(info, t, byId.get(t.id))),
-    cloud: ts.filter((t) => !runsOnEngine(info, t, byId.get(t.id))),
+    local: ts.filter((t) => runsOnEngine(info, t, byId.get(t.id), isLocalProvider)),
+    cloud: ts.filter((t) => !runsOnEngine(info, t, byId.get(t.id), isLocalProvider)),
   });
   const rows: FxTierRow[] = info.tiers.map((tier) => ({
     id: tier.id,
     label: tier.label,
     accent: GROUP_DEFS.find((g) => g.key === tier.id)?.accent ?? "light",
     level: tier.level,
+    standard: tier.default,
     ...split(members(tier.id)),
   }));
   rows.push({
@@ -1115,6 +1167,7 @@ function fxTierRows(info: EngineEffortInfo, tasks: LlmTask[]): FxTierRow[] {
     label: "Other",
     accent: "light",
     level: undefined,
+    standard: null,
     ...split(members(null)),
   });
   // A tier with nothing local has nothing to set: every task in it stays on its cloud model.
@@ -1122,9 +1175,10 @@ function fxTierRows(info: EngineEffortInfo, tasks: LlmTask[]): FxTierRow[] {
 }
 
 // What a tier's Default means: with no tier level each task keeps today's Standard level, so
-// name it when they agree. With a tier level set the tasks' own levels are not on the wire.
+// name it when they agree. With a tier level set the tasks' own levels are not on the wire, so
+// name the tier's bucket default — the level its tasks are sent unless set individually.
 function tierDefaultName(row: FxTierRow): string {
-  if (row.level) return "per task";
+  if (row.level) return row.standard ? LEVEL_NAME[row.standard] : "per task";
   const levels = new Set(row.local.map((t) => t.fallback));
   const [only] = levels;
   return levels.size === 1 && only !== undefined ? levelName(only) : "per task";
@@ -1188,6 +1242,7 @@ function EngineEffortCard({
   tasks,
   modelLabel,
   providerLabel,
+  isLocalProvider,
   open,
   onToggle,
   openTiers,
@@ -1202,6 +1257,7 @@ function EngineEffortCard({
   tasks: LlmTask[];
   modelLabel: string | null;
   providerLabel: (id: string) => string;
+  isLocalProvider: (id: string) => boolean;
   open: boolean;
   onToggle: () => void;
   openTiers: Set<string>;
@@ -1213,11 +1269,18 @@ function EngineEffortCard({
 }) {
   const picks = new Map(tasks.map((t) => [t.id, t]));
   const taskLabel = (id: string) => picks.get(id)?.label ?? id;
-  const rows = fxTierRows(info, tasks);
-  const setCount =
-    info.tiers.filter((t) => t.level !== null).length +
-    info.tasks.filter((t) => t.level !== null).length;
-  const bodyId = `fx-${engine}-body`;
+  const rows = fxTierRows(info, tasks, isLocalProvider);
+  // Only what the card shows: a level on a row or task it hides cannot be seen or cleared here.
+  const setCount = rows.reduce(
+    (n, r) => n + (r.level ? 1 : 0) + r.local.filter((t) => t.level !== null).length,
+    0,
+  );
+  const ids = {
+    body: `fx-${engine}-body`,
+    title: `fx-${engine}-title`,
+    badge: `fx-${engine}-badge`,
+    desc: `fx-${engine}-desc`,
+  };
 
   const cloudLine = (cloud: EngineEffortTask[]) => {
     if (cloud.length === 0) return null;
@@ -1225,6 +1288,15 @@ function EngineEffortCard({
     const where = [...new Set(cloud.map((t) => providerLabel(picks.get(t.id)?.provider ?? "")))];
     return (
       <p className="llm-fx-res llm-fx-cloud">
+        <svg
+          className="llm-fx-cloud-icon"
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path d="M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6 9.5 4.25 4.25 0 0 0 7 18z" />
+        </svg>{" "}
         {names} {cloud.length > 1 ? "stay" : "stays"} on {where.join(" / ")} — not on {info.label}.
       </p>
     );
@@ -1236,21 +1308,27 @@ function EngineEffortCard({
         type="button"
         className="llm-fxc-head"
         aria-expanded={open}
-        aria-controls={bodyId}
+        aria-controls={open ? ids.body : undefined}
+        aria-labelledby={`${ids.title} ${ids.badge}`}
+        aria-describedby={ids.desc}
         onClick={onToggle}
       >
         <span className="llm-fxc-title">
-          <span className="llm-group-name">{info.label} reasoning</span>
+          <span className="llm-group-name" id={ids.title}>
+            {info.label} reasoning
+          </span>
           {info.active ? (
-            <span className="badge info">
+            <span className="badge info" id={ids.badge}>
               <span className="llm-fx-dot" aria-hidden="true" />
               In use
             </span>
           ) : (
-            <span className="badge off">Next time it serves</span>
+            <span className="badge off" id={ids.badge}>
+              Next time it serves
+            </span>
           )}
         </span>
-        <span className="llm-group-desc llm-fxc-desc">
+        <span className="llm-group-desc llm-fxc-desc" id={ids.desc}>
           While {info.label} serves, every local task runs on <b>{modelLabel ?? info.label}</b> —
           the model is fixed, so only the reasoning level is set here. Kept apart from your Standard
           picks.
@@ -1265,7 +1343,7 @@ function EngineEffortCard({
         </span>
       </button>
       {open && (
-        <div className="llm-fxb" id={bodyId}>
+        <div className="llm-fxb" id={ids.body}>
           {!info.active && (
             <p className="llm-fx-notice">
               {info.label} isn't serving. These levels are kept and apply the next time it does —
@@ -1288,6 +1366,7 @@ function EngineEffortCard({
                     type="button"
                     className="llm-fxt-name"
                     aria-expanded={tierOpen}
+                    aria-controls={tierOpen ? `${fxRowId(engine, row.id)}-tasks` : undefined}
                     onClick={() => onToggleTier(row.id)}
                   >
                     <span className="llm-fxt-rail" aria-hidden="true" />
@@ -1319,10 +1398,9 @@ function EngineEffortCard({
                 </div>
                 <FxError text={errors.get(tierKey)} />
                 {tierOpen && (
-                  <div className="llm-fxt-tasks">
+                  <div className="llm-fxt-tasks" id={`${fxRowId(engine, row.id)}-tasks`}>
                     {row.local.map((t) => {
                       const key = fxRowKey(engine, "task", t.id);
-                      const from = t.fallback_source === "tier" ? "from tier" : "Standard";
                       const reading =
                         t.fallback === null
                           ? "The model's own default — no level sent"
@@ -1342,7 +1420,8 @@ function EngineEffortCard({
                                     <span className="llm-fx-setnote">
                                       Set · {LEVEL_NAME[t.level]}
                                     </span>{" "}
-                                    — default would be {levelName(t.fallback)}
+                                    — default would be{" "}
+                                    {t.fallback ? LEVEL_NAME[t.fallback] : "the model's own"}
                                   </>
                                 ) : (
                                   reading
@@ -1352,7 +1431,7 @@ function EngineEffortCard({
                             <FxLevelSelect
                               label={`${taskLabel(t.id)} on ${info.label}`}
                               value={t.level}
-                              defaultText={`${levelName(t.fallback)} (${from})`}
+                              defaultText={levelName(t.fallback)}
                               levels={info.levels}
                               disabled={busy.has(key)}
                               compact
