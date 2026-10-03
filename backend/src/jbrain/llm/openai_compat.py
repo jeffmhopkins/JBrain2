@@ -172,6 +172,7 @@ class OpenAiCompatClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,
     ) -> LlmResult:
         user_content: str | list[dict[str, Any]]
         if images:
@@ -200,6 +201,7 @@ class OpenAiCompatClient:
             }
         self._apply_reasoning(payload, reasoning_effort)
         self._apply_sampling(payload, sampling)
+        self._apply_slot(payload, id_slot)
         # Local servers run keyless; omitting the header beats sending "Bearer ".
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         data = await post_json(
@@ -282,6 +284,7 @@ class OpenAiCompatClient:
         max_tokens: int,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -292,7 +295,13 @@ class OpenAiCompatClient:
             payload["tools"] = openai_tools(tools)
         self._apply_reasoning(payload, reasoning_effort)
         self._apply_sampling(payload, sampling)
+        self._apply_slot(payload, id_slot)
         return payload
+
+    def _apply_slot(self, payload: dict[str, Any], id_slot: int | None) -> None:
+        # llama-server's own field; a cloud OpenAI-compatible API would reject or misread it.
+        if id_slot is not None and self.provider == "local":
+            payload["id_slot"] = id_slot
 
     def _auth_headers(self) -> dict[str, str]:
         # Local servers run keyless; omitting the header beats sending "Bearer ".
@@ -308,6 +317,7 @@ class OpenAiCompatClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,
     ) -> LlmTurn:
         payload = self._converse_payload(
             model=model,
@@ -317,6 +327,7 @@ class OpenAiCompatClient:
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
             sampling=sampling,
+            id_slot=id_slot,
         )
         headers = self._auth_headers()
         data = await post_json(
@@ -370,6 +381,7 @@ class OpenAiCompatClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
+        id_slot: int | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over chat-completions SSE chunks. Content deltas stream
         live; tool_call deltas arrive fragmented and keyed by index (id/name on
@@ -384,6 +396,7 @@ class OpenAiCompatClient:
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
             sampling=sampling,
+            id_slot=id_slot,
         )
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}

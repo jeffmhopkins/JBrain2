@@ -32,13 +32,22 @@ from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from jbrain import queue
 from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, local_catalog
+from jbrain.llm.kv_pool_guard import KvPoolBusyError
+from jbrain.llm.openai_slot_fit import (
+    context_length_exceeded,
+    error_bytes,
+    fit_openai_request,
+    pinned_request,
+    pool_busy,
+)
 from jbrain.llm.residency import ResidencyError
+from jbrain.llm.slot_roles import JCODE_ROLE, SlotCapError
 from jbrain.vision import OcrServiceError
 from jbrain.web.fetch import JS_SHELL_MESSAGE, JS_SHELL_NOTE, WebFetchError
 from jbrain.web.search import WebSearchError
@@ -142,6 +151,12 @@ def _alias(served: str) -> str:
     return _ALIASES.get(served, served)
 
 
+def _window(model: local_catalog.LocalModel) -> int:
+    # On a pooled model grok must budget against the jcode slot's cap, not the model's window:
+    # past the cap the proxy refuses the request.
+    return model.kv_pool.cap(JCODE_ROLE) if model.kv_pool is not None else model.context_window
+
+
 @router.get("/jcode/llm/v1/models")
 async def list_models(request: Request) -> Response:
     """The installed tool-capable models the sandbox offers via grok's `/model`.
@@ -154,8 +169,7 @@ async def list_models(request: Request) -> Response:
     models = await _models(request)
     if request.query_params.get("format") == "lines":
         body = "".join(
-            f"{_alias(m.served_model)}|{m.served_model}|{m.label}|{m.context_window}\n"
-            for m in models
+            f"{_alias(m.served_model)}|{m.served_model}|{m.label}|{_window(m)}\n" for m in models
         )
         return Response(content=body, media_type="text/plain")
     data = [
@@ -191,6 +205,13 @@ async def chat_completions(request: Request) -> Response:
     if served not in {m.served_model for m in models}:
         raise HTTPException(status_code=400, detail=f"unknown or unavailable model: {served!r}")
     payload["model"] = served
+    # Before the swap lock: a request too long for its slot must not wait behind another
+    # model's turn just to be refused.
+    try:
+        prompt_tokens = fit_openai_request(served, payload, JCODE_ROLE)
+    except SlotCapError as exc:
+        return JSONResponse(status_code=400, content=context_length_exceeded(exc))
+    pool_guard = getattr(request.app.state, "kv_pool_guard", None)
 
     residency = getattr(request.app.state, "residency", None)
     # One model loading/serving at a time on the box: hold the swap lock across BOTH the
@@ -203,9 +224,15 @@ async def chat_completions(request: Request) -> Response:
     # without patching global httpx; defaults to a real client against the gateway.
     factory = getattr(request.app.state, "jcode_llm_client_factory", None) or httpx.AsyncClient
     client = factory(base_url=gateway_url.rstrip("/"), timeout=_TIMEOUT)
+    stream = bool(payload.get("stream"))
 
     async def relay() -> AsyncIterator[bytes]:
+        nonlocal prompt_tokens
         guard = swap_lock if swap_lock is not None else contextlib.nullcontext()
+        # The guard's placement and a remap's re-fit run under the swap lock, after the 200
+        # headers are out (placing before them would hold the lock for a response that may
+        # never be iterated). So their refusals are written into the body as OpenAI errors —
+        # a client that sees a cut stream or an empty 200 retries blind.
         try:
             async with guard:
                 # Evict-to-budget for the chosen model BEFORE the gateway loads it on the
@@ -213,13 +240,12 @@ async def chat_completions(request: Request) -> Response:
                 # Best-effort — a residency hiccup degrades to the gateway's own load. But a
                 # deliberate over-box refusal (the model can't fit RAM) propagates: better to
                 # fail this swap than crash the box loading a model that can't fit.
+                admitted: str | None = None
                 if residency is not None:
                     try:
                         # Send what was ADMITTED: a switch between our engine read and
                         # residency's would otherwise admit one model and send another.
                         admitted = await residency.ensure_room(served)
-                        if admitted:
-                            payload["model"] = admitted
                     except (ResidencyError, gpu_guard.GpuBudgetError):
                         # GpuBudgetError joins ResidencyError here, and the omission was the
                         # worst kind: it is not a subclass, so it fell to the blanket arm,
@@ -231,15 +257,31 @@ async def chat_completions(request: Request) -> Response:
                         raise
                     except Exception:  # noqa: BLE001 - housekeeping never fails a completion
                         log.warning("jcode-llm ensure_room failed model=%s", served, exc_info=True)
+                if admitted and admitted != served:
+                    payload["model"] = admitted
+                    # The engine switched under the request: the cap checked above was the
+                    # other model's.
+                    prompt_tokens = fit_openai_request(admitted, payload, JCODE_ROLE)
                 # Stream the gateway's response back verbatim (SSE or whole JSON). The
                 # gateway is unauthenticated on the internal network — no upstream credential.
-                async with client.stream("POST", "/chat/completions", json=payload) as upstream:
+                async with (
+                    pinned_request(
+                        pool_guard, str(payload["model"]), payload, prompt_tokens, JCODE_ROLE
+                    ),
+                    client.stream("POST", "/chat/completions", json=payload) as upstream,
+                ):
                     async for chunk in upstream.aiter_raw():
                         yield chunk
+        except SlotCapError as exc:
+            log.warning("jcode-llm request too long for its slot: %s", exc)
+            yield error_bytes(context_length_exceeded(exc), stream=stream)
+        except KvPoolBusyError as exc:
+            log.warning("jcode-llm request deferred, KV pool busy: %s", exc)
+            yield error_bytes(pool_busy(exc), stream=stream)
         finally:
             await client.aclose()
 
-    media = "text/event-stream" if payload.get("stream") else "application/json"
+    media = "text/event-stream" if stream else "application/json"
     return StreamingResponse(relay(), media_type=media)
 
 

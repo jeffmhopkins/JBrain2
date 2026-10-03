@@ -24,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 
 from jbrain.llm import engine as engines
+from jbrain.llm import slot_roles
 from jbrain.llm.types import Sampling
 
 # The router spec for a local model is always "local:<served_model>": the local
@@ -150,37 +151,38 @@ CTX_CHECKPOINTS = 16
 # deliberate zero on `checkpoint_gb`: a measurement earns the memory, a guess does not.
 CTX_CHECKPOINTS_UNMEASURED = 2
 
-# Qwen3.8-Flash-Next's per-token cache, DERIVED from the UD-IQ4_XS GGUF headers and llama.cpp
-# master (FLASH_NEXT_ENGINE_PLAN §3) — UNMEASURED; F2 replaces it with an on-box reading. Of 48
-# layers only 12 are full attention (2 KV heads x 256); the other 36 are Gated DeltaNet with a
-# constant state. Both caches below are served q8_0 (1.0625 B/element, `-ctk`/`-ctv` on the
-# entry), and both grow with every token:
-#
-#   attention KV   12 layers x 2 heads x 256 x 2 (K+V) x 1.0625 = 13,056 B/token -> 1.594 GiB/128k
-#   QSA indexer    12 layers x 256 (one 128-wide key head, raw + pooled) x 1.0625
-#                                                              =  3,264 B/token -> 0.398 GiB/128k
-#
-# The indexer cache is the term an earlier draft of the plan put at ~0.8 GiB total: it caches
-# every token at the KV type, so compression does not shrink it. 1.99 per 128k per slot is
-# 15.9 GiB across the four 262,144-token slots. The Qwen3.8 27B history says derivations here
-# run light (5.78 measured against 4.25 derived), which is why F2's exit gate is set on the
-# measurement, not on this.
+# Qwen3.8-Flash-Next's per-token cache, MEASURED (FLASH_NEXT_ENGINE_PLAN §3a, F2 2026-10-01):
+# cold loads at five layouts fit GTT ≈ 60.2 GiB + 7.0 GiB per 262,144 cells, and the slot count
+# costs ~nothing (2 x 64k read the same as 1 x 131k). 7.0 per 262k is 3.5 per 128k — ~1.75x the
+# §3 derivation from the GGUF headers (attention KV 1.594 + QSA indexer 0.398 = 1.99/128k), the
+# same "derivations run light" the Qwen3.8 27B showed. Served as one `--kv-unified` pool, so
+# `_kv_gb` charges this once against the pool's cells, never per slot.
 #
 # MOVES WITH THE SERVING FLAG: `-ctk`/`-ctv q8_0` on the entry and this number are one decision.
-_FLASH_NEXT_KV_GB_PER_128K = 1.99
+_FLASH_NEXT_KV_GB_PER_128K = 3.5
 
-# Everything else a Flash-Next load pins that is neither weights nor KV, at its four default
-# slots (derived, FLASH_NEXT_ENGINE_PLAN §3): ~1.5 GiB compute buffers (unverified for QSA at
-# 262k on Vulkan) + 4 x 0.11 GiB recurrent state (GDN + conv + the PLE conv row, per slot).
-# Booked flat at the default slot count: the per-model slot cap is the default, so an operator
-# can only lower the count and this can only over-reserve, by at most 0.33 GiB.
-_FLASH_NEXT_RUNTIME_OVERHEAD_GB = 1.5 + 4 * 0.11
+# Everything a Flash-Next load pins beyond weights, KV and the vision buffer: nothing. The fit's
+# fixed term (60.2 GiB) already holds compute buffers, recurrent state and the projector, and
+# the slot count moved GTT by noise, so the derived 1.5 GiB compute + 0.11 per slot would book
+# memory no reading showed.
+_FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
 
-# The Flash-Next engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB —
-# which the engine serves memory-mapped and pinned to CPU (`--load-mode mmap`,
-# `-ot per_layer_token_embd=CPU`). It exceeds Vulkan's 4 GiB binding limit, so it cannot be
-# device-resident anyway, and its working set is a few GB of page cache the kernel can reclaim.
-_FLASH_NEXT_FILE_BACKED_GB = 26.8
+# What of the GGUF on disk the GPU never holds, MEASURED rather than taken from the header. The
+# engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB — is served
+# memory-mapped and pinned to CPU (`--load-mode mmap`, `-ot per_layer_token_embd=CPU`; it
+# exceeds Vulkan's 4 GiB binding limit anyway), its working set a few GB of reclaimable page
+# cache. The F2 fit (§3a) shows ~1.6 GiB more stays off the GPU than the engram alone: its
+# fixed term is 60.2 GiB INCLUDING the projector and vision workspace, against 61.3 GiB of
+# on-disk weights less the engram. Booking the measured share keeps the device column on the
+# fit instead of 1.6 GiB above it, without dropping the vision term the other entries carry:
+#
+#   88.1 on disk - 28.4 = 59.7 weights + 0.47 vision = 60.2 fixed (the fit's)
+#   + 28.0 KV for the 1M pool (3.5 x 8)               = 88.2 device (the fit's 88.2)
+#   + 7.0 host-only checkpoints (8 per slot x 8 x 0.11) = 95.2 footprint (eviction and meter)
+#
+# A load is admitted on the device figure alone — see `_lazy_checkpoints` — so with the 6 GiB
+# floor it needs ~94.2 GiB free.
+_FLASH_NEXT_FILE_BACKED_GB = 28.4
 
 
 def ctx_checkpoints(checkpoint_gb: float | None, served: int | None = 0) -> int:
@@ -453,6 +455,11 @@ class LocalModel:
     # A catalog-pinned `--ctx-checkpoints` count, 0 for the measured/unmeasured rule in
     # `ctx_checkpoints()`. Set only where a plan fixed the count against a derived cost.
     served_ctx_checkpoints: int = 0
+    # One shared `--kv-unified` pool with a role pinned to each slot (FLASH_NEXT_ENGINE_PLAN
+    # §4a), or None for the even per-slot split every standard entry serves. When set, it — not
+    # the context window or slot count — is the served shape, and `default_slots` equals its
+    # slot count.
+    kv_pool: slot_roles.KvPool | None = None
 
     @property
     def spec(self) -> str:
@@ -495,13 +502,15 @@ class LocalModel:
         gone — jerv now names its chat in-turn via `name_session` — but the class of task
         remains. Trading MTP's decode gain (~22 vs ~11-12 t/s measured) for that is a real
         choice, and it is the operator's to make."""
+        if self.kv_pool is not None:
+            return self.kv_pool.n_slots
         return max(1, requested)
 
     def served_slots(self, saved: Mapping[str, int]) -> int:
         """The `-np` this model serves given the operator's saved slot overrides (catalog id ->
         count): the saved count when there is one, else the catalog's `default_slots`. Every
-        reader of a slots map goes through here so an unconfigured Flash-Next is budgeted at
-        the four slots it is served with, not the single slot an absent override used to mean.
+        reader of a slots map goes through here so an unconfigured model is budgeted at the slots
+        it is served with, and a pooled model at its pool's slots whatever is saved.
         """
         return self.effective_slots(saved.get(self.id, self.default_slots))
 
@@ -1201,16 +1210,17 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=88.1,
         note="125B MoE (~6B active) + a 51B n-gram engram table, text + vision — a hybrid "
         "reasoner meant to replace the gpt-oss-120b + Qwen3.8-27B pair on its own engine "
-        "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container with four "
-        "role-pinned 262k slots; never co-resident with the standard gateway. ~88 GiB on disk, "
-        "~83 GiB resident (derived, not yet measured on-box).",
+        "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container as one shared "
+        "1M-token pool across eight role-pinned slots; never co-resident with the standard "
+        "gateway. ~88 GiB on disk; booked at the measured ~88 GiB on the GPU plus up to 7 GiB "
+        "of host-side prompt checkpoints (~95 GiB in all), and a load needs ~94 GiB free.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
-        # Each slot serves the model's full `n_ctx_train`; the gateway's `-c` is that times the
-        # slot count (non-unified KV, so one long conversation cannot evict another slot's
-        # prefix — §4a).
+        # The longest single sequence: any slot may grow to `n_ctx_train` inside the pool. The
+        # served shape is `kv_pool`, which the window and slot overrides cannot change; each
+        # role's own limit is its pool cap (slot_roles).
         context_window=262144,
         native_context_window=262144,
         kv_gb_per_128k=_FLASH_NEXT_KV_GB_PER_128K,
@@ -1223,8 +1233,10 @@ CATALOG: tuple[LocalModel, ...] = (
         checkpoint_gb=0.11,
         served_ctx_checkpoints=8,
         engine=engines.FLASH_NEXT,
-        # Slots are role-pinned prefix caches here (persona, ingest, agents, jcode — §4a).
-        default_slots=4,
+        # Slots are role-pinned prefix caches over one shared pool (§4a); `effective_slots`
+        # serves the pool's count whatever this says, so the two are kept equal.
+        default_slots=slot_roles.FLASH_NEXT_POOL.n_slots,
+        kv_pool=slot_roles.FLASH_NEXT_POOL,
         file_backed_gb=_FLASH_NEXT_FILE_BACKED_GB,
         extra_server_args=(
             # Map the GGUF instead of reading it: the engram table must stay file-backed.
@@ -1328,6 +1340,12 @@ def get_by_served(served_model: str) -> LocalModel | None:
     return _BY_SERVED.get(served_model)
 
 
+def pool_of(served_model: str) -> slot_roles.KvPool | None:
+    """The shared KV pool `served_model` serves, or None when its slots split `-c` evenly."""
+    model = _BY_SERVED.get(served_model)
+    return model.kv_pool if model is not None else None
+
+
 def engine_of(served_model: str) -> engines.Engine:
     """The engine that serves `served_model`. A name outside the catalog is an operator-served
     model on the standard gateway, the only one an unlisted model can be added to."""
@@ -1363,7 +1381,7 @@ def remap_for_engine(served_model: str, active: engines.Engine) -> str | None:
 # the runtime-overhead and vision terms, because load_footprint_gb needs them.)
 
 
-def _resident_weights_gb(model: LocalModel, disk_gb: float | None) -> float:
+def resident_weights_gb(model: LocalModel, disk_gb: float | None) -> float:
     """The weights a load pins: the measured on-disk size when known, else the nominal
     `size_gb`, less whatever the engine serves memory-mapped from disk (`file_backed_gb`).
 
@@ -1394,7 +1412,12 @@ def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
     Linear off the 128k reference. `--swa-full` (`kv_full_history`) gives the sliding-window
     layers a full-size cache instead of a ring, which roughly doubles the term — counted here
     so the load reservation, the eviction budget and the settings meter cannot drift apart."""
-    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
+    if model.kv_pool is not None:
+        # One `--kv-unified` pool: the cells are allocated once at load, however many slots
+        # share them and whatever window is saved.
+        kv = model.kv_gb_per_128k * model.kv_pool.n_ctx / _KV_REFERENCE_TOKENS
+    else:
+        kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
     return kv * 2 if model.kv_full_history else kv
 
 
@@ -1415,9 +1438,9 @@ def footprint_gb(
     with a larger override saved — matching what the gateway will really serve rather than
     reserving for slots the engine won't allocate. None means the catalog's `default_slots`.
 
-    Weights exclude the file-backed share (`_resident_weights_gb`)."""
+    Weights exclude the file-backed share (`resident_weights_gb`)."""
     slots = _slots_or_default(model, slots)
-    weights = _resident_weights_gb(model, disk_gb)
+    weights = resident_weights_gb(model, disk_gb)
     # `--swa-full` doubling lives in `_kv_gb`: omitting it under-reported the model by several
     # GB in both the meter and the eviction budget — on a box that has hard-locked under
     # memory pressure.
@@ -1497,7 +1520,7 @@ def load_footprint_gb(
     served_window = model.context_window if window is None else window
     n_slots = _slots_or_default(model, slots)
     total = (
-        _resident_weights_gb(model, None)
+        resident_weights_gb(model, None)
         + _kv_gb(model, served_window, n_slots)
         + _runtime_overhead_gb(model)
     )
@@ -1538,13 +1561,28 @@ def declared_gb(
     vision model from its first real image onward."""
     slots = _slots_or_default(model, slots)
     device = (
-        _resident_weights_gb(model, disk_gb)
+        resident_weights_gb(model, disk_gb)
         + _kv_gb(model, window, slots)
         + _runtime_overhead_gb(model)
         + _vision_resident_gb(model)
     )
-    host_only = _checkpoints_gb(model, slots) + CACHE_RAM_GB
+    checkpoints = 0.0 if _lazy_checkpoints(model) else _checkpoints_gb(model, slots)
+    host_only = checkpoints + CACHE_RAM_GB
     return round(device + host_only, 2), round(device, 2)
+
+
+def _lazy_checkpoints(model: LocalModel) -> bool:
+    """Whether a load's admission charge leaves the context checkpoints out.
+
+    Only for a pooled model. Checkpoints are host RAM allocated lazily — a slot makes one only
+    after it has seen `CHECKPOINT_MIN_STEP`-spaced prompt growth, and most of Flash-Next's eight
+    slots hold short prompts — so charging all 64 at intent (7 GiB) refused a switch onto a box
+    that fits the model with room to spare. They stay in `footprint_gb` (eviction and the meter
+    count them once they can exist), and once allocated they show in the measured free memory
+    that every later admission takes the minimum against (`admission._available_gb`). The
+    gap is a load's own growth after admission, bounded at the 7 GiB this leaves out. Every
+    standard entry keeps the old charge, byte for byte."""
+    return model.kv_pool is not None
 
 
 def recommended_ids() -> tuple[str, ...]:

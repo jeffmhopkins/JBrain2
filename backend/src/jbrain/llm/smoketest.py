@@ -173,6 +173,10 @@ async def _room_for(
     # that refusing every load would be the wrong default.
     if available_gb is None:
         return True
+    # Stricter than load admission for a pooled model: `footprint_gb` counts its context
+    # checkpoints, which admission leaves out because they are allocated lazily (Flash-Next:
+    # 7 GiB of 95.2). A Flash-Next smoke test gated here would want ~7 GiB more free than the
+    # switch itself; size it from `local_catalog.declared_gb` when one is added.
     cost = _resident_cost_gb(model)
     if available_gb >= cost + LOAD_HEADROOM_GB:
         return True

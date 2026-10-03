@@ -869,3 +869,49 @@ async def test_a_residency_refusal_still_defers(monkeypatch: pytest.MonkeyPatch)
     assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
     assert fake.deferred == [("job-1", "ResidencyError('code mode holds the box')")]
     assert fake.permanent == []
+
+
+async def test_a_call_too_long_for_its_slot_fails_the_job_for_good(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same input meets the same slot cap on every attempt, so retrying only burns the
+    budget; the box event is the owner's only trace of a directly-enqueued job."""
+    from jbrain.llm.slot_roles import SlotCapError, SlotRole
+
+    fake = FakeQueue([job(kind="ocr_attachment", payload={"attachment_id": "att-1"})])
+    install(monkeypatch, fake)
+    fallbacks = install_fallback_spy(monkeypatch)
+    steps = install_run_step_spy(monkeypatch)
+    recorded: list[tuple[str, str]] = []
+
+    async def _spy(kind: str, subject: str, **kw: object) -> None:
+        recorded.append((kind, subject))
+
+    monkeypatch.setattr(worker.box_events, "record", _spy)
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        raise SlotCapError(SlotRole.INGEST, cap=131_072, prompt_tokens=200_000, max_tokens=4_096)
+
+    assert await worker.process_one(None, {"ocr_attachment": handler}) is True  # type: ignore[arg-type]
+    assert fake.permanent == ["job-1"]
+    assert recorded == [("job_too_long_for_slot", "ocr_attachment")]
+    assert steps == [("job-1", False)]
+    # Unlike a capacity refusal this input will never fit, so the note's fallback runs.
+    assert fallbacks == ["att-1"]
+
+
+async def test_a_busy_kv_pool_defers_without_burning_an_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Busy slots holding the pool is a capacity wait, like a residency refusal."""
+    from jbrain.llm.kv_pool_guard import KvPoolBusyError
+
+    fake = FakeQueue([job(kind="integrate_note")])
+    install(monkeypatch, fake)
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        raise KvPoolBusyError("busy slots hold the pool")
+
+    assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
+    assert fake.deferred == [("job-1", "KvPoolBusyError('busy slots hold the pool')")]
+    assert fake.failed == [] and fake.permanent == []

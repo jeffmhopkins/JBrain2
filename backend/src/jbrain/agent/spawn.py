@@ -72,6 +72,7 @@ from jbrain.agent.tree import (
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.llm.providers import REASONING_EFFORTS
+from jbrain.llm.slot_roles import SlotRole
 
 log = structlog.get_logger(__name__)
 
@@ -79,6 +80,9 @@ _TITLE_LEN = 120  # a child session title is a short label; longer is clamped
 # The LLM task a child loop runs on (mirrors AgentLoop's default) — consulted to
 # detect a local route, which serializes the fan (see _effective_max_parallel).
 _CHILD_TASK = "agent.turn"
+# Children share the research slot with deep research: a fan of them in the interactive slot
+# would evict the jerv prefix the parent turn is about to reuse for its synthesis.
+_CHILD_SLOT_ROLE = SlotRole.RESEARCH
 
 # A child's brief can run long. The call stamp only needs enough to recognise which
 # child a row is; the full brief stays in the child's own transcript.
@@ -954,7 +958,9 @@ class SpawnService:
             # this is a cancellable await, and a parent cancel landing on it after the row
             # was inserted (but before the guarding try/finally) used to strand the row
             # 'running' with 0 steps — exactly the zombie sub-agent the Runs surface showed.
-            child_window = await self._router.context_window("agent.turn")
+            child_window = await self._router.context_window(
+                _CHILD_TASK, slot_role=_CHILD_SLOT_ROLE
+            )
             # Stamp the child's call the same way the parent turn stamps its own, so a
             # research fan's children are legible on the vitals detail surface instead
             # of appearing as unattributed rows under it (migration 0166). Resolved
@@ -1032,6 +1038,7 @@ class SpawnService:
                     max_steps=child_steps_for(plan.effort),
                     max_cost_tokens=CHILD_MAX_COST_TOKENS,
                 ),
+                slot_role=_CHILD_SLOT_ROLE,
             )
             child_read_ctx = read_context(owner_ctx.principal_id, ())
             conversation = [

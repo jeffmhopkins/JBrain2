@@ -13,13 +13,26 @@ from typing import Any
 import pytest
 
 from jbrain.api import llm_settings
-from jbrain.llm import engine, local_catalog, local_gateway, local_weights, providers, smoketest
+from jbrain.llm import (
+    admission,
+    engine,
+    gpu_guard,
+    llama_swap_config,
+    local_catalog,
+    local_gateway,
+    local_weights,
+    providers,
+    slot_roles,
+    smoketest,
+)
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, ResidencyWiring
 from tests.unit.fakes import FakeLocalGateway
 from tests.unit.test_llm_settings_api import _authed_client, _cloud_settings
 
 FLASH_ID = "qwen3.8-flash-next"
+# A catalog model the prompt cache saves for, so its fingerprint is not gated off.
+SAVER = "qwen3-vl-30b-a3b"
 
 
 def _flash() -> local_catalog.LocalModel:
@@ -31,10 +44,13 @@ def _flash() -> local_catalog.LocalModel:
 # --- the catalog entry ------------------------------------------------------------------
 
 
-def test_the_entry_is_a_flash_next_engine_model_with_four_slots() -> None:
+def test_the_entry_is_a_flash_next_engine_model_with_an_eight_slot_pool() -> None:
     m = _flash()
     assert m.engine == engine.FLASH_NEXT
-    assert m.default_slots == 4
+    pool = m.kv_pool
+    assert pool is not None and pool is slot_roles.FLASH_NEXT_POOL
+    assert m.default_slots == pool.n_slots == 8
+    assert pool.n_ctx == 1_048_576
     assert m.served_model == FLASH_ID and m.spec == f"local:{FLASH_ID}"
     assert m.hf_repo == "unsloth/Qwen3.8-Flash-Next-GGUF"
     assert m.quant == "UD-IQ4_XS" and "UD-IQ4_XS" in m.gguf_include
@@ -49,7 +65,8 @@ def test_the_entry_is_a_flash_next_engine_model_with_four_slots() -> None:
     assert m.sampling == qwen.sampling and m.sampling_thinking == qwen.sampling_thinking
     # GiB, the catalog's unit: 93.7 decimal GB of shards + the 0.84 GiB projector.
     assert m.size_gb == pytest.approx(93.7e9 / 1024**3 + 0.84, abs=0.1)
-    assert m.file_backed_gb == pytest.approx(26.8)
+    # The 26.82 GiB engram table plus the ~1.6 GiB more the F2 fit shows never reaches the GPU.
+    assert m.file_backed_gb == pytest.approx(28.4)
 
 
 def test_every_standard_entry_keeps_one_default_slot_and_no_file_backed_weights() -> None:
@@ -59,10 +76,12 @@ def test_every_standard_entry_keeps_one_default_slot_and_no_file_backed_weights(
             assert m.served_ctx_checkpoints == 0, m.id
 
 
-def test_kv_term_is_the_plans_derivation() -> None:
-    """§3: attention KV + QSA indexer, both q8_0, per 128k tokens per slot."""
-    per_token = 12 * 2 * 256 * 2 * 1.0625 + 12 * 256 * 1.0625
-    assert _flash().kv_gb_per_128k == pytest.approx(per_token * 131072 / 1024**3, abs=0.01)
+def test_kv_term_is_the_f2_measured_slope() -> None:
+    """§3a: GTT grew 7.0 GiB per 262,144 cells across five cold-load layouts — 3.5 per 128k,
+    ~1.75x the §3 header derivation (attention KV + QSA indexer, both q8_0)."""
+    derived = (12 * 2 * 256 * 2 * 1.0625 + 12 * 256 * 1.0625) * 131072 / 1024**3
+    assert _flash().kv_gb_per_128k == pytest.approx(7.0 / 2)
+    assert _flash().kv_gb_per_128k / derived == pytest.approx(1.75, abs=0.03)
 
 
 def test_checkpoints_are_pinned_at_eight_per_slot() -> None:
@@ -72,20 +91,18 @@ def test_checkpoints_are_pinned_at_eight_per_slot() -> None:
     assert local_catalog.ctx_checkpoints(m.checkpoint_gb) == local_catalog.CTX_CHECKPOINTS
 
 
-def test_resident_footprint_is_the_plans_83_gib_at_four_full_slots() -> None:
+def test_device_footprint_lands_on_the_f2_fit_for_the_1m_pool() -> None:
+    """§3a fit: GTT ≈ 60.2 + 7.0 per 262,144 cells = 88.2 GiB for the 1M pool. The fixed 60.2
+    already holds the projector and vision workspace, so the booking must not add them twice."""
     m = _flash()
-    total = local_catalog.footprint_gb(m, 262144)
-    assert total == pytest.approx(83, abs=1.0)
-    # The parts, so a drift is attributable: weights less the engram table, 4 x 262k of KV,
-    # 32 checkpoints, the flat overhead and the vision workspace.
-    expected = (
-        (m.size_gb - m.file_backed_gb)
-        + m.kv_gb_per_128k * 2 * 4
-        + 0.11 * 8 * 4
-        + m.runtime_overhead_gb  # type: ignore[operator]
-        + local_catalog.vision_attn_buffer_gb()
-    )
-    assert total == pytest.approx(expected, abs=0.02)
+    fit = 60.2 + 7.0 * 1_048_576 / 262_144
+    _host, device = local_catalog.declared_gb(m, 262144)
+    assert device == pytest.approx(fit, abs=0.1)
+    fixed = (m.size_gb - m.file_backed_gb) + local_catalog.vision_attn_buffer_gb()
+    assert fixed == pytest.approx(60.2, abs=0.1)
+    # Eviction and the meter add the 64 host-only checkpoints (8 per pool slot) on top.
+    footprint = local_catalog.footprint_gb(m, 262144)
+    assert footprint == pytest.approx(device + 0.11 * 8 * 8, abs=0.02)
 
 
 def test_file_backed_weights_are_subtracted_from_the_measured_disk_size() -> None:
@@ -95,28 +112,79 @@ def test_file_backed_weights_are_subtracted_from_the_measured_disk_size() -> Non
     assert at_disk - local_catalog.footprint_gb(m, 262144, disk_gb=89.0) == pytest.approx(1.0)
     no_backing = dataclasses.replace(m, file_backed_gb=0.0)
     assert at_disk == pytest.approx(
-        local_catalog.footprint_gb(no_backing, 262144, disk_gb=90.0 - 26.8), abs=0.01
+        local_catalog.footprint_gb(no_backing, 262144, disk_gb=90.0 - m.file_backed_gb),
+        abs=0.01,
     )
     # A partial download can never drive the weights term negative.
     assert local_catalog.footprint_gb(m, 262144, disk_gb=1.0) == local_catalog.footprint_gb(
         m, 262144, disk_gb=0.0
     )
-    host, device = local_catalog.declared_gb(m, 262144, disk_gb=90.0)
-    assert host == pytest.approx(at_disk, abs=0.02)
-    assert host - device == pytest.approx(0.11 * 8 * 4, abs=0.02)
     assert local_catalog.load_footprint_gb(m) < m.size_gb + m.kv_gb_per_128k * 8
 
 
-def test_footprint_defaults_to_the_catalog_slot_count() -> None:
+def test_admission_leaves_the_lazy_checkpoints_out_for_the_pool_only() -> None:
+    """Checkpoints are host RAM made lazily, slot by slot, so a load's charge is the device
+    figure; the footprint (eviction, meter) still counts them. Standard entries are unchanged:
+    their host column still carries their checkpoints."""
     m = _flash()
-    assert local_catalog.footprint_gb(m, 262144) == local_catalog.footprint_gb(m, 262144, slots=4)
-    two = local_catalog.footprint_gb(m, 262144, slots=2)
-    assert local_catalog.footprint_gb(m, 262144) - two == pytest.approx(
-        m.kv_gb_per_128k * 2 * 2 + 0.11 * 8 * 2, abs=0.02
+    host, device = local_catalog.declared_gb(m, 262144, disk_gb=90.0)
+    assert host == device
+    assert local_catalog.footprint_gb(m, 262144, disk_gb=90.0) == pytest.approx(
+        host + 0.11 * 8 * 8, abs=0.02
     )
-    assert m.served_slots({}) == 4 and m.served_slots({FLASH_ID: 2}) == 2
+    qwen = local_catalog.get("qwen3.8-27b")
+    assert qwen is not None and qwen.checkpoint_gb > 0
+    q_host, q_device = local_catalog.declared_gb(qwen, qwen.context_window)
+    assert q_host - q_device == pytest.approx(
+        local_catalog._checkpoints_gb(qwen, 1) + local_catalog.CACHE_RAM_GB, abs=0.02
+    )
+
+
+def test_a_flash_next_load_is_admitted_on_a_lightly_used_128gb_box() -> None:
+    """The live box reads ~121 GiB total with ~15 GiB in use before a switch (§3a). Booked at
+    the fit with the checkpoints left out, the load is admitted on both pools with room; the
+    first cut of the pool (device over-booked, all 64 checkpoints charged) needed ~102.8 GiB
+    free and rolled the switch back on any slightly busy box."""
+    m = _flash()
+    host_gb, device_gb = local_catalog.declared_gb(m, 262144)
+    reserve = gpu_guard.MIN_FREE_GTT_GB
+    free = 121.0 - 15.0
+    request = admission.Reservation(
+        "i", m.served_model, admission.Phase.PLANNED, host_gb, device_gb
+    )
+    pool = admission.Pool(total_gb=121.0, reserve_gb=reserve, measured_free_gb=free)
+    decision = admission.admit(request, [], host=pool, device=pool)
+    assert decision.outcome is admission.Outcome.ADMIT, decision.reason
+    assert host_gb + reserve <= 94.5
+    # The headroom left is real, not a rounding margin.
+    assert free - reserve - host_gb >= 11.0
+
+
+def test_the_pool_is_charged_once_whatever_window_or_slots_are_saved() -> None:
+    """One `--kv-unified` allocation: a stale window or slot override (F2 stored some) moves
+    neither the gateway command nor the budget, so neither may move the footprint."""
+    m = _flash()
+    pooled = local_catalog.footprint_gb(m, 262144)
+    for window, slots in ((65536, 2), (262144, 4), (32768, 1), (262144, None)):
+        assert local_catalog.footprint_gb(m, window, slots=slots) == pooled
+        assert local_catalog.declared_gb(m, window, slots=slots) == local_catalog.declared_gb(
+            m, 262144
+        )
+        assert local_catalog.load_footprint_gb(m, window, slots=slots) == (
+            local_catalog.load_footprint_gb(m)
+        )
+    kv_only = local_catalog.footprint_gb(m, 262144, disk_gb=0.0) - local_catalog.footprint_gb(
+        dataclasses.replace(m, kv_gb_per_128k=0.0), 262144, disk_gb=0.0
+    )
+    assert kv_only == pytest.approx(m.kv_gb_per_128k * 8, abs=0.02)
+
+
+def test_served_slots_are_the_pool_slots() -> None:
+    m = _flash()
+    assert m.served_slots({}) == 8 and m.served_slots({FLASH_ID: 2}) == 8
+    assert m.effective_slots(1) == m.effective_slots(4) == 8
     gpt = local_catalog.get("gpt-oss-120b")
-    assert gpt is not None and gpt.served_slots({}) == 1
+    assert gpt is not None and gpt.served_slots({}) == 1 and gpt.served_slots({gpt.id: 2}) == 2
 
 
 # --- engine separation: pickers, jcode, residency, smoketest, kv-prefix ------------------
@@ -187,19 +255,19 @@ async def test_restore_skips_members_of_the_inactive_engine(
 async def test_residency_budgets_flash_next_at_its_default_slots() -> None:
     coord = _coord(engine.FLASH_NEXT, FakeLocalGateway())
     fp = await coord._footprint(FLASH_ID, {}, {})
-    assert fp == local_catalog.footprint_gb(_flash(), 262144, slots=4)
+    assert fp == local_catalog.footprint_gb(_flash(), 262144, slots=8)
 
 
 @pytest.mark.asyncio
 async def test_gateway_served_shape_defaults_to_the_catalog_slots() -> None:
     client = local_gateway.LocalGatewayClient("http://x/v1")
-    assert await client._served_shape(_flash()) == (262144, 4)
+    assert await client._served_shape(_flash()) == (262144, 8)
 
     async def _none() -> dict[str, int]:
         return {}
 
     wired = local_gateway.LocalGatewayClient("http://x/v1", slots_loader=_none)
-    assert await wired._served_shape(_flash()) == (262144, 4)
+    assert await wired._served_shape(_flash()) == (262144, 8)
 
 
 class _SmokeGateway:
@@ -232,19 +300,52 @@ async def test_smoketest_tries_only_the_engine_under_test(tmp_path: Path) -> Non
 
 
 def test_kv_prefix_fingerprints_the_active_engines_launch_line(tmp_path: Path) -> None:
-    save = " --slot-save-path /models/.kvslots/m"
-    (tmp_path / "llama-swap.yaml").write_text(f"models:\n  m:\n    cmd: llama-server -c 1{save}\n")
+    save = " --slot-save-path /models/.kvslots/qwen3-vl-30b-a3b"
+    (tmp_path / "llama-swap.yaml").write_text(
+        f"models:\n  {SAVER}:\n    cmd: llama-server -c 1{save}\n"
+    )
     flash_cfg = tmp_path / "llama-swap.flash-next.yaml"
-    flash_cfg.write_text(f"models:\n  m:\n    cmd: llama-server -c 2{save}\n")
+    flash_cfg.write_text(f"models:\n  {SAVER}:\n    cmd: llama-server -c 2{save}\n")
     store = KvPrefixStore(object(), str(tmp_path))  # type: ignore[arg-type]
-    standard_fp = store.identity_of("m", "sys", [], None)
+    standard_fp = store.identity_of(SAVER, "sys", [], None)
     store.set_engine(engine.FLASH_NEXT)
-    flash_fp = store.identity_of("m", "sys", [], None)
+    flash_fp = store.identity_of(SAVER, "sys", [], None)
     assert standard_fp is not None and flash_fp is not None and standard_fp != flash_fp
     built = KvPrefixStore(object(), str(tmp_path), engine=engine.FLASH_NEXT)  # type: ignore[arg-type]
-    assert built.identity_of("m", "sys", [], None) == flash_fp
+    assert built.identity_of(SAVER, "sys", [], None) == flash_fp
     flash_cfg.unlink()
-    assert store.identity_of("m", "sys", [], None) is None
+    assert store.identity_of(SAVER, "sys", [], None) is None
+
+
+@pytest.mark.asyncio
+async def test_the_pools_slot_save_path_does_not_make_kv_prefix_save_or_restore(
+    tmp_path: Path,
+) -> None:
+    """The pool renders `--slot-save-path` for slot erase only; the disk layer gates on the
+    catalog (recurrent, no MTP), so it stays out of Flash-Next until F4 — patch on or off."""
+    flash = dataclasses.asdict(_flash())
+    (tmp_path / FLASH_ID / "UD-IQ4_XS").mkdir(parents=True)
+    (tmp_path / FLASH_ID / "UD-IQ4_XS" / "m-UD-IQ4_XS-00001-of-00001.gguf").write_bytes(b"\0")
+    (tmp_path / FLASH_ID / "mmproj-F16.gguf").write_bytes(b"\0")
+    llama_swap_config.write(str(tmp_path), [flash], engine=engine.FLASH_NEXT)
+    line = llama_swap_config.launch_line(str(tmp_path), FLASH_ID, engine.FLASH_NEXT)
+    assert line is not None and "--slot-save-path" in line
+    for patch in (False, True):
+        store = KvPrefixStore(
+            FakeLocalGateway(),  # type: ignore[arg-type]
+            str(tmp_path),
+            patch_active=patch,
+            engine=engine.FLASH_NEXT,
+        )
+        assert store._eligible(FLASH_ID) is None
+        assert store._ineligible_reason(FLASH_ID).startswith("recurrent")
+        assert not await store.save_after_prime(FLASH_ID, "sys", [], 50_000)
+        assert not await store.restore_if_lost(FLASH_ID, "sys", [])
+        # Nothing hashes a prefix for it either, and the snapshot names the refusal.
+        assert store.identity_of(FLASH_ID, "sys", [], None) is None
+        snap = await store.snapshot([(FLASH_ID, "sys", [], None)])
+        row = snap["models"][0]  # type: ignore[index]
+        assert row["state"] == "ineligible" and row["eligible"] is False
 
 
 # --- the page-cache drop -----------------------------------------------------------------
@@ -334,7 +435,7 @@ def test_the_settings_picker_hides_flash_next_while_standard_is_active() -> None
     # removable from the PWA.
     row = {m["id"]: m for m in body["local_models"]}[FLASH_ID]
     assert row["engine"] == "flash-next"
-    assert row["parallel_slots"] == 4 and row["parallel_slots_max"] == 4
+    assert row["parallel_slots"] == 8 and row["parallel_slots_max"] == 8
     resp = c.put("/api/settings/llm", json={"tasks": {"agent.turn": {"provider": FLASH_ID}}})
     assert resp.status_code == 422
 
@@ -349,16 +450,8 @@ def test_the_slot_cap_is_per_model() -> None:
     gpt = local_catalog.get("gpt-oss-120b")
     assert gpt is not None
     assert llm_settings.slots_max(gpt) == llm_settings.PARALLEL_SLOTS_MAX == 2
-    assert llm_settings.slots_max(_flash()) == 4
-    c, store = _api()
-    url = f"/api/settings/llm/local-models/{FLASH_ID}/parallel-slots"
-    assert c.put(url, json={"slots": 5}).status_code == 422
-    assert c.put(url, json={"slots": 0}).status_code == 422
-    resp = c.put(url, json={"slots": 3})
-    assert resp.status_code == 200
-    assert {m["id"]: m for m in resp.json()["local_models"]}[FLASH_ID]["parallel_slots"] == 3
-    resp = c.put(url, json={"slots": None})
-    assert {m["id"]: m for m in resp.json()["local_models"]}[FLASH_ID]["parallel_slots"] == 4
+    assert llm_settings.slots_max(_flash()) == 8
+    c, _ = _api()
     assert (
         c.put(
             "/api/settings/llm/local-models/gpt-oss-120b/parallel-slots", json={"slots": 3}
@@ -367,24 +460,92 @@ def test_the_slot_cap_is_per_model() -> None:
     )
 
 
-def test_one_slot_means_one_on_a_model_served_wider_by_default() -> None:
-    """F2 measures 1 × 262144 against the default 4 × 262144. The store used to record 1 as an
-    absence, which reads back as the default four, so the PUT had to refuse it (422) and the
-    layout was unreachable. Stored explicitly, it reaches the snapshot, the footprint and the
-    served shape; a count equal to the default is still an absence."""
+@pytest.mark.parametrize("slots", [1, 2, 4, 9, 0])
+def test_a_pooled_model_refuses_any_slot_change(slots: int) -> None:
+    """The router pins roles by slot id; another count would send calls to the wrong slot. A
+    409 with a reason the owner can read, not a 422 range error."""
     c, store = _api("flash-next")
-    url = f"/api/settings/llm/local-models/{FLASH_ID}/parallel-slots"
-    four = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}[FLASH_ID]
-    resp = c.put(url, json={"slots": 1})
+    resp = c.put(f"/api/settings/llm/local-models/{FLASH_ID}/parallel-slots", json={"slots": slots})
+    assert resp.status_code == 409
+    assert "shared 1,048,576-token memory pool across 8 slots" in resp.json()["detail"]
+    assert "slot count is fixed" in resp.json()["detail"]
+    assert FLASH_ID not in store.values.get("llm_local_parallel_slots", {})
+
+
+@pytest.mark.parametrize("window", [65536, 131072, 1])
+def test_a_pooled_model_refuses_any_window_change(window: int) -> None:
+    c, store = _api("flash-next")
+    resp = c.put(
+        f"/api/settings/llm/local-models/{FLASH_ID}/context-window",
+        json={"context_window": window},
+    )
+    assert resp.status_code == 409
+    assert "context window is fixed" in resp.json()["detail"]
+    assert FLASH_ID not in store.values.get("llm_local_context_windows", {})
+
+
+@pytest.mark.parametrize("slots", [None, 8])
+def test_a_pooled_slot_no_op_is_accepted_and_clears_a_stale_override(slots: int | None) -> None:
+    """F2 stored overrides for Flash-Next; the no-op PUT is how they are cleared from the PWA."""
+    c, store = _api("flash-next")
+    store.values["llm_local_parallel_slots"] = {FLASH_ID: 4, "gpt-oss-120b": 2}
+    resp = c.put(f"/api/settings/llm/local-models/{FLASH_ID}/parallel-slots", json={"slots": slots})
     assert resp.status_code == 200
+    assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
     row = {m["id"]: m for m in resp.json()["local_models"]}[FLASH_ID]
-    assert row["parallel_slots"] == 1
-    assert row["default_slots"] == 4 and row["parallel_slots_max"] == 4
-    assert row["kv_gb"] < four["kv_gb"]
-    assert store.values["llm_local_parallel_slots"] == {FLASH_ID: 1}
-    assert _flash().served_slots(store.values["llm_local_parallel_slots"]) == 1
-    assert c.put(url, json={"slots": 4}).status_code == 200
-    assert store.values["llm_local_parallel_slots"] == {}
+    assert row["parallel_slots"] == 8
+
+
+@pytest.mark.parametrize("window", [None, 262144])
+def test_a_pooled_window_no_op_is_accepted_and_clears_a_stale_override(window: int | None) -> None:
+    c, store = _api("flash-next")
+    store.values["llm_local_context_windows"] = {FLASH_ID: 65536}
+    resp = c.put(
+        f"/api/settings/llm/local-models/{FLASH_ID}/context-window",
+        json={"context_window": window},
+    )
+    assert resp.status_code == 200
+    assert store.values["llm_local_context_windows"] == {}
+
+
+def test_the_snapshot_describes_the_pool_and_hides_stale_overrides() -> None:
+    c, store = _api("flash-next")
+    store.values["llm_local_context_windows"] = {FLASH_ID: 65536}
+    store.values["llm_local_parallel_slots"] = {FLASH_ID: 2}
+    rows = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    row = rows[FLASH_ID]
+    pool = slot_roles.FLASH_NEXT_POOL
+    assert row["kv_pool"]["n_ctx"] == 1_048_576
+    assert row["kv_pool"]["slots"] == [
+        {
+            "slot": r.slot,
+            "role": r.role.value,
+            "label": r.label,
+            "cap": r.cap_tokens,
+            "overflow": r.overflow.value if r.overflow is not None else None,
+        }
+        for r in pool.reservations
+    ]
+    assert row["kv_pool"]["slots"][0] == {
+        "slot": 0,
+        "role": "interactive",
+        "label": "jerv (chat, omnibox)",
+        "cap": 262144,
+        "overflow": None,
+    }
+    by_role = {s["role"]: s for s in row["kv_pool"]["slots"]}
+    assert by_role["pet"]["overflow"] == "small"
+    assert row["parallel_slots"] == 8 and row["context_window_override"] is None
+    # The pool's KV once, whatever is saved.
+    assert row["kv_gb"] == local_catalog.footprint_gb(_flash(), 262144, disk_gb=0.0)
+    # The memory bar's weights segment leaves out what the GPU never holds.
+    assert row["resident_weights_gb"] == pytest.approx(
+        local_catalog.resident_weights_gb(_flash(), row["disk_gb"]), abs=0.01
+    )
+    assert row["resident_weights_gb"] < row["size_gb"] - 28
+    gpt = rows["gpt-oss-120b"]
+    assert gpt["resident_weights_gb"] == pytest.approx(gpt["disk_gb"] or gpt["size_gb"], abs=0.01)
+    assert rows["gpt-oss-120b"]["kv_pool"] is None
 
 
 def test_a_single_slot_model_stores_exactly_what_it_always_has() -> None:
@@ -447,23 +608,13 @@ def _lay_down_flash(root: Path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("window", "slots", "c", "np"),
-    [
-        (131072, None, 4 * 131072, 4),
-        (262144, 1, 262144, 1),
-        (131072, 1, 131072, 1),
-        (65536, 2, 2 * 65536, 2),
-    ],
+    ("window", "slots"), [(131072, None), (262144, 1), (131072, 1), (65536, 2), (262144, 4)]
 )
-async def test_a_saved_layout_reaches_the_flash_next_served_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    window: int,
-    slots: int | None,
-    c: int,
-    np: int,
+async def test_a_saved_f2_layout_no_longer_reaches_the_flash_next_served_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, window: int, slots: int | None
 ) -> None:
-    """The F2 layouts, end to end through the load-time re-stamp: `-c` is slots × window."""
+    """The overrides F2 stored, end to end through the load-time re-stamp: the pool is served
+    whatever is saved, and the served shape reads back as one slot's maximum sequence."""
     from tests.unit.fakes import FakeSettingsStore
 
     _lay_down_flash(tmp_path)
@@ -477,16 +628,16 @@ async def test_a_saved_layout_reaches_the_flash_next_served_command(
     )
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
-    assert f" -c {c} " in text and f" -np {np} " in text
+    assert " -c 1048576 " in text and " -np 8 --kv-unified " in text
     served = _flash().served_model
-    assert llama_swap_config_shape(tmp_path)[served] == (window, np)
+    assert llama_swap_config_shape(tmp_path)[served] == (262144, 8)
 
 
 @pytest.mark.asyncio
 async def test_a_dropped_stored_flag_is_named_on_the_settings_screen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The re-stamp still lands the window, serves the model without the refused flag, and
+    """The re-stamp still renders the pool, serves the model without the refused flag, and
     `gateway_config_error` (what the settings screen shows) names the model, the reason and the
     no-shell fix."""
     from tests.unit.fakes import FakeSettingsStore
@@ -501,7 +652,7 @@ async def test_a_dropped_stored_flag_is_named_on_the_settings_screen(
     try:
         await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
         text = (tmp_path / "llama-swap.flash-next.yaml").read_text()
-        assert " -c 524288 " in text and "--cache-ram" not in text
+        assert " -c 1048576 " in text and "--cache-ram" not in text
         err = llm_settings.gateway_config_error()
         assert err is not None and FLASH_ID in err and "--cache-ram" in err
         assert f"/api/debug/llm/local-models/{FLASH_ID}/extra-args" in err
@@ -510,8 +661,6 @@ async def test_a_dropped_stored_flag_is_named_on_the_settings_screen(
 
 
 def llama_swap_config_shape(root: Path) -> dict[str, tuple[int, int]]:
-    from jbrain.llm import llama_swap_config
-
     return llama_swap_config.served_shape_from_config(str(root), engine.FLASH_NEXT)
 
 
@@ -593,8 +742,6 @@ def test_the_renderer_re_applies_the_launch_flag_allowlist(
     """A stored override that never went through the settings API's allowlist must not reach
     a launch command — the renderer checks what is STORED, not just what the PUT accepted. The
     model is served on its catalog flags and the reason names the no-shell fix."""
-    from jbrain.llm import llama_swap_config
-
     (tmp_path / "gpt-oss-120b").mkdir()
     (tmp_path / "gpt-oss-120b" / "m-mxfp4.gguf").write_bytes(b"\0")
     gpt = local_catalog.get("gpt-oss-120b")
@@ -733,10 +880,12 @@ def test_the_up_predicate_counts_a_crash_looping_engine() -> None:
 
 @pytest.mark.asyncio
 async def test_kv_prefix_follows_an_engine_switch_without_a_restart(tmp_path: Path) -> None:
-    save = " --slot-save-path /models/.kvslots/m"
-    (tmp_path / "llama-swap.yaml").write_text(f"models:\n  m:\n    cmd: llama-server -c 1{save}\n")
+    save = " --slot-save-path /models/.kvslots/qwen3-vl-30b-a3b"
+    (tmp_path / "llama-swap.yaml").write_text(
+        f"models:\n  {SAVER}:\n    cmd: llama-server -c 1{save}\n"
+    )
     (tmp_path / "llama-swap.flash-next.yaml").write_text(
-        f"models:\n  m:\n    cmd: llama-server -c 2{save}\n"
+        f"models:\n  {SAVER}:\n    cmd: llama-server -c 2{save}\n"
     )
     current = {"engine": "standard"}
 
@@ -746,10 +895,10 @@ async def test_kv_prefix_follows_an_engine_switch_without_a_restart(tmp_path: Pa
     source = engine.ActiveEngine(_load, ttl_s=0.0)
     store = KvPrefixStore(object(), str(tmp_path), engine=source)  # type: ignore[arg-type]
     await store._refresh_engine()
-    standard_fp = store.identity_of("m", "sys", [], None)
+    standard_fp = store.identity_of(SAVER, "sys", [], None)
     current["engine"] = "flash-next"  # the debug route flips it on the live api
     await store._refresh_engine()
-    flash_fp = store.identity_of("m", "sys", [], None)
+    flash_fp = store.identity_of(SAVER, "sys", [], None)
     assert standard_fp is not None and flash_fp is not None and standard_fp != flash_fp
 
 
@@ -880,8 +1029,6 @@ def test_the_renderer_refuses_a_stored_unsafe_argument(tmp_path: Path, bad: str)
     model's operator flags are dropped and the reason reported, never smuggled into the YAML."""
     import yaml
 
-    from jbrain.llm import llama_swap_config
-
     (tmp_path / "gpt-oss-120b").mkdir()
     (tmp_path / "gpt-oss-120b" / "m-mxfp4.gguf").write_bytes(b"\0")
     gpt = local_catalog.get("gpt-oss-120b")
@@ -900,8 +1047,6 @@ def test_the_renderer_refuses_a_stored_unsafe_argument(tmp_path: Path, bad: str)
 
 def test_an_empty_roster_renders_an_empty_mapping(tmp_path: Path) -> None:
     import yaml
-
-    from jbrain.llm import llama_swap_config
 
     text = llama_swap_config.render([], str(tmp_path))
     assert yaml.safe_load(text)["models"] == {}
@@ -957,6 +1102,20 @@ def test_free_gb_measures_a_real_directory_and_skips_an_absent_one(tmp_path: Pat
     assert local_weights.free_gb(str(tmp_path / "absent")) is None
     measured = local_weights.free_gb(str(tmp_path))
     assert measured is not None and measured >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_props_carry_the_pool_beside_the_per_slot_n_ctx() -> None:
+    """llama-server's `n_ctx` under `--kv-unified` is one slot's maximum (262144), not the pool;
+    the debug read says so instead of leaving 262144 to be read as the window."""
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["gpt-oss-120b", FLASH_ID])
+    gw = FakeLocalGateway(props_payload={"n_ctx": 262144, "total_slots": 8})
+    props = await llm_settings.gateway_props(FLASH_ID, settings, gw)  # type: ignore[arg-type]
+    assert props["n_ctx"] == 262144
+    pool = props["kv_pool"]
+    assert isinstance(pool, dict) and pool["n_ctx"] == 1_048_576 and len(pool["slots"]) == 8
+    gpt = await llm_settings.gateway_props("gpt-oss-120b", settings, gw)  # type: ignore[arg-type]
+    assert "kv_pool" not in gpt
 
 
 def test_tool_round_text_is_analysis_only_for_a_harmony_reasoner() -> None:

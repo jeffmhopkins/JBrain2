@@ -25,12 +25,21 @@ from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.auth import service
 from jbrain.llm import local_catalog
+from jbrain.llm.kv_pool_guard import KvPoolBusyError
+from jbrain.llm.openai_slot_fit import (
+    context_length_exceeded,
+    error_bytes,
+    fit_openai_request,
+    pinned_request,
+    pool_busy,
+)
+from jbrain.llm.slot_roles import JCODE_ROLE, SlotCapError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -231,17 +240,37 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
     payload["model"] = served  # pin to the on-box coder; ignore the caller's choice
+    # A remote coder is jcode traffic: on a pooled model it is held to the jcode slot's cap and
+    # pinned to that slot through the shared pool guard, exactly as the jcode proxy is. The
+    # client's slot, parallel-choice and output-length fields are dropped by the fit itself.
+    try:
+        prompt_tokens = fit_openai_request(served, payload, JCODE_ROLE)
+    except SlotCapError as exc:
+        return JSONResponse(status_code=400, content=context_length_exceeded(exc))
+    pool_guard = getattr(request.app.state, "kv_pool_guard", None)
     client = httpx.AsyncClient(base_url=gateway_url.rstrip("/"), timeout=httpx.Timeout(600.0))
 
     captured: list[bytes] = []
+    stream = bool(payload.get("stream"))
 
     async def relay() -> AsyncIterator[bytes]:
+        # The guard's wait runs inside the body, after the 200 headers: placing before them
+        # would hold a pending placement for a response that may never be iterated. So a busy
+        # pool is written into the body as an OpenAI error rather than cutting the stream.
         try:
-            async with client.stream("POST", upstream_path, json=payload) as upstream:
+            async with (
+                pinned_request(pool_guard, served, payload, prompt_tokens, JCODE_ROLE),
+                client.stream("POST", upstream_path, json=payload) as upstream,
+            ):
                 async for chunk in upstream.aiter_raw():
                     if meter:
                         captured.append(chunk)
                     yield chunk
+        except KvPoolBusyError as exc:
+            log.warning("external-llm request deferred, KV pool busy sid=%s: %s", sid, exc)
+            yield error_bytes(pool_busy(exc), stream=stream)
+        except SlotCapError as exc:
+            yield error_bytes(context_length_exceeded(exc), stream=stream)
         finally:
             await client.aclose()
             if meter:
@@ -252,7 +281,7 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
                     except Exception:  # noqa: BLE001 - metering must not fail the call
                         log.warning("external-llm usage record failed sid=%s", sid, exc_info=True)
 
-    media = "text/event-stream" if payload.get("stream") else "application/json"
+    media = "text/event-stream" if stream else "application/json"
     return StreamingResponse(relay(), media_type=media)
 
 

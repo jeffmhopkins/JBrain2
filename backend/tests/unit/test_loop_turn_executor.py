@@ -13,6 +13,7 @@ from jbrain.agent.agents import agent_for
 from jbrain.agent.contracts import UsageEvent
 from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.tasks.runner import LoopTurnExecutor
 
 OWNER = SessionContext(principal_id="11111111-1111-1111-1111-111111111111", principal_kind="owner")
@@ -34,9 +35,10 @@ class _FakeLoop:
     run_turn drove it with (so the test can assert the window was passed through)."""
 
     seen_kwargs: dict = {}
+    init_kwargs: dict = {}
 
     def __init__(self, *_a: object, **_k: object) -> None:
-        pass
+        _FakeLoop.init_kwargs = _k
 
     async def run_stream(self, **kwargs: object):  # type: ignore[no-untyped-def]
         _FakeLoop.seen_kwargs = kwargs
@@ -68,7 +70,11 @@ async def _effort(_key: str) -> str:
     return "medium"
 
 
-async def _window(_key: str) -> int:
+_window_roles: list[object] = []
+
+
+async def _window(_key: str, slot_role: object = None) -> int:
+    _window_roles.append(slot_role)
     return 5000
 
 
@@ -184,3 +190,31 @@ async def test_no_root_tree_leaves_the_turn_treeless(monkeypatch: pytest.MonkeyP
         acc=_FakeAcc(),  # type: ignore[arg-type]
     )
     assert _FakeLoop.seen_kwargs.get("tree") is None
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "role"),
+    [({}, SlotRole.SCHEDULED), ({"slot_role": SlotRole.WORKSHOP}, SlotRole.WORKSHOP)],
+)
+@pytest.mark.asyncio
+async def test_run_turn_pins_its_slot_role_on_the_loop_and_the_window(
+    monkeypatch: pytest.MonkeyPatch, kwargs: dict, role: SlotRole
+) -> None:
+    """Background turns default to the scheduled slot (tasks, plan continuations, jmolt night)
+    and a note conversation names the workshop one; never jerv's interactive slot, whose
+    prefix a background turn would otherwise evict on a pooled model."""
+    monkeypatch.setattr(runner_mod, "AgentLoop", _FakeLoop)
+    _window_roles.clear()
+    executor = LoopTurnExecutor(router=_router(), registry=object(), **kwargs)  # type: ignore[arg-type]
+    await executor.run_turn(
+        profile=agent_for("jerv"),
+        read_ctx=OWNER,
+        read_scopes=(),
+        conversation=[],
+        timezone=None,
+        recorder=object(),
+        agent_session_id="sess-1",
+        acc=_FakeAcc(),  # type: ignore[arg-type]
+    )
+    assert _FakeLoop.init_kwargs.get("slot_role") == role
+    assert _window_roles == [role]

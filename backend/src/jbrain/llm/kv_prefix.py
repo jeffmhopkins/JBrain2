@@ -400,10 +400,17 @@ class KvPrefixStore:
                 entry["reason"] = self._ineligible_reason(served_model)
             entry["restored_unused"] = served_model in self._restored_unused
             entry["last_outcome"] = self._last_outcome.get(served_model)
+            if eligible is None:
+                # Decided before the launch line is read: a model can be served with a save path
+                # for other reasons (Flash-Next's pool needs one for slot erase) and still never
+                # save, so a resolved fingerprint here would read as a cold cache, not a refusal.
+                entry["state"] = "ineligible"
+                models.append(entry)
+                continue
             await self._refresh_engine()
             resolved = await asyncio.to_thread(self._resolve, served_model, system, tools, effort)
             if resolved is None:
-                entry["state"] = "no_disk_layer" if eligible is not None else "ineligible"
+                entry["state"] = "no_disk_layer"
                 models.append(entry)
                 continue
             fingerprint, _save_dir, identity = resolved
@@ -620,7 +627,11 @@ class KvPrefixStore:
     ) -> str | None:
         """The fingerprint a turn with this identity would look for, or None when this model
         has no disk layer. Lets a caller name the identity it just ran without reaching into
-        `_resolve` — the router needs it to close `note_agent_turn` above."""
+        `_resolve` — the router needs it to close `note_agent_turn` above. None for a model
+        this store never saves, whatever its launch line carries, so nothing hashes a prefix
+        per turn for a cache that cannot exist."""
+        if self._eligible(served_model) is None:
+            return None
         resolved = self._resolve(served_model, system, tools, reasoning_effort)
         return None if resolved is None else resolved[0]
 

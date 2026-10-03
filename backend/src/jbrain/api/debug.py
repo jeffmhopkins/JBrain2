@@ -64,6 +64,7 @@ from jbrain.llm import engine as llm_engine
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.slot_roles import SlotPin, SlotRole, role_for, slot_pin
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     AssistantMessage,
@@ -357,6 +358,10 @@ class CompleteRequest(BaseModel):
     # buffered on the box and pulled from /jobs/{id}, because a stream held open across a
     # Cloudflare Tunnel dies at its request timeout exactly like a long completion does.
     stream: bool = False
+    # The pooled-engine slot to run in. Omitted: the task's own role, except that a task
+    # whose role is jerv's interactive slot runs in the workshop slot instead, so a console
+    # probe never overwrites the persona prefix the owner's next chat turn reuses.
+    slot_role: SlotRole | None = None
 
 
 class StreamFrame(BaseModel):
@@ -393,6 +398,13 @@ class CompleteOut(BaseModel):
 _MAX_STREAM_FRAMES = 400
 
 
+def _slot_pin(task: str, asked: SlotRole | None) -> SlotPin:
+    """The `slot_role` keyword a console call passes, or nothing (the task's own role)."""
+    if asked is None and role_for(task) == SlotRole.INTERACTIVE:
+        return slot_pin(SlotRole.WORKSHOP)
+    return slot_pin(asked)
+
+
 async def _run_stream(
     router_: LlmRouter,
     body: CompleteRequest,
@@ -420,6 +432,7 @@ async def _run_stream(
         max_tokens=body.max_tokens,
         strength=strength,
         sampling=sampling,
+        **_slot_pin(task, body.slot_role),
     ):
         at = _stamp()
         if ttft_ms is None:
@@ -478,6 +491,7 @@ async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> Complete
             max_tokens=body.max_tokens,
             strength=strength,
             sampling=sampling,
+            **_slot_pin(task, body.slot_role),
         )
     except LlmError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -527,6 +541,10 @@ class ToolProbeRequest(BaseModel):
     # gateway's tool-grammar builder chokes on — impossible with registry names alone.
     raw_tools: list[dict[str, Any]] = Field(default_factory=list)
     max_tokens: int = Field(default=2048, ge=1, le=32768)
+    # The pooled-engine slot to run in. Omitted: the task's own role, except that a task
+    # whose role is jerv's interactive slot runs in the workshop slot instead, so a console
+    # probe never overwrites the persona prefix the owner's next chat turn reuses.
+    slot_role: SlotRole | None = None
 
 
 class ToolProbeOut(BaseModel):
@@ -581,6 +599,7 @@ async def tool_probe(body: ToolProbeRequest, request: Request, _p: DebugDep) -> 
             tools=llm_tools,
             max_tokens=body.max_tokens,
             strength=body.strength,
+            **_slot_pin(body.task, body.slot_role),
         )
     except LlmError as exc:
         return ToolProbeOut(
@@ -659,6 +678,10 @@ class ReplayRequest(BaseModel):
     fallback_result: str = "(no recorded result for this call)"
     max_steps: int = Field(default=8, ge=1, le=24)
     max_tokens: int = Field(default=2048, ge=1, le=32768)
+    # The pooled-engine slot to run in. Omitted: the task's own role, except that a task
+    # whose role is jerv's interactive slot runs in the workshop slot instead, so a console
+    # probe never overwrites the persona prefix the owner's next chat turn reuses.
+    slot_role: SlotRole | None = None
 
 
 class ReplayStep(BaseModel):
@@ -732,6 +755,7 @@ async def replay(body: ReplayRequest, request: Request, _p: DebugDep) -> ReplayO
                 tools=llm_tools,
                 max_tokens=body.max_tokens,
                 strength=body.strength,
+                **_slot_pin(body.task, body.slot_role),
             )
         except LlmError as exc:
             return ReplayOut(
@@ -3186,9 +3210,9 @@ async def set_parallel_slots(
 ) -> LlmSettingsOut:
     """Set one model's served slot count (llama-server `-np`), the PWA control mirrored here.
 
-    The other half of the window knob: `-c` is slots × window, so a layout (Flash-Next's
-    4 × 262144 against 1 × 262144 or 2 × 65536) is these two calls. The PWA caps its control at
-    two slots, so without this a measured layout below a model's default was unreachable."""
+    The other half of the window knob: `-c` is slots × window on a standard model. Flash-Next
+    serves a fixed shared pool, so for it this accepts only a no-op (null or 8) and answers 409
+    otherwise, exactly as the owner route does."""
     request.state.debug_detail = f"{model_id}: {body.slots}"
     return await llm_settings.set_local_parallel_slots_value(
         model_id, body.slots, settings, _store(request), _OWNER_CTX, _gateway(request)
@@ -3437,9 +3461,10 @@ async def cancel_engine_switch(request: Request, _p: DebugDep) -> engine_api.Swi
 
 
 # --- Slot save/restore probe (F4's first check) ------------------------------------------
-# Usable from F4 on: the flash-next config renders no --slot-save-path and the checkpoint
-# sidecar patch is off until F4 turns it on for this image, so before then the save step
-# fails with llama-server's own error rather than measuring anything.
+# Meaningful from F4 on. The flash-next config now renders --slot-save-path (the pool needs it
+# for slot erase), so the save step runs, but the checkpoint sidecar patch stays off until F4
+# turns it on for this image: until then a restore carries no context checkpoints, and the
+# probe measures that known gap rather than F4's fix.
 # Whether a saved-then-restored slot computes the SAME next token distribution as the slot
 # it was saved from. Greedy token equality is too coarse (it can differ legitimately and
 # agree by luck), so this returns the top-n log-probabilities side by side and the largest

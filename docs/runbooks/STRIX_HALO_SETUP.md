@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-10-02
+> **Status:** Living · **Last verified:** 2026-10-03
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -1401,6 +1401,15 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
    "→ Flash-Next"). A pick of Flash-Next while Standard serves runs on the task default.
 4. **Backing out:** switch back to Standard the same way, then **Uninstall** it in On-box
    models. The next Ops → Update removes its container and image.
+
+Its memory shape is fixed: one shared pool of 1,048,576 tokens (`-c 1048576 -np 8
+--kv-unified`) across eight slots, each kept for one kind of work (chat, ingest, scheduled
+tasks, research, jcode, wiki/notes, the pet, small prompts) so their cached prompts stop
+evicting each other. Its context-window and slot controls do not apply — a change is refused
+with the reason — and each kind of work has its own limit inside the pool. Budgeted at the F2
+measurement (plan §3a): ~88 GiB on the GPU, plus up to 7 GiB of host-side prompt checkpoints
+that appear only as slots fill (~95 GiB in all). A switch admits the load on the GPU figure, so
+it needs ~94 GiB free (88 + the 6 GiB floor) — a box at ~121 GiB with ~15 GiB in use has room.
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come

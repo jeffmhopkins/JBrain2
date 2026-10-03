@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>KV pool · A — summary line + table</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  [data-theme="light"] body{background:#DADAD6;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+  button{font:inherit;color:inherit;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+
+  /* ---- reviewer chrome (outside the phone) ---- */
+  .caption{max-width:390px;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;vertical-align:middle;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .sim{max-width:390px;width:100%;padding:10px 12px;margin:0 16px;background:var(--surface);border:1px dashed var(--border);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);width:58px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;cursor:pointer;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel);font-weight:600;}
+  .sim button.warn[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber);}
+  .sim .shint{font-size:11px;color:var(--text-3);}
+
+  /* ---- the phone ---- */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  [data-theme="light"] .phone{border-color:#C9C9C4;}
+  @media (max-width:430px){
+    body{padding-top:12px;}
+    .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;}
+  }
+  @media (min-width:900px){ .phone{width:560px;} .caption,.sim{max-width:560px;} }
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 10px 0 4px;border-bottom:1px solid var(--border);flex:none;padding-top:env(safe-area-inset-top);}
+  .bar .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .bar .ttl{font-size:var(--fs-screen);font-weight:500;}
+  .vitals{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:11px;font-variant-numeric:tabular-nums;}
+  .vitals .cols{display:flex;align-items:flex-end;gap:2px;height:20px;width:48px;}
+  .vitals .cols i{display:block;width:2px;background:var(--text-3);border-radius:1px;}
+  .vitals b{color:var(--text-2);font-weight:500;}
+
+  .body{flex:1;overflow-y:auto;padding:12px 14px 28px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:4px 2px 8px;}
+
+  /* shared atoms */
+  .dot{width:8px;height:8px;border-radius:999px;display:inline-block;flex:none;}
+  .dot.ok{background:var(--ok);} .dot.warn{background:var(--warn);} .dot.info{background:var(--steel);} .dot.off{background:var(--text-3);}
+  .dot.hollow{background:none;border:1.5px solid var(--text-3);}
+  .dot.live{animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 9px;border-radius:999px;white-space:nowrap;}
+  .badge.ok{background:var(--green-tint);color:var(--green);} .badge.warn{background:var(--amber-tint);color:var(--amber);}
+  .badge.info{background:var(--steel-tint);color:var(--steel);} .badge.off{background:var(--surface-2);color:var(--text-2);}
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 16px;border-radius:12px;
+    border:1px solid transparent;font-size:14px;font-weight:500;cursor:pointer;}
+  .btn.secondary{background:var(--surface-2);border-color:var(--border);color:var(--text);}
+  .btn.wide{width:100%;}
+  .link{appearance:none;background:none;border:none;color:var(--steel);font-size:inherit;cursor:pointer;padding:0;font-weight:500;}
+  .mono{font-family:var(--font-mono);}
+  .num{font-variant-numeric:tabular-nums;}
+  .note{font-size:13px;color:var(--text-2);line-height:1.45;}
+  .note b{color:var(--text);font-weight:500;}
+
+  /* LLM settings · On-box models (mirrors .onbox-card / .llm-local-row) */
+  .lcard{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px;}
+  .lhead{display:flex;align-items:center;gap:10px;padding:13px 16px;}
+  .lhead .lt{font-size:var(--fs-secondary);font-weight:600;}
+  .lhead .lr{margin-left:auto;font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px;}
+  .lmeter{margin:0 16px 12px;}
+  .lmeter .bar2{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;display:flex;}
+  .lmeter .bar2 i{display:block;height:100%;}
+  .lmeter .lm{display:flex;justify-content:space-between;font-size:12px;color:var(--text-2);margin-top:5px;font-variant-numeric:tabular-nums;}
+  .lsec{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);padding:10px 16px 0;border-top:1px solid var(--border);}
+  .lrows{padding:0 16px;}
+  .lrow{padding:14px 0;border-top:1px solid var(--border);}
+  .lsec + .lrows .lrow:first-child{border-top:none;}
+  .lrow.ghosted{opacity:.62;}
+  .lrow-head{display:flex;align-items:flex-start;gap:12px;}
+  .lname{flex:1;min-width:0;font-size:var(--fs-body);font-weight:500;}
+  .lmeta{display:block;font-size:var(--fs-micro);color:var(--text-3);font-weight:400;margin-top:1px;}
+  .ltopr{display:flex;align-items:center;gap:10px;flex:none;}
+  .lbtn{appearance:none;min-height:36px;padding:0 13px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;position:relative;}
+  .lbtn::after{content:"";position:absolute;inset:-4px;}
+  .lbtn:disabled{color:var(--text-3);cursor:not-allowed;}
+  .lstate{font-size:12px;color:var(--text-3);}
+  .lstate.on{color:var(--green);}
+  .lchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .chip{font-size:var(--fs-micro);padding:2px 8px;border-radius:999px;font-weight:500;}
+  .chip.vision{color:var(--violet);background:var(--violet-tint);} .chip.reason{color:var(--amber);background:var(--amber-tint);}
+  .chip.tools{color:var(--steel);background:var(--steel-tint);}
+  .ctx{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  .ctx-label{font-size:var(--fs-micro);color:var(--text-2);}
+  .ctx-select{font:inherit;font-size:var(--fs-micro);color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:4px 10px;cursor:pointer;}
+  .ctx-select:disabled{opacity:.6;cursor:default;}
+  .ctx-meta{font-size:var(--fs-micro);color:var(--text-3);margin-left:auto;}
+  .ctx-meta.err{color:var(--rose);}
+  .offeng{display:flex;gap:8px;align-items:flex-start;margin-top:9px;font-size:12.5px;color:var(--text-2);line-height:1.4;background:var(--surface-2);border-radius:10px;padding:8px 10px;}
+  .offeng svg{color:var(--text-3);margin-top:1px;width:15px;height:15px;}
+  .newmark{outline:1px dashed var(--steel);outline-offset:6px;border-radius:10px;}
+
+  /* role swatches — paired hues per job family; the second of a pair is lighter */
+  .sw{width:10px;height:10px;border-radius:3px;flex:none;display:inline-block;}
+
+  /* modal shell — one Sheet (DESIGN "Modal system") */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:opacity .16s ease-out;z-index:20;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;
+    transform:translateY(100%);transition:transform .18s ease-out;z-index:21;padding:0 16px calc(16px + env(safe-area-inset-bottom));max-height:88%;overflow:auto;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:32px;height:4px;border-radius:999px;background:var(--border);margin:10px auto 14px;}
+  .sheet h3{font-size:18px;font-weight:500;margin-bottom:4px;}
+
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(16px);background:var(--surface-2);border:1px solid var(--border);
+    border-radius:999px;padding:10px 16px;font-size:12.5px;color:var(--text);opacity:0;pointer-events:none;transition:.18s ease-out;max-width:88%;z-index:30;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important;}
+  }
+
+  /* ---- variant A ---- */
+  .psum{appearance:none;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:999px;padding:4px 10px;cursor:pointer;min-height:28px;position:relative;font-variant-numeric:tabular-nums;}
+  .psum::after{content:"";position:absolute;inset:-8px -4px;}
+  .psum b{font-weight:600;}
+  .psum .cv{color:var(--text-3);transition:transform .15s ease-out;display:flex;}
+  .psum[aria-expanded="true"] .cv{transform:rotate(180deg);}
+  .psum .u{color:var(--text-2);}
+  .lockm{display:inline-flex;align-items:center;gap:4px;}
+  .ptab{margin-top:10px;border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .ptab table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}
+  .ptab th{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:500;text-align:left;padding:8px 10px 6px;background:var(--surface-2);}
+  .ptab th.r,.ptab td.r{text-align:right;}
+  .ptab td{padding:8px 10px;border-top:1px solid var(--border);vertical-align:top;}
+  .ptab td.n{color:var(--text-3);width:22px;padding-right:0;}
+  .ptab .jl{display:flex;align-items:center;gap:7px;color:var(--text);}
+  .ptab .jr{display:block;font-family:var(--font-mono);font-size:11px;color:var(--text-3);margin:2px 0 0 17px;}
+  .ptab .ov{display:block;font-size:11.5px;color:var(--text-2);margin:2px 0 0 17px;}
+  .ptab .us{display:flex;align-items:center;justify-content:flex-end;gap:6px;white-space:nowrap;}
+  .ptab .us small{color:var(--text-3);font-size:11px;}
+  .ptab tr.freed td{background:var(--amber-tint);}
+  .ptab tfoot td{background:var(--surface-2);font-size:12.5px;color:var(--text-2);}
+  .ptab tfoot b{color:var(--text);font-weight:600;}
+  .pfoot{display:flex;gap:8px;align-items:flex-start;padding:9px 10px;border-top:1px solid var(--border);font-size:12px;color:var(--text-2);line-height:1.45;}
+  .pfoot svg{color:var(--text-3);width:14px;height:14px;margin-top:2px;}
+  .pfoot.warn{background:var(--amber-tint);color:var(--text);} .pfoot.warn svg{color:var(--amber);}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">KV pool · A — one-line summary that expands to a table</span>
+    <span class="toggle" role="group" aria-label="theme"><button id="c-dark" aria-pressed="true" onclick="sim('theme','dark')">dark</button><button id="c-light" aria-pressed="false" onclick="sim('theme','light')">light</button></span><br/>
+    On the Flash-Next row, the <b>context window</b> and <b>slots</b> selects become <b>one read-only line</b> in the same place and style: <b>KV pool · 8 slots · 1M shared</b>, with a lock and <i>set by the engine</i>. Tap the line to open a <b>table</b> (slot, job, cap and, if available, live use). The footer says lightly that the caps add up to more than the pool. Try <b>Live use → pool full</b> and <b>Row → Before</b>. The dashed outline marks what is new.
+  </div>
+  <div class="sim" id="sim" aria-label="Mock scenario controls"></div>
+
+  <div class="phone">
+    <div class="bar" id="top"></div>
+    <div class="body" id="screen"></div>
+    <div class="scrim" id="scrim" onclick="closeModal()"></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+    <div id="toast" role="status"></div>
+  </div>
+
+<script>
+// ===== shared mock model — identical across A/B/C so only the presentation differs =====
+// The API's kv_pool, verbatim: one shared pool, eight role-pinned slots with per-slot caps.
+const KV_POOL={n_ctx:1048576,slots:[
+  {slot:0,role:'interactive',label:'jerv (chat, omnibox)',cap:262144},
+  {slot:1,role:'ingest',label:'Ingest and analysis',cap:131072},
+  {slot:2,role:'scheduled',label:'Scheduled tasks',cap:262144},
+  {slot:3,role:'research',label:'Research and sub-agents',cap:262144},
+  {slot:4,role:'jcode',label:'jcode',cap:262144},
+  {slot:5,role:'workshop',label:'Wiki, notes, intake',cap:131072},
+  {slot:6,role:'pet',label:'Kid pet',cap:32768},
+  {slot:7,role:'small',label:'Small prompts',cap:65536},
+]};
+// pet's overflow is a fixed routing rule, not an API field the mock invents per slot
+const OVERFLOW={pet:'small'};
+const CAP_SUM=KV_POOL.slots.reduce((a,s)=>a+s.cap,0);
+// paired hues per job family (you · background · agents · writing · tiny)
+const ROLE_COLOR={interactive:['var(--steel)',1],ingest:['var(--amber)',1],scheduled:['var(--amber)',.6],
+  research:['var(--violet)',1],jcode:['var(--violet)',.6],workshop:['var(--green)',1],pet:['var(--green)',.6],small:['var(--text-2)',.7]};
+const sw=r=>`<span class="sw" style="background:${ROLE_COLOR[r][0]};opacity:${ROLE_COLOR[r][1]}"></span>`;
+const fill=r=>`background:${ROLE_COLOR[r][0]};opacity:${ROLE_COLOR[r][1]}`;
+
+// Illustrative live use ("if available") — [tokens held, state]; state: live | warm | empty | freed
+const K=1024;
+const OCC={
+  idle:[[38*K,'warm'],[0,'empty'],[0,'empty'],[0,'empty'],[12*K,'warm'],[0,'empty'],[3*K,'warm'],[1*K,'warm']],
+  busy:[[118*K,'live'],[96*K,'live'],[41*K,'warm'],[201*K,'live'],[154*K,'warm'],[60*K,'live'],[0,'empty'],[9*K,'live']],
+  full:[[186*K,'live'],[128*K,'live'],[230*K,'live'],[250*K,'live'],[0,'freed'],[112*K,'warm'],[0,'empty'],[22*K,'live']],
+};
+const FREED_NOTE='Slot 4 · jcode was idle 6 min — the router freed its 210K so Research could grow.';
+
+const S={
+  theme:(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark',
+  serving:true,      // Flash-Next engine is the one serving
+  occ:'off',         // off | idle | busy | full
+  before:false,      // show today's (broken) selects on the Flash-Next row
+  sel:null, open:false, modal:null, tick:0,
+};
+
+const fmtK=n=>n>=1048576?`${+(n/1048576).toFixed(n%1048576?2:0)}M`:n>=1024?`${Math.round(n/1024)}K`:`${n}`;
+const fmtFull=n=>n.toLocaleString('en-US');
+const pct=(a,b)=>Math.max(0,Math.min(100,a/b*100));
+const occOn=()=>S.serving&&S.occ!=='off';
+function occ(i){if(!occOn())return null;const [u,st]=OCC[S.occ][i];
+  // a light random walk on live slots so the view reads as live
+  if(st!=='live')return{used:u,st};const cap=KV_POOL.slots[i].cap;
+  const j=Math.round((Math.sin(S.tick*1.3+i*2.1)*.04)*cap);return{used:Math.max(1024,Math.min(cap,u+j)),st};}
+const usedTotal=()=>KV_POOL.slots.reduce((a,s,i)=>a+(occ(i)?occ(i).used:0),0);
+const stLabel={live:'generating',warm:'holding a prefix',empty:'empty',freed:'freed by router'};
+const stDot={live:'ok live',warm:'info',empty:'hollow',freed:'warn'};
+
+const I={
+  back:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+  caret:'<svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+  down:'<svg width="14" height="14" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+  lock:'<svg width="14" height="14" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  info:'<svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg>',
+  arrow:'<svg width="12" height="12" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  pool:'<svg width="16" height="16" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M13 5v14M17 5v14"/></svg>',
+};
+
+// ---- reviewer scenario panel ----
+function renderSim(){
+  const b=(k,v,t,cls)=>`<button class="${cls||''}" aria-pressed="${S[k]===v}" onclick="sim('${k}',${JSON.stringify(v).replace(/"/g,"'")})">${t}</button>`;
+  document.getElementById('sim').innerHTML=`
+    <div class="srow"><span class="sl">Engine</span>${b('serving',true,'Flash-Next serving')}${b('serving',false,'Standard serving')}</div>
+    <div class="srow"><span class="sl">Live use</span>${b('occ','off','not shown')}${b('occ','idle','idle')}${b('occ','busy','busy')}${b('occ','full','pool full','warn')}<span class="shint">if available · illustrative</span></div>
+    <div class="srow"><span class="sl">Row</span>${b('before',false,'After (this variant)')}${b('before',true,'Before (today)','warn')}</div>`;
+  document.getElementById('c-dark').setAttribute('aria-pressed',String(S.theme==='dark'));
+  document.getElementById('c-light').setAttribute('aria-pressed',String(S.theme==='light'));
+}
+function sim(k,v){S[k]=v;if(k==='occ'&&v!=='off'&&!S.serving){S.serving=true;}if(k==='serving'&&!v&&S.modal)S.modal=null;render();}
+
+function renderTop(){
+  const busy=S.occ==='full'?[9,12,14,16,18,17,16,15,18,19,18,17]:S.occ==='busy'?[6,8,9,12,10,11,9,12,13,11,10,12]:[2,3,2,4,3,2,2,3,2,2,3,2];
+  document.getElementById('top').innerHTML=`<button class="back" aria-label="Back" onclick="toast('Back to Settings')">${I.back}</button><span class="ttl">LLM</span>
+    <span class="vitals" aria-label="GPU busy"><span class="cols">${busy.map((h,i)=>`<i style="height:${h}px;opacity:${.35+i*.055}"></i>`).join('')}</span><b>${S.occ==='full'?'88%':S.occ==='busy'?'54%':'9%'}</b></span>`;
+}
+
+// ---- the On-box models card: one Flash-Next (pool) row, one standard row for contrast ----
+function beforeSelects(){
+  return`<div class="ctx"><label class="ctx-label">context window</label><select class="ctx-select" onchange="toast('409 — Flash-Next serves one shared pool; per-model window is fixed')"><option>256K</option><option>512K</option><option>1M</option></select>
+      <span class="ctx-meta err">server refuses changes</span></div>
+    <div class="ctx"><label class="ctx-label">slots</label><select class="ctx-select" onchange="toast('409 — slots are role-pinned by the engine')"><option>4 slots · 4× KV (default)</option><option>1 slot · 1× KV</option><option>2 slots · 2× KV</option><option>3 slots · 3× KV</option></select>
+      <span class="ctx-meta err">server refuses changes</span></div>`;
+}
+function keepLoaded(off){return`<div class="ctx"><label class="ctx-label">keep loaded</label><select class="ctx-select" ${off?'disabled':''}><option>off (evict normally)</option><option>on (evict last)</option></select></div>`;}
+function flashRow(){
+  const on=S.serving;
+  const head=`<div class="lrow-head"><div class="lname">Qwen3.8-Flash-Next<span class="lmeta">UD-IQ4_XS · 94.6 GB${on?' · 74 GB resident':''}</span></div>
+    <div class="ltopr">${on?`<button class="lbtn" onclick="toast('Unload goes through Ops → Local engine')">Unload</button>`:`<button class="lbtn" disabled>Stage</button>`}<span class="lstate ${on?'on':''}">${on?'loaded':'off-engine'}</span></div></div>`;
+  const off=on?'':`<div class="offeng">${I.lock}<span>Runs on the Flash-Next engine — <button class="link" onclick="toast('Opens Ops → Local engine')">switch engines</button> to load it.</span></div>`;
+  const chips=`<div class="lchips"><span class="chip vision">vision</span><span class="chip reason">reasoning</span><span class="chip tools">tools</span></div>`;
+  const pool=S.before?beforeSelects():`<div class="newmark">${V.pool()}</div>`;
+  return`<div class="lrow" id="row-fn">${head}${off}${chips}${pool}${keepLoaded(!on)}</div>`;
+}
+function stdRow(){
+  const on=!S.serving;
+  return`<div class="lrow ghosted"><div class="lrow-head"><div class="lname">Qwen3.8-27B<span class="lmeta">Q6_K · 22.5 GB${on?' · 24 GB resident':''}</span></div>
+    <div class="ltopr"><button class="lbtn" ${on?'':'disabled'}>${on?'Unload':'Stage'}</button><span class="lstate ${on?'on':''}">${on?'loaded':'off-engine'}</span></div></div>
+    <div class="lchips"><span class="chip vision">vision</span><span class="chip tools">tools</span></div>
+    <div class="ctx"><label class="ctx-label">context window</label><select class="ctx-select" ${on?'disabled':''}><option>128K</option><option>256K</option></select><span class="ctx-meta">${on?'🔒 unload to change':'KV ~6 GB'}</span></div>
+    <div class="ctx"><label class="ctx-label">interactive slot</label><select class="ctx-select" ${on?'disabled':''}><option>off (shared slot)</option><option>on (dedicated · 2× KV)</option></select></div>
+    ${keepLoaded(false)}<p class="note" style="margin-top:8px;font-size:12px;color:var(--text-3)">Standard-engine row — unchanged, shown for contrast.</p></div>`;
+}
+function llmScreen(){
+  const gtt=S.serving?74.2:81.9;
+  return`<div class="sect">On-box models</div>
+    <div class="lcard"><div class="lhead"><span class="lt">On-box models</span><span class="lr"><span class="dot ok"></span>${S.serving?'Flash-Next':'Standard'} engine</span></div>
+      <div class="lmeter"><div class="bar2"><i style="width:${pct(gtt,120)}%;background:var(--steel)"></i></div><div class="lm"><span>GTT ${gtt} GiB</span><span>of 120 GiB</span></div></div>
+      <div class="lsec">On-box LLMs</div>
+      <div class="lrows">${flashRow()}${stdRow()}</div></div>`;
+}
+
+// ---- modal + toast ----
+function renderModal(){
+  const m=S.modal;const scrim=document.getElementById('scrim'),sh=document.getElementById('sheet');
+  scrim.classList.toggle('show',!!m);sh.classList.toggle('show',!!m);
+  if(m)sh.innerHTML=`<div class="grip"></div>${m()}`;
+}
+function closeModal(){S.modal=null;render();}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&S.modal)closeModal();});
+
+function render(){
+  document.documentElement.dataset.theme=S.theme;
+  renderSim();renderTop();
+  const scr=document.getElementById('screen');const y=scr.scrollTop;
+  scr.innerHTML=llmScreen();scr.scrollTop=y;
+  const sh=document.getElementById('sheet');const sy=sh.scrollTop;renderModal();sh.scrollTop=sy;
+}
+setInterval(()=>{if(occOn()&&S.occ!=='idle'&&!(document.activeElement&&document.activeElement.tagName==='SELECT')){S.tick++;render();}},1500);
+
+// ===== variant A — summary pill, expands to a table =====
+const V={
+  pool(){
+    const live=occOn();const u=live?usedTotal():0;
+    const line=`<div class="ctx"><span class="ctx-label">KV pool</span>
+      <button class="psum" aria-expanded="${S.open}" aria-controls="ptab" onclick="S.open=!S.open;render()">
+        <b>8 slots</b> · 1M shared${live?` <span class="u">· ${fmtK(u)} in use</span>`:''}<span class="cv">${I.down}</span></button>
+      <span class="ctx-meta lockm">${I.lock}set by the engine</span></div>`;
+    if(!S.open)return line;
+    const rows=KV_POOL.slots.map((s,i)=>{const o=occ(i);
+      const ov=OVERFLOW[s.role]?`<span class="ov">full → spills to Small prompts</span>`:'';
+      const use=live?`<td class="r"><span class="us"><span class="dot ${stDot[o.st]}" title="${stLabel[o.st]}"></span>${o.st==='freed'?'<small>freed</small>':o.used?fmtK(o.used):'<small>—</small>'}</span></td>`:'';
+      return`<tr class="${o&&o.st==='freed'?'freed':''}"><td class="n">${s.slot}</td><td><span class="jl">${sw(s.role)}${s.label}</span><span class="jr">${s.role}</span>${ov}</td>
+        <td class="r">${fmtK(s.cap)}</td>${use}</tr>`;}).join('');
+    const foot=`<tfoot><tr><td></td><td>Pool</td><td class="r"><b>1M</b></td>${live?`<td class="r"><b>${fmtK(u)}</b></td>`:''}</tr></tfoot>`;
+    const note=live&&S.occ==='full'
+      ?`<div class="pfoot warn">${I.info}<span>${FREED_NOTE}</span></div>`
+      :`<div class="pfoot">${I.info}<span>Caps are per-slot limits and add up to <b>${fmtK(CAP_SUM)}</b>, more than the pool. When the pool would overrun, the router frees an idle slot.${S.serving?'':' The engine is stopped, so nothing is in use.'}</span></div>`;
+    const legend=live?`<div class="pfoot" style="font-size:11.5px"><span class="dot ok"></span>generating <span class="dot info" style="margin-left:6px"></span>holding a prefix <span class="dot hollow" style="margin-left:6px"></span>empty · live use if available</div>`:'';
+    return line+`<div class="ptab" id="ptab"><table><thead><tr><th></th><th>Slot · job</th><th class="r">Cap</th>${live?'<th class="r">In use</th>':''}</tr></thead><tbody>${rows}</tbody>${foot}</table>${note}${legend}</div>`;
+  },
+};
+
+render();
+</script>
+</body>
+</html>

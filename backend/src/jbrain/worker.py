@@ -56,6 +56,7 @@ from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gateway_regen, gpu_guard
 from jbrain.llm.drain import AdmissionGate
 from jbrain.llm.engine import ActiveEngine
+from jbrain.llm.kv_pool_guard import KvPoolBusyError, KvPoolGuard
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import (
@@ -65,6 +66,7 @@ from jbrain.llm.residency import (
     pg_box_lock,
     pg_box_try_lock,
 )
+from jbrain.llm.slot_roles import SlotCapError
 from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
 from jbrain.sdr import aprslog
@@ -218,7 +220,23 @@ async def process_one(
             log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
             await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
             await _after_exhaustion(maker, job, exhausted)
-        except (ResidencyError, gpu_guard.GpuBudgetError) as exc:
+        except SlotCapError as exc:
+            # The same input lands in the same slot with the same cap on every attempt, so
+            # retrying only burns the budget. A box event, because a directly-enqueued job has
+            # no run step and its last_error reaches no owner surface. Sizes only, no text.
+            # Unlike the deferral arm below, this one runs `_after_exhaustion`: the failure is
+            # final, so an attachment job's note gets its body-only analysis fallback now,
+            # where a deferred job is still alive and will run again.
+            exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
+            log.error("worker.job_failed_slot_cap", job_id=job.id, kind=job.kind, error=repr(exc))
+            await box_events.record(
+                box_events.JOB_TOO_LONG_FOR_SLOT, job.kind, detail=str(exc), status="failed"
+            )
+            await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
+            await _after_exhaustion(maker, job, exhausted)
+        except (ResidencyError, gpu_guard.GpuBudgetError, KvPoolBusyError) as exc:
+            # KvPoolBusyError is the same answer one level down: the model is resident but busy
+            # slots hold the KV pool it needs. Waiting is the remedy, so it defers too.
             # Code mode reserved the box mid-run: this job started before the run_loop pause
             # engaged, and its model load was refused. DEFER (no attempt burned) so it simply
             # waits for code mode to clear instead of exhausting its retry budget — the pause
@@ -740,6 +758,9 @@ async def run() -> None:
         # prompt evaluation exactly like a chat turn, and the worker's are the loads nobody is
         # watching a screen for — a slow prefill there is invisible until the job is late.
         slots_probe=llm_gateway.slots,
+        # Frees a pooled model's idle slots in our eviction order before a job's call would
+        # overrun the shared KV pool. Per process; `/slots` is what the api and worker share.
+        pool_guard=KvPoolGuard(llm_gateway.slots, llm_gateway.erase_slot),
         # The same engine read and drain gate as this process's coordinator, so a nightly
         # job's `local:gpt-oss-120b` runs on Flash-Next while it serves instead of being
         # refused (FLASH_NEXT_ENGINE_PLAN §4c).

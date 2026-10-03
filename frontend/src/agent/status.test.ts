@@ -181,6 +181,11 @@ describe("agentStatus", () => {
       label: "This model ran out of context — raise its window in Settings or start a new chat",
       turnKey: "#1",
     });
+    expect(stop("kv_pool_busy")).toEqual({
+      kind: "error",
+      label: "The model's memory is busy — try again shortly",
+      turnKey: "#1",
+    });
   });
 
   it("reads an open question as waiting, neither an error nor an answer", () => {

@@ -30,6 +30,7 @@ from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.tasks.repo import TaskInfo, TaskRunInfo, TaskRunRepo
 
@@ -105,6 +106,11 @@ class LoopTurnExecutor:
 
     router: LlmRouter
     registry: ToolRegistry
+    # Scheduled tasks (whichever agent they run as), plan continuations and jmolt night all
+    # share the scheduled slot, so they evict each other's prefixes there; a note conversation
+    # names the workshop slot. Never the interactive one: a background turn there would evict
+    # the jerv prefix the owner's next chat turn reuses.
+    slot_role: SlotRole = SlotRole.SCHEDULED
 
     async def run_turn(
         self,
@@ -126,7 +132,7 @@ class LoopTurnExecutor:
         # as /chat does. Passing it into run_stream is what makes the loop EMIT UsageEvents on
         # this path (the loop suppresses them when the window is None); without it a continuation
         # streamed to a reattached client left the context meter frozen at the last /chat value.
-        context_window = await self.router.context_window("agent.turn")
+        context_window = await self.router.context_window("agent.turn", slot_role=self.slot_role)
         # The loop yields ChatEvents, not the step/cost tallies the run summary needs,
         # so count them as the loop records each step (as /chat does).
         tally = StepTally(recorder)
@@ -153,6 +159,7 @@ class LoopTurnExecutor:
             recorder=tally,  # type: ignore[arg-type]
             guardrails=guardrails,
             hidden_tools_provider=compose_hidden_tools(canvas_hidden),
+            slot_role=self.slot_role,
         )
         # `root_tree` seeds this turn as the ROOT of a sub-agent fan (depth 0), exactly as /chat
         # does — the budget sized off the turn's own per-turn cap. Without it `ctx.tree` is None,

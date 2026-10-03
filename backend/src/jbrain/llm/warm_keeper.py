@@ -42,6 +42,7 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.slot_roles import WARM_ROLE
 from jbrain.llm.types import UserMessage
 
 log = structlog.get_logger()
@@ -260,6 +261,10 @@ class WarmKeeper:
         # prime's own completion re-asserting `_primed` — leaving the model resident, cold, and
         # believed primed, which is the exact state that hook exists to prevent.
         generation = self._generation
+        # On a pooled model the prime is pinned to jerv's slot by naming its role (the router
+        # ignores a role off a pool). No other role is primed — their stable prefixes are a few
+        # hundred tokens, or a long prefill nobody is waiting on that would compete with the
+        # owner's first turn after boot.
         try:
             prime_turn = await self._router.converse(
                 AGENT_TURN_TASK,
@@ -267,6 +272,7 @@ class WarmKeeper:
                 messages=[UserMessage(text="warmup")],
                 tools=tools,
                 max_tokens=1,
+                slot_role=WARM_ROLE,
             )
         except Exception as exc:  # noqa: BLE001 — gateway down/cold/no-room: retry, never raise
             log.info("warm_keeper.prime_failed", model=served, error=str(exc))
