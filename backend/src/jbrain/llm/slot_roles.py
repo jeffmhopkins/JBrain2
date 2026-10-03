@@ -106,7 +106,17 @@ FLASH_NEXT_POOL: Final = KvPool(
         RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 7, "jerv (chat, omnibox)"),
         RoleReservation(SlotRole.INGEST, 1, 131_072, 6, "Ingest and analysis"),
         RoleReservation(SlotRole.SCHEDULED, 2, 262_144, 5, "Scheduled tasks"),
-        RoleReservation(SlotRole.RESEARCH, 3, 262_144, 3, "Research and sub-agents"),
+        # A research run and a scheduled news run share this slot; spilling to the workshop
+        # slot keeps the second from queueing behind the first inside llama-server, where the
+        # wait counts against the HTTP timeout.
+        RoleReservation(
+            SlotRole.RESEARCH,
+            3,
+            262_144,
+            3,
+            "Research and sub-agents",
+            overflow=SlotRole.WORKSHOP,
+        ),
         RoleReservation(SlotRole.JCODE, 4, 262_144, 4, "jcode"),
         RoleReservation(SlotRole.WORKSHOP, 5, 131_072, 2, "Wiki, notes, intake"),
         RoleReservation(SlotRole.PET, 6, 32_768, 1, "Kid pet", overflow=SlotRole.SMALL),
