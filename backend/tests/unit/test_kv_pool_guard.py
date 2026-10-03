@@ -4,12 +4,14 @@ cannot erase). Faked `/slots` bodies in the shape llama-server sends (see test_p
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 from typing import Any
 
 import httpx
 import pytest
 
-from jbrain.llm.kv_pool_guard import KvPoolBusyError, KvPoolGuard
+from jbrain.llm.kv_pool_guard import NO_ERASE_TTL_S, KvPoolBusyError, KvPoolGuard
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotCapError, SlotRole
 
@@ -35,20 +37,39 @@ def _layout(**held: dict[str, object]) -> list[dict[str, object]]:
 
 
 class _Gateway:
-    def __init__(self, *reads: list[dict[str, object]], erase_ok: bool = True) -> None:
+    """Scripted `/slots` reads (the last repeats); a slot it erased reads empty afterwards.
+    `refuse` names slots whose erase raises, `stall` slots whose erase never returns (a slot
+    that turned busy, where llama-server defers the erase)."""
+
+    def __init__(
+        self,
+        *reads: list[dict[str, object]],
+        erase_ok: bool = True,
+        refuse: frozenset[int] = frozenset(),
+        stall: frozenset[int] = frozenset(),
+    ) -> None:
         self._reads = list(reads)
         self.reads = 0
         self.erased: list[int] = []
+        self.cleared: set[int] = set()
         self._erase_ok = erase_ok
+        self._refuse = refuse
+        self._stall = stall
 
     async def read(self, model: str) -> list[dict[str, object]]:
         assert model == MODEL
         body = self._reads[min(self.reads, len(self._reads) - 1)]
         self.reads += 1
-        return body
+        return [_slot(s["id"]) if s["id"] in self.cleared else s for s in body]  # type: ignore[arg-type]
 
     async def erase(self, model: str, slot: int) -> bool:
         self.erased.append(slot)
+        if slot in self._refuse:
+            raise LocalGatewayError("boom")
+        if slot in self._stall:
+            await asyncio.Event().wait()
+        if self._erase_ok:
+            self.cleared.add(slot)
         return self._erase_ok
 
 
@@ -63,9 +84,17 @@ class _Clock:
         self.now += seconds
 
 
-def _guard(gw: _Gateway, *, wait_s: float = 10.0) -> KvPoolGuard:
-    clock = _Clock()
-    return KvPoolGuard(gw.read, gw.erase, wait_s=wait_s, poll_s=2.0, sleep=clock.sleep, clock=clock)
+def _guard(gw: _Gateway, *, wait_s: float = 10.0, clock: _Clock | None = None) -> KvPoolGuard:
+    clock = clock or _Clock()
+    return KvPoolGuard(
+        gw.read,
+        gw.erase,
+        wait_s=wait_s,
+        poll_s=2.0,
+        erase_timeout_s=0.05,
+        sleep=clock.sleep,
+        clock=clock,
+    )
 
 
 async def test_a_call_that_fits_is_pinned_to_its_roles_slot_and_erases_nothing() -> None:
@@ -259,3 +288,123 @@ async def test_the_gateway_erases_through_llama_swaps_upstream_passthrough() -> 
         await gw.erase_slot(MODEL, 7)
     with pytest.raises(LocalGatewayError):
         await gw.erase_slot("not-resident", 0)
+
+
+def _crowded() -> list[dict[str, object]]:
+    # 7 x 140k idle = 980k; a 200k call needs about 131k of it freed.
+    return _layout(**{f"s{i}": _slot(i, 140_000) for i in range(1, 8)})
+
+
+async def test_a_prefilling_slot_is_charged_its_cap_and_a_decoding_one_its_budget() -> None:
+    # While prefilling, `n_prompt_tokens` grows a batch at a time: 5k now says nothing about a
+    # 200k prompt still being eaten, so each slot is held at its cap.
+    prefilling = _layout(
+        **{f"s{i}": _slot(i, 5_000, busy=True, remain=1_000) for i in (0, 1, 2, 3)}
+    )
+    with pytest.raises(KvPoolBusyError):
+        async with _guard(_Gateway(prefilling), wait_s=0.0).placed(
+            MODEL, POOL, SlotRole.JCODE, prompt_tokens=250_000, max_tokens=10_000
+        ):
+            pass
+    decoding = _layout(
+        **{f"s{i}": _slot(i, 5_000, busy=True, remain=1_000, decoded=10) for i in (0, 2, 3)}
+    )
+    async with _guard(_Gateway(decoding), wait_s=0.0).placed(
+        MODEL, POOL, SlotRole.JCODE, prompt_tokens=250_000, max_tokens=10_000
+    ) as placed:
+        assert placed.slot == POOL.slot(SlotRole.JCODE)
+
+
+async def test_an_erase_that_fails_or_stalls_moves_on_to_the_next_candidate() -> None:
+    # SMALL's erase raises and PET's never returns (the slot turned busy and llama-server
+    # deferred it); neither counts as freed, and WORKSHOP is erased instead.
+    gw = _Gateway(_crowded(), refuse=frozenset({7}), stall=frozenset({6}))
+    async with _guard(gw).placed(
+        MODEL, POOL, SlotRole.INTERACTIVE, prompt_tokens=190_000, max_tokens=10_000
+    ) as placed:
+        assert placed.slot == 0
+    assert gw.erased == [7, 6, 5]
+    assert gw.cleared == {5}
+
+
+async def test_cells_freed_are_what_the_server_reports_after_the_erase() -> None:
+    # The erase "succeeds" but the re-read shows the slot still full (it was picked up in
+    # between): the guard must keep going rather than trust its own arithmetic.
+    gw = _Gateway(_crowded())
+    real_erase = gw.erase
+
+    async def erase_without_effect(model: str, slot: int) -> bool:
+        ok = await real_erase(model, slot)
+        if slot == 7:
+            gw.cleared.discard(7)
+        return ok
+
+    guard = KvPoolGuard(gw.read, erase_without_effect, wait_s=10.0)
+    async with guard.placed(
+        MODEL, POOL, SlotRole.INTERACTIVE, prompt_tokens=190_000, max_tokens=10_000
+    ):
+        pass
+    assert gw.erased == [7, 6]
+
+
+async def test_a_501_is_retried_once_the_ttl_lapses() -> None:
+    clock = _Clock()
+    gw = _Gateway(_crowded(), erase_ok=False)
+    guard = _guard(gw, clock=clock)
+    call: dict[str, Any] = {"prompt_tokens": 190_000, "max_tokens": 10_000}
+    async with guard.placed(MODEL, POOL, SlotRole.INTERACTIVE, **call):
+        pass
+    async with guard.placed(MODEL, POOL, SlotRole.INTERACTIVE, **call):
+        pass
+    assert gw.erased == [7]
+    clock.now += NO_ERASE_TTL_S + 1
+    async with guard.placed(MODEL, POOL, SlotRole.INTERACTIVE, **call):
+        pass
+    assert gw.erased == [7, 7]
+
+
+async def test_the_pet_stays_put_when_the_call_is_too_big_for_the_small_slot() -> None:
+    pool = dataclasses.replace(
+        POOL,
+        reservations=tuple(
+            dataclasses.replace(r, cap_tokens=8_192) if r.role is SlotRole.SMALL else r
+            for r in POOL.reservations
+        ),
+    )
+    gw = _Gateway(_layout(s6=_slot(6, 5_000, busy=True)))
+    async with _guard(gw).placed(
+        MODEL, pool, SlotRole.PET, prompt_tokens=20_000, max_tokens=10_000
+    ) as placed:
+        assert placed.slot == pool.slot(SlotRole.PET)
+
+
+async def test_two_contending_calls_do_not_both_count_the_same_free_cells() -> None:
+    # Three placed calls hold 3 x 256k. JCODE's 256k fits what is left exactly, INGEST's 128k
+    # fits on its own too, but not both: whichever decides second must see the first.
+    gw = _Gateway(_layout())
+    guard = _guard(gw, wait_s=0.0)
+    full: dict[str, Any] = {"prompt_tokens": 252_144, "max_tokens": 10_000}
+    release = asyncio.Event()
+
+    async def hold(role: SlotRole, **call: Any) -> str:
+        try:
+            async with guard.placed(MODEL, POOL, role, **call):
+                await release.wait()
+        except KvPoolBusyError:
+            return "busy"
+        return "ok"
+
+    holders = [
+        asyncio.create_task(hold(r, **full))
+        for r in (SlotRole.RESEARCH, SlotRole.SCHEDULED, SlotRole.INTERACTIVE)
+    ]
+    contenders = [
+        asyncio.create_task(hold(SlotRole.JCODE, **full)),
+        asyncio.create_task(hold(SlotRole.INGEST, prompt_tokens=120_000, max_tokens=10_000)),
+    ]
+    await asyncio.wait(contenders, return_when=asyncio.FIRST_COMPLETED)
+    release.set()
+    results = await asyncio.gather(*holders, *contenders)
+    assert results[:3] == ["ok", "ok", "ok"]
+    assert sorted(results[3:]) == ["busy", "ok"]
+    assert guard._pending == {}  # every placement released on the way out

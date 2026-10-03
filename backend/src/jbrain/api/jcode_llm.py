@@ -37,7 +37,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from jbrain import queue
 from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import engine as engines
-from jbrain.llm import gpu_guard, local_catalog, slot_roles
+from jbrain.llm import gpu_guard, local_catalog
+from jbrain.llm.openai_slot_fit import (
+    context_length_exceeded,
+    fit_openai_request,
+    pinned_request,
+)
 from jbrain.llm.residency import ResidencyError
 from jbrain.llm.slot_roles import JCODE_ROLE, SlotCapError
 from jbrain.vision import OcrServiceError
@@ -46,8 +51,6 @@ from jbrain.web.search import WebSearchError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-    from jbrain.llm.kv_pool_guard import KvPoolGuard
 
 log = logging.getLogger(__name__)
 
@@ -151,105 +154,6 @@ def _window(model: local_catalog.LocalModel) -> int:
     return model.kv_pool.cap(JCODE_ROLE) if model.kv_pool is not None else model.context_window
 
 
-def _prompt_tokens(served: str, payload: dict) -> int:
-    """A size estimate for the request's prompt: the messages and tools as sent, with each
-    image charged flat (its base64 characters would swamp the estimate)."""
-    images = 0
-    stripped: list[object] = []
-    messages = payload.get("messages")
-    for message in messages if isinstance(messages, list) else []:
-        content = message.get("content") if isinstance(message, dict) else None
-        if isinstance(content, list):
-            text = [
-                p for p in content if not (isinstance(p, dict) and p.get("type") == "image_url")
-            ]
-            images += len(content) - len(text)
-            message = {**message, "content": text}
-        stripped.append(message)
-    chars = len(json.dumps(stripped)) + len(json.dumps(payload.get("tools") or []))
-    return slot_roles.estimate_prompt_tokens(served, chars=chars, n_images=images)
-
-
-def _requested_output(payload: dict) -> int | None:
-    for key in ("max_tokens", "max_completion_tokens"):
-        value = payload.get(key)
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-            return value
-    return None
-
-
-def _too_long(exc: SlotCapError) -> JSONResponse:
-    # OpenAI's shape, so grok reports it as a context overflow (and can compact) rather than
-    # as a broken gateway.
-    return JSONResponse(
-        status_code=400,
-        content={
-            "error": {
-                "message": str(exc),
-                "type": "invalid_request_error",
-                "code": "context_length_exceeded",
-            }
-        },
-    )
-
-
-def _fit_jcode_slot(served: str, payload: dict) -> int:
-    """Hold a pooled model's request to the jcode slot's cap, rewriting its output budget in
-    `payload`; the prompt estimate, for the pool guard. Raises `SlotCapError`.
-
-    An absent budget is filled in with what the slot has left: llama-server would otherwise
-    generate until the slot hits its own limit, which on a pool is the whole trained context."""
-    pool = local_catalog.pool_of(served)
-    if pool is None:
-        return 0
-    prompt_tokens = _prompt_tokens(served, payload)
-    asked = _requested_output(payload)
-    cap = pool.cap(JCODE_ROLE)
-    if asked is None:
-        room = cap - prompt_tokens
-        if room < slot_roles.MIN_CLAMPED_OUTPUT:
-            raise SlotCapError(
-                JCODE_ROLE,
-                cap=cap,
-                prompt_tokens=prompt_tokens,
-                max_tokens=slot_roles.MIN_CLAMPED_OUTPUT,
-            )
-        payload["max_tokens"] = room
-        return prompt_tokens
-    admission = slot_roles.admit(pool, JCODE_ROLE, prompt_tokens=prompt_tokens, max_tokens=asked)
-    payload["max_tokens"] = admission.max_tokens
-    if "max_completion_tokens" in payload:
-        payload["max_completion_tokens"] = admission.max_tokens
-    return prompt_tokens
-
-
-@contextlib.asynccontextmanager
-async def _pinned(
-    guard: KvPoolGuard | None, model: str, payload: dict, prompt_tokens: int
-) -> AsyncIterator[None]:
-    """Pin a pooled model's request to the jcode slot for as long as it streams: unpinned it
-    lands in whichever slot llama-server picks, evicting a primed role's prefix."""
-    pool = local_catalog.pool_of(model)
-    if pool is None:
-        yield
-        return
-    if guard is None:
-        payload["id_slot"] = pool.slot(JCODE_ROLE)
-        yield
-        return
-    async with guard.placed(
-        model,
-        pool,
-        JCODE_ROLE,
-        prompt_tokens=prompt_tokens,
-        max_tokens=int(payload.get("max_tokens") or 0),
-    ) as placement:
-        payload["max_tokens"] = placement.max_tokens
-        if placement.slot is not None:
-            payload["id_slot"] = placement.slot
-        yield
-
-
 @router.get("/jcode/llm/v1/models")
 async def list_models(request: Request) -> Response:
     """The installed tool-capable models the sandbox offers via grok's `/model`.
@@ -301,9 +205,9 @@ async def chat_completions(request: Request) -> Response:
     # Before the swap lock: a request too long for its slot must not wait behind another
     # model's turn just to be refused.
     try:
-        prompt_tokens = _fit_jcode_slot(served, payload)
+        prompt_tokens = fit_openai_request(served, payload, JCODE_ROLE)
     except SlotCapError as exc:
-        return _too_long(exc)
+        return JSONResponse(status_code=400, content=context_length_exceeded(exc))
     pool_guard = getattr(request.app.state, "kv_pool_guard", None)
 
     residency = getattr(request.app.state, "residency", None)
@@ -319,6 +223,7 @@ async def chat_completions(request: Request) -> Response:
     client = factory(base_url=gateway_url.rstrip("/"), timeout=_TIMEOUT)
 
     async def relay() -> AsyncIterator[bytes]:
+        nonlocal prompt_tokens
         guard = swap_lock if swap_lock is not None else contextlib.nullcontext()
         try:
             async with guard:
@@ -332,8 +237,19 @@ async def chat_completions(request: Request) -> Response:
                         # Send what was ADMITTED: a switch between our engine read and
                         # residency's would otherwise admit one model and send another.
                         admitted = await residency.ensure_room(served)
-                        if admitted:
+                        if admitted and admitted != served:
                             payload["model"] = admitted
+                            # The engine switched under the request: the cap checked above
+                            # was the other model's. Too late for a 400, so the stream ends.
+                            try:
+                                prompt_tokens = fit_openai_request(admitted, payload, JCODE_ROLE)
+                            except SlotCapError as exc:
+                                log.warning(
+                                    "jcode-llm request too long for %s after a remap: %s",
+                                    admitted,
+                                    exc,
+                                )
+                                return
                     except (ResidencyError, gpu_guard.GpuBudgetError):
                         # GpuBudgetError joins ResidencyError here, and the omission was the
                         # worst kind: it is not a subclass, so it fell to the blanket arm,
@@ -348,7 +264,9 @@ async def chat_completions(request: Request) -> Response:
                 # Stream the gateway's response back verbatim (SSE or whole JSON). The
                 # gateway is unauthenticated on the internal network — no upstream credential.
                 async with (
-                    _pinned(pool_guard, str(payload["model"]), payload, prompt_tokens),
+                    pinned_request(
+                        pool_guard, str(payload["model"]), payload, prompt_tokens, JCODE_ROLE
+                    ),
                     client.stream("POST", "/chat/completions", json=payload) as upstream,
                 ):
                     async for chunk in upstream.aiter_raw():

@@ -193,6 +193,10 @@ CONTEXT_WINDOWS: dict[str, int] = {
     "grok-4.3": 256_000,
 }
 
+# Below this a prompt is mostly chat-template overhead, whose tokens have no characters behind
+# them in the estimate; calibrating on it would skew the ratio for the long prompts caps guard.
+_MIN_CALIBRATION_TOKENS = 2048
+
 JSON_NUDGE = (
     "\n\nYour previous reply was not valid JSON."
     " Return only valid JSON matching the requested schema — no prose, no code fences."
@@ -879,8 +883,13 @@ class LlmRouter:
     @staticmethod
     def _calibrate(provider: str, model: str, chars: int, n_images: int, usage: LlmUsage) -> None:
         # Every local call's real prompt size tightens the estimate the slot caps are checked
-        # with. An image's tokens have no characters behind them, so those calls are skipped.
-        if provider == local_catalog.LOCAL_PROVIDER and n_images == 0:
+        # with. An image's tokens have no characters behind them, and on a short prompt the
+        # chat template's fixed overhead dominates the ratio, so those calls are skipped.
+        if (
+            provider == local_catalog.LOCAL_PROVIDER
+            and n_images == 0
+            and usage.input_tokens >= _MIN_CALIBRATION_TOKENS
+        ):
             prefill.calibrate(model, chars, usage.input_tokens)
 
     async def complete(

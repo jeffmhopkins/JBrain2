@@ -900,9 +900,10 @@ async def test_a_call_too_long_for_its_slot_fails_the_job_for_good(
     assert fallbacks == ["att-1"]
 
 
-async def test_a_busy_pool_is_retried_like_any_transient_failure(
+async def test_a_busy_kv_pool_defers_without_burning_an_attempt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Busy slots holding the pool is a capacity wait, like a residency refusal."""
     from jbrain.llm.kv_pool_guard import KvPoolBusyError
 
     fake = FakeQueue([job(kind="integrate_note")])
@@ -912,4 +913,5 @@ async def test_a_busy_pool_is_retried_like_any_transient_failure(
         raise KvPoolBusyError("busy slots hold the pool")
 
     assert await worker.process_one(None, {"integrate_note": handler}) is True  # type: ignore[arg-type]
-    assert fake.failed and fake.permanent == []
+    assert fake.deferred == [("job-1", "KvPoolBusyError('busy slots hold the pool')")]
+    assert fake.failed == [] and fake.permanent == []

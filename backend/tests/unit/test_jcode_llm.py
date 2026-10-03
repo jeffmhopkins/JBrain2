@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import jcode_llm
 from jbrain.llm import engine, local_catalog, prefill, slot_roles
 from jbrain.llm.kv_pool_guard import KvPoolGuard
+from jbrain.llm.openai_slot_fit import DEFAULT_OUTPUT_TOKENS
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, JCODE_ROLE
 
 _AUTH = {"Authorization": "Bearer sk-test"}
@@ -263,8 +264,66 @@ def test_a_pooled_request_is_pinned_to_the_jcode_slot_with_its_budget_filled_in(
     r, payload = _post(_flash_app(), monkeypatch, {"messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200
     assert payload["id_slot"] == FLASH_NEXT_POOL.slot(JCODE_ROLE)
-    # Without a budget llama-server would generate until the slot hits the trained context.
-    assert 0 < payload["max_tokens"] < _JCODE_CAP
+    # Without a budget llama-server would generate until the slot hits the trained context;
+    # the default is a coding turn's worth, since the guard charges all of it to the pool.
+    assert payload["max_tokens"] == DEFAULT_OUTPUT_TOKENS
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_the_client_cannot_choose_a_slot_or_bypass_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"messages": [], "id_slot": 0, "slot_id": 0, "n_predict": -1, "max_tokens": 500}
+    r, payload = _post(_flash_app(), monkeypatch, body)
+    assert r.status_code == 200
+    assert payload["id_slot"] == FLASH_NEXT_POOL.slot(JCODE_ROLE)
+    assert "slot_id" not in payload and "n_predict" not in payload
+    assert payload["max_tokens"] == 500
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_a_live_guard_on_the_pool_layout_pins_the_jcode_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def eight_slots(model: str) -> list[dict[str, object]]:
+        return [{"id": i, "is_processing": False, "n_prompt_tokens": 0} for i in range(8)]
+
+    async def erase(model: str, slot: int) -> bool:
+        raise AssertionError("an empty pool needs no room made")
+
+    app = _flash_app()
+    app.state.kv_pool_guard = guard = KvPoolGuard(eight_slots, erase)
+    r, payload = _post(app, monkeypatch, {"messages": [], "max_tokens": 1000})
+    assert r.status_code == 200
+    assert payload["id_slot"] == FLASH_NEXT_POOL.slot(JCODE_ROLE)
+    assert guard._pending == {}  # released once the stream ended
+
+
+class _RemapsToFlash:
+    async def ensure_room(self, served: str) -> str:
+        return _FLASH
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_a_remap_after_admission_is_fitted_to_the_model_actually_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The engine switched between the proxy's read and residency's: gpt-oss was asked for,
+    # Flash-Next admitted. The request is held to the jcode slot of the model it goes to.
+    sent: dict[str, object] = {}
+    _fake_gateway(monkeypatch, sent, chunks=(b"ok",))
+    client = TestClient(_app(residency=_RemapsToFlash()))
+    body = {"model": "gpt-oss-120b", "messages": [], "n_predict": -1}
+    assert client.post(_COMPLETIONS, json=body, headers=_AUTH).status_code == 200
+    payload = cast("dict", sent["payload"])
+    assert payload["model"] == _FLASH and "n_predict" not in payload
+    assert payload["id_slot"] == FLASH_NEXT_POOL.slot(JCODE_ROLE)
+    assert payload["max_tokens"] == DEFAULT_OUTPUT_TOKENS
+    # Too long for the slot it was remapped to: too late for a 400, so nothing is forwarded.
+    sent.clear()
+    long = {"model": "gpt-oss-120b", "messages": [{"role": "user", "content": "x" * 1_200_000}]}
+    r = client.post(_COMPLETIONS, json=long, headers=_AUTH)
+    assert r.content == b"" and "payload" not in sent
 
 
 @pytest.mark.usefixtures("_fresh_ratio")

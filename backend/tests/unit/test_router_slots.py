@@ -4,8 +4,8 @@ slot a call carries, its cap, the layout fallback, and that nothing else ever ca
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -179,17 +179,36 @@ async def test_the_window_of_a_pooled_model_is_its_slots_cap() -> None:
     assert context_window_for_spec(f"local:{FLASH}", engines.FLASH_NEXT) == 262_144
 
 
-async def test_local_usage_calibrates_the_estimate_but_an_image_call_does_not() -> None:
+async def test_only_long_text_prompts_calibrate_the_estimate() -> None:
     from jbrain.llm.types import LlmImage
 
-    fake = FakeLlmClient()
+    def turn(input_tokens: int) -> LlmTurn:
+        return LlmTurn(
+            text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(input_tokens, 1)
+        )
+
+    images = [UserMessage("u", images=[LlmImage("image/png", "x")])]
+    text = [UserMessage("u" * 20_000)]
+    # A short prompt is mostly template overhead; an image's tokens have no characters.
+    fake = FakeLlmClient(turns=[turn(100), turn(5_000), turn(5_000)])
     router = _router(fake)
-    await router.complete(
-        "vision.ocr", system="s", user_text="u", images=[LlmImage("image/png", "x")]
-    )
+    await router.converse("vision.ocr", system="s", messages=text)
+    await router.converse("vision.ocr", system="s", messages=images)
     assert FLASH not in prefill._ratio
-    await router.complete("vision.ocr", system="s" * 99, user_text="u")
+    await router.converse("vision.ocr", system="s", messages=text)
     assert FLASH in prefill._ratio
+
+
+async def test_an_abandoned_stream_releases_its_placement() -> None:
+    guard = _guard()
+    fake = FakeLlmClient(stream_chunks=[["a", "b", "c"]])
+    stream = _router(fake, guard=guard).converse_stream(
+        "agent.turn", system="s", messages=[UserMessage("hi")]
+    )
+    await anext(stream)
+    assert guard._pending
+    await cast("AsyncGenerator[StreamPart]", stream).aclose()  # the owner pressed stop
+    assert guard._pending == {}
 
 
 def _local_client(seen: list[dict[str, Any]], provider: str) -> OpenAiCompatClient:

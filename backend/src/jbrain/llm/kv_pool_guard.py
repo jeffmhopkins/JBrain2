@@ -11,7 +11,10 @@ erasing one is deferred by the server until it finishes, which frees nothing now
 `/slots` is the shared truth between the api and worker processes, each with its own guard. A
 guard also remembers what it has itself just placed (`_pending`): a request is not
 `is_processing` until llama-server picks it up, and two calls placed back to back would
-otherwise each see the other's slot as empty.
+otherwise each see the other's slot as empty. The OTHER process's placements are not in it:
+between that process's read and the moment llama-server starts its request, the slot still
+reads idle and empty here. That window (one HTTP round trip) is the residual race this wave
+accepts; a busy slot still prefilling is charged its whole cap to cover the rest of it.
 
 The same `/slots` read is the layout check. A server still running a pre-pool config (fewer
 slots, until the next re-stamp) would WRAP an `id_slot` past its count onto the wrong slot
@@ -44,6 +47,12 @@ SlotEraser = Callable[[str, int], Awaitable[bool]]
 # typical background turn to end, short against the job queue's own retry backoff.
 DEFAULT_WAIT_S: Final = 120.0
 DEFAULT_POLL_S: Final = 2.0
+# An erase llama-server defers (the slot turned busy after our read) blocks until that slot
+# finishes. It frees nothing now, so it is abandoned quickly and the next candidate tried.
+ERASE_TIMEOUT_S: Final = 3.0
+# How long a server that answered erase with 501 is trusted to still lack `--slot-save-path`;
+# a re-stamped config gains it without this process restarting.
+NO_ERASE_TTL_S: Final = 600.0
 
 
 class KvPoolBusyError(LlmTransientError):
@@ -78,16 +87,23 @@ def _busy(slot: Mapping[str, object]) -> bool:
 
 
 def _held(slot: Mapping[str, object]) -> int:
-    """Cells the slot holds now: its cached prompt plus anything generated after it."""
-    return _int(slot.get("n_prompt_tokens")) + _int(_next_token(slot).get("n_decoded"))
+    # llama-server counts generated tokens into `n_prompt_tokens` as they are decoded, so it is
+    # the slot's whole cached sequence on its own.
+    return _int(slot.get("n_prompt_tokens"))
 
 
 def _projected(slot: Mapping[str, object], cap: int) -> int:
     """Cells the slot will hold at most. A busy one grows by what it may still generate,
-    bounded by its cap; an unbounded generation (`n_remain` < 0) is charged the whole cap."""
+    bounded by its cap; an unbounded generation (`n_remain` < 0) is charged the whole cap.
+
+    A slot still PREFILLING (busy, nothing decoded) is charged at least its cap: there
+    `n_prompt_tokens` grows a batch at a time and says nothing about the prompt's real size."""
     if not _busy(slot):
         return _held(slot)
-    remain = _next_token(slot).get("n_remain")
+    token = _next_token(slot)
+    remain = token.get("n_remain")
+    if _int(token.get("n_decoded")) == 0:
+        return max(_held(slot) + _int(remain), cap)
     if not isinstance(remain, int) or remain < 0:
         return cap
     return min(_held(slot) + remain, cap)
@@ -105,6 +121,7 @@ class KvPoolGuard:
         *,
         wait_s: float = DEFAULT_WAIT_S,
         poll_s: float = DEFAULT_POLL_S,
+        erase_timeout_s: float = ERASE_TIMEOUT_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -112,6 +129,7 @@ class KvPoolGuard:
         self._erase = erase
         self._wait_s = wait_s
         self._poll_s = poll_s
+        self._erase_timeout_s = erase_timeout_s
         self._sleep = sleep
         self._clock = clock
         # One decision at a time per process: two calls deciding together would each count
@@ -120,8 +138,9 @@ class KvPoolGuard:
         # (served model, slot) -> {ticket: projected cells} for calls placed and not finished.
         self._pending: dict[tuple[str, int], dict[int, int]] = {}
         self._tickets = count()
-        # Models whose server answered erase with 501 — logged once, then let through.
-        self._no_erase: set[str] = set()
+        # Model -> when its server answered erase with 501; logged once, let through until
+        # the entry expires.
+        self._no_erase: dict[str, float] = {}
 
     async def _slots(self, model: str) -> list[dict[str, object]] | None:
         try:
@@ -173,10 +192,9 @@ class KvPoolGuard:
             yield Placement(None, admission.role, admission.max_tokens, prompt_tokens)
             return
         need = prompt_tokens + admission.max_tokens
-        await self._make_room(model, pool, admission, need, slots)
         key = (model, admission.slot)
         ticket = next(self._tickets)
-        self._pending.setdefault(key, {})[ticket] = need
+        await self._make_room(model, pool, admission, need, slots, ticket)
         try:
             yield Placement(admission.slot, admission.role, admission.max_tokens, prompt_tokens)
         finally:
@@ -222,14 +240,23 @@ class KvPoolGuard:
         admission: SlotAdmission,
         need: int,
         slots: Sequence[Mapping[str, object]],
+        ticket: int,
     ) -> None:
+        """Wait until the pool can hold this call, freeing idle slots as needed, then record it
+        as pending — inside the lock, so the next decision already counts it."""
         deadline = self._clock() + self._wait_s
+        # The read `placed` just made is reused when nothing else was deciding; after waiting
+        # for the lock it may be stale (another call erased or placed), so it is read again.
+        current: Sequence[Mapping[str, object]] | None = None if self._lock.locked() else slots
         while True:
             async with self._lock:
-                fresh = await self._slots(model)
-                if fresh is not None:
-                    slots = fresh
-                if await self._evict_until_fits(model, pool, admission.slot, need, slots):
+                if current is None:
+                    fresh = await self._slots(model)
+                    current = fresh if fresh is not None and len(fresh) == pool.n_slots else slots
+                if await self._evict_until_fits(
+                    model, pool, admission.slot, need, current, deadline
+                ):
+                    self._pending.setdefault((model, admission.slot), {})[ticket] = need
                     return
             if self._clock() >= deadline:
                 raise KvPoolBusyError(
@@ -237,6 +264,27 @@ class KvPoolGuard:
                     "pool, and busy slots hold them"
                 )
             await self._sleep(self._poll_s)
+            current = None
+
+    def _cannot_erase(self, model: str) -> bool:
+        since = self._no_erase.get(model)
+        if since is None:
+            return False
+        if self._clock() - since < NO_ERASE_TTL_S:
+            return True
+        del self._no_erase[model]
+        return False
+
+    async def _erase_one(self, model: str, slot: int) -> bool | None:
+        """True erased, False the server cannot erase at all (501), None not freed now."""
+        try:
+            async with asyncio.timeout(self._erase_timeout_s):
+                return await self._erase(model, slot)
+        except TimeoutError:
+            log.warning("llm.slot_erase_deferred", model=model, slot=slot)
+        except Exception:  # noqa: BLE001 — a failed erase just frees nothing
+            log.warning("llm.slot_erase_failed", model=model, slot=slot, exc_info=True)
+        return None
 
     async def _evict_until_fits(
         self,
@@ -245,38 +293,45 @@ class KvPoolGuard:
         target: int,
         need: int,
         slots: Sequence[Mapping[str, object]],
+        deadline: float,
     ) -> bool:
-        total, freeable = self._occupancy(model, pool, slots, target, need)
-        if total <= pool.n_ctx:
-            return True
-        for slot in pool.eviction_order():
+        """Erase idle slots in eviction order until the projection fits. After every erase the
+        pool is read again: a slot can turn busy between our read and its erase, and the cells
+        freed are whatever the server now reports, not what the stale read promised."""
+        tried: set[int] = set()
+        while True:
+            total, freeable = self._occupancy(model, pool, slots, target, need)
             if total <= pool.n_ctx:
-                break
-            cells = freeable.get(slot)
-            if cells is None:
-                continue
-            if model in self._no_erase:
                 return True
-            try:
-                erased = await self._erase(model, slot)
-            except Exception:  # noqa: BLE001 — a failed erase leaves the engine's own purge
-                log.warning("llm.slot_erase_failed", model=model, slot=slot, exc_info=True)
-                return True
-            if not erased:
+            if self._cannot_erase(model):
                 # Without `--slot-save-path` nothing can be erased; the engine purges idle
                 # slots itself in its own order, which is worse but not a reason to refuse.
-                self._no_erase.add(model)
+                return True
+            slot = next(
+                (s for s in pool.eviction_order() if s in freeable and s not in tried), None
+            )
+            if slot is None or self._clock() >= deadline:
+                return False
+            tried.add(slot)
+            erased = await self._erase_one(model, slot)
+            if erased is False:
+                self._no_erase[model] = self._clock()
                 log.warning("llm.slot_erase_unsupported", model=model)
                 return True
-            total -= cells
+            if erased is None:
+                continue
             log.info(
                 "llm.slot_evicted",
                 model=model,
                 slot=slot,
                 role=str(pool.by_slot(slot).role),
-                tokens_freed=cells,
+                tokens_freed=freeable[slot],
             )
-        return total <= pool.n_ctx
+            fresh = await self._slots(model)
+            if fresh is not None and len(fresh) == pool.n_slots:
+                slots = fresh
+            else:
+                slots = [s for s in slots if s.get("id") != slot]
 
 
 def _overflow(

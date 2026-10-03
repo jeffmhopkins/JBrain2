@@ -56,7 +56,7 @@ from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router, gateway_regen, gpu_guard
 from jbrain.llm.drain import AdmissionGate
 from jbrain.llm.engine import ActiveEngine
-from jbrain.llm.kv_pool_guard import KvPoolGuard
+from jbrain.llm.kv_pool_guard import KvPoolBusyError, KvPoolGuard
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import (
@@ -231,7 +231,9 @@ async def process_one(
             )
             await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
             await _after_exhaustion(maker, job, exhausted)
-        except (ResidencyError, gpu_guard.GpuBudgetError) as exc:
+        except (ResidencyError, gpu_guard.GpuBudgetError, KvPoolBusyError) as exc:
+            # KvPoolBusyError is the same answer one level down: the model is resident but busy
+            # slots hold the KV pool it needs. Waiting is the remedy, so it defers too.
             # Code mode reserved the box mid-run: this job started before the run_loop pause
             # engaged, and its model load was refused. DEFER (no attempt burned) so it simply
             # waits for code mode to clear instead of exhausting its retry budget — the pause
