@@ -1,9 +1,11 @@
 """The archivist's gmail_* tool handlers + their web-gating (docs/EMAIL_ARCHIVIST_PLAN
 .md). Handlers run against FakeGmail — no network, the connector/LLM-adapter posture."""
 
+import pytest
+
 from jbrain.agent.agents import GMAIL_TOOLS
 from jbrain.agent.gmailtools import build_gmail_handlers
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import TOOLS_DIR
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
@@ -11,6 +13,13 @@ from jbrain.db.session import SessionContext
 from jbrain.gmail import FakeGmail, GmailError, GmailLabel, GmailMessage
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+
+
+@pytest.fixture(autouse=True)
+def _fresh_turn() -> None:
+    """CTX stands for one turn, and its read memo would otherwise carry a result from one
+    test's fake mailbox into the next test's identical call."""
+    CTX.read_memo.clear()
 
 
 def _msg(mid: str, subject: str = "Invoice", body: str = "please pay", sender: str = "a@x.com"):
@@ -365,12 +374,95 @@ async def test_extract_reports_when_nothing_matched_the_pattern() -> None:
     assert "gmail_read one of them" in out
 
 
-async def test_extract_says_when_it_scanned_only_the_most_recent() -> None:
+async def test_extract_names_the_offset_that_reaches_older_mail() -> None:
     fake = FakeGmail([_msg(f"m{i}", body="Total: $1.00") for i in range(5)])
     out = await _handlers(fake)["gmail_extract"](
         {"query": "total", "find": r"\$([\d.]+)", "limit": 2}, CTX
     )
-    assert "Scanned the 2 most recent" in out
+    assert "matches 1–2, newest first" in out
+    assert "offset=2" in out
+
+
+async def test_extract_offset_pages_past_the_newest_matches() -> None:
+    """The archivist's miss: 76 Mouser orders and every scan saw the same newest 25, so the
+    order it wanted — older — was never read. `offset` is how a scan reaches it."""
+    fake = FakeGmail(
+        [_msg(f"m{i}", body="Line 1 538-10-89-7103") for i in range(3)]
+        + [_msg("old", body="Line 1 841-MPXV7002DP pressure sensor")]
+    )
+    h = _handlers(fake)
+    first = await h["gmail_extract"]({"query": "line", "find": "MPXV", "limit": 3}, CTX)
+    assert "No match for regex" in first and "offset=3" in first
+    older = await h["gmail_extract"](
+        {"query": "line", "find": "MPXV", "limit": 3, "offset": 3}, CTX
+    )
+    assert "[old]" in older and "matches 4–4" in older
+    assert "offset=" not in older  # the last page names no further page
+
+
+async def test_extract_offset_past_the_end_says_everything_was_scanned() -> None:
+    fake = FakeGmail([_msg("m1", body="Total: $1.00")])
+    out = await _handlers(fake)["gmail_extract"]({"query": "total", "find": "x", "offset": 10}, CTX)
+    assert "past the last of them" in out
+
+
+async def test_extract_says_limit_is_capped_instead_of_silently_clamping() -> None:
+    fake = FakeGmail([_msg("m1", body="Total: $1.00")])
+    out = await _handlers(fake)["gmail_extract"]({"query": "total", "find": "x", "limit": 200}, CTX)
+    assert "`limit` is at most 25" in out
+
+
+# --- repeat memo -----------------------------------------------------------
+
+
+class _CountingGmail(FakeGmail):
+    def __init__(self, messages: list[GmailMessage], labels: list[GmailLabel] = []) -> None:  # noqa: B006
+        super().__init__(messages, labels)
+        self.searches = 0
+
+    async def search(self, query: str, *, max_results: int = 25) -> list[str]:
+        self.searches += 1
+        return await super().search(query, max_results=max_results)
+
+
+async def test_an_exact_repeat_is_answered_from_the_memo_with_a_warning() -> None:
+    fake = _CountingGmail([_msg("m1", subject="Invoice")])
+    h = _handlers(fake)
+    first = await h["gmail_search"]({"query": "MPXV", "limit": 20}, CTX)
+    again = await h["gmail_search"]({"limit": 20, "query": "MPXV"}, CTX)
+    assert fake.searches == 1  # argument order does not make it a new call
+    assert again.startswith("[REPEAT:") and str(first) in again
+    assert isinstance(again, ToolOutput)
+    assert again.result_brief == "repeat of an earlier call"
+    # A different call is not a repeat.
+    await h["gmail_search"]({"query": "MPXV7002", "limit": 20}, CTX)
+    assert fake.searches == 2
+
+
+async def test_a_write_clears_the_memo() -> None:
+    """A label changes what `label:X` returns, so the read after it must really run."""
+    fake = _CountingGmail([_msg("m1")], [GmailLabel(id="L1", name="Receipts")])
+    h = _handlers(fake)
+    await h["gmail_search"]({"query": "invoice"}, CTX)
+    await h["gmail_label"]({"message_id": "m1", "add": ["Receipts"]}, CTX)
+    out = await h["gmail_search"]({"query": "invoice"}, CTX)
+    assert fake.searches == 2 and not out.startswith("[REPEAT")
+
+
+async def test_an_error_is_not_memoized() -> None:
+    """A transient Gmail failure must stay retryable, not be replayed as the answer."""
+    calls = 0
+
+    async def flaky():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise GmailError("Gmail timed out")
+        return FakeGmail([_msg("m1")])
+
+    h = build_gmail_handlers(flaky)
+    assert "timed out" in await h["gmail_count"]({"query": "invoice"}, CTX)
+    assert "1 message(s)" in await h["gmail_count"]({"query": "invoice"}, CTX)
 
 
 # --- web gating ------------------------------------------------------------

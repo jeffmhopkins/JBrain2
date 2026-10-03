@@ -58,7 +58,9 @@ class GmailError(RuntimeError):
 @dataclass(frozen=True)
 class GmailMessage:
     """One message, flattened to what a triage agent reads. `body` is the decoded
-    text/plain part (empty for a metadata-only fetch)."""
+    text/plain part (empty for a metadata-only fetch). `html` is the text/html alternative
+    when the body is the plain part — kept so a stub plain part can be overridden
+    (`jbrain.gmail.body.render_body`) — and "" otherwise."""
 
     id: str
     thread_id: str
@@ -68,6 +70,7 @@ class GmailMessage:
     date: str
     snippet: str
     body: str
+    html: str = ""
 
 
 @dataclass(frozen=True)
@@ -132,28 +135,32 @@ def _decode_b64url(data: str) -> str:
         return ""
 
 
-def _extract_text(payload: dict[str, Any]) -> str:
-    """Walk a message payload for its text/plain body, falling back to text/html
-    stripped of tags only as a last resort. Returns "" if there is no text part."""
-    mime = str(payload.get("mimeType", ""))
+def _find_part(payload: dict[str, Any], mime_type: str) -> str:
+    """The first decodable part of `mime_type`, depth-first, or "" if there is none."""
     body_data = (payload.get("body") or {}).get("data")
-    if mime == "text/plain" and body_data:
+    if str(payload.get("mimeType", "")) == mime_type and body_data:
         return _decode_b64url(body_data)
-    html_fallback = ""
     for part in payload.get("parts") or []:
-        text = _extract_text(part)
-        if text and str(part.get("mimeType", "")) == "text/plain":
+        if text := _find_part(part, mime_type):
             return text
-        if text and not html_fallback:
-            html_fallback = text
-    if mime == "text/html" and body_data:
-        return _decode_b64url(body_data)
-    return html_fallback
+    return ""
+
+
+def _extract_text(payload: dict[str, Any]) -> tuple[str, str]:
+    """(body, html): the text/plain part when there is one, else the text/html part; and
+    the text/html part separately whenever it was NOT the body. A sender's plain-text
+    alternative is sometimes a stub — DigiKey's order confirmation is "." and Mouser's a
+    one-line thank-you, with every line item only in the HTML — so the renderer needs the
+    HTML on hand to notice that, not just the part we happened to prefer."""
+    plain = _find_part(payload, "text/plain")
+    html = _find_part(payload, "text/html")
+    return (plain, html) if plain else (html, "")
 
 
 def _message_from_payload(raw: dict[str, Any]) -> GmailMessage:
     payload = raw.get("payload") or {}
     headers = payload.get("headers") or []
+    body, html = _extract_text(payload)
     return GmailMessage(
         id=str(raw.get("id", "")),
         thread_id=str(raw.get("threadId", "")),
@@ -162,7 +169,8 @@ def _message_from_payload(raw: dict[str, Any]) -> GmailMessage:
         subject=_header(headers, "Subject"),
         date=_header(headers, "Date"),
         snippet=str(raw.get("snippet", "")).strip(),
-        body=_extract_text(payload),
+        body=body,
+        html=html,
     )
 
 

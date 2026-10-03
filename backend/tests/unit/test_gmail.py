@@ -140,6 +140,44 @@ async def test_get_full_parses_headers_and_body() -> None:
     assert msg.subject == "Hello"
     assert msg.snippet == "Hi there"
     assert msg.body == "the real body"  # text/plain wins over the html sibling
+    assert msg.html == "<p>ignored</p>"  # …but is kept, so a stub plain part can yield
+
+
+async def test_get_finds_parts_nested_under_a_mixed_wrapper() -> None:
+    """An order confirmation with an attached invoice: the alternative pair sits one level
+    down, under multipart/mixed, and both halves must still be found."""
+    raw = {
+        "id": "m1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "headers": [],
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {"mimeType": "text/plain", "body": {"data": _b64url(".")}},
+                        {"mimeType": "text/html", "body": {"data": _b64url("<p>items</p>")}},
+                    ],
+                },
+                {"mimeType": "application/pdf", "body": {"attachmentId": "a1"}},
+            ],
+        },
+    }
+    msg = await _client(lambda r: httpx.Response(200, json=raw)).get("m1")
+    assert (msg.body, msg.html) == (".", "<p>items</p>")
+
+
+async def test_get_html_only_message_puts_the_html_in_body() -> None:
+    raw = {
+        "id": "m1",
+        "payload": {
+            "mimeType": "text/html",
+            "headers": [],
+            "body": {"data": _b64url("<p>only html</p>")},
+        },
+    }
+    msg = await _client(lambda r: httpx.Response(200, json=raw)).get("m1")
+    assert (msg.body, msg.html) == ("<p>only html</p>", "")
 
 
 async def test_get_metadata_only_sets_format_and_empty_body() -> None:

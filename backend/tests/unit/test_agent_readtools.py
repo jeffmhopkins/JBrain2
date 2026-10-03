@@ -1538,10 +1538,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "42381ebc9081e834b1c3a8e937899d8ba888213b21d6af38214fcbf664628a21",
         ),
+        # v2 adds `offset`: one call scans at most 25 messages, and v1's only advice for
+        # reaching older mail was to raise a `limit` that cannot go past 25.
         "gmail_extract.tool": (
             "gmail_extract",
-            1,
-            "65f49f61bdf1dd833d7529e376df16d6f22001f14b715acde3795c423a44375e",
+            2,
+            "c382dd236dbad17ad83bd043f383e754d6a52f490f49448fdb26775e10376050",
         ),
         "gmail_list_labels.tool": (
             "gmail_list_labels",
