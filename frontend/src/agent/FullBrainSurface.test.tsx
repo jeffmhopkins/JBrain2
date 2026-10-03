@@ -1274,6 +1274,41 @@ describe("FullBrainSurface", () => {
     expect(screen.getByText("here you go")).toBeInTheDocument();
   });
 
+  it("re-opens the trace when the model thinks again, keeping its answer so far", async () => {
+    // Qwen Flash-Next interleaves: it writes, goes back to thinking, then writes again. The
+    // text already written must stay on screen while the trace re-opens for the new phase.
+    let resumeAnswer: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      resumeAnswer = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "reasoning_delta", text: "first thought" };
+      yield { type: "text_delta", text: "Found two orders." };
+      yield { type: "reasoning_delta", text: " which one is older?" };
+      await gate;
+      yield { type: "text_delta", text: " The older one." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "find it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Held in the SECOND thinking phase: the answer so far is up AND the trace is live.
+    expect(await screen.findByText(/Found two orders\./)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Thinking…/ })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
+    );
+
+    act(() => resumeAnswer());
+    const settled = await screen.findByRole("button", { name: /Thought/ });
+    await waitFor(() => expect(settled).toHaveAttribute("aria-expanded", "false"));
+    expect(await screen.findByText(/The older one\./)).toBeInTheDocument();
+  });
+
   it("switches between the Thinking and Worked bodies — only one open at a time", async () => {
     // A settled turn that both reasoned and ran a tool. Tapping a segment opens its
     // body and closes the other, so the foot strip reads as one switchable view.

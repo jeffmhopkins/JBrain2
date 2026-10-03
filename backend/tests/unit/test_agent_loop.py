@@ -703,17 +703,19 @@ def stream_router_with(
 
 
 def stream_router_local(
-    turns: list[LlmTurn], stream_chunks: list[list[str]] | None = None
+    turns: list[LlmTurn],
+    stream_chunks: list[list[str]] | None = None,
+    model: str = "gpt-oss-120b",
 ) -> tuple[LlmRouter, FakeLlmClient]:
-    """A router pinned to the local (gpt-oss) provider — the harmony route whose tool-call rounds
-    can leak analysis onto the content channel."""
+    """A router pinned to a local provider — by default gpt-oss, the harmony route whose
+    tool-call rounds can leak analysis onto the content channel."""
     fake = FakeLlmClient(turns=turns, stream_chunks=stream_chunks or [])
     # Pin agent.turn so the task route (local) wins over the prompt's strength tier — otherwise
     # the tier would resolve to the default cloud model and the local client wouldn't be hit.
     return (
         LlmRouter(
             {"local": fake},
-            {"agent.turn": ("local", "gpt-oss-120b")},
+            {"agent.turn": ("local", model)},
             pinned=frozenset({"agent.turn"}),
         ),
         fake,
@@ -1024,6 +1026,65 @@ async def test_run_stream_reclassifies_a_leaked_tool_round_analysis_on_the_local
     assert acc.answer_text == "Step 3 done — generated the comparison."
     assert "write_plan_result" not in acc.answer_text
     assert "Now call write_plan_result" in acc.reasoning_text
+
+
+async def test_run_stream_keeps_a_think_tag_models_narration_in_the_answer() -> None:
+    """Qwen Flash-Next puts its thinking on reasoning_content, so the text it writes between
+    tools is narration meant for the owner. Reclassifying it (the gpt-oss treatment) made the
+    answer he was reading vanish into the trace each time the model went back to thinking."""
+    turns = [
+        LlmTurn(
+            "Found two orders — checking the older one.",
+            (ToolCall("c1", "search", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(10, 5),
+            reasoning="which order",
+        ),
+        LlmTurn(" It is order 18758819.", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = stream_router_local(
+        turns,
+        stream_chunks=[
+            ["Found two orders — checking the older one."],
+            [" It is order 18758819."],
+        ],
+        model="qwen3.8-flash-next",
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert not any(isinstance(e, ReasoningReclassify) for e in events)
+    acc = TranscriptAccumulator()
+    for e in events:
+        acc.feed(e)
+    assert acc.answer_text == "Found two orders — checking the older one. It is order 18758819."
+
+
+async def test_run_still_hides_a_think_tag_sub_agents_tool_round_text() -> None:
+    """A sub-agent's narration would be glued into the result its parent synthesizes, so the
+    keep-narration rule is the owner-facing turn's alone."""
+    turns = [
+        LlmTurn(
+            "Now search the follow-up.",
+            (ToolCall("c1", "search", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(10, 5),
+        ),
+        LlmTurn("Here are the URLs.", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = stream_router_local(
+        turns,
+        stream_chunks=[["Now search the follow-up."], ["Here are the URLs."]],
+        model="qwen3.8-flash-next",
+    )
+    reasoning: list[str] = []
+    result = await AgentLoop(router, registry_with(make_tool("search", search))).run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="scout this")],
+        on_text=lambda _t: None,
+        on_reasoning=reasoning.append,
+    )
+    assert result.text == "Here are the URLs."
+    assert "Now search the follow-up" in "".join(reasoning)
 
 
 async def test_run_stream_streams_the_final_answer_live_on_the_local_route() -> None:

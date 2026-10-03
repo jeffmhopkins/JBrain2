@@ -1457,9 +1457,9 @@ function ThinkTool({ step }: { step: ToolStep }): ReactNode {
 // trace ("Thinking") and its tool steps ("Worked") as two segments on a single row,
 // each expanding its own body in place (the violet/steel registers from DESIGN.md).
 // While the model is still thinking the trace auto-opens, a pulse marks it live, and
-// the trace auto-follows the newest text; the moment the answer's first token lands it
-// collapses to "Thought for Ns" (the duration measured here, so the reducer stays
-// pure) and stays a tap away. The "Worked" segment appears as soon as a tool runs —
+// the trace auto-follows the newest text; the moment answer text lands it collapses to
+// "Thought for Ns" (the duration measured here, so the reducer stays pure) and stays a tap
+// away. If the model goes back to thinking it re-opens, the answer so far staying above. The "Worked" segment appears as soon as a tool runs —
 // on the same line — so a turn that thinks AND uses tools reads as one foot strip.
 function ActivityLine({
   reasoning,
@@ -1495,14 +1495,21 @@ function ActivityLine({
   useEffect(() => {
     if (thinking) {
       if (startRef.current === null) startRef.current = performance.now();
-      setOpen("think");
+      // A model that interleaves thinking and answer text (Qwen Flash-Next) comes back here
+      // mid-turn: re-open the trace — unless the owner switched to Worked, which stays.
+      setOpen((cur) => (cur === "work" ? cur : "think"));
     } else {
-      // The thinking phase ended — record its duration once, and collapse the trace
-      // (but leave a Worked view the owner opened mid-stream in place).
-      if (startRef.current !== null && ms === null) setMs(performance.now() - startRef.current);
+      // A thinking phase ended — add its duration to the turn's total (an interleaving model
+      // thinks in several phases), and collapse the trace (but leave a Worked view the owner
+      // opened mid-stream in place).
+      const started = startRef.current;
+      if (started !== null) {
+        startRef.current = null;
+        setMs((prev) => (prev ?? 0) + (performance.now() - started));
+      }
       setOpen((cur) => (cur === "think" ? null : cur));
     }
-  }, [thinking, ms]);
+  }, [thinking]);
 
   // Follow the newest line while it streams, so a long trace stays readable without
   // the owner chasing the scrollbar (only while live and open). `reasoning` and the

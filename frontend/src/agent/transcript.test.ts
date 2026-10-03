@@ -56,6 +56,22 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.text).toBe("the answer");
   });
 
+  it("re-opens thinking when reasoning resumes after answer text, keeping the text", () => {
+    // Qwen Flash-Next interleaves: think, write, think again, write again. The answer so far
+    // must stay on screen while the second thinking phase is live.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "reasoning_delta", text: "first thought" });
+    ms = applyEvent(ms, { type: "text_delta", text: "Found two orders." });
+    expect(ms[0]?.thinking).toBe(false);
+    ms = applyEvent(ms, { type: "reasoning_delta", text: " which one?" });
+    expect(ms[0]?.thinking).toBe(true);
+    expect(ms[0]?.text).toBe("Found two orders.");
+    ms = applyEvent(ms, { type: "text_delta", text: " The older one." });
+    expect(ms[0]?.thinking).toBe(false);
+    expect(ms[0]?.text).toBe("Found two orders. The older one.");
+    expect(ms[0]?.reasoning).toBe("first thought which one?");
+  });
+
   it("reclassifies a leaked tool-round tail from the answer into the thinking trace", () => {
     // The local (harmony) route streams a tool-call round's leaked analysis into the answer
     // live; a reasoning_reclassify then relocates it to the thinking disclosure. The answer
