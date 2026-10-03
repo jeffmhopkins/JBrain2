@@ -2,11 +2,12 @@
 
 > **Status:** Plan · **Last verified:** 2026-10-03
 >
-> **Awaiting the owner's pick** among A, B and C. Nothing is built yet. Once a variant is
-> chosen, this header records it as the binding spec and keeps the other two as the rivals.
-> The reasoning then goes into `docs/reference/DESIGN.md` along with the frontend. Behaviour
-> source: the owner's request of 2026-10-03, on top of the engine remap in
-> `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` §4c.
+> **Decided 2026-10-03: B — its own "Flash-Next reasoning" card** is the binding spec
+> (`b-flash-card.html`); A and C are kept as the rivals. Chosen because it leaves the existing
+> tier cards untouched and keeps the Flash-Next levels editable while Standard serves (they
+> apply next time Flash-Next is on). The reasoning goes into `docs/reference/DESIGN.md` with
+> the frontend. Behaviour source: the owner's request of 2026-10-03, on top of the engine remap in
+`docs/plans/FLASH_NEXT_ENGINE_PLAN.md` §4c.
 
 Three interactive mocks of the per-task routing tiers in **LLM settings**. While the
 **Flash-Next** engine serves, every local task is remapped onto Qwen3.8 Flash-Next. That
