@@ -813,6 +813,7 @@ export function LLMSettingsScreen() {
         autoRestore={settings.auto_restore}
         onSetAutoRestore={setAutoRestore}
         autoRestoreBusy={busy.has("auto-restore")}
+        soleEngineServing={flashServing}
         image={image}
         busy={busy}
         rowErrors={rowErrors}
@@ -1785,10 +1786,12 @@ function FreeRamControl({
 function AutoRestoreControl({
   enabled,
   busy,
+  keptLoaded,
   onChange,
 }: {
   enabled: boolean;
   busy: boolean;
+  keptLoaded: boolean;
   onChange: (enabled: boolean) => void;
 }) {
   return (
@@ -1807,7 +1810,9 @@ function AutoRestoreControl({
       <span className="onbox-freeram-hint">
         {enabled
           ? "displaced models come back when a turn ends"
-          : "off — models load only when a turn needs one"}
+          : keptLoaded
+            ? "off — Flash-Next still stays loaded (the only model on its engine)"
+            : "off — models load only when a turn needs one"}
       </span>
     </div>
   );
@@ -1835,6 +1840,7 @@ function OnBoxModelsCard({
   autoRestore,
   onSetAutoRestore,
   autoRestoreBusy,
+  soleEngineServing,
   image,
   busy,
   rowErrors,
@@ -1876,6 +1882,8 @@ function OnBoxModelsCard({
   autoRestore: boolean;
   onSetAutoRestore: (enabled: boolean) => void;
   autoRestoreBusy: boolean;
+  // An engine with a single model (Flash-Next) serves: the box keeps it loaded regardless.
+  soleEngineServing: boolean;
   image: ImageSettings | null;
   busy: Set<string>;
   rowErrors: Map<string, string>;
@@ -2149,6 +2157,7 @@ function OnBoxModelsCard({
             <AutoRestoreControl
               enabled={autoRestore}
               busy={autoRestoreBusy}
+              keptLoaded={soleEngineServing}
               onChange={onSetAutoRestore}
             />
           </>

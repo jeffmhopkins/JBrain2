@@ -2766,6 +2766,17 @@ describe("Flash-Next reasoning card (GUI gate B)", () => {
     expect(await within(fxRow(fx, "medium")).findByRole("alert")).toHaveTextContent("not now");
   });
 
+  it("says Flash-Next stays loaded when auto-restore is off", async () => {
+    const seed = fxSeed(true);
+    seed.local_hosting_enabled = true;
+    seed.auto_restore = false;
+    stubFx(seed);
+    render(<LLMSettingsScreen />);
+    expect(
+      await screen.findByText("off — Flash-Next still stays loaded (the only model on its engine)"),
+    ).toBeInTheDocument();
+  });
+
   it("hides the Standard routing cards while Flash-Next serves", async () => {
     stubFx(fxSeed(true));
     render(<LLMSettingsScreen />);
