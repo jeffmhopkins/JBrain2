@@ -10,6 +10,7 @@ import type {
   ContainerStatus,
   DeviceSummary,
   EgoGraph,
+  EngineEffortInfo,
   EngineId,
   EngineState,
   EntityListItem,
@@ -724,6 +725,97 @@ function applyLlmPatch(
     patch.provider === "grok"
       ? (patch.reasoning_effort ?? task.reasoning_effort ?? LLM_REASONING_DEFAULT)
       : null;
+}
+
+// Flash-Next's own reasoning levels (PUT/DELETE /api/settings/llm/engine-effort/…), kept apart
+// from the Standard picks. Rebuilt on every read so an engine switch flips `active`/`applies`.
+const MOCK_EFFORT_TIERS: [string, string][] = [
+  ["high", "High reasoning"],
+  ["medium", "Medium reasoning"],
+  ["low", "Low reasoning"],
+  ["vision", "Vision"],
+];
+const MOCK_TASK_TIER: Record<string, string> = {
+  "agent.turn": "medium",
+  "agent.vision": "vision",
+  "fact.adjudicate": "high",
+  "entity.disambiguate": "low",
+  "correction_note.extract": "medium",
+  "vision.ocr": "vision",
+  "vision.caption": "vision",
+};
+const MOCK_FLASH_ROWS: {
+  tiers: Record<string, ReasoningEffort>;
+  tasks: Record<string, ReasoningEffort>;
+} = {
+  tiers: {},
+  tasks: { "vision.ocr": "none" },
+};
+
+function mockEngineEfforts(): Record<string, EngineEffortInfo> {
+  const active = ENGINE_STATE.effective === "flash-next";
+  // The bucket default the router sends: medium travels as no level at all.
+  const bucket = (tier: string | null): ReasoningEffort | null =>
+    tier === "high" || tier === "low" ? tier : null;
+  return {
+    "flash-next": {
+      label: "Flash-Next",
+      active,
+      levels: ["none", "low", "medium", "high"],
+      tiers: MOCK_EFFORT_TIERS.map(([id, label]) => ({
+        id,
+        label,
+        level: MOCK_FLASH_ROWS.tiers[id] ?? null,
+        default: bucket(id),
+      })),
+      // session.title is a mock-only leftover the real server no longer routes.
+      tasks: LLM_SETTINGS.tasks
+        .filter((t) => t.id !== "session.title")
+        .map((t) => {
+          const tier = MOCK_TASK_TIER[t.id] ?? null;
+          const tierLevel = tier ? (MOCK_FLASH_ROWS.tiers[tier] ?? null) : null;
+          const fallback = tierLevel ?? t.reasoning_effort ?? bucket(tier);
+          const level = MOCK_FLASH_ROWS.tasks[t.id] ?? null;
+          return {
+            id: t.id,
+            tier,
+            level,
+            fallback,
+            fallback_source: tierLevel ? ("tier" as const) : ("standard" as const),
+            effective: level ?? fallback,
+            applies: active && t.provider === "local",
+          };
+        }),
+    },
+  };
+}
+
+function llmSnapshot(): LlmSettings {
+  LLM_SETTINGS.engine_efforts = mockEngineEfforts();
+  return LLM_SETTINGS;
+}
+
+function applyMockEngineEfforts(body: {
+  tiers?: Record<string, ReasoningEffort | null>;
+  tasks?: Record<string, ReasoningEffort | null>;
+}): Response | null {
+  const levels = ["none", "low", "medium", "high"];
+  const changes: [Record<string, ReasoningEffort>, string, ReasoningEffort | null][] = [];
+  for (const [rows, entries] of [
+    [MOCK_FLASH_ROWS.tiers, body.tiers ?? {}],
+    [MOCK_FLASH_ROWS.tasks, body.tasks ?? {}],
+  ] as const) {
+    for (const [key, level] of Object.entries(entries)) {
+      if (level !== null && !levels.includes(level))
+        return json({ detail: `Flash-Next takes ${levels.join(", ")}; not '${level}'` }, 422);
+      changes.push([rows, key, level]);
+    }
+  }
+  for (const [rows, key, level] of changes) {
+    if (level === null) delete rows[key];
+    else rows[key] = level;
+  }
+  return null;
 }
 
 function makeAttachment(
@@ -4399,7 +4491,30 @@ export const mockFetch: typeof fetch = async (input, init) => {
     };
     return json(ENGINE_STATE.switch, 202);
   }
-  if (path === "/api/settings/llm" && method === "GET") return json(LLM_SETTINGS);
+  if (path === "/api/settings/llm" && method === "GET") return json(llmSnapshot());
+  const effortMatch = path.match(
+    /^\/api\/settings\/llm\/engine-effort\/([^/]+)(?:\/([^/]+)\/([^/]+))?$/,
+  );
+  if (effortMatch && (method === "PUT" || method === "DELETE")) {
+    const [, engine, scope, key] = effortMatch;
+    if (engine !== "flash-next") return json({ detail: `unknown engine: ${engine}` }, 422);
+    let body: {
+      tiers?: Record<string, ReasoningEffort | null>;
+      tasks?: Record<string, ReasoningEffort | null>;
+    };
+    if (scope === undefined || key === undefined) {
+      body = JSON.parse(String(init?.body)) as typeof body;
+    } else {
+      const level =
+        method === "DELETE"
+          ? null
+          : (JSON.parse(String(init?.body)) as { effort: ReasoningEffort }).effort;
+      const one = { [decodeURIComponent(key)]: level };
+      body = scope === "tier" ? { tiers: one } : { tasks: one };
+    }
+    const refused = applyMockEngineEfforts(body);
+    return refused ?? json(llmSnapshot());
+  }
   if (path === "/api/settings/llm" && method === "PUT") {
     const body = JSON.parse(String(init?.body)) as {
       tasks: Record<string, { provider: LlmProviderId; reasoning_effort?: ReasoningEffort }>;

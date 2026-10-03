@@ -27,6 +27,7 @@ from jbrain.llm import kv_pool_guard as kv_pool_guard_mod
 from jbrain.llm import kv_prefix as kv_prefix_mod
 from jbrain.llm import local_catalog, model_sampling, prefill, slot_roles
 from jbrain.llm.anthropic import AnthropicClient
+from jbrain.llm.engine_effort import EngineEfforts
 from jbrain.llm.errors import LlmBadResponseError, LlmError, LlmStreamTruncatedError
 from jbrain.llm.openai_compat import OpenAiCompatClient
 from jbrain.llm.slot_roles import SlotRole
@@ -154,6 +155,26 @@ TASK_REASONING_DEFAULTS: dict[str, str] = {
     task: effort for task, effort in TASK_REASONING_BUCKET.items() if effort != "medium"
 }
 
+# The settings screen's role groups ("tiers"): the three reasoning buckets plus vision. A
+# per-engine reasoning level can be set on a tier and every task in it inherits it unless it
+# has its own (jbrain.llm.engine_effort). Not the prompt `strength` tiers below — those pick a
+# MODEL; these only group tasks for the effort a picked model runs at.
+EFFORT_TIERS: tuple[str, ...] = ("high", "medium", "low", "vision")
+
+
+def is_vision_task(task: str) -> bool:
+    """A task that sends image content, so it needs a vision-capable model."""
+    return task.startswith("vision.") or task == "agent.vision"
+
+
+def task_tier(task: str) -> str | None:
+    """The role group `task` sits in on the settings screen, or None for a task in none. The
+    hidden title task counts as low: it follows the chat MODEL but keeps its own low effort."""
+    if is_vision_task(task):
+        return "vision"
+    return TASK_REASONING_BUCKET.get(task)
+
+
 # The one task whose model is "the model the operator is using" — the chat agent's turn.
 _PRIMARY_MODEL_TASK = "agent.turn"
 # Tasks that FOLLOW the primary chat model instead of carrying their own routing. Both are
@@ -249,16 +270,22 @@ def _split_spec(label: str, spec: str) -> tuple[str, str]:
     return provider, model
 
 
-def warm_reasoning_effort(task: str, served_model: str, stored: str | None) -> str | None:
+def warm_reasoning_effort(
+    task: str, served_model: str, stored: str | None, engine_level: str | None = None
+) -> str | None:
     """The reasoning effort a `task` turn would carry on a LOCAL `served_model` — for the
     gateway's load-time warm-up, which must render the exact prompt a routed turn will
     send (the effort lands in the prompt's leading tokens; see
     `openai_compat.apply_local_reasoning`). Mirrors `_resolve_live`'s stored-override-else-
-    default fold, then gates on the model itself: the model being LOADED is not always the
-    model the task routes to, and a non-reasoning model must not carry the field."""
+    default fold, then its per-engine level (`engine_level`, the caller's resolution for the
+    engine `served_model` runs on), then gates on the model itself: the model being LOADED is
+    not always the model the task routes to, and a non-reasoning model must not carry the
+    field."""
     effort = TASK_REASONING_DEFAULTS.get(task)
     if stored:
         effort = stored
+    if engine_level is not None:
+        effort = engine_level
     if not _reasoning_capable(local_catalog.LOCAL_PROVIDER, served_model):
         return None
     return effort
@@ -382,8 +409,12 @@ class LlmRouter:
         engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
         admission_gate: Callable[[], Awaitable[bool]] | None = None,
         pool_guard: kv_pool_guard_mod.KvPoolGuard | None = None,
+        engine_efforts_loader: Callable[[], Awaitable[EngineEfforts]] | None = None,
     ):
         self._clients = clients
+        # The owner's reasoning levels for a non-Standard engine (jbrain.llm.engine_effort),
+        # read through a short TTL cache. None -> every call keeps its Standard effort.
+        self._engine_efforts_loader = engine_efforts_loader
         # Keeps a shared KV pool (Flash-Next) from overrunning under a pinned call, and
         # checks the live slot layout before an `id_slot` is trusted (jbrain.llm.kv_pool_guard).
         # None on a bare test router: pool calls are then pinned and capped off the catalog
@@ -662,7 +693,13 @@ class LlmRouter:
         can't-serve-local override is ignored (the call falls back to the resolved
         route) rather than breaking the turn. When it lands, the reasoning effort is
         re-gated on the overridden model, so picking a non-reasoning local model
-        drops the effort param the resolved route would have carried."""
+        drops the effort param the resolved route would have carried.
+
+        Effort precedence, lowest first: the task's bucket default, a stored Standard
+        effort, then — only when the route lands on a non-Standard engine's model after the
+        remap — the owner's per-engine level for the task, else its tier
+        (`_engine_effort`). A per-call `effort_override` is applied by the callers on top of
+        all of these (`converse`, `converse_stream`, `effective_reasoning_effort`)."""
         provider, model = self._resolve(task, strength)
         # The task's bucket default (high/low deviations only) unless a stored
         # override replaces it below — so a fresh box runs at the right effort.
@@ -718,9 +755,30 @@ class LlmRouter:
         # remapped alike, and BEFORE the effort gate, so the effort is judged on the model
         # that will actually run (Flash-Next reasons; a remapped vision model did not).
         provider, model = await self._on_engine(task, strength, provider, model)
+        if provider == local_catalog.LOCAL_PROVIDER:
+            reasoning_effort = await self._engine_effort(task, model, reasoning_effort)
         if not _reasoning_capable(provider, model):
             reasoning_effort = None
         return provider, model, reasoning_effort
+
+    async def _engine_effort(self, task: str, model: str, effort: str | None) -> str | None:
+        """`effort`, replaced by the owner's level for `task` on the engine `model` runs on —
+        the task's own row, else its tier's (jbrain.llm.engine_effort). Keyed off the model that
+        will run, AFTER the remap, so a stored Standard pick, an env pin, a tier and a per-call
+        `spec_override` that all land on Flash-Next get Flash-Next's level alike. A Standard
+        model never reads the table, so Standard routing is exactly what it was; a failed read
+        keeps `effort` rather than failing the call."""
+        if self._engine_efforts_loader is None:
+            return effort
+        engine = local_catalog.engine_of(model)
+        if engine == engines.STANDARD:
+            return effort
+        try:
+            efforts = await self._engine_efforts_loader()
+        except Exception:  # noqa: BLE001 — a settings hiccup must never fail a routed call
+            return effort
+        level, _scope = efforts.resolve(engine, task, task_tier(task))
+        return level if level is not None else effort
 
     async def _route(
         self, task: str, strength: str | None, spec_override: str | None
@@ -791,8 +849,9 @@ class LlmRouter:
         `spec_override` (the per-conversation pick) re-gates the effort on the
         overridden model, so a turn steered onto a non-reasoning local model reports
         None rather than the resolved route's effort. `effort_override` (the pick's
-        reasoning level) wins over the stored effort under the same capability gate —
-        matching what `converse`/`converse_stream` will actually send."""
+        reasoning level) wins over the stored effort and any per-engine level under the
+        same capability gate — matching what `converse`/`converse_stream` will actually
+        send."""
         provider, model, effort = await self._resolve_live(task, strength, spec_override)
         if effort_override is not None and _reasoning_capable(provider, model):
             return effort_override
@@ -1251,6 +1310,7 @@ def build_router(
     engine_loader: Callable[[], Awaitable[engines.Engine]] | None = None,
     admission_gate: Callable[[], Awaitable[bool]] | None = None,
     pool_guard: kv_pool_guard_mod.KvPoolGuard | None = None,
+    engine_efforts_loader: Callable[[], Awaitable[EngineEfforts]] | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
@@ -1285,7 +1345,11 @@ def build_router(
     `pool_guard` (jbrain.llm.kv_pool_guard) keeps a pooled model's shared KV from overrunning
     and catches a stale slot layout. One per process, shared with anything else that pins slots
     there (the api's jcode proxy), so its decisions serialize and its pending calls are seen.
-    Without it a pooled model's calls are still pinned and capped, off the catalog alone."""
+    Without it a pooled model's calls are still pinned and capped, off the catalog alone.
+
+    `engine_efforts_loader` (an `engine_effort.EngineEffortCache`'s `get`) applies the owner's
+    per-engine reasoning levels to calls that run on Flash-Next; without it they keep their
+    Standard effort."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -1315,4 +1379,5 @@ def build_router(
         engine_loader=engine_loader,
         admission_gate=admission_gate,
         pool_guard=pool_guard,
+        engine_efforts_loader=engine_efforts_loader,
     )

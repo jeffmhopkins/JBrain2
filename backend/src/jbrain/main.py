@@ -171,6 +171,7 @@ from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router, drain, engine_switch, gpu_guard
 from jbrain.llm import engine as engine_mod
+from jbrain.llm.engine_effort import EngineEffortCache
 from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.ledger import ReservationLedger
@@ -627,6 +628,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # instances the coordinator above uses.
             engine_loader=app.state.active_engine.get,
             admission_gate=app.state.admission_gate.wait_open,
+            # The owner's Flash-Next reasoning levels, TTL-cached; the settings routes'
+            # writes invalidate it in this process (jbrain.llm.engine_effort).
+            engine_efforts_loader=EngineEffortCache(
+                lambda: settings_store.llm_engine_efforts(SYSTEM_CTX)
+            ).get,
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.
