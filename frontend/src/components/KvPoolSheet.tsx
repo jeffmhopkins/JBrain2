@@ -6,44 +6,75 @@
 // stay out until it is, rather than being drawn from numbers nobody measured.
 
 import { useEffect, useState } from "react";
-import type { KvPool } from "../api/client";
+import type { KvPool, KvPoolSlot } from "../api/client";
+import { useEngineSnapshot } from "../engineState";
 import { Sheet } from "./Sheet";
 import { ArrowRightIcon, InfoIcon, LockIcon } from "./icons";
 
 // What each role's slot serves — the tap-to-expand line. The API carries only a short label,
-// and this sentence is the owner-facing explanation of the routing, so it lives here.
-export const SLOT_SERVES: Record<string, string> = {
-  interactive: "Your chat turns and the omnibox.",
-  ingest: "Note ingest and the analysis pipeline.",
-  scheduled: "Workflow runs fired on a schedule.",
-  research: "Deep research and the sub-agents it fans out.",
-  jcode: "jcode coding sessions.",
-  workshop: "Wiki writing, note edits and guided intake.",
-  pet: "The kid pet. When it fills, its prompts spill to Small prompts.",
-  small: "Short one-off prompts.",
-};
+// and this sentence is the owner-facing explanation of the routing, so it lives here. A Map,
+// so a role named like an Object.prototype key can never read an inherited value.
+export const SLOT_SERVES: ReadonlyMap<string, string> = new Map([
+  ["interactive", "Your chat turns and the omnibox."],
+  ["ingest", "Note ingest and the analysis pipeline."],
+  ["scheduled", "Workflow runs fired on a schedule."],
+  ["research", "Deep research and the sub-agents it fans out."],
+  ["jcode", "jcode coding sessions."],
+  ["workshop", "Wiki writing, note edits and guided intake."],
+  ["pet", "The kid pet."],
+  ["small", "Short one-off prompts."],
+]);
 
-// A fixed routing rule (the pet's slot spills to the small-prompts slot), not an API field.
-const OVERFLOW: Record<string, string> = { pet: "small" };
+// The engine's overflow routing, for a server that predates the per-slot `overflow` field.
+const OVERFLOW_FALLBACK: ReadonlyMap<string, string> = new Map([["pet", "small"]]);
 
-// LLM settings' "256k" style, but binary at the M step too: the pool and its caps are powers
-// of two, and a decimal 1.4M of caps beside a "1M" pool would misstate the overcommit
-// (the caps are 1.34× the pool).
-function fmtTokens(n: number): string {
-  if (n >= 1_048_576) return `${+(n / 1_048_576).toFixed(2)}M`;
-  return n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`;
+function overflowRole(s: KvPoolSlot): string | null {
+  if (s.overflow !== undefined) return s.overflow;
+  return OVERFLOW_FALLBACK.get(s.role) ?? null;
+}
+
+// Not the screen's fmtTokens: that one goes decimal at M, and the pool and its caps are
+// powers of two, so a decimal "1.4M" of caps beside a "1M" pool would misstate the
+// overcommit (the caps are 1.34× the pool). Binary throughout, and the k/M boundary is
+// taken after rounding so a just-under-1M count can never print as "1024k".
+export function fmtTokens(n: number): string {
+  if (n < 1024) return `${n}`;
+  const k = Math.round(n / 1024);
+  if (k >= 1024) return `${+(n / 1_048_576).toFixed(2)}M`;
+  return `${k}k`;
+}
+
+// Whether the pool model is off-engine — its engine is not the one serving — rather than
+// blocked for some other reason (hosting off, not installed, switched unavailable), which
+// would make "the engine is stopped" false. The engine store is the source; the load
+// route's own sentence is the fallback for a server or a moment without it.
+export function poolOffEngine(
+  engine: string | undefined,
+  loaded: boolean,
+  blockedReason: string | null | undefined,
+  effective: string | null | undefined,
+): boolean {
+  if (loaded) return false;
+  if (engine !== undefined && effective) return engine !== effective;
+  return blockedReason?.startsWith("Runs on the ") ?? false;
 }
 
 export function KvPoolLine({
   pool,
   title,
-  offEngine,
+  engine,
+  loaded,
+  blockedReason,
 }: {
   pool: KvPool;
   title: string;
-  offEngine: boolean;
+  engine: string | undefined;
+  loaded: boolean;
+  blockedReason: string | null | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  const effective = useEngineSnapshot().state?.effective;
+  const offEngine = poolOffEngine(engine, loaded, blockedReason, effective);
   return (
     <div className="llm-local-ctx kvp-line">
       <span className="llm-local-ctx-label">KV pool</span>
@@ -56,7 +87,12 @@ export function KvPoolLine({
           <i key={s.slot} />
         ))}
       </span>
-      <button type="button" className="kvp-open" onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        className="kvp-open"
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
+      >
         View slots
         <ArrowRightIcon size={12} />
       </button>
@@ -91,7 +127,11 @@ export function KvPoolSheet({
 
   useEffect(() => {
     if (jumpTo === null) return;
-    document.getElementById(`kvp-slot-${jumpTo}`)?.scrollIntoView?.({ block: "nearest" });
+    const row = document.getElementById(`kvp-slot-${jumpTo}`);
+    row?.scrollIntoView?.({ block: "nearest" });
+    // The link that was tapped is gone once its row collapses; land focus on the target
+    // row so a keyboard or screen-reader user is not dropped back to the top of the sheet.
+    row?.querySelector<HTMLButtonElement>(".kvp-slot-btn")?.focus();
     setJumpTo(null);
   }, [jumpTo]);
 
@@ -129,9 +169,8 @@ export function KvPoolSheet({
       <ul className="kvp-list">
         {pool.slots.map((s) => {
           const open = sel === s.slot;
-          const target = OVERFLOW[s.role]
-            ? pool.slots.find((t) => t.role === OVERFLOW[s.role])
-            : undefined;
+          const spill = overflowRole(s);
+          const target = spill ? pool.slots.find((t) => t.role === spill) : undefined;
           return (
             <li
               key={s.slot}
@@ -161,10 +200,10 @@ export function KvPoolSheet({
               </button>
               {open && (
                 <div className="kvp-exp">
-                  {SLOT_SERVES[s.role] ?? `Serves the ${s.role} role.`}
+                  {SLOT_SERVES.get(s.role) ?? `Serves the ${s.role} role.`}
                   {target && (
                     <>
-                      {" "}
+                      {` When it fills, its prompts spill to ${target.label}. `}
                       <button type="button" className="kvp-link" onClick={() => jump(target.slot)}>
                         Show {target.label}
                       </button>

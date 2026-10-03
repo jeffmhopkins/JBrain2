@@ -1099,6 +1099,9 @@ export interface KvPoolSlot {
   role: string;
   label: string;
   cap: number;
+  /** The role whose slot takes this one's calls when it is busy (the pet spills to small),
+   * or null. Absent from an older server — the frontend falls back to the engine's rule. */
+  overflow?: string | null | undefined;
 }
 
 /** A shared KV pool: `n_ctx` tokens split across role-pinned slots. The caps may add up to

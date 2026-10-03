@@ -1981,7 +1981,9 @@ function LlmModelRow({
         <KvPoolLine
           pool={m.kv_pool}
           title={m.engine === "flash-next" ? "Flash-Next KV pool" : "KV pool"}
-          offEngine={blocked !== null && !m.loaded}
+          engine={m.engine}
+          loaded={m.loaded}
+          blockedReason={m.blocked_reason}
         />
       ) : (
         <>

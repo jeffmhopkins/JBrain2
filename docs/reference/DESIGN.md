@@ -683,8 +683,10 @@ and the server refuses changes to them (409), so the per-model selects were a li
   *set by the engine*. Three stat tiles (Pool, Slots, Caps total), then **one row per
   slot** — number, label, a **role chip** and a **cap bar** scaled to the largest cap — and
   **Done**. Tapping a slot adds one line on what it serves (a frontend role → sentence map;
-  the API carries only the label). Kid pet's line links to **Small prompts**, where it
-  spills when full, and the link selects and scrolls to that slot.
+  the API carries only the label). A slot with an overflow (Kid pet → Small prompts) says
+  where it spills when full, naming the target's label from the pool, and links to it: the
+  link selects, scrolls to and focuses that slot. The slot's `overflow` field is the
+  source; a server without it falls back to the engine's pet → small rule.
 - **Role hues pair by job family** — steel for you (interactive), amber for background
   work (ingest, scheduled), violet for agents (research, jcode), green for writing
   (workshop, pet), grey for small; the second slot of a pair is lighter. An unknown role
@@ -695,7 +697,10 @@ and the server refuses changes to them (409), so the per-model selects were a li
   stated truly.
 - **Off-engine** (Flash-Next not serving) the line and Sheet still render, with the row's
   existing off-engine reason above, and the Sheet adds *the engine is stopped, so these
-  are the caps it will use*.
+  are the caps it will use*. Off-engine is read from the engine store (the model's
+  `engine` ≠ the effective engine), not from "Stage is blocked": hosting off, not
+  installed or switched unavailable must not claim the engine is stopped. Only with no
+  engine state does the load route's *"Runs on the … engine"* sentence stand in.
 - **Caps only until the API reports use.** The mock's live states (an *In use* tile, lit
   ticks, filled bars, per-slot state dots, the router-freed-a-slot footer) are drawn only
   from a real per-slot occupancy field; there is none yet, so the ticks stay unlit and the
