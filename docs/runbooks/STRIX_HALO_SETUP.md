@@ -1424,8 +1424,9 @@ tensor stays memory-mapped because it is lazy and CPU-pinned). Measured at 512k:
 against mmap's 41, steady host free memory 25.8 GB against 16.5. The read still fills page cache
 as it streams (it peaked at 52 GiB once), so the gateway drops it **by byte range** — every range
 of the shards except the engram tensor, read from the GGUF headers — during the load, after it,
-and from `POST /api/debug/llm/drop-page-cache`. The load guard tries that drop once before its
-6 GB host floor aborts a load, and aborts only if free memory is still under the floor.
+and from `POST /api/debug/llm/drop-page-cache`. The load guard also drops it the moment host
+free memory comes within 4 GB of its 6 GB floor (at most once per 10 s, bounded to 2 s); the
+floor itself is unchanged — any reading under it aborts the load.
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come

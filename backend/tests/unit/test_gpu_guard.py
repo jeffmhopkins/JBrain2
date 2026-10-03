@@ -519,7 +519,9 @@ def test_an_unreadable_device_total_never_concludes_never() -> None:
     assert zero.value.permanent is False
 
 
-# --- relief before the host floor aborts ---------------------------------------------------
+# --- proactive relief in the band above the host floor -------------------------------------
+
+_BAND = gpu_guard.MIN_FREE_GTT_GB + gpu_guard.RELIEF_BAND_GB / 2  # inside the warning band
 
 
 def _host_free(monkeypatch: pytest.MonkeyPatch, start: float) -> list[float]:
@@ -536,23 +538,23 @@ async def _quiet_abort() -> None:
     return None
 
 
-async def test_a_drop_that_lifts_host_memory_over_the_floor_lets_the_load_finish(
+async def test_entering_the_band_drops_page_cache_before_the_floor_is_reached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """MEASURED 2026-10-03: 1M-pool loads aborted at 5.3/5.9 GB free with tens of GB of the
-    read's clean page cache on the box. Dropping it and re-reading keeps the floor exactly as
-    strict while removing the abort a drop would have prevented."""
+    read's clean page cache on the box. The drop now lands while there is still room above the
+    floor, so the floor itself is never relaxed."""
     probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
     free = _host_free(monkeypatch, 40.0)
     relieved: list[float] = []
 
     async def load() -> None:
-        free[0] = 5.3
+        free[0] = _BAND
         await asyncio.sleep(0.05)
 
     async def relieve() -> None:
         relieved.append(free[0])
-        free[0] = 20.0  # the residue was dropped and the pages came back
+        free[0] = 20.0
 
     await gpu_guard.guarded_load(
         load,
@@ -563,10 +565,10 @@ async def test_a_drop_that_lifts_host_memory_over_the_floor_lets_the_load_finish
         relieve=relieve,
         sample_interval_s=0.01,
     )
-    assert relieved == [5.3]
+    assert relieved == [_BAND]
 
 
-async def test_a_drop_that_does_not_lift_host_memory_still_aborts(
+async def test_a_sample_under_the_floor_is_fatal_and_is_never_rescued(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
@@ -579,7 +581,8 @@ async def test_a_drop_that_does_not_lift_host_memory_still_aborts(
         await asyncio.sleep(0.2)
 
     async def relieve() -> None:
-        relieved.append("dropped")  # nothing came back: the memory really is in use
+        relieved.append("dropped")
+        free[0] = 20.0
 
     async def abort() -> None:
         aborted.append("unloaded")
@@ -594,33 +597,28 @@ async def test_a_drop_that_does_not_lift_host_memory_still_aborts(
             relieve=relieve,
             sample_interval_s=0.01,
         )
-    assert relieved == ["dropped"] and aborted == ["unloaded"]
-    assert "still under it after dropping" in str(exc.value)
+    assert relieved == [] and aborted == ["unloaded"]
+    assert "free host memory fell to 5.3" in str(exc.value)
 
 
-async def test_relief_is_bounded_to_one_attempt_per_interval(
+async def test_a_drop_that_hangs_cannot_stall_the_watchdog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A read refilling the cache faster than any drop drains it meets the floor: the second
-    dip inside the window aborts instead of dropping again."""
+    """Relief runs while memory is already tight; a drop wedged in the kernel must not stop
+    sampling. The wait is bounded, and the floor still fires on the next sample."""
     probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
     free = _host_free(monkeypatch, 40.0)
-    relieved: list[str] = []
-    refills: list[asyncio.Task[None]] = []
 
     async def load() -> None:
-        free[0] = 5.0
-        await asyncio.sleep(0.5)
-
-    async def _refill() -> None:
-        await asyncio.sleep(0.02)
-        free[0] = 5.0
+        free[0] = _BAND
+        await asyncio.sleep(30)
 
     async def relieve() -> None:
-        relieved.append("dropped")
-        free[0] = 20.0
-        refills.append(asyncio.ensure_future(_refill()))
+        free[0] = 3.0  # memory keeps going while the drop is stuck
+        await asyncio.Event().wait()
 
+    loop = asyncio.get_running_loop()
+    started = loop.time()
     with pytest.raises(GpuBudgetError):
         await gpu_guard.guarded_load(
             load,
@@ -630,8 +628,34 @@ async def test_relief_is_bounded_to_one_attempt_per_interval(
             abort=_quiet_abort,
             relieve=relieve,
             sample_interval_s=0.01,
-            relief_interval_s=60.0,
         )
+    assert loop.time() - started < 1.0
+
+
+async def test_relief_is_bounded_to_one_drop_per_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
+    free = _host_free(monkeypatch, 40.0)
+    relieved: list[str] = []
+
+    async def load() -> None:
+        free[0] = _BAND
+        await asyncio.sleep(0.2)
+
+    async def relieve() -> None:
+        relieved.append("dropped")  # frees nothing: the band persists across many samples
+
+    await gpu_guard.guarded_load(
+        load,
+        probe=probe,
+        projected_gb=21.0,
+        target="m",
+        abort=_never_aborts,
+        relieve=relieve,
+        sample_interval_s=0.01,
+        relief_interval_s=60.0,
+    )
     assert relieved == ["dropped"]
 
 
@@ -642,6 +666,8 @@ async def test_a_failing_drop_leaves_the_floor_to_decide(
     free = _host_free(monkeypatch, 40.0)
 
     async def load() -> None:
+        free[0] = _BAND
+        await asyncio.sleep(0.05)
         free[0] = 3.0
         await asyncio.sleep(0.2)
 
@@ -658,3 +684,38 @@ async def test_a_failing_drop_leaves_the_floor_to_decide(
             relieve=relieve,
             sample_interval_s=0.01,
         )
+
+
+async def test_the_ceiling_is_judged_on_a_sample_taken_after_the_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drop can take seconds; the device checks must read the pool after it, not the sample
+    from before. Here the pool runs away during the drop and the re-sample catches it at once,
+    long before the next interval's sample would."""
+    free = _host_free(monkeypatch, 40.0)
+    loop = asyncio.get_running_loop()
+    dropped_at: list[float] = []
+
+    class _Probe:
+        async def sample(self) -> GpuMem:
+            return _sample(500.0 if dropped_at else 1.0, gtt_total=1000.0)
+
+    async def load() -> None:
+        free[0] = _BAND
+        await asyncio.sleep(30)
+
+    async def relieve() -> None:
+        dropped_at.append(loop.time())
+        free[0] = 20.0
+
+    with pytest.raises(GpuBudgetError, match="ran away"):
+        await gpu_guard.guarded_load(
+            load,
+            probe=_Probe(),
+            projected_gb=21.0,
+            target="m",
+            abort=_quiet_abort,
+            relieve=relieve,
+            sample_interval_s=0.5,
+        )
+    assert loop.time() - dropped_at[0] < 0.25

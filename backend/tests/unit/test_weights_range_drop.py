@@ -8,6 +8,7 @@ against a synthetic file, the complement arithmetic, and which ranges reach `pos
 import os
 import struct
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -242,3 +243,128 @@ def test_the_drop_is_measured_against_a_real_page_cache(tmp_path: Path) -> None:
         os.close(fd)
     # The engram's 64 pages survive; the 16 MiB in front of it is what was freed.
     assert left == 64 and freed == round(((16 << 20) + page) / 1024**3, 2)
+
+
+# --- parser hardening ----------------------------------------------------------------------
+
+
+def _raw_gguf(
+    path: Path,
+    kvs: list[bytes],
+    *,
+    version: int = 3,
+    n_tensors: int = 0,
+    n_kv: int | None = None,
+) -> None:
+    head = b"GGUF" + struct.pack("<IQQ", version, n_tensors, len(kvs) if n_kv is None else n_kv)
+    path.write_bytes(head + b"".join(kvs) + b"\0" * 64)
+
+
+def _kv(key: str, kind: int, payload: bytes) -> bytes:
+    return _gguf_string(key) + struct.pack("<I", kind) + payload
+
+
+def test_every_fixed_metadata_type_and_nested_arrays_are_skipped(tmp_path: Path) -> None:
+    widths = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
+    kvs = [_kv(f"k{kind}", kind, b"\x01" * width) for kind, width in widths.items()]
+    # An array of two arrays of strings, and an array of each fixed type.
+    inner = struct.pack("<IQ", 8, 2) + _gguf_string("x") + _gguf_string("yy")
+    kvs.append(_kv("nested", 9, struct.pack("<IQ", 9, 2) + inner + inner))
+    kvs += [
+        _kv(f"arr{kind}", 9, struct.pack("<IQ", kind, 3) + b"\x02" * (3 * width))
+        for kind, width in widths.items()
+    ]
+    shard = tmp_path / "types.gguf"
+    _raw_gguf(shard, kvs)
+    assert _tensor_ranges(str(shard)) == ()
+
+
+def test_a_v2_header_is_read(tmp_path: Path) -> None:
+    shard = tmp_path / "v2.gguf"
+    _raw_gguf(shard, [_kv("general.architecture", 8, _gguf_string("t"))], version=2)
+    assert _tensor_ranges(str(shard)) == ()
+    v1 = tmp_path / "v1.gguf"
+    _raw_gguf(v1, [], version=1)
+    with pytest.raises(GgufError, match="v1"):
+        _tensor_ranges(str(v1))
+
+
+@pytest.mark.parametrize(
+    ("name", "kvs", "counts", "match"),
+    [
+        # A key claiming a length past the bound is refused before anything is read.
+        ("huge-key", [struct.pack("<Q", 1 << 40)], {}, "name|truncated"),
+        ("long-key", [struct.pack("<Q", 70 * 1024) + b"k" * (70 * 1024)], {}, "bound"),
+        ("huge-value", [_kv("s", 8, struct.pack("<Q", 1 << 50))], {}, "bound"),
+        # A length within bounds but past the end of the file is never read.
+        ("past-eof", [_kv("s", 8, struct.pack("<Q", 4096))], {}, "truncated"),
+        (
+            "deep",
+            [_kv("d", 9, b"".join(struct.pack("<IQ", 9, 1) for _ in range(12)))],
+            {},
+            "depth",
+        ),
+        ("huge-array", [_kv("a", 9, struct.pack("<IQ", 8, 1 << 40))], {}, "cannot fit"),
+        ("huge-fixed-array", [_kv("a", 9, struct.pack("<IQ", 12, 1 << 40))], {}, "truncated"),
+        ("many-tensors", [], {"n_tensors": 10**7}, "bound"),
+        ("many-keys", [], {"n_kv": 10**7}, "bound"),
+        ("unknown-type", [_kv("u", 77, b"")], {}, "unknown"),
+    ],
+)
+def test_a_hostile_or_corrupt_header_is_refused(
+    tmp_path: Path, name: str, kvs: list[bytes], counts: dict[str, int], match: str
+) -> None:
+    shard = tmp_path / f"{name}.gguf"
+    _raw_gguf(shard, kvs, **counts)
+    with pytest.raises(GgufError, match=match):
+        _tensor_ranges(str(shard))
+
+
+def test_a_truncated_tensor_table_is_refused(tmp_path: Path) -> None:
+    shard = tmp_path / "t.gguf"
+    shard.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 2, 0) + _gguf_string("only-a-name"))
+    with pytest.raises(GgufError, match="truncated"):
+        _tensor_ranges(str(shard))
+
+
+def test_a_bad_shard_is_parsed_once_and_then_remembered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = tmp_path / "bad.gguf"
+    bad.write_bytes(b"NOPE" + b"\0" * 64)
+    parses: list[str] = []
+    real = local_weights._parse_tensor_ranges
+
+    def _counting(path: str) -> tuple[tuple[str, int, int], ...]:
+        parses.append(path)
+        return real(path)
+
+    monkeypatch.setattr(local_weights, "_parse_tensor_ranges", _counting)
+    for _ in range(3):
+        with pytest.raises(GgufError):
+            _tensor_ranges(str(bad))
+    assert parses == [str(bad)]
+    # A re-downloaded shard (new size) gets a fresh attempt.
+    bad.write_bytes(b"NOPE" + b"\0" * 65)
+    with pytest.raises(GgufError):
+        _tensor_ranges(str(bad))
+    assert len(parses) == 2
+
+
+def test_any_failure_on_one_shard_leaves_that_shard_alone_and_drops_the_rest(
+    tmp_path: Path, advised: list[tuple[str, int, int]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / FLASH_ID
+    root.mkdir()
+    write_gguf(root / "a.gguf", [("blk.0.weight", 100)])
+    write_gguf(root / "b.gguf", [("blk.1.weight", 100)])
+    real = local_weights._drop_shard_except
+
+    def _flaky(path: str, keep: list[Any]) -> int | None:
+        if path.endswith("a.gguf"):
+            raise RuntimeError("anything at all")
+        return real(path, keep)
+
+    monkeypatch.setattr(local_weights, "_drop_shard_except", _flaky)
+    local_weights.drop_weights_page_cache_except_mapped(str(tmp_path), FLASH_ID)
+    assert {name for name, _o, _l in advised} == {"b.gguf"}

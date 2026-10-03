@@ -200,7 +200,7 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   ```
 
   Watch the load on `GET /api/debug/host`: a 1M load that still drives
-  host free memory under the guard's 6 GB floor after its page-cache drop is aborted and
+  host free memory under the guard's 6 GB floor despite the page-cache drops is aborted and
   unloaded (`gpu_guard.aborting_load`), and setting 512k back is the recovery.
 - `PUT /api/debug/llm/local-models/{id}/parallel-slots` `{"slots": n|null}` — the served `-np`
   (1..the model's slot cap; null restores the catalog default). The other half of a layout:

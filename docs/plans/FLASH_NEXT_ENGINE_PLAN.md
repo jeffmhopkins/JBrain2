@@ -126,7 +126,8 @@ go through a buffered read into pinned staging, which leaves unmapped, droppable
 drops Flash-Next's cache **by byte range**: each shard's GGUF header gives the tensor offsets,
 the catalog's `-ot per_layer_token_embd=CPU` rule names the ranges to keep, and every other range
 is `POSIX_FADV_DONTNEED`ed — in the in-load sweep, after the load, from the debug drop route, and
-by the load guard once before its 6 GB host floor aborts (re-measured; still under = abort). The
+by the load guard proactively when host free memory is within 4 GB of its 6 GB floor (once per
+10 s, bounded to 2 s, then host and GTT re-read; any sample under the floor still aborts). The
 cache is never counted as free (the 2026-08-19 livelock was ~39 GiB of clean cache that
 `MemAvailable` did). The pool size is selectable without a release — 524,288 (default) or
 1,048,576, saved as the model's context-window override (§4a) — so the 1M re-measure is a debug
@@ -164,7 +165,10 @@ cache as used, so admission would charge the PLE working set; and the load path 
 weights' page cache during and after load (`local_weights.drop_weights_page_cache`, called
 from `local_gateway`), which was built for `--no-mmap` and would evict the engram working set
 here. F1 makes both engine-aware: `footprint_gb` subtracts a catalog **file-backed** figure
-from the measured `disk_gb`, and the page-cache drop skips mmapped tensors.
+from the measured `disk_gb`, and the page-cache drop skips mmapped tensors — first by skipping
+the whole model, since 2026-10-03 by byte range (`local_weights
+.drop_weights_page_cache_except_mapped`: the GGUF headers locate the `-ot …=CPU` tensors, and
+every other range is dropped; §3a).
 
 ## 4. Shape
 
@@ -535,8 +539,8 @@ with per-slot caps and a pool guard (§4a).
   mocks** before code (`PROCESS.md`).
 - Re-measure on the box with every slot filled to its cap (the worst case, ~74 GiB predicted).
 - Page cache and pool size (2026-10-03, §3a): `--load-mode none`, the range-aware page-cache
-  drop (in-load sweep, post-load, debug route, and the guard's one drop before its host floor
-  aborts), and the pool size selectable between 512k and 1M without a release. Pending on the
+  drop (in-load sweep, post-load, debug route, and the guard's proactive drop in the 4 GB band
+  above its host floor), and the pool size selectable between 512k and 1M without a release. Pending on the
   box: a 1M load under `none` with the range drop, read off `GET /api/debug/host` while it runs.
 - Tests: caps per role, clamp and refusal, eviction order, layout mismatch, pool flags rendered,
   slot selection per task and caller, every pool-model request pinned, engine-aware jcode

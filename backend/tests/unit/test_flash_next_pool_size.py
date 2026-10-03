@@ -265,3 +265,79 @@ async def test_an_unreadable_size_keeps_the_smaller_default() -> None:
 
     guard = KvPoolGuard(read, erase, windows_loader=broken)
     assert await guard._sized(FLASH_ID, FLASH_NEXT_POOL) is FLASH_NEXT_POOL
+
+
+async def test_the_size_read_is_cached_briefly() -> None:
+    reads: list[int] = []
+    now = [0.0]
+
+    async def read(_model: str) -> list[dict[str, object]]:
+        return _slots(0)
+
+    async def erase(_model: str, _slot: int) -> bool:
+        return True
+
+    async def loader() -> dict[str, int]:
+        reads.append(1)
+        return {FLASH_ID: ONE_M}
+
+    guard = KvPoolGuard(read, erase, windows_loader=loader, clock=lambda: now[0])
+    for _ in range(3):
+        assert (await guard._sized(FLASH_ID, FLASH_NEXT_POOL)).n_ctx == ONE_M
+    assert len(reads) == 1
+    now[0] += 11.0
+    await guard._sized(FLASH_ID, FLASH_NEXT_POOL)
+    assert len(reads) == 2
+
+
+# --- a resize whose unload fails -----------------------------------------------------------
+
+
+def test_a_failed_unload_restores_the_previous_size_and_says_so() -> None:
+    """A resident pool left at its old size while the budget prices the new one is 14 GiB
+    wrong; the change is undone instead."""
+    gw = FakeLocalGateway(running={FLASH_ID})
+    gw.fail_unload = True
+    c, store = _api(gw)
+    store.values["llm_local_context_windows"] = {"gpt-oss-120b": 65536}
+    resp = c.put(
+        f"/api/settings/llm/local-models/{FLASH_ID}/context-window",
+        json={"context_window": ONE_M},
+    )
+    assert resp.status_code == 502
+    assert "could not be unloaded" in resp.json()["detail"]
+    assert "524,288" in resp.json()["detail"]
+    assert store.values["llm_local_context_windows"] == {"gpt-oss-120b": 65536}
+
+
+# --- the update smoketest ------------------------------------------------------------------
+
+
+def test_the_rendered_config_reports_the_served_pool(tmp_path: Path) -> None:
+    root = tmp_path / FLASH_ID
+    root.mkdir()
+    (root / "Qwen3.8-Flash-Next-UD-IQ4_XS.gguf").write_bytes(b"\0")
+    (root / "mmproj-F16.gguf").write_bytes(b"\0")
+    manifest = [dataclasses.asdict(_flash())]
+    llama_swap_config.write(
+        str(tmp_path), manifest, windows={FLASH_ID: ONE_M}, engine=engines.FLASH_NEXT
+    )
+    assert llama_swap_config.served_pool_cells_from_config(str(tmp_path), engines.FLASH_NEXT) == {
+        FLASH_ID: ONE_M
+    }
+    # The per-sequence shape is unchanged: a slot still cannot pass the training length.
+    assert llama_swap_config.served_shape_from_config(str(tmp_path), engines.FLASH_NEXT) == {
+        FLASH_ID: (262_144, 8)
+    }
+    assert llama_swap_config.served_pool_cells_from_config(str(tmp_path / "nope")) == {}
+
+
+def test_the_smoketest_gates_a_pooled_model_at_its_served_pool() -> None:
+    from jbrain.llm import smoketest
+
+    m = _flash()
+    default = smoketest._resident_cost_gb(m)
+    assert smoketest._resident_cost_gb(m, {FLASH_ID: ONE_M}) == pytest.approx(
+        default + 14.0, abs=0.05
+    )
+    assert smoketest._resident_cost_gb(m, {"other": ONE_M}) == default

@@ -175,25 +175,18 @@ def drop_weights_page_cache_except_mapped(models_dir: str, model_id: str) -> flo
     freed_pages = 0
     measured = False
     for path in _weight_files(root, (".gguf",)):
-        with contextlib.suppress(OSError, AttributeError):
-            size = os.path.getsize(path)
-            try:
-                ranges = _tensor_ranges(path)
-            except GgufError as exc:
-                log.warning("local_weights.gguf_unparsed", path=path, error=str(exc))
-                continue
-            kept = [(lo, hi) for name, lo, hi in ranges if any(k.search(name) for k in keep)]
-            fd = os.open(path, os.O_RDONLY)
-            try:
-                before = _cached_pages(fd)
-                for lo, hi in drop_ranges(size, kept):
-                    os.posix_fadvise(fd, lo, hi - lo, os.POSIX_FADV_DONTNEED)
-                after = _cached_pages(fd)
-                if before is not None and after is not None:
-                    measured = True
-                    freed_pages += max(0, before - after)
-            finally:
-                os.close(fd)
+        # Anything at all going wrong with one shard leaves THAT shard's cache alone: it costs
+        # memory, and evicting the engram by mistake would cost every token a disk read.
+        try:
+            got = _drop_shard_except(path, keep)
+        except _KnownUnparseable:
+            continue  # already logged when it first failed
+        except Exception as exc:  # noqa: BLE001 — see above; logged, never raised
+            log.warning("local_weights.shard_left_alone", path=path, error=str(exc))
+            continue
+        if got is not None:
+            measured = True
+            freed_pages += got
     if not measured:
         return None
     return round(freed_pages * _PAGE_SIZE / _BYTES_PER_GIB, 2)
@@ -216,8 +209,28 @@ def drop_ranges(size: int, kept: list[tuple[int, int]]) -> list[tuple[int, int]]
     return out
 
 
+def _drop_shard_except(path: str, keep: list[re.Pattern[str]]) -> int | None:
+    """Drop one shard's cache outside the tensors matching `keep`; pages freed, or None when
+    unmeasurable. Raises on a header it cannot read (the caller leaves the shard alone)."""
+    size = os.path.getsize(path)
+    ranges = _tensor_ranges(path)
+    kept = [(lo, hi) for name, lo, hi in ranges if any(k.search(name) for k in keep)]
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        before = _cached_pages(fd)
+        for lo, hi in drop_ranges(size, kept):
+            os.posix_fadvise(fd, lo, hi - lo, os.POSIX_FADV_DONTNEED)
+        after = _cached_pages(fd)
+    finally:
+        os.close(fd)
+    if before is None or after is None:
+        return None
+    return max(0, before - after)
+
+
 class GgufError(ValueError):
-    """A GGUF header this parser cannot read (bad magic, unknown type, truncated)."""
+    """A GGUF header this parser cannot read (bad magic, unknown type, truncated, or a size
+    past the parser's bounds)."""
 
 
 # GGUF metadata value types (ggml/include/gguf.h `enum gguf_type`) -> fixed byte width; STRING
@@ -226,12 +239,30 @@ _GGUF_FIXED = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12:
 _GGUF_STRING, _GGUF_ARRAY, _GGUF_UINT32 = 8, 9, 4
 _GGUF_DEFAULT_ALIGNMENT = 32
 
+# Bounds on what a header may claim, so a corrupt or hostile file is refused instead of driving
+# a huge read or a near-endless loop. Generous against real files: llama.cpp's own keys and
+# tensor names are tens of bytes; the largest real VALUE strings are chat templates (~10-20 KB),
+# which are skipped by seek, never read, so they get a looser bound than the names that are.
+_GGUF_MAX_NAME = 64 * 1024
+_GGUF_MAX_VALUE_STRING = 16 * 1024 * 1024
+_GGUF_MAX_DEPTH = 8
+_GGUF_MAX_COUNT = 1_000_000
+
 
 class _Reader:
-    def __init__(self, handle: BinaryIO) -> None:
+    """Header reads that can never run past the file: every length is checked against the
+    bytes actually left before anything is read or skipped."""
+
+    def __init__(self, handle: BinaryIO, size: int) -> None:
         self._h = handle
+        self._size = size
+
+    def _left(self) -> int:
+        return self._size - self._h.tell()
 
     def take(self, n: int) -> bytes:
+        if n < 0 or n > self._left():
+            raise GgufError("truncated header")
         data = self._h.read(n)
         if len(data) != n:
             raise GgufError("truncated header")
@@ -243,59 +274,80 @@ class _Reader:
     def u64(self) -> int:
         return int(struct.unpack("<Q", self.take(8))[0])
 
-    def string(self) -> str:
-        return self.take(self.u64()).decode("utf-8", "replace")
+    def name(self) -> str:
+        """A key or tensor name: read, so bounded tightly."""
+        n = self.u64()
+        if n > _GGUF_MAX_NAME:
+            raise GgufError(f"a {n}-byte name is past the {_GGUF_MAX_NAME}-byte bound")
+        return self.take(n).decode("utf-8", "replace")
 
     def skip(self, n: int) -> None:
+        if n < 0 or n > self._left():
+            raise GgufError("truncated header")
         self._h.seek(n, os.SEEK_CUR)
 
     def tell(self) -> int:
         return self._h.tell()
 
+    def left(self) -> int:
+        return self._left()
 
-def _skip_value(r: _Reader, kind: int) -> None:
+
+def _skip_value(r: _Reader, kind: int, depth: int = 0) -> None:
+    if depth > _GGUF_MAX_DEPTH:
+        raise GgufError(f"metadata arrays nested past depth {_GGUF_MAX_DEPTH}")
     if kind in _GGUF_FIXED:
         r.skip(_GGUF_FIXED[kind])
     elif kind == _GGUF_STRING:
-        r.skip(r.u64())
+        n = r.u64()
+        if n > _GGUF_MAX_VALUE_STRING:
+            raise GgufError(f"a {n}-byte string is past the {_GGUF_MAX_VALUE_STRING}-byte bound")
+        r.skip(n)
     elif kind == _GGUF_ARRAY:
         inner, count = r.u32(), r.u64()
         if inner in _GGUF_FIXED:
             r.skip(_GGUF_FIXED[inner] * count)
         else:
-            # Strings (the tokenizer vocab) or nested arrays: walked one by one, with seeks.
+            # Strings (the tokenizer vocab) or nested arrays: walked one by one, with seeks. A
+            # count the remaining bytes could not hold (8 per string length, 12 per nested
+            # array header) is refused before the loop rather than discovered at its end.
+            if count * 8 > r.left():
+                raise GgufError(f"an array of {count} elements cannot fit the file")
             for _ in range(count):
-                _skip_value(r, inner)
+                _skip_value(r, inner, depth + 1)
     else:
         raise GgufError(f"unknown metadata type {kind}")
 
 
-@functools.lru_cache(maxsize=32)
-def _tensor_ranges_cached(path: str, size: int, mtime_ns: int) -> tuple[tuple[str, int, int], ...]:
-    del size, mtime_ns  # part of the cache key only: a re-downloaded shard re-parses
+def _parse_tensor_ranges(path: str) -> tuple[tuple[str, int, int], ...]:
+    file_size = os.path.getsize(path)
     with open(path, "rb") as handle:
-        r = _Reader(handle)
+        r = _Reader(handle, file_size)
         if r.take(4) != b"GGUF":
             raise GgufError("not a GGUF file")
         version = r.u32()
-        if version < 2:
+        if version not in (2, 3):
             raise GgufError(f"GGUF v{version} is not supported")
         n_tensors, n_kv = r.u64(), r.u64()
+        if n_tensors > _GGUF_MAX_COUNT or n_kv > _GGUF_MAX_COUNT:
+            raise GgufError(f"{n_tensors} tensors / {n_kv} keys is past the parser's bound")
         alignment = _GGUF_DEFAULT_ALIGNMENT
         for _ in range(n_kv):
-            key, kind = r.string(), r.u32()
+            key, kind = r.name(), r.u32()
             if key == "general.alignment" and kind == _GGUF_UINT32:
                 alignment = r.u32() or _GGUF_DEFAULT_ALIGNMENT
             else:
                 _skip_value(r, kind)
         infos: list[tuple[str, int]] = []
         for _ in range(n_tensors):
-            name = r.string()
-            r.skip(8 * r.u32())  # the dims
+            name = r.name()
+            n_dims = r.u32()
+            if n_dims > _GGUF_MAX_DEPTH:
+                raise GgufError(f"tensor {name!r} claims {n_dims} dimensions")
+            r.skip(8 * n_dims)
             r.skip(4)  # the ggml type
             infos.append((name, r.u64()))
         data_start = -(-r.tell() // alignment) * alignment
-    file_size = os.path.getsize(path)
     # A tensor's extent is up to the next tensor's offset (or the end of the file): exact up to
     # alignment padding, and it needs no table of ggml block sizes that new quant types outrun.
     infos.sort(key=lambda t: t[1])
@@ -306,16 +358,38 @@ def _tensor_ranges_cached(path: str, size: int, mtime_ns: int) -> tuple[tuple[st
     return tuple(out)
 
 
+class _KnownUnparseable(GgufError):
+    """A shard already remembered as unparseable: refused again without a re-parse or a log."""
+
+
+# Shards whose header failed to parse, by (path, size, mtime) -> the reason, so the in-load
+# sweep (every couple of seconds) does not re-parse and re-log a bad shard each time. A
+# re-downloaded shard has a new size or mtime and gets a fresh attempt.
+_UNPARSEABLE: dict[tuple[str, int, int], str] = {}
+
+
+@functools.lru_cache(maxsize=32)
+def _tensor_ranges_cached(path: str, size: int, mtime_ns: int) -> tuple[tuple[str, int, int], ...]:
+    del size, mtime_ns  # part of the cache key only: a re-downloaded shard re-parses
+    return _parse_tensor_ranges(path)
+
+
 def _tensor_ranges(path: str) -> tuple[tuple[str, int, int], ...]:
     """(tensor name, first byte, end byte) of every tensor in one GGUF shard, absolute file
     offsets, in file order. Header-only read (a few MB on a vocab-carrying first shard), cached
-    by path+size+mtime since a shard does not change under a running engine. Raises
-    `GgufError` on anything it cannot read."""
+    by path+size+mtime since a shard does not change under a running engine — and a failure is
+    remembered by the same key. Raises `GgufError` on anything it cannot read."""
     st = os.stat(path)
+    key = (path, st.st_size, st.st_mtime_ns)
+    if key in _UNPARSEABLE:
+        raise _KnownUnparseable(_UNPARSEABLE[key])
     try:
-        return _tensor_ranges_cached(path, st.st_size, st.st_mtime_ns)
-    except (struct.error, UnicodeError, OverflowError) as exc:
-        raise GgufError(str(exc)) from exc
+        return _tensor_ranges_cached(*key)
+    except (GgufError, struct.error, UnicodeError, OverflowError, MemoryError) as exc:
+        if len(_UNPARSEABLE) > 256:
+            _UNPARSEABLE.clear()
+        _UNPARSEABLE[key] = str(exc) or type(exc).__name__
+        raise GgufError(_UNPARSEABLE[key]) from exc
 
 
 def _weight_files(root: str, suffixes: tuple[str, ...]) -> list[str]:

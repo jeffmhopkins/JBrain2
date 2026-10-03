@@ -1608,7 +1608,8 @@ async def drop_page_cache(
     dropped. It therefore reports less freed than its size, by design."""
     request.state.debug_detail = f"drop page cache ({models or 'all'})"
     ids = [m.strip() for m in models.split(",") if m.strip()] if models else None
-    freed = _gateway(request).drop_page_cache(ids)
+    # In a thread: a resident Flash-Next's range-aware drop parses GGUF headers first.
+    freed = await asyncio.to_thread(_gateway(request).drop_page_cache, ids)
     measured = [v for v in freed.values() if v is not None]
     return {
         "models": freed,

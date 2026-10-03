@@ -51,7 +51,7 @@ from jbrain.llm import local_catalog
 from jbrain.llm.local_gateway import LocalGatewayError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 # gpt-oss is the served model whose tool-call path a rolling llama.cpp build
 # regressed before (a harmony grammar segfault over the tool union). It is still
@@ -119,7 +119,9 @@ def mem_available_gb(meminfo_path: Path = MEMINFO_PATH) -> float | None:
     return (free_kb["MemFree"] + free_kb.get("SReclaimable", 0)) / (1024 * 1024)
 
 
-def _resident_cost_gb(model: local_catalog.LocalModel) -> float:
+def _resident_cost_gb(
+    model: local_catalog.LocalModel, pool_cells: Mapping[str, int] | None = None
+) -> float:
     """What holding `model` actually costs in unified memory, through the SHARED cost model.
 
     This used to hand-roll `size_gb + kv_gb_per_128k`, which was a third independent model
@@ -141,8 +143,13 @@ def _resident_cost_gb(model: local_catalog.LocalModel) -> float:
     real remaining gap and it under-counts a widened window — but the gate is now wrong by
     one input instead of by six, and the load it guards passes through the device pre-flight
     (`gpu_guard`), which does resolve the live window.
+
+    A pooled model is the exception the config CAN answer: `pool_cells` (catalog id -> the
+    rendered `-c` of a `--kv-unified` entry) is the pool size actually served, so a 1M pool is
+    gated as 1M rather than as the catalog's 512k default.
     """
-    return local_catalog.footprint_gb(model, model.context_window)
+    window = (pool_cells or {}).get(model.id, model.context_window)
+    return local_catalog.footprint_gb(model, window)
 
 
 async def _room_for(
@@ -150,6 +157,7 @@ async def _room_for(
     gateway: SmokeGateway,
     meminfo: Path,
     messages: list[str],
+    pool_cells: Mapping[str, int] | None = None,
 ) -> bool:
     """True when this model can be loaded without leaving the box on the edge.
 
@@ -177,7 +185,7 @@ async def _room_for(
     # checkpoints, which admission leaves out because they are allocated lazily (Flash-Next:
     # 7 GiB of 95.2). A Flash-Next smoke test gated here would want ~7 GiB more free than the
     # switch itself; size it from `local_catalog.declared_gb` when one is added.
-    cost = _resident_cost_gb(model)
+    cost = _resident_cost_gb(model, pool_cells)
     if available_gb >= cost + LOAD_HEADROOM_GB:
         return True
     messages.append(
@@ -206,6 +214,7 @@ async def run_smoketest(
     *,
     meminfo_path: Path | None = None,
     engine: engines.Engine = engines.STANDARD,
+    pool_cells: Mapping[str, int] | None = None,
 ) -> tuple[bool, list[str]]:
     """Smoke-test the gateway's current build against the installed model set.
 
@@ -221,6 +230,8 @@ async def run_smoketest(
     reclaiming it is the very thing that livelocks this hardware.
 
     ``engine`` is the engine whose gateway is under test; only its models are tried.
+    ``pool_cells`` (catalog id -> served pool size) sizes a pooled model's gate at its served
+    pool; the caller reads it from the rendered config.
     """
     messages: list[str] = []
     meminfo = meminfo_path if meminfo_path is not None else MEMINFO_PATH
@@ -245,7 +256,7 @@ async def run_smoketest(
     # Cheapest possible load: a build that can't run at all fails here without paying
     # to read tens of GB of a large model's weights.
     smallest = min(installed, key=lambda m: m.size_gb)
-    if not await _room_for(smallest, gateway, meminfo, messages):
+    if not await _room_for(smallest, gateway, meminfo, messages, pool_cells):
         return False, messages
     try:
         await gateway.load(smallest.served_model)

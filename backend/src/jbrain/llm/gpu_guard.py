@@ -99,11 +99,19 @@ RUNAWAY_MULTIPLE = 1.75
 # process — so this is a hard floor, held even when a load's own prediction says it fits.
 MIN_FREE_GTT_GB = 6.0
 
-# How often a guarded load may try to drop page cache before the host floor aborts it
-# (`guarded_load`'s `relieve`). One attempt per window: a drop that did not lift free memory
-# back over the floor will not do better a second later, and a load whose read refills the
-# cache faster than the in-load sweep drains it is a load the floor should stop.
+# The warning band above the host floor in which a guarded load drops its own page cache
+# (`guarded_load`'s `relieve`) BEFORE the floor is reached. Proactive on purpose: a sample under
+# the floor is fatal, so the drop has to land while there is still room to land it in.
+RELIEF_BAND_GB = 4.0
+
+# At most one proactive drop per window: a load whose read refills the cache faster than the
+# drops drain it is a load the floor should stop, not one to keep rescuing.
 RELIEF_INTERVAL_S = 10.0
+
+# The longest the watchdog waits on one drop. Relief runs while memory is already tight, and a
+# drop wedged in the kernel must not stop the watchdog sampling: past this it carries on and the
+# floor decides.
+RELIEF_TIMEOUT_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -384,14 +392,17 @@ async def guarded_load(
     able to serve. Aborting is best-effort too, and it is deliberately attempted before the
     raise: on a runaway the priority is getting the allocation released, not a tidy error.
 
-    `relieve`, when given, is tried once before the HOST floor aborts: it drops the load's own
-    page-cache residue, and the floor is re-read and enforced on what is left. MEASURED
-    2026-10-03: two 1M-pool Flash-Next loads were aborted at 5.3 and 5.9 GB free with tens of
-    GB of the read's clean cache on the box — memory the floor counted as used (rightly: the
-    2026-08-19 livelock was ~39 GiB of such cache that `MemAvailable` called free) and nothing
-    had dropped. Dropping it and measuring again keeps the floor and the accounting exactly as
-    they are; only an abort that a drop would have prevented goes away. At most one attempt
-    per `relief_interval_s`, so a read outrunning every drop still meets the floor."""
+    `relieve`, when given, drops the load's own page-cache residue PROACTIVELY, when host free
+    memory enters the `RELIEF_BAND_GB` band above the floor. MEASURED 2026-10-03: two 1M-pool
+    Flash-Next loads were aborted at 5.3 and 5.9 GB free with tens of GB of the read's clean
+    cache on the box — memory the floor counts as used (rightly: the 2026-08-19 livelock was
+    ~39 GiB of such cache that `MemAvailable` called free) and that nothing had dropped.
+    Relief never rescues a sample already under the floor — that sample is fatal, as it always
+    was — so the floor and the accounting are exactly as strict as before; relief only makes it
+    less likely the floor is reached. At most one drop per `relief_interval_s`, each bounded by
+    `RELIEF_TIMEOUT_S` (or two samples, if shorter) so a wedged drop cannot stall the watchdog.
+    After a drop both host memory and the device pool are re-read, so the checks below judge
+    the box as it is after the drop, not the sample from before it."""
     baseline = await probe.sample()
     if baseline is None:
         log.info("gpu_guard.unwatched_load", model=target, reason="no device-memory probe")
@@ -412,19 +423,24 @@ async def guarded_load(
             if now is None:
                 continue  # lost the probe mid-load: fall back to running unwatched
             host_free = _host_free_gb()
-            relieved = False
             if (
                 host_free is not None
-                and host_free < MIN_FREE_GTT_GB
+                and MIN_FREE_GTT_GB <= host_free < MIN_FREE_GTT_GB + RELIEF_BAND_GB
                 and relieve is not None
                 and (last_relief is None or loop.time() - last_relief >= relief_interval_s)
             ):
                 last_relief = loop.time()
-                relieved = True
                 low = host_free
-                with contextlib.suppress(Exception):  # a failed drop leaves the floor to decide
-                    await relieve()
+                # Bounded and best-effort: a drop that fails or hangs leaves the floor to decide.
+                # A timed-out drop keeps running in its thread; only the wait is abandoned.
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        relieve(), timeout=min(RELIEF_TIMEOUT_S, 2 * sample_interval_s)
+                    )
                 host_free = _host_free_gb()
+                # Re-sampled so the ceiling and device-floor checks read the box after the drop,
+                # not the sample taken before it (the drop's wait can be seconds long).
+                now = await probe.sample() or now
                 log.info(
                     "gpu_guard.host_floor_relief",
                     model=target,
@@ -445,7 +461,6 @@ async def guarded_load(
                     f"free host memory fell to {host_free:.1f} GB while loading {target} "
                     f"(floor {MIN_FREE_GTT_GB:.0f} GB) — the reclaim livelock this box hangs "
                     "on starts here, not at the GTT cap"
-                    + (" (still under it after dropping the load's page cache)" if relieved else "")
                 )
             elif now.gtt_used_gb > ceiling_gb:
                 breach = (

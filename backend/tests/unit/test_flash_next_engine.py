@@ -455,6 +455,53 @@ async def test_the_guard_relief_drops_by_range_for_a_mapped_model(
     assert dropped == [f"{FLASH_ID}:keep-mapped", "gpt-oss-120b"]
 
 
+async def test_a_failing_sweep_never_fails_the_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    calls: list[str] = []
+
+    def _boom(_dir: str, model_id: str) -> float:
+        calls.append(model_id)
+        raise RuntimeError("header exploded")
+
+    monkeypatch.setattr(local_weights, "drop_weights_page_cache_except_mapped", _boom)
+    monkeypatch.setattr(local_gateway.host_metrics, "read_page_cache_gb", lambda: 5.0)
+    monkeypatch.setattr(local_gateway, "_SWEEP_POLL_S", 0.001)
+    monkeypatch.setattr(local_gateway, "_SWEEP_INTERVAL_S", 0.002)
+    client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
+    task = asyncio.create_task(client._sweep_page_cache_during_load(_flash()))
+    for _ in range(100):
+        await asyncio.sleep(0.002)
+        if len(calls) >= 2:
+            break
+    # Still sweeping after the failures: it neither died nor raised into the load.
+    assert len(calls) >= 2 and not task.done()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+async def test_an_unannounced_mapped_model_is_dropped_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import threading
+
+    threads: list[bool] = []
+
+    def _keep_mapped(_dir: str, _model_id: str) -> float:
+        threads.append(threading.current_thread() is threading.main_thread())
+        return 0.5
+
+    monkeypatch.setattr(local_weights, "drop_weights_page_cache_except_mapped", _keep_mapped)
+    client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
+    client._drop_cache_for_unannounced({FLASH_ID})
+    await asyncio.gather(*client._background_drops)
+    assert threads == [False]
+
+
 # --- the settings API --------------------------------------------------------------------
 
 

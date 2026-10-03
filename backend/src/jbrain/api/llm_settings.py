@@ -1076,6 +1076,38 @@ def gateway_config_error() -> str | None:
     return _last_regen_error
 
 
+async def _unload_for_pool_resize(
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+    model: local_catalog.LocalModel,
+    stored: int | None,
+    before: slot_roles.KvPool,
+) -> None:
+    """Unload a resident pooled model whose saved pool size just changed, or undo the change.
+
+    Unlike `_unload_if_loaded` this cannot be best-effort. A unified pool allocates its cells
+    at load, so a model left resident keeps serving the OLD size while every budget reader
+    (residency, the load charge, the pool guard) prices the new one — 14 GiB wrong in either
+    direction between 512k and 1M. So a failed unload restores the previous stored size and
+    says so, rather than leaving the settings describing a pool the box is not serving."""
+    try:
+        if model.served_model not in await gateway.running():
+            return
+        with box_events.because("its memory pool was resized — it reloads at the new size"):
+            await gateway.unload(model.served_model)
+    except LocalGatewayError as exc:
+        await store.set_llm_local_context_window(ctx, model_id=model.id, window=stored)
+        log.warning("llm_settings.pool_resize_unload_failed", model=model.id, error=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{model.label} is loaded and could not be unloaded to resize its pool ({exc}), "
+                f"so it stays at {before.n_ctx:,} tokens. Unload it, then set the size again."
+            ),
+        ) from exc
+
+
 async def _unload_if_loaded(
     settings: Settings, gateway: LocalGatewayClient, model: local_catalog.LocalModel
 ) -> None:
@@ -1367,16 +1399,14 @@ async def set_local_context_window_value(
         # per-sequence window, which the pool fixes.
         if window not in (None, model.context_window, *pool.cell_choices):
             raise HTTPException(status_code=409, detail=_pool_fixed_reason(model, pool, "window"))
-        before = local_catalog.effective_pool(model, await store.llm_local_context_windows(ctx))
+        stored = (await store.llm_local_context_windows(ctx)).get(model_id)
+        before = pool.resized(stored)
         # Only a non-default size is stored, so null, the per-sequence window and the default
         # size all clear the row — a stale pre-pool override included.
         saved = window if window in pool.cell_choices and window != pool.n_ctx else None
         await store.set_llm_local_context_window(ctx, model_id=model_id, window=saved)
-        after = pool.resized(saved)
-        if before is not None and before.n_ctx != after.n_ctx:
-            # A unified pool allocates its cells at load, so a new size needs a reload: the
-            # next load re-stamps `-c`, and the budget never prices a size that is not served.
-            await _unload_if_loaded(settings, gateway, model)
+        if before.n_ctx != pool.resized(saved).n_ctx:
+            await _unload_for_pool_resize(store, ctx, gateway, model, stored, before)
         return await _snapshot(settings, store, ctx, gateway)
     ceiling = model.max_context_window
     if window is not None and not (1 <= window <= ceiling):
