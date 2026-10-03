@@ -957,3 +957,12 @@ def test_free_gb_measures_a_real_directory_and_skips_an_absent_one(tmp_path: Pat
     assert local_weights.free_gb(str(tmp_path / "absent")) is None
     measured = local_weights.free_gb(str(tmp_path))
     assert measured is not None and measured >= 0.0
+
+
+def test_tool_round_text_is_analysis_only_for_a_harmony_reasoner() -> None:
+    """Flash-Next's `<think>` thinking is split onto its own channel, so its tool-round text is
+    narration; gpt-oss's harmony content on a tool round is leaked analysis. A served name
+    outside the catalog keeps the old harmony assumption."""
+    assert not local_catalog.tool_round_text_is_analysis("qwen3.8-flash-next")
+    assert local_catalog.tool_round_text_is_analysis("gpt-oss-120b")
+    assert local_catalog.tool_round_text_is_analysis("not-in-the-catalog")
