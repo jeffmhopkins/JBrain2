@@ -204,7 +204,7 @@ def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str])
     operator's copy appended afterwards is the ONLY occurrence.
 
     Also applied to a catalog entry's own `extra_server_args` against the shared command, for
-    the same invariant one layer down: Flash-Next's `--load-mode mmap` must REMOVE the shared
+    the same invariant one layer down: Flash-Next's `--load-mode none` must REMOVE the shared
     `--no-mmap`, not sit beside it relying on argv order. No standard entry's flags overlap
     the shared command, so for them this is a no-op and their lines are unchanged.
 
@@ -328,8 +328,9 @@ def render(
         gguf = resolve_weight(root, model_id, str(m["gguf_include"]))
         # A pooled entry's shape is the pool, whatever window or slot count is saved for it:
         # an override from before the pool (F2 stored some for Flash-Next) would otherwise
-        # re-split the cells and break the role-to-slot pinning the router relies on.
-        pool = slot_roles.pool_shape(m)
+        # re-split the cells and break the role-to-slot pinning the router relies on. The one
+        # saved value it honours is a pool size from the entry's own choices (`KvPool.resized`).
+        pool = slot_roles.pool_shape(m, windows.get(model_id))
         window = windows.get(model_id, int(cast(int, m["context_window"])))
         catalog_args = tuple(
             str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ())

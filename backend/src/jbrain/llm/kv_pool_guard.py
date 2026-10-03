@@ -40,6 +40,7 @@ from typing import Final
 
 import structlog
 
+from jbrain.llm import local_catalog
 from jbrain.llm.errors import LlmTransientError
 from jbrain.llm.prefill import SlotsReader
 from jbrain.llm.slot_roles import (
@@ -161,8 +162,13 @@ class KvPoolGuard:
         erase_timeout_s: float = ERASE_TIMEOUT_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
+        windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
     ) -> None:
         self._read = read
+        # The saved per-model overrides, where a pooled model's pool size lives
+        # (`local_catalog.effective_pool`). Without it the guard holds calls to the catalog
+        # default, which on a box serving a larger pool only frees idle slots sooner.
+        self._windows_loader = windows_loader
         self._erase = erase
         self._wait_s = wait_s
         self._poll_s = poll_s
@@ -201,6 +207,21 @@ class KvPoolGuard:
         self._layout_seen.pop(model, None)
         return None
 
+    async def _sized(self, model: str, pool: KvPool) -> KvPool:
+        """`pool` at the size `model` is actually served with. A failed read keeps the catalog
+        default: the smaller pool, so the guard errs toward evicting early, never overrunning."""
+        if self._windows_loader is None or not pool.cell_choices:
+            return pool
+        model_id = local_catalog.id_for_served(model)
+        if model_id is None:
+            return pool
+        try:
+            windows = await self._windows_loader()
+        except Exception:  # noqa: BLE001 — a settings hiccup must not fail the call
+            log.warning("llm.pool_size_unread", model=model, exc_info=True)
+            return pool
+        return pool.resized(windows.get(model_id))
+
     def _layout_recent(self, model: str) -> bool:
         seen = self._layout_seen.get(model)
         return seen is not None and self._clock() - seen < LAYOUT_TTL_S
@@ -222,6 +243,7 @@ class KvPoolGuard:
         Raises `SlotCapError` (permanent) before anything else when the call cannot fit its
         cap, and `KvPoolBusyError` (transient) when busy slots hold the room it needs for
         longer than `wait_s` (the guard's default when None)."""
+        pool = await self._sized(model, pool)
         admission = admit(pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens)
         read = await self._slots(model)
         ticket = next(self._tickets)

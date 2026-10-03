@@ -517,3 +517,144 @@ def test_an_unreadable_device_total_never_concludes_never() -> None:
             _sample(gtt_used=0.0, gtt_total=0.0), projected_gb=900.0, target="m", host_free_gb=7.0
         )
     assert zero.value.permanent is False
+
+
+# --- relief before the host floor aborts ---------------------------------------------------
+
+
+def _host_free(monkeypatch: pytest.MonkeyPatch, start: float) -> list[float]:
+    free = [start]
+
+    def _meminfo(path: str = "/proc/meminfo") -> tuple[float, float]:
+        return 121.0, 121.0 - free[0]
+
+    monkeypatch.setattr("jbrain.llm.gpu_guard.read_memory_gb", _meminfo)
+    return free
+
+
+async def _quiet_abort() -> None:
+    return None
+
+
+async def test_a_drop_that_lifts_host_memory_over_the_floor_lets_the_load_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MEASURED 2026-10-03: 1M-pool loads aborted at 5.3/5.9 GB free with tens of GB of the
+    read's clean page cache on the box. Dropping it and re-reading keeps the floor exactly as
+    strict while removing the abort a drop would have prevented."""
+    probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
+    free = _host_free(monkeypatch, 40.0)
+    relieved: list[float] = []
+
+    async def load() -> None:
+        free[0] = 5.3
+        await asyncio.sleep(0.05)
+
+    async def relieve() -> None:
+        relieved.append(free[0])
+        free[0] = 20.0  # the residue was dropped and the pages came back
+
+    await gpu_guard.guarded_load(
+        load,
+        probe=probe,
+        projected_gb=21.0,
+        target="m",
+        abort=_never_aborts,
+        relieve=relieve,
+        sample_interval_s=0.01,
+    )
+    assert relieved == [5.3]
+
+
+async def test_a_drop_that_does_not_lift_host_memory_still_aborts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
+    free = _host_free(monkeypatch, 40.0)
+    relieved: list[str] = []
+    aborted: list[str] = []
+
+    async def load() -> None:
+        free[0] = 5.3
+        await asyncio.sleep(0.2)
+
+    async def relieve() -> None:
+        relieved.append("dropped")  # nothing came back: the memory really is in use
+
+    async def abort() -> None:
+        aborted.append("unloaded")
+
+    with pytest.raises(GpuBudgetError) as exc:
+        await gpu_guard.guarded_load(
+            load,
+            probe=probe,
+            projected_gb=21.0,
+            target="m",
+            abort=abort,
+            relieve=relieve,
+            sample_interval_s=0.01,
+        )
+    assert relieved == ["dropped"] and aborted == ["unloaded"]
+    assert "still under it after dropping" in str(exc.value)
+
+
+async def test_relief_is_bounded_to_one_attempt_per_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read refilling the cache faster than any drop drains it meets the floor: the second
+    dip inside the window aborts instead of dropping again."""
+    probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
+    free = _host_free(monkeypatch, 40.0)
+    relieved: list[str] = []
+    refills: list[asyncio.Task[None]] = []
+
+    async def load() -> None:
+        free[0] = 5.0
+        await asyncio.sleep(0.5)
+
+    async def _refill() -> None:
+        await asyncio.sleep(0.02)
+        free[0] = 5.0
+
+    async def relieve() -> None:
+        relieved.append("dropped")
+        free[0] = 20.0
+        refills.append(asyncio.ensure_future(_refill()))
+
+    with pytest.raises(GpuBudgetError):
+        await gpu_guard.guarded_load(
+            load,
+            probe=probe,
+            projected_gb=21.0,
+            target="m",
+            abort=_quiet_abort,
+            relieve=relieve,
+            sample_interval_s=0.01,
+            relief_interval_s=60.0,
+        )
+    assert relieved == ["dropped"]
+
+
+async def test_a_failing_drop_leaves_the_floor_to_decide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
+    free = _host_free(monkeypatch, 40.0)
+
+    async def load() -> None:
+        free[0] = 3.0
+        await asyncio.sleep(0.2)
+
+    async def relieve() -> None:
+        raise OSError("fadvise refused")
+
+    with pytest.raises(GpuBudgetError):
+        await gpu_guard.guarded_load(
+            load,
+            probe=probe,
+            projected_gb=21.0,
+            target="m",
+            abort=_quiet_abort,
+            relieve=relieve,
+            sample_interval_s=0.01,
+        )

@@ -1087,7 +1087,7 @@ def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
     tokens = _cmd(text, "qwen3.8-flash-next")
     # The base command's `--no-mmap` is REMOVED, not superseded by argv order.
     assert "--no-mmap" not in tokens
-    assert _value(tokens, "--load-mode") == "mmap"
+    assert _value(tokens, "--load-mode") == "none"
     assert _value(tokens, "-ot") == "per_layer_token_embd=CPU"
     assert _value(tokens, "--lazy-mode") == "on"
     assert _value(tokens, "-ngl") == "999"
@@ -1186,7 +1186,7 @@ def test_readers_resolve_the_engine_they_are_given(tmp_path: Path) -> None:
     root = str(tmp_path)
     assert llama_swap_config.launch_line(root, "qwen3.8-flash-next", engine.STANDARD) is None
     line = llama_swap_config.launch_line(root, "qwen3.8-flash-next", engine.FLASH_NEXT)
-    assert line is not None and "--load-mode mmap" in line
+    assert line is not None and "--load-mode none" in line
     assert llama_swap_config.launch_line(root, "gpt-oss-120b", engine.FLASH_NEXT) is None
     assert llama_swap_config.launch_line(root, "gpt-oss-120b", engine.STANDARD) is not None
     assert llama_swap_config.served_shape_from_config(root, engine.FLASH_NEXT) == {

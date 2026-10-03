@@ -107,6 +107,31 @@ fell to 5.3 GB, under the load guard's 6 GB floor, so the guard aborted every lo
 the 2×262k size measured loading cleanly at 74.2 GiB; the 8 slots and their caps are unchanged —
 the caps now oversubscribe the pool further, which the pool guard is built for.
 
+**Why the 1M load failed, and the fix (2026-10-03).** Per llama.cpp `869034b`, `--load-mode
+mmap` MAP_POPULATEs/WILLNEEDs the GPU-weight shards (~59.5 GiB of page cache) before uploading
+them to Vulkan, and our gateway never dropped any Flash-Next page cache (it assumed all of it was
+engram); the unified 8-slot compute reserve is also ~9–10 GiB larger than non-unified. Measured
+with `--load-mode none` at 512k (operator extra-arg first, now the catalog flag):
+
+| | mmap (steady) | none (during load) | none (steady) |
+|---|---|---|---|
+| Load time | 41 s | — | 27 s |
+| Host free | 16.5 GB | min ~11.5 GB | 25.8 GB |
+| Page cache | 25.9 GiB | peak 52 GiB (the buffered read) | ~17.8 GiB |
+| GTT | 82.3 GiB | 63.5 GiB early | 82.9 GiB |
+
+In `none` the lazy engram tensor is still mmapped (prefetch 0) and served fine; the GPU tensors
+go through a buffered read into pinned staging, which leaves unmapped, droppable page cache.
+(`dio` falls back to buffered on Vulkan's pinned staging, so it buys nothing.) So the gateway now
+drops Flash-Next's cache **by byte range**: each shard's GGUF header gives the tensor offsets,
+the catalog's `-ot per_layer_token_embd=CPU` rule names the ranges to keep, and every other range
+is `POSIX_FADV_DONTNEED`ed — in the in-load sweep, after the load, from the debug drop route, and
+by the load guard once before its 6 GB host floor aborts (re-measured; still under = abort). The
+cache is never counted as free (the 2026-08-19 livelock was ~39 GiB of clean cache that
+`MemAvailable` did). The pool size is selectable without a release — 524,288 (default) or
+1,048,576, saved as the model's context-window override (§4a) — so the 1M re-measure is a debug
+console call, not a deploy.
+
 ## 3. Memory budget (derived — F2 replaces it with a measurement)
 
 Read from the UD-IQ4_XS GGUF headers and llama.cpp master: 48 layers, 12 full-attention
@@ -158,9 +183,9 @@ from the measured `disk_gb`, and the page-cache drop skips mmapped tensors.
   because both are never up at once (the API opens a fresh client per call, so there is no
   stale connection or DNS pinning); §4d is what guarantees it.
 - **Serving flags:** `-ngl 999` (explicit — #29028 is the full-offload crash),
-  `--load-mode mmap` (with the global `--no-mmap` **removed** from the base command for
-  this engine — catalog `extra_server_args` do not supersede base flags today; only
-  operator args do), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
+  `--load-mode none` (with the global `--no-mmap` **removed** from the base command for
+  this engine; `mmap` until 2026-10-03, see §3a — `none` reads the GPU weights buffered and
+  still maps the lazy engram tensor), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
   4 GiB binding limit; GPU placement aborted for Soot/Silicon), `--lazy-mode on`,
   `-np 8 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
   `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
@@ -218,7 +243,7 @@ the live slot count and sends unpinned (still capped) on a mismatch.
 | 5 | Wiki, note conversations, guided intake, video summaries, unknown tasks | 128k (131,072) | 3rd |
 | 6 | jpanel kid pet (`pet.*`); overflows to slot 7 when busy | 32k (32,768) | 2nd |
 | 7 | Small prompts: titles, `triage.classify`, one-shot vision reads, probes | 64k (65,536) | first |
-| | **Pool** | **512k (524,288)** | `--kv-unified -c 524288` |
+| | **Pool** | **512k (524,288)** by default; 1M (1,048,576) selectable | `--kv-unified -c 524288` |
 
 `agent.turn` is shared by the chat and every background agent, so the task name alone cannot
 pick the slot: background callers name their role (`slot_role`), and an unnamed `agent.turn`
@@ -350,7 +375,7 @@ on the real box".
 | Start / stop Flash-Next **before** the switch exists (F2) | A debug-only engine route, `POST /api/debug/llm/engine {standard\|flash-next}`, applying the same §4d one-engine guard; on success it records the target as both the **desired** and the **effective** engine (§4d), and `GET` shows both, so a deploy fallback is visible. The supervisor refuses any engine `/start` or `/restart` that would make two (a stopped engine is never restarted; Ops "Restart all" skips it). Since F3a it is a thin wrapper over the owner switch — one orchestration (drain, smoke, rollback), reached with the token | Claude with a token | F1; folded in F3a |
 | On-box measurements (F2) | Debug routes: `/complete`, `/vision`, `/grounding`, `/tool-probe`, `/host/metrics`, `/llm/upstream-logs`, `/llm/gateway-logs`, the extra-args launch-flag route — all made **engine-aware** in F1. Two new ones: a **slot save/restore probe** (usable from F4, whose first check it is — §6) and an **allowlisted perplexity one-shot** run by the supervisor inside the `flash-next` image on a bundled WikiText-2 sample (check 6) — a fixed job, never free-form exec | Claude with a token | F1 |
 | Iterate on the image (pin bump, flags baked into it) | Debug `POST /refresh` (or `/rebuild`) with `flash-next` — rebuilds that one service from `main` without the ~10-minute full update. **For an engine service it is a quiesced build**: whichever engine is up is released (models unloaded, stopped, memory settled), the image builds under the update's bounded runner with **no engine running** (a llama.cpp compile beside a ~90 GiB engine is the update's own freeze), the container is recreated **stopped**, and exactly the engine that was up before comes back — the refreshed one or the other. So it works whichever engine serves, at the cost of local inference being down for the build; to try the new build, switch with the debug engine route afterwards | Claude with a token | exists; engine-safe in F1 |
-| Reclaim weight page cache | Debug `POST /llm/drop-page-cache` — made to skip the mmapped engram table, which it would otherwise evict (§3) | Claude with a token | exists; F1 |
+| Reclaim weight page cache | Debug `POST /llm/drop-page-cache` — range-aware on a resident Flash-Next: keeps the mmapped engram tensor's bytes, drops the rest (§3a) | Claude with a token | exists; F1, range-aware F3b |
 | Tune launch flags | Debug extra-args route (`-ngl`, `-ub`, `--ctx-checkpoints`, `-lv`, `--load-mode`, …), engine-aware; `-ot` is added to `EXTRA_ARG_FLAGS` | Claude with a token | F1 |
 | Switch engines | PWA **Ops → Local engine** (drain → swap → smoke → auto-rollback) over the owner API `POST /api/settings/llm/engine` | owner | F3a (API; the card after its mock is chosen) |
 | See what the engine is doing | PWA Ops card over `GET /api/settings/llm/engine` (engine, memory, last switch + smoke, history as `engine_switch` box events); logs via PWA and debug | owner | F3a (API) |
@@ -488,7 +513,8 @@ with per-slot caps and a pool guard (§4a).
   by task name or the caller's `slot_role`; the jcode proxy pins slot 4; direct gateway calls
   (load prime, probes) pinned too.
 - The pool: `-np 8 --kv-unified -c 524288 --slot-save-path …` (1M as first shipped; see §3a), saved window/slot overrides
-  ignored for it, the budget charging the pool once; the settings API refuses slot/window
+  ignored for it except a saved pool size from `{524288, 1048576}` (the context-window route,
+  owner or debug; render, budget, admission, the pool guard and the drawer's `kv_pool` follow it), the budget charging the pool once; the settings API refuses slot/window
   changes for it and reports the slot table.
 - Caps at the router and the jcode proxy (clamp or refuse, `SlotCapError`), the live slot-count
   check, and the pool guard (evict idle slots in our order, bounded wait). A refusal the proxies
@@ -508,6 +534,10 @@ with per-slot caps and a pool guard (§4a).
 - PWA: a read-only pool view replacing the window/slot pickers for a pool model — **three
   mocks** before code (`PROCESS.md`).
 - Re-measure on the box with every slot filled to its cap (the worst case, ~74 GiB predicted).
+- Page cache and pool size (2026-10-03, §3a): `--load-mode none`, the range-aware page-cache
+  drop (in-load sweep, post-load, debug route, and the guard's one drop before its host floor
+  aborts), and the pool size selectable between 512k and 1M without a release. Pending on the
+  box: a 1M load under `none` with the range drop, read off `GET /api/debug/host` while it runs.
 - Tests: caps per role, clamp and refusal, eviction order, layout mismatch, pool flags rendered,
   slot selection per task and caller, every pool-model request pinned, engine-aware jcode
   power-on.

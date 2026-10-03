@@ -5,6 +5,7 @@ The config rendering itself is covered in test_llama_swap_config.py and the stan
 regression in test_llama_swap_golden.py."""
 
 import ast
+import contextlib
 import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
@@ -353,25 +354,33 @@ async def test_the_pools_slot_save_path_does_not_make_kv_prefix_save_or_restore(
 
 
 def _recording_drop(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Records every page-cache drop: the whole-file one as the model id, the range-aware one
+    (mapped tensors kept) as `<id>:keep-mapped`."""
     dropped: list[str] = []
 
     def _drop(_dir: str, model_id: str) -> float:
         dropped.append(model_id)
         return 1.5
 
+    def _keep_mapped(_dir: str, model_id: str) -> float:
+        dropped.append(f"{model_id}:keep-mapped")
+        return 0.5
+
     monkeypatch.setattr(local_weights, "drop_weights_page_cache", _drop)
+    monkeypatch.setattr(local_weights, "drop_weights_page_cache_except_mapped", _keep_mapped)
     return dropped
 
 
-def test_the_drop_lever_keeps_a_resident_mapped_model_and_drops_it_once_gone(
+def test_the_drop_lever_keeps_a_resident_mapped_model_engram_and_drops_it_once_gone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dropped = _recording_drop(monkeypatch)
     client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
     client._seen_resident = {FLASH_ID, "gpt-oss-120b"}
     freed = client.drop_page_cache([FLASH_ID, "gpt-oss-120b"])
-    # Serving from that cache: left alone and NOT reported as a drop that freed nothing.
-    assert dropped == ["gpt-oss-120b"] and FLASH_ID not in freed
+    # Serving from the engram's pages: only the rest of its shards' cache is dropped.
+    assert dropped == [f"{FLASH_ID}:keep-mapped", "gpt-oss-120b"]
+    assert freed == {FLASH_ID: 0.5, "gpt-oss-120b": 1.5}
     # Unloaded (after a switch back, say): its ~88 GiB of cache is residue, and is dropped.
     client._seen_resident = set()
     freed = client.drop_page_cache([FLASH_ID])
@@ -400,19 +409,50 @@ async def test_unloading_a_mapped_model_drops_its_residue(
     assert dropped == [FLASH_ID]
 
 
-def test_the_gateway_keeps_the_engram_cache_after_a_load(
+def test_the_gateway_keeps_only_the_engram_cache_after_a_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    dropped: list[str] = []
-    monkeypatch.setattr(
-        local_weights, "drop_weights_page_cache", lambda _d, mid: dropped.append(mid) or 0.0
-    )
+    dropped = _recording_drop(monkeypatch)
     client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
     client._drop_weights_cache(_flash())
-    assert dropped == []
+    assert dropped == [f"{FLASH_ID}:keep-mapped"]
     gpt = local_catalog.get("gpt-oss-120b")
     client._drop_weights_cache(gpt)
-    assert dropped == ["gpt-oss-120b"]
+    assert dropped[-1] == "gpt-oss-120b"
+
+
+async def test_the_in_load_sweep_drops_a_mapped_models_residue_by_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep used to skip Flash-Next outright, so the ~60 GiB its load reads for the GPU
+    piled up in page cache — what put a 1M-pool load under the guard's host floor."""
+    import asyncio
+
+    dropped = _recording_drop(monkeypatch)
+    cache = iter([1.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0])
+    monkeypatch.setattr(local_gateway.host_metrics, "read_page_cache_gb", lambda: next(cache, 3.0))
+    monkeypatch.setattr(local_gateway, "_SWEEP_POLL_S", 0.001)
+    client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
+    task = asyncio.create_task(client._sweep_page_cache_during_load(_flash()))
+    for _ in range(50):
+        await asyncio.sleep(0.002)
+        if dropped:
+            break
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert dropped and set(dropped) == {f"{FLASH_ID}:keep-mapped"}
+
+
+async def test_the_guard_relief_drops_by_range_for_a_mapped_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dropped = _recording_drop(monkeypatch)
+    client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
+    await client._relieve_host_memory(_flash())
+    await client._relieve_host_memory(local_catalog.get("gpt-oss-120b"))
+    await client._relieve_host_memory(None)
+    assert dropped == [f"{FLASH_ID}:keep-mapped", "gpt-oss-120b"]
 
 
 # --- the settings API --------------------------------------------------------------------
@@ -595,7 +635,7 @@ async def test_the_load_time_restamp_writes_the_active_engines_file(
     store.values["llm_local_engine_effective"] = "flash-next"
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     assert not (tmp_path / "llama-swap.yaml").exists()
-    assert "--load-mode mmap" in (tmp_path / "llama-swap.flash-next.yaml").read_text()
+    assert "--load-mode none" in (tmp_path / "llama-swap.flash-next.yaml").read_text()
     store.values["llm_local_engine_effective"] = "standard"
     await llm_settings.regen_gateway_config(settings, store)  # type: ignore[arg-type]
     assert flash.id not in (tmp_path / "llama-swap.yaml").read_text()

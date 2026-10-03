@@ -499,7 +499,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # One per process: the router and the jcode proxy both pin slots on a pooled model, so
         # they must share its lock and its record of calls placed but not yet running.
         app.state.kv_pool_guard = KvPoolGuard(
-            app.state.local_gateway.slots, app.state.local_gateway.erase_slot
+            app.state.local_gateway.slots,
+            app.state.local_gateway.erase_slot,
+            # A pooled model's saved pool size rides in the window overrides.
+            windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
         )
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (passed to build_router below as its

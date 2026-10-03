@@ -868,17 +868,11 @@ class LocalGatewayClient:
                 grew = now is not None and (now - last) >= _SWEEP_GROWTH_GB
                 if not grew and elapsed < _SWEEP_INTERVAL_S:
                     continue
-                if local_weights.serves_file_backed(model.id):
-                    # Mapped weights: the cache IS the engram working set of the model being
-                    # loaded. Keep polling for the progress bar, never drop.
-                    elapsed = 0.0
-                    last = now if now is not None else last
-                    continue
                 # `to_thread`: the walk + fadvise are blocking syscalls, and stalling the event
-                # loop during a load would delay the very health probe we are timing.
-                await asyncio.to_thread(
-                    local_weights.drop_weights_page_cache, self._models_dir, model.id
-                )
+                # loop during a load would delay the very health probe we are timing. A
+                # file-backed model's drop is range-aware: its engram pages stay, and the
+                # residue of the read that uploads its GPU weights goes as it streams.
+                await asyncio.to_thread(self._drop_fn(model), self._models_dir, model.id)
                 sweeps += 1
                 elapsed = 0.0
                 last = host_metrics.read_page_cache_gb() or 0.0
@@ -896,6 +890,23 @@ class LocalGatewayClient:
                 )
             raise
 
+    @staticmethod
+    def _drop_fn(model: local_catalog.LocalModel) -> Callable[[str, str], float | None]:
+        """The page-cache drop for `model` while it is loading or resident: range-aware for a
+        file-backed model (its mapped tensors stay), the whole-file drop for every other."""
+        if local_weights.serves_file_backed(model.id):
+            return local_weights.drop_weights_page_cache_except_mapped
+        return local_weights.drop_weights_page_cache
+
+    async def _relieve_host_memory(self, model: local_catalog.LocalModel | None) -> None:
+        """The load guard's last step before aborting on the host floor: drop this model's read
+        residue NOW and let the guard re-measure (`gpu_guard.guarded_load`'s `relieve`). The
+        sweep normally keeps up; this covers a read that outran it."""
+        if model is None or not self._models_dir:
+            return
+        freed = await asyncio.to_thread(self._drop_fn(model), self._models_dir, model.id)
+        log.info("local_gateway.host_floor_relief", model=model.id, freed_gb=freed)
+
     def _drop_weights_cache(self, model: local_catalog.LocalModel | None) -> None:
         """Release the page-cache copy of the weights this load just read.
 
@@ -910,12 +921,9 @@ class LocalGatewayClient:
         this just returned rather than racing it."""
         if model is None or not self._models_dir:
             return
-        if local_weights.serves_file_backed(model.id):
-            # Not a `--no-mmap` copy: the mapped engram table pages through this cache on every
-            # token, so dropping it would only make the next tokens read it from disk again.
-            log.info("local_gateway.weights_cache_kept_file_backed", model=model.id)
-            return
-        freed = local_weights.drop_weights_page_cache(self._models_dir, model.id)
+        # A file-backed model keeps its mapped engram pages (they are read on every token) and
+        # loses the rest — see `local_weights.drop_weights_page_cache_except_mapped`.
+        freed = self._drop_fn(model)(self._models_dir, model.id)
         # All three outcomes are worth a line, and they are not the same thing. `if freed:`
         # logged only the happy case — which was harmless while the figure was the sum of
         # file sizes (always truthy) and became a blind spot the moment it started being
@@ -1290,6 +1298,7 @@ class LocalGatewayClient:
                     projected_gb=projected_gb,
                     target=served_model,
                     abort=lambda: self.unload(served_model),
+                    relieve=lambda: self._relieve_host_memory(model),
                 )
         except BaseException:
             # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
@@ -1619,20 +1628,22 @@ class LocalGatewayClient:
 
         Safe on a RESIDENT model: `POSIX_FADV_DONTNEED` drops clean page cache, never the
         GTT copy llama-server is serving from, and weights are read-only so nothing can be
-        lost. Synchronous — a handful of `posix_fadvise` calls with no I/O of their own."""
+        lost. A resident FILE-BACKED model gets the range-aware drop: the engram pages it
+        serves from stay, the residue of its load goes. Synchronous — a handful of
+        `posix_fadvise` calls with no I/O of their own."""
         if not self._models_dir:
             return {}
         wanted = model_ids if model_ids is not None else [m.id for m in local_catalog.CATALOG]
         freed: dict[str, float | None] = {}
-        kept = self._resident_file_backed()
+        mapped = self._resident_file_backed()
         for model_id in wanted:
-            if model_id in kept:
-                # Serving from that cache right now — dropping it would only make the next
-                # tokens re-read the engram table from disk. Left out of the result rather
-                # than reported as a 0.0 "drop", which would claim an attempt that never ran.
-                log.info("local_gateway.page_cache_kept_while_resident", model=model_id)
-                continue
-            got = local_weights.drop_weights_page_cache(self._models_dir, model_id)
+            if model_id in mapped:
+                got = local_weights.drop_weights_page_cache_except_mapped(
+                    self._models_dir, model_id
+                )
+                log.info("local_gateway.page_cache_dropped_keeping_mapped", model=model_id)
+            else:
+                got = local_weights.drop_weights_page_cache(self._models_dir, model_id)
             # Absent directories return None from the walk too, and reporting those as
             # "unmeasurable" would bury the real ones. Only provisioned models get a row.
             if got is not None or local_catalog.get(model_id) is not None:

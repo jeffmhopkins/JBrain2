@@ -169,7 +169,7 @@ _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
 
 # What of the GGUF on disk the GPU never holds, MEASURED rather than taken from the header. The
 # engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB — is served
-# memory-mapped and pinned to CPU (`--load-mode mmap`, `-ot per_layer_token_embd=CPU`; it
+# memory-mapped and pinned to CPU (`--lazy-mode on`, `-ot per_layer_token_embd=CPU`; it
 # exceeds Vulkan's 4 GiB binding limit anyway), its working set a few GB of reclaimable page
 # cache. The F2 fit (§3a) shows ~1.6 GiB more stays off the GPU than the engram alone: its
 # fixed term is 60.2 GiB INCLUDING the projector and vision workspace, against 61.3 GiB of
@@ -1239,14 +1239,26 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_pool=slot_roles.FLASH_NEXT_POOL,
         file_backed_gb=_FLASH_NEXT_FILE_BACKED_GB,
         extra_server_args=(
-            # Map the GGUF instead of reading it: the engram table must stay file-backed.
-            # Catalog flags supersede the shared command's `--no-mmap` (llama_swap_config), so
-            # this is the ONLY load-mode flag on the line. `--no-mmap` here exhausted RAM in
-            # the published Strix Halo runs (plan §2).
+            # Read the GPU weights with a buffered read rather than through the mapping. With
+            # `--lazy-mode on` the engram table below is STILL mapped (lazy tensors are mmapped
+            # whatever the load mode, prefetch 0), so it stays file-backed; only the ~60 GiB
+            # bound for Vulkan changes path. `mmap` MAP_POPULATEs those shards into page cache
+            # before uploading, which is what drove a 1M-pool load under the guard's 6 GB host
+            # floor twice. MEASURED 2026-10-03 at 512k: `none` loaded in 27 s (mmap 41), the
+            # read's cache peaked at 52 GiB and fell back to ~18, steady host free 25.8 GB
+            # against mmap's 16.5. What the read leaves in cache is unmapped and dropped by
+            # range during the load (local_weights.drop_weights_page_cache_except_mapped).
+            # The old note here — "`--no-mmap` exhausted RAM in the published runs" — predates
+            # lazy mode, which is what keeps the engram out of that read. Catalog flags
+            # supersede the shared command's `--no-mmap` (llama_swap_config), so this is the
+            # ONLY load-mode flag on the line. `dio` would fall back to buffered on Vulkan's
+            # pinned staging, so it buys nothing over `none`.
             "--load-mode",
-            "mmap",
+            "none",
             # The 26.8 GiB engram tensor exceeds Vulkan's 4 GiB binding limit; GPU placement
-            # aborted in the published runs. Pin it to CPU, paged in from the mapping.
+            # aborted in the published runs. Pin it to CPU, paged in from the mapping. The
+            # page-cache drop reads this rule to know which byte ranges to leave
+            # (`cpu_mapped_tensor_patterns`).
             "-ot",
             "per_layer_token_embd=CPU",
             "--lazy-mode",
@@ -1346,6 +1358,43 @@ def pool_of(served_model: str) -> slot_roles.KvPool | None:
     return model.kv_pool if model is not None else None
 
 
+def effective_pool(
+    model: LocalModel, windows: Mapping[str, int] | None
+) -> slot_roles.KvPool | None:
+    """The pool `model` serves given the saved per-model window overrides (catalog id ->
+    tokens), or None for a model without one.
+
+    A pooled model's saved "window" is its pool size: the one per-model override it has no
+    other use for, so the size is chosen through the same store, routes and loaders every
+    window override already travels (`set_local_context_window_value`), and every reader that
+    passes `windows.get(id, context_window)` as the window — the gateway's load charge,
+    residency's eviction budget, the settings meter — prices the size actually served."""
+    if model.kv_pool is None:
+        return None
+    return model.kv_pool.resized((windows or {}).get(model.id))
+
+
+def cpu_mapped_tensor_patterns(model: LocalModel) -> tuple[str, ...]:
+    """The tensor-name regexes the catalog pins to CPU (`-ot <regex>=CPU`) on a file-backed
+    model — the tensors whose pages the engine serves from the file mapping, so a page-cache
+    drop must leave them (`local_weights.drop_weights_page_cache_except_mapped`).
+
+    Read off the catalog's own flags rather than a second field, so the placement rule and the
+    drop that respects it cannot drift apart. Empty for a model with no file-backed share."""
+    if model.file_backed_gb <= 0:
+        return ()
+    args = list(model.extra_server_args)
+    out: list[str] = []
+    for flag, value in zip(args, args[1:], strict=False):
+        if flag not in ("-ot", "--override-tensor"):
+            continue
+        for rule in value.split(","):
+            pattern, _, buffer = rule.rpartition("=")
+            if pattern and buffer.upper() == "CPU":
+                out.append(pattern)
+    return tuple(out)
+
+
 def engine_of(served_model: str) -> engines.Engine:
     """The engine that serves `served_model`. A name outside the catalog is an operator-served
     model on the standard gateway, the only one an unlisted model can be added to."""
@@ -1414,8 +1463,8 @@ def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
     so the load reservation, the eviction budget and the settings meter cannot drift apart."""
     if model.kv_pool is not None:
         # One `--kv-unified` pool: the cells are allocated once at load, however many slots
-        # share them and whatever window is saved.
-        kv = model.kv_gb_per_128k * model.kv_pool.n_ctx / _KV_REFERENCE_TOKENS
+        # share them. A pooled model's "window" is its saved pool size (`effective_pool`).
+        kv = model.kv_gb_per_128k * model.kv_pool.resized(window).n_ctx / _KV_REFERENCE_TOKENS
     else:
         kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
     return kv * 2 if model.kv_full_history else kv
