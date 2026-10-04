@@ -40,14 +40,49 @@ models. So the rules are structural:
   or firewalled domains, no credentials, an `--isolated` in-memory profile.
 - **Quarantined result.** Its answer returns to jerv as data — text plus source URLs, with
   links and images stripped — and can never pick a side-effecting tool.
-- **Read-only actions.** Navigate, snapshot, click, select, type into search/filter fields,
-  scroll, back, wait, an on-demand screenshot. Refused: logins, checkout and payment,
-  downloads, uploads, and any form submit outside a search/filter. Enforced in the host
-  loop's action allowlist, not the prompt.
+- **Tiered actions, not a blanket read-only** (owner decision 2026-10-04: form filling is
+  allowed, behind approval). Every state-changing action passes the risk gate in §2a before
+  it runs; the gate lives in the host loop, never in the prompt.
 - **Budgets.** ~20 steps, a wall-clock cap, a page cap, loop detection. Success is checked
   against the final page, never taken from the model's "done".
 - **Existing sidecars.** `reader` and `byparr` also take untrusted pages but sit on
   `internal` beside the database. They move behind the same fence in B0.
+
+## 2a. The risk gate — mundane actions run, risky ones ask
+
+The owner wants routine work done without a prompt for every click, and anything touching
+personal data or commitments to wait for approval. Prior work converges on the same shape:
+**deterministic rules first, a separate judge for the gray zone, and the person approves
+with the evidence in front of them.**
+
+Prior work this borrows from:
+- **OpenAI Operator** — asks before "significant" actions (purchases, sending), and hands
+  control to the person for passwords and payment ("takeover") rather than typing them.
+- **Claude in Chrome / computer use** — per-site permissions, always-confirm categories
+  (purchases, publishing, sharing personal data), and an injection classifier on page
+  content.
+- **Vercel `agent-browser`** — declarative action policies with confirmation prompts.
+- **Microsoft Presidio** (MIT) — detects PII in text: names, emails, phones, addresses,
+  card and account numbers, IDs. Used on every value the agent is about to type.
+- **The page itself** — HTML `autocomplete` tokens (`cc-number`, `email`, `tel`,
+  `street-address`, `current-password`, `one-time-code`), `type=password`, payment iframes,
+  a form's method and the submit button's label are strong, cheap signals.
+- **Meta LlamaFirewall's AlignmentCheck, Google's Conseca, CaMeL, Progent** — a separate
+  check that the next action still serves the owner's original goal, judged without the
+  page's text in its instructions (so an injected page can't argue for itself). This is
+  also how this repo's own Claude Code auto-mode classifier works.
+
+The gate, in order (first match wins):
+
+| Tier | Examples | What happens |
+|---|---|---|
+| **Never** | typing a password, card number, CVV, bank/ID number, one-time code; downloads that execute | Refused. The card tells the owner to do that step themselves. |
+| **Ask** | any submit carrying PII (Presidio hit or a PII `autocomplete` field), creating an account, sending or posting a message, booking, reserving, ordering, agreeing to terms, a value that came from the owner's own data | Paused. A PWA card shows the screenshot, the site, the exact fields and values to submit, and Allow / Deny / Always allow this on this site. |
+| **Auto** | navigation, search and filter forms (GET, `role=search`), choosing a location, date or tab, dismissing cookie banners, a site the owner has said "always allow" for this action kind | Runs, and appears in the trace. |
+| **Judge** | anything the rules don't place | A separate small model call sees the owner's goal, the pending action and the field labels — never the page's prose — and answers auto or ask. Unsure means ask. |
+
+Owner choices ("always allow on this site") are stored per site and action kind, are
+listed and revocable in Settings, and never extend to the Never tier.
 
 ## 3. Waves
 
@@ -78,9 +113,15 @@ models. So the rules are structural:
   the same loop: success (verified on the final page), steps, time, snapshot tokens,
   tool-call parse failures. The winner ships; the numbers go in this plan.
 
-### B2 — Seeing it in chat ◻️ (GUI gate: three mocks, owner picks)
-- `browse` steps in the Worked pane as readable rows ("Opened epictheatres.com", "Picked
-  'Titusville'", "Read today's showtimes") with a small screenshot per step.
+### B2 — Seeing it in chat, and approving ◻️ (GUI gate: three mocks, owner picks)
+- A **tool card** in the chat that pops up while `browse` runs (owner decision 2026-10-04:
+  screenshots, no live stream): the latest screenshot and readable step rows ("Opened
+  epictheatres.com", "Picked 'Titusville'", "Read today's showtimes"); it settles into the
+  Worked pane when the run ends.
+- The **approval card** for the Ask tier, in the same place: screenshot, site, the fields
+  and values about to be submitted, Allow / Deny / Always allow on this site.
+- The risk gate (§2a) ships here with its rules, Presidio on typed values, and the judge
+  call; its decisions are logged per step.
 - Settings: browsing on/off, step budget. Ops: the browser container's health and the last
   runs' traces.
 
@@ -93,20 +134,23 @@ models. So the rules are structural:
   suspensions on Ops.
 - A rate-limited queue in front of SearXNG for deep-research bursts, on top of the
   existing one-hour cache.
-- Provider chain with per-provider budgets: SearXNG → Brave Search API (about 1,000
-  queries/month on its free credit, then $5/1,000) → optionally Mojeek (£2/1,000). Tavily
-  becomes an optional last tier the owner can switch off.
+- Provider chain with per-provider budgets: SearXNG → **Brave Search API** (owner decision
+  2026-10-04; about 1,000 queries/month on its free credit, then $5/1,000) → optionally
+  Mojeek (£2/1,000). Tavily becomes an optional last tier the owner can switch off.
+- The Brave key is set **in Settings**, never `.env` — a panel mirroring the Tavily one
+  (`api/tavily_settings.py`): stored key with the env as fallback, enable toggle, a "Test
+  key" button, and this month's usage against the budget.
 - A week of per-engine health on the new pin (including a 50-query burst) decides whether
   Brave's free credit covers the overflow.
 
-## 4. Open questions
-1. **Owner confirmations.** v1 refuses every state-changing action. Should a later wave add
-   a PWA confirmation card ("jerv wants to submit this form on X — allow?"), or keep the
-   browser strictly read-only?
-2. **A live view.** kernel-images or Steel (both Apache-2.0) could stream the browser into
-   the PWA. Worth it after B2's per-step screenshots, or not at all?
-3. **Brave API key.** One key with a free monthly credit, or SearXNG alone plus the browser
-   as a last resort?
+## 4. Decided (owner, 2026-10-04)
+1. **Forms are allowed, behind approval** — the tiered risk gate in §2a.
+2. **Screenshots, no live view** — shown as a tool card that pops up during a run.
+3. **Brave Search API is in**, its key set in Settings.
+
+## 5. Open questions
+1. **The judge's model.** Flash-Next itself at low effort in a small slot, or a smaller
+   dedicated classifier? Decided by B2's measured false-auto rate.
 </content>
 </invoke>
 <invoke name="Bash">
