@@ -8,10 +8,12 @@ touchscreen that runs the kids' pet (firmware in [`../../firmware/`](../../firmw
 The stock back only fits a tiny battery. This one is a deeper box that holds a real one, screws on
 with the original four screw positions, and has grip ribs so small hands don't drop it.
 
-![The recommended back plate (103035, 1000 mAh) on a unit, the pet on its screen](renders/hero-plate.jpg)
+| | |
+|---|---|
+| ![The recommended back plate (103035, 1000 mAh) in orange, the pet on its screen](renders/hero-plate-orange.jpg) | ![The same back plate in black](renders/hero-plate-black.jpg) |
 
 *Rendered from the model, with Waveshare's 3D model of the board and the firmware's own pet on the
-glass. Print it in any colour.*
+glass, in orange and in black. Print it in any colour.*
 
 ## Pick a version
 
@@ -29,7 +31,9 @@ a choking hazard**.
 
 ## Or: the desk stand
 
-![The recommended desk stand (103035 box): it lies on its side, the screen leans back 30°, USB-C and buttons along the top](renders/hero-stand.jpg)
+| | |
+|---|---|
+| ![The recommended desk stand (103035 box) in orange: it lies on its side, the screen leans back 30°, USB-C and buttons along the top](renders/hero-stand-orange.jpg) | ![The same desk stand in black](renders/hero-stand-black.jpg) |
 
 A two-part version for a desk. A thin **head** screws to the display in place of the stock
 cover, then sinks right into the angled end of a plain **battery box**, held by six flush

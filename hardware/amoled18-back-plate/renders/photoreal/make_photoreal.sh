@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Rebuilds the two photoreal shots on the README, ../hero-plate.jpg and ../hero-stand.jpg:
-# the recommended back plate and the recommended desk stand, rendered in Blender (Cycles) with
-# the display from Waveshare's STEP and the firmware's own pet on the glass.
+# Rebuilds the photoreal shots on the README, ../hero-<plate|stand>-<orange|black>.jpg: the
+# recommended back plate and the recommended desk stand, each in two filaments, rendered in
+# Blender (Cycles) with the display from Waveshare's STEP and the firmware's own pet on the glass.
 #
 # Heavy and optional: make_renders.sh does not call it, and a model change only needs it if the
 # change shows from outside. Needs python3.11 (bpy 4.2 is built for it), OpenSCAD 2021+, a C
@@ -63,12 +63,15 @@ cc -O2 -I"$FIRMWARE" -o "$WORK/pet_frame" pet_frame.c \
 "$WORK/pet_frame" 1 "$WORK/pet_side.ppm" 0 side
 "$CACHE/tools/bin/python" screens.py "$WORK"
 
+echo "Rendering ($WIDTH px, $SAMPLES samples)"
 for shot in plate stand; do
-  echo "Rendering $shot ($WIDTH px, $SAMPLES samples)"
-  "$CACHE/blender/bin/python" hero.py $shot "$WORK" "$WORK/$shot.png" "$WIDTH" "$SAMPLES" 2>&1 \
-    | grep -iE "error|traceback" || true
-  "$CACHE/tools/bin/python" -c "import sys; from PIL import Image; \
+  for colour in orange black; do
+    out=hero-$shot-$colour
+    "$CACHE/blender/bin/python" hero.py $shot $colour "$WORK" "$WORK/$out.png" "$WIDTH" "$SAMPLES" \
+      2>&1 | grep -iE "error|traceback" || true
+    "$CACHE/tools/bin/python" -c "import sys; from PIL import Image; \
 Image.open(sys.argv[1]).convert('RGB').save(sys.argv[2], quality=90, optimize=True)" \
-    "$WORK/$shot.png" "../hero-$shot.jpg"
-  echo "  ../hero-$shot.jpg"
+      "$WORK/$out.png" "../$out.jpg"
+    echo "  ../$out.jpg"
+  done
 done

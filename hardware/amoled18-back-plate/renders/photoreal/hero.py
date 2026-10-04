@@ -1,19 +1,20 @@
 # One photoreal shot in Blender (Cycles): the printed parts from OpenSCAD, the board and panel
 # from Waveshare's STEP, the firmware's own pet on the glass. make_photoreal.sh drives it.
-# Usage: python hero.py <plate|stand> <work dir> <out.png> [width] [samples] [camera x,y,z]
+# Usage: python hero.py <plate|stand> <orange|black> <work dir> <out.png> [width] [samples]
+#        [camera x,y,z]
 # A camera position renders a check view from there, aimed at the middle of the unit.
 import json
 import math
 import sys
 from pathlib import Path
 
+import bpy  # first: importing bpy is what makes bmesh and mathutils importable
 import bmesh
-import bpy
 from mathutils import Matrix, Vector
 
-shot, work, out = sys.argv[1], Path(sys.argv[2]), sys.argv[3]
-width = int(sys.argv[4]) if len(sys.argv) > 4 else 1600
-samples = int(sys.argv[5]) if len(sys.argv) > 5 else 256
+shot, colour, work, out = sys.argv[1], sys.argv[2], Path(sys.argv[3]), sys.argv[4]
+width = int(sys.argv[5]) if len(sys.argv) > 5 else 1600
+samples = int(sys.argv[6]) if len(sys.argv) > 6 else 256
 parts = work / shot
 poses = {k: Matrix(v) for k, v in json.loads((parts / "poses.json").read_text()).items()}
 
@@ -37,10 +38,10 @@ def principled(name, color, rough, metal=0.0):
     return m, b
 
 
-def pla(color):
+def pla(color, rough):
     """Matte PLA with 0.2 mm layer lines along the part's own print Z, so every part must come
     in in its print frame and be posed by its object matrix."""
-    m, b = principled("PLA", color, 0.48)
+    m, b = principled("PLA", color, rough)
     b.inputs["Specular IOR Level"].default_value = 0.45
     nt = m.node_tree
     tc = nt.nodes.new("ShaderNodeTexCoord")
@@ -70,7 +71,9 @@ def pla(color):
     return m
 
 
-mat_pla = pla((0.86, 0.20, 0.07))  # a warm coral-orange filament
+# Filament: base colour and roughness. Black prints a touch glossier than a pigmented colour.
+FILAMENTS = {"orange": ((0.86, 0.20, 0.07), 0.48), "black": ((0.03, 0.03, 0.032), 0.40)}
+mat_pla = pla(*FILAMENTS[colour])
 mat_shell, _ = principled("Shell", (0.012, 0.012, 0.013), 0.42)
 mat_buttons, _ = principled("Buttons", (0.05, 0.05, 0.055), 0.6)
 mat_glass, glass_bsdf = principled("Glass", (0.004, 0.004, 0.005), 0.04)
@@ -229,8 +232,8 @@ else:
     area("rim", (-170, 150, 140), 70, 1.6e6, cool, 220)
     # Low and to the side: the glass faces up here, and a fill behind the camera greys it out.
     area("fill", (120, -260, 30), 200, 0.3e6)
-if len(sys.argv) > 6:
-    cam_loc, look = Vector(map(float, sys.argv[6].split(","))), Vector((0, 0, h * 0.5))
+if len(sys.argv) > 7:
+    cam_loc, look = Vector(map(float, sys.argv[7].split(","))), Vector((0, 0, h * 0.5))
 
 cam_data = bpy.data.cameras.new("cam")
 cam_data.lens, cam_data.sensor_width = 85, 36
