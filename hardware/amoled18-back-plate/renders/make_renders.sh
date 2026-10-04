@@ -20,7 +20,6 @@ run() {
 iso="--viewall --autocenter --imgsize=900,700"
 
 echo "Overview"
-run hero.png "$MODEL" $iso --camera=0,0,0,55,0,25,0 -D show_battery=true
 run back.png "$MODEL" $iso --camera=0,0,0,235,0,25,0
 run cutaway.png src/fig_cutaway.scad $iso --camera=0,0,0,70,0,70,0
 run print-bed.png src/fig_print_bed.scad $iso --camera=0,0,0,55,0,20,0
@@ -54,7 +53,6 @@ B1="Desk stand: box for 103035 on edge"
 B2="Desk stand: box for 802525 flat"
 B3="Desk stand: box for 104050 on end (tight, measure first)"
 sec="--projection=o --imgsize=900,700"
-run stand.png src/fig_stand.scad --imgsize=900,700 --camera=35,0,15,62,0,60,200 -p "$PRESETS" -P "$B1"
 run stand-back.png src/fig_stand.scad --imgsize=900,700 --camera=35,0,25,55,0,35,240 -p "$PRESETS" -P "$B1" -D 'view="exploded"'
 run stand-section-103035.png src/fig_stand.scad $sec --camera=35,0,20,90,0,0,150 -p "$PRESETS" -P "$B1" -D 'view="section"'
 run stand-section-802525.png src/fig_stand.scad $sec --camera=30,0,20,90,0,0,140 -p "$PRESETS" -P "$B2" -D 'view="section"'
