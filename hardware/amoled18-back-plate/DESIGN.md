@@ -1,6 +1,6 @@
 # Design notes
 
-> **Status:** Living · **Last verified:** 2026-09-23
+> **Status:** Living · **Last verified:** 2026-10-04
 
 How the plate is built, why, and where every number came from. You don't need this to print or
 adjust it. Back to the [README](README.md).
@@ -168,6 +168,15 @@ Every image in these guides is rendered from the model: `renders/make_renders.sh
 all (OpenSCAD 2021+; on a headless machine it uses `xvfb-run`). The figure sources are in
 `renders/src/`; the labelled ones draw their dimension lines and text in OpenSCAD itself
 (`renders/src/annot.scad`), so a change to the model only needs a re-run.
+
+The two photoreal shots on the README, `renders/hero-plate.jpg` and `renders/hero-stand.jpg`, come
+from `renders/photoreal/make_photoreal.sh` instead: Blender (Cycles, as the `bpy` module) renders
+the printed parts exported from the model, Waveshare's STEP of the board and panel (downloaded and
+checksummed), and a pet frame drawn by the firmware's own `face.c`. The STEP has no case, so the
+black front shell in those shots is drawn from the case outline and the [photos](#screws): the
+board hangs on standoffs that end at the seam (taken as 4 mm), which puts the glass just under
+the shell's face. It takes about 20 minutes on four cores and needs `python3.11`; re-run it only
+when a change shows from outside.
 
 ## Photos of the real unit
 

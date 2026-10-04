@@ -1,6 +1,6 @@
 # Deep back plate — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-09-23
+> **Status:** Living · **Last verified:** 2026-10-04
 
 A 3D-printable back cover for the [Waveshare
 ESP32-S3-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-s3-touch-amoled-1.8.htm), the little
@@ -8,7 +8,10 @@ touchscreen that runs the kids' pet (firmware in [`../../firmware/`](../../firmw
 The stock back only fits a tiny battery. This one is a deeper box that holds a real one, screws on
 with the original four screw positions, and has grip ribs so small hands don't drop it.
 
-![The default back plate, battery ghosted in green](renders/hero.png)
+![The recommended back plate (103035, 1000 mAh) on a unit, the pet on its screen](renders/hero-plate.jpg)
+
+*Rendered from the model, with Waveshare's 3D model of the board and the firmware's own pet on the
+glass. Print it in any colour.*
 
 ## Pick a version
 
@@ -26,7 +29,7 @@ a choking hazard**.
 
 ## Or: the desk stand
 
-![The desk stand: the box lies on its side, the screen leans back 30°, USB-C and buttons along the top](renders/stand.png)
+![The recommended desk stand (103035 box): it lies on its side, the screen leans back 30°, USB-C and buttons along the top](renders/hero-stand.jpg)
 
 A two-part version for a desk. A thin **head** screws to the display in place of the stock
 cover, then sinks right into the angled end of a plain **battery box**, held by six flush
