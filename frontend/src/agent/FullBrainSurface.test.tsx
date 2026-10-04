@@ -1309,6 +1309,169 @@ describe("FullBrainSurface", () => {
     expect(await screen.findByText(/The older one\./)).toBeInTheDocument();
   });
 
+  // A chat stream the test feeds one event at a time, so each live state can be asserted.
+  function scriptedStream(): {
+    chat: () => AsyncGenerator<ChatEvent>;
+    push: (...events: ChatEvent[]) => void;
+  } {
+    const queue: ChatEvent[] = [];
+    let wake: () => void = () => {};
+    async function* chat(): AsyncGenerator<ChatEvent> {
+      for (;;) {
+        while (queue.length === 0) {
+          await new Promise<void>((r) => {
+            wake = r;
+          });
+        }
+        const ev = queue.shift() as ChatEvent;
+        yield ev;
+        if (ev.type === "done") return;
+      }
+    }
+    return {
+      chat,
+      push: (...events) => {
+        queue.push(...events);
+        wake();
+      },
+    };
+  }
+
+  it("auto-expands Worked for a tool called after the answer, then hands back to the trace", async () => {
+    // Owner's spec 2026-10-03: text collapses thinking; a tool called with no thinking
+    // first opens Worked on its live step; thinking again switches to the trace; text
+    // collapses it; settling leaves everything closed.
+    const s = scriptedStream();
+    render(<Harness d={deps({ chat: s.chat })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "find it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    act(() => s.push({ type: "reasoning_delta", text: "plan" }));
+    const think = await screen.findByRole("button", { name: /Thinking…/ });
+    await waitFor(() => expect(think).toHaveAttribute("aria-expanded", "true"));
+
+    // think → text: the trace collapses.
+    act(() => s.push({ type: "text_delta", text: "Looking it up." }));
+    await screen.findByText(/Looking it up\./);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Thought/ })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      ),
+    );
+
+    // text → tool: Worked opens on the new, still-running step.
+    act(() => s.push({ type: "tool_call", id: "c1", name: "search", arguments: {} }));
+    const worked = await screen.findByRole("button", { name: /Worked/ });
+    await waitFor(() => expect(worked).toHaveAttribute("aria-expanded", "true"));
+    expect(document.querySelectorAll(".fb-act-view.show .fb-step")).toHaveLength(1);
+
+    // tool → think: the trace wins again and Worked folds back.
+    act(() => s.push({ type: "tool_result", tool_call_id: "c1", ok: true, summary: "1 note" }));
+    act(() => s.push({ type: "reasoning_delta", text: " which one?" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Thinking…/ })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
+    );
+    expect(worked).toHaveAttribute("aria-expanded", "false");
+
+    // Another tool after text, then the answer resumes: Worked opens, then text collapses it.
+    act(() => s.push({ type: "text_delta", text: " Checking one more." }));
+    act(() => s.push({ type: "tool_call", id: "c2", name: "search", arguments: {} }));
+    await waitFor(() => expect(worked).toHaveAttribute("aria-expanded", "true"));
+    act(() => s.push({ type: "tool_result", tool_call_id: "c2", ok: true, summary: "ok" }));
+    act(() => s.push({ type: "text_delta", text: " The older one." }));
+    await screen.findByText(/The older one\./);
+    await waitFor(() => expect(worked).toHaveAttribute("aria-expanded", "false"));
+
+    // A last tool left open when the turn settles still ends collapsed.
+    act(() => s.push({ type: "tool_call", id: "c3", name: "search", arguments: {} }));
+    await waitFor(() => expect(worked).toHaveAttribute("aria-expanded", "true"));
+    act(() => s.push({ type: "done", stop_reason: "end_turn" }));
+    await screen.findByRole("button", { name: "Copy response" });
+    expect(worked).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /Thought/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("keeps the trace open for a tool called inside a thinking phase", async () => {
+    // Spec #3 is only for a tool with no thinking in front of it — the trace already
+    // interleaves a call made mid-thought, so Worked stays closed.
+    const s = scriptedStream();
+    render(<Harness d={deps({ chat: s.chat })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    act(() =>
+      s.push(
+        { type: "text_delta", text: "Sure." },
+        { type: "reasoning_delta", text: "need a search" },
+        { type: "tool_call", id: "c1", name: "search", arguments: {} },
+      ),
+    );
+    const worked = await screen.findByRole("button", { name: /Worked/ });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Thinking…/ })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
+    );
+    expect(worked).toHaveAttribute("aria-expanded", "false");
+    act(() => s.push({ type: "done", stop_reason: "end_turn" }));
+    await screen.findByRole("button", { name: "Copy response" });
+  });
+
+  it("stops auto-toggling a section the owner toggled by hand for the rest of the turn", async () => {
+    const s = scriptedStream();
+    render(<Harness d={deps({ chat: s.chat })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    act(() =>
+      s.push(
+        { type: "text_delta", text: "First." },
+        { type: "tool_call", id: "c1", name: "search", arguments: {} },
+      ),
+    );
+    const worked = await screen.findByRole("button", { name: /Worked/ });
+    await waitFor(() => expect(worked).toHaveAttribute("aria-expanded", "true"));
+
+    // The owner closes the auto-opened Worked: a later tool no longer re-opens it.
+    fireEvent.click(worked);
+    expect(worked).toHaveAttribute("aria-expanded", "false");
+    act(() =>
+      s.push(
+        { type: "tool_result", tool_call_id: "c1", ok: true, summary: "ok" },
+        { type: "text_delta", text: " Second." },
+        { type: "tool_call", id: "c2", name: "search", arguments: {} },
+      ),
+    );
+    await waitFor(() => expect(document.querySelectorAll(".fb-step")).toHaveLength(2));
+    expect(worked).toHaveAttribute("aria-expanded", "false");
+
+    // He opens it again by hand: thinking resuming does not take it away, nor does settling.
+    fireEvent.click(worked);
+    act(() =>
+      s.push(
+        { type: "tool_result", tool_call_id: "c2", ok: true, summary: "ok" },
+        { type: "reasoning_delta", text: "hmm" },
+      ),
+    );
+    const think = await screen.findByRole("button", { name: /Thinking…/ });
+    expect(think).toHaveAttribute("aria-expanded", "false");
+    expect(worked).toHaveAttribute("aria-expanded", "true");
+    act(() => s.push({ type: "text_delta", text: " Done." }, { type: "done", stop_reason: "x" }));
+    await screen.findByRole("button", { name: "Copy response" });
+    expect(worked).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("switches between the Thinking and Worked bodies — only one open at a time", async () => {
     // A settled turn that both reasoned and ran a tool. Tapping a segment opens its
     // body and closes the other, so the foot strip reads as one switchable view.

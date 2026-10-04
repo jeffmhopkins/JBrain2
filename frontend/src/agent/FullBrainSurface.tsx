@@ -59,7 +59,14 @@ import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { stepLedger } from "./stepLedger";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
-import type { ToolActivity, TranscriptMessage } from "./transcript";
+import {
+  type FootSection,
+  type FootSignal,
+  type ToolActivity,
+  type TranscriptMessage,
+  nextAutoSection,
+  reconcileFoot,
+} from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
@@ -1214,7 +1221,8 @@ function Bubble({
       <ActivityLine
         reasoning={message.reasoning}
         thinking={message.thinking}
-        hasAnswer={message.text !== ""}
+        streaming={message.streaming}
+        answerLength={message.text.length}
         tools={message.tools}
         copyText={settledAnswer ? stripModelCitations(message.text) : ""}
         audio={settledAnswer || streamingAudio ? audio : undefined}
@@ -1459,12 +1467,15 @@ function ThinkTool({ step }: { step: ToolStep }): ReactNode {
 // While the model is still thinking the trace auto-opens, a pulse marks it live, and
 // the trace auto-follows the newest text; the moment answer text lands it collapses to
 // "Thought for Ns" (the duration measured here, so the reducer stays pure) and stays a tap
-// away. If the model goes back to thinking it re-opens, the answer so far staying above. The "Worked" segment appears as soon as a tool runs —
-// on the same line — so a turn that thinks AND uses tools reads as one foot strip.
+// away. If the model goes back to thinking it re-opens, the answer so far staying above.
+// The "Worked" segment appears as soon as a tool runs — on the same line — so a turn that
+// thinks AND uses tools reads as one foot strip; a tool called after the answer began, with
+// no thinking first, opens it until the answer resumes (`nextAutoSection`).
 function ActivityLine({
   reasoning,
   thinking,
-  hasAnswer,
+  streaming,
+  answerLength,
   tools,
   copyText,
   audio,
@@ -1473,7 +1484,8 @@ function ActivityLine({
 }: {
   reasoning: string;
   thinking: boolean;
-  hasAnswer: boolean;
+  streaming: boolean;
+  answerLength: number;
   tools: ToolActivity[];
   /** The settled answer text to copy; "" while streaming or empty (no copy button). */
   copyText: string;
@@ -1485,31 +1497,69 @@ function ActivityLine({
 }): ReactNode {
   // The trace and the steps are one disclosure with two segments: at most one body
   // is open, and tapping a segment switches the view to it (tapping the open one
-  // closes it). A live thinking phase opens the trace; the answer's arrival collapses
-  // it unless the owner has since switched to "Worked".
-  const [open, setOpen] = useState<"think" | "work" | null>(thinking ? "think" : null);
+  // closes it). While the turn is live, `nextAutoSection` picks the body the stream wants
+  // open; a section the owner toggles by hand is his for the rest of the turn.
+  const [open, setOpen] = useState<FootSection>(thinking ? "think" : "none");
+  const autoRef = useRef<FootSection>(thinking ? "think" : "none");
+  const ownedRef = useRef<Set<FootSection>>(new Set());
+  const toolCountRef = useRef(0);
+  const answerLengthRef = useRef(answerLength);
   const startRef = useRef<number | null>(null);
   const [ms, setMs] = useState<number | null>(null);
   const traceRef = useRef<HTMLDivElement | null>(null);
 
+  const signal = (s: FootSignal) => {
+    const target = nextAutoSection(autoRef.current, s);
+    autoRef.current = target;
+    setOpen((cur) => reconcileFoot(cur, target, ownedRef.current));
+  };
+  const openByHand = (section: Exclude<FootSection, "none">, toggle = true) => {
+    ownedRef.current.add(section);
+    setOpen((v) => (toggle && v === section ? "none" : section));
+  };
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a thinking flip is the only trigger
   useEffect(() => {
     if (thinking) {
       if (startRef.current === null) startRef.current = performance.now();
       // A model that interleaves thinking and answer text (Qwen Flash-Next) comes back here
-      // mid-turn: re-open the trace — unless the owner switched to Worked, which stays.
-      setOpen((cur) => (cur === "work" ? cur : "think"));
+      // mid-turn: the trace re-opens, switching away from an auto-opened Worked view.
+      signal("think");
     } else {
       // A thinking phase ended — add its duration to the turn's total (an interleaving model
-      // thinks in several phases), and collapse the trace (but leave a Worked view the owner
-      // opened mid-stream in place).
+      // thinks in several phases), and collapse the trace.
       const started = startRef.current;
       if (started !== null) {
         startRef.current = null;
         setMs((prev) => (prev ?? 0) + (performance.now() - started));
       }
-      setOpen((cur) => (cur === "think" ? null : cur));
+      signal(streaming ? "text" : "settle");
     }
   }, [thinking]);
+
+  // A settled turn ends collapsed, bar a section the owner opened by hand.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: settling is the only trigger
+  useEffect(() => {
+    if (!streaming) signal("settle");
+  }, [streaming]);
+
+  // Answer text resuming after an auto-opened Worked collapses it, as text collapses the trace.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: answer growth is the only trigger
+  useEffect(() => {
+    const grew = answerLength > answerLengthRef.current;
+    answerLengthRef.current = answerLength;
+    if (grew && streaming && !thinking && autoRef.current === "work") signal("text");
+  }, [answerLength]);
+
+  // A tool called once the answer is on screen, with no thinking phase in front of it, opens
+  // Worked so the new call's live step shows while it runs. Declared after the answer effect
+  // so a text delta and a tool call landing in one render end on Worked.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new tool call is the only trigger
+  useEffect(() => {
+    const added = tools.length > toolCountRef.current;
+    toolCountRef.current = tools.length;
+    if (added && streaming && !thinking && answerLength > 0) signal("tool");
+  }, [tools.length]);
 
   // Follow the newest line while it streams, so a long trace stays readable without
   // the owner chasing the scrollbar (only while live and open). `reasoning` and the
@@ -1538,7 +1588,7 @@ function ActivityLine({
       : "Thought";
   // No top border (and flush to the top) while the line leads a still-thinking
   // bubble with no answer above it yet.
-  const bare = thinking && !hasAnswer;
+  const bare = thinking && answerLength === 0;
 
   return (
     // The line and its disclosure share one foot strip — a single flex child of the
@@ -1551,14 +1601,14 @@ function ActivityLine({
     // them, so drawing both stacks two separators and leaves the rule looking orphaned
     // under the card.
     <div className={`fb-act-foot${bare ? " bare" : ""}${ledger.length > 0 ? " has-ledger" : ""}`}>
-      <TurnLedger rows={ledger} onOpenSteps={() => setOpen("work")} />
+      <TurnLedger rows={ledger} onOpenSteps={() => openByHand("work", false)} />
       <div className="fb-activity">
         {hasReasoning && (
           <button
             type="button"
             className={`fb-act-chip fb-act-think${open === "think" ? " on" : ""}`}
             aria-expanded={open === "think"}
-            onClick={() => setOpen((v) => (v === "think" ? null : "think"))}
+            onClick={() => openByHand("think")}
           >
             <BrainGlyph className="fb-act-ic" />
             <span className="fb-act-lab">
@@ -1572,7 +1622,7 @@ function ActivityLine({
             type="button"
             className={`fb-act-chip fb-act-work${open === "work" ? " on" : ""}`}
             aria-expanded={open === "work"}
-            onClick={() => setOpen((v) => (v === "work" ? null : "work"))}
+            onClick={() => openByHand("work")}
           >
             <GearGlyph />
             <span className="fb-act-lab">Worked</span>
@@ -1599,7 +1649,7 @@ function ActivityLine({
         {copyText && <CopyButton text={copyText} compact={audio !== undefined} />}
       </div>
       {(hasReasoning || tools.length > 0) && (
-        <div className={`fb-act-body${open ? " open" : ""}`}>
+        <div className={`fb-act-body${open !== "none" ? " open" : ""}`}>
           <div className="fb-act-inner">
             {hasReasoning && (
               <div className={`fb-act-view${open === "think" ? " show" : ""}`}>

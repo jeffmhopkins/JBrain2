@@ -157,8 +157,8 @@ export interface TranscriptMessage {
   /** The model's reasoning trace (gpt-oss/GLM), accumulated from `reasoning_delta`
    * and replayed from storage. Empty for non-reasoning turns. */
   reasoning: string;
-  /** True while reasoning is streaming and the answer hasn't started — drives the
-   * live "Thinking…" state; flips false on the first answer token (or `done`). */
+  /** True while a reasoning phase is streaming — drives the live "Thinking…" state; flips
+   * false on the next answer token (or `done`), and back on if reasoning resumes. */
   thinking: boolean;
   /** Reflexion's flag on this turn — absent until a `verdict` event lands. */
   verdict?: Verdict;
@@ -528,4 +528,42 @@ export function unsent(messages: TranscriptMessage[] | undefined): boolean {
     last.tools.length === 0 &&
     last.views.length === 0
   );
+}
+
+/** Which body of a turn's foot strip is open: the reasoning trace, the tool steps, or neither. */
+export type FootSection = "none" | "think" | "work";
+
+/** What the live turn just did, as far as the foot strip cares: reasoning (re)started,
+ * answer text arrived, a tool was called after the answer began with no thinking in front
+ * of it, or the turn settled. */
+export type FootSignal = "think" | "text" | "tool" | "settle";
+
+/** The auto-expand state machine for a LIVE turn's foot strip (owner's spec, 2026-10-03).
+ * Thinking opens the trace; answer text collapses whatever was auto-opened; a tool called
+ * once the answer has started (no thinking first) opens the steps so the new call is seen
+ * while it runs; thinking again switches back to the trace; settling collapses everything.
+ * A tool inside a thinking phase keeps the trace — the trace already interleaves the call. */
+export function nextAutoSection(cur: FootSection, signal: FootSignal): FootSection {
+  switch (signal) {
+    case "think":
+      return "think";
+    case "tool":
+      return cur === "think" ? "think" : "work";
+    case "text":
+    case "settle":
+      return "none";
+  }
+}
+
+/** Fold an auto transition into what the panel shows. A section the owner toggled by hand
+ * this turn is his: one he left open stays open (even past settle), and one he touched is
+ * never auto-opened again — the auto view falls back to closed instead. */
+export function reconcileFoot(
+  open: FootSection,
+  target: FootSection,
+  owned: ReadonlySet<FootSection>,
+): FootSection {
+  if (open !== "none" && owned.has(open)) return open;
+  if (target !== "none" && owned.has(target)) return "none";
+  return target;
 }

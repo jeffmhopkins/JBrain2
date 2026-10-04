@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type TranscriptMessage, applyEvent } from "./transcript";
+import {
+  type FootSection,
+  type TranscriptMessage,
+  applyEvent,
+  nextAutoSection,
+  reconcileFoot,
+} from "./transcript";
 import type { ChatEvent } from "./types";
 
 function streaming(): TranscriptMessage {
@@ -763,5 +769,41 @@ describe("applyEvent reducer", () => {
     ms = applyEvent(ms, spawned); // reconnect replay
     expect(ms[0]?.tools[0]?.fan?.children).toHaveLength(1);
     expect(ms[0]?.tools[0]?.fan?.children[0]?.phase).toBe("queued");
+  });
+});
+
+describe("foot-strip auto-expand state machine", () => {
+  const none: ReadonlySet<FootSection> = new Set();
+
+  it("walks the owner's live-turn precedence: think, text, tool, think, settle", () => {
+    let s: FootSection = "none";
+    s = nextAutoSection(s, "think");
+    expect(s).toBe("think");
+    s = nextAutoSection(s, "text"); // answer arrives → thinking collapses
+    expect(s).toBe("none");
+    s = nextAutoSection(s, "tool"); // a tool with no thinking first → Worked opens
+    expect(s).toBe("work");
+    s = nextAutoSection(s, "think"); // thinking again → the trace wins
+    expect(s).toBe("think");
+    s = nextAutoSection(s, "tool"); // a call mid-thought stays in the trace
+    expect(s).toBe("think");
+    expect(nextAutoSection("work", "text")).toBe("none"); // answer resumes after a tool
+    expect(nextAutoSection("work", "settle")).toBe("none");
+    expect(nextAutoSection("think", "settle")).toBe("none");
+  });
+
+  it("follows the auto target while the owner has touched nothing", () => {
+    expect(reconcileFoot("none", "work", none)).toBe("work");
+    expect(reconcileFoot("work", "think", none)).toBe("think");
+    expect(reconcileFoot("think", "none", none)).toBe("none");
+  });
+
+  it("lets a section the owner toggled by hand win for the rest of the turn", () => {
+    // Opened by hand: kept through a switch and through settling.
+    expect(reconcileFoot("work", "think", new Set(["work"]))).toBe("work");
+    expect(reconcileFoot("work", "none", new Set(["work"]))).toBe("work");
+    // Closed by hand: never auto-opened again; an auto-opened other section still folds.
+    expect(reconcileFoot("none", "work", new Set(["work"]))).toBe("none");
+    expect(reconcileFoot("work", "think", new Set(["think"]))).toBe("none");
   });
 });
