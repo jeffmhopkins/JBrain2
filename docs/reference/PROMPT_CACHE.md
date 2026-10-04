@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-09-18
+> **Status:** Living · **Last verified:** 2026-10-04
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -57,6 +57,47 @@ and an **external-draft speculative** entry carries draft state no slot file cap
 qwen3.8 MTP hybrids are admitted only when the owner's Fast-Qwen-loads patch setting is on,
 because the patched engine supplies the checkpoint restore the stock server lacks.
 
+**Flash-Next** (a hybrid, catalog `kv_restore_needs_patch`) is admitted because its image
+builds the checkpoint-sidecar patch in (`deploy/patches/0001`, `PATCH_RESTORE_CHECKPOINT=1`
+since F4) — and the store proves it on every save: the patched server writes a `.ckpt` sidecar
+beside each slot file, so a save without one removes the file and takes the model out of the
+disk layer until the next api start (`patch_absent` in the state read). A file without its
+sidecar is never restored.
+
+## On Flash-Next: one prefix per role, and conversation files (F4)
+
+Flash-Next serves eight role-pinned slots over one shared KV pool
+(`../plans/FLASH_NEXT_ENGINE_PLAN.md` §4a), so the store works per **role**:
+
+- jerv's prime is saved from slot 0 and restored into slot 0. The keeper also restores the
+  same file into the **scheduled-task** slot (2) when it is empty — scheduled turns send jerv's
+  persona, tools and effort, so it is their identity too. Ingest, research and the pet are not
+  primed: their stable prefixes are a few hundred tokens or do not exist. Any role's turn still
+  restores into its own slot on demand if a file of its identity exists.
+- A restore goes into the role's own slot only while that slot is idle and **empty**, never
+  over an occupied one, and only when the restored tokens fit the pool beside what every other
+  slot may grow to (a full pool fails every busy request).
+- Memos and drift are per (model, role). A pooled restored-but-unused memo expires after
+  10 minutes, because the pool guard can erase that slot without telling the store.
+
+The interactive slot also carries **conversation files** (`llm/kv_conversation.py`, toggle
+*Keep chats on disk*, default ON). When another conversation, or the keeper's prime, is about
+to take slot 0, the conversation it holds is saved first — only if `/slots` still reads as that
+conversation's cache (between its last prompt and prompt + answer) and the server saves exactly
+that many tokens. A conversation idle for 10 minutes is saved by the keeper's tick. When a
+conversation speaks again and slot 0 does not hold it, its file is restored before the request
+if the file's base identity (launch line, persona, tools, effort) matches and every message the
+saved request sent opens the new one, digest for digest. llama-server then compares tokens and
+re-evaluates from the first divergence (typically the previous answer re-rendered without its
+thinking), so a wrong guess costs a re-prefill, never a wrong answer. A conversation that moved
+on (an edit, a regenerate further back) loses its file. File names are hashes and the `.meta`
+claim holds only digests and counts; the slot file itself carries the conversation's tokens,
+like the KV in RAM it came from.
+
+Both kinds share the **disk budget** (default 40 GiB, Ops → *Prompt cache disk*): every
+conversation file is evicted before any role prefix, oldest first. A Flash-Next 29k-token prefix
+is ~0.55 GiB; a conversation file grows with its length from there.
+
 One consequence worth knowing before you touch Settings: raising a hybrid's slot count to 2
 strips `--spec-type`, which withholds `--slot-save-path`, which turns the disk layer off for
 that model. Correct, and the screen now says so.
@@ -75,16 +116,23 @@ The often-repeated "~60 s prefill" is the low end of that range, not its centre.
 
 ## Operating it, with no terminal
 
-Everything here is the owner debug API (`runbooks/DEBUG_ACCESS.md` has the full reference):
+The owner's two knobs are in the PWA, Ops → Server update: **Keep chats on disk** (the
+conversation cache) and **Prompt cache disk** (the budget). Both apply at once.
+
+Everything else is the owner debug API (`runbooks/DEBUG_ACCESS.md` has the full reference):
 
 - `GET /api/debug/llm/kv-prefix` — **the question "is it working?"**. Counters for every
-  outcome since the api started, per-model state (`file_present`, `restored_unused`,
-  `cold_no_file`, `no_disk_layer`, `ineligible`) resolved against what is actually on disk,
-  disk usage against the budget, and llama-server's own reuse ratio.
+  outcome since the api started, a hit/miss `summary`, per-model state (`file_present`,
+  `restored_unused`, `cold_no_file`, `no_disk_layer`, `ineligible`) resolved against what is
+  actually on disk, per-role rows and conversation state on Flash-Next, disk usage against the
+  budget, and llama-server's own reuse ratio.
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real prime and time it. `reuse_rate`
   near 1.0 proves a restore landed; `elapsed_ms` alone only implies it.
 - `DELETE /api/debug/llm/kv-prefix` — clear the store, or one model's files.
-- `PUT /api/debug/llm/kv-prefix/budget?gb=N` — the disk allowance, 2..500 GiB.
+- `PUT /api/debug/llm/kv-prefix/budget?gb=N` — the disk allowance, 2..500 GiB, live.
+- `PUT /api/debug/llm/kv-prefix/conversations?enabled=` — the conversation cache, live.
+- `POST /api/debug/llm/slot-probe` — save a slot, restore it into another, compare next-token
+  logprobs within a tolerance; `passed` and `sidecar` are Flash-Next's F4 gate.
 
 A miss also writes a `kv_prefix_missed` box event, so it reaches the PWA's vitals.
 
@@ -115,14 +163,19 @@ show you when one bites.
   engages on an overrun, nothing pins the prefix head — and the slot still reports a large
   `n_prompt_tokens` afterwards, so the restore gate would read "something prefix-sized is
   cached" and decline. Silent and self-concealing if it ever fires.
-- **There is no slot pinning.** A second slot buys one dissimilar request of headroom, not
-  immunity; see `llm/llama_swap_config.py`'s `-np` comment for what llama.cpp actually does.
+- **There is no slot pinning on the standard engine.** A second slot buys one dissimilar
+  request of headroom, not immunity; see `llm/llama_swap_config.py`'s `-np` comment for what
+  llama.cpp actually does. Flash-Next pins every call to its role's slot.
+- **Conversation restores are unmeasured on the box** until F4's on-box sitting: whether the
+  previous answer's re-render leaves a checkpoint close enough to the divergence to be worth
+  the restore is a measurement, not a guarantee.
 
 ## Where the code is
 
 | | |
 |---|---|
-| `llm/kv_prefix.py` | the disk store: fingerprint, save gate, restore gate, LRU budget |
+| `llm/kv_prefix.py` | the disk store: fingerprint, save gate, restore gate, per-role slots, conversations, LRU budget |
+| `llm/kv_conversation.py` | conversation file names, claims and the restore decision |
 | `llm/warm_keeper.py` | the keep-warm loop: prime, re-prime, the edge triggers |
 | `agent/priming.py` | the prime's (system, tools) — the same call a real turn makes |
 | `llm/llama_swap_config.py` | `--slot-save-path`, `-np`, `--cache-reuse`, `-cram` |
