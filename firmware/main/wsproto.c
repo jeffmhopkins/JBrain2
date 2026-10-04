@@ -125,9 +125,12 @@ void wsp_policy_up(wsp_policy_t *p)
 void wsp_policy_failed(wsp_policy_t *p, int hs_status, uint32_t now_ms)
 {
     p->fails++;
-    /* NO ROUTE IS AN ANSWER, NOT A FAULT. A box that predates the socket says 404 (or 405)
-       to the upgrade every time; three attempts would only spend three handshakes learning it. */
-    const bool absent = hs_status == 404 || hs_status == 405;
+    /* NO ROUTE IS AN ANSWER, NOT A FAULT. A box that predates the socket answers the upgrade
+       with 403 — Starlette refuses a WebSocket to a path it has no route for that way — and a
+       proxy in front of it may say 404 or 405; three attempts would only spend three handshakes
+       learning it. A box WITH the route refuses a bad key with 403 too, and falling back is right
+       for that as well: the HTTPS path reports the 401 plainly, and the socket is retried. */
+    const bool absent = hs_status == 403 || hs_status == 404 || hs_status == 405;
     if (absent || p->fails >= WSP_FALLBACK_AFTER) {
         p->fallback = true;
         p->since_ms = now_ms;
@@ -139,6 +142,12 @@ bool wsp_policy_try_ws(const wsp_policy_t *p, uint32_t now_ms)
     if (!p->fallback) return true;
     /* Unsigned subtraction, so the comparison survives the millisecond clock wrapping. */
     return (uint32_t)(now_ms - p->since_ms) >= WSP_FALLBACK_RETRY_MS;
+}
+
+bool wsp_retry_quiet(uint32_t now_ms, uint32_t last_http_ms, int http_waiting)
+{
+    if (http_waiting > 0) return false;
+    return (uint32_t)(now_ms - last_http_ms) >= WSP_RETRY_QUIET_MS;
 }
 
 uint32_t wsp_backoff_ms(int fails)

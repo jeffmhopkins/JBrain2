@@ -6787,7 +6787,13 @@ validation. Nothing panel-specific lives in the socket code, so the two paths ca
 **every HTTP route is unchanged**: a panel on older firmware keeps working through the rollout.
 Only the panel routes are reachable over it (`_ALLOWED`); the OTA image and `/jpanel/events` are
 deliberately not. The connection is authenticated at the upgrade with the same bearer device key,
-and a revoke closes it at once.
+and a revoke closes it at once. The replay's URL is fixed (`http://panel.internal`) and the
+panel's Host is passed on only as a header, and only when it is a plain `host[:port]` — built
+into the URL, a crafted Host (`x/api/debug/reach?`) would have steered an allowed path to any
+route. The replay keeps no cookies between requests. An upload whose body stops arriving for 30 s
+is answered 408 and its slot freed (the panel also sends `cancel` when its own upload fails).
+Registration happens before the old connection is closed, so two upgrades racing for one device
+leave exactly one live socket.
 
 **The protocol** is JSON control frames plus binary frames `[id u32 LE][bytes]` for bodies, both
 ways; `panel_ws.py`'s docstring is the reference and `firmware/main/wsproto.h` spells the same
@@ -6812,9 +6818,14 @@ once*. One owner task holds the socket (connect, a heartbeat every 20 s, a dead-
 `link_request`, exactly where they used to block in `esp_http_client`. While the socket is the
 transport and is reconnecting, a request does **not** open its own HTTPS session as a shortcut —
 that would be the second handshake — it waits up to 8 s and otherwise fails with the socket's
-real error. **Fallback:** after three failed attempts (or at once, on a 404/405 upgrade — a box
-without the route), the panel goes back to one HTTPS session per request, serialised by one lock
-the socket's retry also takes, and tries the socket again every ten minutes. A socket the box
+real error. **Fallback:** after three failed attempts (or at once, when the upgrade is answered
+403, 404 or 405 — a box without the route; Starlette refuses a WebSocket to an unrouted path with
+403, and a refused key arrives as 403 too, since the box's 4401 close is sent before the upgrade
+is accepted), the panel goes back to one HTTPS session per request, serialised by one lock, and
+tries the socket again every ten minutes. That retry never queues on the lock: it waits for a
+moment with no HTTPS request waiting and none for 5 s, holds the lock only for its own (6 s
+bounded) handshake, and marks the socket up BEFORE releasing it, so a request that queued behind
+it re-checks and goes over the socket instead of opening a second session. A socket the box
 accepts and then drops before it has stayed up 30 s counts as a failure, so a revoked key cannot
 become a two-second handshake loop. **OTA stays on `esp_https_ota`** but closes the socket first
 (`link_suspend`) so the download is the only session, then reopens it if the install failed.

@@ -45,6 +45,13 @@ static const char *TAG = "link";
    long enough for one handshake, short of every caller's own patience. */
 #define LINK_UP_WAIT_MS 8000
 #define LINK_CONNECT_MS 15000
+/* A retry from the fallback holds the HTTPS lock while it handshakes, and a request that arrives
+   meanwhile waits for it; so it gives up sooner than a first connect. A box that is reachable
+   answers in one or two seconds. */
+#define LINK_RETRY_CONNECT_MS 6000
+/* How long an OTA's suspend waits for the socket to be gone: a TLS connect already under way
+   cannot be interrupted short of its own network timeout (10 s), then the close (2 s). */
+#define LINK_SUSPEND_MS 30000
 #define LINK_SEND_MS 10000
 /* A body that has stopped flowing for this long is a connection that has died under it. */
 #define LINK_STALL_MS 20000
@@ -115,6 +122,9 @@ static char s_err[96];
 static char s_http_err[96];
 static uint8_t *s_http_tmp; /* one HTTPS read, PSRAM; only the holder of `s_http_lock` uses it */
 static bool s_suspend_holds_http;
+/* The fallback's traffic, for the retry to find a quiet moment in (`wsp_retry_quiet`). */
+static volatile uint32_t s_last_http_ms;
+static int s_http_waiting; /* touched only through __atomic builtins */
 static void (*s_event_fn)(const char *why);
 
 static uint32_t now_ms(void)
@@ -246,8 +256,10 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t event, void *data)
     case WEBSOCKET_EVENT_CLOSED:
     case WEBSOCKET_EVENT_DISCONNECTED:
         if (d != NULL && d->close_status_code != 0) {
-            /* 4000 replaced, 4401 not authenticated, 4403 revoked, 4408 idle — the box's own
-               account of why it hung up, which is worth more than any guess from this end. */
+            /* 4000 replaced, 4403 revoked, 4408 idle, 4400 protocol — the box's own account of
+               why it hung up, which is worth more than any guess from this end. (A refused key
+               never gets here: the box closes before accepting, which arrives as `upgrade
+               hs=403`.) */
             snprintf(s_err, sizeof(s_err), "closed=%d", d->close_status_code);
         }
         xEventGroupSetBits(s_ev, EV_DOWN);
@@ -303,7 +315,7 @@ static void teardown(bool graceful)
     esp_websocket_client_destroy(h);
 }
 
-static bool connect_once(void)
+static bool connect_once(uint32_t timeout_ms)
 {
     esp_websocket_client_config_t wc = {
         .uri = s_uri,
@@ -344,8 +356,19 @@ static bool connect_once(void)
         snprintf(s_err, sizeof(s_err), "ws-start");
         return false;
     }
-    const EventBits_t bits = xEventGroupWaitBits(s_ev, EV_UP | EV_DOWN, pdFALSE, pdFALSE,
-                                                 pdMS_TO_TICKS(LINK_CONNECT_MS));
+    /* A suspend cuts the wait short: the OTA waiting on it should not also wait out a handshake
+       to a box that is not answering. */
+    const uint32_t began = now_ms();
+    EventBits_t bits = 0;
+    while (true) {
+        const uint32_t spent = now_ms() - began;
+        if (spent >= timeout_ms) break;
+        bits = xEventGroupWaitBits(s_ev, EV_UP | EV_DOWN | EV_WAKE, pdFALSE, pdFALSE,
+                                   pdMS_TO_TICKS(timeout_ms - spent));
+        if (bits & (EV_UP | EV_DOWN)) break;
+        if (s_suspended) return false;
+        xEventGroupClearBits(s_ev, EV_WAKE);
+    }
     if ((bits & EV_UP) && !(bits & EV_DOWN)) return true;
     if (!(bits & (EV_UP | EV_DOWN))) snprintf(s_err, sizeof(s_err), "connect-timeout");
     return false;
@@ -413,9 +436,29 @@ static void owner_task(void *arg)
         }
         /* THE HANDSHAKE TAKES THE SAME LOCK AS AN HTTPS REQUEST. In fallback a request may be
            mid-flight on its own session; retrying the socket on top of it would be the two
-           concurrent handshakes this whole module exists to prevent. */
-        xSemaphoreTake(s_http_lock, portMAX_DELAY);
-        const bool up = !s_suspended && connect_once();
+           concurrent handshakes this whole module exists to prevent. And a retry from the
+           fallback never WAITS for that lock — it waits for a quiet moment, so a talk turn is
+           never queued behind it except for the second or two a handshake takes. */
+        const bool retrying = s_fallback;
+        if (retrying) {
+            const int waiting = __atomic_load_n(&s_http_waiting, __ATOMIC_SEQ_CST);
+            if (!wsp_retry_quiet(now, s_last_http_ms, waiting) ||
+                xSemaphoreTake(s_http_lock, 0) != pdTRUE) {
+                nap(1000);
+                continue;
+            }
+        } else {
+            xSemaphoreTake(s_http_lock, portMAX_DELAY);
+        }
+        const bool up =
+            !s_suspended && connect_once(retrying ? LINK_RETRY_CONNECT_MS : LINK_CONNECT_MS);
+        if (up) {
+            /* FLIPPED BEFORE THE LOCK IS GIVEN: a request queued on it then finds the socket up
+               and takes it (`http_request` re-checks), instead of opening a second session
+               beside it. */
+            s_fallback = false;
+            s_up = true;
+        }
         xSemaphoreGive(s_http_lock);
         if (!up) {
             teardown(false);
@@ -427,8 +470,6 @@ static void owner_task(void *arg)
             if (!s_fallback) nap(wsp_backoff_ms(s_policy.fails));
             continue;
         }
-        s_fallback = false;
-        s_up = true;
         s_connects++;
         ESP_LOGI(TAG, "socket up (%u) — internal free %u, low-water %u", s_connects,
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -590,6 +631,8 @@ static link_res_t ws_request(const link_req_t *r)
         memcpy(s->tx + WSP_ID_BYTES, r->body + off, n);
         if (ws_send(true, s->tx, (int)(n + WSP_ID_BYTES)) < 0) {
             res.err = "upload-stall";
+            /* Told, so the box frees the request's slot now rather than when it ages out. */
+            cancel(s->id);
             release(s);
             return res;
         }
@@ -693,9 +736,18 @@ static void http_err(esp_http_client_handle_t c, esp_err_t err)
 static link_res_t http_request(const link_req_t *r)
 {
     link_res_t res = {.status = -1, .err = ""};
-    if (xSemaphoreTake(s_http_lock, pdMS_TO_TICKS(r->timeout_ms)) != pdTRUE) {
+    __atomic_add_fetch(&s_http_waiting, 1, __ATOMIC_SEQ_CST);
+    const bool got = xSemaphoreTake(s_http_lock, pdMS_TO_TICKS(r->timeout_ms)) == pdTRUE;
+    __atomic_sub_fetch(&s_http_waiting, 1, __ATOMIC_SEQ_CST);
+    if (!got) {
         res.err = "http-busy";
         return res;
+    }
+    /* The lock may have been held by a retry that brought the socket back: then this request
+       is the socket's, and opening an HTTPS session now would be a second one beside it. */
+    if (!s_fallback && s_up) {
+        xSemaphoreGive(s_http_lock);
+        return ws_request(r);
     }
     char url[288];
     char auth[256];
@@ -783,6 +835,7 @@ static link_res_t http_request(const link_req_t *r)
 
 done:
     esp_http_client_cleanup(c);
+    s_last_http_ms = now_ms();
     xSemaphoreGive(s_http_lock);
     return res;
 }
@@ -817,7 +870,9 @@ void link_suspend(void)
     xEventGroupSetBits(s_ev, EV_WAKE);
     /* Parked means the socket is destroyed and its session's memory is back. Bounded: a stuck
        teardown must not stop an update that is the one thing that could fix it. */
-    xEventGroupWaitBits(s_ev, EV_PARKED, pdFALSE, pdFALSE, pdMS_TO_TICKS(LINK_CONNECT_MS + 5000));
+    const EventBits_t parked = xEventGroupWaitBits(s_ev, EV_PARKED, pdFALSE, pdFALSE,
+                                                   pdMS_TO_TICKS(LINK_SUSPEND_MS));
+    if (!(parked & EV_PARKED)) ESP_LOGW(TAG, "socket still closing after %d ms", LINK_SUSPEND_MS);
     /* And no fallback request is mid-session either. Held until `link_resume`. */
     s_suspend_holds_http = xSemaphoreTake(s_http_lock, pdMS_TO_TICKS(60000)) == pdTRUE;
     ESP_LOGI(TAG, "suspended — internal free %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));

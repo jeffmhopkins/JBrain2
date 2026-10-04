@@ -34,10 +34,15 @@
 /* HOW MANY TIMES THE SOCKET MAY FAIL TO COME UP BEFORE THE PANEL STOPS INSISTING ON IT.
    After this it falls back to one HTTPS request per connection — the 0.3.38 behaviour, which
    is exactly right for a box that predates the socket route — and tries the socket again every
-   `WSP_FALLBACK_RETRY_MS`. A box that answers the upgrade with 404 or 405 has no such route at
-   all, which is not a transient fault worth three attempts: that falls back at once. */
+   `WSP_FALLBACK_RETRY_MS`. A box that answers the upgrade with 403 (what Starlette says for a
+   WebSocket path it has no route for), 404 or 405 has no such route at all, which is not a
+   transient fault worth three attempts: that falls back at once. */
 #define WSP_FALLBACK_AFTER 3
 #define WSP_FALLBACK_RETRY_MS (10 * 60 * 1000)
+/* A retry from the fallback waits for a gap this long in the HTTPS requests, and for none to be
+   waiting: its handshake and a request's cannot share the heap, and a talk turn must not sit
+   behind a socket attempt. */
+#define WSP_RETRY_QUIET_MS 5000
 #define WSP_BACKOFF_MIN_MS 2000
 #define WSP_BACKOFF_MAX_MS 60000
 
@@ -90,6 +95,9 @@ void wsp_policy_up(wsp_policy_t *p);
 /* `hs_status` is the HTTP status the upgrade was answered with, 0 when it never got that far. */
 void wsp_policy_failed(wsp_policy_t *p, int hs_status, uint32_t now_ms);
 bool wsp_policy_try_ws(const wsp_policy_t *p, uint32_t now_ms);
+/* Whether now is a quiet enough moment for that retry: no HTTPS request waiting, and none for
+   `WSP_RETRY_QUIET_MS`. Clock-wrap safe. */
+bool wsp_retry_quiet(uint32_t now_ms, uint32_t last_http_ms, int http_waiting);
 /* How long to wait before the next attempt, doubling with consecutive failures. */
 uint32_t wsp_backoff_ms(int fails);
 

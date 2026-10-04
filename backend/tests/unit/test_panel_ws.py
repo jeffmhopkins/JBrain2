@@ -485,3 +485,117 @@ class TestABoxThatCannotAnswer:
             monkeypatch.setattr(conn._http, "request", boom)
             _request(ws, 1, "GET", "/endpoint/firmware")
             assert _response(ws, 1)[0]["s"] == 502
+
+
+class TestAHostileHost:
+    @pytest.mark.parametrize(
+        ("host", "kept"),
+        [
+            ("jbrain.example.com", True),
+            ("192.168.1.20:8443", True),
+            ("[fe80::1]:443", True),
+            ("x/api/debug/reach?", False),
+            ("a@b", False),
+            ("host:80/../debug", False),
+            ("", False),
+        ],
+    )
+    def test_only_a_plain_host_is_passed_on(self, host: str, kept: bool) -> None:
+        assert panel_ws.safe_host(host) == (host if kept else "panel.internal")
+
+    def test_a_crafted_host_cannot_steer_the_replay(self, client: TestClient) -> None:
+        """The replay's URL is fixed; a Host that smuggles a path (`x/api/debug/reach?`) would,
+        as the base URL, have turned an allowed `/endpoint/firmware` into `/api/debug/reach`."""
+        seen: list[str] = []
+        with client.websocket_connect(WS, headers={**_auth(), "host": "x/api/debug/reach?"}) as ws:
+            _hello(ws)
+            (device,) = panel_ws.snapshot()
+            http = panel_ws._live[device]._http
+            assert str(http.base_url) == "http://panel.internal"
+            real = http.request
+
+            async def spy(method: str, url: str, **kw: Any) -> Any:
+                resp = await real(method, url, **kw)
+                seen.append(str(resp.request.url))
+                return resp
+
+            cast(Any, http).request = spy
+            _request(ws, 1, "GET", "/endpoint/firmware")
+            head, body = _response(ws, 1)
+        assert head["s"] == 200 and "version" in json.loads(body)
+        assert seen == ["http://panel.internal/api/endpoint/firmware"]
+
+
+class TestAnUploadThatStops:
+    def test_a_stalled_upload_is_answered_and_its_slot_freed(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A panel whose socket half-dies mid-upload cannot say `cancel`; left alone, four of
+        those would answer every later request 429."""
+        monkeypatch.setattr(panel_ws, "REAP_S", 0.05)
+        monkeypatch.setattr(panel_ws, "PENDING_STALL_S", 0.1)
+        with _connect(client) as ws:
+            _hello(ws)
+            (device,) = panel_ws.snapshot()
+            req = {"t": "req", "id": 7, "m": "POST", "p": "/endpoint/converse", "len": 100}
+            ws.send_text(json.dumps(req))
+            ws.send_bytes(struct.pack("<I", 7) + b"x" * 10)
+            head, _ = _response(ws, 7)
+            assert head["s"] == 408
+            assert panel_ws._live[device]._pending == {}
+            assert panel_ws.snapshot()[device]["failed"] == 1
+
+
+class _FakeSocket:
+    """Just enough of a Starlette WebSocket for `PanelSocket.run`, with a close that takes its
+    time — the window in which two upgrades for one device race."""
+
+    def __init__(self, gate: asyncio.Event) -> None:
+        self.client = None
+        self.headers: dict[str, str] = {}
+        self.app = FastAPI()
+        self.closed_with: int | None = None
+        self._gate = gate
+        self._gone = asyncio.Event()
+
+    async def send_text(self, _text: str) -> None:
+        return None
+
+    async def receive(self) -> dict[str, Any]:
+        await self._gone.wait()
+        return {"type": "websocket.disconnect"}
+
+    async def close(self, code: int) -> None:
+        await self._gate.wait()
+        if self.closed_with is None:
+            self.closed_with = code
+        self._gone.set()
+
+
+class TestRacingUpgrades:
+    def test_two_upgrades_at_once_leave_one_live_socket(self) -> None:
+        async def scenario() -> None:
+            gate = asyncio.Event()
+            principal = auth_service.PrincipalInfo(id="dev-1", kind="device_key", label="p")
+            socks = [_FakeSocket(gate) for _ in range(3)]
+            conns = [panel_ws.PanelSocket(cast(Any, s), principal, "k") for s in socks]
+            runs = [asyncio.ensure_future(conns[0].run())]
+            await asyncio.sleep(0)
+            runs += [asyncio.ensure_future(c.run()) for c in conns[1:]]
+            for _ in range(5):
+                await asyncio.sleep(0)
+            gate.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert panel_ws._live == {"dev-1": conns[2]}
+            assert socks[0].closed_with == 4000 and socks[1].closed_with == 4000
+            assert socks[2].closed_with is None
+            await panel_ws.disconnect(["dev-1"], 1000)
+            await asyncio.gather(*runs)
+            assert panel_ws._live == {}
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            panel_ws._live.clear()
+            panel_ws._replaced.clear()

@@ -41,7 +41,9 @@ spells the same thing from the other end.
 
 ONE CONNECTION PER DEVICE. A panel that reconnects (Wi-Fi blip, reboot, a half-open socket it
 gave up on) replaces its old connection, which is closed with 4000. Close codes: 4401 not
-authenticated, 4000 replaced, 4408 idle (no frame for `IDLE_S`), 4400 protocol error, 4403
+authenticated (sent before the upgrade is accepted, so a client actually SEES an HTTP 403 —
+the same answer a box without this route gives, which is why the panel falls back on 403 at
+once), 4000 replaced, 4408 idle (no frame for `IDLE_S`), 4400 protocol error, 4403
 revoked.
 
 Rules: no LLM (#1 n/a). No new table (#3 n/a) — the registry is process memory describing live
@@ -57,6 +59,7 @@ import re
 import struct
 import time
 from dataclasses import dataclass, field
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, cast
 
 import httpx
@@ -94,6 +97,22 @@ MAX_BODY = 2 * 1024 * 1024
 MAX_INFLIGHT = 4
 #: A control frame is a few hundred bytes. Anything bigger is not a control frame.
 MAX_TEXT = 4096
+#: An upload whose body has not advanced for this long is abandoned and its slot freed. A panel
+#: whose upload fails says `cancel`, but one whose socket half-dies mid-upload cannot, and four
+#: such leftovers would answer every later request 429 until the socket closed.
+PENDING_STALL_S = 30.0
+#: How often the stalled uploads are looked for.
+REAP_S = 5.0
+
+#: The base URL of the in-process replay. FIXED, never built from anything the client sent: a
+#: crafted Host (`x/api/debug/reach?`) would otherwise steer the replayed path past `_ALLOWED`.
+_BASE_URL = "http://panel.internal"
+#: What a Host header may look like to be passed on to the route — hostname or IPv4, optional
+#: port, or a bracketed IPv6 literal. Anything else is replaced by `_BASE_URL`'s host.
+_HOST_RE = re.compile(
+    r"(?:[A-Za-z0-9][A-Za-z0-9.-]{0,252}|\[[0-9A-Fa-f:.]{2,45}\])"  # name, IPv4 or [IPv6]
+    r"(?::\d{1,5})?"  # and a port
+)
 
 #: Bound at import. Tests (and nothing else) monkeypatch `httpx.AsyncClient` module-wide to fake
 #: the box's own outbound calls; the tunnel must keep the real client either way.
@@ -154,7 +173,10 @@ class _Pending:
     headers: dict[str, str]
     length: int
     window: int
-    body: bytearray = field(default_factory=bytearray)
+    #: The body as it arrived, joined once at dispatch — one copy, not one per chunk and another.
+    chunks: list[bytes] = field(default_factory=list)
+    got: int = 0
+    last_progress: float = field(default_factory=time.monotonic)
 
 
 @dataclass
@@ -209,6 +231,14 @@ def snapshot() -> dict[str, dict[str, Any]]:
     return out
 
 
+def safe_host(host: str | None) -> str:
+    """The Host a replayed request carries: the panel's own when it is a plain host[:port], the
+    fixed internal name otherwise."""
+    if host and _HOST_RE.fullmatch(host):
+        return host
+    return _BASE_URL.removeprefix("http://")
+
+
 def is_connected(device_id: str) -> bool:
     return device_id in _live
 
@@ -254,18 +284,24 @@ class PanelSocket:
     def _client(websocket: WebSocket) -> httpx.AsyncClient:
         """An in-process HTTP client onto this very app, carrying what a direct request would.
 
-        The Host header is the one the panel connected with, so a route that derives a URL from
-        its own request (the firmware manifest) answers exactly what it answers over HTTPS. The
-        client address and `X-Forwarded-For` are the socket's, so `nudge.remember` still learns
-        where the panel is."""
-        host = websocket.headers.get("host", "localhost")
+        The URL is fixed (`_BASE_URL`); the Host HEADER is the one the panel connected with, when
+        it is a plain host[:port], so a route that derives a URL from its own request (the
+        firmware manifest) answers exactly what it answers over HTTPS. The client address and
+        `X-Forwarded-For` are the socket's, so `nudge.remember` still learns where the panel is.
+        No cookies: a jar would carry one request's Set-Cookie into the next."""
         client = websocket.client
         transport = _ASGITransport(
             app=websocket.app,
             raise_app_exceptions=False,
             client=(client.host, client.port) if client else ("127.0.0.1", 0),
         )
-        return _AsyncClient(transport=transport, base_url=f"http://{host}", timeout=None)
+        return _AsyncClient(
+            transport=transport,
+            base_url=_BASE_URL,
+            headers={"host": safe_host(websocket.headers.get("host"))},
+            cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            timeout=None,
+        )
 
     # --- sending ----------------------------------------------------------------------------
 
@@ -288,7 +324,10 @@ class PanelSocket:
     # --- the connection -----------------------------------------------------------------------
 
     async def run(self) -> None:
+        # REGISTERED BEFORE ANYTHING AWAITS: two upgrades racing must each see the other, or
+        # both would close a third and stay live side by side.
         old = _live.get(self.device)
+        _live[self.device] = self
         if old is not None:
             # THE NEW ONE WINS. A panel only reconnects when it has given up on the old socket,
             # so the old one is at best half-open; keeping it would leave events going to a
@@ -296,11 +335,11 @@ class PanelSocket:
             _replaced[self.device] = _replaced.get(self.device, 0) + 1
             log.info("panel_ws.replaced", device=self.device)
             await old.close(4000)
-        _live[self.device] = self
         queue = nudge.attach(self.device)
         background = [
             asyncio.ensure_future(self._heartbeat()),
             asyncio.ensure_future(self._events(queue)),
+            asyncio.ensure_future(self._reap()),
         ]
         log.info("panel_ws.open", device=self.device, label=self.stats.label)
         why = "closed"
@@ -312,10 +351,10 @@ class PanelSocket:
         except WebSocketDisconnect:
             why = "disconnect"
         finally:
-            for t in background:
+            running = [*background, *self.tasks.values()]
+            for t in running:
                 t.cancel()
-            for t in list(self.tasks.values()):
-                t.cancel()
+            await asyncio.gather(*running, return_exceptions=True)
             nudge.detach(self.device, queue)
             if _live.get(self.device) is self:
                 del _live[self.device]
@@ -337,6 +376,15 @@ class PanelSocket:
         while True:
             await asyncio.sleep(HEARTBEAT_S)
             await self._send_json({"t": "hb"})
+
+    async def _reap(self) -> None:
+        while True:
+            await asyncio.sleep(REAP_S)
+            cutoff = time.monotonic() - PENDING_STALL_S
+            for rid in [r for r, p in self._pending.items() if p.last_progress < cutoff]:
+                del self._pending[rid]
+                log.warning("panel_ws.upload_stalled", device=self.device, rid=rid)
+                await self._refuse(rid, 408, "upload stopped arriving")
 
     async def _events(self, queue: asyncio.Queue[str]) -> None:
         while True:
@@ -453,18 +501,21 @@ class PanelSocket:
             # A late chunk for a request that was cancelled or refused. Dropped, not fatal: the
             # panel may have queued it before it read the refusal.
             return True
-        if len(pending.body) + len(chunk) > pending.length:
+        if pending.got + len(chunk) > pending.length:
             del self._pending[rid]
             await self._refuse(rid, 400, "body longer than declared")
             return True
-        pending.body.extend(chunk)
-        if len(pending.body) == pending.length:
+        pending.chunks.append(chunk)
+        pending.got += len(chunk)
+        pending.last_progress = time.monotonic()
+        if pending.got == pending.length:
             del self._pending[rid]
             self._start(pending)
         return True
 
-    async def _refuse(self, rid: int, status: int, detail: str) -> None:
-        self.stats.failed += 1
+    async def _refuse(self, rid: int, status: int, detail: str, *, count: bool = True) -> None:
+        if count:
+            self.stats.failed += 1
         body = json.dumps({"detail": detail}).encode()
         await self._send_json(
             {
@@ -493,9 +544,12 @@ class PanelSocket:
             headers["x-forwarded-for"] = fwd
         status = 0
         answered = False
+        failed = False
+        body_in = b"".join(req.chunks)
+        req.chunks.clear()
         try:
             resp = await self._http.request(
-                req.method, "/api" + req.path, content=bytes(req.body), headers=headers
+                req.method, "/api" + req.path, content=body_in, headers=headers
             )
             status = resp.status_code
             body = resp.content
@@ -521,14 +575,14 @@ class PanelSocket:
                 await self._send_bytes(frame(req.rid, body[sent : sent + n]))
                 sent += n
         except TimeoutError:
-            self.stats.failed += 1
+            failed = True
             log.warning("panel_ws.window_stalled", device=self.device, path=req.path)
         except asyncio.CancelledError:
             raise
         except Exception:
             # The socket died mid-answer, or the app raised past `raise_app_exceptions=False`.
             # Either way this request is over; the connection's own reader decides about the rest.
-            self.stats.failed += 1
+            failed = True
             log.warning(
                 "panel_ws.dispatch_failed", device=self.device, path=req.path, exc_info=True
             )
@@ -536,10 +590,13 @@ class PanelSocket:
             # full fifty-five seconds of a talk turn to learn what the box knows now.
             if not answered:
                 with contextlib.suppress(Exception):
-                    await self._refuse(req.rid, 502, "the box could not answer this request")
+                    await self._refuse(
+                        req.rid, 502, "the box could not answer this request", count=False
+                    )
         finally:
             self._out.pop(req.rid, None)
-            if status >= 400:
+            # Once per request, however many ways it failed.
+            if failed or status >= 400:
                 self.stats.failed += 1
             # The access line uvicorn would have written, since these requests never pass it.
             log.info(
@@ -557,7 +614,8 @@ class PanelSocket:
 async def panel_socket(websocket: WebSocket) -> None:
     """A panel's single connection. Authenticated by the same device key, the same way, as
     every panel route (`Authorization: Bearer <device_key>`, kind-filtered so an owner or
-    capability key resolves to nothing) — refused with 4401 before the upgrade completes."""
+    capability key resolves to nothing). Refused before the upgrade is accepted: the close is
+    4401, but what crosses the wire is an HTTP 403 to the upgrade."""
     key = _bearer(websocket.headers.get("authorization", ""))
     repo = cast(AuthRepo, websocket.app.state.auth_repo)
     principal = await service.authenticate_device(repo, key) if key else None

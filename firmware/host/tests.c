@@ -4013,9 +4013,21 @@ static void test_a_box_with_no_socket_route_falls_back_at_once(void)
     wsp_policy_init(&p);
     wsp_policy_failed(&p, 404, 50);
     CHECK(p.fallback, "404 falls back on the first try");
+    /* And 403 is what an old box ACTUALLY says: Starlette refuses an unrouted WebSocket so. */
     wsp_policy_init(&p);
     wsp_policy_failed(&p, 403, 50);
-    CHECK(!p.fallback, "a refused key is not a missing route");
+    CHECK(p.fallback, "403 falls back on the first try");
+    wsp_policy_init(&p);
+    wsp_policy_failed(&p, 502, 50);
+    CHECK(!p.fallback, "a proxy's bad moment is weather, not a missing route");
+}
+
+static void test_a_retry_from_the_fallback_waits_for_a_quiet_moment(void)
+{
+    CHECK(!wsp_retry_quiet(100000, 99000, 0), "not a second after a request");
+    CHECK(!wsp_retry_quiet(100000, 0, 1), "never while a request waits for the session");
+    CHECK(wsp_retry_quiet(100000, 100000 - WSP_RETRY_QUIET_MS, 0), "after a quiet gap, yes");
+    CHECK(!wsp_retry_quiet(1000u, 0xFFFFFF00u, 0), "and the gap is measured across the wrap");
 }
 
 static void test_the_fallback_clock_survives_a_rollover(void)
@@ -4456,6 +4468,7 @@ int main(void)
     test_the_window_never_lets_the_box_outrun_the_buffer();
     test_the_socket_falls_back_after_three_failures_and_comes_back();
     test_a_box_with_no_socket_route_falls_back_at_once();
+    test_a_retry_from_the_fallback_waits_for_a_quiet_moment();
     test_the_fallback_clock_survives_a_rollover();
     test_the_reconnect_backs_off_and_is_capped();
     test_the_socket_uri_comes_from_the_api_base();
