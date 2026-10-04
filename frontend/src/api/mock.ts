@@ -391,6 +391,9 @@ const SETTINGS: AppSettings = {
   brain_answer_robot: false,
   local_llm_auto_update: true,
   local_llm_patch_restore_checkpoint: false,
+  llm_kv_prefix_budget_gb: 40,
+  llm_kv_conversation_cache: true,
+  llm_kv_restore_gate: "awaiting_probe",
   pronunciation_lexicon: {},
 };
 

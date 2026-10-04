@@ -204,7 +204,11 @@ from jbrain.sdr.resolve import for_purpose
 from jbrain.sdr.roles import Choice
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
-from jbrain.settings_store import LLM_KV_PREFIX_BUDGET_GB_DEFAULT, SqlSettingsStore
+from jbrain.settings_store import (
+    LLM_KV_CONVERSATION_CACHE_DEFAULT,
+    LLM_KV_PREFIX_BUDGET_GB_DEFAULT,
+    SqlSettingsStore,
+)
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.stream import resolve_stream, ytdlp_available
 from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
@@ -606,6 +610,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         kv_budget_gb = LLM_KV_PREFIX_BUDGET_GB_DEFAULT
         with suppress(Exception):
             kv_budget_gb = await settings_store.llm_kv_prefix_budget_gb(SYSTEM_CTX)
+        # The conversation cache toggle (FLASH_NEXT F4c); a hiccup keeps its default.
+        kv_conversations = LLM_KV_CONVERSATION_CACHE_DEFAULT
+        with suppress(Exception):
+            kv_conversations = await settings_store.llm_kv_conversation_cache(SYSTEM_CTX)
         app.state.kv_prefix = KvPrefixStore(
             app.state.local_gateway,
             settings.local_models_dir,
@@ -613,6 +621,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_store_bytes=kv_budget_gb * 1024**3,
             # Which engine's config launch lines are fingerprinted from, re-read per call.
             engine=app.state.active_engine,
+            conversations=kv_conversations,
+            # Restores into a pool are fitted under the same guard every pinned call uses.
+            pool_guard=getattr(app.state, "kv_pool_guard", None),
         )
         app.state.llm_router = build_router(
             settings,

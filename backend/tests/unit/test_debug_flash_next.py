@@ -531,13 +531,20 @@ class _Upstream:
     without --slot-save-path, which refuses every slot action with 501."""
 
     def __init__(
-        self, *, save_path: bool = True, drift: float = 0.0, reprefill: bool = False
+        self,
+        *,
+        save_path: bool = True,
+        drift: float = 0.0,
+        reprefill: bool = False,
+        sidecar_to: Path | None = None,
     ) -> None:
         self.reprefill = reprefill
         self.save_path = save_path
         self.drift = drift
         self.calls: list[str] = []
         self.restored: set[int] = set()
+        # Where a PATCHED server would write the save's checkpoint sidecar; None = stock.
+        self.sidecar_to = sidecar_to
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         import json as _json
@@ -560,6 +567,8 @@ class _Upstream:
                 )
             slot = int(tail.rsplit("/", 1)[1])
             if action == "save":
+                if self.sidecar_to is not None:
+                    self.sidecar_to.write_bytes(b"JBCK")
                 return httpx.Response(
                     200,
                     json={"n_saved": 777, "n_written": 123456, "timings": {"save_ms": 12.5}},
@@ -1220,3 +1229,126 @@ def test_debug_cancel_is_409_outside_draining(box: tuple[TestClient, str, Any]) 
     resp = client.post("/api/debug/llm/engine/cancel", headers=_auth(key))
     assert resp.status_code == 409 and "draining" in resp.json()["detail"]
     assert client.post("/api/debug/llm/engine/cancel").status_code == 401
+
+
+def test_slot_probe_passes_a_restore_within_tolerance_and_fails_a_drifted_one(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4's gate: the restored slot's next-token logprobs within `tolerance` of the cold and
+    warm reads, AND an effective restore. A slot that lost state moves the distribution."""
+    client, key, _ = box
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(_Upstream(drift=0.003)))
+    body = _probe(client, key, synth_tokens=120, n_probs=3).json()
+    assert body["tolerance"] == 0.05
+    assert body["within_tolerance"] is True and body["passed"] is True
+
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(_Upstream(drift=0.5)))
+    body = _probe(client, key, synth_tokens=120, n_probs=3).json()
+    assert body["within_tolerance"] is False and body["passed"] is False
+    # A looser tolerance is the caller's to choose.
+    body = _probe(client, key, synth_tokens=120, n_probs=3, tolerance=1.0).json()
+    assert body["within_tolerance"] is True
+
+    upstream = _Upstream(drift=0.0, reprefill=True)
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(upstream))
+    body = _probe(client, key, synth_tokens=120, n_probs=3).json()
+    assert body["within_tolerance"] is True and body["passed"] is False, "re-prefilled"
+
+
+def test_slot_probe_reports_whether_the_save_wrote_its_checkpoint_sidecar(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, key, _ = box
+    folder = tmp_path / ".kvslots" / "gpt-oss-120b"
+    folder.mkdir(parents=True)
+    sidecar = folder / "debug-slot-probe.bin.ckpt"
+    patched = _Upstream(sidecar_to=sidecar)
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(patched))
+    assert _probe(client, key).json()["sidecar"] is True
+    # A stock build writes none; the previous run's sidecar must not vouch for it.
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(_Upstream()))
+    assert _probe(client, key).json()["sidecar"] is False
+
+
+def test_slot_probe_names_any_slot_pair_on_a_pool(
+    box: tuple[TestClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, key, state = box
+    upstream = _Upstream()
+    monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(upstream))
+    state.local_gateway.n_slots = 8
+    resp = _probe(client, key, prompt="x", slot_a=5, slot_b=6)
+    assert resp.status_code == 200
+    assert upstream.calls[:2] == ["/slots/5?erase", "/slots/6?erase"]
+    assert "/slots/6?restore" in upstream.calls
+
+
+async def test_the_probe_records_the_restore_gate_for_the_running_flash_next(
+    tmp_path: Path,
+) -> None:
+    """kv_prefix restores nothing on Flash-Next until a probe PASSED, sidecar included, against
+    the running launch line and build; the probe is what writes that verdict."""
+    from types import SimpleNamespace
+
+    from jbrain.llm import engine as engines
+    from jbrain.llm import kv_prefix, llama_swap_config
+
+    served = "qwen3.8-flash-next"
+    line = f"llama-server -c 524288 --slot-save-path /models/.kvslots/{served} --port 9001"
+    (tmp_path / engines.CONFIG_FILE[engines.FLASH_NEXT]).write_text(
+        f"models:\n  {served}:\n    cmd: {line}\n"
+    )
+    folder = tmp_path / llama_swap_config.KVSLOT_DIR / served
+    folder.mkdir(parents=True)
+
+    class _Gateway:
+        async def props(self, _served: str) -> dict[str, object]:
+            return {"build_info": "b1-869034b"}
+
+    class _Store:
+        def __init__(self) -> None:
+            self.forgot: list[str] = []
+
+        def forget_gate(self, served_model: str) -> None:
+            self.forgot.append(served_model)
+
+    store = _Store()
+    gw: Any = _Gateway()
+    request: Any = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(kv_prefix=store)))
+    got = await debug._record_restore_gate(
+        request,
+        str(tmp_path),
+        gw,
+        engines.FLASH_NEXT,
+        served,
+        passed=True,
+        detail={"sidecar": True},
+    )
+    assert got == "passed" and store.forgot == [served]
+    verdict = kv_prefix.read_gate_verdict(str(folder))
+    assert verdict is not None
+    assert verdict["fingerprint"] == kv_prefix.gate_fingerprint(line, "b1-869034b")
+    assert verdict["verdict"] == "passed"
+    got = await debug._record_restore_gate(
+        request,
+        str(tmp_path),
+        gw,
+        engines.FLASH_NEXT,
+        served,
+        passed=False,
+        detail={},
+    )
+    assert got == "failed"
+    # A model without the gate records nothing.
+    assert (
+        await debug._record_restore_gate(
+            request,
+            str(tmp_path),
+            gw,
+            engines.STANDARD,
+            "gpt-oss-120b",
+            passed=True,
+            detail={},
+        )
+        is None
+    )

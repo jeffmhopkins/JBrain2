@@ -1082,7 +1082,13 @@ class _RecordingKvStore:
         self._dispatched = dispatched
 
     async def restore_if_lost(
-        self, served: str, system: str, tools, *, reasoning_effort: str | None = None
+        self,
+        served: str,
+        system: str,
+        tools,
+        *,
+        reasoning_effort: str | None = None,
+        role: object = None,
     ) -> bool:
         assert not self._dispatched, "restore must run BEFORE the turn is dispatched"
         self.restores.append((served, system, len(list(tools)), reasoning_effort))
@@ -1096,13 +1102,30 @@ class _RecordingKvStore:
         return f"{served}|{system}|{len(list(tools))}|{reasoning_effort}"
 
     def note_agent_turn(
-        self, served: str, input_tokens: int, *, fingerprint: str | None = None
+        self,
+        served: str,
+        input_tokens: int,
+        *,
+        fingerprint: str | None = None,
+        role: object = None,
     ) -> None:
         self.noted.append((served, input_tokens))
         self.named.append(fingerprint)
 
-    def note_prefix_used(self, served: str, fingerprint: str | None) -> None:
+    def note_prefix_used(
+        self, served: str, fingerprint: str | None, *, role: object = None
+    ) -> None:
         self.used.append((served, fingerprint))
+
+    # The conversation hooks (FLASH_NEXT F4c) apply on a pooled model only; these routes are
+    # standard models, where the store itself ignores them.
+    def note_conversation_turn(
+        self, served: str, key: object, messages: object, **kw: object
+    ) -> None:
+        return None
+
+    def note_conversation_abandoned(self, served: str) -> None:
+        return None
 
 
 async def test_an_agent_turn_on_a_local_model_checks_the_disk_prefix_first() -> None:

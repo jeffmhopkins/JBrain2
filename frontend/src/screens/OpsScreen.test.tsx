@@ -761,6 +761,64 @@ describe("OpsScreen", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
+  it("lets the owner turn the chat cache off and set its disk budget", async () => {
+    // FLASH_NEXT_ENGINE_PLAN F4: both knobs live in the PWA, never in a host file.
+    const puts: unknown[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/settings") && init?.method === "PUT") {
+        puts.push(JSON.parse(String(init.body)));
+        return json({});
+      }
+      if (url.endsWith("/api/settings")) {
+        return json({
+          llm_kv_conversation_cache: true,
+          llm_kv_prefix_budget_gb: 40,
+          llm_kv_restore_gate: "failed",
+        });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+
+    const toggle = await screen.findByRole("switch", { name: /Keep chats on disk/ });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    // The privacy scope and the restore gate are said where the switch is.
+    expect(screen.getByText(/Brain chats never leave the database/)).toBeInTheDocument();
+    expect(screen.getAllByText(/slot check failed/).length).toBeGreaterThan(0);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(puts).toEqual([{ llm_kv_conversation_cache: false }]));
+
+    const budget = screen.getByRole("combobox", { name: "Prompt cache disk budget" });
+    await waitFor(() => expect(budget).toHaveValue("40"));
+    fireEvent.change(budget, { target: { value: "80" } });
+    await waitFor(() =>
+      expect(puts).toEqual([{ llm_kv_conversation_cache: false }, { llm_kv_prefix_budget_gb: 80 }]),
+    );
+    expect(budget).toHaveValue("80");
+  });
+
+  it("shows a stored budget outside the presets and puts it back on a refusal", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/settings") && init?.method === "PUT") {
+        return new Response(null, { status: 500 });
+      }
+      if (url.endsWith("/api/settings")) {
+        return json({ llm_kv_conversation_cache: true, llm_kv_prefix_budget_gb: 33 });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+
+    const budget = await screen.findByRole("combobox", { name: "Prompt cache disk budget" });
+    await waitFor(() => expect(budget).toHaveValue("33"));
+    fireEvent.change(budget, { target: { value: "120" } });
+    await waitFor(() => expect(budget).toHaveValue("33"));
+  });
+
   it("puts the toggle back if the box refuses the change", async () => {
     // A switch that shows a state the box did not accept is worse than no switch.
     fetchMock.mockImplementation(async (input, init) => {

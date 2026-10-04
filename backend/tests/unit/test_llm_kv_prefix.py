@@ -17,10 +17,12 @@ from typing import Any
 
 import pytest
 
+import jbrain.llm.kv_prefix as _kv_prefix_mod
 from jbrain import box_events
 from jbrain.llm import kv_prefix, llama_swap_config, local_catalog
 from jbrain.llm.kv_prefix import MIN_PREFIX_TOKENS, KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayError
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmTool
 
 PRIME = 28757  # the measured jerv prefix on gpt-oss-120b — a realistic count
@@ -36,6 +38,13 @@ MODEL_ID = "qwen3-vl-30b"
 _LIVE_SLOT: dict[str, object] = json.loads(
     (Path(__file__).parent / "fixtures" / "llama_slots_idle.json").read_text()
 )["slot"]
+
+
+@pytest.fixture(autouse=True)
+def _roomy_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store refuses a save that would leave the volume under 20 GiB free; a test's
+    scratch disk is not the box's models volume."""
+    monkeypatch.setattr(_kv_prefix_mod, "_free_bytes", lambda _folder: 10**13)
 
 
 def fresh_slot(**over: object) -> dict[str, object]:
@@ -996,7 +1005,10 @@ async def test_clear_takes_the_files_and_the_state_that_described_them(root: Pat
     path = _plant_file(root, store, "persona")
     os.write(os.open(str(path) + ".ckpt", os.O_CREAT | os.O_WRONLY), b"\0" * 8)
     _seed_prime(store, "persona")
-    store._restored_unused[SERVED] = _fingerprint_of(store, "persona")
+    store._restored_unused[(SERVED, SlotRole.INTERACTIVE)] = (
+        _fingerprint_of(store, "persona"),
+        0.0,
+    )
 
     out = await store.clear()
 

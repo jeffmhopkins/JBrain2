@@ -90,7 +90,15 @@ from jbrain.api.settings import get_settings_store
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
-from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage, local_catalog
+from jbrain.llm import (
+    AssistantMessage,
+    LlmImage,
+    LlmMessage,
+    LlmRouter,
+    UserMessage,
+    kv_conversation,
+    local_catalog,
+)
 from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.llm.kv_pool_guard import KvPoolBusyError
 from jbrain.llm.providers import REASONING_EFFORTS
@@ -822,6 +830,49 @@ def _conversation(
     return messages
 
 
+async def _disk_conversation_key(
+    request: Request, owner_ctx: SessionContext, session: AgentSessionInfo, profile: Any
+) -> str | None:
+    """The conversation key that lets this chat's slot state reach disk (FLASH_NEXT F4c), or
+    None to keep it in RAM. A slot file sits outside Postgres's domain firewalls, so only a
+    chat that cannot hold firewalled or private data gets one (`kv_conversation.cache_allowed`):
+    which includes no location, mail or records tool having run in ANY of its turns — read off
+    the transcript, so it holds across restarts. Anything unreadable keeps it in RAM."""
+    if not kv_conversation.cache_allowed(
+        reads_knowledge_base=profile.reads_knowledge_base,
+        persona_tools=(
+            None if profile.tools is None else profile.tools | (profile.extra_tools or frozenset())
+        ),
+        domain_scopes=session.domain_scopes,
+        subject_ids=session.subject_ids,
+        tools_ran=(),
+    ):
+        return None
+    # A session once scoped to a firewalled domain stays off disk for good (api/sessions
+    # records it at the re-scope).
+    settings_store = getattr(request.app.state, "settings_store", None)
+    excluded_reader = getattr(settings_store, "llm_kv_conversation_excluded", None)
+    if excluded_reader is None:
+        return None
+    try:
+        excluded = await excluded_reader(owner_ctx)
+    except Exception:  # noqa: BLE001 — unknown exclusions keep the chat off disk
+        log.warning("agent.kv_conversation_exclusions_unread", exc_info=True)
+        return None
+    if "*" in excluded or session.id in excluded:
+        return None
+    transcript = get_agent_transcript(request)
+    tool_names = getattr(transcript, "tool_names", None)
+    if tool_names is None:
+        return None
+    try:
+        ran = await tool_names(owner_ctx, session.id)
+    except Exception:  # noqa: BLE001 — unknown history keeps the chat off disk
+        log.warning("agent.kv_conversation_history_unread", exc_info=True)
+        return None
+    return None if kv_conversation.any_excluded(ran) else str(session.id)
+
+
 @router.post("/chat")
 async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> StreamingResponse:
     owner_ctx = ctx_for(principal)
@@ -1062,6 +1113,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # before the step loop, so nothing can be armed mid-turn anyway).
     canvas_hidden = await canvas_hidden_tools(router, model_override, profile.tools or frozenset())
     hidden_provider = compose_hidden_tools(canvas_hidden)
+    conversation_key = await _disk_conversation_key(request, owner_ctx, session, profile)
     loop = AgentLoop(
         router,
         get_agent_registry(request),
@@ -1071,6 +1123,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         effort_override=effort_override,
         hidden_tools_provider=hidden_provider,
         slot_role=SlotRole.INTERACTIVE,
+        # Named only for a chat that cannot hold firewalled data — its slot state may then be
+        # written to disk (FLASH_NEXT F4c). A Brain/curator chat never is.
+        conversation_key=conversation_key,
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain

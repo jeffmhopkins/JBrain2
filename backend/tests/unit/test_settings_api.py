@@ -64,6 +64,9 @@ def test_get_settings_defaults_to_full_analysis(
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
         "local_llm_patch_restore_checkpoint": False,
+        "llm_kv_prefix_budget_gb": 40,
+        "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
@@ -86,6 +89,9 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
         "local_llm_patch_restore_checkpoint": False,
+        "llm_kv_prefix_budget_gb": 40,
+        "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
     assert store.values["image_analysis_mode"] == "ocr"
@@ -103,6 +109,9 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
         "local_llm_patch_restore_checkpoint": False,
+        "llm_kv_prefix_budget_gb": 40,
+        "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
@@ -120,6 +129,9 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
         "local_llm_patch_restore_checkpoint": False,
+        "llm_kv_prefix_budget_gb": 40,
+        "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
@@ -144,6 +156,9 @@ def test_put_settings_round_trips_the_timezone(
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
         "local_llm_patch_restore_checkpoint": False,
+        "llm_kv_prefix_budget_gb": 40,
+        "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
     assert store.values["owner_timezone"] == "America/New_York"
@@ -360,6 +375,9 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
         "local_llm_patch_restore_checkpoint": False,
+        "llm_kv_prefix_budget_gb": 40,
+        "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
@@ -431,3 +449,39 @@ def test_a_mangled_callsign_is_refused_not_cleaned(
     # Refused rather than stripped: a callsign that quietly lost a character filters for
     # a station that does not exist, and an empty heard log reads as a deaf radio.
     assert c.put("/api/settings", json={"owner_callsign": bad}).status_code == 422
+
+
+def test_the_prompt_cache_budget_and_conversation_toggle_round_trip_and_apply_live(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    """The owner's two prompt-cache knobs (FLASH_NEXT_ENGINE_PLAN F4c): stored, bounded at the
+    edge like the debug twin, and handed to the api's live store without a restart."""
+    c, store = client
+
+    class _Live:
+        def __init__(self) -> None:
+            self.applied: list[dict[str, object]] = []
+
+        def configure(self, **kw: object) -> None:
+            self.applied.append(kw)
+
+        async def clear_conversations(self) -> int:
+            self.applied.append({"cleared": True})
+            return 0
+
+    live = _Live()
+    c.app.state.kv_prefix = live  # type: ignore[attr-defined]
+    got = c.put(
+        "/api/settings", json={"llm_kv_prefix_budget_gb": 60, "llm_kv_conversation_cache": False}
+    ).json()
+    assert got["llm_kv_prefix_budget_gb"] == 60 and got["llm_kv_conversation_cache"] is False
+    assert store.values["llm_kv_prefix_budget_gb"] == 60
+    assert store.values["llm_kv_conversation_cache"] is False
+    # Off also deletes every saved conversation file.
+    assert live.applied == [
+        {"max_store_bytes": 60 * 1024**3},
+        {"conversations": False},
+        {"cleared": True},
+    ]
+    assert c.put("/api/settings", json={"llm_kv_prefix_budget_gb": 1}).status_code == 422
+    assert c.put("/api/settings", json={"llm_kv_prefix_budget_gb": 501}).status_code == 422

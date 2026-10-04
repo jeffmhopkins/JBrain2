@@ -25,6 +25,14 @@ resides and warms it. Two subtleties it handles:
     once; it no-ops only after it has primed the current (model, hidden) — so a real jerv turn's
     growing conversation KV is never clobbered by a redundant re-prime.
 
+On a POOLED model (Flash-Next's role-pinned slots) the disk layer works per role
+(FLASH_NEXT_ENGINE_PLAN §4b, F4): jerv's prime is saved from slot 0 and restored into slot 0,
+and once settled each tick also puts the same file back into the scheduled-task slot when that
+slot is empty — scheduled turns run jerv's persona and tools — and saves the interactive slot's
+conversation once it has idled (`KvPrefixStore.save_idle_conversation`). Restores only, never a
+prime: a second ~60 s prefill right after a load competed with the owner's first turn, which is
+why F3a dropped role priming.
+
 Best-effort throughout: a down gateway, a full box, the code-mode hold, or a failed prime is
 logged and retried on the next tick, never raised into boot or a turn.
 """
@@ -44,8 +52,8 @@ from jbrain.llm import local_catalog
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.slot_roles import WARM_ROLE
-from jbrain.llm.types import UserMessage
+from jbrain.llm.slot_roles import WARM_ROLE, SlotRole
+from jbrain.llm.types import LlmTool, UserMessage
 
 log = structlog.get_logger()
 
@@ -53,6 +61,15 @@ log = structlog.get_logger()
 # The task the prime routes as — the interactive chat turn (jerv). Priming as this exact task
 # is what makes the primed prefix (model, effort, tools) match a real turn's, so the reuse lands.
 AGENT_TURN_TASK = "agent.turn"
+
+# Pooled roles, beyond the interactive slot, that the keeper restores jerv's saved prefix into.
+# Only roles whose calls send jerv's prefix at the agent task's effort (so the same file is
+# their own identity): scheduled tasks and plan continuations (tasks/runner.py). Left out, as
+# decided: ingest and the pet send ~400-500-token prefixes, under the store's 4096-token floor
+# and under a second of prefill; research has no stable prefix (each sub-agent's persona and
+# the fan's plan differ); jcode, workshop and small prompts own or vary their prompts. Their
+# turns still restore into their own slot on demand if a file of their identity ever exists.
+DISK_RESTORED_ROLES: tuple[SlotRole, ...] = (SlotRole.SCHEDULED,)
 
 
 class WarmKeeper:
@@ -206,10 +223,12 @@ class WarmKeeper:
             if self._kv_prefix is not None:
                 try:
                     await self._kv_prefix.restore_if_lost(
-                        served, system, tools, reasoning_effort=effort
+                        served, system, tools, reasoning_effort=effort, role=WARM_ROLE
                     )
                 except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
                     log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
+                if local_catalog.pool_of(served) is not None:
+                    await self._tend_pooled_roles(served, system, tools, effort)
             return True  # already primed with the current tool set — leave any live conversation be
         # Bring the WEIGHTS up before priming, when the model is cold.
         #
@@ -255,7 +274,7 @@ class WarmKeeper:
         if self._kv_prefix is not None:
             try:
                 await self._kv_prefix.restore_if_lost(
-                    served, system, tools, reasoning_effort=effort
+                    served, system, tools, reasoning_effort=effort, role=WARM_ROLE
                 )
             except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
                 log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
@@ -296,7 +315,12 @@ class WarmKeeper:
         if self._kv_prefix is not None:
             try:
                 await self._kv_prefix.save_after_prime(
-                    served, system, tools, prime_turn.usage.input_tokens, reasoning_effort=effort
+                    served,
+                    system,
+                    tools,
+                    prime_turn.usage.input_tokens,
+                    reasoning_effort=effort,
+                    role=WARM_ROLE,
                 )
             except Exception:  # noqa: BLE001 — a failed save costs a future restore, nothing now
                 log.warning("warm_keeper.kv_save_failed", model=served, exc_info=True)
@@ -307,6 +331,26 @@ class WarmKeeper:
             hidden=sorted(hidden),
         )
         return True
+
+    async def _tend_pooled_roles(
+        self, served: str, system: str, tools: list[LlmTool], effort: str | None
+    ) -> None:
+        """The settled tick's pooled work: jerv's file into each empty restored role slot, and
+        an idle conversation to disk. Every step is the store's own guarded best effort."""
+        store = self._kv_prefix
+        if store is None:
+            return
+        for role in DISK_RESTORED_ROLES:
+            try:
+                await store.restore_if_lost(
+                    served, system, tools, reasoning_effort=effort, role=role
+                )
+            except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
+                log.warning("warm_keeper.kv_role_restore_failed", model=served, role=role)
+        try:
+            await store.save_idle_conversation(served)
+        except Exception:  # noqa: BLE001
+            log.warning("warm_keeper.kv_conversation_save_failed", model=served, exc_info=True)
 
     def _retry_delay(self) -> float:
         """The eager interval, doubled per consecutive failure, capped at the steady one.

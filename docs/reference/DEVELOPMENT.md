@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-09-09
+> **Status:** Living · **Last verified:** 2026-10-04
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -12,7 +12,12 @@ Three rules with no carve-outs:
 1. **Every LLM call goes through the adapter.** No direct provider SDK usage
    outside the adapter package.
 2. **Every file read/write goes through the storage abstraction.** No direct
-   filesystem paths in application code.
+   filesystem paths in application code. The one standing exception is the models volume's
+   engine-owned files — llama-server writes and reads KV slot files under `.kvslots/` by name
+   (`--slot-save-path`), so the disk prompt cache (`llm/kv_prefix.py`) stats, prunes, deletes
+   and writes the small claims beside them with plain path I/O, confined to that tree, the way
+   the weights' page-cache drop works on the weights' own files. It is owner-only box state,
+   never note content routed around the blob store.
 3. **Every database query runs on an RLS-scoped session.** No raw connections
    that bypass the domain-scope GUC.
 

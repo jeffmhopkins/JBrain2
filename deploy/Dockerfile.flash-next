@@ -52,12 +52,16 @@ RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION
 # base's libraries at all, so the two llama.cpps never meet. Only the Vulkan loader and libc
 # stay dynamic, and those are the base's by design.
 #
-# The checkpoint-sidecar patch (deploy/patches/0001, applied by anchor) is OFF by default:
-# FLASH_NEXT_PATCH_RESTORE_CHECKPOINT=1 turns it on, and the plan does that in F4, after the
-# anchors have been re-validated against this pin. The anchors fail hard on drift, by design.
+# The checkpoint-sidecar patch (deploy/patches/0001, applied by anchor) is ON (F4): a slot
+# restore otherwise clears the slot's context checkpoints and this hybrid re-prefills from zero,
+# so the disk prefix cache is useless without it. Anchors re-validated against this pin on
+# 2026-10-04 (both apply once, a re-run is a no-op, server-context.cpp compiles). They fail hard
+# on drift, by design — a pin bump re-validates them. FLASH_NEXT_PATCH_RESTORE_CHECKPOINT=0
+# builds stock; the api then sees no sidecar on its first save and keeps Flash-Next out of the
+# disk layer (jbrain.llm.kv_prefix).
 FROM ${FLASH_NEXT_BASE} AS llama-build
 ARG LLAMA_CPP_COMMIT=869034b4bb93a425ea989d30fc3d000f5a461d58
-ARG PATCH_RESTORE_CHECKPOINT=0
+ARG PATCH_RESTORE_CHECKPOINT=1
 COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
 RUN set -eux; \
     printf '%s' "${LLAMA_CPP_COMMIT}" | grep -Eq '^[0-9a-f]{40}$' \

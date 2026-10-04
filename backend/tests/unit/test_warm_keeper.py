@@ -403,12 +403,21 @@ class _FakeKvStore:
         self.restore_result = False
         self.raise_on_restore = False
         self.raise_on_save = False
+        self.roles: list[tuple[str, SlotRole | None]] = []  # the role each restore and save named
+        self.idle_saves: list[str] = []
 
     async def restore_if_lost(
-        self, served: str, system: str, tools, *, reasoning_effort: str | None = None
+        self,
+        served: str,
+        system: str,
+        tools,
+        *,
+        reasoning_effort: str | None = None,
+        role: SlotRole | None = None,
     ) -> bool:
         self._gateway.events.append("kv_restore")
         self.restores.append(served)
+        self.roles.append(("restore", role))
         if self.raise_on_restore:
             raise RuntimeError("disk went away")
         return self.restore_result
@@ -421,12 +430,18 @@ class _FakeKvStore:
         prime_tokens: int,
         *,
         reasoning_effort: str | None = None,
+        role: SlotRole | None = None,
     ) -> bool:
         self._gateway.events.append("kv_save")
         self.saves.append((served, prime_tokens, reasoning_effort))
+        self.roles.append(("save", role))
         if self.raise_on_save:
             raise RuntimeError("disk went away")
         return True
+
+    async def save_idle_conversation(self, served: str) -> bool:
+        self.idle_saves.append(served)
+        return False
 
 
 def _kept_with_store(
@@ -615,3 +630,32 @@ async def test_a_standard_model_prime_names_the_same_role_for_the_router_to_igno
     keeper = _keeper(router=r, gateway=_FakeGateway(running={"gpt-oss-120b"}))
     assert await keeper.reconcile_once() is True
     assert r.pins == [SlotRole.INTERACTIVE]
+
+
+async def test_the_prime_is_saved_and_restored_as_the_interactive_role() -> None:
+    keeper, _gateway, _router, store = _kept_with_store(running={"gpt-oss-120b"})
+    assert await keeper.reconcile_once() is True
+    assert ("save", SlotRole.INTERACTIVE) in store.roles
+    assert all(role is SlotRole.INTERACTIVE for _, role in store.roles)
+
+
+async def test_a_settled_pooled_tick_refills_the_scheduled_slot_and_saves_an_idle_chat() -> None:
+    # F4: jerv's saved prefix also serves the scheduled slot (same persona, tools and effort),
+    # restored on an empty slot only — never a second prime — and the interactive slot's
+    # conversation is offered to disk once idle.
+    fn = "qwen3.8-flash-next"
+    keeper, _gateway, _router, store = _kept_with_store(fn, running={fn})
+    assert await keeper.reconcile_once() is True  # primes
+    store.roles.clear()
+    assert await keeper.reconcile_once() is True  # settled
+    assert store.roles == [("restore", SlotRole.INTERACTIVE), ("restore", SlotRole.SCHEDULED)]
+    assert store.idle_saves == [fn]
+
+
+async def test_a_standard_model_tends_no_other_role() -> None:
+    keeper, _gateway, _router, store = _kept_with_store(running={"gpt-oss-120b"})
+    assert await keeper.reconcile_once() is True
+    store.roles.clear()
+    assert await keeper.reconcile_once() is True
+    assert store.roles == [("restore", SlotRole.INTERACTIVE)]
+    assert store.idle_saves == []

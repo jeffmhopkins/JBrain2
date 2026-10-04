@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Apply JBrain's local llama.cpp patches by ANCHOR (not line number), so they
 # survive minor upstream drift around the touched code. Run inside the builder
-# stage of Dockerfile.local-llm against a checked-out llama.cpp tree.
+# stage of Dockerfile.local-llm (opt-in) and Dockerfile.flash-next (on) against a
+# checked-out llama.cpp tree.
 #
 # The patch (deploy/patches/0001) makes slot save/restore preserve CONTEXT
 # CHECKPOINTS via a sidecar file, which is what lets a SWA/hybrid/recurrent
@@ -11,6 +12,10 @@
 # silently-unapplied patch would ship the unpatched binary while claiming the
 # fix. Validated end-to-end against a live hybrid model (LFM2-350M) at commit
 # 758443071: a 2820-token restored prompt re-processed 4 tokens, not 2820.
+# Re-validated 2026-10-04 against Flash-Next's pin 869034b: the save anchor and the
+# `std::move(restored)` restore anchor each match once, a second run skips both, and the
+# patched server-context.cpp compiles (-fsyntax-only); the on-box restore check is the debug
+# slot probe (FLASH_NEXT_ENGINE_PLAN F4).
 set -euo pipefail
 
 SRC="${1:?usage: apply-llama-patches.sh <llama.cpp source dir>}"

@@ -581,6 +581,16 @@ export interface AppSettings {
    *  (patched llama-server → fast qwen MTP-hybrid disk restores). OFF by default. Surfaced
    *  because it lived only in the box's `.env`, which the owner has no terminal to reach. */
   local_llm_patch_restore_checkpoint: boolean;
+  /** The prompt cache's disk allowance in GiB (2..500, default 40): saved role prefixes and
+   *  Flash-Next conversation files share it, conversation files evicted first. Live. */
+  llm_kv_prefix_budget_gb: number;
+  /** Whether Flash-Next saves each chat conversation to disk as its slot moves on and restores
+   *  it when that conversation speaks again. ON by default. Live. */
+  llm_kv_conversation_cache: boolean;
+  /** Read-only: whether Flash-Next may restore from disk yet — `awaiting_probe` until the
+   *  debug slot probe passes against the running engine, `failed` when it did not. Null when
+   *  there is nothing to gate. */
+  llm_kv_restore_gate?: "awaiting_probe" | "passed" | "failed" | null;
   // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
   // a whole-word substitution before a clip renders. Empty by default.
   pronunciation_lexicon: Record<string, string>;

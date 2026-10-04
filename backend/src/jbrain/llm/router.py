@@ -498,23 +498,43 @@ class LlmRouter:
         system: str,
         tools: Sequence[LlmTool],
         reasoning_effort: str | None,
-    ) -> None:
+        *,
+        slot_role: SlotRole | None = None,
+        conversation_key: str | None = None,
+    ) -> int | None:
         """Between admission and dispatch, put the agent-turn prefix back from disk if no
         slot holds it — ~2 s against the ~60 s prefill the turn would otherwise pay. Only
-        the interactive task, only a local model, always best-effort: any failure leaves
-        the turn to prefill exactly as it would have without the store."""
+        the agent task, only a local model, always best-effort: any failure leaves the turn
+        to prefill exactly as it would have without the store.
+
+        On a pooled model the prefix goes into the caller's own role slot, and an interactive
+        turn first gets its whole CONVERSATION back when one was saved (FLASH_NEXT F4c) —
+        after which the persona alone is not restored over it. Returns the store's prepare
+        sequence for the turn's note (None when the conversation layer did not run)."""
         if (
             self._kv_prefix is None
             or task != kv_prefix_mod.AGENT_TURN_TASK
             or provider != local_catalog.LOCAL_PROVIDER
         ):
-            return
+            return None
+        role = slot_roles.role_for(task, slot_role)
+        seq: int | None = None
+        if role is SlotRole.INTERACTIVE and local_catalog.pool_of(model) is not None:
+            try:
+                restored, seq = await self._kv_prefix.prepare_conversation(
+                    model, conversation_key, system, tools, reasoning_effort
+                )
+                if restored:
+                    return seq
+            except Exception:  # noqa: BLE001 — the disk layer must never fail a turn
+                log.warning("llm.kv_conversation_failed", model=model, exc_info=True)
         try:
             await self._kv_prefix.restore_if_lost(
-                model, system, tools, reasoning_effort=reasoning_effort
+                model, system, tools, reasoning_effort=reasoning_effort, role=role
             )
         except Exception:  # noqa: BLE001 — the disk layer must never fail a turn
             log.warning("llm.kv_restore_failed", model=model, exc_info=True)
+        return seq
 
     def _note_agent_turn(
         self,
@@ -526,6 +546,12 @@ class LlmRouter:
         system: str = "",
         tools: Sequence[LlmTool] = (),
         reasoning_effort: str | None = None,
+        slot_role: SlotRole | None = None,
+        conversation_key: str | None = None,
+        output_tokens: int = 0,
+        cached_tokens: int = 0,
+        prepare_seq: int | None = None,
+        tool_names: Sequence[str] = (),
     ) -> None:
         """Tell the store a real turn's prompt size, so the slot that conversation grew keeps
         reading as 'prefix present' (restoring over it would wipe cached history to re-plant a
@@ -544,7 +570,20 @@ class LlmRouter:
         fingerprint: str | None = None
         with contextlib.suppress(Exception):  # identity is best-effort; never fail a turn
             fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
-        self._kv_prefix.note_agent_turn(model, input_tokens, fingerprint=fingerprint)
+        role = slot_roles.role_for(task, slot_role)
+        self._kv_prefix.note_agent_turn(model, input_tokens, fingerprint=fingerprint, role=role)
+        if role is SlotRole.INTERACTIVE:
+            with contextlib.suppress(Exception):
+                self._kv_prefix.note_conversation_turn(
+                    model,
+                    conversation_key,
+                    fingerprint=fingerprint,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cached_tokens=cached_tokens,
+                    seq=prepare_seq,
+                    tool_names=tool_names,
+                )
 
     def _note_prefix_used(
         self,
@@ -554,18 +593,25 @@ class LlmRouter:
         system: str,
         tools: Sequence[LlmTool],
         reasoning_effort: str | None,
+        *,
+        slot_role: SlotRole | None = None,
     ) -> None:
         """Retire the store's restored-but-unused memo for a request that reached the model
-        without completing — an abandoned stream. Best-effort in every direction."""
+        without completing — an abandoned stream — and drop any claim on the conversation
+        the interactive slot held, since what it holds now is unknown. Best-effort in every
+        direction."""
         if (
             self._kv_prefix is None
             or task != kv_prefix_mod.AGENT_TURN_TASK
             or provider != local_catalog.LOCAL_PROVIDER
         ):
             return
+        role = slot_roles.role_for(task, slot_role)
         with contextlib.suppress(Exception):
+            if role is SlotRole.INTERACTIVE:
+                self._kv_prefix.note_conversation_abandoned(model)
             fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
-            self._kv_prefix.note_prefix_used(model, fingerprint)
+            self._kv_prefix.note_prefix_used(model, fingerprint, role=role)
 
     async def _admit_local(self, provider: str, model: str) -> str:
         """Admit a local model; the served name residency actually admitted (it differs only
@@ -1121,6 +1167,7 @@ class LlmRouter:
         spec_override: str | None = None,
         sampling: Sampling | None = None,
         slot_role: SlotRole | None = None,
+        conversation_key: str | None = None,
     ) -> LlmTurn:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
@@ -1132,7 +1179,8 @@ class LlmRouter:
         stored override, so a non-reasoning route never receives the param.
         `spec_override` steers the MODEL for this turn (the omnibox's per-conversation
         pick), outranking the resolved route; a malformed/can't-serve override is
-        ignored."""
+        ignored. `conversation_key` names the chat conversation an interactive turn belongs
+        to, so the disk store can save and restore it (FLASH_NEXT F4c)."""
         provider, model, reasoning_effort = await self._admitted(
             task, strength, spec_override, await self._route(task, strength, spec_override)
         )
@@ -1140,7 +1188,16 @@ class LlmRouter:
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
+        prepare_seq = await self._ensure_agent_prefix(
+            task,
+            provider,
+            model,
+            system,
+            tools,
+            reasoning_effort,
+            slot_role=slot_role,
+            conversation_key=conversation_key,
+        )
         n_images = slot_roles.image_count(messages)
         replay, chars, replayed_tokens = self._fit_replay(
             task,
@@ -1185,6 +1242,12 @@ class LlmRouter:
             system=system,
             tools=tools,
             reasoning_effort=reasoning_effort,
+            slot_role=slot_role,
+            conversation_key=conversation_key,
+            output_tokens=turn.usage.output_tokens,
+            cached_tokens=turn.usage.cached_tokens,
+            prepare_seq=prepare_seq,
+            tool_names=[c.name for c in turn.tool_calls],
         )
         await self._record(task, provider, model, turn.usage)
         log.info(
@@ -1214,6 +1277,7 @@ class LlmRouter:
         spec_override: str | None = None,
         sampling: Sampling | None = None,
         slot_role: SlotRole | None = None,
+        conversation_key: str | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks
@@ -1237,7 +1301,16 @@ class LlmRouter:
         # prompt's own size, which `calibrate` below corrects from the turn's real usage —
         # less the prefix the KV cache already holds, which on a tool round is nearly all of
         # it (`prefill._fraction`).
-        await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
+        prepare_seq = await self._ensure_agent_prefix(
+            task,
+            provider,
+            model,
+            system,
+            tools,
+            reasoning_effort,
+            slot_role=slot_role,
+            conversation_key=conversation_key,
+        )
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
         n_images = slot_roles.image_count(messages)
         replay, prompt_chars, replayed_tokens = self._fit_replay(
@@ -1357,7 +1430,15 @@ class LlmRouter:
                 # `first_part` is still True only if nothing ever arrived, in which case no
                 # slot was touched and there is nothing to retire.
                 if final is None and not first_part:
-                    self._note_prefix_used(task, provider, model, system, tools, reasoning_effort)
+                    self._note_prefix_used(
+                        task,
+                        provider,
+                        model,
+                        system,
+                        tools,
+                        reasoning_effort,
+                        slot_role=slot_role,
+                    )
         if final is not None:
             elapsed = time.perf_counter() - start
             # The exact token count for the characters we just sent — the only free, exact
@@ -1371,6 +1452,12 @@ class LlmRouter:
                 system=system,
                 tools=tools,
                 reasoning_effort=reasoning_effort,
+                slot_role=slot_role,
+                conversation_key=conversation_key,
+                output_tokens=final.usage.output_tokens,
+                cached_tokens=final.usage.cached_tokens,
+                prepare_seq=prepare_seq,
+                tool_names=[c.name for c in final.tool_calls],
             )
             await self._record(task, provider, model, final.usage)
             log.info(

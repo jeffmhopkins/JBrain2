@@ -383,13 +383,30 @@ LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY = "local_llm_patch_restore_checkpoint"
 LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT = False
 
 
-# The jerv prompt cache's disk allowance, in GiB (jbrain.llm.kv_prefix). It was a module
-# constant whose own comment conceded the gap — "changing it is a release, there is no knob"
-# — on a box whose owner has no terminal (CLAUDE.md #10) and whose store was measured at 94%
-# of it. Read once at startup, like the patch toggle: raising it takes effect on the next api
-# restart, which the PWA's Ops → Update performs anyway.
+# The prompt cache's disk allowance, in GiB (jbrain.llm.kv_prefix) — role prefixes and,
+# on Flash-Next, conversation files share it. It was a module constant whose own comment
+# conceded the gap — "changing it is a release, there is no knob" — on a box whose owner has no
+# terminal (CLAUDE.md #10). Read at startup and applied live by the settings and debug routes.
+# 40 since 2026-10-04 (owner): room for conversation files beside every engine's prefixes.
 LLM_KV_PREFIX_BUDGET_GB_KEY = "llm_kv_prefix_budget_gb"
-LLM_KV_PREFIX_BUDGET_GB_DEFAULT = 25
+LLM_KV_PREFIX_BUDGET_GB_DEFAULT = 40
+LLM_KV_PREFIX_BUDGET_GB_MIN = 2
+LLM_KV_PREFIX_BUDGET_GB_MAX = 500
+
+# Whether the pooled interactive slot saves each chat conversation to disk as the slot moves on
+# and restores it when that conversation speaks again (FLASH_NEXT_ENGINE_PLAN F4c). ON by
+# default (owner, 2026-10-04); applied live. Off stops new saves and restores and deletes every
+# conversation file already on disk.
+LLM_KV_CONVERSATION_CACHE_KEY = "llm_kv_conversation_cache"
+LLM_KV_CONVERSATION_CACHE_DEFAULT = True
+
+# Chat sessions that may never have a conversation file, whatever their scope says NOW: any
+# session that was ever scoped to a firewalled domain (or had a subject) before a re-scope,
+# whose history can carry what that scope let it read. Recorded at the re-scope (the only way
+# a scope changes); a session CREATED with a firewalled scope is already refused by its current
+# scope. Owner-only like every row here (RLS on app.settings), bounded, append-only.
+LLM_KV_CONVERSATION_EXCLUDED_KEY = "llm_kv_conversation_excluded_sessions"
+LLM_KV_CONVERSATION_EXCLUDED_MAX = 20_000
 
 
 # The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
@@ -1151,12 +1168,62 @@ class SqlSettingsStore:
         return stored is True
 
     async def llm_kv_prefix_budget_gb(self, ctx: SessionContext) -> int:
-        """The prompt cache's disk allowance in GiB. Defaults to 25; a stored value outside
+        """The prompt cache's disk allowance in GiB. Defaults to 40; a stored value outside
         1..500 is ignored rather than trusted, because this number bounds a delete loop."""
         stored = await self.get(ctx, LLM_KV_PREFIX_BUDGET_GB_KEY, LLM_KV_PREFIX_BUDGET_GB_DEFAULT)
         if isinstance(stored, int) and not isinstance(stored, bool) and 1 <= stored <= 500:
             return stored
         return LLM_KV_PREFIX_BUDGET_GB_DEFAULT
+
+    async def llm_kv_conversation_cache(self, ctx: SessionContext) -> bool:
+        """Whether conversation files are saved and restored. Defaults ON when unset; a stored
+        value that is not a boolean reads as OFF — this gates writing chat state to disk, so
+        junk must never turn it on."""
+        stored = await self.get(
+            ctx, LLM_KV_CONVERSATION_CACHE_KEY, LLM_KV_CONVERSATION_CACHE_DEFAULT
+        )
+        return stored is True
+
+    async def llm_kv_conversation_excluded(self, ctx: SessionContext) -> frozenset[str]:
+        """Sessions that may never reach disk (`LLM_KV_CONVERSATION_EXCLUDED_KEY`). A stored value
+        that is not a list of strings, or a full list, reads as EVERY session excluded — the
+        caller reads "*" in the result as that."""
+        stored = await self.get(ctx, LLM_KV_CONVERSATION_EXCLUDED_KEY, [])
+        if not isinstance(stored, list) or not all(isinstance(s, str) for s in stored):
+            return frozenset({"*"})
+        if len(stored) >= LLM_KV_CONVERSATION_EXCLUDED_MAX:
+            return frozenset({"*"})
+        return frozenset(stored)
+
+    async def exclude_llm_kv_conversation(self, ctx: SessionContext, session_id: str) -> None:
+        """Mark a session as never-on-disk, in ONE statement: concurrent re-scopes must never
+        drop each other's entry (a lost exclusion is a domain-firewall escape). Idempotent. A
+        stored value that is not an array is left alone — it already reads as everything
+        excluded — and at the bound the list stops growing, reading the same way
+        (`llm_kv_conversation_excluded`)."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.settings (key, value)"
+                    " VALUES (:key, jsonb_build_array(cast(:sid AS text)))"
+                    " ON CONFLICT (key) DO UPDATE SET value = CASE"
+                    "  WHEN jsonb_typeof(app.settings.value) <> 'array' THEN app.settings.value"
+                    "  WHEN app.settings.value @> jsonb_build_array(cast(:sid AS text))"
+                    "   THEN app.settings.value"
+                    "  WHEN jsonb_array_length(app.settings.value) >= :cap THEN app.settings.value"
+                    "  ELSE app.settings.value || jsonb_build_array(cast(:sid AS text))"
+                    " END, updated_at = now()"
+                ),
+                {
+                    "key": LLM_KV_CONVERSATION_EXCLUDED_KEY,
+                    "sid": session_id,
+                    "cap": LLM_KV_CONVERSATION_EXCLUDED_MAX,
+                },
+            )
+
+    async def set_llm_kv_conversation_cache(self, ctx: SessionContext, on: bool) -> bool:
+        await self.upsert(ctx, LLM_KV_CONVERSATION_CACHE_KEY, on)
+        return on
 
     async def set_llm_kv_prefix_budget_gb(self, ctx: SessionContext, gb: int) -> int:
         """Store the allowance. Bounds are the API's job, as everywhere else here."""

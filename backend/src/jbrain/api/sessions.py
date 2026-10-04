@@ -7,9 +7,11 @@ runs as the full-scope owner — the narrowing applies to a session's tool reads
 not to the session list.
 """
 
+import uuid
 from datetime import datetime
 from typing import Any, cast
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -18,6 +20,8 @@ from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, EngineSessi
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/sessions", dependencies=[Depends(owner_only)])
 
@@ -144,12 +148,22 @@ async def rescope_session(
     A session the ENGINE opened (a note conversation) is refused: its scope comes from
     the note it reads, and it holds graph-write tools (409, not 404 — the session exists
     and the owner may read it; only this verb does not apply to it)."""
+    ctx = ctx_for(principal)
+    before = await get_agent_sessions(request).get(ctx, session_id)
+    if before is not None and (
+        any(d != "general" for d in before.domain_scopes) or before.subject_ids
+    ):
+        # Its history may carry what the old scope let it read: never on disk, even once the
+        # scope narrows to `general` (FLASH_NEXT F4c). Recorded before the change lands, under
+        # the canonical id the chat keys its conversation on.
+        await _exclude_from_disk(request, ctx, str(before.id))
     try:
-        await get_agent_sessions(request).set_scopes(
-            ctx_for(principal), session_id, body.domain_scopes
-        )
+        await get_agent_sessions(request).set_scopes(ctx, session_id, body.domain_scopes)
     except EngineSessionRescope as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # A conversation's saved slot state on disk was judged against its OLD scope; any change
+    # drops it (the next turn re-judges under the new one).
+    await _forget_disk_conversation(request, _canonical_id(before, session_id))
     return Response(status_code=204)
 
 
@@ -169,9 +183,41 @@ async def unarchive_session(request: Request, principal: PrincipalDep, session_i
 
 @router.delete("/{session_id}")
 async def delete_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
-    """Delete a session; its runs and transcript cascade with it."""
-    await get_agent_sessions(request).delete(ctx_for(principal), session_id)
+    """Delete a session; its runs and transcript cascade with it — and so does any slot
+    state the disk prompt cache saved for it (FLASH_NEXT F4c)."""
+    ctx = ctx_for(principal)
+    before = await get_agent_sessions(request).get(ctx, session_id)
+    await get_agent_sessions(request).delete(ctx, session_id)
+    await _forget_disk_conversation(request, _canonical_id(before, session_id))
     return Response(status_code=204)
+
+
+def _canonical_id(info: AgentSessionInfo | None, raw: str) -> str:
+    """The id the chat keys its disk conversation on (`str(session.id)`), whatever case or form
+    the route was called with — a forget under another spelling would miss its files."""
+    if info is not None:
+        return str(info.id)
+    try:
+        return str(uuid.UUID(raw))
+    except ValueError:
+        return raw
+
+
+async def _exclude_from_disk(request: Request, ctx: Any, session_id: str) -> None:
+    store = getattr(request.app.state, "settings_store", None)
+    if store is None:
+        return
+    await store.exclude_llm_kv_conversation(ctx, session_id)
+
+
+async def _forget_disk_conversation(request: Request, session_id: str) -> None:
+    store = getattr(request.app.state, "kv_prefix", None)
+    if store is None:
+        return
+    try:
+        await store.forget_conversation(session_id)
+    except Exception:  # noqa: BLE001 — the session change already happened; log, never fail it
+        log.warning("sessions.kv_conversation_forget_failed", exc_info=True)
 
 
 class TurnAttachmentOut(BaseModel):

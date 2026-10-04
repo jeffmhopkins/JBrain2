@@ -14,6 +14,7 @@ it can read anything yet write nothing.
 
 import asyncio
 import base64
+import contextlib
 import datetime as dt
 import decimal
 import json
@@ -64,7 +65,7 @@ from jbrain.ingest.ocr import (
 from jbrain.ingest.video import FRAME_CAPTION_TASK as VIDEO_FRAME_TASK
 from jbrain.ingest.video import SUMMARY_TASK as VIDEO_SUMMARY_TASK
 from jbrain.ingest.video import run_video_analysis, transcribe_audio_chunked
-from jbrain.llm import LlmImage, llama_swap_config, local_catalog, slot_roles
+from jbrain.llm import LlmImage, kv_prefix, llama_swap_config, local_catalog, slot_roles
 from jbrain.llm import engine as llm_engine
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
@@ -3659,13 +3660,38 @@ async def kv_prefix_budget(
     _p: DebugDep,
     gb: Annotated[int, Query()],
 ) -> dict[str, object]:
-    """Set the prompt cache's disk allowance in GiB (2..500, default 25).
+    """Set the prompt cache's disk allowance in GiB (2..500, default 40) — role prefixes and
+    conversation files share it, conversation files evicted first.
 
     It was a module constant whose own comment conceded the gap — "changing it is a release,
-    there is no knob" — which on a box with no terminal meant no path at all. Read once at
-    construction, so it applies on the next api start; Ops → Update performs one anyway."""
+    there is no knob" — which on a box with no terminal meant no path at all. Stored and
+    applied live; the owner's twin is the Settings field (`PUT /api/settings`)."""
     request.state.debug_detail = f"kv prefix budget {gb} GiB"
-    return await llm_settings.set_kv_prefix_budget(_store(request), _OWNER_CTX, gb=gb)
+    return await llm_settings.set_kv_prefix_budget(
+        _store(request),
+        _OWNER_CTX,
+        gb=gb,
+        kv_prefix=getattr(request.app.state, "kv_prefix", None),
+    )
+
+
+@router.put("/llm/kv-prefix/conversations")
+async def kv_prefix_conversations(
+    request: Request,
+    _p: DebugDep,
+    enabled: Annotated[bool, Query()],
+) -> dict[str, object]:
+    """Turn the conversation cache on or off (FLASH_NEXT_ENGINE_PLAN F4c): the Flash-Next
+    interactive slot saving each chat conversation as it moves on and restoring it when that
+    conversation speaks again. The owner's twin is the Ops switch (`PUT /api/settings`).
+    Applied live; off also deletes every saved conversation file."""
+    request.state.debug_detail = f"kv conversation cache {'on' if enabled else 'off'}"
+    return await llm_settings.set_kv_conversation_cache(
+        _store(request),
+        _OWNER_CTX,
+        enabled=enabled,
+        kv_prefix=getattr(request.app.state, "kv_prefix", None),
+    )
 
 
 @router.post("/llm/local-models/{model_id}/prime")
@@ -3779,10 +3805,10 @@ async def cancel_engine_switch(request: Request, _p: DebugDep) -> engine_api.Swi
 
 
 # --- Slot save/restore probe (F4's first check) ------------------------------------------
-# Meaningful from F4 on. The flash-next config now renders --slot-save-path (the pool needs it
-# for slot erase), so the save step runs, but the checkpoint sidecar patch stays off until F4
-# turns it on for this image: until then a restore carries no context checkpoints, and the
-# probe measures that known gap rather than F4's fix.
+# The flash-next config renders --slot-save-path (the pool needs it for slot erase too), and
+# from F4 the image builds the checkpoint-sidecar patch in, so a restore carries the slot's
+# context checkpoints. `sidecar` says whether the save actually wrote one — the on-disk proof
+# that the running build is the patched one — and `passed` is the F4 gate.
 # Whether a saved-then-restored slot computes the SAME next token distribution as the slot
 # it was saved from. Greedy token equality is too coarse (it can differ legitimately and
 # agree by luck), so this returns the top-n log-probabilities side by side and the largest
@@ -3816,6 +3842,11 @@ class SlotProbeIn(BaseModel):
     slot_a: int | None = Field(default=None, ge=0, le=63)
     slot_b: int | None = Field(default=None, ge=0, le=63)
     n_probs: int = Field(default=10, ge=1, le=100)
+    # The largest |logprob difference| over shared top-n candidates that still counts as the
+    # same distribution. A restored slot re-evaluates its last token from a checkpoint in a
+    # different ubatch split than the cold prefill, so a small difference is expected; a
+    # restore that lost state moves the distribution by far more.
+    tolerance: float = Field(default=0.05, gt=0, le=5.0)
 
 
 class SlotProbeRead(BaseModel):
@@ -3850,6 +3881,19 @@ class SlotProbeOut(BaseModel):
     # read's) — the restore loaded state the server then threw away, which is what a
     # hybrid without its context checkpoints does. None when timings are missing.
     restore_effective: bool | None
+    # The verdict F4 gates on: the restore was effective, both comparisons share most of
+    # their top-n, the top token agrees, and every shared logprob is within `tolerance`.
+    tolerance: float
+    within_tolerance: bool | None
+    passed: bool
+    # Whether the save wrote its checkpoint sidecar (`<file>.ckpt`) — the patched engine's
+    # signature. None when this process cannot see the save directory.
+    sidecar: bool | None
+    # The disk prefix cache's restore gate this run recorded for a patch-gated model
+    # (Flash-Next): `passed` only when `passed` AND `sidecar` held, keyed by the running
+    # launch line and llama.cpp build; `failed` otherwise. None when nothing was recorded (a
+    # model without the gate, or a save directory this process cannot see).
+    restore_gate: str | None = None
     n_saved: int | None
     n_restored: int | None
     file_bytes: int | None
@@ -3906,6 +3950,70 @@ def _restore_effective(cold: SlotProbeRead, restored: SlotProbeRead) -> bool | N
     return again < full
 
 
+def _within(diff: SlotProbeDiff, tolerance: float, n_probs: int) -> bool | None:
+    """Whether one comparison is the same distribution within `tolerance`: the top token
+    agrees, at least half the top-n is shared (two reads that share one candidate prove
+    nothing), and no shared logprob moved further. None when nothing was comparable."""
+    if diff.max_abs_diff is None:
+        return None
+    return (
+        diff.top1_equal
+        and diff.shared >= max(1, (n_probs + 1) // 2)
+        and diff.max_abs_diff <= tolerance
+    )
+
+
+def _probe_sidecar_path(models_dir: str, served: str) -> Path | None:
+    """Where the probe save's checkpoint sidecar lands, on the models volume the kv-prefix
+    store also reads, or None when this process cannot see that folder."""
+    model_id = local_catalog.id_for_served(served)
+    if model_id is None:
+        return None
+    folder = Path(models_dir) / llama_swap_config.KVSLOT_DIR / model_id
+    return folder / f"{_SLOT_PROBE_FILE}.ckpt" if folder.is_dir() else None
+
+
+async def _record_restore_gate(
+    request: Request,
+    models_dir: str,
+    gateway: LocalGatewayClient,
+    engine: llm_engine.Engine,
+    served: str,
+    *,
+    passed: bool,
+    detail: dict[str, Any],
+) -> str | None:
+    """Write this run's verdict as the disk prefix cache's restore gate (kv_prefix: restores
+    on a patch-gated model wait for a passing probe against the server running now). Keyed by
+    the launch line and `/props` build_info, so a new image or launch line needs a new run."""
+    model = local_catalog.get_by_served(served)
+    if model is None or not model.kv_restore_needs_patch:
+        return None
+    line = llama_swap_config.launch_line(models_dir, served, engine)
+    save_dir = None if line is None else kv_prefix.save_dir_for(line, models_dir)
+    if line is None or save_dir is None:
+        return None
+    try:
+        build = str((await gateway.props(served)).get("build_info") or "")
+    except LocalGatewayError:
+        return None
+    verdict = "passed" if passed else "failed"
+    record = {
+        "fingerprint": kv_prefix.gate_fingerprint(line, build),
+        "verdict": verdict,
+        "model": served,
+        "build_info": build,
+        "at": dt.datetime.now(dt.UTC).isoformat(),
+        **detail,
+    }
+    if not await asyncio.to_thread(kv_prefix.write_gate_verdict, save_dir, record):
+        return None
+    store = getattr(request.app.state, "kv_prefix", None)
+    if store is not None:
+        store.forget_gate(served)
+    return verdict
+
+
 def _needs_save_path(resp: httpx.Response) -> bool:
     # llama-server answers every slot action with 501 (ERROR_TYPE_NOT_SUPPORTED) when it was
     # started without --slot-save-path; the message names the flag on every build seen.
@@ -3929,7 +4037,13 @@ async def slot_probe(
     lost its context checkpoints shows up (a hybrid re-prefills from zero).
 
     Not a byte-equal ubatch comparison: the cold read prefills in whatever ubatch split the
-    server chooses for the whole prompt, so expect small differences, not zero.
+    server chooses for the whole prompt, so expect small differences, not zero. `tolerance`
+    (default 0.05 nats) bounds them: `within_tolerance` holds when, against both the cold and
+    the warm read, the top token agrees, at least half the top-n is shared and no shared
+    logprob differs by more; `passed` adds `restore_effective` — F4's gate. `sidecar` says
+    whether the save wrote the checkpoint sidecar, i.e. whether the patched engine is running.
+    Any slot pair may be named, slot 0 included (Flash-Next's slots are role-pinned: name ones
+    whose prefix you can afford to lose — 6 and 7 by default).
 
     **Overwrites both slots' caches** — pick slots no live workload is pinned to (on
     Flash-Next, not slot 0's persona). 409 when no model is resident (this never loads one),
@@ -4027,6 +4141,11 @@ async def slot_probe(
                 tokens_cached=got.get("tokens_cached"),
             )
 
+        sidecar_path = _probe_sidecar_path(settings.local_models_dir, served)
+        if sidecar_path is not None:
+            # A previous run's sidecar would otherwise vouch for a build that writes none.
+            with contextlib.suppress(OSError):
+                sidecar_path.unlink(missing_ok=True)
         try:
             await action(slot_a, "erase", {})
             await action(slot_b, "erase", {})
@@ -4044,6 +4163,32 @@ async def slot_probe(
             cur = cur.get(part) if isinstance(cur, dict) else None
         return cur
 
+    vs_cold = _diff(restored, cold)
+    vs_warm = _diff(restored, warm)
+    checks = (
+        _within(vs_cold, body.tolerance, body.n_probs),
+        _within(vs_warm, body.tolerance, body.n_probs),
+    )
+    within = None if None in checks else all(checks)
+    effective = _restore_effective(cold, restored)
+    passed = bool(effective) and within is True
+    sidecar = None if sidecar_path is None else sidecar_path.exists()
+    gate = await _record_restore_gate(
+        request,
+        settings.local_models_dir,
+        gateway,
+        engine,
+        served,
+        passed=passed and sidecar is True,
+        detail={
+            "within_tolerance": within,
+            "restore_effective": effective,
+            "sidecar": sidecar,
+            "tolerance": body.tolerance,
+            "max_abs_diff_vs_cold": vs_cold.max_abs_diff,
+            "slots": [slot_a, slot_b],
+        },
+    )
     return SlotProbeOut(
         engine=engine,
         model=served,
@@ -4053,9 +4198,14 @@ async def slot_probe(
         cold=cold,
         warm=warm,
         restored=restored,
-        restored_vs_cold=_diff(restored, cold),
-        restored_vs_warm=_diff(restored, warm),
-        restore_effective=_restore_effective(cold, restored),
+        restored_vs_cold=vs_cold,
+        restored_vs_warm=vs_warm,
+        restore_effective=effective,
+        tolerance=body.tolerance,
+        within_tolerance=within,
+        passed=passed,
+        sidecar=sidecar,
+        restore_gate=gate,
         n_saved=num(saved, "n_saved"),
         n_restored=num(restored_meta, "n_restored"),
         file_bytes=num(saved, "n_written"),

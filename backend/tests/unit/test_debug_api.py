@@ -2110,7 +2110,11 @@ def test_kv_prefix_budget_is_bounded_and_says_when_it_applies(
     ok = client.put("/api/debug/llm/kv-prefix/budget", params={"gb": 40}, headers=_auth(key))
     assert ok.status_code == 200
     assert ok.json()["budget_gb"] == 40
-    assert "restart" in ok.json()["applies"]
+    # Applied to the live store when one is wired; otherwise it waits for the next start.
+    store = getattr(client.app.state, "kv_prefix", None)  # type: ignore[attr-defined]
+    assert ("now" if store is not None else "restart") in ok.json()["applies"]
+    if store is not None:
+        assert store._max_store_bytes == 40 * 1024**3
 
     assert (
         client.put(
@@ -2118,6 +2122,28 @@ def test_kv_prefix_budget_is_bounded_and_says_when_it_applies(
         ).status_code
         == 422
     )
+
+
+def test_the_conversation_cache_switch_applies_live_and_off_deletes_the_files(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+    store = getattr(client.app.state, "kv_prefix", None)  # type: ignore[attr-defined]
+    off = client.put(
+        "/api/debug/llm/kv-prefix/conversations", params={"enabled": "false"}, headers=_auth(key)
+    )
+    assert off.status_code == 200
+    body = off.json()
+    assert body["conversation_cache"] is False and "files_removed" in body
+    if store is not None:
+        assert store._conversations is False
+    on = client.put(
+        "/api/debug/llm/kv-prefix/conversations", params={"enabled": "true"}, headers=_auth(key)
+    )
+    assert on.status_code == 200 and on.json()["conversation_cache"] is True
+    assert (
+        client.put("/api/debug/llm/kv-prefix/conversations", params={"enabled": "true"})
+    ).status_code in (401, 403)
 
 
 def test_the_kv_prefix_write_routes_need_the_token(debug_client: tuple[TestClient, str]) -> None:

@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4◻️ F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -28,7 +28,7 @@ upstream source and published measurements). §10 records what they changed.
 | Checkpoints | **8 per slot** to start; 16 only once F2 has measured their real cost (§3). |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector (904 MB). |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
-| Disk prefix cache | One primed prefix per slot role, restored into its own slot (§4b) — F4, not F3b: F3b primes only jerv's slot. |
+| Disk prefix cache | One primed prefix per slot role, restored into its own slot (§4b) — F4, not F3b: F3b primes only jerv's slot. Extended 2026-10-04 (owner): chat **conversations** on disk too, inside an owner-set budget (default 40 GB, Ops), toggle default on (F4c). |
 | Engine | Mainline llama.cpp on Vulkan first; a custom community engine is F5, adopted only on evidence. **halogen is excluded** (closed-source server; conflicts with pin-sources-by-commit). |
 
 ## 2. Prior work, and what each piece actually measured
@@ -177,7 +177,7 @@ every other range is dropped; §3a).
   whatever closed #29028, llama-swap (pinned by commit, as `test_llama_swap_pin` requires)
   in front of the one model. Keeping llama-swap keeps the `local_gateway.py` contract
   (`/running`, `/api/models/unload`, `/upstream/…/health`) that `residency`, `warm_keeper`
-  and the ledger read. The checkpoint-sidecar patch is a build arg, off until F4.
+  and the ledger read. The checkpoint-sidecar patch is a build arg, on since F4.
 - **Own config:** Flash-Next renders its own `llama-swap.flash-next.yaml`. Every reader of
   `llama-swap.yaml` (`launch_line`, `served_shape_from_config`, `kv_prefix._resolve`, the
   smoketest) resolves the file for the **active engine**. The standard `render`, the
@@ -383,7 +383,7 @@ on the real box".
 | Tune launch flags | Debug extra-args route (`-ngl`, `-ub`, `--ctx-checkpoints`, `-lv`, `--load-mode`, …), engine-aware; `-ot` is added to `EXTRA_ARG_FLAGS` | Claude with a token | F1 |
 | Switch engines | PWA **Ops → Local engine** (drain → swap → smoke → auto-rollback) over the owner API `POST /api/settings/llm/engine` | owner | F3a (API; the card after its mock is chosen) |
 | See what the engine is doing | PWA Ops card over `GET /api/settings/llm/engine` (engine, memory, last switch + smoke, history as `engine_switch` box events); logs via PWA and debug | owner | F3a (API) |
-| Clear or inspect disk prefix caches | The existing kv-prefix clear/snapshot surfaces, per role | owner | F4 |
+| Clear or inspect disk prefix caches | The existing kv-prefix clear/snapshot surfaces, per role and per conversation; Ops → *Keep chats on disk* and *Prompt cache disk* | owner | F4 |
 | Try a custom engine | PWA engine sub-setting (mainline \| gufo \| …); images arrive by Ops → Update | owner | F5 |
 | Back out completely | Switch to Standard, Uninstall the weights in the PWA; the next update removes the stopped container and its image | owner | F1 + F3a |
 | Recover from a bad build | Ops → Update's existing rollback; the switch's auto-rollback keeps a local engine serving; Standard is never rebuilt by this plan | automatic | exists + F3a |
@@ -639,7 +639,7 @@ reasoning"). The adapter never sent it back. Owner decision: the card's lighter
   drops it, so each conversation's history prefix changes once and its first turn re-reads the
   history cold. Not yet observed on-box.
 
-### F4 — Per-role disk prefix cache ◻️
+### F4 — Per-role disk prefix cache 🟡 (code built 2026-10-04; the on-box check is pending)
 Begins with the check moved out of F2, and gated on it:
 - Re-validate the sidecar patch against the new pin (anchors fail hard on drift, by
   design), turn its build arg on for this image and render `--slot-save-path` for it.
@@ -654,6 +654,88 @@ Begins with the check moved out of F2, and gated on it:
 - Tests: per-role fingerprints, restore targets the right slot and never overwrites an
   occupied one, a role switch does not raise `identity_drift`, an engine switch leaves the
   other engine's files intact, budget eviction across roles.
+
+**Built (2026-10-04), ready to deploy:**
+- **F4a prep.** The sidecar patch re-validated against `869034b`: both anchors match exactly
+  once (`res->is_save  = true;`, `slot->prompt.tokens = std::move(restored);`), a second run
+  skips both, and the patched `server-context.cpp` compiles (`-fsyntax-only`); the
+  checkpoint struct still carries the fields the blocks serialize. `PATCH_RESTORE_CHECKPOINT`
+  defaults to 1 for the flash-next image (Dockerfile and compose). `--slot-save-path` was
+  already rendered for the pool (slot erase needs it). The slot probe takes any slot pair and
+  now returns `tolerance` (default 0.05), `within_tolerance` (top token agrees, half the top-n
+  shared, every shared logprob within tolerance — against both the cold and the warm read),
+  `passed` (that plus `restore_effective`) and `sidecar` (the save wrote its `.ckpt` — the
+  patched build is the one running).
+- **§4b store.** Flash-Next is eligible through a catalog `kv_restore_needs_patch` gate, and
+  each save PROVES the patch: no sidecar → the file is removed, the model leaves the disk layer
+  until the next api start (`patch_absent`), and a file without a sidecar is never restored.
+  Memos and identity drift are per (model, role); saves read only the role's own slot; a
+  restore targets the role's slot, only while it is idle and empty, only when the restored
+  tokens fit the pool (through the pool guard since the review, below). A restored-unused
+  slot is not restored again until a request uses it, the model reloads or the guard erases it.
+  Each role's effort is in its fingerprint as before; the standard engine keeps its single-memo
+  behaviour.
+- **Roles primed.** Deviation from the list above, deliberate: jerv's prime is saved from slot
+  0, and the keeper RESTORES that same file into the scheduled slot (2) when it is empty — the
+  scheduled prefix is jerv's — but primes nothing else. Ingest and pet prefixes are ~400–500
+  tokens (under the store's 4,096-token floor and under a second of prefill) and research has
+  no stable prefix, which is why F3a dropped role priming; a role's turn still restores into its
+  own slot on demand if a file of its identity exists.
+- **F4c — conversations (owner extension).** The chat names its conversation to the router
+  (`conversation_key`, the session id). On a pooled model, before an interactive request that
+  is not the conversation slot 0 holds, the store saves the holder (only if `/slots` still
+  reads as that conversation's cache and `n_saved` matches) and then restores the request's own
+  conversation file when its key and base identity match (see the review entry below).
+  The keeper saves a conversation idle for 10 min. Conversation files live beside the role
+  prefixes (`c-<hash>.kvslot` + a `.meta` claim: key hash, base, counts), share the budget, and
+  are all evicted before any role prefix. Toggle *Keep chats on disk* (default on) and budget
+  *Prompt cache disk* (default 40 GiB, was 25) in Ops, both live; debug twins
+  `PUT /llm/kv-prefix/conversations` and `…/budget`. `GET /llm/kv-prefix` reports per-role
+  rows, the held conversation, conversation files and hit/miss counters.
+- **Restore gate (review, 2026-10-04).** No restore of any kind on Flash-Next until the slot
+  probe has passed — sidecar included — against the running launch line and llama.cpp build;
+  the probe records its verdict in `restore-gate.json` beside the slot files, so a new image or
+  launch line needs a new run. Saves continue. `restore_gate` is in the state read and the
+  settings read (Ops hints say when restores wait or are off).
+- **Privacy scope (review, 2026-10-04; CLAUDE.md #3).** A conversation file holds that chat's
+  tokens outside Postgres's domain firewalls, so only chats that cannot hold firewalled data get
+  one: a persona with `reads_knowledge_base=False`, a session scoped to `general` only (or
+  nothing) and no subject. Brain/curator chats never do. Role prefixes (system + tools only) are
+  unaffected.
+- **Independent review (2026-10-04).** Conversation restores are decided on the conversation key
+  and base identity alone — a chat's message list is never stable between turns (volatile
+  blocks, the turn's own tool steps) — and judged by the `cached_tokens` the first request
+  reports (hit / partial / miss; three misses drop the file). Saves stream outside the store's
+  main lock, one at a time, each deleting the old sidecar first, and never leave the volume
+  under 20 GiB free. Restore fits go through the router's pool guard (its lock, its pending
+  calls, a charge for never-used restored slots, an erase notice back to the store). Privacy
+  also excludes mail-holding personas and any chat in which a location, mail or records tool
+  ran (read off the transcript); deleting or re-scoping a chat deletes its files, and the
+  toggle off deletes them all. A turn superseded by another interactive request never claims
+  the slot; a reload forgets the restore gate.
+- **Re-review (2026-10-04).** A forget or a clear can no longer be undone by a save parked
+  between its snapshot and its write (forgotten-set + clear epoch, checked under the save lock;
+  a turn streaming at the delete claims nothing). A restore reserves its cells in the pool
+  guard's locked decision and holds them while it streams. A session ever scoped to a firewalled
+  domain or a subject before a re-scope is recorded (owner setting, no new table) and stays off
+  disk for good. APRS tools join the excluded list; the toggle reads malformed values as off.
+- **Preserved thinking (#1560).** Restores compare no messages at all; the next turn's text-only,
+  `preserve_thinking=false` render diverges at the previous turn's first tool step, where reuse
+  stops at the nearest checkpoint before it — which the hit/partial/miss judging measures.
+
+**Pending on the box (in order; each needs only the debug token):**
+1. Ops → Update (rebuilds the flash-next image with the patch), switch to Flash-Next.
+2. `POST /llm/slot-probe {"synth_tokens": 29000, "slot_a": 6, "slot_b": 7}` → `sidecar: true`,
+   `passed: true` and `restore_gate: passed` — that verdict is what opens restores. **Fail →
+   F4 stops there**: the gate stays `failed`, so nothing is restored; turn *Keep chats on disk*
+   off and `DELETE /llm/kv-prefix?model=qwen3.8-flash-next` to stop the saves too.
+3. After a load: `GET /llm/kv-prefix` shows `saved` for the interactive role, a file with
+   `sidecar: true`, and after an engine round-trip `restored` into slot 0 with the prime's
+   `reuse_rate` near 1.0 (`POST …/prime`).
+4. Conversations: two chats alternated; `conversation_saved` / `conversation_restored` move,
+   and the restored turn's `prefill` is a fraction of the transcript. If the previous answer's
+   re-render diverges before the last checkpoint so that nothing is reused, turn the toggle
+   off and record it here.
 
 ### F5 — Custom engine track (evidence-gated) ◻️
 The container's contract stays fixed — llama-swap in front, OpenAI API behind — so an
@@ -678,7 +760,11 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
 - **Quality vs gpt-oss-120b is unknown** — no shared public benchmark. F2's checks are not
   an eval; run the existing ingest/analysis eval fixtures before retiring anything.
 - **Restore without the patch is useless** — checkpoints are cleared on restore; F4 does
-  not ship without the sidecar patch validated on the pin.
+  not ship without the sidecar patch validated on the pin (anchors and compile: done
+  2026-10-04; the live restore: the slot probe, on the box). Each save also proves it.
+- **Conversation files hold conversation tokens on disk** — like the KV in RAM, outside the
+  database's RLS and its backups, until the budget or a clear removes them. The owner chose
+  this (2026-10-04); the toggle turns it off.
 - **Upstream churn** — qwen4exp is a month old; each pin move re-runs F2.
 - **The standard engine must stay healthy** — its image and flags do not change; F1's
   engine-awareness must leave a box that never provisions Flash-Next byte-identical in

@@ -61,9 +61,10 @@ def test_flash_next_llama_cpp_is_a_full_commit_with_its_reason_beside_it() -> No
         assert pr in text, f"the pin's comment no longer accounts for {pr}"
 
 
-def test_flash_next_checkpoint_patch_is_off_by_default() -> None:
-    """The sidecar patch's anchors are re-validated against this pin in F4, not before."""
-    assert _pin(_FLASH_NEXT, "PATCH_RESTORE_CHECKPOINT") == "0"
+def test_flash_next_checkpoint_patch_is_on_by_default() -> None:
+    """F4 re-validated the sidecar patch's anchors against this pin; a pin bump re-validates
+    them (they fail the build hard on drift), and the api proves the patch per save."""
+    assert _pin(_FLASH_NEXT, "PATCH_RESTORE_CHECKPOINT") == "1"
 
 
 def test_flash_next_bakes_a_checksummed_wikitext_sample() -> None:

@@ -44,6 +44,15 @@ tokens, with the engine logging "restored context checkpoint (pos_min = 2815,
 pos_max = 2815, n_tokens = 2816, n_past = 2816)". Without the patch the same
 cycle re-processed all 2820.
 
+RE-VALIDATED 2026-10-04 at 869034b4bb93a425ea989d30fc3d000f5a461d58 (the Flash-Next pin):
+both anchors match exactly once (save: `res->is_save  = true;`; restore:
+`slot->prompt.tokens = std::move(restored);`), a second run is a no-op, and the patched
+tools/server/server-context.cpp compiles with -fsyntax-only. At this commit
+`server_prompt::checkpoints` is still a `std::list<common_prompt_checkpoint>` whose
+entries carry n_tokens / pos_min / pos_max / data_tgt / data_dft / data_spec, so the
+blocks serialize the same state. The live restore is checked on the box by the debug slot
+probe (FLASH_NEXT_ENGINE_PLAN F4).
+
 App-side contract (jbrain.llm.kv_prefix): the sidecar lives and dies with its
 slot file — pruning or invalidating `<f>.kvslot` also removes `<f>.kvslot.ckpt`,
 and the sidecar's size counts toward the store budget.

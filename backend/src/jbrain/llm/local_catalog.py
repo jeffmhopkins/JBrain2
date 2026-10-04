@@ -397,6 +397,13 @@ class LocalModel:
     # hidden states and is always verified — a restore costs brief draft acceptance, never
     # correctness. Set per entry once reasoned through; verified live per model.
     kv_slot_restorable: bool = False
+    # Disk save/restore admitted only while the engine's llama-server carries the
+    # checkpoint-sidecar patch (deploy/patches/0001). Without it a restore clears the slot's
+    # context checkpoints and a hybrid re-prefills from zero even on a perfect match
+    # (upstream Discussion #27950), so the file buys nothing. `kv_prefix` proves the patch at
+    # runtime: a save that writes no `.ckpt` sidecar marks the build unpatched and the model
+    # leaves the disk layer until the api restarts (FLASH_NEXT_ENGINE_PLAN §4b).
+    kv_restore_needs_patch: bool = False
     # GiB per context checkpoint, per slot. Non-zero only for a HYBRID (recurrent) model,
     # where a checkpoint is a full copy of the recurrent state and is device-resident —
     # ~150 MiB for Qwen3.8 (llama.cpp #20145, #23371). Zero on an attention model, whose
@@ -1256,6 +1263,8 @@ CATALOG: tuple[LocalModel, ...] = (
         # this guess 16 per slot.
         checkpoint_gb=0.11,
         served_ctx_checkpoints=8,
+        # The image builds the sidecar patch in (F4); the store still proves it per save.
+        kv_restore_needs_patch=True,
         engine=engines.FLASH_NEXT,
         # Slots are role-pinned prefix caches over one shared pool (§4a); `effective_slots`
         # serves the pool's count whatever this says, so the two are kept equal.
