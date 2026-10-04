@@ -253,16 +253,22 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
     `.ckpt` sidecar and a conversation's `.meta` claim are billed to their slot file, never
     counted alone), so a prune that fires can be explained against this total. Conversation
     files are evicted before any prefix, oldest first.
-  - `summary` — `hits` (`restored` + `conversation_restored`), `misses` (the fault outcomes
-    plus conversation misses), `role_restores`, `conversation_hits`, `conversation_misses`,
+  - `summary` — `hits` (role `restored` plus conversation restores JUDGED a hit or partial by
+    the `cached_tokens` of the first request they served), `misses` (the fault outcomes plus
+    conversation misses), `role_restores`, `conversation_restores` (attempts),
+    `conversation_restore_hits` / `_partials` / `_misses`, `conversation_misses`,
     `conversation_saves`.
   - `roles[]` — on a pooled model (Flash-Next), one row per (model, slot role) the store has
-    state for: `slot`, `restored_unused` and `restored_age_s` (a pooled memo expires after
-    10 min, because the pool guard can erase a restored slot unseen), `last_identity`,
+    state for: `slot`, `restored_unused` and `restored_age_s` (held until a request uses the
+    slot, the model reloads, or this process's pool guard erases it), `last_identity`,
     `last_outcome`. Drift is judged per role, so a research turn is never "jerv drifting".
   - `conversations` — `enabled` (the owner's toggle), `held` (the conversation the interactive
-    slot holds as a short hash, its message count, last input tokens, `unsaved`, `idle_s`) and
-    `files`. Restores and saves are counted as `conversation_restored` / `conversation_saved`;
+    slot holds as a short hash, `awaiting_judgement` right after a restore, last input tokens,
+    `unsaved`, `idle_s`) and `files`. A conversation is restored on its key and base identity
+    alone and judged by what the server reused; three misses in a row drop its file.
+    `conversation_tainted` counts chats in which a location, mail or records tool ran (their
+    files deleted, never saved again); `save_skipped_low_disk` counts saves refused to keep the
+    volume at 20 GiB free. Restores and saves are counted as `conversation_restored` / `conversation_saved`;
     `conversation_no_file`, `conversation_prefix_mismatch`, `conversation_base_mismatch`,
     `conversation_skipped_busy`, `conversation_skipped_pool_full` are ordinary misses, not
     faults, and write no box event.
@@ -305,8 +311,8 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   (FLASH_NEXT_ENGINE_PLAN F4c): on Flash-Next the interactive slot saves the conversation it
   holds when another conversation (or the keeper's prime) takes the slot, or after 10 min idle,
   and restores a conversation before its next turn when the saved messages still open the new
-  prompt. Default ON; applied live. Off stops new saves and restores; saved files stay until the
-  budget ages them out or `DELETE …/kv-prefix` removes them. The owner's twin is Ops → *Keep
+  prompt. Default ON; applied live. Off stops new saves and restores and deletes every saved
+  conversation file. The owner's twin is Ops → *Keep
   chats on disk* (`PUT /api/settings` `llm_kv_conversation_cache`).
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
   `elapsed_ms`, the measurement instrument for any prefill experiment, plus **`reuse`**

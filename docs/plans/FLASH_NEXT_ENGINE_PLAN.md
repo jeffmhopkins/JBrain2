@@ -671,10 +671,10 @@ Begins with the check moved out of F2, and gated on it:
   until the next api start (`patch_absent`), and a file without a sidecar is never restored.
   Memos and identity drift are per (model, role); saves read only the role's own slot; a
   restore targets the role's slot, only while it is idle and empty, only when the restored
-  tokens fit the pool beside every other slot's projection (`kv_pool_guard.projected_cells`,
-  the pool size read off `-c`). A pooled restored-unused memo expires after 10 min (the guard
-  can erase a slot unseen). Each role's effort is in its fingerprint as before; the standard
-  engine keeps its single-memo behaviour.
+  tokens fit the pool (through the pool guard since the review, below). A restored-unused
+  slot is not restored again until a request uses it, the model reloads or the guard erases it.
+  Each role's effort is in its fingerprint as before; the standard engine keeps its single-memo
+  behaviour.
 - **Roles primed.** Deviation from the list above, deliberate: jerv's prime is saved from slot
   0, and the keeper RESTORES that same file into the scheduled slot (2) when it is empty — the
   scheduled prefix is jerv's — but primes nothing else. Ingest and pet prefixes are ~400–500
@@ -685,9 +685,9 @@ Begins with the check moved out of F2, and gated on it:
   (`conversation_key`, the session id). On a pooled model, before an interactive request that
   is not the conversation slot 0 holds, the store saves the holder (only if `/slots` still
   reads as that conversation's cache and `n_saved` matches) and then restores the request's own
-  conversation file if its base identity matches and its message digests open the new prompt.
+  conversation file when its key and base identity match (see the review entry below).
   The keeper saves a conversation idle for 10 min. Conversation files live beside the role
-  prefixes (`c-<hash>.kvslot` + a `.meta` claim of digests and counts), share the budget, and
+  prefixes (`c-<hash>.kvslot` + a `.meta` claim: key hash, base, counts), share the budget, and
   are all evicted before any role prefix. Toggle *Keep chats on disk* (default on) and budget
   *Prompt cache disk* (default 40 GiB, was 25) in Ops, both live; debug twins
   `PUT /llm/kv-prefix/conversations` and `…/budget`. `GET /llm/kv-prefix` reports per-role
@@ -702,9 +702,20 @@ Begins with the check moved out of F2, and gated on it:
   one: a persona with `reads_knowledge_base=False`, a session scoped to `general` only (or
   nothing) and no subject. Brain/curator chats never do. Role prefixes (system + tools only) are
   unaffected.
-- **Preserved thinking (#1560).** Conversation digests leave out the reasoning replayed within a
-  turn; the next turn's text-only, `preserve_thinking=false` render diverges at the previous
-  turn's first tool step, and reuse runs to the nearest checkpoint before it.
+- **Independent review (2026-10-04).** Conversation restores are decided on the conversation key
+  and base identity alone — a chat's message list is never stable between turns (volatile
+  blocks, the turn's own tool steps) — and judged by the `cached_tokens` the first request
+  reports (hit / partial / miss; three misses drop the file). Saves stream outside the store's
+  main lock, one at a time, each deleting the old sidecar first, and never leave the volume
+  under 20 GiB free. Restore fits go through the router's pool guard (its lock, its pending
+  calls, a charge for never-used restored slots, an erase notice back to the store). Privacy
+  also excludes mail-holding personas and any chat in which a location, mail or records tool
+  ran (read off the transcript); deleting or re-scoping a chat deletes its files, and the
+  toggle off deletes them all. A turn superseded by another interactive request never claims
+  the slot; a reload forgets the restore gate.
+- **Preserved thinking (#1560).** Restores compare no messages at all; the next turn's text-only,
+  `preserve_thinking=false` render diverges at the previous turn's first tool step, where reuse
+  stops at the nearest checkpoint before it — which the hit/partial/miss judging measures.
 
 **Pending on the box (in order; each needs only the debug token):**
 1. Ops → Update (rebuilds the flash-next image with the patch), switch to Flash-Next.

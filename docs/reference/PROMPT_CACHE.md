@@ -83,35 +83,55 @@ Flash-Next serves eight role-pinned slots over one shared KV pool
   primed: their stable prefixes are a few hundred tokens or do not exist. Any role's turn still
   restores into its own slot on demand if a file of its identity exists.
 - A restore goes into the role's own slot only while that slot is idle and **empty**, never
-  over an occupied one, and only when the restored tokens fit the pool beside what every other
-  slot may grow to (a full pool fails every busy request).
-- Memos and drift are per (model, role). A pooled restored-but-unused memo expires after
-  10 minutes, because the pool guard can erase that slot without telling the store.
+  over an occupied one, and only when the restored tokens fit the pool — judged by the router's
+  pool guard under its own lock, with its pending calls, so a restore can never push the pool
+  past its cells under a busy request (a full pool fails every busy request). The guard also
+  charges what a restore put in a slot that never ran a request (`/slots` reports no size for
+  one) until a request uses it or the guard erases it, and tells the store when it does.
+- Memos and drift are per (model, role). A restored-but-unused slot is not restored again until
+  a request uses it, the model reloads, or this process's pool guard erases it. (The worker's
+  guard can erase it unseen; that role's next turn then pays one prefill and resets the memo.)
+- Every save deletes the old `.ckpt` sidecar first, so a sidecar after the save proves the
+  running build is patched; a patch-gated role prefix is re-saved once per api start for the
+  same reason, even when its file exists.
+- No save leaves the models volume with less than 20 GiB free, or less than twice the file
+  about to be written (`save_skipped_low_disk`); saves and prunes run one at a time.
 
 The interactive slot also carries **conversation files** (`llm/kv_conversation.py`, toggle
 *Keep chats on disk*, default ON) — for **research-type chats only**. A slot file holds the
 conversation's token ids on disk, outside Postgres, where the domain firewalls (health, finance,
-location) cannot reach it, so a chat gets one only when it cannot hold firewalled data: its
-persona does not read the knowledge base (jerv and the other `reads_knowledge_base=False`
-agents, whose turns run with empty read scopes), its session names no domain but `general`
-(an unknown domain counts as firewalled) and no subject. **Brain/curator chats never get a
-conversation file.** Role prefix files hold only the system prompt and tool schemas, no owner
-data, and are unaffected. When another conversation, or the keeper's prime, is about
-to take slot 0, the conversation it holds is saved first — only if `/slots` still reads as that
-conversation's cache (between its last prompt and prompt + answer) and the server saves exactly
-that many tokens. A conversation idle for 10 minutes is saved by the keeper's tick. When a
-conversation speaks again and slot 0 does not hold it, its file is restored before the request
-if the file's base identity (launch line, persona, tools, effort) matches and every message the
-saved request sent opens the new one, digest for digest. llama-server then compares tokens and
-re-evaluates from the first divergence (typically the previous answer re-rendered without its
-thinking), so a wrong guess costs a re-prefill, never a wrong answer. The digests leave out
-the reasoning a tool step replays within its own turn (`AssistantMessage.reasoning`): the next
-turn's history is text-only and the template renders it with `preserve_thinking=false`, so the
-divergence llama-server finds is at the previous turn's first tool step, and reuse runs up to
-the nearest checkpoint before it. A conversation that moved
-on (an edit, a regenerate further back) loses its file. File names are hashes and the `.meta`
-claim holds only digests and counts; the slot file itself carries the conversation's tokens,
-like the KV in RAM it came from.
+location) cannot reach it, so a chat gets one only when it cannot hold firewalled or private
+data:
+
+- its persona reads no knowledge base and holds no mail tools (jerv and the other
+  `reads_knowledge_base=False` agents; never the curator, never the archivist);
+- its session names no domain but `general` (an unknown domain counts as firewalled) and no
+  subject;
+- no location, mail or records tool (`current_location`, `where_was_i`, `weather`, `gmail_*`,
+  `read_labs`, … — `kv_conversation.EXCLUDED_TOOLS`) has run in ANY of its turns. The chat reads
+  that off the transcript before each turn; a turn that runs one deletes the conversation's
+  files at once and it is never saved again.
+
+**Brain/curator chats never get a conversation file.** Role prefix files hold only the system
+prompt and tool schemas, no owner data, and are unaffected. Deleting a chat, or changing its
+scope, deletes its files (`forget_conversation`); turning the toggle off deletes them all.
+
+When another conversation, or the keeper's prime, is about to take slot 0, the conversation it
+holds is saved first — only if `/slots` still reads as that conversation's cache (between its
+last prompt and prompt + answer) and the server saves exactly that many tokens. The save streams
+outside the store's main lock. A conversation idle for 10 minutes is saved by the keeper's tick.
+When a conversation speaks again and slot 0 does not hold it, its file is restored before the
+request on **identity alone** — same conversation key, same base identity (launch line, persona,
+tools, effort). A chat request's message list is not stable from turn to turn (a timestamped
+`now` block, resume/plan/artifact context, per-turn hints, the turn's own tool steps with their
+replayed thinking), so no message comparison could hold; llama-server compares TOKENS after the
+restore and re-evaluates from the first divergence, reusing up to the nearest context checkpoint
+before it — a restore is never wrong, only more or less useful. How useful is **measured**: the
+first request after a restore reports `cached_tokens`, judged a hit (at least half the restored
+tokens reused), partial (at least 4,096) or miss. A conversation whose restores miss three times
+in a row loses its file and is not saved again until the api restarts. A request that another
+interactive request superseded never claims the slot. File names are hashes, and the `.meta`
+claim holds only the key's hash, the base identity, counts and the miss streak.
 
 Both kinds share the **disk budget** (default 40 GiB, Ops → *Prompt cache disk*): every
 conversation file is evicted before any role prefix, oldest first. A Flash-Next 29k-token prefix
@@ -194,7 +214,7 @@ show you when one bites.
 | | |
 |---|---|
 | `llm/kv_prefix.py` | the disk store: fingerprint, save gate, restore gate, per-role slots, conversations, LRU budget |
-| `llm/kv_conversation.py` | conversation file names, claims and the restore decision |
+| `llm/kv_conversation.py` | conversation file names, claims, the privacy rule, the restore decision and its judging |
 | `llm/warm_keeper.py` | the keep-warm loop: prime, re-prime, the edge triggers |
 | `agent/priming.py` | the prime's (system, tools) — the same call a real turn makes |
 | `llm/llama_swap_config.py` | `--slot-save-path`, `-np`, `--cache-reuse`, `-cram` |
