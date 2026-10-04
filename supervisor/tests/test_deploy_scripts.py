@@ -192,6 +192,21 @@ def test_update_marks_worktree_safe_before_pull() -> None:
     assert safe < pull, "safe.directory must be set before the pull"
 
 
+def test_update_drops_page_cache_before_restarting_the_engine() -> None:
+    # The api's load guard counts page cache as used, and a build or pull leaves
+    # tens of GB of it; nothing on an idle box reclaims it. Without a drop right
+    # before the final engine start, Flash-Next (~88 GB) was refused with 109 GB
+    # really free (2026-10-04).
+    lines = (DEPLOY / "update-inner.sh").read_text().splitlines()
+    marker = 'local_engine_start "$SELECTED_ENGINE"'
+    start = next((i for i, ln in enumerate(lines) if marker in ln), None)
+    assert start is not None, "update-inner.sh must restart the selected engine"
+    block = lines[max(0, start - 4) : start]
+    assert any(ln.strip() == "drop_page_cache" for ln in block), (
+        "drop_page_cache must run just before the final engine start"
+    )
+
+
 def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     # The LLM gateway pins its resident model set (~91 GB) in unified memory and is
     # profile-gated, so the update's plain `up -d` never recreates it — it would sit
