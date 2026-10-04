@@ -19,7 +19,7 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { Fragment, type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
@@ -320,7 +320,18 @@ export interface MdFlag {
   claim: string;
   /** The reason to show on tap (drawn from the matching issue). */
   reason: string;
+  /** Which reflexion check raised it (default `grounding`). An `arithmetic` claim is a bare
+   * NUMBER, not a sentence: it anchors on the number's own boundaries, once, instead of on
+   * sentence boundaries — which a figure mid-sentence never meets, so every one used to
+   * strand at the bubble's end as an anonymous ⚠ with nothing to say which number it meant.
+   * The kind also picks the hover title: an untraced number is never "not in your notes". */
+  kind?: "grounding" | "arithmetic";
 }
+
+const FLAG_TITLE: Record<NonNullable<MdFlag["kind"]>, string> = {
+  grounding: "unverified — not grounded in your notes",
+  arithmetic: "unverified — not traced to a calculation",
+};
 
 /** A matcher over the ungrounded-claim sentences, plus a lookup from a matched
  * (normalized) sentence back to its flag and a set the scanner marks as it places
@@ -339,7 +350,7 @@ interface Ctx {
    * target renders as a favicon link, a note (or absent) as the numbered chip. */
   cites?: CiteTarget[] | undefined;
   /** The turn's computations, positional with the `[=n]` numbering — one per `calculate`
-   * or `run_python` call that produced a number. */
+   * or `run_python` call that succeeded (the backend's `is_computation`). */
   calcs?: CalcTarget[] | undefined;
   /** This message states exactly ONE computation and carries exactly ONE marker, so the
    * marker's DIGIT cannot be telling us anything the position does not — see `soleCalc`. */
@@ -439,7 +450,7 @@ function FlagMark({ flag, ctx, fkey }: { flag: MdFlag; ctx: Ctx; fkey: string })
         className="md-flag"
         aria-expanded={open}
         aria-label="unverified claim"
-        title="unverified — not grounded in your notes"
+        title={FLAG_TITLE[flag.kind ?? "grounding"]}
         onClick={() => ctx.onFlag?.(flag.id)}
       >
         ⚠
@@ -480,9 +491,16 @@ function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
       // flags it instead — degrade safely, never mis-anchor.
       const before = text.slice(0, at);
       const after = text.slice(at + m[0].length);
-      const leftOk = at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
-      const rightOk = after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
+      const token = flag?.kind === "arithmetic";
+      const leftOk = token
+        ? !/[\p{L}\p{N}]$|\d[.,]$/u.test(before)
+        : at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
+      const rightOk = token
+        ? !/^[\p{L}\p{N}]|^[.,]\d/u.test(after)
+        : after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
       if (!flag || !leftOk || !rightOk) continue; // not a clean sentence match — scan as prose
+      // A number repeats far more often than a sentence does; flag its first occurrence.
+      if (token && ctx.flags.placed.has(flag.id)) continue;
       if (at > last) out.push(...scanPlaces(text.slice(last, at), `${key}-g${i}`, ctx));
       // Mark the flagged TEXT (subtle amber), not just the trailing ⚠ — so the
       // reader sees *which* prose is unverified. The interior still scans for
@@ -580,8 +598,17 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       out.push(...scanPlain(rest, `${key}-${n++}`, ctx));
       break;
     }
-    if (m.index > 0) out.push(...scanPlain(rest.slice(0, m.index), `${key}-${n++}`, ctx));
     const tok = m[0];
+    // A `[=n]` naming no computation this message holds is dropped along with the space
+    // before it, so the figure it followed reads as plain prose: a raw `[=2]` told the owner
+    // nothing, and a chip on some OTHER call would be worse. Done here, on prose tokens only,
+    // so a marker quoted in code (a fenced block, `inline code`) is never touched.
+    const calcNum = /^\[=\d+\]$/.test(tok) ? (ctx.soleCalc ? 1 : Number(tok.slice(2, -1))) : 0;
+    const unresolvedCalc = calcNum > 0 && !ctx.calcs?.[calcNum - 1];
+    const prefix = unresolvedCalc
+      ? rest.slice(0, m.index).replace(/[ \t]+$/, "")
+      : rest.slice(0, m.index);
+    if (prefix.length > 0) out.push(...scanPlain(prefix, `${key}-${n++}`, ctx));
     const k = `${key}-${n++}`;
     if (tok.startsWith("`")) {
       out.push(
@@ -610,22 +637,24 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       //
       // The model authors the MARKER and nothing else. What the popover shows is read from
       // the persisted call, so a marker cannot assert a computation that did not happen; one
-      // that resolves to no call renders as plain text, the same rule `ToolView` applies to
-      // an unknown view name.
+      // that resolves to no call is not shown at all, the same rule `ToolView` applies to an
+      // unknown view name.
       const stated = Number(tok.slice(2, -1));
       // `soleCalc` means the digit carries no information this message's shape does not
       // already fix, so the one computation wins and the marker RENDERS as the position it
       // really is — showing ƒ2 beside a single call would be its own small lie.
       const num = ctx.soleCalc ? 1 : stated;
       const target = ctx.calcs?.[num - 1];
-      if (!target) {
-        out.push(<Fragment key={k}>{tok}</Fragment>);
-      } else {
+      // An unresolved marker renders nothing (its leading space went with it, above).
+      if (target) {
         out.push(
           <button
             key={k}
             type="button"
             className="md-calc"
+            // The popover re-finds its marker by this, so a re-render that replaces the
+            // node (a verdict landing, the paced reveal settling) cannot strand the panel.
+            data-calc={num}
             aria-label={`show the working for this number (${num})`}
             onClick={(e) => ctx.onCalc?.(num, e.currentTarget)}
           >
@@ -1029,7 +1058,8 @@ export function Markdown({
    * a favicon link; a note (or absent) renders as the numbered chip. */
   cites?: CiteTarget[] | undefined;
   /** The turn's computations, positional with `[=n]`: the `code_run` view of each call that
-   * produced a number, in call order. A marker past the end renders as plain text. */
+   * succeeded, in call order. A marker that resolves to none is dropped, leaving the figure as
+   * plain prose. */
   calcs?: CalcTarget[] | undefined;
   /** Tap handler for a `[=n]` computation marker — opens its working. */
   onCalc?: ((n: number, anchor: HTMLElement) => void) | undefined;
@@ -1052,10 +1082,6 @@ export function Markdown({
    * of stripping it as browse noise. Off everywhere else. */
   harmonyCitations?: boolean;
 }): ReactNode {
-  const blocks = useMemo(
-    () => parseBlocks(stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text)),
-    [text, harmonyCitations],
-  );
   const index = useMemo(() => buildIndex(entities), [entities]);
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.
@@ -1066,11 +1092,16 @@ export function Markdown({
   // as raw text. The prompt already says "this turn" and the model does not honour it, so
   // the renderer forgives the digit — but ONLY where it cannot be wrong: one computation and
   // one marker leaves nothing for the number to disambiguate. Two of either and the digit is
-  // load-bearing again, and a marker that still resolves to nothing stays plain text rather
-  // than pointing at the wrong call.
+  // load-bearing again, and a marker that still resolves to nothing is dropped rather than
+  // pointing at the wrong call.
+  const calcCount = calcs?.length ?? 0;
   const soleCalc = useMemo(
-    () => (calcs?.length ?? 0) === 1 && (text.match(/\[=\d+\]/g) ?? []).length === 1,
-    [calcs, text],
+    () => calcCount === 1 && (text.match(/\[=\d+\]/g) ?? []).length === 1,
+    [calcCount, text],
+  );
+  const blocks = useMemo(
+    () => parseBlocks(stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text)),
+    [text, harmonyCitations],
   );
   const ctx: Ctx = {
     onCite,

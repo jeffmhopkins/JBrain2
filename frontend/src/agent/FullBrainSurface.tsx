@@ -64,11 +64,12 @@ import {
   type FootSignal,
   type ToolActivity,
   type TranscriptMessage,
+  type Verdict,
   nextAutoSection,
   reconcileFoot,
 } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
-import type { FullBrain } from "./useFullBrain";
+import { type FullBrain, readsNotes } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
 import { STEP_VIEWS, ToolView } from "./views/registry";
 
@@ -383,6 +384,7 @@ export function AgentTranscript({
               // owner answered lives only in a component.
               ask={ask(fb.messages, i, fb.answers, fb.setAnswer)}
               noteDomainCode={threadDomain}
+              notesSurface={readsNotes(fb.active?.agent)}
               onOpenNote={onOpenNote}
               onOpenEntity={onOpenEntity}
               onOpenProposal={(id) => {
@@ -759,17 +761,59 @@ export function AgentStatusLine({
 }
 
 // The reason shown when a ⚠ flag is tapped — short and plain, the owner's words
-// not the verifier's. Reflexion's grounding check means exactly this.
-const FLAG_REASON = "Not in your notes — I couldn't ground this in a source.";
+// not the verifier's. One per check, because they say different things: the grounding
+// check means "your notes don't support this sentence", the arithmetic one "this number
+// came from no calculation this turn". Wording the second as the first told a jerv owner
+// — whose agent reads no notes at all — that a figure was missing from his notes.
+const FLAG_REASON: Record<Verdict["kind"], string> = {
+  grounding: "Not in your notes — I couldn't ground this in a source.",
+  arithmetic: "Not traced to a calculation — no result this turn produced this number.",
+};
 
 // Build the inline flags for a turn from its reflexion verdict: one amber ⚠ per
-// ungrounded answer sentence, each carrying its reason. A passing or absent
-// verdict yields none, so the bubble is byte-for-byte unchanged (Option 1 is
+// ungrounded answer sentence (or untraced number), each carrying its reason. A passing or
+// absent verdict yields none, so the bubble is byte-for-byte unchanged (Option 1 is
 // purely additive). The id is the claim's index so it's stable across renders.
-function mdFlags(message: TranscriptMessage): MdFlag[] {
+//
+// A surface whose persona reads no notes (jerv and the rest) shows NO reflexion flag of
+// either kind — the owner's ruling. A grounding flag could not be true there ("not in your
+// notes" of an agent with none); an arithmetic one was ruled noise on those surfaces. The
+// backend no longer sends either there; this holds for an older server too.
+function mdFlags(message: TranscriptMessage, notesSurface = true): MdFlag[] {
   const v = message.verdict;
-  if (!v || v.passed) return [];
-  return v.ungroundedClaims.map((claim, i) => ({ id: `ug-${i}`, claim, reason: FLAG_REASON }));
+  if (!v || v.passed || !notesSurface) return [];
+  return v.ungroundedClaims.map((claim, i) => ({
+    id: `ug-${i}`,
+    claim,
+    reason: FLAG_REASON[v.kind],
+    kind: v.kind,
+  }));
+}
+
+/** The turn's computations, positional with `[=n]`. Built from the STEPS, not from anything
+ * the model wrote: a marker names a position and the popover's contents come from the
+ * persisted call, so a marker can never assert a computation that did not happen
+ * (SHOW_THE_WORKING_PLAN.md D3).
+ *
+ * Two numberings, told apart by the persisted view itself. A turn whose computations carry
+ * `computation_index` was numbered by the backend, which handed the model each SUCCESSFUL
+ * result's marker and gave a failed run none — so `[=n]` is the view stamped `n`. A turn
+ * without it predates that (or ran where markers are not cited) and was numbered by the
+ * model counting every `code_run` call, failed ones included; re-numbering it by success
+ * now would shift every reopened marker after a failure onto the wrong working. */
+function computations(message: TranscriptMessage): CalcTarget[] {
+  const views = message.tools.flatMap((t) =>
+    t.view && t.view.view === "code_run" ? [t.view] : [],
+  );
+  const indexed = views.filter((v) => typeof v.data.computation_index === "number");
+  if (indexed.length === 0) return views.map((payload) => ({ payload }));
+  const byIndex: CalcTarget[] = [];
+  for (const payload of indexed)
+    byIndex[(payload.data.computation_index as number) - 1] = { payload };
+  // Dense by construction (the backend counts 1..N); a hole would be a bug, and `filter`
+  // would silently shift every marker after it — so a hole stays a hole and resolves to
+  // nothing, which renders no chip.
+  return byIndex;
 }
 
 /** The question block a turn carries, or undefined. Pure, and the whole of the block's
@@ -831,6 +875,7 @@ function Bubble({
   readAloud,
   ask,
   noteDomainCode,
+  notesSurface = true,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
@@ -883,13 +928,18 @@ function Bubble({
     | undefined;
   /** The note's own domain, for the rule down turn 0's left edge. Null = no colour. */
   noteDomainCode?: string | null | undefined;
+  /** This conversation's persona reads the owner's notes (`readsNotes`) — false on jerv and
+   * every other KB-blind persona, where no reflexion flag of either kind is shown. */
+  notesSurface?: boolean | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
   const [openFlag, setOpenFlag] = useState<string | null>(null);
   // The open computation popover, if any — one at a time per turn, because it is a glance
   // at one number rather than a panel you leave up.
-  const [calc, setCalc] = useState<{ target: CalcTarget; anchor: DOMRect } | null>(null);
+  const [calc, setCalc] = useState<{ target: CalcTarget; anchor: () => Element | null } | null>(
+    null,
+  );
   // Pace the *displayed* prose: a steady typewriter reveal while the turn streams,
   // snapping to the full text once it settles. Only the Markdown text is paced —
   // sources, entities, and flags below still read the full `message.text`, so they
@@ -1025,13 +1075,7 @@ function Bubble({
     ...(t.webSources ?? []).map((w): CiteTarget => ({ kind: "web", url: w.url, title: w.title })),
     ...(t.entities ?? []).map((e): CiteTarget => ({ kind: "entity", entityId: e.entity_id })),
   ]);
-  // The turn's computations, positional with `[=n]` — one per call that produced a number,
-  // in call order. Built from the STEPS, not from anything the model wrote: a marker names a
-  // position and the popover's contents come from the persisted call, so a marker can never
-  // assert a computation that did not happen (SHOW_THE_WORKING_PLAN.md D3).
-  const calcTargets: CalcTarget[] = message.tools.flatMap((t) =>
-    t.view && t.view.view === "code_run" ? [{ payload: t.view }] : [],
-  );
+  const calcTargets = computations(message);
   const onCite =
     onOpenNote || onOpenEntity
       ? (n: number) => {
@@ -1071,7 +1115,7 @@ function Bubble({
   // Reflexion flagged this turn (Loop 1): map each ungrounded answer sentence to an
   // amber ⚠ flag anchored after it, tappable for the reason. A passing/absent
   // verdict makes no flags, so the bubble renders exactly as before.
-  const flags = mdFlags(message);
+  const flags = mdFlags(message, notesSurface);
 
   // Carry each image tool's last live preview to its generated_image view (1:1, in
   // call order) so the view holds it as a placeholder until the full-res image loads —
@@ -1154,7 +1198,16 @@ function Bubble({
           calcs={calcTargets}
           onCalc={(n, el) => {
             const target = calcTargets[n - 1];
-            if (target) setCalc({ target, anchor: el.getBoundingClientRect() });
+            if (!target) return;
+            // Re-found by its number inside its own bubble on every placement, so a re-render
+            // that replaces the marker node does not strand the panel; the tapped node is the
+            // fallback while it is still in the page.
+            const bubble = el.closest(".bubble");
+            setCalc({
+              target,
+              anchor: () =>
+                bubble?.querySelector(`[data-calc="${n}"]`) ?? (el.isConnected ? el : null),
+            });
           }}
           streaming={message.streaming}
         />

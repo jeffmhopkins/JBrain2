@@ -130,6 +130,15 @@ export function modeForAgent(agent: string): ConvMode {
   return MODE_AGENTS.fullbrain.includes(agent) ? "fullbrain" : "research";
 }
 
+/** The personas that read the owner's notes — the backend's `reads_knowledge_base`. A
+ * notes-grounding verdict ("not in your notes") is a claim about THESE agents' answers only;
+ * on any other surface there are no notes for a claim to be missing from. An absent agent
+ * is curator, the server's default. */
+const NOTES_AGENTS: ReadonlySet<string> = new Set(["curator", "note_ingest"]);
+export function readsNotes(agent: string | undefined): boolean {
+  return NOTES_AGENTS.has(agent ?? "curator");
+}
+
 /** Which agents the new-chat picker OFFERS, per tab — a subset of MODE_AGENTS.
  * `note_ingest` is deliberately absent: the engine opens a note conversation with a
  * captured note as turn 0, and a hand-started one would be the persona W3 hands the

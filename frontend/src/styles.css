@@ -10982,10 +10982,40 @@ button.small {
   gap: calc(6px * var(--font-scale));
 }
 /* capped and scrolling: the panel opens on the working, so a long program is a scroll
-   rather than a second tap. */
+   rather than a second tap. `contain` keeps a scroll that reaches the end of the working
+   from chaining into the transcript behind it. */
 .fb-shell .fb-calc-body {
   max-height: 46vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* the close control — one of the three ways the panel closes (a tap outside, Escape, this).
+   A slim row of its own rather than floating over the working, which it would cover. */
+.fb-shell .fb-calc-head {
+  display: flex;
+  justify-content: flex-end;
+}
+/* a full 44×44 hit area (DESIGN.md: touch targets ≥ 44px) whose negative vertical margins
+   let the row it sits in paint only ~16px tall, so the working still starts near the top. */
+.fb-shell .fb-calc-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -14px -8px -14px 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .fb-calc-x:hover {
+  color: var(--text);
+}
+.fb-shell .fb-calc-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 /* Inside the popover there is no step rail to line up with, so every rung that carries the
    rail inset drops it. The inset is a MARGIN on the code block and PADDING on the rest —

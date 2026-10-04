@@ -29,6 +29,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import (
+    CITES_COMPUTATIONS,
     DEEP_RESEARCH_TOOL,
     SPAWN_TOOL,
     AgentProfile,
@@ -1448,6 +1449,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # for an agent that reads notes; a non-KB agent (jerv, teacher) has
             # none to contrast with, so suppress it.
             general_knowledge_label=profile.reads_knowledge_base,
+            # The owner-facing root turn of a persona whose prompt defines `[=n]`; spawned
+            # children and task runs never set it (see `CITES_COMPUTATIONS`).
+            cite_computations=profile.name in CITES_COMPUTATIONS,
             here=here,
             here_as_of=here_as_of,
             context_window=context_window,

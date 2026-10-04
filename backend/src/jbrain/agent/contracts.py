@@ -578,13 +578,20 @@ class VerdictEvent(BaseModel):
     the *verbatim* answer sentences that failed grounding, so the PWA can anchor an
     inline "unverified" flag against the exact prose instead of re-parsing the
     prose `issues` prefix. `issues` stays the full human-readable list (it also
-    carries any citation/mutation issues, which have no answer-sentence to anchor)."""
+    carries any citation/mutation issues, which have no answer-sentence to anchor).
+
+    `kind` says WHICH check failed, because the PWA's reason and its anchor both depend on
+    it: `grounding` claims are answer SENTENCES the owner's notes did not support ("not in
+    your notes"), `arithmetic` claims are bare NUMBERS that traced to no tool result,
+    argument or owner message. Rendering the second with the first's reason told a jerv
+    owner — whose agent reads no notes at all — that a figure was "not in your notes"."""
 
     type: Literal["verdict"] = "verdict"
     passed: bool
     score: float
     issues: list[str] = Field(default_factory=list)
     ungrounded_claims: list[str] = Field(default_factory=list)
+    kind: Literal["grounding", "arithmetic"] = "grounding"
 
 
 class GeneralKnowledgeEvent(BaseModel):

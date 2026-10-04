@@ -46,6 +46,7 @@ from jbrain.agent.loop import (
     ToolContext,
     ToolOutput,
     guardrails_for_effort,
+    is_computation,
 )
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
@@ -151,8 +152,8 @@ def test_system_prompt_pinned_to_its_version() -> None:
     editing it must be a deliberate version bump, like every .prompt file."""
     digest = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert (SYSTEM_VERSION, digest) == (
-        "agent-system-v14",
-        "1a78894217369ea2d8dae1d9e16ba135431cf997ebedcad36301ca4fc1158340",
+        "agent-system-v15",
+        "d146a32d7cc4f88a47501c9691adfc2e4fb4cefcb639b617d014115730ba8605",
     )
 
 
@@ -2489,3 +2490,229 @@ async def test_a_budget_warning_starts_a_new_replay_boundary() -> None:
     )
     assert fake.converse_calls[1]["messages"][-1] == UserMessage(text=BUDGET_WARNING_DIRECTIVE)
     assert [c["replay_reasoning"] for c in fake.converse_calls[:3]] == [False, False, True]
+
+
+async def test_an_arithmetic_verdict_says_it_is_one() -> None:
+    """The PWA picks the flag's reason and anchor by `kind`: a bare number is not an answer
+    sentence, and "not in your notes" is the wrong thing to say about it."""
+    router, _ = stream_router_with(
+        _computed_turns(),
+        stream_chunks=[[""], ["that is 32138.49285 mm², or about 252.7 cm²"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("calculate", calc_tool))))
+    verdict = events[-1]
+    assert isinstance(verdict, VerdictEvent)
+    assert verdict.kind == "arithmetic"
+
+
+# --- the `[=n]` marker is handed to the model, not counted by it -------------------
+# Observed on the box: `calculate` with a date expression (the wrong tool, but it returned
+# 0 rather than failing), then `run_python` with the real answer — and the model cited the
+# python figure as `[=1]`, which opened the calculate call's working.
+
+
+def _code_run_tool(outcomes: list[bool]) -> ToolHandler:
+    """A computing tool whose successive calls pass or fail in the given order."""
+
+    async def handler(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        ok = outcomes.pop(0)
+        return ToolOutput(
+            "result" if ok else "Traceback: NameError",
+            view=ViewPayload(view="code_run", surface="inline", data={"ok": ok}),
+        )
+
+    return handler
+
+
+def _three_computations() -> list[LlmTurn]:
+    return [
+        LlmTurn(
+            "",
+            (
+                ToolCall("c1", "calculate", {}),
+                ToolCall("c2", "run_python", {}),
+                ToolCall("c3", "run_python", {}),
+            ),
+            "tool_use",
+            LlmUsage(1, 1),
+        ),
+        LlmTurn("82 days", (), "end_turn", LlmUsage(1, 1)),
+    ]
+
+
+def _computing_registry() -> ToolRegistry:
+    return registry_with(
+        make_tool("calculate", _code_run_tool([True])),
+        make_tool("run_python", _code_run_tool([False, True])),
+    )
+
+
+def _model_saw(messages: list[Any]) -> dict[str, str]:
+    """The tool results as the MODEL read them, by call id."""
+    (results,) = [m for m in messages if isinstance(m, ToolResultMessage)]
+    return {r.tool_call_id: r.content for r in results.results}
+
+
+async def test_each_computation_result_names_its_marker_and_a_failed_run_takes_none() -> None:
+    router, fake = stream_router_with(_three_computations())
+    loop = AgentLoop(router, _computing_registry())
+    events = [
+        ev
+        async for ev in loop.run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="how long until christmas?")],
+            cite_computations=True,
+        )
+    ]
+    model = _model_saw(fake.stream_calls[1]["messages"])
+    # The wrong-tool `calculate` still SUCCEEDED, so it is computation 1 — and the model is
+    # told so, rather than left to count.
+    assert model["c1"].endswith("as [=1] (exactly that marker).")
+    # A run that failed has no figure to cite: no marker, and it does not take a number.
+    assert "[=" not in model["c2"]
+    assert model["c3"].endswith("as [=2] (exactly that marker).")
+    # The instruction is the model's alone: the step the owner opens shows the tool's text.
+    summaries = {e.tool_call_id: e.summary for e in events if isinstance(e, ToolResultEvent)}
+    assert all("[=" not in summary for summary in summaries.values())
+    # The persisted view carries the index the model was given, for the PWA to resolve by.
+    views = {e.tool_call_id: e.view.data for e in events if isinstance(e, ToolViewEvent)}
+    assert views["c1"]["computation_index"] == 1
+    assert "computation_index" not in views["c2"]
+    assert views["c3"]["computation_index"] == 2
+
+
+async def test_no_marker_note_unless_the_turn_cites_computations() -> None:
+    """A task run, another persona, a buffered or plain stream without the flag: nothing."""
+    router, fake = stream_router_with(_three_computations())
+    events = await collect(AgentLoop(router, _computing_registry()))
+    assert all("[=" not in c for c in _model_saw(fake.stream_calls[1]["messages"]).values())
+    views = [e.view.data for e in events if isinstance(e, ToolViewEvent)]
+    assert all("computation_index" not in v for v in views)
+
+
+async def test_a_child_run_gets_no_marker_note() -> None:
+    """A spawned sub-agent runs through `run()` at depth > 0: its markers would render
+    nowhere, and its persona prompt does not define them."""
+    router, fake = router_with(_three_computations())
+    await AgentLoop(router, _computing_registry()).run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="how long until christmas?")],
+        depth=1,
+    )
+    assert all("[=" not in c for c in _model_saw(fake.converse_calls[1]["messages"]).values())
+
+
+async def test_buffer_retry_hands_the_model_its_marker_too() -> None:
+    router, fake = stream_router_with(_three_computations())
+    loop = AgentLoop(router, _computing_registry())
+    [
+        ev
+        async for ev in loop.run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="how long until christmas?")],
+            buffer_retry=True,
+            cite_computations=True,
+        )
+    ]
+    model = _model_saw(fake.converse_calls[1]["messages"])
+    assert model["c3"].endswith("as [=2] (exactly that marker).")
+
+
+async def test_a_tool_with_no_code_run_view_takes_no_marker() -> None:
+    router, fake = stream_router_with(
+        [
+            LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("ok", (), "end_turn", LlmUsage(1, 1)),
+        ]
+    )
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    [
+        ev
+        async for ev in loop.run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="q")],
+            cite_computations=True,
+        )
+    ]
+    assert "[=" not in _model_saw(fake.stream_calls[1]["messages"])["c1"]
+
+
+def test_is_computation_is_the_rule_the_pwa_numbers_by() -> None:
+    assert is_computation(ViewPayload(view="code_run", data={"ok": True}))
+    # A view with no `ok` at all is not a failure.
+    assert is_computation(ViewPayload(view="code_run", data={}))
+    assert not is_computation(ViewPayload(view="code_run", data={"ok": False}))
+    assert not is_computation(ViewPayload(view="list_card", data={}))
+    assert not is_computation(None)
+
+
+# --- the notes-grounding verdict belongs to a knowledge-base agent ------------------
+
+
+async def test_a_kb_blind_agent_gets_no_notes_grounding_verdict() -> None:
+    """The same ungrounded, sourced turn that flags on curator stays silent with the
+    persona's KB bit off: "not in your notes" means nothing to an agent that reads none."""
+    router, _ = stream_router_with(
+        _sourced_turns(),
+        stream_chunks=[[""], ["the roof needs replacing soon"]],
+    )
+    loop = AgentLoop(router, registry_with(make_tool("search", search_cholesterol)))
+    events = [
+        ev
+        async for ev in loop.run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="what do I know?")],
+            general_knowledge_label=False,
+        )
+    ]
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def test_a_kb_blind_agent_gets_no_notes_grounding_verdict_on_buffer_retry() -> None:
+    tool_use = LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1))
+    router, fake = stream_router_with(
+        [tool_use, LlmTurn("the roof needs replacing", (), "end_turn", LlmUsage(1, 1))] * 3,
+    )
+    loop = AgentLoop(router, registry_with(make_tool("search", search_cholesterol)))
+    events = [
+        ev
+        async for ev in loop.run_stream(
+            session=OWNER,
+            scopes=("health",),
+            conversation=[UserMessage(text="what do I know?")],
+            buffer_retry=True,
+            general_knowledge_label=False,
+        )
+    ]
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+    # A pass verdict improves on nothing, so no retry is spent chasing a grounding the
+    # agent cannot have: one produce-step, two converse calls.
+    assert len(fake.converse_calls) == 2
+
+
+async def test_a_kb_blind_agent_gets_no_arithmetic_verdict_either() -> None:
+    """The owner's ruling: a KB-blind surface (jerv) shows no reflexion ⚠ at all, and
+    nothing but the PWA reads the tail verdict — so it is not computed for such an agent."""
+    router, _ = stream_router_with(
+        _computed_turns(),
+        stream_chunks=[[""], ["that is 32138.49285 mm², or about 252.7 cm²"]],
+    )
+    loop = AgentLoop(router, registry_with(make_tool("calculate", calc_tool)))
+    events = [
+        ev
+        async for ev in loop.run_stream(
+            session=OWNER,
+            scopes=(),
+            conversation=[UserMessage(text="area?")],
+            general_knowledge_label=False,
+        )
+    ]
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)

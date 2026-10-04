@@ -318,7 +318,37 @@ describe("applyEvent reducer", () => {
       score: 0.5,
       issues: ["claim not grounded in retrieved sources: The roof needs replacing."],
       ungroundedClaims: ["The roof needs replacing."],
+      // No `kind` (an older server): sentences read as the grounding check.
+      kind: "grounding",
     });
+  });
+
+  it("infers an untagged verdict's kind from its claims", () => {
+    // An older server sent both checks without `kind`; its arithmetic claims are bare numbers.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "about 252.7 cm², $5,030.40 a check" });
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    ms = applyEvent(ms, {
+      type: "verdict",
+      passed: false,
+      score: 0,
+      ungrounded_claims: ["252.7", "5,030.40"],
+    });
+    expect(ms[0]?.verdict?.kind).toBe("arithmetic");
+  });
+
+  it("carries an arithmetic verdict's kind onto the turn", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "about 252.7 cm²" });
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
+    ms = applyEvent(ms, {
+      type: "verdict",
+      passed: false,
+      score: 0,
+      ungrounded_claims: ["252.7"],
+      kind: "arithmetic",
+    });
+    expect(ms[0]?.verdict?.kind).toBe("arithmetic");
   });
 
   it("leaves a turn unflagged when no verdict arrives", () => {
@@ -332,7 +362,13 @@ describe("applyEvent reducer", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
     ms = applyEvent(ms, { type: "verdict", passed: true, score: 1 });
-    expect(ms[0]?.verdict).toEqual({ passed: true, score: 1, issues: [], ungroundedClaims: [] });
+    expect(ms[0]?.verdict).toEqual({
+      passed: true,
+      score: 1,
+      issues: [],
+      ungroundedClaims: [],
+      kind: "grounding",
+    });
   });
 
   it("marks a turn answered from general knowledge (no retrieval)", () => {

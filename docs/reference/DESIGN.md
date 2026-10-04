@@ -1891,16 +1891,38 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   `docs/mocks/code-run/g-cited-floating.html`). Its own marker namespace, separate from the
   `[^n]` source citation: *from your note* and *from arithmetic I did* are different claims.
   The model authors the MARKER only — the panel is filled from the persisted call, and a
-  marker that resolves to nothing renders as plain text rather than as an unbacked claim.
+  marker that resolves to nothing is DROPPED (with the space before it), leaving the figure
+  as plain prose: neither an unbacked chip nor a raw `[=n]` (prose only — a marker quoted in
+  code is left as written). On an owner-facing root turn of a persona whose prompt defines
+  the marker (curator, jerv, archivist — `agents.CITES_COMPUTATIONS`), the backend numbers the
+  SUCCESSFUL computations — a `code_run` whose `ok` is false takes no number — hands the model
+  each one's marker beside its result (never in the step's own text), and stamps that number
+  on the persisted view as `computation_index`, which is what the chip resolves by, so the
+  two sides cannot disagree about which call `ƒ2` is. A turn with no stamped index (older, or
+  a persona that does not cite) keeps the old numbering, one per `code_run` call, failed ones
+  included — renumbering a reopened turn would move its markers. (Turn the owner saw:
+  a wrong-tool `calculate` that returned 0, then the `run_python` that answered, cited
+  `[=1]` — the model had counted, and the chip opened the wrong working.) The chip reads
+  `ƒn` (U+0192, the function sign), which is why it can look like "f1"; it is never the
+  `[^n]` footnote path.
   With ONE exception, measured rather than assumed: the model numbers `[=n]` across the
   CONVERSATION while the surface builds the targets per MESSAGE, so a later turn's only
   computation arrives as `[=2]` and rendered as raw prose beside the answer. Where a message
   holds one computation and one marker the digit cannot be saying anything the message's own
   shape does not, so the marker resolves and renders as `ƒ1` — the position it really is.
   Two of either and the digit is load-bearing again: a marker pointing at the WRONG call is
-  worse than one that reads as text. The
+  worse than one that is not shown at all. The
   panel floats and is clamped rather than reflowing the transcript, and opens ON the working,
-  capped at 46vh and scrolling: it is the same `code_run` component the Worked step renders,
+  capped at 46vh and scrolling (`overscroll-behavior: contain`, so the end of the working does
+  not drag the transcript). Exactly three things close it: a tap OUTSIDE (the transparent
+  scrim), Escape, and its own close control (a top-right ✕ with a full 44×44 hit area, its
+  row kept slim by negative margins). A tap, touch or scroll INSIDE never does — it used to,
+  because a capture-phase scroll listener on `window` heard the panel's own body scroll. The
+  scrim catches touch, so the transcript only moves under an open panel programmatically (the
+  stream's follow-to-bottom) or by wheel/keyboard; when it does, the panel follows its marker
+  (re-found by `data-calc` in its bubble, rAF-throttled) rather than closing. Focus goes to
+  the ✕ on open and back to the marker on close. The panel is the same `code_run` component
+  the Worked step renders,
   so the two entry points cannot drift. It used to open compact — an expression-and-answer
   head over a "show the working" link — and on the box that head only restated what the body
   labelled properly one line below, the same duplication the step itself had against its
@@ -1908,6 +1930,17 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   The marker covers `run_python` exactly as it covers `calculate`: one namespace, one
   numbering, one panel, because *a number a program printed* and *a number an expression
   evaluated to* are the same claim about where a figure came from.
+- **A reflexion flag says which check it is, and anchors on what it checked**
+  (`FullBrainSurface.mdFlags`, `markdown.FlagMark`). An amber ⚠ after flagged prose, tap for
+  the reason. A `grounding` verdict flags answer SENTENCES the surfaced notes did not support
+  ("Not in your notes — …"), anchored on sentence boundaries. An `arithmetic` verdict flags
+  bare NUMBERS that traced to no result this turn ("Not traced to a calculation — …"),
+  anchored right after the number's first occurrence, with a matching hover title. Both are
+  shown only on a persona that reads the notes (`useFullBrain.readsNotes`: curator,
+  note_ingest); jerv and every other KB-blind persona show NO ⚠ of either kind (owner's
+  ruling, 2026-10-04), and the backend no longer computes either verdict for them. A jerv
+  answer used to end in three anonymous ⚠, the arithmetic check's untraced numbers worded as
+  "not in your notes".
 - **`code_run` is a STEP view, not a bubble card** (`views/codeRun.tsx`, build plan
   `docs/archive/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
   belongs where the owner goes to check a number, not stacked under every reply that did some
