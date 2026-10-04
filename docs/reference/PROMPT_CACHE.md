@@ -121,7 +121,11 @@ of these can be undone by a save already under way: a forgotten conversation is 
 its files are deleted, a clear bumps an epoch every earlier claim carries, and every save checks
 both under the same lock the deletion takes — including a claim made by a turn that was still
 streaming when the chat was deleted. A restore's pool cells are reserved in the pool guard's own
-locked decision and held while the file streams, so no placement can count them free.
+locked decision and held while the file streams, so no placement can count them free. One window stays open: a save interrupted after llama-server wrote the slot file but before
+the store wrote its claim (the api cancelled or killed mid-save) leaves a conversation file with
+no `.meta`. It can never be restored — a file without a readable claim is never trusted — and
+it is the first thing the budget evicts; any forget or clear also deletes it, since a claimless
+conversation file cannot say whose it is.
 
 When another conversation, or the keeper's prime, is about to take slot 0, the conversation it
 holds is saved first — only if `/slots` still reads as that conversation's cache (between its
