@@ -771,7 +771,11 @@ describe("OpsScreen", () => {
         return json({});
       }
       if (url.endsWith("/api/settings")) {
-        return json({ llm_kv_conversation_cache: true, llm_kv_prefix_budget_gb: 40 });
+        return json({
+          llm_kv_conversation_cache: true,
+          llm_kv_prefix_budget_gb: 40,
+          llm_kv_restore_gate: "failed",
+        });
       }
       return baseMock(input) ?? new Response(null, { status: 404 });
     });
@@ -780,6 +784,9 @@ describe("OpsScreen", () => {
 
     const toggle = await screen.findByRole("switch", { name: /Keep chats on disk/ });
     await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    // The privacy scope and the restore gate are said where the switch is.
+    expect(screen.getByText(/Brain chats never leave the database/)).toBeInTheDocument();
+    expect(screen.getAllByText(/slot check failed/).length).toBeGreaterThan(0);
     fireEvent.click(toggle);
     await waitFor(() => expect(puts).toEqual([{ llm_kv_conversation_cache: false }]));
 

@@ -587,6 +587,10 @@ export interface AppSettings {
   /** Whether Flash-Next saves each chat conversation to disk as its slot moves on and restores
    *  it when that conversation speaks again. ON by default. Live. */
   llm_kv_conversation_cache: boolean;
+  /** Read-only: whether Flash-Next may restore from disk yet — `awaiting_probe` until the
+   *  debug slot probe passes against the running engine, `failed` when it did not. Null when
+   *  there is nothing to gate. */
+  llm_kv_restore_gate?: "awaiting_probe" | "passed" | "failed" | null;
   // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
   // a whole-word substitution before a clip renders. Empty by default.
   pronunciation_lexicon: Record<string, string>;

@@ -286,6 +286,15 @@ function GatewayPatchRestoreToggle() {
 // Disk allowances the owner picks from; a stored value outside the list is shown as-is.
 const PROMPT_CACHE_BUDGETS_GB = [10, 25, 40, 60, 80, 120, 200];
 
+type RestoreGate = "awaiting_probe" | "passed" | "failed";
+
+// What the restore gate means for the owner: saves always happen, restores wait for the probe.
+const GATE_HINT: Record<RestoreGate, string> = {
+  awaiting_probe: " Restores wait for the engine's slot check.",
+  passed: "",
+  failed: " Restores are off: the engine's slot check failed.",
+};
+
 /** The prompt cache's two owner knobs (FLASH_NEXT_ENGINE_PLAN F4): whether Flash-Next keeps
  *  each chat conversation on disk across slot changes, restarts and engine switches, and how
  *  much disk the cache may use. Both apply at once — no Update needed. Same optimistic
@@ -293,6 +302,7 @@ const PROMPT_CACHE_BUDGETS_GB = [10, 25, 40, 60, 80, 120, 200];
 function PromptCacheControls() {
   const [conversations, setConversations] = useState<boolean | null>(null);
   const [budget, setBudget] = useState<number | null>(null);
+  const [gate, setGate] = useState<RestoreGate | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -306,6 +316,7 @@ function PromptCacheControls() {
         if (typeof settings.llm_kv_prefix_budget_gb === "number") {
           setBudget(settings.llm_kv_prefix_budget_gb);
         }
+        setGate(settings.llm_kv_restore_gate ?? null);
       } catch {
         // Leave both unknown rather than guessing a state the owner might act on.
       }
@@ -348,8 +359,8 @@ function PromptCacheControls() {
         <span className="settings-meta" style={{ margin: 0 }}>
           Keep chats on disk{" "}
           <span className="muted">
-            — Flash-Next saves a conversation when another takes its slot and restores it when you
-            come back
+            — research chats only; Brain chats never leave the database.
+            {gate !== null && GATE_HINT[gate]}
           </span>
         </span>
         <button
@@ -367,7 +378,10 @@ function PromptCacheControls() {
       <div className="settings-switch-row ops-autoupdate">
         <span className="settings-meta" style={{ margin: 0 }}>
           Prompt cache disk{" "}
-          <span className="muted">— saved prompts and chats; the oldest chats go first</span>
+          <span className="muted">
+            — saved prompts and chats; the oldest chats go first.
+            {gate !== null && GATE_HINT[gate]}
+          </span>
         </span>
         <select
           aria-label="Prompt cache disk budget"
