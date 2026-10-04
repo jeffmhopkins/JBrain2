@@ -1,293 +1,277 @@
-# Photo Archive Pipeline — Design Spec
+# Photos and People — Design Spec
 
-> **Status:** Proposed (icebox) · **Last verified:** 2026-07-03
+> **Status:** Proposed · **Last verified:** 2026-10-04
 
-> **Status: proposed, not scheduled.** This is a forward-looking design dropped
-> in for the record; nothing here is built and it is not on the current roadmap
-> (the active frontier is Phase 6, the wiki). When/if it is picked up, it must be
-> reconciled with the root `CLAUDE.md` non-negotiables — in particular: all LLM
-> (and VLM) calls go through the LLM adapter, all file I/O goes through the
-> storage abstraction, and the new tables (`assets`, `asset_paths`, `faces`,
-> `people`, `albums`) need RLS scoping + isolation tests, since photo content is
-> as sensitive as health/finance/location. The shared-Postgres + on-box model
-> assumptions here align with `STRIX_HALO_SETUP.md`.
+> **Status: proposed, not scheduled.** Nothing here is built. Reworked 2026-10-04 around the
+> owner's direction: **family-first face recognition with InsightFace**, two launcher apps
+> (**People** to enroll the family, **Photos** to browse), and Flash-Next as the box's
+> vision model. The 2026-07 draft assumed a text-only `gpt-oss-120b` behind a separate small
+> VLM; Flash-Next sees images itself, so that bridge layer is gone. When picked up it must
+> meet the root `CLAUDE.md` non-negotiables: model calls through the LLM adapter, files
+> through the storage abstraction, and an RLS isolation test for every new table. Face
+> data is **biometric** — at least as sensitive as health, finance or location.
 
-A self-hosted system to ingest a decade of unprocessed phone dumps, dedupe and
-enrich them, recognize people, and make everything searchable through a browser
-viewer. Built as an agentic toolset on top of an existing JBrain2 instance
-(notes → RAG → LLM-maintained wiki, Ubuntu + Docker, `gpt-oss-120b` as the main LLM).
+Two things, built in order:
 
----
+1. **Know the family.** About a dozen named people. Their faces are enrolled once in a
+   People launcher; from then on, whenever a photo reaches jerv, a dedicated face model
+   says who is in it and the vision model reasons with those names.
+2. **The archive.** A decade of phone dumps ingested, de-duplicated, dated, captioned and
+   searchable — "photos of Emma at the lake, 2019" — through a Photos launcher.
 
-## 1. Core idea
-
-The pipeline is a **staged, idempotent map over files**, not an agent loop over
-images. Cheap deterministic work runs on every file; medium-cost vision work runs
-on every file; the expensive 120B model runs **only on the residual** — the items
-that still lack a date or identity after the cheap passes.
-
-The single most important architectural fact: **`gpt-oss-120b` is text-only.** It
-cannot see images. Every image must be turned into *text* (caption, OCR, class label)
-by a separate vision worker before the 120B ever reasons about it.
-
-The spine of the system is a **content-hash-keyed table**. The `sha256` of each file
-is the primary key, which makes dedup fall out for free and lets one logical asset
-map to many physical file locations.
+Part 1 stands alone and is useful on day one; part 2 reuses all of it.
 
 ---
 
-## 2. Technology stack
+## 1. How identity works, and why not "just ask the vision model"
+
+Apple Photos, Google Photos, Immich, PhotoPrism and digiKam all use one pipeline:
+**detect** each face → **align** it → **embed** it as a vector, where the same person lands
+close together across lighting, angle and years → **name** a group once → **match** every
+new face by cosine similarity against the named people → **feed corrections back**.
+
+Handing a vision model labelled reference photos and asking "who is this?" is the
+tempting shortcut, and it is the wrong one. VLMs are not trained for identity: they name
+confidently and wrongly, and often refuse. It is also expensive — a reference image costs
+~2,048 tokens on Flash-Next, so three references for twelve people is ~72k tokens on every
+photo.
+
+**The split here:** InsightFace decides *who*; Flash-Next gets the answer as text —
+`face 1 [box] = Emma (0.71, strong); face 2 [box] = unknown` — and does the describing.
+The model is told never to put a name on an `unknown`.
+
+---
+
+## 2. Technology
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Host | Strix Halo (Ryzen AI Max+ 395), 128GB unified memory, iGPU `gfx1151` | Ubuntu + Docker |
-| Orchestration / agent | JBrain2 + `gpt-oss-120b` (text-only) | Conductor + residual reasoning only |
-| Vision worker | Small VLM (e.g. Qwen2.5-VL-7B class) via Ollama / llama.cpp | image → caption / OCR / class label |
-| Face recognition | InsightFace (`buffalo_l`), 512-d embeddings | direct, into our own table |
-| Image/text embeddings | CLIP (image + text encoders) | subject search + similarity |
-| Database | PostgreSQL + `pgvector` | **shared with JBrain2's RAG store** |
-| Dedup | `sha256` content hash (exact) + CLIP similarity (near-dupe) | |
-| Metadata | `exiftool` | EXIF dates, GPS, filename-date backfill |
-| Backend | Python | matches JBrain2 |
-| Frontend | TypeScript (browser) | matches JBrain2 |
-
-### GPU note (Strix Halo)
-
-- ROCm 7.2.x auto-detects Strix Halo for the LLM/VLM stack (Ollama, llama.cpp).
-- Immich's bundled ROCm image is still catching up to `gfx1151`; not relevant if
-  faces run via InsightFace directly.
-- For the **one-time backfill**, CPU inference is an acceptable, reliable fallback —
-  it's an overnight batch. Pursue GPU (`HSA_OVERRIDE_GFX_VERSION=11.5.1`) only if
-  re-running ML often.
+| Face detect + embed | **InsightFace `buffalo_l`** (SCRFD detector + ArcFace R50, 512-d) | CPU through ONNX Runtime; tens of ms per face. Chosen over OpenCV's SFace for children, profiles and faces that age. Model weights are licensed for non-commercial use — fine for a personal box. |
+| Where it runs | The existing **`rapidocr` sidecar**, extended | Already CPU-only ONNX Runtime + OpenCV, already does face *detection* (YuNet, `deploy/rapidocr/server.py`). New routes: `/faces/embed`. Weights (~280 MB) come from the weights volume like every other model, never baked into the image. Lazy-loaded and idle-freed like the OCR engine, so it costs nothing while unused and never touches the GPU Flash-Next holds. |
+| Vision + reasoning | **Flash-Next** (text + image + video) | Captions, OCR and the archive's residual dating all run here; no separate small VLM. |
+| Image search | CLIP-class image/text embedding | Part 2 only; on the same sidecar. |
+| Database | PostgreSQL + `pgvector`, the same store as the RAG index | One query path. |
+| Metadata | `exiftool` | Part 2: EXIF dates, GPS, filename-date backfill. |
 
 ---
 
-## 3. Data model
+## 3. Part 1 — Know the family
 
-Lives in the same Postgres + pgvector as JBrain2's RAG.
+### Data model
 
 ```sql
--- One logical asset per unique file content
+-- One row per enrolled person. Linked to the knowledge graph so "Emma" in a photo,
+-- in a note and in the wiki is one person.
+people (
+  id          uuid primary key,
+  entity_id   uuid references app.entities(id),  -- the graph's person node
+  display     text not null,
+  created_at  timestamptz default now()
+)
+
+-- The reference faces the owner enrolled: 3-10 per person, spread across ages and angles.
+face_refs (
+  id           uuid primary key,
+  person_id    uuid references people(id) on delete cascade,
+  embedding    vector(512) not null,       -- ArcFace, L2-normalised
+  crop_sha256  text not null,              -- aligned 112x112 crop, via the storage abstraction
+  source_sha   text,                       -- the photo it came from
+  taken_at     timestamptz,                -- EXIF date: a child's face changes with age
+  det_score    real,
+  created_at   timestamptz default now()
+)
+```
+
+Both tables are owner-only under RLS with a jmolt restrictive deny, each with an isolation
+test. Deleting a person cascades away every embedding and crop. **Face data never leaves
+the box:** crops and embeddings are never sent to a cloud model, and identification runs
+only on the local sidecar.
+
+### Matching
+
+1. Detect and embed every face in the photo.
+2. Score each person by their **best single reference** (max cosine), not a mean prototype
+   — a toddler-era reference should still match a toddler photo.
+3. Three bands, thresholds measured on the family's own photos at build time:
+   **strong** → the name; **near** → "possibly Emma"; **below** → `unknown`.
+4. Only names, boxes and bands reach the model. Faces too small or blurred to embed well
+   (low detector score, under ~40 px) are reported as `unrecognisable`, not guessed.
+
+### Where it shows up
+
+- **Chat.** When a photo reaches jerv, identification runs automatically and its result
+  rides in as text beside the image. `canvas` can then label each box with the name.
+- **A tool.** `identify_people(source_attachment_id)` for jerv to call explicitly, and for
+  video frames later.
+- **Enrolment from chat.** "Number the faces" → canvas draws 1..n → "2 is Emma" → a
+  `face_refs` row. The owner confirms before anything is stored.
+
+### The People launcher
+
+A launcher app, like Images: the family, and nothing else.
+
+- **People grid** — one card per person: name, a representative face, how many references.
+- **Person page** — their reference faces; **add** by uploading photos (the sidecar
+  detects faces; the owner picks which one is this person when there are several);
+  **remove** a bad reference; **rename**; **link** to the graph's person node; **delete**
+  the person and all their data.
+- **Quality hints** — warn when a person has fewer than three references, or none from
+  the last few years (children).
+- **Test a photo** — drop a photo, see who it would recognise, at what band. This is how
+  thresholds are checked without a terminal.
+
+GUI gate: three mocks, owner picks, before any of it is built (`docs/reference/DESIGN.md`).
+
+---
+
+## 4. Part 2 — The archive and the Photos launcher
+
+The archive is a **staged, idempotent map over files**, not an agent loop over images.
+Cheap deterministic work runs on every file, model work runs on every file, and the costly
+reasoning runs **only on the residual** — what still lacks a date after the cheap passes.
+
+### Data model
+
+```sql
+-- One logical asset per unique file content: dedup falls out of the key.
 assets (
-  id                      bigserial primary key,
+  id                      uuid primary key,
   sha256                  text unique not null,
   mime                    text,
-  bytes                   bigint,
   width                   int,
   height                  int,
   captured_at             timestamptz,
   captured_at_source      text,        -- exif | filename | inferred | unknown
-  captured_at_confidence  real,        -- 0..1, meaningful for 'inferred'
-  captured_at_rationale   text,        -- why, when inferred (audit trail)
+  captured_at_confidence  real,
+  captured_at_rationale   text,        -- why, when inferred
   category                text,        -- photo | screenshot | meme | document | receipt
-  category_confidence     real,
-  caption                 text,        -- VLM-generated
-  ocr_text                text,        -- VLM/OCR-extracted
-  image_emb               vector(768), -- CLIP image embedding
-  status                  jsonb,       -- which stages are done (see §5)
+  caption                 text,        -- Flash-Next
+  ocr_text                text,
+  image_emb               vector(768), -- CLIP
+  status                  jsonb,       -- which stages are done
   created_at              timestamptz default now()
 )
 
--- One hash → many physical locations (the dedup ledger + hash→location map)
-asset_paths (
-  asset_id  bigint references assets(id),
-  path      text,
-  present   boolean default true       -- re-validated on re-ingest
-)
+asset_paths ( asset_id uuid references assets(id), path text, present boolean default true )
 
--- One row per detected face
+-- Every detected face in the archive. person_id is set by matching against face_refs,
+-- or left null (see open decision 1 on unknown faces).
 faces (
-  id         bigserial primary key,
-  asset_id   bigint references assets(id),
-  bbox       int[],                     -- [x, y, w, h]
-  emb        vector(512),               -- InsightFace embedding
-  person_id  bigint references people(id),  -- null until named/matched
+  id         uuid primary key,
+  asset_id   uuid references assets(id) on delete cascade,
+  bbox       int[],
+  embedding  vector(512),
+  person_id  uuid references people(id),
+  score      real,          -- best match cosine
   det_score  real
 )
-
-people (
-  id    bigserial primary key,
-  name  text
-)
-
--- Optional, for proposed groupings
-albums (
-  id     bigserial primary key,
-  title  text,
-  rule   jsonb        -- e.g. date range / person / event criteria
-)
-album_assets ( album_id bigint, asset_id bigint )
 ```
 
-**Why hash-keyed:** on ingest, hash the file; if the hash already exists, just append
-an `asset_paths` row — never reprocess. Exact duplicates collapse automatically.
-Near-duplicates (re-compressed messenger copies) escape hashing and are caught later
-by CLIP similarity as a review queue.
+**Why hash-keyed:** an exact duplicate only adds an `asset_paths` row and is never
+reprocessed. Near-duplicates (re-compressed messenger copies) are caught later by CLIP
+similarity as a review queue.
 
----
-
-## 4. Process / pipeline
-
-Each stage operates on *"assets where this stage isn't done yet"* (read from `status`),
-returns counts/IDs (never row blobs), and is safely re-runnable.
+### Pipeline
 
 ```
-2TB inbox (read-only)
-   │  ingest_inbox()      — hash, dedup, write assets + paths
+read-only inbox
+   │ ingest_inbox()        hash, dedup, write assets + paths
    ▼
-[CHEAP · all files]       — deterministic, no model
-   extract_exif()         — date, GPS, camera, dimensions
-   date_from_filename()   — IMG_2015…, Screenshot_…, WhatsApp regex
+[CHEAP · all files]        no model
+   extract_exif()          date, GPS, camera, dimensions
+   date_from_filename()    IMG_2015…, Screenshot_…, WhatsApp patterns
    ▼
-[MEDIUM · all files]      — vision worker (VLM) + embedding + faces
-   classify()             — photo/screenshot/meme/document/receipt
-   caption() / ocr()      — text for search + reasoning
-   embed_image()          — CLIP vector
-   detect_faces()         — bbox + 512-d embedding per face
+[MODEL · all files]        sidecar + Flash-Next, overnight batch
+   classify()              photo / screenshot / meme / document / receipt
+   caption() / ocr()       text for search and reasoning
+   embed_image()           CLIP vector
+   detect_faces()          box + ArcFace embedding per face, matched to face_refs
    ▼
-[COSTLY · residual only]  — 120B + RAG; only undated/unknown items
-   infer_date()           — caption+OCR+GPS+people → RAG notes → date range
-   infer_identity()       — unknown face + co-occurrence + wiki → name guess
+[COSTLY · residual only]   Flash-Next + RAG over the owner's notes
+   infer_date()            caption + OCR + GPS + people → notes → a date range
    ▼
-Assets DB (pgvector)  ──►  search tools  ──►  browser viewer
+assets ──► search tools ──► Photos launcher
 ```
 
-The cost gradient is the whole point: deterministic on everything (instant), VLM on
-everything (overnight batch), 120B on a few thousand hard cases (where it actually
-earns its keep by cross-referencing your own notes to recover dates/identities a pure
-pixel pipeline never could).
+The unique unlock is the last stage: dating a photo by cross-referencing the owner's own
+notes ("we moved to the blue house in 2019") and who is in it. A pixel-only pipeline can't.
+
+### Tools (granular, returning IDs and counts — never blobs)
+
+- `ingest_inbox(path)`, `pipeline_status()`
+- `extract_exif(ids)`, `date_from_filename(ids)`
+- `classify(ids)`, `caption(ids)`, `ocr(ids)`, `embed_image(ids)`, `detect_faces(ids)`
+- `infer_date(id)` — writes source=`inferred`, never overwrites a real EXIF date
+- `search_text(query)`, `search_person(name)`, `search_similar(id)`, `get_assets(filters, page)`
+
+### The Photos launcher
+
+- **Timeline** — a chronological grid; **inferred dates drawn distinctly** so a guess
+  never reads as fact.
+- **People filter** — tap a family member → every photo of them (from `faces.person_id`).
+- **Search** — free text through CLIP ("beach sunset 2016"), combinable with people/date.
+- **Similar** — "more like this", which doubles as near-duplicate review.
+- **Asset detail** — the photo, its faces labelled, caption, OCR text, metadata, and the
+  inferred-date rationale when there is one.
+- **Queues** — duplicates to resolve, inferred dates below the confidence bar.
+
+Browsing reads the database directly and never waits on a model. Its own GUI gate.
 
 ---
 
-## 5. Agent tool catalog
+## 5. Principles
 
-Keep tools **granular** — never a monolithic `process_photos()`. Granularity is what
-lets the 120B make real decisions ("8k are unclassified but already dated → run only
-`classify` on those").
-
-**Ingest & orchestration**
-
-- `ingest_inbox(path) -> {new, duplicate, total}` — hash, dedup, insert.
-- `pipeline_status() -> {stage: count}` — the agent's situational awareness; drives resume.
-
-**Deterministic metadata** (all files)
-
-- `extract_exif(asset_ids) -> {updated}` — sets `captured_at` + source=`exif`.
-- `date_from_filename(asset_ids) -> {updated}` — sets source=`filename`.
-
-**Vision worker — VLM, image → text** (all files)
-
-- `classify(asset_ids) -> {asset_id: {category, confidence}}`
-- `caption(asset_ids) -> {asset_id: caption}`
-- `ocr(asset_ids) -> {asset_id: text}`
-
-**Embeddings**
-
-- `embed_image(asset_ids) -> {embedded}` — CLIP into `image_emb`.
-
-**Faces** (InsightFace)
-
-- `detect_faces(asset_ids) -> {faces_found}`
-- `cluster_faces() -> {cluster_id: face_ids[]}`
-- `name_person(cluster_or_face_ids, name) -> person_id` — the "Jeff" step.
-- `match_faces(asset_ids) -> {matched}` — cosine vs known people.
-
-**Agent reasoning — 120B + RAG, residual only**
-
-- `infer_date(asset_id) -> {range, confidence, rationale}` — writes source=`inferred`, never overwrites a real EXIF date.
-- `infer_identity(face_id) -> {name_guess, confidence, rationale}`
-- `propose_albums() -> [album]` — group by trip/event from dates+captions+faces.
-
-**Search — also the viewer's backend**
-
-- `search_text(query) -> [asset]` — CLIP text encoder → cosine over `image_emb`.
-- `search_person(name) -> [asset]`
-- `search_similar(asset_id) -> [asset]` — image→image; doubles as near-dup review.
-- `get_assets(filters, page) -> [asset]` / `thumbnail(asset_id) -> url`
+1. **Identity comes from embeddings, never from the VLM's guess.** Unknown stays unknown.
+2. **Face data stays on the box** and is deletable per person, completely.
+3. **Staged and idempotent.** Every archive stage acts on the undone set and is re-runnable.
+4. **Inferred ≠ known.** A guessed date carries its source, confidence and rationale.
+5. **Immutable inbox.** Originals are read-only; derived data goes to the DB and the
+   storage abstraction.
+6. **No terminal.** Enrolment, thresholds, the archive's progress and its failures are all
+   visible and operable from the PWA (`CLAUDE.md` #10).
 
 ---
 
-## 6. Integration with JBrain2
+## 6. Open decisions
 
-JBrain2 is the **conductor and the brain**, not the workhorse.
-
-- **Tools register in JBrain2's agentic tool framework.** Tool *execution* is plain
-  Python doing a `map`; the 120B only orchestrates by batch and reads summaries.
-- **Shared Postgres + pgvector.** Image embeddings live in the same store as the RAG
-  index — one query path, no second vector DB.
-- **The unique unlock = RAG over your own notes.** `infer_date` / `infer_identity`
-  feed the VLM's text output into RAG against your wiki ("we moved to the blue house
-  in 2019") to recover metadata that's gone from the file. This is the one thing a
-  standalone pipeline can't do, and it's exactly what JBrain2 is shaped for.
-- **Vision worker runs alongside** as a separate model the tools call — it bridges
-  pixels to the text-only 120B.
-- **Immich is optional.** Faces via InsightFace-direct fit the custom store better.
-  Keep Immich only if you want its mobile auto-backup for *future* photos (a separate,
-  legitimate reason) — it is not needed for the archive pipeline.
+1. **Unknown faces.** Store unnamed faces so they can be grouped and named later (the full
+   Photos/Immich model), or drop them so nobody outside the enrolled family is ever kept?
+   Leaning: chat drops them; the archive keeps them but only on owner opt-in.
+2. **Thresholds.** Measured on the family's own photos at build time through the People
+   launcher's "test a photo"; the bands are per-box settings, not constants.
+3. **Archive scale and library layout.** How big is the backlog, where do originals live,
+   and are they copied or referenced in place.
+4. **CLIP model choice** for part 2, and whether it shares the sidecar or gets its own.
 
 ---
 
-## 7. Design principles (non-negotiables)
+## 7. Build order
 
-1. **Staged + idempotent.** Every tool reads `status`, acts on the undone set, is
-   re-runnable. Crash at 30k files → resume without redoing 30k.
-2. **Tools return IDs and counts, never blobs.** The 120B never receives 40k rows.
-3. **Cost gradient.** Cheap → medium → costly, each running on a smaller set.
-4. **Inferred ≠ known.** `captured_at_source` is load-bearing. A guess is a flagged
-   hypothesis with confidence + rationale; it never overwrites a real date.
-5. **Immutable inbox.** The 2TB SSD is strictly read-only landing. Derived data goes
-   to the DB + a separate library path. A bad run can never corrupt originals;
-   re-ingest is always safe.
-
----
-
-## 8. Proposed UI (browser viewer)
-
-A thin TypeScript frontend over the search tools. Core views:
-
-- **Timeline** — chronological grid. **Inferred dates rendered distinctly** (e.g.
-  dashed/colored) so a guess never looks like ground truth. Filter by year/month.
-- **People** — face-cluster gallery; click a person → all their photos. Surfaces
-  unnamed clusters for the naming workflow.
-- **Subject / semantic search** — free-text box → CLIP text→image ("beach sunset 2016").
-- **Similar** — "find more like this" from any asset (image→image embedding).
-- **Asset detail** — original + all `asset_paths`, faces (named/unnamed), caption,
-  OCR text, full metadata, and the **inferred-date rationale** when applicable.
-
-Review/maintenance queues (these are where the human + agent collaborate):
-
-- **Face naming queue** — confirm/merge proposed clusters; one-click `name_person`.
-- **Duplicate review queue** — near-dupes from `search_similar` above a threshold;
-  pick the keeper.
-- **Low-confidence queue** — inferred dates/identities below a confidence bar for
-  human confirmation.
-
-UI principle: the viewer reads the DB directly for browsing; it calls the agent only
-for things that benefit from reasoning (ambiguous identity, inferred dating, album
-proposals). Browsing must never block on the 120B.
-
----
-
-## 9. Open decisions
-
-- **Faces: InsightFace-direct vs Immich.** Leaning InsightFace-direct (one store, one
-  query path, no second Docker stack). Revisit only if mobile auto-backup is wanted.
-- **VLM choice + batch throughput target.** Pick a 7B-class VLM; optimize for
-  batch throughput, not latency. Benchmark on real files before committing.
-- **GPU vs CPU for backfill.** Start CPU (reliable overnight batch); add ROCm later
-  if ML re-runs often.
-- **Library layout.** Where do "kept" originals live vs the immutable inbox? Decide the
-  canonical library path and whether files are copied or referenced in place.
-
----
-
-## 10. Suggested build order
-
-1. Schema + `ingest_inbox` (hash, dedup, paths). Prove dedup on a real dump subset.
-2. Deterministic metadata (`extract_exif`, `date_from_filename`). Get the timeline right.
-3. Vision worker + `classify` → junk separation (real photos vs screenshots/memes).
-4. `embed_image` + `search_text` / `search_similar`. First useful search.
-5. Faces: `detect_faces` → `cluster_faces` → `name_person` → `match_faces`.
-6. Residual reasoning: `infer_date` / `infer_identity` over JBrain2 RAG.
-7. Browser viewer (timeline, people, search) + review queues.
-8. Optional: `propose_albums`, Immich for future-photo mobile backup.
+1. **P1 — sidecar.** InsightFace on the `rapidocr` sidecar: detect + embed, weights through
+   the weights volume, lazy load and idle free. Debug route to run it on an attachment.
+2. **P2 — store and match.** `people` + `face_refs` with RLS tests; matching with the three
+   bands; `identify_people`; the chat hook so every photo jerv sees carries its names.
+3. **P3 — People launcher** (GUI gate first): enrol by upload, remove, rename, link, delete,
+   test a photo. Enrolment from chat.
+4. **A1 — archive spine.** `assets` / `asset_paths`, ingest + dedup, EXIF + filename dates.
+5. **A2 — model passes.** classify, caption, OCR, CLIP, faces across the archive.
+6. **A3 — Photos launcher** (GUI gate first): timeline, people filter, search, similar,
+   detail, queues.
+7. **A4 — residual dating** over the owner's notes.
+</content>
+</invoke>
+<invoke name="Bash">
+<parameter name="command">cd /home/user/JBrain2 && python3 - <<'EOF'
+import pathlib,re
+p=pathlib.Path("docs/proposed/README.md"); s=p.read_text()
+old=s[s.index("- `PHOTO_ARCHIVE_PLAN.md`"):s.index("- `MUSIC_GEN_PLAN.md`")]
+new="""- `PHOTO_ARCHIVE_PLAN.md` — photos and people: family-first face recognition (InsightFace
+  `buffalo_l` on the `rapidocr` sidecar, ~a dozen enrolled people, identity from embeddings
+  and never from the VLM, face data never off the box) surfaced to jerv as names beside each
+  photo, a **People** launcher to enrol the family, then the archive — hash-keyed dedup,
+  deterministic dating, Flash-Next captions, CLIP search, notes-backed date inference — and a
+  **Photos** launcher to browse it.
+"""
+s=s.replace(old,new); p.write_text(s)
+EOF
+grep -n "Last verified" docs/proposed/README.md | head -1; bash scripts/docs-freshness.sh 2>&1 | tail -2
