@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { useForeground } from "../visibility";
 import { onReadAloudSettings } from "./readAloudBus";
 import { chunkStream, engineForVoice, readingProfile, speakable } from "./speakable.js";
 
@@ -62,6 +63,9 @@ export interface ReadAloud {
 }
 
 const canPlayPiper = (): boolean => typeof window !== "undefined" && "Audio" in window;
+const READ_RETRIES = 5;
+const READ_RETRY_MS = 5_000;
+
 const canSpeakNative = (): boolean => typeof window !== "undefined" && "speechSynthesis" in window;
 
 interface PiperClip {
@@ -145,9 +149,18 @@ export function useReadAloud(): ReadAloud {
   );
   const canVoice = useCallback((): boolean => usePiper() || canSpeakNative(), [usePiper]);
 
+  // Re-read the box on every return to the foreground, and retry a failed read a few times:
+  // reading once on mount meant one dropped request (an update, a tunnel blip) hid the play
+  // control until the app was reopened.
+  const foreground = useForeground();
+  const [settingsTry, setSettingsTry] = useState(0);
+  const [voicesTry, setVoicesTry] = useState(0);
+
   // Whether read-aloud is on, which voice answers speak in, and which engine to use.
   useEffect(() => {
+    if (!foreground) return;
     let stale = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     api
       .getSettings()
       .then((s) => {
@@ -164,11 +177,16 @@ export function useReadAloud(): ReadAloud {
         engineRef.current = eng;
         setEngine(eng);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!stale && settingsTry < READ_RETRIES) {
+          retry = setTimeout(() => setSettingsTry((n) => n + 1), READ_RETRY_MS);
+        }
+      });
     return () => {
       stale = true;
+      clearTimeout(retry);
     };
-  }, []);
+  }, [foreground, settingsTry]);
 
   // Settings live in the always-mounted HomeScreen, so a read-aloud change made in the Settings
   // overlay would never reach this hook via a re-fetch. Apply saved changes as they happen so the
@@ -197,7 +215,9 @@ export function useReadAloud(): ReadAloud {
   // Which piper voices the box has — piper mode needs at least one; without any (box
   // unreachable / no models) piper mode falls back to the device's native voice.
   useEffect(() => {
+    if (!foreground) return;
     let stale = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     api
       .brainVoices()
       .then((voices) => {
@@ -206,15 +226,18 @@ export function useReadAloud(): ReadAloud {
         setHasVoices(voices.length > 0);
       })
       .catch(() => {
-        if (!stale) {
-          hasVoicesRef.current = false;
-          setHasVoices(false);
+        if (stale) return;
+        hasVoicesRef.current = false;
+        setHasVoices(false);
+        if (voicesTry < READ_RETRIES) {
+          retry = setTimeout(() => setVoicesTry((n) => n + 1), READ_RETRY_MS);
         }
       });
     return () => {
       stale = true;
+      clearTimeout(retry);
     };
-  }, []);
+  }, [foreground, voicesTry]);
 
   const setPlay = useCallback((key: string | null) => {
     playingRef.current = key;

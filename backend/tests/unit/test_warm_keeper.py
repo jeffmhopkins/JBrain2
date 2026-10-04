@@ -329,6 +329,16 @@ async def test_auto_restore_off_stops_the_keeper_loading_a_model_that_is_gone() 
     assert r.admitted == []
 
 
+async def test_flash_next_is_kept_loaded_even_with_auto_restore_off() -> None:
+    """Flash-Next is the only model on its engine and serves every local task, so reloading it
+    evicts nothing: the owner wants it loaded by default, whatever the standard switch says."""
+    r = _FakeRouter("qwen3.8-flash-next")
+    g = _FakeGateway(running=set())
+    k = _keeper(router=r, gateway=g, auto_restore=False)
+    await k.reconcile_once()
+    assert len(r.converses) == 1
+
+
 async def test_auto_restore_off_still_primes_a_model_that_is_already_resident() -> None:
     """The gate is on LOADING, not on priming. A resident model's warm prefix costs nothing to
     hold, and dropping it would make every first turn slow for no memory saved."""

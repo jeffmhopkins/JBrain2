@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-03
+> **Status:** Living · **Last verified:** 2026-10-04
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -752,10 +752,11 @@ untouched.
   provider. A tier with no local task is left out.
 - **A tier's level leaves task levels in place.** The tier counts them (*1 task · 1 set*), and
   **Reset to tier** clears them in one batch write.
-- **The tier cards are unchanged.** Their *→ Flash-Next (engine active)* marker gains a
-  **reasoning ↑** link (named *Set {tier} levels on Flash-Next*). It goes to the engine row
-  that the group's remapped tasks really sit in, so the Other card links to Low. It opens the
-  card and that row, scrolls to it, and flashes the row once (no flash under reduced motion).
+- **The Standard tier cards hide while Flash-Next serves** (owner, 2026-10-03): every local
+  task runs on Flash-Next then, so the Standard routing would only describe a stopped
+  gateway, and this card is the one that applies. They return as soon as Standard serves.
+- **On-box LLMs starts collapsed** on a new device (owner, 2026-10-03) and remembers the
+  owner's choice per device (`localStorage`, best-effort).
 - **No optimistic state.** Every write (PUT/DELETE one row, or the batch) returns the whole
   snapshot. Only its `engine_efforts` is taken, so the rest of a snapshot cannot revert a
   Standard edit made meanwhile. A select is locked while its own write is out. A refusal
@@ -1829,6 +1830,20 @@ the step that made it. Not a surface of its own and not a note-screen change: th
 - It renders from the **persisted turn** — the writes ride the tool result and are stored
   on the turn — so a conversation reopened days later says exactly what it said live,
   with no second fetch and no second source of truth.
+- **The activity strip follows a live turn, one body at a time** (`ActivityLine`; the
+  state machine is `nextAutoSection` / `reconcileFoot` in `agent/transcript.ts`; owner's
+  spec, 2026-10-03). The violet Thought and steel Worked chips share one panel, and while
+  the turn streams the panel shows what the model is doing *now*: **thinking** opens the
+  trace; **answer text** collapses it; a **tool called after the answer has started, with
+  no thinking in front of it,** opens Worked on that call's live step, so the owner sees
+  the tool run where the strip had been closed — and the next answer text folds it again;
+  **thinking again** switches back to the trace (a model that interleaves thinking and
+  answer — Qwen Flash-Next — re-opens it with its answer so far left on screen); a tool
+  called *inside* a thinking phase stays in the trace, which already interleaves the call.
+  **Settling** leaves both bodies closed. **A hand toggle wins:** a chip the owner taps
+  during the turn is his until it settles — one he opened stays open (also past settle),
+  one he closed is never auto-opened again. The panel's open/close is the shared 180ms
+  height transition, off under `prefers-reduced-motion`.
 - **The ledger is not a disclosure.** What a turn CHANGED renders on the face of that
   turn, above the activity strip: one line per change — the statement in the owner's own
   words, its domain, and what became of it (`recorded · updated · not recorded · added`).

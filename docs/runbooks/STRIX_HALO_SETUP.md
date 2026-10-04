@@ -1331,6 +1331,10 @@ measurement and confused it. It is a **surprise** control, not a safety one: eve
 included, goes through the device-memory guard either way. Read live, so the flip applies to the
 next turn with no restart.
 
+The switch governs the standard gateway only. While Flash-Next serves, it is the only model on its
+engine and every local task runs on it, so the warm keeper keeps it loaded (and primed) whether the
+switch is on or off — reloading it evicts nothing (owner, 2026-10-03).
+
 ### Is MTP actually drafting?
 
 `/props`'s `speculative.types` **cannot answer this** — the server builds that object from a

@@ -39,6 +39,8 @@ import structlog
 
 from jbrain.agent.priming import jerv_prime_inputs
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.llm import engine as engines
+from jbrain.llm import local_catalog
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
@@ -169,7 +171,12 @@ class WarmKeeper:
         cold = served not in running
         if cold:
             self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
-            if not await self._auto_restore_allowed():
+            # Auto-restore governs the standard gateway, where reloading one model can evict
+            # another. Flash-Next is the only model on its engine — nothing to evict, and every
+            # local task runs on it — so it is kept loaded whatever that switch says (owner,
+            # 2026-10-03: "defaulted to having Flash loaded").
+            sole_engine = local_catalog.engine_of(served) != engines.STANDARD
+            if not sole_engine and not await self._auto_restore_allowed():
                 # Off: the operator asked for nothing to be loaded behind their back. SETTLED,
                 # not "retry soon" — returning False here would spin the eager 5s cadence
                 # forever against a switch that is never going to flip on its own.
