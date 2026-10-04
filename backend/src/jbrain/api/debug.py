@@ -49,7 +49,7 @@ from jbrain.agent.grounding import (
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api import endpoint as endpoint_api
 from jbrain.api import engine as engine_api
-from jbrain.api import llm_settings, nudge
+from jbrain.api import llm_settings, nudge, panel_ws
 from jbrain.api import sdr as sdr_api
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
@@ -4350,6 +4350,21 @@ class PanelReach(BaseModel):
     # long the message SHOULD have taken and `msg_ms` says how long it did. `null` when the panel
     # has not streamed a message since boot, or is too old to say.
     last_message: PanelMessage | None = None
+    # THE PANEL'S SINGLE SOCKET, from both ends. `socket` is the box's live view
+    # (`panel_ws.snapshot()`): null means this panel holds no socket to this process right now —
+    # either it is on HTTP fallback, reconnecting, or gone; `stale_s` says which is likelier.
+    # The rest is what the panel last said about it: `ws` is "ws" / "http" / "down" (or "" from
+    # firmware that predates the socket), `ws_err` the last REAL reason a connection failed.
+    socket: dict[str, Any] | None = None
+    ws: str = ""
+    ws_err: str = ""
+    ws_connects: int = 0
+    ws_drops: int = 0
+    # The internal-heap low-water mark since boot and the largest internal 8-bit block — the
+    # pair that says whether a TLS session still fits.
+    int_free: int = -1
+    int_min: int = -1
+    int_big: int = -1
 
 
 class PanelReachOut(BaseModel):
@@ -4421,7 +4436,7 @@ async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
             await session.execute(
                 text(
                     """
-                    SELECT pr.label, s.version, s.reported_at, s.report
+                    SELECT pr.label, s.version, s.reported_at, s.report, pr.id::text
                     FROM app.endpoint_status s
                     JOIN app.principals pr ON pr.id = s.principal_id
                     ORDER BY s.reported_at DESC
@@ -4436,6 +4451,7 @@ async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
         ).scalar_one_or_none()
 
     now = dt.datetime.now(dt.UTC)
+    sockets = panel_ws.snapshot()
     panels: list[PanelReach] = []
     for row in rows:
         report = row[3] if isinstance(row[3], dict) else {}
@@ -4456,6 +4472,14 @@ async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
                 dash_err=str(report.get("dash_err", "") or ""),
                 dash_ago_s=_int_or(report.get("dash_ago_s"), 0),
                 last_message=_panel_message(report),
+                socket=sockets.get(str(row[4])),
+                ws=str(report.get("ws", "") or ""),
+                ws_err=str(report.get("ws_err", "") or ""),
+                ws_connects=_int_or(report.get("ws_connects"), 0),
+                ws_drops=_int_or(report.get("ws_drops"), 0),
+                int_free=_int_or(report.get("int_free"), -1),
+                int_min=_int_or(report.get("int_min"), -1),
+                int_big=_int_or(report.get("int_big"), -1),
                 paths=[
                     PanelPath(
                         name=name,

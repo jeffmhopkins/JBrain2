@@ -337,9 +337,14 @@ class TestTheVolumeCeilingWasTheBugReport:
         jpanel = (
             pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
         ).read_text(encoding="utf-8")
+        # Since 0.3.39 the speaker is claimed in `replay_head`, the callback `link.c` runs once the
+        # answer's status is in and before its first byte — so the replay is that and `do_replay`.
         replay = re.search(r"static void do_replay\(void\)\n\{.*?\n\}", jpanel, re.S)
-        assert replay, "do_replay moved; re-pin this test"
-        body = replay.group(0)
+        head = re.search(
+            r"static int replay_head\(void \*ctx, int status\)\n\{.*?\n\}", jpanel, re.S
+        )
+        assert replay and head, "do_replay or replay_head moved; re-pin this test"
+        body = replay.group(0) + head.group(0)
         assert "s_state = JPANEL_PLAYING;" in body, (
             "a replay no longer reaches the state that ends a playback, so the again/reply pair "
             "is never re-armed after one"
@@ -681,7 +686,9 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
                 f"a branch jumps to done without naming itself:\n{above}\n{line}"
             )
 
-        assert body.count("goto done;") >= 5, "the branches were restructured; re-read this test"
+        # Four since 0.3.39: connect, upload-stall and no-headers became ONE transport branch that
+        # names `link.c`'s real reason (`res.err`), beside 409, 422 and any other status.
+        assert body.count("goto done;") >= 4, "the branches were restructured; re-read this test"
 
     def test_a_send_that_failed_is_counted_and_a_house_with_one_panel_is_not(self) -> None:
         """NOBODY-TO-SEND-TO IS NOT A FAULT. The box answered; there is simply no second panel

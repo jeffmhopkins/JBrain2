@@ -81,3 +81,10 @@ CONFIG_SR_MN_EN_MULTINET7_QUANT=y
 # See ROOM_ENDPOINT_PLAN.md §10.4ax.
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# THE ONE SOCKET (`main/link.c`) IS WRITTEN TO FROM SEVERAL TASKS WHILE ITS OWN TASK READS.
+# Without a separate TX lock, `esp_websocket_client` serialises every send behind the receive
+# loop's lock, which it releases only between one-second polls — so a 1.1 MB recording sent in
+# 2 KB frames could wait up to a second per frame. With it, sends and the read loop no longer
+# contend; `link.c` still serialises the senders among themselves with its own mutex.
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y

@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-09-28
+> **Status:** Living · **Last verified:** 2026-10-04
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -435,6 +435,38 @@ failed join falls through to the loop, retrying every 60 s via `net_retry()` rat
 not fail, it *aborts* — hence the separate entry point.
 
 Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls back.
+
+## One connection to the box, not one per request (0.3.39)
+
+On 0.3.38 every request — the three-second settings poll, telemetry, the jpanel poll, a talk
+turn, a send — opened its own TLS session (~40 KB of internal RAM, 1-2 s of handshake), and two
+of those in flight at once did not fit: after a couple of talk turns everything failed with
+`connect`. Now **`main/link.c` holds one TLS WebSocket to `/api/endpoint/ws` and every request
+rides it**; the box replays each one through the same route its HTTPS twin reaches, so nothing on
+the box has two implementations.
+
+- **Callers did not change shape.** `talk.c`, `jpanel.c` and `ota.c` call `link_request()` and
+  block on their own task exactly where they used to block in `esp_http_client`. A streamed
+  answer (a voice-post message into the speaker ring) is a sink under a 16 KB credit window, so a
+  slow speaker slows the box rather than the socket everyone shares.
+- **Never two TLS sessions at once** is the invariant. While the socket is reconnecting a request
+  waits for it rather than opening its own session. After three failed connects (or a 404 — a box
+  without the route) the panel falls back to one HTTPS session per request, one at a time, and
+  retries the socket every ten minutes. The OTA download keeps its own `esp_https_ota` session
+  but closes the socket first (`link_suspend`) and reopens it if the install fails.
+- **`main/wsproto.c` is the pure half** — frame ids, the control frames, reassembling a frame the
+  client hands over in pieces, the credit window, the fallback policy, the error string — and it
+  is on the host suite.
+- **Telemetry says what "connect" never did:** `ws`, `ws_err` (esp-tls code, errno, upgrade
+  status), `ws_connects`, `ws_drops`, and `int_min` / `int_big`, the internal-heap low-water mark
+  and largest 8-bit block. `GET /api/debug/endpoint/reach` shows them beside the box's own view
+  of each socket.
+
+The component is espressif's `esp_websocket_client`, pinned in `dependencies.lock` like the
+others and fetched by the IDF component manager at build time — nothing to install by hand.
+`CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK` is on so sends from three tasks do not queue behind the
+receive loop. The design and what is still unmeasured are in ROOM_ENDPOINT_PLAN.md, "One socket
+for everything".
 
 ## The two things that make "cable once" true
 
