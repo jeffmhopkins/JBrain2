@@ -665,6 +665,9 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
 2. Should the switch be schedulable (e.g. Flash-Next overnight for batch ingest)? Out of
    scope for v1; the endpoint shape should not preclude it.
 3. MTP with multiple slots — measure after F3b, or leave to F5's engines?
+4. Canvas grounding was admitted **unprobed** (owner decision 2026-10-04): Flash-Next is in
+   `CANVAS_MODELS` at the Qwen3.8 `norm_1000` base so jerv can mark up photos at all.
+   A `/grounding` run during the F2 soak should confirm it; a disagreement is one line.
 
 ## 10. What the reviews changed
 

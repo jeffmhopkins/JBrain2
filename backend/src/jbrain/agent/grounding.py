@@ -56,6 +56,10 @@ _CONVENTIONS: dict[str, Convention] = {
     # convention. If that ever stops being true it is a re-probe, not a code change.
     "qwen3.8-27b": Convention.NORM_1000,
     "qwen3.8-27b-q4": Convention.NORM_1000,
+    # NOT probed — admitted by owner decision 2026-10-04 (see readtools.CANVAS_MODELS).
+    # Same Qwen3.8 family, and an unprompted box list it gave on the owner's photo was
+    # already 0-1000; a re-probe that disagrees is a one-line change here.
+    "qwen3.8-flash-next": Convention.NORM_1000,
 }
 
 # `bbox_2d` is [x1, y1, x2, y2] — CORNERS, not [x, y, w, h]. A silent w/h misread

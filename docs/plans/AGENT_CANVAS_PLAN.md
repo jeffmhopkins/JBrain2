@@ -1,6 +1,6 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ W7✅ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ W7✅ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
 > **W0's measurement is DONE (2026-08-17).** Probed on the live box against
 > `qwen3.8-27b-q4`: the base is **`norm_1000`**, now pinned in `agent/grounding.py` for
@@ -500,6 +500,11 @@ is gone: PR #1150 made MTP a serving mode rather than a catalog entry, and the q
 is now `supports_vision=True` in `local_catalog.py`. The gate still earns its keep as
 the `CANVAS_MODELS` allowlist in `agent/readtools.py`: a model must be
 grounding-qualified, not merely vision-capable.)
+
+**Flash-Next is the one unprobed entry (owner decision, 2026-10-04).** While it serves it
+is the box's only engine, so leaving it off the allowlist meant no photo markup at all —
+jerv drew boxes on a blank `render_html` page instead. It is pinned to the Qwen3.8
+`norm_1000` base in `agent/grounding.py`; a probe that disagrees is a one-line change.
 
 **The mechanism already exists and needs no signature change.** `hidden_tools_provider`
 (`loop.py:521`) is the one dynamic per-turn tool-visibility hook, and it is composed
