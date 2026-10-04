@@ -82,6 +82,9 @@ class _FakeResp:
 class _FakeSupervisor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
+        # The last GET's headers and timeout, so a route's auth and patience are asserted.
+        self.headers: dict = {}
+        self.timeout: Any = None
         # Service names (e.g. "jcode") whose /logs return 404 — a not-running peer.
         self.down: set[str] = set()
         # POSTs, kept apart from `calls` so a test can assert a route CAUSED something
@@ -120,9 +123,32 @@ class _FakeSupervisor:
         return _FakeResp(404, "")
 
     async def get(
-        self, url: str, params: dict | None = None, headers: dict | None = None
+        self,
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        timeout: Any = None,  # noqa: ASYNC109 - mirrors httpx.AsyncClient.get
     ) -> _FakeResp:
         self.calls.append((url, params or {}))
+        self.headers = headers or {}
+        self.timeout = timeout
+        if url == "/disk":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "generated_at": "2026-10-04T00:00:00+00:00",
+                    "cached": False,
+                    "age_s": 0.0,
+                    "filesystem": [{"paths": ["/ (supervisor)"], "fsid": None}],
+                    "docker": {"volumes": {"items": [{"name": "jbrain_db_data"}]}},
+                    "project_dirs": {
+                        "root": "/opt/jbrain2",
+                        "entries": [{"path": "/opt/jbrain2/local-models", "bytes": 9}],
+                    },
+                    "errors": ["du helper: exit 1 (partial): denied"],
+                },
+            )
         if url.endswith("/nope") or any(url == f"/logs/{s}" for s in self.down):
             return _FakeResp(404, "")
         if url == "/update/status":
@@ -1241,6 +1267,37 @@ def test_host_proxies_and_sorts_processes(debug_client: tuple[TestClient, str]) 
 def test_host_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.get("/api/debug/host").status_code == 401
+
+
+def test_disk_passes_the_supervisor_breakdown_through(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # The disk breakdown is the supervisor's shape, errors list included: a partial
+    # build (du helper failed) must still reach the console rather than 5xx.
+    client, key = debug_client
+    resp = client.get("/api/debug/disk", headers=_auth(key))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project_dirs"]["entries"][0]["path"] == "/opt/jbrain2/local-models"
+    assert body["errors"] == ["du helper: exit 1 (partial): denied"]
+    sup = _state(client).supervisor_client
+    assert ("/disk", {}) in sup.calls
+    assert sup.headers == {"Authorization": "Bearer sek"}
+    # A cold build walks hundreds of GB; the default 30 s client timeout would cut it off.
+    assert sup.timeout.read >= 120
+
+
+def test_disk_refresh_bypasses_the_cache(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.get("/api/debug/disk", headers=_auth(key), params={"refresh": "1"})
+    assert resp.status_code == 200
+    assert ("/disk", {"refresh": "1"}) in _state(client).supervisor_client.calls
+
+
+def test_disk_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/disk").status_code == 401
+    assert ("/disk", {}) not in _state(client).supervisor_client.calls
 
 
 def test_whoami_reports_host_scope(debug_client: tuple[TestClient, str]) -> None:

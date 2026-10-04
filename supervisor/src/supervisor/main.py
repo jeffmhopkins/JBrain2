@@ -4,6 +4,7 @@ import docker
 
 from supervisor.app import create_app
 from supervisor.config import Settings
+from supervisor.disk_usage import DiskUsage
 from supervisor.gateway import ComposeDockerGateway
 
 # SUPERVISOR_TOKEN is required and comes from the environment at runtime.
@@ -11,4 +12,5 @@ settings = Settings()  # pyright: ignore[reportCallIssue]
 gateway = ComposeDockerGateway(
     docker.from_env(), settings.compose_project, settings.project_dir
 )
-app = create_app(settings, gateway)
+disk = DiskUsage(gateway, settings.compose_project, settings.project_dir)
+app = create_app(settings, gateway, disk=disk)

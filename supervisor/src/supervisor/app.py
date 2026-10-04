@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from supervisor import host_metrics, usb_devices, watchdog
+from supervisor.disk_usage import DiskReport, DiskUsage
 from supervisor.gateway import (
     ENGINE_SERVICES,
     FLASH_NEXT_SERVICE,
@@ -260,12 +261,17 @@ IMPORT_ARCHIVE_RE = re.compile(r"^import-\d{8}-\d{6}\.jbrain\.tar$")
 
 
 def create_app(
-    settings: Settings, gateway: DockerGateway, *, watch_api: bool = True
+    settings: Settings,
+    gateway: DockerGateway,
+    *,
+    watch_api: bool = True,
+    disk: DiskUsage | None = None,
 ) -> FastAPI:
     """Build the supervisor app around an injected gateway.
 
     `watch_api` off is for tests: the watchdog is a background task that probes over the
-    network, which a route test has no business starting."""
+    network, which a route test has no business starting. `disk` is the cached disk
+    breakdown; without one `/disk` answers 503."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -591,6 +597,14 @@ def create_app(
                 for p in gateway.container_processes()
             ]
         )
+
+    @authed.get("/disk")
+    def disk_usage(refresh: bool = False) -> DiskReport:
+        # Where the disk went: statvfs, `docker system df`, and a `du` of the project
+        # tree from a read-only helper. Cached ~60 s; `?refresh=1` rebuilds it.
+        if disk is None:
+            raise HTTPException(status_code=503, detail="disk probe not configured")
+        return disk.report(refresh=refresh)
 
     @authed.post("/update", status_code=202)
     def start_update() -> UpdateStartResponse:

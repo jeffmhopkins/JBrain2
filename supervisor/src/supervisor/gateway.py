@@ -11,10 +11,12 @@ import contextlib
 import shlex
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from docker.types import LogConfig, Mount
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping, Sequence
 
     import docker
     from docker.models.containers import Container
@@ -204,6 +206,14 @@ exit $rc
 """
 
 
+# The disk probe's helper runs the supervisor's OWN image: it is on the box by
+# construction (this process runs from it), so the probe never pulls, and its Debian
+# base carries coreutils `du`/`stat`.
+DISK_HELPER_IMAGE = "jbrain2-supervisor:local"
+# Kept apart from ONESHOT_LABEL so a probe never trips the one-shot mutual exclusion.
+DISK_HELPER_LABEL = "jbrain.diskprobe"
+
+
 # Docker reports this zero-value timestamp for containers that never started.
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
 
@@ -215,6 +225,16 @@ _NEVER_STARTED = "0001-01-01T00:00:00Z"
 # well above any legitimate run (a slow multi-model download can be hours), so it only
 # ever fires on a genuine wedge, never on real work in progress.
 _ONESHOT_MAX_RUNTIME_S = 6 * 60 * 60
+
+
+@dataclass(frozen=True, slots=True)
+class HelperRun:
+    """What a disk helper container printed. `exit_code` is None when it never
+    finished inside its timeout (it was killed), so the caller can say so."""
+
+    exit_code: int | None
+    stdout: str
+    stderr: str
 
 
 class UnknownServiceError(LookupError):
@@ -511,6 +531,78 @@ class ComposeDockerGateway:
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
         return self._status_of(self._latest(f"{ONESHOT_LABEL}={kind}"), tail)
 
+    def docker_df(self) -> dict[str, Any]:
+        return cast("dict[str, Any]", self._client.df())
+
+    def docker_root_dir(self) -> str | None:
+        root = cast("dict[str, Any]", self._client.info()).get("DockerRootDir")
+        return root if isinstance(root, str) and root else None
+
+    def run_readonly_helper(
+        self, argv: Sequence[str], mounts: Mapping[str, str], timeout_s: float
+    ) -> HelperRun:
+        """Run a fixed argv in a throwaway container that can only LOOK: every bind
+        is read-only and non-recursive, there is no network, the rootfs is read-only
+        and the only capability kept is DAC_READ_SEARCH. An argv list, never a shell,
+        so no path is ever interpolated into a command line.
+
+        DAC_READ_SEARCH lets the helper read ANY file it can reach, whoever owns it —
+        broader than sizing needs, since `du` only stats. It is bounded by what is
+        mounted (read-only) and by the fixed argv, and it is no new escalation: this
+        process already holds the docker socket, which is root on the host.
+
+        Created, then started inside the try, so a container whose start fails is
+        still removed; removed explicitly rather than with auto_remove because an
+        auto-removed container can vanish before its logs are read, and a non-zero
+        `du` exit (one unreadable file) still carries a valid answer on stdout."""
+        self._sweep_disk_helpers()
+        container = self._client.containers.create(
+            DISK_HELPER_IMAGE,
+            command=list(argv),
+            name=f"jbrain-diskprobe-{time.time_ns()}",
+            labels={DISK_HELPER_LABEL: "1"},
+            network_mode="none",
+            read_only=True,
+            cap_drop=["ALL"],
+            cap_add=["DAC_READ_SEARCH"],
+            security_opt=["no-new-privileges"],
+            mem_limit="256m",
+            pids_limit=64,
+            # The probe reads its answer back from the logs, so pin a driver that
+            # can be read whatever the daemon's default is.
+            log_config=LogConfig(type=LogConfig.types.JSON, config={"max-size": "10m"}),
+            mounts=[_readonly_bind(host, inside) for host, inside in mounts.items()],
+        )
+        try:
+            container.start()
+            try:
+                result = cast("dict[str, Any]", container.wait(timeout=timeout_s))
+                exit_code: int | None = int(result.get("StatusCode", -1))
+            except Exception:
+                exit_code = None
+                with contextlib.suppress(Exception):
+                    container.kill()
+            out: bytes = container.logs(stdout=True, stderr=False)
+            err: bytes = container.logs(stdout=False, stderr=True)
+            return HelperRun(
+                exit_code=exit_code,
+                stdout=out.decode("utf-8", errors="replace"),
+                stderr=err.decode("utf-8", errors="replace"),
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                container.remove(force=True)
+
+    def _sweep_disk_helpers(self) -> None:
+        """Force-remove any helper a crash left behind (the supervisor died between
+        create and remove). Best-effort: a sweep failure never blocks the probe."""
+        with contextlib.suppress(Exception):
+            for stale in self._client.containers.list(
+                all=True, filters={"label": DISK_HELPER_LABEL}
+            ):
+                with contextlib.suppress(Exception):
+                    stale.remove(force=True)
+
     def _run_oneshot(self, prefix: str, labels: dict[str, str], command: str) -> str:
         if self._oneshot_running():
             raise UpdateInProgressError
@@ -635,6 +727,19 @@ class ComposeDockerGateway:
         if not services:
             raise UnknownServiceError(service)
         return services[0]
+
+
+def _readonly_bind(host: str, inside: str) -> Mount:
+    """A read-only bind that does NOT carry submounts along. Bound recursively, the
+    docker data root would bring every running container's merged rootfs into the
+    helper; non-recursive, the helper sees the one filesystem it is there to size.
+    docker-py's Mount has no field for it, but it is the API's own dict, so the
+    BindOptions key (API 1.40+) is set directly. A Mount, not a legacy `volumes`
+    bind, because the legacy form creates a missing host path (as root) and a probe
+    must never write to the host, not even a mkdir."""
+    mount = Mount(target=inside, source=host, type="bind", read_only=True)
+    mount["BindOptions"] = {"NonRecursive": True}
+    return mount
 
 
 def _to_info(service: str, container: Container) -> ContainerInfo:

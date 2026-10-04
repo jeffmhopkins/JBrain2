@@ -3306,6 +3306,36 @@ async def host(request: Request, settings: SettingsDep, _p: DebugDep) -> HostMet
     return HostMetricsOut(**data)
 
 
+# A cold `/disk` runs `docker system df` (which walks every volume) and a `du` of the
+# project tree in a helper container, so it can take a minute or more; the supervisor
+# caches the result ~60 s, so a retry after a timeout reads the finished build.
+_DISK_TIMEOUT = httpx.Timeout(240.0, connect=5.0)
+
+
+@router.get("/disk")
+async def disk(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    refresh: Annotated[bool, Query()] = False,
+) -> dict[str, object]:
+    """Where the box's disk went, proxied from the supervisor (the only holder of the
+    docker socket): filesystem totals, `docker system df` (images with reclaimable bytes,
+    container writable layers, volumes, build cache), and per-entry sizes of PROJECT_DIR
+    one level deeper under the model and backup dirs. Passed through as the supervisor
+    shapes it — a partial build carries an `errors` list rather than failing.
+    `?refresh=1` bypasses the supervisor's ~60 s cache."""
+    request.state.debug_detail = "disk usage" + (" (refresh)" if refresh else "")
+    resp = await _supervisor(request).get(
+        "/disk",
+        params={"refresh": "1"} if refresh else {},
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+        timeout=_DISK_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 # --- Live LLM routing (read / switch / load / unload) -----------------------
 
 
