@@ -64,6 +64,14 @@ beside each slot file, so a save without one removes the file and takes the mode
 disk layer until the next api start (`patch_absent` in the state read). A file without its
 sidecar is never restored.
 
+**The restore gate.** On Flash-Next nothing is restored — no role prefix, no conversation —
+until `POST /api/debug/llm/slot-probe` has **passed** (logits within tolerance, restore
+effective, and the save's checkpoint sidecar present) against the server running now. The
+probe writes its verdict as `restore-gate.json` beside the slot files, keyed by a fingerprint
+of the launch line (minus `--port`) and the llama.cpp build from `/props`; a new image or launch
+line reads as `awaiting_probe` until the probe runs again, and a failed probe keeps restores off.
+Saves are not gated. The state read and Ops show `awaiting_probe | passed | failed`.
+
 ## On Flash-Next: one prefix per role, and conversation files (F4)
 
 Flash-Next serves eight role-pinned slots over one shared KV pool
@@ -81,7 +89,14 @@ Flash-Next serves eight role-pinned slots over one shared KV pool
   10 minutes, because the pool guard can erase that slot without telling the store.
 
 The interactive slot also carries **conversation files** (`llm/kv_conversation.py`, toggle
-*Keep chats on disk*, default ON). When another conversation, or the keeper's prime, is about
+*Keep chats on disk*, default ON) — for **research-type chats only**. A slot file holds the
+conversation's token ids on disk, outside Postgres, where the domain firewalls (health, finance,
+location) cannot reach it, so a chat gets one only when it cannot hold firewalled data: its
+persona does not read the knowledge base (jerv and the other `reads_knowledge_base=False`
+agents, whose turns run with empty read scopes), its session names no domain but `general`
+(an unknown domain counts as firewalled) and no subject. **Brain/curator chats never get a
+conversation file.** Role prefix files hold only the system prompt and tool schemas, no owner
+data, and are unaffected. When another conversation, or the keeper's prime, is about
 to take slot 0, the conversation it holds is saved first — only if `/slots` still reads as that
 conversation's cache (between its last prompt and prompt + answer) and the server saves exactly
 that many tokens. A conversation idle for 10 minutes is saved by the keeper's tick. When a
@@ -89,7 +104,11 @@ conversation speaks again and slot 0 does not hold it, its file is restored befo
 if the file's base identity (launch line, persona, tools, effort) matches and every message the
 saved request sent opens the new one, digest for digest. llama-server then compares tokens and
 re-evaluates from the first divergence (typically the previous answer re-rendered without its
-thinking), so a wrong guess costs a re-prefill, never a wrong answer. A conversation that moved
+thinking), so a wrong guess costs a re-prefill, never a wrong answer. The digests leave out
+the reasoning a tool step replays within its own turn (`AssistantMessage.reasoning`): the next
+turn's history is text-only and the template renders it with `preserve_thinking=false`, so the
+divergence llama-server finds is at the previous turn's first tool step, and reuse runs up to
+the nearest checkpoint before it. A conversation that moved
 on (an edit, a regenerate further back) loses its file. File names are hashes and the `.meta`
 claim holds only digests and counts; the slot file itself carries the conversation's tokens,
 like the KV in RAM it came from.

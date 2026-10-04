@@ -692,13 +692,26 @@ Begins with the check moved out of F2, and gated on it:
   *Prompt cache disk* (default 40 GiB, was 25) in Ops, both live; debug twins
   `PUT /llm/kv-prefix/conversations` and `…/budget`. `GET /llm/kv-prefix` reports per-role
   rows, the held conversation, conversation files and hit/miss counters.
+- **Restore gate (review, 2026-10-04).** No restore of any kind on Flash-Next until the slot
+  probe has passed — sidecar included — against the running launch line and llama.cpp build;
+  the probe records its verdict in `restore-gate.json` beside the slot files, so a new image or
+  launch line needs a new run. Saves continue. `restore_gate` is in the state read and the
+  settings read (Ops hints say when restores wait or are off).
+- **Privacy scope (review, 2026-10-04; CLAUDE.md #3).** A conversation file holds that chat's
+  tokens outside Postgres's domain firewalls, so only chats that cannot hold firewalled data get
+  one: a persona with `reads_knowledge_base=False`, a session scoped to `general` only (or
+  nothing) and no subject. Brain/curator chats never do. Role prefixes (system + tools only) are
+  unaffected.
+- **Preserved thinking (#1560).** Conversation digests leave out the reasoning replayed within a
+  turn; the next turn's text-only, `preserve_thinking=false` render diverges at the previous
+  turn's first tool step, and reuse runs to the nearest checkpoint before it.
 
 **Pending on the box (in order; each needs only the debug token):**
 1. Ops → Update (rebuilds the flash-next image with the patch), switch to Flash-Next.
-2. `POST /llm/slot-probe {"synth_tokens": 29000, "slot_a": 6, "slot_b": 7}` → `sidecar: true`
-   and `passed: true`. **Fail → F4 stops there**: turn *Keep chats on disk* off and
-   `DELETE /llm/kv-prefix?model=qwen3.8-flash-next`; the per-role layer then still costs
-   nothing but disk, and a failing `sidecar` keeps Flash-Next out of it on its own.
+2. `POST /llm/slot-probe {"synth_tokens": 29000, "slot_a": 6, "slot_b": 7}` → `sidecar: true`,
+   `passed: true` and `restore_gate: passed` — that verdict is what opens restores. **Fail →
+   F4 stops there**: the gate stays `failed`, so nothing is restored; turn *Keep chats on disk*
+   off and `DELETE /llm/kv-prefix?model=qwen3.8-flash-next` to stop the saves too.
 3. After a load: `GET /llm/kv-prefix` shows `saved` for the interactive role, a file with
    `sidecar: true`, and after an engine round-trip `restored` into slot 0 with the prime's
    `reuse_rate` near 1.0 (`POST …/prime`).
