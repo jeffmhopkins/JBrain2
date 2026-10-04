@@ -43,7 +43,7 @@ run fig-outline.png src/fig_outline.scad --projection=o --imgsize=1100,1000 --vi
 run fig-battery-room.png src/fig_battery_room.scad --projection=o --imgsize=1100,1000 --viewall --autocenter --camera=0,0,200,0,0,0
 run fig-rim-detail.png src/fig_rim_detail.scad $ortho --camera=0,21,32,90,0,90,46
 run fig-floor-detail.png src/fig_floor_detail.scad $ortho --camera=0,20,3,90,0,90,46
-run fig-tower-top.png src/fig_tower_top.scad $ortho --camera=0,20,33.5,90,0,90,50
+run fig-tower-top.png src/fig_tower_top.scad --projection=o --imgsize=1300,850 --camera=0,19.6,34,90,0,90,56
 run fig-tower-bottom.png src/fig_tower_bottom.scad $ortho --camera=0,19.5,3,90,0,90,54
 for d in 0 0.3 0.5; do
   run "fig-grip-$d.png" src/fig_grip.scad --projection=o --imgsize=500,800 --camera=17,0,8.5,90,0,0,72 -D grip_depth=$d

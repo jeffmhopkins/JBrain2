@@ -105,15 +105,16 @@ estimate from photos, so it's the thing most worth checking against the stock co
 ## Screw towers
 
 Each screw goes up a hollow tower from the back. Its head sits under a 2 mm **seat** at the top,
-and the tower's flat top presses on the board's brass nut.
+and the tower's flat top presses on the board's brass standoff, level with the front shell's
+edge.
 
 ![Top of a screw tower](renders/fig-tower-top.png)
 
 | Field | What it is | Change it when |
 |---|---|---|
-| `tower_drop` | How far below the rim top the towers stop (negative = above) | Measure the stock cover: rim top to the tops of its screw posts |
-| `head_seat` | Plastic between screw head and nut | Rarely; it sets the screw length (2 + how far the screw goes into the nut) |
-| `nut_pad_h`, `nut_pad_d` | Optional raised pad around the nut (0 = flat top, the default) | Only if the tower top would press on parts beside a nut |
+| `tower_drop` | How far below the rim top the towers stop (negative = above). 2, the rim's height, puts the tower tops at the seam, where the standoffs end | A gap at the seam: raise it by the gap. Board loose: lower it |
+| `head_seat` | Plastic between screw head and standoff | Rarely; it sets the screw length (2 + how far the screw goes into the standoff) |
+| `nut_pad_h`, `nut_pad_d` | Optional raised pad around the standoff (0 = flat top, the default) | Only if the tower top would press on parts beside a standoff |
 | `hole_slop` | Extra on every hole, since printers make holes small | Screw head or hex key tight in the tower: raise by 0.1 |
 | `bridge_skin` | The thin skin closing each tower for printing (0.4 mm, two layers) | Thicker if it sags; 0 for none (then a small overhang instead) |
 
@@ -149,9 +150,9 @@ source; measuring them on the original black cover makes a keeper fit first time
 |---|---|
 | How tall the rim stands | `lip_h` |
 | The rim's outside width and length | `lip_outer_x`, `lip_outer_y` |
-| Rim top down to the tops of the screw posts (0 if level, negative if the posts are higher) | `tower_drop` |
+| How far the board's standoffs end from the front shell's edge (2 = level with it, as measured) | `tower_drop` (rim height + that distance) |
 | Rim top down to the floor inside | `stock_clear` (only affects reported numbers) |
-| How far a stock screw sticks out past its post, and how tall the brass nuts stand | Choosing screw length — [DESIGN.md](DESIGN.md#screws) |
+| How far a stock screw goes into its standoff | Choosing screw length — [DESIGN.md](DESIGN.md#screws) |
 
 ## Desk stand
 
