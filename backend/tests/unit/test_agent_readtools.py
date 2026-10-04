@@ -1368,8 +1368,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # rewording (the 2026-10-03 Titusville turn reworded one query twenty times).
         "web_search.tool": (
             "web_search",
-            5,
-            "ea9b223ce7e66ea7350299cb1d0b52a41d4e7d02654c54355fc11f4f1d704a47",
+            6,
+            "991d5e3f938112248dacb25677770ee15e7afdc342553557e33867da8f2b1720",
         ),
         "news_search.tool": (
             "news_search",
