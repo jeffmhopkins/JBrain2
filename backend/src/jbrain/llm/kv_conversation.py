@@ -70,6 +70,9 @@ EXCLUDED_TOOLS: Final = frozenset(
         "find_when_at",
         "geocode_reverse",
         "neighborhood",
+        # APRS: decoded position reports, the owner's station's among them.
+        "aprs_recent",
+        "sdr_aprs_logging",
         "save_place",
         "time_at_place",
         "where_is",
@@ -225,6 +228,9 @@ class ConversationHold:
     dirty: bool
     at: float
     restored_tokens: int | None = None
+    # The store's conversation epoch when this claim was made: a clear (the toggle turned off)
+    # bumps it, and a claim from before can never be saved.
+    epoch: int = 0
 
     def still_in_slot(self, n_slot_tokens: int) -> bool:
         """Whether a `/slots` count is this conversation's cache: at least the last prompt, at

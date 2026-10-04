@@ -18,6 +18,7 @@ from jbrain import box_events
 from jbrain.llm import engine as engines
 from jbrain.llm import kv_conversation, kv_prefix, llama_swap_config
 from jbrain.llm.kv_conversation import ConversationHold, ConversationMeta
+from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotRole
@@ -567,7 +568,8 @@ async def test_a_turn_that_ran_a_location_or_mail_tool_never_reaches_disk(root: 
     _turn(store, gw, "chat-A", 40_000)
     await _prepare(store, "chat-B")  # saved before it was tainted
     _turn(store, gw, "chat-B", 31_000)
-    assert await _prepare(store, "chat-A") is False or True
+    gw.restore_n = 40_299
+    assert await _prepare(store, "chat-A"), "chat-A's file restores while it is still clean"
     _turn(store, gw, "chat-A", 41_000, tools=("current_location",))
     await asyncio.gather(*store._tasks)
     assert not list(_folder(root).glob("c-*.kvslot")) or all(
@@ -765,3 +767,104 @@ def test_only_chats_that_cannot_hold_firewalled_data_get_files() -> None:
     # Once a location, mail or records tool has run in it, never.
     for tool in ("current_location", "where_was_i", "weather", "gmail_read", "read_labs"):
         assert not allowed(tools_ran=("web_search", tool))
+
+
+# ---- races against forget / clear (a claim must never outlive its conversation) ---------------
+
+
+class _Parked:
+    """Parks `prepare_conversation` at its engine refresh — the await between snapshotting the
+    claim and saving it — so a forget or a clear can land inside that window."""
+
+    def __init__(self, store: KvPrefixStore) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self._store = store
+        self._calls = 0
+
+    async def __call__(self) -> None:
+        self._calls += 1
+        if self._calls == 1:
+            self.entered.set()
+            await self.release.wait()
+
+
+async def _race(store: KvPrefixStore, interfere: Any) -> None:
+    parked = _Parked(store)
+    store._refresh_engine = parked  # type: ignore[method-assign]
+    task = asyncio.create_task(_prepare(store, "chat-B"))
+    await parked.entered.wait()
+    await interfere()
+    parked.release.set()
+    await task
+
+
+async def test_a_forget_inside_the_prepare_window_is_not_undone_by_its_save(root: Path) -> None:
+    store, gw = _store(root)
+    _turn(store, gw, "chat-A", 40_000)
+    await _race(store, lambda: store.forget_conversation("chat-A"))
+    assert gw.saved == [], "a deleted chat's claim was saved after the delete"
+    assert not list(_folder(root).glob("c-*.kvslot"))
+
+
+async def test_a_clear_inside_the_prepare_window_is_not_undone_by_its_save(root: Path) -> None:
+    store, gw = _store(root)
+    _turn(store, gw, "chat-A", 40_000)
+
+    async def turn_off() -> None:
+        store.configure(conversations=False)
+        await store.clear_conversations()
+        store.configure(conversations=True)  # even switched straight back on
+
+    await _race(store, turn_off)
+    assert gw.saved == []
+
+
+async def test_a_turn_still_streaming_at_the_delete_claims_nothing(root: Path) -> None:
+    store, gw = _store(root)
+    await store.forget_conversation("chat-A")  # deleted while its turn was in flight
+    _turn(store, gw, "chat-A", 40_000)  # ... which then completes
+    assert FLASH not in store._conv_hold
+    assert not await store.save_idle_conversation(FLASH, idle_s=0)
+    await _prepare(store, "chat-B")
+    assert gw.saved == []
+
+
+# ---- restore cells reserved in the guard's own decision ----------------------------------------
+
+
+async def test_a_restores_cells_are_held_by_the_guard_while_it_streams(root: Path) -> None:
+    gw = FakeGateway(_folder(root))
+    guard = KvPoolGuard(gw.slots, _no_erase)
+    store = KvPrefixStore(
+        gw,  # type: ignore[arg-type]
+        str(root),
+        engine=engines.FLASH_NEXT,
+        conversations=True,
+        pool_guard=guard,
+    )
+    _record_gate(root, "passed")
+    await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
+    gw.slot_state = _slots()
+    seen: list[int] = []
+    restore = gw.restore_slot
+
+    async def watching(served: str, slot_id: int, filename: str) -> dict[str, object]:
+        seen.append(guard._pending_on(FLASH, slot_id))
+        return await restore(served, slot_id, filename)
+
+    gw.restore_slot = watching  # type: ignore[method-assign]
+    assert await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
+    assert seen == [PRIME], "the cells were held while the file streamed"
+    assert guard._pending_on(FLASH, 2) == 0, "released after: the restored charge took over"
+    assert guard._restored[(FLASH, 2)] == PRIME
+    # A failed restore releases its hold and charges nothing.
+    gw.restore_error = LocalGatewayError("boom")
+    store.note_slot_erased(FLASH, 2)
+    guard.forget_restored(FLASH)
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
+    assert guard._pending_on(FLASH, 2) == 0 and (FLASH, 2) not in guard._restored
+
+
+async def _no_erase(model: str, slot: int) -> bool:
+    raise AssertionError("nothing needs erasing")

@@ -475,6 +475,14 @@ class KvPrefixStore:
         # Hashes of conversations whose restores missed MISS_LIMIT times in a row: their file
         # was dropped, and saving them again would only repeat the waste.
         self._unhelpful: set[str] = set()
+        # Hashes of conversations forgotten this process life (a deleted or re-scoped chat): a
+        # claim on one — even one made by a turn that was still streaming at the delete — is
+        # never saved. Checked under `self._save_lock`, which the forget's deletion also takes,
+        # so a save either sees the mark or finishes before the files are deleted.
+        self._forgotten: set[str] = set()
+        # Bumped by every clear of all conversations (the toggle turned off): a claim made
+        # before it is never saved.
+        self._conv_epoch = 0
         # Background deletions started from synchronous notes, kept so they are not collected.
         self._tasks: set[asyncio.Task[object]] = set()
         # ---- instrumentation (see `snapshot`) ----
@@ -507,6 +515,7 @@ class KvPrefixStore:
                 # Nothing more is saved, and what was saved goes (`clear_conversations`, which
                 # the routes await after this).
                 self._conv_hold.clear()
+                self._conv_epoch += 1
 
     # ---- the restore gate ------------------------------------------------------------
 
@@ -1557,12 +1566,20 @@ class KvPrefixStore:
         need = self._prime_tokens.get(fingerprint) or await asyncio.to_thread(
             _file_token_bound, path
         )
-        if need is None or not await self._fits(served_model, pool, slot_id, need, slots, line):
+        reserved, ticket = (
+            (False, None)
+            if need is None
+            else await self._reserve(served_model, pool, slot_id, need, slots, line)
+        )
+        if not reserved:
             await self._note("restore_skipped_pool_full", served_model, role=role, need=need)
             return False
-        return await self._restore_file(served_model, slot_id, fingerprint, path, role=role)
+        try:
+            return await self._restore_file(served_model, slot_id, fingerprint, path, role=role)
+        finally:
+            self._end_reserve(served_model, slot_id, ticket)
 
-    async def _fits(
+    async def _reserve(
         self,
         served_model: str,
         pool: KvPool,
@@ -1570,14 +1587,21 @@ class KvPrefixStore:
         need: int,
         slots: Sequence[dict[str, object]],
         line: str,
-    ) -> bool:
-        """Whether `need` restored cells fit in `slot_id` — through the pool guard when wired
-        (its lock, its pending calls, its charge for never-used restored slots), else off the
-        `/slots` read in hand and the pool size on the launch line."""
+    ) -> tuple[bool, int | None]:
+        """Whether `need` restored cells fit in `slot_id`, and — through the pool guard, when
+        wired — the cells held as pending from that same locked decision until `_end_reserve`
+        (its lock, its pending calls, its charge for never-used restored slots). Without a
+        guard: off the `/slots` read in hand and the pool size on the launch line."""
         if self._pool_guard is not None:
-            return await self._pool_guard.fits(served_model, pool, slot_id, need)
+            ticket = await self._pool_guard.reserve_restore(served_model, pool, slot_id, need)
+            return ticket is not None, ticket
         cells = _pool_cells(line, pool)
-        return kv_pool_guard.projected_cells(pool, slots, exclude=slot_id) + need <= cells
+        fits = kv_pool_guard.projected_cells(pool, slots, exclude=slot_id) + need <= cells
+        return fits, None
+
+    def _end_reserve(self, served_model: str, slot_id: int, ticket: int | None) -> None:
+        if self._pool_guard is not None and ticket is not None:
+            self._pool_guard.end_restore(served_model, slot_id, ticket)
 
     async def _restore_file(
         self,
@@ -1695,7 +1719,7 @@ class KvPrefixStore:
         if pool is None:
             return False, seq
         if conversation_key is not None and kv_conversation.key_hash(conversation_key) in (
-            self._tainted
+            self._tainted | self._forgotten
         ):
             conversation_key = None
         async with self._lock:
@@ -1760,9 +1784,30 @@ class KvPrefixStore:
             # it and overwrites whatever it leaves, so a restore now would be wasted.
             self._count("conversation_skipped_busy")
             return False
-        if not await self._fits(served_model, pool, slot_id, meta.n_tokens, slots, line):
+        reserved, ticket = await self._reserve(
+            served_model, pool, slot_id, meta.n_tokens, slots, line
+        )
+        if not reserved:
             self._count("conversation_skipped_pool_full")
             return False
+        try:
+            return await self._restore_conversation_file(
+                served_model, conversation_key, base, path, name, meta, slot_id
+            )
+        finally:
+            self._end_reserve(served_model, slot_id, ticket)
+
+    async def _restore_conversation_file(
+        self,
+        served_model: str,
+        conversation_key: str,
+        base: str,
+        path: str,
+        name: str,
+        meta: ConversationMeta,
+        slot_id: int,
+    ) -> bool:
+        """The conversation restore itself, with its pool cells already reserved."""
         started = time.perf_counter()
         try:
             resp = await self._gateway.restore_slot(served_model, slot_id, name)
@@ -1809,6 +1854,7 @@ class KvPrefixStore:
             dirty=False,
             at=time.monotonic(),
             restored_tokens=n_restored,
+            epoch=self._conv_epoch,
         )
         await box_events.record(
             box_events.KV_PREFIX_RESTORED,
@@ -1833,7 +1879,7 @@ class KvPrefixStore:
         and the server saves exactly that many tokens. Under `self._save_lock`, never the main
         lock. `busy` means try again later; `failed` means the claim is no longer good."""
         digest = kv_conversation.key_hash(hold.key)
-        if digest in self._tainted or digest in self._unhelpful:
+        if not self._hold_current(hold):
             return "failed"
         await self._refresh_engine()
         line = await asyncio.to_thread(
@@ -1932,6 +1978,12 @@ class KvPrefixStore:
         unclaimed, which is never saved."""
         if self._conversation_pool(served_model) is None:
             return
+        if conversation_key is not None and kv_conversation.key_hash(conversation_key) in (
+            self._forgotten
+        ):
+            # The chat was deleted or re-scoped while this turn streamed: claim nothing.
+            self._conv_hold.pop(served_model, None)
+            return
         if conversation_key is not None and kv_conversation.any_excluded(tool_names):
             self._tainted.add(kv_conversation.key_hash(conversation_key))
             self._conv_hold.pop(served_model, None)
@@ -1950,9 +2002,7 @@ class KvPrefixStore:
         ):
             verdict = kv_conversation.judge(cached_tokens, previous.restored_tokens)
             self._count(f"conversation_restore_{verdict}")
-            path = self._conversation_path(served_model, previous.base, conversation_key)
-            if path is not None:
-                self._spawn(self._judged(path, conversation_key, verdict))
+            self._spawn(self._judged(served_model, previous.base, conversation_key, verdict))
         if conversation_key is None or fingerprint is None or input_tokens <= 0:
             self._conv_hold.pop(served_model, None)
             return
@@ -1963,14 +2013,39 @@ class KvPrefixStore:
             output_tokens=max(0, output_tokens),
             dirty=True,
             at=time.monotonic(),
+            epoch=self._conv_epoch,
+        )
+
+    def _hold_current(self, hold: ConversationHold) -> bool:
+        """Whether a claim may still be saved: the cache is on, no clear happened since the
+        claim, and its conversation was not forgotten, tainted or retired as unhelpful."""
+        digest = kv_conversation.key_hash(hold.key)
+        return (
+            self._conversations
+            and hold.epoch == self._conv_epoch
+            and digest not in self._forgotten
+            and digest not in self._tainted
+            and digest not in self._unhelpful
         )
 
     async def _judged(
-        self, path: str, conversation_key: str, verdict: kv_conversation.Judgement
+        self,
+        served_model: str,
+        base: str,
+        conversation_key: str,
+        verdict: kv_conversation.Judgement,
     ) -> None:
-        """Record a judgement on the file's claim; a conversation whose restores keep missing
-        is not saved again this process life — each save of it would be a wasted write."""
-        if await asyncio.to_thread(_record_judgement, path, verdict):
+        """Record a judgement on the file's claim — a read-modify-write of the `.meta`, so under
+        the save lock that every other writer of it holds. A conversation whose restores keep
+        missing is not saved again this process life: each save would be a wasted write."""
+        path = await asyncio.to_thread(
+            self._conversation_path, served_model, base, conversation_key
+        )
+        if path is None:
+            return
+        async with self._save_lock:
+            dropped = await asyncio.to_thread(_record_judgement, path, verdict)
+        if dropped:
             self._unhelpful.add(kv_conversation.key_hash(conversation_key))
             self._count("conversation_dropped_unhelpful")
 
@@ -2012,6 +2087,9 @@ class KvPrefixStore:
         drop any claim on a slot holding it. For a deleted or re-scoped session, and a
         conversation an excluded tool ran in. Returns how many files went."""
         digest = kv_conversation.key_hash(conversation_key)
+        # Marked BEFORE waiting for the save lock: a save already streaming finishes and its file
+        # is then deleted below; one that starts later sees the mark and writes nothing.
+        self._forgotten.add(digest)
         for served, hold in list(self._conv_hold.items()):
             if hold.key == conversation_key:
                 del self._conv_hold[served]
@@ -2022,8 +2100,10 @@ class KvPrefixStore:
         return removed
 
     async def clear_conversations(self) -> int:
-        """Delete every conversation file (the toggle turned off). Role prefixes stay."""
+        """Delete every conversation file (the toggle turned off). Role prefixes stay. Claims
+        made before it are void (`_conv_epoch`), whichever await they are parked at."""
         self._conv_hold.clear()
+        self._conv_epoch += 1
         async with self._save_lock:
             removed = await asyncio.to_thread(self._remove_conversation_files, None)
         if removed:

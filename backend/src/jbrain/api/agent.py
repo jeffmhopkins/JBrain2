@@ -848,6 +848,19 @@ async def _disk_conversation_key(
         tools_ran=(),
     ):
         return None
+    # A session once scoped to a firewalled domain stays off disk for good (api/sessions
+    # records it at the re-scope).
+    settings_store = getattr(request.app.state, "settings_store", None)
+    excluded_reader = getattr(settings_store, "llm_kv_conversation_excluded", None)
+    if excluded_reader is None:
+        return None
+    try:
+        excluded = await excluded_reader(owner_ctx)
+    except Exception:  # noqa: BLE001 — unknown exclusions keep the chat off disk
+        log.warning("agent.kv_conversation_exclusions_unread", exc_info=True)
+        return None
+    if "*" in excluded or session.id in excluded:
+        return None
     transcript = get_agent_transcript(request)
     tool_names = getattr(transcript, "tool_names", None)
     if tool_names is None:

@@ -147,10 +147,16 @@ async def rescope_session(
     A session the ENGINE opened (a note conversation) is refused: its scope comes from
     the note it reads, and it holds graph-write tools (409, not 404 — the session exists
     and the owner may read it; only this verb does not apply to it)."""
+    ctx = ctx_for(principal)
+    before = await get_agent_sessions(request).get(ctx, session_id)
+    if before is not None and (
+        any(d != "general" for d in before.domain_scopes) or before.subject_ids
+    ):
+        # Its history may carry what the old scope let it read: never on disk, even once the
+        # scope narrows to `general` (FLASH_NEXT F4c). Recorded before the change lands.
+        await _exclude_from_disk(request, ctx, session_id)
     try:
-        await get_agent_sessions(request).set_scopes(
-            ctx_for(principal), session_id, body.domain_scopes
-        )
+        await get_agent_sessions(request).set_scopes(ctx, session_id, body.domain_scopes)
     except EngineSessionRescope as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # A conversation's saved slot state on disk was judged against its OLD scope; any change
@@ -180,6 +186,13 @@ async def delete_session(request: Request, principal: PrincipalDep, session_id: 
     await get_agent_sessions(request).delete(ctx_for(principal), session_id)
     await _forget_disk_conversation(request, session_id)
     return Response(status_code=204)
+
+
+async def _exclude_from_disk(request: Request, ctx: Any, session_id: str) -> None:
+    store = getattr(request.app.state, "settings_store", None)
+    if store is None:
+        return
+    await store.exclude_llm_kv_conversation(ctx, session_id)
 
 
 async def _forget_disk_conversation(request: Request, session_id: str) -> None:

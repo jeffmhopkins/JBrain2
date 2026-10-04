@@ -2124,6 +2124,28 @@ def test_kv_prefix_budget_is_bounded_and_says_when_it_applies(
     )
 
 
+def test_the_conversation_cache_switch_applies_live_and_off_deletes_the_files(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+    store = getattr(client.app.state, "kv_prefix", None)  # type: ignore[attr-defined]
+    off = client.put(
+        "/api/debug/llm/kv-prefix/conversations", params={"enabled": "false"}, headers=_auth(key)
+    )
+    assert off.status_code == 200
+    body = off.json()
+    assert body["conversation_cache"] is False and "files_removed" in body
+    if store is not None:
+        assert store._conversations is False
+    on = client.put(
+        "/api/debug/llm/kv-prefix/conversations", params={"enabled": "true"}, headers=_auth(key)
+    )
+    assert on.status_code == 200 and on.json()["conversation_cache"] is True
+    assert (
+        client.put("/api/debug/llm/kv-prefix/conversations", params={"enabled": "true"})
+    ).status_code in (401, 403)
+
+
 def test_the_kv_prefix_write_routes_need_the_token(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.delete("/api/debug/llm/kv-prefix").status_code == 401

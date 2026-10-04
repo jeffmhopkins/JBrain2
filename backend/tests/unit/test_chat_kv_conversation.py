@@ -4,7 +4,6 @@ be attempted on identity alone — and only for a chat that can never hold firew
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -209,30 +208,52 @@ def test_a_brain_chat_never_gets_a_conversation_file(box: tuple[TestClient, Any]
     assert gw.saved == []
 
 
-def test_deleting_or_rescoping_a_session_forgets_its_files(
+def test_rescoping_a_session_forgets_its_files_and_keeps_it_off_disk(
     box: tuple[TestClient, Any],
 ) -> None:
     client, (app, store, gw, folder) = box
     _jerv(app, "sess-A")
     _jerv(app, "sess-B")
     app.state.agent_registry = registry_with_tool("current_time", _now_time)
-    _router(
-        app,
-        store,
-        [_final("a", 40_000), _final("b", 31_000), _final("a2", 41_000)],
-    )
+    _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
     _chat(client, "sess-A", "one", [])
     gw.slot_state = _slots(s0=40_299)
     _chat(client, "sess-B", "two", [])
     assert len(list(folder.glob("c-*.kvslot"))) == 1
-    assert (
-        client.post("/api/sessions/sess-A/scope", json={"domain_scopes": ["health"]}).status_code
-        == 204
-    )
+    resp = client.post("/api/sessions/sess-A/scope", json={"domain_scopes": ["health"]})
+    assert resp.status_code == 204
     assert not list(folder.glob("c-*.kvslot")), "a scope change drops what was judged under the old"
-    gw.slot_state = _slots(s0=31_099)
-    _chat(client, "sess-B", "three", [])  # nothing to save: B is still the holder
-    gw.slot_state = _slots(s0=31_400)
-    store._conv_hold.clear()
-    asyncio.run(store.forget_conversation("sess-B"))
-    assert client.delete("/api/sessions/sess-B").status_code == 204
+
+
+def test_the_delete_route_itself_deletes_the_sessions_files(box: tuple[TestClient, Any]) -> None:
+    client, (app, store, gw, folder) = box
+    _jerv(app, "sess-A")
+    _jerv(app, "sess-B")
+    app.state.agent_registry = registry_with_tool("current_time", _now_time)
+    _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
+    _chat(client, "sess-A", "one", [])
+    gw.slot_state = _slots(s0=40_299)
+    _chat(client, "sess-B", "two", [])  # A is saved as B takes the slot
+    files = list(folder.glob("c-*.kvslot"))
+    assert len(files) == 1
+    assert client.delete("/api/sessions/sess-A").status_code == 204
+    assert not files[0].exists()
+    assert not list(folder.glob("c-*.kvslot.meta"))
+
+
+def test_a_session_once_scoped_to_a_firewalled_domain_never_reaches_disk(
+    box: tuple[TestClient, Any],
+) -> None:
+    client, (app, store, gw, folder) = box
+    _jerv(app, "sess-A", scopes=("health",))
+    _jerv(app, "sess-B")
+    app.state.agent_registry = registry_with_tool("current_time", _now_time)
+    # Narrowed to `general` after it could read health: its history may carry that.
+    resp = client.post("/api/sessions/sess-A/scope", json={"domain_scopes": ["general"]})
+    assert resp.status_code == 204
+    _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
+    _chat(client, "sess-A", "one", [])
+    gw.slot_state = _slots(s0=40_299)
+    _chat(client, "sess-B", "two", [])
+    assert gw.saved == []
+    assert "sess-A" in app.state.settings_store.values["llm_kv_conversation_excluded_sessions"]

@@ -400,6 +400,14 @@ LLM_KV_PREFIX_BUDGET_GB_MAX = 500
 LLM_KV_CONVERSATION_CACHE_KEY = "llm_kv_conversation_cache"
 LLM_KV_CONVERSATION_CACHE_DEFAULT = True
 
+# Chat sessions that may never have a conversation file, whatever their scope says NOW: any
+# session that was ever scoped to a firewalled domain (or had a subject) before a re-scope,
+# whose history can carry what that scope let it read. Recorded at the re-scope (the only way
+# a scope changes); a session CREATED with a firewalled scope is already refused by its current
+# scope. Owner-only like every row here (RLS on app.settings), bounded, append-only.
+LLM_KV_CONVERSATION_EXCLUDED_KEY = "llm_kv_conversation_excluded_sessions"
+LLM_KV_CONVERSATION_EXCLUDED_MAX = 20_000
+
 
 # The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
 # (e.g. "Titusville" -> "Tight us ville") the api applies as a whole-word, case-insensitive text
@@ -1168,12 +1176,33 @@ class SqlSettingsStore:
         return LLM_KV_PREFIX_BUDGET_GB_DEFAULT
 
     async def llm_kv_conversation_cache(self, ctx: SessionContext) -> bool:
-        """Whether conversation files are saved and restored. Defaults ON; only an explicit
-        `false` turns it off."""
+        """Whether conversation files are saved and restored. Defaults ON when unset; a stored
+        value that is not a boolean reads as OFF — this gates writing chat state to disk, so
+        junk must never turn it on."""
         stored = await self.get(
             ctx, LLM_KV_CONVERSATION_CACHE_KEY, LLM_KV_CONVERSATION_CACHE_DEFAULT
         )
-        return stored is not False
+        return stored is True
+
+    async def llm_kv_conversation_excluded(self, ctx: SessionContext) -> frozenset[str]:
+        """Sessions that may never reach disk (`LLM_KV_CONVERSATION_EXCLUDED_KEY`). A stored value
+        that is not a list of strings, or a full list, reads as EVERY session excluded — the
+        caller reads "*" in the result as that."""
+        stored = await self.get(ctx, LLM_KV_CONVERSATION_EXCLUDED_KEY, [])
+        if not isinstance(stored, list) or not all(isinstance(s, str) for s in stored):
+            return frozenset({"*"})
+        if len(stored) >= LLM_KV_CONVERSATION_EXCLUDED_MAX:
+            return frozenset({"*"})
+        return frozenset(stored)
+
+    async def exclude_llm_kv_conversation(self, ctx: SessionContext, session_id: str) -> None:
+        """Mark a session as never-on-disk. Idempotent; at the bound the list stops growing and
+        reads as everything excluded (`llm_kv_conversation_excluded`)."""
+        stored = await self.get(ctx, LLM_KV_CONVERSATION_EXCLUDED_KEY, [])
+        current = list(stored) if isinstance(stored, list) else []
+        if session_id in current or len(current) >= LLM_KV_CONVERSATION_EXCLUDED_MAX:
+            return
+        await self.upsert(ctx, LLM_KV_CONVERSATION_EXCLUDED_KEY, [*current, session_id])
 
     async def set_llm_kv_conversation_cache(self, ctx: SessionContext, on: bool) -> bool:
         await self.upsert(ctx, LLM_KV_CONVERSATION_CACHE_KEY, on)
