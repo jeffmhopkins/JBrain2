@@ -1196,13 +1196,30 @@ class SqlSettingsStore:
         return frozenset(stored)
 
     async def exclude_llm_kv_conversation(self, ctx: SessionContext, session_id: str) -> None:
-        """Mark a session as never-on-disk. Idempotent; at the bound the list stops growing and
-        reads as everything excluded (`llm_kv_conversation_excluded`)."""
-        stored = await self.get(ctx, LLM_KV_CONVERSATION_EXCLUDED_KEY, [])
-        current = list(stored) if isinstance(stored, list) else []
-        if session_id in current or len(current) >= LLM_KV_CONVERSATION_EXCLUDED_MAX:
-            return
-        await self.upsert(ctx, LLM_KV_CONVERSATION_EXCLUDED_KEY, [*current, session_id])
+        """Mark a session as never-on-disk, in ONE statement: concurrent re-scopes must never
+        drop each other's entry (a lost exclusion is a domain-firewall escape). Idempotent. A
+        stored value that is not an array is left alone — it already reads as everything
+        excluded — and at the bound the list stops growing, reading the same way
+        (`llm_kv_conversation_excluded`)."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.settings (key, value)"
+                    " VALUES (:key, jsonb_build_array(cast(:sid AS text)))"
+                    " ON CONFLICT (key) DO UPDATE SET value = CASE"
+                    "  WHEN jsonb_typeof(app.settings.value) <> 'array' THEN app.settings.value"
+                    "  WHEN app.settings.value @> jsonb_build_array(cast(:sid AS text))"
+                    "   THEN app.settings.value"
+                    "  WHEN jsonb_array_length(app.settings.value) >= :cap THEN app.settings.value"
+                    "  ELSE app.settings.value || jsonb_build_array(cast(:sid AS text))"
+                    " END, updated_at = now()"
+                ),
+                {
+                    "key": LLM_KV_CONVERSATION_EXCLUDED_KEY,
+                    "sid": session_id,
+                    "cap": LLM_KV_CONVERSATION_EXCLUDED_MAX,
+                },
+            )
 
     async def set_llm_kv_conversation_cache(self, ctx: SessionContext, on: bool) -> bool:
         await self.upsert(ctx, LLM_KV_CONVERSATION_CACHE_KEY, on)

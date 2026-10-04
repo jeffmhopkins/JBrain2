@@ -1822,7 +1822,11 @@ class KvPrefixStore:
                 role=SlotRole.INTERACTIVE,
                 error=str(exc),
             )
-            await asyncio.to_thread(_bump_misses, path)
+            # The claim's read-modify-write, under the lock every other writer of it holds.
+            # Taken inside `self._lock` here; nothing ever takes `self._lock` while holding the
+            # save lock, so the order cannot deadlock.
+            async with self._save_lock:
+                await asyncio.to_thread(_bump_misses, path)
             return False
         elapsed_ms = round((time.perf_counter() - started) * 1000)
         n_restored = resp.get("n_restored")
@@ -2169,7 +2173,7 @@ def _record_judgement(path: str, verdict: kv_conversation.Judgement) -> bool:
 
 
 def _bump_misses(path: str) -> None:
-    """Runs in a thread — a failed restore counts as a miss."""
+    """Runs in a thread, under the store's save lock — a failed restore counts as a miss."""
     _record_judgement(path, "miss")  # a drop here is seen at the next restore: no file
 
 

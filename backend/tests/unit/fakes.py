@@ -748,9 +748,10 @@ class FakeSettingsStore:
 
     async def exclude_llm_kv_conversation(self, ctx: object, session_id: str) -> None:
         stored = self.values.get("llm_kv_conversation_excluded_sessions", [])
-        current = list(stored) if isinstance(stored, list) else []
-        if session_id not in current:
-            self.values["llm_kv_conversation_excluded_sessions"] = [*current, session_id]
+        if not isinstance(stored, list):
+            return  # already reads as everything excluded; never narrowed (mirrors the SQL)
+        if session_id not in stored:
+            self.values["llm_kv_conversation_excluded_sessions"] = [*stored, session_id]
 
     async def set_llm_kv_conversation_cache(self, ctx: object, on: bool) -> bool:
         self.values["llm_kv_conversation_cache"] = on

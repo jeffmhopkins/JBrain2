@@ -257,3 +257,22 @@ def test_a_session_once_scoped_to_a_firewalled_domain_never_reaches_disk(
     _chat(client, "sess-B", "two", [])
     assert gw.saved == []
     assert "sess-A" in app.state.settings_store.values["llm_kv_conversation_excluded_sessions"]
+
+
+def test_the_routes_forget_under_the_canonical_id_whatever_case_they_were_called_with(
+    box: tuple[TestClient, Any],
+) -> None:
+    client, (app, store, gw, folder) = box
+    sid = "0f6b3c2a-9d1e-4f5a-8b7c-1234567890ab"
+    _jerv(app, sid)
+    _jerv(app, "sess-B")
+    app.state.agent_registry = registry_with_tool("current_time", _now_time)
+    _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
+    _chat(client, sid, "one", [])
+    gw.slot_state = _slots(s0=40_299)
+    _chat(client, "sess-B", "two", [])
+    files = list(folder.glob("c-*.kvslot"))
+    assert len(files) == 1
+    # The chat keyed it on str(session.id); the route is called with the id upper-cased.
+    assert client.delete(f"/api/sessions/{sid.upper()}").status_code == 204
+    assert not files[0].exists()
