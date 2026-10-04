@@ -350,6 +350,31 @@ class KvPoolGuard:
     def add_erase_listener(self, listener: Callable[[str, int], None]) -> None:
         self._erase_listeners.append(listener)
 
+    async def reserve_restore(self, model: str, pool: KvPool, slot: int, need: int) -> int | None:
+        """`fits`, and when it does, hold `need` cells on `slot` as pending in the SAME locked
+        decision — so a placement deciding while the multi-second restore streams already
+        counts it. Returns the ticket to pass to `end_restore`, or None when it does not fit
+        (nothing held)."""
+        pool = await self._sized(model, pool)
+        async with self._lock:
+            read = await self._layout(model, pool)
+            if read is None:
+                return None
+            total, _freeable = self._occupancy(model, pool, read, slot, need)
+            if total > pool.n_ctx:
+                return None
+            ticket = next(self._tickets)
+            self._hold(model, slot, ticket, need)
+            return ticket
+
+    def end_restore(self, model: str, slot: int, ticket: int) -> None:
+        """Release a restore's pending hold. A successful restore has called `note_restored`
+        first, so the slot stays charged across the hand-over; a failed one frees the cells."""
+        held = self._pending.get((model, slot), {})
+        held.pop(ticket, None)
+        if not held:
+            self._pending.pop((model, slot), None)
+
     async def fits(self, model: str, pool: KvPool, slot: int, need: int) -> bool:
         """Whether writing `need` cells into idle `slot` keeps the pool within its size, judged
         like a placement: a fresh `/slots` read under the decision lock, this process's pending
