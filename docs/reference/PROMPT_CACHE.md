@@ -106,7 +106,9 @@ data:
 - its persona reads no knowledge base and holds no mail tools (jerv and the other
   `reads_knowledge_base=False` agents; never the curator, never the archivist);
 - its session names no domain but `general` (an unknown domain counts as firewalled) and no
-  subject;
+  subject — and never did: a chat re-scoped away from a firewalled domain (or one with a
+  subject) is recorded at the re-scope in the owner setting `llm_kv_conversation_excluded_sessions`
+  and stays off disk for good, since its history can carry what the old scope let it read;
 - no location, mail or records tool (`current_location`, `where_was_i`, `weather`, `gmail_*`,
   `read_labs`, … — `kv_conversation.EXCLUDED_TOOLS`) has run in ANY of its turns. The chat reads
   that off the transcript before each turn; a turn that runs one deletes the conversation's
@@ -114,7 +116,12 @@ data:
 
 **Brain/curator chats never get a conversation file.** Role prefix files hold only the system
 prompt and tool schemas, no owner data, and are unaffected. Deleting a chat, or changing its
-scope, deletes its files (`forget_conversation`); turning the toggle off deletes them all.
+scope, deletes its files (`forget_conversation`); turning the toggle off deletes them all. None
+of these can be undone by a save already under way: a forgotten conversation is marked before
+its files are deleted, a clear bumps an epoch every earlier claim carries, and every save checks
+both under the same lock the deletion takes — including a claim made by a turn that was still
+streaming when the chat was deleted. A restore's pool cells are reserved in the pool guard's own
+locked decision and held while the file streams, so no placement can count them free.
 
 When another conversation, or the keeper's prime, is about to take slot 0, the conversation it
 holds is saved first — only if `/slots` still reads as that conversation's cache (between its

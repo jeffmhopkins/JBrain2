@@ -713,6 +713,12 @@ Begins with the check moved out of F2, and gated on it:
   ran (read off the transcript); deleting or re-scoping a chat deletes its files, and the
   toggle off deletes them all. A turn superseded by another interactive request never claims
   the slot; a reload forgets the restore gate.
+- **Re-review (2026-10-04).** A forget or a clear can no longer be undone by a save parked
+  between its snapshot and its write (forgotten-set + clear epoch, checked under the save lock;
+  a turn streaming at the delete claims nothing). A restore reserves its cells in the pool
+  guard's locked decision and holds them while it streams. A session ever scoped to a firewalled
+  domain or a subject before a re-scope is recorded (owner setting, no new table) and stays off
+  disk for good. APRS tools join the excluded list; the toggle reads malformed values as off.
 - **Preserved thinking (#1560).** Restores compare no messages at all; the next turn's text-only,
   `preserve_thinking=false` render diverges at the previous turn's first tool step, where reuse
   stops at the nearest checkpoint before it — which the hit/partial/miss judging measures.
