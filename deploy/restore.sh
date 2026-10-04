@@ -32,10 +32,9 @@ fi
 # --- pick the blob archive (tested by supervisor/tests/test_backup_retention.py) ---
 # backup.sh skips the blob tarball when the volume is unchanged, so a dump's blobs are
 # not always its own stamp's. It records the pairing in jbrain-<stamp>.blobs, and that
-# is the answer whenever it exists. Only a dump from before the sidecar falls back to
-# the newest tarball at or before its stamp — never a later one, which could hold
-# attachments the dump has no rows for. That fallback compares stamps written in
-# whatever zone the writer ran in, which is why new backups carry the sidecar.
+# is the answer whenever it exists. A dump from before the sidecar always wrote its own
+# same-stamp tarball, so only that exact file counts: ordering stamps written in
+# different zones could pick an OLDER tarball and drop every attachment added since.
 BLOBS=""
 SIDECAR="backups/jbrain-$STAMP.blobs"
 if [ -f "$SIDECAR" ]; then
@@ -47,20 +46,22 @@ if [ -f "$SIDECAR" ]; then
       echo "warning: this dump pairs with blobs-$paired.tar.gz, which is gone" >&2
     fi
   fi
-else
-  want="${STAMP//-/}"
-  for f in backups/blobs-*.tar.gz; do
-    [ -f "$f" ] || continue
-    s="${f#backups/blobs-}"
-    s="${s%.tar.gz}"
-    [[ "$s" =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
-    if [ "${s//-/}" -le "$want" ] && { [ -z "$BLOBS" ] || [ "${s//-/}" -gt "$best" ]; }; then
-      BLOBS="$f"
-      best="${s//-/}"
-    fi
-  done
+elif [ -f "backups/blobs-$STAMP.tar.gz" ]; then
+  BLOBS="backups/blobs-$STAMP.tar.gz"
 fi
 # --- end pick ---
+
+# Read the whole archive BEFORE anything changes. A tarball cut short by a full disk
+# (the old backup.sh wrote it straight to its final name) would otherwise wipe the
+# volume and then extract half of it. A damaged archive stops the restore here, with
+# the database and the attachments both untouched.
+if [ -n "$BLOBS" ]; then
+  if ! docker run --rm -v /opt/jbrain2/backups:/in:ro alpine \
+    tar tzf "/in/${BLOBS#backups/}" >/dev/null; then
+    echo "error: ${BLOBS#backups/} is damaged or truncated — restore aborted, nothing changed" >&2
+    exit 1
+  fi
+fi
 
 # Writers must be off the database before objects get dropped; the db
 # container itself stays up to run the restore.
@@ -78,7 +79,7 @@ docker compose exec -T db pg_restore -U jbrain -d jbrain \
 if [ -n "$BLOBS" ]; then
   echo "blobs from ${BLOBS#backups/}"
   docker run --rm -v jbrain_blobs:/blobs -v /opt/jbrain2/backups:/in:ro alpine \
-    sh -c "find /blobs -mindepth 1 -delete && tar xzf '/in/${BLOBS#backups/}' -C /blobs"
+    sh -c "tar tzf '/in/${BLOBS#backups/}' >/dev/null && find /blobs -mindepth 1 -delete && tar xzf '/in/${BLOBS#backups/}' -C /blobs"
 else
   echo "warning: no blob archive for $STAMP — attachment bytes left as-is" >&2
 fi

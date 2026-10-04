@@ -84,13 +84,13 @@ blob_for_stamp() { # DIR STAMP
     esac
     return 1
   fi
-  _want="$(_stamp_num "$2")"
-  for _b in $(_stamps "$1" 'blobs-' '\.tar\.gz'); do
-    if _ge "$_want" "$(_stamp_num "$_b")"; then
-      printf '%s\n' "$_b"
-      return 0
-    fi
-  done
+  # No sidecar: a dump from before it existed, which always wrote its own same-stamp
+  # tarball. Only that exact match counts — ordering across stamps written in different
+  # zones can name an OLDER tarball, and a dump whose own tarball is gone has none.
+  if [ -f "$1/blobs-$2.tar.gz" ]; then
+    printf '%s\n' "$2"
+    return 0
+  fi
   return 1
 }
 

@@ -127,6 +127,8 @@ def test_a_tarball_a_kept_dump_restores_with_is_never_pruned(tmp_path: Path) -> 
     dumps = [_stamp(NOW - timedelta(days=d)) for d in range(0, 20)]
     for s in dumps:
         (tmp_path / f"jbrain-{s}.dump").touch()
+        # Each skipped run recorded the tarball it reuses.
+        (tmp_path / f"jbrain-{s}.blobs").write_text(f"{old_blob}\n")
     gone_blob = _stamp(NOW - timedelta(days=31))
     (tmp_path / f"blobs-{gone_blob}.tar.gz").touch()
 
@@ -410,9 +412,11 @@ def test_restore_leaves_blobs_alone_when_the_pairing_is_none_or_gone(
     assert _restore_pick(backups, "20261004-110000") == ""
 
 
-def test_restore_falls_back_to_the_newest_tarball_at_or_before_without_a_sidecar(
+def test_restore_without_a_sidecar_takes_only_the_same_stamp_tarball(
     tmp_path: Path,
 ) -> None:
+    # A pre-sidecar dump always wrote its own same-stamp tarball; ordering across
+    # stamps written in different zones could name an OLDER one, so nothing else counts.
     backups = tmp_path / "backups"
     backups.mkdir()
     for s in ("20260901-070000", "20261001-070000", "20261003-070000"):
@@ -421,9 +425,16 @@ def test_restore_falls_back_to_the_newest_tarball_at_or_before_without_a_sidecar
 
     pick = _restore_pick
     assert pick(backups, "20261003-070000") == "backups/blobs-20261003-070000.tar.gz"
-    assert pick(backups, "20261002-235959") == "backups/blobs-20261001-070000.tar.gz"
-    # Never a LATER tarball: it could hold attachments the dump has no rows for.
+    assert pick(backups, "20261002-235959") == ""
     assert pick(backups, "20260801-000000") == ""
+
+
+def test_restore_reads_the_whole_archive_before_changing_anything() -> None:
+    text = (DEPLOY / "restore.sh").read_text()
+    verify = text.index("tar tzf")
+    stop = text.index("docker compose stop api worker")
+    assert verify < stop, "the archive must be verified before the stack is touched"
+    assert "tar tzf '/in/${BLOBS#backups/}' >/dev/null && find /blobs" in text
 
 
 def test_restore_and_backup_agree_on_the_tarball(tmp_path: Path) -> None:
@@ -432,9 +443,11 @@ def test_restore_and_backup_agree_on_the_tarball(tmp_path: Path) -> None:
     for s in ("20261001-070000", "20261003-070000"):
         (backups / f"blobs-{s}.tar.gz").touch()
     (backups / "jbrain-20261002-130000.blobs").write_text("20261003-070000\n")
-    for stamp in ("20261002-120000", "20261002-130000"):
+    (backups / "blobs-20261002-120000.tar.gz").touch()
+    for stamp in ("20261002-120000", "20261002-130000", "20261002-140000"):
         run = _lib(f"blob_for_stamp backups {stamp}", tmp_path)
-        assert (
-            _restore_pick(backups, stamp)
-            == f"backups/blobs-{run.stdout.strip()}.tar.gz"
-        )
+        picked = run.stdout.strip()
+        expected = f"backups/blobs-{picked}.tar.gz" if picked else ""
+        assert _restore_pick(backups, stamp) == expected
+    # No sidecar and no same-stamp tarball: neither script names one.
+    assert _lib("blob_for_stamp backups 20261002-140000", tmp_path).stdout == ""
