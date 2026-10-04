@@ -198,6 +198,60 @@ async def test_tavily_settings_are_owner_only(
     assert await store.tavily_enabled(UNSCOPED) is True  # non-owner sees the default, not the row
 
 
+async def test_brave_settings_defaults_and_round_trip(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import BRAVE_API_KEY_KEY, BRAVE_BUDGET_KEY, BRAVE_ENABLED_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → enabled but keyless (inert), the 900-query budget, no usage, no error.
+    assert await store.brave_enabled(OWNER) is True
+    assert await store.brave_api_key(OWNER) == ""
+    assert await store.brave_monthly_budget(OWNER) == 900
+    assert await store.brave_usage(OWNER) is None
+    assert await store.brave_last_error(OWNER) is None
+
+    await store.set_brave_enabled(OWNER, False)
+    assert await store.brave_enabled(OWNER) is False
+    await store.upsert(OWNER, BRAVE_ENABLED_KEY, "on")
+    assert await store.brave_enabled(OWNER) is False
+
+    await store.set_brave_api_key(OWNER, "brv-secret")
+    assert await store.brave_api_key(OWNER) == "brv-secret"
+    await store.upsert(OWNER, BRAVE_API_KEY_KEY, 123)
+    assert await store.brave_api_key(OWNER) == ""
+
+    await store.set_brave_monthly_budget(OWNER, 250)
+    assert await store.brave_monthly_budget(OWNER) == 250
+    # Junk or out-of-range never reads as "unlimited": it reads as the default.
+    for junk in (0, -5, 10**9, "lots", True):
+        await store.upsert(OWNER, BRAVE_BUDGET_KEY, junk)
+        assert await store.brave_monthly_budget(OWNER) == 900
+
+    await store.set_brave_usage(OWNER, {"month": "2026-10", "count": 7})
+    assert await store.brave_usage(OWNER) == {"month": "2026-10", "count": 7}
+    record = {"detail": "Brave rejected the API key (HTTP 401)", "at": "2026-10-04T12:00:00"}
+    await store.set_brave_last_error(OWNER, record)
+    assert await store.brave_last_error(OWNER) == record
+
+
+async def test_brave_settings_are_owner_only(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The Brave key, toggle, budget and usage ride the owner-RLS app.settings table: a non-owner
+    # session sees none of the owner's rows and reads the defaults.
+    store = SqlSettingsStore(maker)
+    await store.set_brave_api_key(OWNER, "brv-secret")
+    await store.set_brave_enabled(OWNER, False)
+    await store.set_brave_monthly_budget(OWNER, 10)
+    await store.set_brave_usage(OWNER, {"month": "2026-10", "count": 3})
+    assert await store.brave_api_key(UNSCOPED) == ""
+    assert await store.brave_enabled(UNSCOPED) is True
+    assert await store.brave_monthly_budget(UNSCOPED) == 900
+    assert await store.brave_usage(UNSCOPED) is None
+    assert await store.brave_api_key(ALL_DOMAINS) == ""
+
+
 async def test_brain_answer_voice_defaults_to_amy_and_round_trips(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

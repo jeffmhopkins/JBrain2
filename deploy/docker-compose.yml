@@ -767,9 +767,15 @@ services:
   # tools), and the api's jcode search bridge on behalf of the sandbox CLIs (the sandbox
   # can't reach searxng directly) — so no personal context ever rides a query
   # (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
+  #
+  # PINNED to a dated build, not `latest`: the update never re-pulls a floating tag, so
+  # `latest` froze at whatever the box first pulled. Builds before 2026-09-04 query engines
+  # with httpx, whose TLS/header fingerprint is what DuckDuckGo and Startpage captcha and
+  # Brave/Qwant throttle; SearXNG #6620 moved to curl_cffi (Chrome's fingerprint). Bumping
+  # this tag is how the box gets a newer SearXNG — compose pulls the new tag on update.
   searxng:
     logging: *logbound
-    image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}
+    image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:2026.10.2-19ffbcd30}
     restart: unless-stopped
     mem_limit: 512m
     environment:
@@ -808,9 +814,11 @@ services:
   # then just reports a blocked/empty page, as before) — an EMPTY JBRAIN_READER_URL does
   # NOT disable it, since env_ignore_empty falls back to the on-box default. It needs
   # egress to fetch the target, so it sits on `internal` alongside searxng.
+  # Pinned by digest (the repo publishes only `latest`, and the update never re-pulls a
+  # floating tag — the SearXNG lesson). Resolved 2026-10-04; re-resolve to upgrade.
   reader:
     logging: *logbound
-    image: ${READER_IMAGE:-ghcr.io/intergalacticalvariable/reader:latest}
+    image: ${READER_IMAGE:-ghcr.io/intergalacticalvariable/reader@sha256:1860898a857a2655b3d4c9334f64bc9acb736d854fac488a1fcc81bb284a5b5f}
     restart: unless-stopped
     mem_limit: 1g
     shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
@@ -828,9 +836,11 @@ services:
   # at a non-serving endpoint — an EMPTY value does NOT disable it (env_ignore_empty falls back
   # to the on-box default). On `internal` — it needs egress to reach the target and holds no
   # owner data (only jerv reaches it, like the reader).
+  # Pinned by digest for the same reason as `reader`: `latest` froze at install. Resolved
+  # 2026-10-04 from ghcr's `latest`; re-resolve to upgrade the stealth browser.
   byparr:
     logging: *logbound
-    image: ${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr:latest}
+    image: ${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr@sha256:874f719518f617d03a60e03411fc5d090647e1a877041e81f8dc965927c7deb6}
     restart: unless-stopped
     mem_limit: ${BYPARR_MEM_LIMIT:-2g}  # a stealth browser is heavier than the reader's Chromium
     shm_size: 2gb  # headless browser crashes on the default 64m /dev/shm

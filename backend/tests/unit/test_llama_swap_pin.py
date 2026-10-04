@@ -86,3 +86,14 @@ def test_flash_next_puts_llama_perplexity_on_path() -> None:
     assert 'command -v "$b"' in text
     assert "llama-perplexity --version" in text
     assert "/opt/llama.cpp/bin/" in text
+
+
+def test_flash_next_runtime_has_an_ffmpeg_that_decodes_mjpeg() -> None:
+    """llama-server decodes `input_video` with ffmpeg from PATH, and the api sends Motion-JPEG
+    because Fedora's ffmpeg-free cannot be trusted with H.264 — so the RUNTIME stage installs
+    it when missing and fails the build without an mjpeg decoder or a working ffprobe."""
+    text = _FLASH_NEXT.read_text()
+    runtime = text[text.rindex("\nFROM ") :]
+    assert "install ffmpeg-free" in runtime
+    assert "ffmpeg -hide_banner -decoders" in runtime and "mjpeg" in runtime
+    assert "ffprobe -version" in runtime

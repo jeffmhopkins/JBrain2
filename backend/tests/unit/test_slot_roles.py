@@ -152,3 +152,24 @@ def test_tool_call_chars_reads_a_dict_and_its_json_string_alike() -> None:
     assert slot_roles.tool_call_chars("search", args) == slot_roles.tool_call_chars(
         "search", '{"query": "kv pool"}'
     )
+
+
+def test_a_known_length_video_is_charged_per_merged_frame_pair() -> None:
+    # 1 fps, two frames per pair, plus the extra frame ffmpeg's fps filter can emit: 60 s is
+    # up to 61 frames, so 31 pairs; 59 s is 60 frames, 30 pairs.
+    assert slot_roles.VIDEO_FPS == 1.0
+    assert slot_roles.video_tokens_charge(60.0) == 31 * slot_roles.IMAGE_TOKENS_CHARGE
+    assert slot_roles.video_tokens_charge(59.0) == 30 * slot_roles.IMAGE_TOKENS_CHARGE
+    assert slot_roles.video_tokens_charge(0.5) == slot_roles.IMAGE_TOKENS_CHARGE
+
+
+def test_an_unknown_length_video_is_charged_the_full_minute() -> None:
+    full = slot_roles.video_tokens_charge(60.0)
+    assert slot_roles.video_tokens_charge(None) == full
+    assert slot_roles.video_tokens_charge(0.0) == full
+
+
+def test_the_video_charge_adds_to_the_prompt_estimate() -> None:
+    base = slot_roles.estimate_prompt_tokens("unknown-model", chars=3700)
+    with_video = slot_roles.estimate_prompt_tokens("unknown-model", chars=3700, video_tokens=8192)
+    assert with_video - base == 8192

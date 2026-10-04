@@ -41,6 +41,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    LlmVideo,
     ReasoningChunk,
     Sampling,
     StreamPart,
@@ -928,6 +929,7 @@ class LlmRouter:
         chars: int,
         n_images: int,
         max_tokens: int,
+        video_tokens: int = 0,
     ) -> AsyncIterator[tuple[int | None, int]]:
         """The slot to pin and the output budget to send, held for the duration of the call.
 
@@ -939,7 +941,9 @@ class LlmRouter:
             yield None, max_tokens
             return
         role = slot_roles.role_for(task, slot_role)
-        prompt_tokens = slot_roles.estimate_prompt_tokens(model, chars=chars, n_images=n_images)
+        prompt_tokens = slot_roles.estimate_prompt_tokens(
+            model, chars=chars, n_images=n_images, video_tokens=video_tokens
+        )
         if self._pool_guard is None:
             admission = slot_roles.admit(
                 pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens
@@ -975,6 +979,7 @@ class LlmRouter:
         system: str,
         user_text: str,
         images: Sequence[LlmImage] = (),
+        videos: Sequence[LlmVideo] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
@@ -1003,9 +1008,13 @@ class LlmRouter:
             chars=chars,
             n_images=len(images),
             max_tokens=max_tokens,
+            video_tokens=sum(slot_roles.video_tokens_charge(v.seconds) for v in videos),
         ) as (id_slot, max_tokens):
             # Only when pinned: test fakes and older clients do not take the keyword.
-            slot_kw: dict[str, int] = {} if id_slot is None else {"id_slot": id_slot}
+            slot_kw: dict[str, Any] = {} if id_slot is None else {"id_slot": id_slot}
+            # Only when sent, for the same reason: no existing fake takes `videos`.
+            if videos:
+                slot_kw["videos"] = videos
             result = await client.complete(
                 model=model,
                 system=system,
@@ -1017,7 +1026,8 @@ class LlmRouter:
                 sampling=resolved_sampling,
                 **slot_kw,
             )
-            self._calibrate(provider, model, chars, len(images), result.usage)
+            # A video's frames are image tokens with no characters behind them.
+            self._calibrate(provider, model, chars, len(images) + len(videos), result.usage)
             # Recorded per provider call (the re-ask spends tokens too): the
             # ledger tracks what was billed, not what was usable.
             await self._record(task, provider, model, result.usage)

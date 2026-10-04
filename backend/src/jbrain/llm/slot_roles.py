@@ -16,6 +16,7 @@ Imports nothing from `local_catalog`, which embeds `FLASH_NEXT_POOL`, so there i
 
 import dataclasses
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -194,6 +195,11 @@ PROBE_ROLE: Final = SlotRole.SMALL
 # What one image costs against a cap: the projector's tokens per image at the catalog floor and
 # above. Images are not in the character estimate (`prompt_chars`), so they are charged flat.
 IMAGE_TOKENS_CHARGE: Final = 4096
+# The engine samples video at this rate server-wide (Flash-Next's `--video-fps` is rendered
+# from it) and merges each two consecutive frames into one image's tokens. Unknown length is
+# charged as the longest clip sent natively, so an unprobed video never under-books its slot.
+VIDEO_FPS: Final = 1.0
+VIDEO_UNKNOWN_SECONDS: Final = 60.0
 # A clamp that would leave less output than this refuses instead — a reply cut to a few hundred
 # tokens is a worse failure than a clear "too long for its slot".
 MIN_CLAMPED_OUTPUT: Final = 1024
@@ -265,8 +271,21 @@ def admit(
     raise SlotCapError(role, cap=r.cap_tokens, prompt_tokens=prompt_tokens, max_tokens=max_tokens)
 
 
-def estimate_prompt_tokens(served_model: str, *, chars: int, n_images: int = 0) -> int:
-    return int(prefill.estimate_tokens(served_model, chars)) + n_images * IMAGE_TOKENS_CHARGE
+def video_tokens_charge(seconds: float | None) -> int:
+    """One clip's charge: each merged frame pair is sized like an image. ffmpeg's fps filter
+    can emit one frame past `seconds x fps` (61 for a minute at 1 fps), so one is added."""
+    span = VIDEO_UNKNOWN_SECONDS if seconds is None or seconds <= 0 else seconds
+    return math.ceil((span * VIDEO_FPS + 1) / 2) * IMAGE_TOKENS_CHARGE
+
+
+def estimate_prompt_tokens(
+    served_model: str, *, chars: int, n_images: int = 0, video_tokens: int = 0
+) -> int:
+    return (
+        int(prefill.estimate_tokens(served_model, chars))
+        + n_images * IMAGE_TOKENS_CHARGE
+        + video_tokens
+    )
 
 
 def pool_shape(manifest: Mapping[str, object], saved: int | None = None) -> tuple[int, int] | None:

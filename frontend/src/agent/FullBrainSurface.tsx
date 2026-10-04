@@ -1507,6 +1507,7 @@ function ActivityLine({
   const startRef = useRef<number | null>(null);
   const [ms, setMs] = useState<number | null>(null);
   const traceRef = useRef<HTMLDivElement | null>(null);
+  const stepsRef = useRef<HTMLDivElement | null>(null);
 
   const signal = (s: FootSignal) => {
     const target = nextAutoSection(autoRef.current, s);
@@ -1571,6 +1572,15 @@ function ActivityLine({
       traceRef.current.scrollTop = traceRef.current.scrollHeight;
     }
   }, [reasoning, tools.length, thinking, open]);
+
+  // The Worked list is capped and scrolls like the trace, so a long run of calls never
+  // pushes the answer off screen; while live it follows the newest step.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new tool call drives the re-scroll
+  useEffect(() => {
+    if (streaming && open === "work" && stepsRef.current) {
+      stepsRef.current.scrollTop = stepsRef.current.scrollHeight;
+    }
+  }, [tools.length, streaming, open]);
 
   const hasReasoning = reasoning !== "";
   const steps = tools.map(toolStep);
@@ -1668,7 +1678,7 @@ function ActivityLine({
             )}
             {tools.length > 0 && (
               <div className={`fb-act-view${open === "work" ? " show" : ""}`}>
-                <div className="fb-steps">
+                <div className="fb-steps" ref={stepsRef}>
                   {steps.map((s) => (
                     <StepRow
                       key={s.id}

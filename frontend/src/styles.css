@@ -10381,6 +10381,11 @@ button.small {
   flex-direction: column;
   gap: calc(2px * var(--font-scale));
   padding-top: calc(4px * var(--font-scale));
+  /* Capped and scrolling like the thinking trace: a 15-call turn stays a pane, not a wall.
+     Taller than the trace's 200px because an expanded step needs room to read. */
+  max-height: calc(320px * var(--font-scale));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Sub-agent fan — the in-chat accordion below jerv's bubble (docs/reference/DESIGN.md

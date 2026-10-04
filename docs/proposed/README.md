@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-10-01
+> **Status:** Living · **Last verified:** 2026-10-04
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -45,10 +45,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   description trim lives in `TOOL_CATALOG_PLAN` W0b, which W2 must land after. **Revised after
   a four-lens adversarial review** (§8); records five deliberate rejections with corrected
   evidence (Python sandbox, skills-in-memory, per-persona sidecars, `anyOf`, catalog W2/W3).
-- `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
-  a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
-  bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
-  RAG-backed date/identity inference, browser viewer).
+- `PHOTO_ARCHIVE_PLAN.md` — photos and people: family-first face recognition (InsightFace
+  `buffalo_l` on the `rapidocr` sidecar, ~a dozen enrolled people, identity from embeddings
+  and never from the VLM, face data never off the box) surfaced to jerv as names beside each
+  photo, a **People** launcher to enrol the family, then the archive — hash-keyed dedup,
+  deterministic dating, Flash-Next captions, CLIP search, notes-backed date inference — and a
+  **Photos** launcher to browse it.
 - `MUSIC_GEN_PLAN.md` — music generation on the existing opt-in `comfyui` service
   (ACE-Step 1.5 XL Turbo, AMD/gfx1151-validated): a new audio workflow + audio-aware
   driver output path, an owner-only `generated_audio` artifact table, a `generate_music`

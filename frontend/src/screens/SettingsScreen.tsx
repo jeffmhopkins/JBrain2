@@ -3,6 +3,8 @@ import { type ReadAloudPatch, emitReadAloudSettings } from "../agent/readAloudBu
 import type {
   AppSettings,
   BrainTtsHealth,
+  BraveSettings,
+  BraveTestResult,
   DebugToken,
   FeedConfig,
   GmailSettings,
@@ -328,6 +330,90 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   function clearTavilyKey() {
     setTavilyTest(null);
     void api.updateTavilySettings({ clear_key: true }).then(setTavily);
+  }
+
+  // The Brave Search tier — web_search's metered middle tier (SearXNG → Brave → Tavily). Same
+  // shape as Tavily's panel plus a monthly query budget and this month's usage against it, so
+  // the owner stays inside Brave's free monthly credit with no terminal. See
+  // docs/plans/BROWSER_AGENT_PLAN.md B3.
+  const [brave, setBrave] = useState<BraveSettings | null>(null);
+  const [braveKey, setBraveKey] = useState("");
+  const [braveBudget, setBraveBudget] = useState("");
+  const [braveTesting, setBraveTesting] = useState(false);
+  const [braveTest, setBraveTest] = useState<BraveTestResult | null>(null);
+  const [braveError, setBraveError] = useState<string | null>(null);
+  function braveFailed(err: unknown) {
+    setBraveError(err instanceof Error ? `Couldn't save: ${err.message}` : "Couldn't save.");
+  }
+  function applyBrave(s: BraveSettings) {
+    setBraveError(null);
+    setBrave(s);
+    setBraveBudget(String(s.budget));
+  }
+  useEffect(() => {
+    let stale = false;
+    api
+      .getBraveSettings()
+      .then((s) => {
+        if (stale) return;
+        setBrave(s);
+        setBraveBudget(String(s.budget));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  function toggleBrave() {
+    if (brave === null || !brave.wired) return;
+    setBraveTest(null);
+    void api.updateBraveSettings({ enabled: !brave.enabled }).then(applyBrave).catch(braveFailed);
+  }
+
+  // Save a freshly-pasted key (if any) then spend one real query proving it, refreshing the
+  // status after so the usage line counts the test. With Brave switched off the key still saves
+  // and the test runs anyway — the server answers that Brave is off, without sending a query.
+  function saveAndTestBrave() {
+    const key = braveKey.trim();
+    setBraveTest(null);
+    setBraveTesting(true);
+    const saved = key
+      ? api.updateBraveSettings({ api_key: key }).then((s) => {
+          applyBrave(s);
+          setBraveKey("");
+        })
+      : Promise.resolve();
+    void saved
+      .then(() => api.testBraveSettings())
+      .then(setBraveTest)
+      .then(() => api.getBraveSettings())
+      .then(applyBrave)
+      .catch(braveFailed)
+      .finally(() => setBraveTesting(false));
+  }
+
+  function clearBraveKey() {
+    setBraveTest(null);
+    void api.updateBraveSettings({ api_key: "" }).then(applyBrave).catch(braveFailed);
+  }
+
+  // The budget saves on blur/Enter; anything but a whole number in range snaps back.
+  function commitBraveBudget() {
+    if (brave === null) return;
+    const n = Number(braveBudget);
+    if (!Number.isInteger(n) || n < 1 || n > 100000) {
+      setBraveBudget(String(brave.budget));
+      return;
+    }
+    if (n === brave.budget) return;
+    void api
+      .updateBraveSettings({ monthly_budget: n })
+      .then(applyBrave)
+      .catch((err: unknown) => {
+        setBraveBudget(String(brave.budget));
+        braveFailed(err);
+      });
   }
 
   // The read-only appointments ICS feed — a revocable subscribe URL the owner
@@ -1249,9 +1335,9 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           </span>
         </div>
         <p className="settings-meta">
-          the primary web search (the box's own engines are the fallback), and a hosted reader for
-          pages the box can't — bot walls, paywalls, JavaScript-only sites. Paste your Tavily API
-          key and Save &amp; test. The key is stored on the server and never shown again.
+          the last web-search fallback (after the box's own engines and Brave), and a hosted reader
+          for pages the box can't — bot walls, paywalls, JavaScript-only sites. Paste your Tavily
+          API key and Save &amp; test. The key is stored on the server and never shown again.
         </p>
         {tavily?.effective && tavily.health !== "ok" && (
           <p className="settings-meta settings-error" aria-label="Tavily health">
@@ -1309,6 +1395,133 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         {tavilyTest && (
           <p className={`settings-meta${tavilyTest.ok ? "" : " settings-error"}`}>
             {tavilyTest.detail}
+          </p>
+        )}
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-cardhead">
+          <h2 className="settings-label">Brave Search</h2>
+          <span
+            className={`settings-pill${brave?.effective ? " on" : ""}`}
+            aria-label="Brave status"
+          >
+            <span className="dot" />
+            {brave === null
+              ? "…"
+              : !brave.wired
+                ? "Unavailable"
+                : brave.effective
+                  ? "Active"
+                  : !brave.enabled
+                    ? "Off"
+                    : !brave.key_present
+                      ? "No key"
+                      : brave.blocked === "key_rejected"
+                        ? "Key rejected"
+                        : brave.blocked === "credit_spent"
+                          ? "Out of credit"
+                          : "Budget reached"}
+          </span>
+        </div>
+        <p className="settings-meta">
+          Searches go SearXNG first, then Brave, then Tavily. Stops for the month at the budget. The
+          count resets on the 1st (UTC), but Brave's free credit may reset on your billing date
+          instead — keep the budget under the free credit. Get a key from the{" "}
+          <a
+            href="https://api-dashboard.search.brave.com/app/keys"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Brave dashboard
+          </a>
+          , paste it and Save &amp; test. The key is stored on the server and never shown again.
+        </p>
+        {brave !== null && (
+          <p className="settings-meta" aria-label="Brave usage">
+            Used {brave.used_this_month} of {brave.budget} this month.
+          </p>
+        )}
+        {brave?.last_error && (
+          <p className="settings-meta settings-error" aria-label="Brave health">
+            {brave.last_error}
+            {brave.last_error_at && ` since ${new Date(brave.last_error_at).toLocaleString()}`}.
+          </p>
+        )}
+        <div className="settings-switch-row">
+          <span className="settings-meta" style={{ margin: 0 }}>
+            Enable the tier
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-label="Enable Brave"
+            aria-checked={brave?.enabled ?? false}
+            className={`settings-switch${brave?.enabled ? " on" : ""}`}
+            disabled={brave === null || !brave.wired}
+            onClick={toggleBrave}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+        <label className="settings-field">
+          Monthly budget (queries)
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={100000}
+            step={1}
+            value={braveBudget}
+            disabled={brave === null}
+            onChange={(e) => setBraveBudget(e.target.value)}
+            onBlur={commitBraveBudget}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitBraveBudget();
+            }}
+          />
+        </label>
+        <label className="settings-field">
+          Brave API key
+          <input
+            type="password"
+            autoComplete="off"
+            placeholder={
+              brave?.key_source === "stored"
+                ? "•••••• (saved)"
+                : brave?.key_source === "env"
+                  ? "•••••• (from server config)"
+                  : "BSA…"
+            }
+            value={braveKey}
+            onChange={(e) => setBraveKey(e.target.value)}
+          />
+        </label>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="seg"
+            aria-label="Save & test Brave key"
+            disabled={braveTesting || (!braveKey.trim() && !(brave?.enabled && brave.key_present))}
+            onClick={saveAndTestBrave}
+          >
+            {braveTesting ? "Testing…" : "Save & test"}
+          </button>
+          <button
+            type="button"
+            className="seg"
+            aria-label="Clear Brave key"
+            disabled={brave?.key_source !== "stored"}
+            onClick={clearBraveKey}
+          >
+            Clear key
+          </button>
+        </div>
+        <p className="settings-meta">A test spends one real query and counts toward the budget.</p>
+        {braveError && <p className="settings-meta settings-error">{braveError}</p>}
+        {braveTest && (
+          <p className={`settings-meta${braveTest.ok ? "" : " settings-error"}`}>
+            {braveTest.detail}
           </p>
         )}
       </section>

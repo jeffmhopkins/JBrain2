@@ -299,6 +299,13 @@ _SEARX_HEALTHY = {
     ],
     "unresponsive_engines": [["duckduckgo", "CAPTCHA"]],
 }
+_SEARX_FULL = {
+    "results": [
+        {"title": "A", "url": "https://a.example/1", "content": "x", "engines": ["bing"]},
+        {"title": "B", "url": "https://b.example/2", "content": "y", "engines": ["brave"]},
+        {"title": "C", "url": "https://c.example/3", "content": "z", "engines": ["mojeek"]},
+    ],
+}
 _TAVILY_OK = {
     "results": [
         {
@@ -365,19 +372,25 @@ async def test_a_degraded_result_is_not_cached() -> None:
     assert len(calls) == 2
 
 
-async def test_the_hosted_primary_answers_first_and_searxng_is_not_asked() -> None:
+async def test_a_full_searxng_answer_never_asks_the_hosted_tiers() -> None:
+    """SearXNG is free and on the box; a metered tier is spent only when it falls short."""
+    hosted, calls = _hosted_spy(HostedOutcome([SearchHit("T", "https://t.example/", "s")]))
+    result = await _searx_hosted(_SEARX_FULL, hosted).search("epic theatres titusville", 6)
+    assert calls == [] and result.source == "searxng" and len(result.hits) == 3
+
+
+async def test_a_thin_searxng_answer_falls_through_to_the_hosted_tier() -> None:
     searx_calls: list[httpx.Request] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         searx_calls.append(request)
-        return httpx.Response(200, json=_SEARX_HEALTHY)
+        return httpx.Response(200, json=_SEARX_HEALTHY)  # two hits: under THIN_RESULT_HITS
 
     hosted, calls = _hosted_spy(HostedOutcome([SearchHit("T", "https://t.example/", "s")]))
     client = SearxngClient("http://searxng:8080", httpx.MockTransport(handle), hosted=hosted)
     result = await client.search("epic theatres titusville", 4, time_range="week")
-    assert calls == [("epic theatres titusville", 4, "week")]
-    assert [h.url for h in result.hits] == ["https://t.example/"]
-    assert result.source == "tavily" and searx_calls == []
+    assert len(searx_calls) == 1 and calls == [("epic theatres titusville", 4, "week")]
+    assert [h.url for h in result.hits] == ["https://t.example/"] and result.source == "tavily"
 
 
 async def test_an_empty_primary_falls_through_to_searxng_silently() -> None:
@@ -737,7 +750,7 @@ async def test_web_search_tool_names_a_failed_primary() -> None:
     hosted, _ = _hosted_spy(HostedOutcome([], "Tavily's plan credit limit is used up (HTTP 432)"))
     handlers = build_web_handlers(_searx_hosted(_SEARX_HEALTHY, hosted), WebFetcher())
     text = str(await handlers["web_search"]({"query": "q"}, CTX))
-    assert "primary search (Tavily) failed — Tavily's plan credit limit" in text
+    assert "hosted search tiers failed — Tavily's plan credit limit" in text
     assert "SEARCH DEGRADED" not in text
 
 

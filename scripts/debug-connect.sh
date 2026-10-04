@@ -18,6 +18,13 @@
 #   echo "long prompt..." | scripts/debug-connect.sh complete --task agent.turn
 #   scripts/debug-connect.sh complete --stream --task agent.turn "hi"  # + ttft_ms & frames
 #   scripts/debug-connect.sh vision <attachment_id> --task vision.caption --system "..."
+#   scripts/debug-connect.sh video <attachment_id> [--mode native|frames] [--question Q] [--max-tokens N] [--spec P:M]
+#     (NATIVE_VIDEO_PLAN V0's instrument: one on-box clip sent natively to the routed
+#      `video.summarize` model — first 60 s, Motion-JPEG at the engine's --video-fps — or
+#      through the frame pipeline. Reports prompt_tokens, payload_bytes, transcode_ms and
+#      elapsed_ms beside the answer. --spec local:qwen3.8-flash-next targets one model for
+#      this call only (native mode), without re-routing video.summarize. Runs as a job and
+#      polls, since a minute of video outlasts the tunnel's ~100 s edge limit.)
 #   scripts/debug-connect.sh sql "select code, name from app.domains"
 #   scripts/debug-connect.sh fetch https://example.com/walled --find "keyword"
 #   scripts/debug-connect.sh solve https://www.reuters.com/... # force ONLY the byparr solver tier
@@ -385,6 +392,52 @@ PY
 )"
     _call POST /api/debug/vision "$body" | _pp
     ;;
+
+  video) # <attachment_id> [--mode native|frames] [--question "<q>"] [--system "<prompt>"] [--max-tokens N] [--spec P:M]
+    ATT="${1:-}"; [ -n "$ATT" ] || { echo "usage: debug-connect.sh video <attachment_id> [--mode native|frames] [--question Q] [--max-tokens N] [--spec P:M]" >&2; exit 2; }
+    shift
+    MODE="" QUESTION="" SYSTEM="" MAXTOK="" SPEC=""
+    while [ "${1:-}" != "" ]; do
+      case "$1" in
+        --mode) MODE="$2"; shift 2 ;;
+        --question) QUESTION="$2"; shift 2 ;;
+        --system) SYSTEM="$2"; shift 2 ;;
+        --max-tokens) MAXTOK="$2"; shift 2 ;;
+        --spec) SPEC="$2"; shift 2 ;;
+        *) echo "unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    body="$(ATT="$ATT" MODE="$MODE" QUESTION="$QUESTION" SYSTEM="$SYSTEM" MAXTOK="$MAXTOK" SPEC="$SPEC" python3 - <<'PY'
+import json, os
+b = {"attachment_id": os.environ["ATT"]}
+if os.environ.get("MODE"): b["mode"] = os.environ["MODE"]
+if os.environ.get("QUESTION"): b["question"] = os.environ["QUESTION"]
+if os.environ.get("SYSTEM"): b["system"] = os.environ["SYSTEM"]
+if os.environ.get("MAXTOK"): b["max_tokens"] = int(os.environ["MAXTOK"])
+if os.environ.get("SPEC"): b["spec"] = os.environ["SPEC"]
+print(json.dumps(b))
+PY
+)"
+    JOB=$(_call POST /api/debug/video-async "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id",""))')
+    [ -n "$JOB" ] || { echo "no job id — the probe was refused" >&2; exit 1; }
+    # Ten minutes: the frame pipeline is two dozen vision calls plus a summary, and a cold
+    # Flash-Next load lands in front of the first one.
+    DEADLINE=$(( $(date +%s) + 600 ))
+    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+      # One dropped poll (a tunnel blip, a 502 while the api restarts) is not the job's
+      # answer: keep polling until the deadline rather than exit on it.
+      OUT=$(_call GET "/api/debug/jobs/$JOB" 2>/dev/null) || OUT=""
+      ST=$(printf '%s' "$OUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("status",""))
+except Exception: print("")')
+      if [ -n "$ST" ] && [ "$ST" != "pending" ]; then
+        printf '%s' "$OUT" | _pp
+        [ "$ST" = "done" ] || exit 1
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "video $JOB still pending after 600s; poll: debug-connect.sh raw GET /api/debug/jobs/$JOB" >&2; exit 1 ;;
 
   sql)
     SQL="$(_text_arg "$@")"

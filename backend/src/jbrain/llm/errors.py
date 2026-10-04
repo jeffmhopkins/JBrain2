@@ -55,3 +55,9 @@ class LlmContextOverflowError(LlmBadResponseError):
     "this model ran out of context" (vs a generic failure) can catch it specifically.
     Carries NO body text — the classification reads the response, the error does not
     propagate it (prompts/answers are private, per retry.py's body-free-logs rule)."""
+
+
+class LlmVideoUnsupportedError(LlmBadResponseError):
+    """A video was handed to a client that cannot send one. Only the local OpenAI-compatible
+    engine takes `input_video`; the native-video gate keeps every other route off it, so this
+    firing means a caller skipped the gate. Raised before anything is sent."""

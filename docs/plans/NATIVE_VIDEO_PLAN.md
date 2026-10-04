@@ -38,9 +38,9 @@ frames. The threshold is one named constant, not a setting.
 
 **Native call shape.** The api transcodes before sending, with the ffmpeg it already has:
 first 60 s only, video at the measured fps (CFR), longest edge ≤ 1280, no audio track,
-H.264 in MP4. That keeps the base64 body a few MB rather than a raw phone clip's 100+ MB;
-resolution below the floor buys nothing, since the engine upscales each pair to it. The
-request carries the transcoded clip plus the whispered transcript as `[mm:ss]` text lines,
+Motion-JPEG in Matroska (not H.264: see V0). That keeps the base64 body a few MB rather
+than a raw phone clip's 100+ MB; resolution below the floor buys nothing, since the engine
+upscales each pair to it. The request carries the transcoded clip plus the whispered transcript as `[mm:ss]` text lines,
 which line up with the engine's own 5 s timestamps.
 
 **Adapter (non-negotiable 1).** A new `LlmVideo(media_type, data)` beside `LlmImage` in
@@ -70,28 +70,46 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
 ### V0 — Make the engine able to take video, and measure it ◻️
 - `deploy/Dockerfile.flash-next`: ensure `ffmpeg` and `ffprobe` are on PATH in the runtime
   stage (install through the base's package manager, as the build stage does) and fail the
-  image build if `ffmpeg -version` fails.
+  image build unless ffmpeg lists the `mjpeg` decoder and `ffprobe -version` runs.
+- **The transcode targets Motion-JPEG in Matroska, not H.264 in MP4**, because the engine
+  image's base is Fedora, whose `ffmpeg-free` carries no H.264 decoder we can count on;
+  `mjpeg` is always in it. The cost is a larger body (a few MB a minute at 1 fps), which is
+  what V0 measures as `payload_bytes`.
 - Catalog: `--video-fps 1` in Flash-Next's `extra_server_args` (V0 confirms or moves it).
-- `LlmVideo`, the `videos` request field and `input_video` serialisation.
-- Debug route `POST /api/debug/video` `{attachment_id, mode: native|frames, seconds?}` and
-  `debug-connect.sh video`: runs one clip either way and returns prompt tokens, latency and
-  the answer. This is the measuring instrument, operable with a token and no terminal.
+- `LlmVideo`, the `videos` request field and `input_video` serialisation, with a
+  provisional pool charge (one image charge per two frames at `slot_roles.VIDEO_FPS`, plus
+  the extra frame ffmpeg's fps filter can emit, and a full minute when the length is
+  unknown) so the probe cannot overrun its slot; V1 sets it from the measurement.
+- Debug route `POST /api/debug/video` `{attachment_id, mode: native|frames, question?,
+  max_tokens?, spec?}` (and `/video-async`) and `debug-connect.sh video`: runs one clip
+  either way and returns prompt tokens, latency and the answer. `spec` pins the native call
+  to one model (`local:qwen3.8-flash-next`) without re-routing `video.summarize`. This is the measuring instrument, operable with a token and no terminal.
 - **On-box, with notice to the owner:** two or three clips of 10–60 s. Record tokens per
   second, per-pair tokens, prefill time and a side-by-side of native vs frames answers.
   These fix the fps, the pool charge and whether 60 s fits the 128k roles.
 
 ### V1 — The hybrid in the video tools ◻️
 - `supports_video` flag, `supports_video_for_spec`, the pool charge.
+- **The native gate keys on the engine and model (`supports_video`), never on
+  `provider == "local"`.** The Standard engine is "local" too, and its models have no video
+  path; V0's client check (`openai_compat` refuses video off the local provider) is only a
+  backstop against cloud routes, not the gate.
 - The native branch in `run_video_analysis` with the fallback and the run-step note;
   `analyze_video` and video-attachment ingest inherit it.
 - Tests: the split at 60 s, unknown duration, gate off on the Standard engine and cloud
   routes, every fallback trigger, the serialised part, the charge.
 
-### V2 — Chat and links ◻️
-- A video of ≤ 60 s attached in chat goes into the agent turn as a native part, with its
-  transcript, when `agent.turn` resolves to a video-capable model; otherwise today's marker.
-- `analyze_stream`: a downloaded clip of ≤ 60 s takes the native path.
-- `jerv.prompt`: a short clip is seen directly; long ones go through `analyze_video`.
+### V2 — Chat and links, through a separate call ◻️
+- **The clip never enters jerv's own context** (owner decision 2026-10-04). A minute of video
+  is 60–120k tokens; inline, it would crowd the conversation out of the interactive slot and
+  be carried, or re-read, on every later turn. Instead a chat-attached video of ≤ 60 s goes
+  to `analyze_video` with jerv's question: one native call holding the clip and its
+  transcript, returning text only.
+- That call is pinned to one role, so the clip's prefix stays cached in the slot and a
+  follow-up question on the same clip re-reads it from cache rather than re-prefilling it.
+- `analyze_stream`: a downloaded clip of ≤ 60 s takes the same native path.
+- `jerv.prompt`: ask `analyze_video` about a video, with the question; a follow-up is
+  another call with the new question.
 
 ## 4. Open questions
 1. **fps 1 or 2.** One is cheaper and fits every role at 60 s; two sees faster motion.

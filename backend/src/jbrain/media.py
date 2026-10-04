@@ -31,6 +31,12 @@ from PIL import Image
 log = structlog.get_logger()
 
 
+# Input options for every ffmpeg/ffprobe read of an uploaded clip. The bytes are untrusted: a
+# crafted playlist (HLS/concat) would otherwise make ffmpeg open URLs or other protocols it
+# names. Local files and pipes are all these reads ever need.
+INPUT_PROTOCOLS = ["-protocol_whitelist", "file,pipe"]
+
+
 async def run_media_proc(cmd: list[str], *, timeout_s: float) -> tuple[int | None, bytes, bytes]:
     """Run one media subprocess (ffmpeg/ffprobe) on the event loop, bounded by `timeout_s`
     and **cancel-safe**: a timeout OR a cancelled turn/job `kill()`s the child promptly
@@ -50,6 +56,75 @@ async def run_media_proc(cmd: list[str], *, timeout_s: float) -> tuple[int | Non
         await proc.wait()
         raise
     return proc.returncode, stdout, stderr
+
+
+class TranscodeError(RuntimeError):
+    """ffmpeg could not produce the native-video clip. Carries ffmpeg's stderr tail, never the
+    clip itself."""
+
+
+# The container the native path sends. llama.cpp's server sniffs it with its own ffmpeg, and
+# the engine image's Fedora ffmpeg-free carries no H.264 decoder it can be trusted to have, so
+# the clip is Motion-JPEG (always in ffmpeg-free) inside Matroska.
+NATIVE_VIDEO_MEDIA_TYPE = "video/x-matroska"
+_TRANSCODE_TIMEOUT_S = 300.0
+
+
+def _native_video_scale(max_edge: int) -> str:
+    # Longest edge capped, never upscaled (the engine resizes each frame pair to its own token
+    # floor, so extra pixels buy nothing), both sides even for the 4:2:0 encoder.
+    keep = f"trunc(min(iw,{max_edge})/2)*2"
+    keep_h = f"trunc(min(ih,{max_edge})/2)*2"
+    return f"scale=w='if(gte(iw,ih),{keep},-2)':h='if(gte(iw,ih),-2,{keep_h})'"
+
+
+async def transcode_for_native_video(
+    src: Path, *, max_seconds: float = 60.0, fps: float, max_edge: int = 1280
+) -> bytes:
+    """The first `max_seconds` of `src` as silent Motion-JPEG in Matroska at `fps`, ready for
+    an `input_video` part. Sampling here at the engine's own rate keeps the upload to the
+    frames it would keep anyway. Raises `TranscodeError` on any failure or timeout."""
+    with tempfile.TemporaryDirectory(prefix="jbrain-nvid-") as tmp:
+        out = Path(tmp) / "clip.mkv"
+        cmd = [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            *INPUT_PROTOCOLS,
+            "-i",
+            str(src),
+            "-t",
+            f"{max_seconds:g}",
+            "-an",
+            "-vf",
+            f"fps={fps:g},{_native_video_scale(max_edge)}",
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "4",
+            "-f",
+            "matroska",
+            str(out),
+        ]
+        try:
+            rc, _, stderr = await run_media_proc(cmd, timeout_s=_TRANSCODE_TIMEOUT_S)
+        except TimeoutError as exc:
+            raise TranscodeError(f"transcode timed out after {_TRANSCODE_TIMEOUT_S:g}s") from exc
+        except OSError as exc:
+            raise TranscodeError(f"ffmpeg could not start: {exc}") from exc
+        if rc != 0:
+            tail = stderr.decode("utf-8", "replace")[-500:]
+            raise TranscodeError(f"ffmpeg exited {rc}: {tail}")
+        data = _read_if_present(out)
+        if not data:
+            raise TranscodeError("ffmpeg produced no output")
+        return data
+
+
+def _read_if_present(path: Path) -> bytes:
+    return path.read_bytes() if path.exists() else b""
 
 
 def _sorted_jpegs(tmpdir: Path, pattern: str = "frame_*.jpg") -> list[Path]:
@@ -99,6 +174,7 @@ async def probe_duration_s(path: Path) -> float | None:
                 "format=duration",
                 "-of",
                 "default=noprint_wrappers=1:nokey=1",
+                *INPUT_PROTOCOLS,
                 str(path),
             ],
             timeout_s=60,
@@ -177,6 +253,7 @@ async def _extract(
                 "-nostdin",
                 "-v",
                 "error",
+                *INPUT_PROTOCOLS,
                 "-i",
                 str(src),
                 "-vf",

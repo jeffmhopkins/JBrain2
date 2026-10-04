@@ -469,3 +469,63 @@ async def test_anthropic_ignores_reasoning_effort_kwarg() -> None:
     # Accepts the kwarg without error and never leaks it onto the wire.
     await client.complete(model="m", system="s", user_text="u", reasoning_effort="high")
     assert "reasoning_effort" not in json.loads(seen[0].content)
+
+
+# --- native video (NATIVE_VIDEO_PLAN V0) ------------------------------------
+
+
+async def test_local_serializes_input_video_parts_after_the_images() -> None:
+    from jbrain.llm.types import LlmVideo
+
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "http://gw/v1", "", provider="local", transport=capture_transport(seen, OPENAI_OK)
+    )
+    await client.complete(
+        model="m",
+        system="s",
+        user_text="what happens?",
+        images=[LlmImage(media_type="image/jpeg", data="QUJD")],
+        videos=[LlmVideo(media_type="video/x-matroska", data="VklE", seconds=12.0)],
+    )
+    content = json.loads(seen[0].content)["messages"][1]["content"]
+    assert content == [
+        # The image part is unchanged by the video beside it.
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,QUJD"}},
+        # Raw base64, no data: URI — llama.cpp reads the clip's bytes from `data`.
+        {"type": "input_video", "input_video": {"data": "VklE"}},
+        {"type": "text", "text": "what happens?"},
+    ]
+
+
+async def test_local_sends_a_video_without_any_image() -> None:
+    from jbrain.llm.types import LlmVideo
+
+    seen: list[httpx.Request] = []
+    client = OpenAiCompatClient(
+        "http://gw/v1", "", provider="local", transport=capture_transport(seen, OPENAI_OK)
+    )
+    await client.complete(
+        model="m", system="s", user_text="u", videos=[LlmVideo("video/x-matroska", "VklE")]
+    )
+    content = json.loads(seen[0].content)["messages"][1]["content"]
+    assert [p["type"] for p in content] == ["input_video", "text"]
+
+
+async def test_cloud_clients_refuse_a_video_before_sending() -> None:
+    from jbrain.llm.errors import LlmVideoUnsupportedError
+    from jbrain.llm.types import LlmVideo
+
+    seen: list[httpx.Request] = []
+    clip = [LlmVideo("video/x-matroska", "VklE")]
+    xai = OpenAiCompatClient(
+        "https://api.x.ai/v1", "k", provider="xai", transport=capture_transport(seen, OPENAI_OK)
+    )
+    anthropic = AnthropicClient("k", transport=capture_transport(seen, ANTHROPIC_OK))
+    with pytest.raises(LlmVideoUnsupportedError, match="xai: video input is not supported"):
+        await xai.complete(model="m", system="s", user_text="u", videos=clip)
+    with pytest.raises(LlmVideoUnsupportedError, match="anthropic: video input"):
+        await anthropic.complete(model="m", system="s", user_text="u", videos=clip)
+    assert seen == []
+    # A typed bad-response, so existing handlers that catch the family still do.
+    assert issubclass(LlmVideoUnsupportedError, LlmBadResponseError)

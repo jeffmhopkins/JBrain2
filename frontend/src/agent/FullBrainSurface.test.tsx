@@ -1399,6 +1399,29 @@ describe("FullBrainSurface", () => {
     );
   });
 
+  it("scrolls the open Worked pane to the newest step while the turn streams", async () => {
+    // A long run of calls is a capped pane (styles.css .fb-steps), so the live step must
+    // be scrolled into view rather than left below the fold.
+    const s = scriptedStream();
+    render(<Harness d={deps({ chat: s.chat })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "find it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    act(() => s.push({ type: "text_delta", text: "Looking." }));
+    act(() => s.push({ type: "tool_call", id: "c1", name: "search", arguments: {} }));
+    const worked = await screen.findByRole("button", { name: /Worked/ });
+    await waitFor(() => expect(worked).toHaveAttribute("aria-expanded", "true"));
+    const pane = document.querySelector<HTMLDivElement>(".fb-steps");
+    if (!pane) throw new Error("no Worked pane");
+    Object.defineProperty(pane, "scrollHeight", { configurable: true, value: 900 });
+    pane.scrollTop = 0;
+
+    act(() => s.push({ type: "tool_result", tool_call_id: "c1", ok: true, summary: "ok" }));
+    act(() => s.push({ type: "tool_call", id: "c2", name: "search", arguments: {} }));
+    await waitFor(() => expect(pane.scrollTop).toBe(900));
+  });
+
   it("keeps the trace open for a tool called inside a thinking phase", async () => {
     // Spec #3 is only for a tool with no thinking in front of it — the trace already
     // interleaves a call made mid-thought, so Worked stays closed.

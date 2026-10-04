@@ -8,7 +8,11 @@ from typing import Any
 import httpx
 import structlog
 
-from jbrain.llm.errors import LlmBadResponseError, LlmStreamTruncatedError
+from jbrain.llm.errors import (
+    LlmBadResponseError,
+    LlmStreamTruncatedError,
+    LlmVideoUnsupportedError,
+)
 from jbrain.llm.retry import post_json, stream_sse
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
@@ -19,6 +23,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    LlmVideo,
     Sampling,
     StopReason,
     StreamPart,
@@ -119,6 +124,7 @@ class AnthropicClient:
         system: str,
         user_text: str,
         images: Sequence[LlmImage] = (),
+        videos: Sequence[LlmVideo] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         # Anthropic steers reasoning via a separate `thinking` mechanism, not
@@ -128,6 +134,8 @@ class AnthropicClient:
         sampling: Sampling | None = None,
         id_slot: int | None = None,  # a llama-server slot pin; ignored here
     ) -> LlmResult:
+        if videos:
+            raise LlmVideoUnsupportedError("anthropic: video input is not supported")
         content: list[dict[str, Any]] = [
             {
                 "type": "image",

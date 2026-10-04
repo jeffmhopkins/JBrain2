@@ -1853,7 +1853,9 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   **thinking again** switches back to the trace (a model that interleaves thinking and
   answer — Qwen Flash-Next — re-opens it with its answer so far left on screen); a tool
   called *inside* a thinking phase stays in the trace, which already interleaves the call.
-  **Settling** leaves both bodies closed. **A hand toggle wins:** a chip the owner taps
+  Both bodies are capped panes that scroll (trace 200px, Worked 320px — an expanded step
+  needs the room) and follow the newest line or step while live. **Settling** leaves both
+  bodies closed. **A hand toggle wins:** a chip the owner taps
   during the turn is his until it settles — one he opened stays open (also past settle),
   one he closed is never auto-opened again. The panel's open/close is the shared 180ms
   height transition, off under `prefers-reduced-motion`.

@@ -15,7 +15,11 @@ import httpx
 import structlog
 
 from jbrain.llm import local_catalog
-from jbrain.llm.errors import LlmBadResponseError, LlmStreamTruncatedError
+from jbrain.llm.errors import (
+    LlmBadResponseError,
+    LlmStreamTruncatedError,
+    LlmVideoUnsupportedError,
+)
 from jbrain.llm.retry import post_json, stream_sse
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
@@ -26,6 +30,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    LlmVideo,
     ReasoningChunk,
     Sampling,
     StopReason,
@@ -168,14 +173,18 @@ class OpenAiCompatClient:
         system: str,
         user_text: str,
         images: Sequence[LlmImage] = (),
+        videos: Sequence[LlmVideo] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
     ) -> LlmResult:
+        # Only llama.cpp's server decodes `input_video`; xAI would 4xx it after the upload.
+        if videos and self.provider != local_catalog.LOCAL_PROVIDER:
+            raise LlmVideoUnsupportedError(f"{self.provider}: video input is not supported")
         user_content: str | list[dict[str, Any]]
-        if images:
+        if images or videos:
             user_content = [
                 {
                     "type": "image_url",
@@ -183,6 +192,11 @@ class OpenAiCompatClient:
                 }
                 for img in images
             ]
+            # Raw base64, no data: URI — llama.cpp's server reads `input_video.data` as the
+            # clip's bytes and sniffs the container itself.
+            user_content.extend(
+                {"type": "input_video", "input_video": {"data": v.data}} for v in videos
+            )
             user_content.append({"type": "text", "text": user_text})
         else:
             user_content = user_text

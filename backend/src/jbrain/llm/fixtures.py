@@ -37,6 +37,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    LlmVideo,
     StreamPart,
     TextChunk,
     ToolCall,
@@ -103,10 +104,20 @@ def _key(prompt: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def _video_digest(videos: Sequence[LlmVideo]) -> list[str]:
+    return [hashlib.sha256((v.media_type + v.data).encode()).hexdigest()[:16] for v in videos]
+
+
 def _complete_prompt(
-    *, model: str, system: str, user_text: str, images: Sequence[LlmImage], with_schema: bool
+    *,
+    model: str,
+    system: str,
+    user_text: str,
+    images: Sequence[LlmImage],
+    with_schema: bool,
+    videos: Sequence[LlmVideo] = (),
 ) -> dict[str, Any]:
-    return {
+    prompt: dict[str, Any] = {
         "op": "complete",
         "model": model,
         "system": system,
@@ -114,6 +125,10 @@ def _complete_prompt(
         "images": _image_digest(images),
         "with_schema": with_schema,
     }
+    # Keyed only when present, so every fixture authored before video keeps its key.
+    if videos:
+        prompt["videos"] = _video_digest(videos)
+    return prompt
 
 
 def _converse_prompt(
@@ -199,13 +214,19 @@ class FixtureLlmClient:
         user_text: str,
         text: str,
         images: Sequence[LlmImage] = (),
+        videos: Sequence[LlmVideo] = (),
         with_schema: bool = False,
     ) -> str:
         # with_schema must match the eventual call: a task that sends a json_schema
         # (entity.disambiguate, the wiki lint pair) has its fixtures authored
         # with_schema=True.
         prompt = _complete_prompt(
-            model=model, system=system, user_text=user_text, images=images, with_schema=with_schema
+            model=model,
+            system=system,
+            user_text=user_text,
+            images=images,
+            videos=videos,
+            with_schema=with_schema,
         )
         return self._write(prompt, {"text": text})
 
@@ -235,6 +256,7 @@ class FixtureLlmClient:
         system: str,
         user_text: str,
         images: Sequence[LlmImage] = (),
+        videos: Sequence[LlmVideo] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         id_slot: int | None = None,
@@ -244,6 +266,7 @@ class FixtureLlmClient:
             system=system,
             user_text=user_text,
             images=images,
+            videos=videos,
             with_schema=json_schema is not None,
         )
         key = _key(prompt)

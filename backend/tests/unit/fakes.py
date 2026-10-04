@@ -474,6 +474,40 @@ class FakeSettingsStore:
     async def set_tavily_health(self, ctx: object, record: dict[str, str]) -> None:
         self.values["tavily_health"] = record
 
+    async def brave_enabled(self, ctx: object) -> bool:
+        return self.values.get("brave_enabled", True) is True
+
+    async def set_brave_enabled(self, ctx: object, enabled: bool) -> None:
+        self.values["brave_enabled"] = bool(enabled)
+
+    async def brave_api_key(self, ctx: object) -> str:
+        raw = self.values.get("brave_api_key", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_brave_api_key(self, ctx: object, api_key: str) -> None:
+        self.values["brave_api_key"] = api_key
+
+    async def brave_monthly_budget(self, ctx: object) -> int:
+        raw = self.values.get("brave_monthly_budget", 900)
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            return 900
+        return raw if 1 <= raw <= 100_000 else 900
+
+    async def set_brave_monthly_budget(self, ctx: object, budget: int) -> None:
+        self.values["brave_monthly_budget"] = int(budget)
+
+    async def brave_usage(self, ctx: object) -> object:
+        return self.values.get("brave_usage")
+
+    async def set_brave_usage(self, ctx: object, record: dict[str, object]) -> None:
+        self.values["brave_usage"] = record
+
+    async def brave_last_error(self, ctx: object) -> object:
+        return self.values.get("brave_last_error")
+
+    async def set_brave_last_error(self, ctx: object, record: dict[str, str]) -> None:
+        self.values["brave_last_error"] = record
+
     async def moltbook_api_key(self, ctx: object) -> str:
         raw = self.values.get("moltbook_api_key", "")
         return raw if isinstance(raw, str) else ""
