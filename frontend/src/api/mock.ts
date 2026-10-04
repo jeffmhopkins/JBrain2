@@ -734,6 +734,12 @@ const MOCK_EFFORT_TIERS: [string, string][] = [
   ["medium", "Medium reasoning"],
   ["low", "Low reasoning"],
   ["vision", "Vision"],
+  ["code", "Code mode"],
+];
+// Code mode's two roles: not routed tasks, so they carry their own names.
+const MOCK_CODE_TASKS: [string, string][] = [
+  ["jcode.executor", "Code mode — executor"],
+  ["jcode.planner", "Code mode — planner"],
 ];
 const MOCK_TASK_TIER: Record<string, string> = {
   "agent.turn": "medium",
@@ -787,7 +793,23 @@ function mockEngineEfforts(): Record<string, EngineEffortInfo> {
             effective: level ?? fallback,
             applies: active && t.provider === "local",
           };
-        }),
+        })
+        .concat(
+          MOCK_CODE_TASKS.map(([id, label]) => {
+            const fallback = MOCK_FLASH_ROWS.tiers.code ?? null;
+            const level = MOCK_FLASH_ROWS.tasks[id] ?? null;
+            return {
+              id,
+              tier: "code",
+              label,
+              level,
+              fallback,
+              fallback_source: fallback ? ("tier" as const) : ("standard" as const),
+              effective: level ?? fallback,
+              applies: active && LLM_SETTINGS.jcode.enabled,
+            };
+          }),
+        ),
     },
   };
 }

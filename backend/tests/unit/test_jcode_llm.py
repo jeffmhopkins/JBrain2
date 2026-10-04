@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from jbrain.api import jcode_llm
 from jbrain.llm import engine, local_catalog, openai_slot_fit, prefill, slot_roles
+from jbrain.llm.engine_effort import EngineEfforts
 from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.openai_slot_fit import DEFAULT_OUTPUT_TOKENS
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, JCODE_ROLE
@@ -481,3 +482,170 @@ def test_the_openai_estimate_counts_text_the_way_the_router_does() -> None:
         + 30
         + slot_roles.tool_schema_chars("search", "", schema)
     )
+
+
+# --- the owner's Flash-Next level per code-mode role ------------------------------------------
+
+
+class _Store:
+    """The two code-mode picks the proxy reads to tell a planner request from an executor."""
+
+    def __init__(self, executor: str = "qwen3-coder-next", planner: str = "gpt-oss-120b") -> None:
+        self.executor, self.planner = executor, planner
+
+    async def jcode_model(self, ctx: object) -> str:
+        return self.executor
+
+    async def jcode_planner_model(self, ctx: object) -> str:
+        return self.planner
+
+
+class _Efforts:
+    def __init__(self, rows: dict[tuple[str, str, str], str]) -> None:
+        self.value = EngineEfforts(rows)
+
+    async def get(self) -> EngineEfforts:
+        return self.value
+
+
+_LEVELS = {
+    ("flash-next", "task", "jcode.executor"): "low",
+    ("flash-next", "task", "jcode.planner"): "high",
+}
+
+
+def _coder_app(
+    rows: dict[tuple[str, str, str], str], *, store: _Store | None = None, flash: bool = True
+) -> FastAPI:
+    app = _app(models=(_FLASH, "gpt-oss-120b", "qwen3-coder-next"))
+    if flash:
+
+        async def _load() -> str:
+            return "flash-next"
+
+        app.state.active_engine = engine.ActiveEngine(_load, ttl_s=0.0)
+    app.state.settings_store = store or _Store()
+    app.state.engine_efforts = _Efforts(rows)
+    return app
+
+
+def _send(app: FastAPI, monkeypatch: pytest.MonkeyPatch, body: dict) -> dict:
+    sent: dict[str, object] = {}
+    _fake_gateway(monkeypatch, sent, chunks=(b"ok",))
+    r = TestClient(app).post(_COMPLETIONS, json=body, headers=_AUTH)
+    assert r.status_code == 200
+    return cast("dict", sent["payload"])
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+@pytest.mark.parametrize(
+    ("requested", "level"),
+    [
+        # grok's default block is the executor; its `plan` pin is the planner. Both run on
+        # Flash-Next, each at its own level (our `high` is Qwen3.8's template `xhigh`).
+        ("qwen3-coder-next", "low"),
+        ("gpt-oss-120b", "xhigh"),
+    ],
+)
+def test_each_role_runs_on_flash_next_at_its_own_level(
+    monkeypatch: pytest.MonkeyPatch, requested: str, level: str
+) -> None:
+    payload = _send(_coder_app(_LEVELS), monkeypatch, {"model": requested, "messages": []})
+    assert payload["model"] == _FLASH
+    assert payload["chat_template_kwargs"] == {"enable_thinking": True, "reasoning_effort": level}
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_a_role_without_a_row_takes_the_code_tier_and_none_turns_thinking_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = {
+        ("flash-next", "tier", "code"): "none",
+        ("flash-next", "task", "jcode.executor"): "low",
+    }
+    payload = _send(_coder_app(rows), monkeypatch, {"model": "gpt-oss-120b", "messages": []})
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_the_owners_level_replaces_every_reasoning_field_grok_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {
+        "model": "qwen3-coder-next",
+        "messages": [],
+        "reasoning_effort": "high",
+        "reasoning": {"effort": "high"},
+        "chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "xhigh", "x": 1},
+    }
+    payload = _send(_coder_app(_LEVELS), monkeypatch, body)
+    assert "reasoning_effort" not in payload and "reasoning" not in payload
+    # Unrelated template kwargs survive; the reasoning ones are the owner's.
+    assert payload["chat_template_kwargs"] == {
+        "x": 1,
+        "enable_thinking": True,
+        "reasoning_effort": "low",
+    }
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_with_no_row_grok_s_own_level_goes_through_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"model": "qwen3-coder-next", "messages": [], "reasoning_effort": "medium"}
+    payload = _send(_coder_app({}), monkeypatch, body)
+    assert payload["reasoning_effort"] == "medium" and "chat_template_kwargs" not in payload
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+@pytest.mark.parametrize(
+    "store",
+    [
+        _Store(planner="same"),  # single-model: the plan subagent is the executor
+        _Store(executor="gpt-oss-120b", planner="gpt-oss-120b"),  # one model in both picks
+    ],
+)
+def test_single_model_code_mode_is_all_executor(
+    monkeypatch: pytest.MonkeyPatch, store: _Store
+) -> None:
+    payload = _send(
+        _coder_app(_LEVELS, store=store), monkeypatch, {"model": "gpt-oss-120b", "messages": []}
+    )
+    assert payload["chat_template_kwargs"]["reasoning_effort"] == "low"
+
+
+@pytest.mark.usefixtures("_fresh_ratio")
+def test_a_failed_level_read_forwards_groks_own_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Broken:
+        async def get(self) -> EngineEfforts:
+            raise RuntimeError("db down")
+
+    app = _coder_app(_LEVELS)
+    app.state.engine_efforts = _Broken()
+    body = {"model": "qwen3-coder-next", "messages": [], "reasoning_effort": "medium"}
+    payload = _send(app, monkeypatch, body)
+    assert payload["reasoning_effort"] == "medium" and "chat_template_kwargs" not in payload
+
+
+def test_on_standard_the_body_is_forwarded_byte_for_byte(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = {**_LEVELS, ("flash-next", "tier", "code"): "none"}
+    body = {"model": "gpt-oss-120b", "messages": [], "reasoning_effort": "high"}
+    payload = _send(_coder_app(rows, flash=False), monkeypatch, body)
+    assert payload == body
+
+
+def test_under_flash_next_the_config_keeps_a_block_for_each_standard_coder() -> None:
+    # A shell opened while Flash-Next serves still renders blocks for the session's executor
+    # and planner names, so grok's default resolves and its `plan` pin stays a separate name.
+    lines = TestClient(_coder_app({})).get(f"{_MODELS}?format=lines", headers=_AUTH).text
+    rows = [ln.split("|") for ln in lines.strip().splitlines()]
+    assert [r[1] for r in rows] == [_FLASH, "gpt-oss-120b", "qwen3-coder-next"]
+    assert [r[0] for r in rows[1:]] == ["oss", "qwen"]
+    flash_label = rows[0][2]
+    assert all(r[2] == flash_label and r[3] == str(_JCODE_CAP) for r in rows)
+    # The JSON list is still the engine's own models only.
+    data = TestClient(_coder_app({})).get(_MODELS, headers=_AUTH).json()["data"]
+    assert [m["id"] for m in data] == [_FLASH]
+    # On Standard no extra handle is added.
+    std = TestClient(_coder_app({}, flash=False)).get(f"{_MODELS}?format=lines", headers=_AUTH)
+    assert _FLASH not in std.text and std.text.count("\n") == 2

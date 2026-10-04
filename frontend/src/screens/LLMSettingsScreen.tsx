@@ -219,9 +219,23 @@ export function LLMSettingsScreen() {
   const fxEpoch = useRef(0);
 
   // The engine-reasoning card: open per engine once the owner toggles it (until then it
-  // follows whether that engine serves), and which of its tier rows are open.
+  // follows whether that engine serves), which of its tier rows are open, and the row a link
+  // (the Code mode card's) just jumped to.
   const [fxOpen, setFxOpen] = useState<Record<string, boolean>>({});
   const [fxTiers, setFxTiers] = useState<Set<string>>(new Set());
+  const [fxTarget, setFxTarget] = useState<string | null>(null);
+  useEffect(() => {
+    if (fxTarget === null) return;
+    const el = document.getElementById(fxTarget);
+    setFxTarget(null);
+    if (!el) return;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    el.scrollIntoView?.({ block: "start", behavior: still ? "auto" : "smooth" });
+    el.classList.add("llm-fx-flash");
+    el.addEventListener("animationend", () => el.classList.remove("llm-fx-flash"), {
+      once: true,
+    });
+  }, [fxTarget]);
 
   // Live runtime state: while the drawer is open and hosting is on, refresh the
   // loaded flags every few seconds. Merge ONLY local_models so a poll can't
@@ -765,10 +779,22 @@ export function LLMSettingsScreen() {
     });
   }
 
+  // Open the engine card and one of its tier rows, then jump to it.
+  function goToFxTier(engine: string, tier: string) {
+    setFxOpen((prev) => ({ ...prev, [engine]: true }));
+    setFxTiers((prev) => new Set(prev).add(`${engine}:${tier}`));
+    setFxTarget(fxRowId(engine, tier));
+  }
+
   const engineEfforts = Object.entries(settings.engine_efforts ?? {});
   // While another engine serves every local task, the Standard routing cards only describe a
   // gateway that is stopped; its reasoning card is the one that applies (owner, 2026-10-03).
   const flashServing = engineEfforts.some(([, info]) => info.active);
+  // Code mode runs on that engine's model too, so its card names it instead of offering picks
+  // (owner, 2026-10-04) — only when the engine card has the Code mode row to link to.
+  const servingFx = engineEfforts.find(
+    ([, info]) => info.active && info.tasks.some((t) => t.tier === CODE_TIER),
+  );
   const localIds = new Set(settings.local_models.map((m) => m.id));
   // Local providers: the generic "local" id or a catalog model's own id.
   const isLocalProvider = (id: string) => id === LOCAL_PROVIDER || localIds.has(id);
@@ -844,6 +870,7 @@ export function LLMSettingsScreen() {
           engine={engine}
           info={info}
           tasks={settings.tasks}
+          codeEnabled={settings.jcode.enabled}
           modelLabel={settings.local_models.find((m) => m.engine === engine)?.label ?? null}
           providerLabel={(id) => byId.get(id)?.label ?? id}
           isLocalProvider={isLocalProvider}
@@ -1041,6 +1068,17 @@ export function LLMSettingsScreen() {
           busy={busy.has("jcode-model")}
           onChange={setJcodeModel}
           onPlannerChange={setJcodePlanner}
+          servingOn={
+            servingFx
+              ? {
+                  model:
+                    settings.local_models.find((m) => m.engine === servingFx[0])?.label ??
+                    servingFx[1].label,
+                  engine: servingFx[1].label,
+                  onGo: () => goToFxTier(servingFx[0], CODE_TIER),
+                }
+              : null
+          }
         />
       )}
 
@@ -1054,6 +1092,8 @@ export function LLMSettingsScreen() {
 // Tasks the server places in no tier ride in an "Other" row, matching the tier cards' own
 // synthesized group; they can be set one by one but have no tier level of their own.
 const OTHER_TIER = "other";
+// Code mode's two roles (`jcode.executor` / `jcode.planner`): always on-box, never routed.
+const CODE_TIER = "code";
 
 const LEVEL_NAME: Record<ReasoningEffort, string> = {
   none: "None",
@@ -1086,8 +1126,11 @@ function runsOnEngine(
   task: EngineEffortTask,
   pick: LlmTask | undefined,
   isLocalProvider: (id: string) => boolean,
+  codeEnabled: boolean,
 ): boolean {
   if (info.active) return task.applies;
+  // Code mode has no pick to read: it always runs on-box, so on the engine whenever it is on.
+  if (task.tier === CODE_TIER) return codeEnabled;
   const spec = pick?.effective_spec;
   if (spec) return spec.startsWith(`${LOCAL_PROVIDER}:`);
   return pick !== undefined && isLocalProvider(pick.provider);
@@ -1101,7 +1144,7 @@ const TASK_ORDER = new Map(GROUP_DEFS.flatMap((g) => g.taskIds).map((id, i) => [
 interface FxTierRow {
   id: string;
   label: string;
-  accent: GroupDef["accent"];
+  accent: GroupDef["accent"] | "jcode";
   /** undefined for the Other row, which has no tier level to set. */
   level: ReasoningEffort | null | undefined;
   /** The tier's bucket default — the Standard level a task with no stored effort runs at. */
@@ -1114,19 +1157,28 @@ function fxTierRows(
   info: EngineEffortInfo,
   tasks: LlmTask[],
   isLocalProvider: (id: string) => boolean,
+  codeEnabled: boolean,
 ): FxTierRow[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const rank = (t: EngineEffortTask) => TASK_ORDER.get(t.id) ?? Number.MAX_SAFE_INTEGER;
   const members = (tier: string | null) =>
     info.tasks.filter((t) => t.tier === tier).sort((a, b) => rank(a) - rank(b));
   const split = (ts: EngineEffortTask[]) => ({
-    local: ts.filter((t) => runsOnEngine(info, t, byId.get(t.id), isLocalProvider)),
-    cloud: ts.filter((t) => !runsOnEngine(info, t, byId.get(t.id), isLocalProvider)),
+    local: ts.filter((t) => runsOnEngine(info, t, byId.get(t.id), isLocalProvider, codeEnabled)),
+    // Code mode off: its roles run nowhere, so they are neither set here nor "on the cloud".
+    cloud: ts.filter(
+      (t) =>
+        t.tier !== CODE_TIER &&
+        !runsOnEngine(info, t, byId.get(t.id), isLocalProvider, codeEnabled),
+    ),
   });
   const rows: FxTierRow[] = info.tiers.map((tier) => ({
     id: tier.id,
     label: tier.label,
-    accent: GROUP_DEFS.find((g) => g.key === tier.id)?.accent ?? "light",
+    accent:
+      tier.id === CODE_TIER
+        ? "jcode"
+        : (GROUP_DEFS.find((g) => g.key === tier.id)?.accent ?? "light"),
     level: tier.level,
     standard: tier.default,
     ...split(members(tier.id)),
@@ -1209,6 +1261,7 @@ function EngineEffortCard({
   engine,
   info,
   tasks,
+  codeEnabled,
   modelLabel,
   providerLabel,
   isLocalProvider,
@@ -1224,6 +1277,7 @@ function EngineEffortCard({
   engine: string;
   info: EngineEffortInfo;
   tasks: LlmTask[];
+  codeEnabled: boolean;
   modelLabel: string | null;
   providerLabel: (id: string) => string;
   isLocalProvider: (id: string) => boolean;
@@ -1237,8 +1291,9 @@ function EngineEffortCard({
   onResetTier: (tier: string, taskIds: string[]) => void;
 }) {
   const picks = new Map(tasks.map((t) => [t.id, t]));
-  const taskLabel = (id: string) => picks.get(id)?.label ?? id;
-  const rows = fxTierRows(info, tasks, isLocalProvider);
+  const own = new Map(info.tasks.map((t) => [t.id, t.label]));
+  const taskLabel = (id: string) => own.get(id) ?? picks.get(id)?.label ?? id;
+  const rows = fxTierRows(info, tasks, isLocalProvider, codeEnabled);
   const modelDefault = info.model_default ?? null;
   // Only what the card shows: a level on a row or task it hides cannot be seen or cleared here.
   const setCount = rows.reduce(
@@ -1371,16 +1426,19 @@ function EngineEffortCard({
                   <div className="llm-fxt-tasks" id={`${fxRowId(engine, row.id)}-tasks`}>
                     {row.local.map((t) => {
                       const key = fxRowKey(engine, "task", t.id);
+                      // Code mode with no level forwards whatever grok itself sends.
                       const reading =
-                        t.fallback === null
-                          ? modelDefault
-                            ? `${LEVEL_NAME[modelDefault]} · the model's own default — no level sent`
-                            : "The model's own default — no level sent"
-                          : `${LEVEL_NAME[t.fallback]} · ${
-                              t.fallback_source === "tier"
-                                ? "from the tier"
-                                : "from the Standard pick"
-                            }`;
+                        t.fallback === null && t.tier === CODE_TIER
+                          ? "Grok's own level — none set here"
+                          : t.fallback === null
+                            ? modelDefault
+                              ? `${LEVEL_NAME[modelDefault]} · the model's own default — no level sent`
+                              : "The model's own default — no level sent"
+                            : `${LEVEL_NAME[t.fallback]} · ${
+                                t.fallback_source === "tier"
+                                  ? "from the tier"
+                                  : "from the Standard pick"
+                              }`;
                       return (
                         <div key={t.id} className="llm-fxk-wrap">
                           <div className="llm-fxk">
@@ -1459,11 +1517,15 @@ function JcodeModelCard({
   busy,
   onChange,
   onPlannerChange,
+  servingOn,
 }: {
   jcode: JcodeModelInfo;
   busy: boolean;
   onChange: (model: string) => void;
   onPlannerChange: (planner: string) => void;
+  /** Set while an engine with one model serves: both roles run on it, so there is nothing to
+   * pick — the card names it and links to its reasoning card's Code mode row instead. */
+  servingOn: { model: string; engine: string; onGo: () => void } | null;
 }) {
   // An effective selection may not be among the installed options (e.g. the config
   // default before its weights are installed) — surface it as a disabled option so the
@@ -1480,14 +1542,33 @@ function JcodeModelCard({
           <span className="llm-group-name">Code mode</span>
           <span className="llm-group-count">2 roles</span>
         </div>
-        <p className="llm-group-desc">
-          The local models the jcode coding agent runs — the executor writes code, the planner
-          drives grok’s <code>plan</code> subagent. Pick “Same as executor” to run one model for
-          both. New sessions use the current choice; an in-flight session keeps what it started
-          with.
-        </p>
+        {servingOn ? (
+          <p className="llm-group-desc">
+            The jcode coding agent — the executor writes code, the planner drives grok’s{" "}
+            <code>plan</code> subagent. Your picks are kept for when Standard serves again.
+          </p>
+        ) : (
+          <p className="llm-group-desc">
+            The local models the jcode coding agent runs — the executor writes code, the planner
+            drives grok’s <code>plan</code> subagent. Pick “Same as executor” to run one model for
+            both. New sessions use the current choice; an in-flight session keeps what it started
+            with.
+          </p>
+        )}
 
-        {hasChoices ? (
+        {servingOn ? (
+          <p className="llm-remap llm-jcode-serving">
+            Runs on {servingOn.model} while {servingOn.engine} serves — set its reasoning in{" "}
+            <button
+              type="button"
+              className="llm-fx-link"
+              aria-label={`Set code mode reasoning on ${servingOn.engine}`}
+              onClick={servingOn.onGo}
+            >
+              {servingOn.engine} reasoning ↑
+            </button>
+          </p>
+        ) : hasChoices ? (
           <>
             <span className="llm-field-tag">Executor</span>
             <select

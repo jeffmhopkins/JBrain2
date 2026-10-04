@@ -65,7 +65,11 @@ from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
 from jbrain.llm.router import (
     _FOLLOW_PRIMARY_MODEL,
     _PRIMARY_MODEL_TASK,
+    CODE_TASKS,
+    CODE_TIER,
     EFFORT_TIERS,
+    JCODE_EXECUTOR_TASK,
+    JCODE_PLANNER_TASK,
     TASK_DEFAULTS,
     TASK_REASONING_BUCKET,
     TASK_REASONING_DEFAULTS,
@@ -205,6 +209,14 @@ EFFORT_TIER_LABELS: dict[str, str] = {
     "medium": "Medium reasoning",
     "low": "Low reasoning",
     "vision": "Vision",
+    CODE_TIER: "Code mode",
+}
+
+# Code mode's roles are not router tasks, so the settings screen has no pick to read a name
+# from; the snapshot carries theirs.
+CODE_TASK_LABELS: dict[str, str] = {
+    JCODE_EXECUTOR_TASK: "Code mode — executor",
+    JCODE_PLANNER_TASK: "Code mode — planner",
 }
 
 
@@ -222,6 +234,9 @@ class EngineEffortTierOut(BaseModel):
 class EngineEffortTaskOut(BaseModel):
     id: str
     tier: str | None
+    # The row's name, for a task the screen has no pick to name it from (code mode's roles);
+    # null for a routed task, named by its pick.
+    label: str | None = None
     # The owner's level for this task on the engine, or null (it inherits).
     level: str | None
     # What it runs at while `level` is null: its tier's level, else today's Standard effort
@@ -232,7 +247,8 @@ class EngineEffortTaskOut(BaseModel):
     # override (an agent turn's picked level still wins).
     effective: str | None
     # Whether the task runs on this engine right now (it is active and the task's effective
-    # route is local). A cloud-routed task never reads these levels.
+    # route is local; for code mode's roles, code mode is enabled). A cloud-routed task never
+    # reads these levels.
     applies: bool
 
 
@@ -757,6 +773,23 @@ async def _engine_efforts_info(
                     effective=level if level is not None else fallback,
                     applies=engine == active
                     and runs.partition(":")[0] == local_catalog.LOCAL_PROVIDER,
+                )
+            )
+        # Code mode's roles have no Standard effort: with no row the proxy forwards whatever
+        # level grok sent, so their fallback is the tier's, else none (`standard`).
+        code_level = stored.level(engine, "tier", CODE_TIER)
+        for task in CODE_TASKS:
+            level = stored.level(engine, "task", task)
+            tasks.append(
+                EngineEffortTaskOut(
+                    id=task,
+                    tier=CODE_TIER,
+                    label=CODE_TASK_LABELS[task],
+                    level=level,
+                    fallback=code_level,
+                    fallback_source="tier" if code_level is not None else "standard",
+                    effective=level if level is not None else code_level,
+                    applies=engine == active and settings.jcode_enabled,
                 )
             )
         out[engine] = EngineEffortOut(
@@ -2110,7 +2143,11 @@ def validate_engine_efforts(
         for key, level in entries.items():
             if scope == "tier" and key not in EFFORT_TIERS:
                 raise HTTPException(status_code=422, detail=f"unknown tier: {key}")
-            if scope == "task" and (key not in TASK_DEFAULTS or key in _HIDDEN_TASKS):
+            if (
+                scope == "task"
+                and key not in CODE_TASKS
+                and (key not in TASK_DEFAULTS or key in _HIDDEN_TASKS)
+            ):
                 raise HTTPException(status_code=422, detail=f"unknown task: {key}")
             if level is not None and level not in levels:
                 raise HTTPException(

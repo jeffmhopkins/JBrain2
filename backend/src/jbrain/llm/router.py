@@ -159,7 +159,17 @@ TASK_REASONING_DEFAULTS: dict[str, str] = {
 # per-engine reasoning level can be set on a tier and every task in it inherits it unless it
 # has its own (jbrain.llm.engine_effort). Not the prompt `strength` tiers below — those pick a
 # MODEL; these only group tasks for the effort a picked model runs at.
-EFFORT_TIERS: tuple[str, ...] = ("high", "medium", "low", "vision")
+# "code" is code mode's two roles: not router tasks (the jcode proxy forwards the sandbox's
+# own requests, nothing here routes them), but they run on the engine's model all the same, so
+# the owner sets their level beside the rest (api.jcode_llm applies it).
+CODE_TIER = "code"
+EFFORT_TIERS: tuple[str, ...] = ("high", "medium", "low", "vision", CODE_TIER)
+
+# Code mode's roles as engine-effort task keys: the executor is grok's default model, the
+# planner its `plan` subagent. The proxy tells them apart by the model a request names.
+JCODE_EXECUTOR_TASK = "jcode.executor"
+JCODE_PLANNER_TASK = "jcode.planner"
+CODE_TASKS: tuple[str, ...] = (JCODE_EXECUTOR_TASK, JCODE_PLANNER_TASK)
 
 
 def is_vision_task(task: str) -> bool:
@@ -170,6 +180,8 @@ def is_vision_task(task: str) -> bool:
 def task_tier(task: str) -> str | None:
     """The role group `task` sits in on the settings screen, or None for a task in none. The
     hidden title task counts as low: it follows the chat MODEL but keeps its own low effort."""
+    if task in CODE_TASKS:
+        return CODE_TIER
     if is_vision_task(task):
         return "vision"
     return TASK_REASONING_BUCKET.get(task)

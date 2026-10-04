@@ -73,6 +73,8 @@ def test_tasks_sit_in_the_screens_role_groups() -> None:
     assert task_tier("vision.ocr") == "vision" and task_tier("agent.vision") == "vision"
     # The hidden title follows the chat MODEL but keeps its own low effort, so the low tier.
     assert task_tier("research.title") == "low"
+    # Code mode's two roles are their own tier.
+    assert task_tier("jcode.executor") == "code" and task_tier("jcode.planner") == "code"
 
 
 # --- the router ------------------------------------------------------------------------------
@@ -361,12 +363,15 @@ def test_the_snapshot_reports_levels_tiers_and_tasks(
         "medium": (None, None),  # medium is sent as no level: the model's own default
         "low": (None, "low"),
         "vision": (None, None),
+        "code": (None, None),  # grok's own level, or the model's, absent a row
     }
+    assert flash["tiers"][-1]["label"] == "Code mode"
     tasks = {t["id"]: t for t in flash["tasks"]}
     assert "research.title" not in tasks  # hidden, follows the chat model
     assert tasks["agent.turn"] == {
         "id": "agent.turn",
         "tier": "medium",
+        "label": None,  # named by its pick on the screen
         "level": None,
         "fallback": "low",  # its stored Standard effort
         "fallback_source": "standard",
@@ -497,3 +502,68 @@ def test_the_debug_twin_shares_the_validation_and_the_write(
     }
     assert client.put(url, json={"tiers": {"low": "lots"}}, headers=headers).status_code == 422
     assert store.engine_effort_rows == {(FLASH, "tier", "low"): "none"}
+
+
+def test_code_modes_roles_are_a_code_tier_on_the_snapshot(
+    box: tuple[TestClient, FakeSettingsStore, str],
+) -> None:
+    client, store, _ = box
+    app: Any = client.app
+    flash = _flash(client.get("/api/settings/llm").json())
+    code = [t for t in flash["tasks"] if t["tier"] == "code"]
+    # Last, executor first, each with the name the screen shows (no pick to read one from).
+    assert flash["tasks"][-2:] == code
+    assert code == [
+        {
+            "id": "jcode.executor",
+            "tier": "code",
+            "label": "Code mode — executor",
+            "level": None,
+            "fallback": None,
+            "fallback_source": "standard",
+            "effective": None,
+            "applies": False,
+        },
+        {
+            "id": "jcode.planner",
+            "tier": "code",
+            "label": "Code mode — planner",
+            "level": None,
+            "fallback": None,
+            "fallback_source": "standard",
+            "effective": None,
+            "applies": False,
+        },
+    ]
+    # Applies only while Flash-Next serves AND code mode is on.
+    store.values["llm_local_engine_effective"] = "flash-next"
+    code = {t["id"]: t for t in _flash(client.get("/api/settings/llm").json())["tasks"]}
+    assert code["jcode.executor"]["applies"] is False
+    app.state.settings.jcode_enabled = True
+    code = {t["id"]: t for t in _flash(client.get("/api/settings/llm").json())["tasks"]}
+    assert code["jcode.executor"]["applies"] is True and code["jcode.planner"]["applies"] is True
+
+
+def test_code_mode_levels_set_by_tier_and_role(
+    box: tuple[TestClient, FakeSettingsStore, str],
+) -> None:
+    client, store, _ = box
+    resp = client.put(f"{_BASE}/tier/code", json={"effort": "low"})
+    assert resp.status_code == 200
+    tasks = {t["id"]: t for t in _flash(resp.json())["tasks"]}
+    assert tasks["jcode.planner"]["fallback"] == "low"
+    assert tasks["jcode.planner"]["fallback_source"] == "tier"
+    resp = client.put(f"{_BASE}/task/jcode.planner", json={"effort": "high"})
+    tasks = {t["id"]: t for t in _flash(resp.json())["tasks"]}
+    planner = tasks["jcode.planner"]
+    assert (planner["level"], planner["effective"]) == ("high", "high")
+    assert tasks["jcode.executor"]["effective"] == "low"
+    resp = client.put(_BASE, json={"tasks": {"jcode.executor": "none", "jcode.planner": None}})
+    assert resp.status_code == 200
+    assert store.engine_effort_rows == {
+        (FLASH, "tier", "code"): "low",
+        (FLASH, "task", "jcode.executor"): "none",
+    }
+    # A level Flash-Next does not take, or a role that does not exist, is still a 422.
+    assert client.put(f"{_BASE}/task/jcode.executor", json={"effort": "xhigh"}).status_code == 422
+    assert client.put(f"{_BASE}/task/jcode.reviewer", json={"effort": "low"}).status_code == 422

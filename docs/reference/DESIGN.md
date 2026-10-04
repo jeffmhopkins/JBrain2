@@ -755,6 +755,19 @@ untouched.
 - **The Standard tier cards hide while Flash-Next serves** (owner, 2026-10-03): every local
   task runs on Flash-Next then, so the Standard routing would only describe a stopped
   gateway, and this card is the one that applies. They return as soon as Standard serves.
+- **The Code mode card drops its picks while Flash-Next serves** (owner, 2026-10-04): the
+  executor and the planner both run on its one model, so the two model selects give way to
+  one line, *Runs on Qwen3.8 Flash-Next … while Flash-Next serves — set its reasoning in
+  **Flash-Next reasoning ↑***. The link opens this card and its Code mode row, scrolls to it and
+  flashes it once (no flash under reduced motion). The stored picks are kept and the selects
+  return unchanged when Standard serves. The line shows only when this card has the Code mode
+  row (an older server's card has none, so its selects stay).
+- **Code mode is a tier here** (owner, 2026-10-04). The server's `code` tier (*Code mode*,
+  steel rail like the Code mode card) holds *Code mode — executor* and *Code mode — planner*,
+  named by the server's `label`, since they have no routing pick. Code mode always runs on-box,
+  so the row shows whenever code mode is on, also while Standard serves. With code mode off it
+  is left out, and is not called a cloud task. A role with no level reads *Grok's own level —
+  none set here*: with no row the proxy forwards whatever grok sent.
 - **On-box LLMs starts collapsed** on a new device (owner, 2026-10-03) and remembers the
   owner's choice per device (`localStorage`, best-effort).
 - **No optimistic state.** Every write (PUT/DELETE one row, or the batch) returns the whole

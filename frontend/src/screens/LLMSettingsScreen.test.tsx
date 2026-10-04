@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   EngineEffortInfo,
   EngineEffortTask,
@@ -2800,6 +2800,130 @@ describe("Flash-Next reasoning card (GUI gate B)", () => {
       0,
     );
     expect(screen.queryByRole("region", { name: "Flash-Next reasoning" })).toBeNull();
+  });
+
+  describe("code mode on Flash-Next", () => {
+    // Code mode on, its two roles in the server's "code" tier, and Flash-Next installed so the
+    // Code mode card can name the model it runs on.
+    function codeSeed(active: boolean, enabled = true): LlmSettings {
+      const seed = fxSeed(active);
+      seed.local_models = [
+        lm({ id: "qwen3.8-flash-next", label: "Qwen3.8 Flash-Next", engine: "flash-next" }),
+      ];
+      seed.jcode = {
+        enabled,
+        model: "qwen3-coder-next",
+        default: "qwen3-coder-next",
+        planner: "gpt-oss-120b",
+        planner_default: "gpt-oss-120b",
+        planner_same: "same",
+        options: [{ id: "qwen3-coder-next", label: "Qwen3-Coder-Next 80B" }],
+      };
+      const info = fxInfo(seed);
+      info.tiers.push({ id: "code", label: "Code mode", level: null, default: null });
+      info.tasks.push(
+        {
+          ...fxTask("jcode.executor", "code", null, active && enabled),
+          label: "Code mode — executor",
+        },
+        {
+          ...fxTask("jcode.planner", "code", null, active && enabled, "high"),
+          label: "Code mode — planner",
+        },
+      );
+      return seed;
+    }
+
+    it("gives code mode its own tier row with both roles, named by the server", async () => {
+      stubFx(codeSeed(true));
+      render(<LLMSettingsScreen />);
+      const fx = await card();
+      const row = fxRow(fx, "code");
+      expect(row).not.toBeNull();
+      expect(row).toHaveClass("llm-jcode");
+      expect(within(row).getByText("2 tasks · 1 set")).toBeInTheDocument();
+      fireEvent.click(within(row).getByRole("button", { name: /Code mode/ }));
+      expect(within(row).getByLabelText("Code mode — executor on Flash-Next")).toHaveValue(
+        "default",
+      );
+      expect(within(row).getByLabelText("Code mode — planner on Flash-Next")).toHaveValue("high");
+      // No level forwards grok's own, so the row does not claim the model's default.
+      expect(within(row).getByText("Grok's own level — none set here")).toBeInTheDocument();
+      // The rows read in the server's order: the code tier after the others.
+      const ids = Array.from(fx.querySelectorAll(".llm-fxt")).map((el) => el.id);
+      expect(ids.at(-1)).toBe("fx-flash-next-code");
+    });
+
+    it("sets a role's level through the task route", async () => {
+      const writes = stubFx(codeSeed(true));
+      render(<LLMSettingsScreen />);
+      const fx = await openTier(/^Code mode/);
+      fireEvent.change(within(fx).getByLabelText("Code mode — executor on Flash-Next"), {
+        target: { value: "low" },
+      });
+      await waitFor(() =>
+        expect(writes).toEqual([
+          {
+            method: "PUT",
+            path: "/api/settings/llm/engine-effort/flash-next/task/jcode.executor",
+            body: { effort: "low" },
+          },
+        ]),
+      );
+    });
+
+    it("replaces the Code mode picks with the model it runs on and a link to its levels", async () => {
+      const scrolled = vi.fn();
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrolled;
+      onTestFinished(() => {
+        Element.prototype.scrollIntoView = original;
+      });
+      stubFx(codeSeed(true));
+      render(<LLMSettingsScreen />);
+      const codeCard = await screen.findByRole("region", { name: "Code mode model card" });
+      expect(within(codeCard).queryByLabelText("Code mode executor model")).toBeNull();
+      expect(within(codeCard).queryByLabelText("Code mode planner model")).toBeNull();
+      expect(codeCard).toHaveTextContent(
+        "Runs on Qwen3.8 Flash-Next while Flash-Next serves — set its reasoning in Flash-Next reasoning ↑",
+      );
+      // The card is collapsed by the owner; the link opens it and the Code mode row.
+      const fx = await card();
+      fireEvent.click(within(fx).getByRole("button", { name: "Flash-Next reasoning In use" }));
+      expect(within(fx).queryByLabelText("Code mode — executor on Flash-Next")).toBeNull();
+      fireEvent.click(
+        within(codeCard).getByRole("button", { name: "Set code mode reasoning on Flash-Next" }),
+      );
+      expect(
+        await within(fx).findByLabelText("Code mode — executor on Flash-Next"),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(scrolled).toHaveBeenCalled());
+      expect(fxRow(fx, "code")).toHaveClass("llm-fx-flash");
+    });
+
+    it("leaves the Code mode card's picks alone while Standard serves", async () => {
+      stubFx(codeSeed(false));
+      render(<LLMSettingsScreen />);
+      const codeCard = await screen.findByRole("region", { name: "Code mode model card" });
+      expect(within(codeCard).getByLabelText("Code mode executor model")).toBeInTheDocument();
+      expect(within(codeCard).getByLabelText("Code mode planner model")).toBeInTheDocument();
+      expect(codeCard).not.toHaveTextContent(/Runs on/);
+      // Code mode always runs on-box, so its levels can be set ahead of a switch.
+      const fx = await card();
+      fireEvent.click(within(fx).getByRole("button", { name: /Flash-Next reasoning/ }));
+      expect(fxRow(fx, "code")).not.toBeNull();
+    });
+
+    it("leaves the code tier out while code mode is off", async () => {
+      stubFx(codeSeed(true, false));
+      render(<LLMSettingsScreen />);
+      const fx = await card();
+      expect(fxRow(fx, "high")).not.toBeNull();
+      expect(fxRow(fx, "code")).toBeNull();
+      // Not called a cloud task either: it runs nowhere.
+      expect(within(fx).queryByText(/Code mode — executor/)).toBeNull();
+      expect(screen.queryByRole("region", { name: "Code mode model card" })).toBeNull();
+    });
   });
 
   describe("live poll", () => {
