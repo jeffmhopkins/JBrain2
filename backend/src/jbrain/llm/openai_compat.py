@@ -38,8 +38,8 @@ from jbrain.llm.types import (
     TextChunk,
     ToolCall,
     UserMessage,
-    current_turn_start,
     parse_json_payload,
+    replayed_steps,
 )
 
 log = structlog.get_logger()
@@ -121,22 +121,22 @@ def _user_content(text: str, images: Sequence[LlmImage]) -> str | list[dict[str,
 
 
 def _openai_messages(
-    system: str, messages: Sequence[LlmMessage], *, replay_reasoning: bool = False
+    system: str, messages: Sequence[LlmMessage], *, replay_model: str = ""
 ) -> list[dict[str, Any]]:
     """Flatten provider-agnostic messages into the OpenAI chat array. Tool
     results become individual `tool`-role messages, one per result.
 
-    `replay_reasoning` (a preserving local model only) puts each assistant step's own
-    trace back as `reasoning_content` — but only for steps after the last user message,
-    the turn in flight: an earlier turn's thinking would grow every prompt without bound."""
+    `replay_model` (a preserving local model the router chose to replay to) puts each of its
+    own steps' traces back as `reasoning_content` — only for the turn in flight
+    (`replayed_steps`): an earlier turn's thinking would grow every prompt without bound."""
     out: list[dict[str, Any]] = [{"role": "system", "content": system}]
-    turn_start = current_turn_start(messages) if replay_reasoning else len(messages)
+    replayed = replayed_steps(messages, replay_model)
     for index, msg in enumerate(messages):
         if isinstance(msg, UserMessage):
             out.append({"role": "user", "content": _user_content(msg.text, msg.images)})
         elif isinstance(msg, AssistantMessage):
             entry: dict[str, Any] = {"role": "assistant", "content": msg.text or None}
-            if index >= turn_start and msg.reasoning:
+            if index in replayed:
                 entry["reasoning_content"] = msg.reasoning
             if msg.tool_calls:
                 entry["tool_calls"] = [
@@ -309,19 +309,26 @@ class OpenAiCompatClient:
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> dict[str, Any]:
-        replay = local_catalog.replays_reasoning(self.provider, model)
+        # The router decides whether to replay (it may turn it off to fit a slot); the catalog
+        # gate is re-checked here so no caller can put thinking on a wire that cannot take it.
+        preserving = local_catalog.replays_reasoning(self.provider, model)
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "messages": _openai_messages(system, messages, replay_reasoning=replay),
+            "messages": _openai_messages(
+                system, messages, replay_model=model if replay_reasoning and preserving else ""
+            ),
         }
         if tools:
             payload["tools"] = openai_tools(tools)
         self._apply_reasoning(payload, reasoning_effort)
-        if replay:
+        if preserving:
             # The template's own default keeps EVERY historical assistant's thinking; false
-            # bounds it to the turn in flight, the same line the replay above draws.
+            # bounds it to the turn in flight, the same line the replay above draws. Sent on
+            # every call to this model, replayed or not, so a round that had to drop its replay
+            # to fit still renders the history the same way.
             kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
             kwargs["preserve_thinking"] = False
         self._apply_sampling(payload, sampling)
@@ -348,6 +355,7 @@ class OpenAiCompatClient:
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> LlmTurn:
         payload = self._converse_payload(
             model=model,
@@ -358,6 +366,7 @@ class OpenAiCompatClient:
             reasoning_effort=reasoning_effort,
             sampling=sampling,
             id_slot=id_slot,
+            replay_reasoning=replay_reasoning,
         )
         headers = self._auth_headers()
         data = await post_json(
@@ -412,6 +421,7 @@ class OpenAiCompatClient:
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over chat-completions SSE chunks. Content deltas stream
         live; tool_call deltas arrive fragmented and keyed by index (id/name on
@@ -427,6 +437,7 @@ class OpenAiCompatClient:
             reasoning_effort=reasoning_effort,
             sampling=sampling,
             id_slot=id_slot,
+            replay_reasoning=replay_reasoning,
         )
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}

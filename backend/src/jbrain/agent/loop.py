@@ -144,6 +144,11 @@ class Guardrails:
 # at medium — rarely truncates mid-chain; the 200k cost-token backstop still bounds a
 # runaway.)
 STEPS_BY_EFFORT: dict[str, int] = {"high": 60, "medium": 50}
+# Keys are OUR levels; the Qwen3.8 card's `xhigh` is what "high" maps to on the wire, so it needs
+# no entry. Known gap, not fixed here: an UNSET effort on Flash-Next runs at the template default
+# (`xhigh`) yet sizes as the default 20 steps, because the effort reaching this table is the
+# routed one, before the engine resolves it. Closing it needs the resolved model's
+# `template_default_effort` at guardrail time (FLASH_NEXT_ENGINE_PLAN's open effort question).
 
 # A SUPERVISED turn — one a foreground PWA client is up watching stream, able to Stop it at
 # any moment — earns a much larger per-turn budget: the human is the loop's anchor, so a long
@@ -611,18 +616,29 @@ def _user_text(conversation: Sequence[LlmMessage]) -> str:
     return "\n".join(m.text for m in conversation if isinstance(m, UserMessage))
 
 
-def _step_message(turn: LlmTurn) -> AssistantMessage:
-    """A tool step of the turn in flight, appended for the next round — with its reasoning.
+def _step_message(turn: LlmTurn, reasoning: str | None = None) -> AssistantMessage:
+    """A tool step of the turn in flight, appended for the next round — with its reasoning
+    and the served model that produced it (stamped by the router).
 
     Only these in-flight steps ever carry a trace (history rebuilt from earlier turns is
-    text-only); the adapter decides whether it goes on the wire. `_converse_turn` folds a
-    hidden tool round's content onto `reasoning` for the persisted trace, but that content
-    already replays as `text` — the fold is cut back off so it is never sent twice, which
-    would also break the re-rendered step's match with the tokens the model generated."""
-    reasoning = turn.reasoning
-    if turn.text and reasoning.endswith(turn.text):
-        reasoning = reasoning[: -len(turn.text)]
-    return AssistantMessage(text=turn.text, tool_calls=turn.tool_calls, reasoning=reasoning)
+    text-only); the router and adapter decide whether it goes on the wire. `reasoning`
+    overrides `turn.reasoning` where the two differ: `_converse_turn` folds a hidden tool
+    round's content onto the turn's reasoning for the persisted trace, but that content
+    already replays as `text`, so the step carries the model's own channel only."""
+    return AssistantMessage(
+        text=turn.text,
+        tool_calls=turn.tool_calls,
+        reasoning=turn.reasoning if reasoning is None else reasoning,
+        reasoning_model=turn.model,
+    )
+
+
+def _billable_tokens(turn: LlmTurn) -> int:
+    """A round's cost against the loop's guardrail and the tree budget: its usage less the
+    replayed reasoning, which the model re-reads every round but which is the turn's own
+    earlier output, already paid for once. Counting it would end a long Flash-Next tool loop
+    on `budget` well before the same work on a model that does not replay."""
+    return max(turn.usage.input_tokens - turn.replayed_tokens, 0) + turn.usage.output_tokens
 
 
 def _prompt_message(message: LlmMessage) -> dict[str, Any]:
@@ -635,7 +651,10 @@ def _prompt_message(message: LlmMessage) -> dict[str, Any]:
         return {"role": "user", "content": message.text}
     if isinstance(message, AssistantMessage):
         calls = "".join(f"\n[tool call] {c.name}" for c in message.tool_calls)
-        return {"role": "assistant", "content": f"{message.text}{calls}"}
+        # The trace itself would swamp the capture; its size says what the step weighed. It
+        # reached the model only on a preserving route (`replayed_steps`).
+        thought = f"[reasoning: {len(message.reasoning)} chars]\n" if message.reasoning else ""
+        return {"role": "assistant", "content": f"{thought}{message.text}{calls}"}
     joined = "\n\n".join(
         f"[{'error' if r.is_error else 'result'} {r.tool_call_id}]\n{r.content}"
         for r in message.results
@@ -772,9 +791,13 @@ class AgentLoop:
         on_text: Callable[[str], None] | None,
         on_reasoning: Callable[[str], None] | None,
         hide_tool_round_text: bool = False,
-    ) -> LlmTurn:
-        """One model turn for `run`. With no streaming callbacks it's a plain
-        `converse` (the existing non-streaming path, unchanged). With `on_text`/
+    ) -> tuple[LlmTurn, str]:
+        """One model turn for `run`, and the reasoning its step replays — the model's own
+        channel, which differs from the turn's `reasoning` only when a hidden tool round's
+        text was folded onto the latter for the persisted trace.
+
+        With no streaming callbacks it's a plain `converse` (the existing non-streaming path,
+        unchanged). With `on_text`/
         `on_reasoning` it streams via `converse_stream` and forwards each chunk to the
         callback as it arrives — the sub-agent spawner uses this to surface a child's
         live tokens — while still returning the closing turn so the loop is identical.
@@ -793,7 +816,7 @@ class AgentLoop:
         thinking (the gap that made the coder's thinking never reach the fan's trace)."""
         effort = reasoning_effort if reasoning_effort is not None else self._effort_override
         if on_text is None and on_reasoning is None:
-            return await self._router.converse(
+            plain = await self._router.converse(
                 self._task,
                 system=system_prompt,
                 messages=messages,
@@ -804,6 +827,7 @@ class AgentLoop:
                 spec_override=self._model_override,
                 **self._slot_pin,
             )
+            return plain, plain.reasoning
         turn: LlmTurn | None = None
         # On the local route we can't classify this round's content until its stop_reason
         # arrives (a tool call is signalled only at the end), so buffer the round's text and
@@ -841,6 +865,7 @@ class AgentLoop:
             # raising, since it is mid-SSE and the PWA wants a terminal reason; both land
             # outside `end_turn`, which is the property that matters.
             raise LlmStreamTruncatedError(f"{self._task}: stream closed with no LlmTurn")
+        own_reasoning = turn.reasoning
         if hide_tool_round_text and round_text:
             round_content = "".join(round_text)
             if turn.stop_reason == "tool_use" and turn.tool_calls:
@@ -852,7 +877,7 @@ class AgentLoop:
                 turn = replace(turn, reasoning=turn.reasoning + round_content)
             elif on_text is not None:
                 on_text(round_content)
-        return turn
+        return turn, own_reasoning
 
     async def run(
         self,
@@ -957,7 +982,7 @@ class AgentLoop:
             search as text instead of synthesizing."""
             nonlocal cost
             final_messages = [*messages, UserMessage(text=FINAL_ANSWER_DIRECTIVE)]
-            final = await self._converse_turn(
+            final, _ = await self._converse_turn(
                 system_prompt,
                 final_messages,
                 (),
@@ -966,7 +991,7 @@ class AgentLoop:
                 on_reasoning,
                 hide_tool_round_text,
             )
-            spent_final = final.usage.input_tokens + final.usage.output_tokens
+            spent_final = _billable_tokens(final)
             cost += spent_final
             if tree is not None:
                 tree.charge(spent_final)
@@ -983,7 +1008,7 @@ class AgentLoop:
             # ignores it.
             if force_final_answer and step > 0 and step == self._g.max_steps - _BUDGET_WARNING_LEAD:
                 messages.append(UserMessage(text=BUDGET_WARNING_DIRECTIVE))
-            turn = await self._converse_turn(
+            turn, own_reasoning = await self._converse_turn(
                 system_prompt,
                 messages,
                 tools,
@@ -992,7 +1017,7 @@ class AgentLoop:
                 on_reasoning,
                 hide_tool_round_text,
             )
-            spent_call = turn.usage.input_tokens + turn.usage.output_tokens
+            spent_call = _billable_tokens(turn)
             cost += spent_call
             if tree is not None:
                 tree.charge(spent_call)
@@ -1037,7 +1062,7 @@ class AgentLoop:
                     return await _forced_final("budget", step + 1)
                 return _result(turn.text, "budget", step + 1)
 
-            messages.append(_step_message(turn))
+            messages.append(_step_message(turn, own_reasoning))
             results: list[ToolResult] = []
             any_error = False
             halt_seen: str | None = None
@@ -1330,7 +1355,7 @@ class AgentLoop:
                 ):
                     yield ev
                 return
-            spent_call = turn.usage.input_tokens + turn.usage.output_tokens
+            spent_call = _billable_tokens(turn)
             last_real_input = turn.usage.input_tokens  # floor for the next step's live ticks
             cost += spent_call
             if tree is not None:
@@ -1728,7 +1753,7 @@ class AgentLoop:
                 spec_override=self._model_override,
                 **self._slot_pin,
             )
-            spent = turn.usage.input_tokens + turn.usage.output_tokens
+            spent = _billable_tokens(turn)
             budget[0] -= spent
             if tree is not None:
                 tree.charge(spent)

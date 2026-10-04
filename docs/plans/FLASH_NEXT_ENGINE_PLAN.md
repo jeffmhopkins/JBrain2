@@ -607,23 +607,37 @@ steps (decision consistency, less re-reasoning, better KV reuse), and the served
 `reasoning_content` on assistant messages (llama-server: "chat template supports preserving
 reasoning"). The adapter never sent it back. Owner decision: the card's lighter
 `preserve_thinking: false` mode — replay only the turn in flight's tool steps.
-- `AssistantMessage.reasoning`; the agent loop sets it on each tool step it appends (`run`,
-  `run_stream`, the buffered reflexion path). History rebuilt from earlier turns stays text-only.
-- `openai_compat._openai_messages` emits `reasoning_content` only for assistant steps after the
-  last user message (`types.current_turn_start`), and the payload carries
-  `chat_template_kwargs.preserve_thinking=false` so the template draws the same line. An injected
-  directive (budget warning, forced final answer) is a user message, so it starts a new boundary
-  for both alike.
+- `AssistantMessage.reasoning` + `reasoning_model`; the agent loop sets both on each tool step it
+  appends (`run`, `run_stream`, the buffered reflexion path). The router stamps the served model
+  on every `LlmTurn`, so a step names its thinker and only that same model is ever replayed to
+  (a mid-turn engine switch drops the other model's thinking). History rebuilt from earlier turns
+  stays text-only. A sub-agent's hidden tool-round text, folded onto the persisted trace, is not
+  replayed as reasoning (it already goes back as the step's content).
+- `openai_compat._openai_messages` emits `reasoning_content` only for the steps
+  `types.replayed_steps` picks (after the last user message, produced by this model), and every
+  call to a preserving model carries `chat_template_kwargs.preserve_thinking=false` so the
+  template draws the same line. An injected directive (budget warning, forced final answer) is a
+  user message, so it starts a new boundary for both alike.
 - Gate: the catalog flag `LocalModel.preserves_reasoning`, set on Flash-Next only, read through
-  `local_catalog.replays_reasoning(provider, served)` — never a cloud provider, an unknown served
-  name, or a Standard model. The Qwen3.8-27B entries stay off until their served template is shown
-  to read both fields.
-- Slot fit: `slot_roles.prompt_chars(..., replay_reasoning=…)` counts the replayed trace, so the
-  router's cap check and pool guard book what is actually sent; the raw-body proxies'
+  `local_catalog.replays_reasoning(provider, served)`, which is never true for a cloud provider,
+  an unknown served name or a Standard model. The Qwen3.8-27B entries stay off until their served
+  template is shown to read both fields. The ROUTER decides per call and passes
+  `replay_reasoning=True` to the client explicitly; the client re-checks the catalog gate.
+- **Degrade on overflow:** `slot_roles.prompt_chars(..., replay_model=…)` counts the replayed
+  trace, so the cap check and pool guard book what is sent. If the replay is what pushes a prompt
+  past its role's slot cap, the router runs that round WITHOUT it (`llm.reasoning_replay_dropped`)
+  instead of failing; a prompt too big even bare is still refused. The raw-body proxies'
   `openai_slot_fit.prompt_chars` counts a client's own `reasoning_content`.
-- Expect one cold prefill per conversation after deploy: if the template's default rendered an
-  (empty) think block on earlier turns' assistant messages, `preserve_thinking=false` drops it,
-  so the history prefix changes once. Not yet observed on-box.
+- Cost: the router stamps an estimate of the replayed tokens on the turn (`replayed_tokens`), and
+  the loop's cost guardrail and tree budget leave them out — the model re-reads its own earlier
+  output each round, which would otherwise end a long Flash-Next loop on `budget` early. The
+  prompt capture shows a step's trace size (`[reasoning: N chars]`).
+- Known gap (comment in `STEPS_BY_EFFORT`): an unset effort on Flash-Next runs at the template's
+  `xhigh` but sizes the step cap as the default, since the guardrail sees the routed effort.
+- **Expect a one-time re-prefill per conversation after deploy:** if the template's default
+  rendered an (empty) think block on earlier turns' assistant messages, `preserve_thinking=false`
+  drops it, so each conversation's history prefix changes once and its first turn re-reads the
+  history cold. Not yet observed on-box.
 
 ### F4 — Per-role disk prefix cache ◻️
 Begins with the check moved out of F2, and gated on it:

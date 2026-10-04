@@ -30,7 +30,7 @@ from jbrain.llm.types import (
     LlmTool,
     ToolResultMessage,
     UserMessage,
-    current_turn_start,
+    replayed_steps,
 )
 
 # No single sequence may exceed what the model was trained on, whatever the pool holds.
@@ -321,7 +321,7 @@ def prompt_chars(
     messages: Sequence[LlmMessage],
     tools: Sequence[LlmTool],
     *,
-    replay_reasoning: bool = False,
+    replay_model: str = "",
 ) -> int:
     """Roughly how much text this turn puts in front of the model, in characters.
 
@@ -334,11 +334,11 @@ def prompt_chars(
     Images are counted as their encoded size deliberately not at all: a vision model prices
     them per tile, not per byte, so their characters would swamp the estimate.
 
-    `replay_reasoning` mirrors the adapter's replay to a preserving model: the turn in
-    flight's own thinking goes back into the prompt, and a deep tool loop's traces can
-    outweigh its transcript — left out, the pool guard would book a slot short."""
+    `replay_model` mirrors the adapter's replay to a preserving model (`replayed_steps`):
+    the turn in flight's own thinking goes back into the prompt, and a deep tool loop's traces
+    can outweigh its transcript — left out, the pool guard would book a slot short."""
     total = len(system)
-    turn_start = current_turn_start(messages) if replay_reasoning else len(messages)
+    replayed = replayed_steps(messages, replay_model)
     for index, message in enumerate(messages):
         if isinstance(message, UserMessage):
             total += len(message.text)
@@ -346,7 +346,7 @@ def prompt_chars(
             total += len(message.text) + sum(
                 tool_call_chars(call.name, call.arguments) for call in message.tool_calls
             )
-            if index >= turn_start:
+            if index in replayed:
                 total += len(message.reasoning)
         elif isinstance(message, ToolResultMessage):
             total += sum(len(str(result.content)) for result in message.results)

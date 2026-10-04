@@ -86,6 +86,7 @@ class FakeLlmClient:
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> LlmTurn:
         self.converse_calls.append(
             {
@@ -97,6 +98,7 @@ class FakeLlmClient:
                 "reasoning_effort": reasoning_effort,
                 "sampling": sampling,
                 "id_slot": id_slot,
+                "replay_reasoning": replay_reasoning,
             }
         )
         if not self._turns:
@@ -116,6 +118,7 @@ class FakeLlmClient:
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> AsyncIterator[StreamPart]:
         self.stream_calls.append(
             {
@@ -127,6 +130,7 @@ class FakeLlmClient:
                 "reasoning_effort": reasoning_effort,
                 "sampling": sampling,
                 "id_slot": id_slot,
+                "replay_reasoning": replay_reasoning,
             }
         )
         idx = len(self.stream_calls) - 1

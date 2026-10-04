@@ -10,6 +10,7 @@ import httpx
 from jbrain.llm import (
     AssistantMessage,
     FakeLlmClient,
+    LlmMessage,
     LlmRouter,
     LlmTool,
     LlmTurn,
@@ -258,18 +259,26 @@ async def test_glm_keeps_its_genuine_none() -> None:
 
 # --- Preserved thinking within a turn -----------------------------------------------
 
+FLASH = "qwen3.8-flash-next"
 _CALL = ToolCall(id="c1", name="search", arguments={"q": "x"})
-_TWO_TURNS = [
-    UserMessage(text="earlier"),
-    # An earlier turn's step cannot carry a trace in practice; given one anyway, it must not
-    # be replayed — the boundary is the serializer's, not the caller's good behaviour.
-    AssistantMessage(text="earlier answer", reasoning="old thinking"),
-    UserMessage(text="now"),
-    AssistantMessage(text="", tool_calls=(_CALL,), reasoning="step one thinking"),
-    ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="r1")]),
-    AssistantMessage(text="", tool_calls=(_CALL,), reasoning="step two thinking"),
-    ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="r2")]),
-]
+
+
+def _two_turns(model: str = FLASH) -> list[LlmMessage]:
+    return [
+        UserMessage(text="earlier"),
+        # An earlier turn's step cannot carry a trace in practice; given one anyway, it must
+        # not be replayed — the boundary is the serializer's, not the caller's good behaviour.
+        AssistantMessage(text="earlier answer", reasoning="old thinking", reasoning_model=model),
+        UserMessage(text="now"),
+        AssistantMessage(
+            text="", tool_calls=(_CALL,), reasoning="step one thinking", reasoning_model=model
+        ),
+        ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="r1")]),
+        AssistantMessage(
+            text="", tool_calls=(_CALL,), reasoning="step two thinking", reasoning_model=model
+        ),
+        ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="r2")]),
+    ]
 
 
 def _assistant_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -278,7 +287,7 @@ def _assistant_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 async def test_flash_next_replays_reasoning_only_after_the_last_user_message() -> None:
     captured, client = _capturing_client()
-    await client.converse(model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS)
+    await client.converse(model=FLASH, system="s", messages=_two_turns(), replay_reasoning=True)
     entries = _assistant_entries(captured["payload"])
     assert "reasoning_content" not in entries[0]
     assert [e["reasoning_content"] for e in entries[1:]] == [
@@ -289,10 +298,31 @@ async def test_flash_next_replays_reasoning_only_after_the_last_user_message() -
     assert captured["payload"]["chat_template_kwargs"]["preserve_thinking"] is False
 
 
+async def test_the_router_decides_replay_but_the_template_kwarg_always_rides() -> None:
+    # A round whose replay was dropped to fit its slot still renders history the same way.
+    captured, client = _capturing_client()
+    await client.converse(model=FLASH, system="s", messages=_two_turns())
+    assert all("reasoning_content" not in e for e in _assistant_entries(captured["payload"]))
+    assert captured["payload"]["chat_template_kwargs"] == {"preserve_thinking": False}
+
+
+async def test_another_models_thinking_is_never_replayed() -> None:
+    # A mid-turn engine switch: the steps were thought by gpt-oss, the next round is Flash-Next.
+    captured, client = _capturing_client()
+    await client.converse(
+        model=FLASH, system="s", messages=_two_turns("gpt-oss-120b"), replay_reasoning=True
+    )
+    assert all("reasoning_content" not in e for e in _assistant_entries(captured["payload"]))
+
+
 async def test_preserve_thinking_rides_beside_the_reasoning_toggle() -> None:
     captured, client = _capturing_client()
     await client.converse(
-        model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS, reasoning_effort="low"
+        model=FLASH,
+        system="s",
+        messages=_two_turns(),
+        reasoning_effort="low",
+        replay_reasoning=True,
     )
     assert captured["payload"]["chat_template_kwargs"] == {
         "enable_thinking": True,
@@ -316,7 +346,7 @@ async def test_flash_next_stream_replays_reasoning_too() -> None:
         "http://localhost:11434/v1", "", provider="local", transport=httpx.MockTransport(handler)
     )
     async for _part in client.converse_stream(
-        model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS
+        model=FLASH, system="s", messages=_two_turns(), replay_reasoning=True
     ):
         pass
     entries = _assistant_entries(captured["payload"])
@@ -330,16 +360,18 @@ async def test_flash_next_stream_replays_reasoning_too() -> None:
 async def test_a_step_with_no_trace_sends_no_reasoning_field() -> None:
     captured, client = _capturing_client()
     messages = [UserMessage(text="u"), AssistantMessage(text="", tool_calls=(_CALL,))]
-    await client.converse(model="qwen3.8-flash-next", system="s", messages=messages)
+    await client.converse(model=FLASH, system="s", messages=messages, replay_reasoning=True)
     assert "reasoning_content" not in _assistant_entries(captured["payload"])[0]
 
 
 async def test_a_non_preserving_local_model_gets_no_reasoning_back() -> None:
     # Qwen3.8-27B shares the family but its served template is not shown to preserve
-    # reasoning, so it keeps the pre-existing wire shape exactly.
+    # reasoning, so it keeps the pre-existing wire shape exactly — even if asked to replay.
     for model in ("qwen3.8-27b-q4", "gpt-oss-120b", "not-in-the-catalog"):
         captured, client = _capturing_client()
-        await client.converse(model=model, system="s", messages=_TWO_TURNS)
+        await client.converse(
+            model=model, system="s", messages=_two_turns(model), replay_reasoning=True
+        )
         assert all("reasoning_content" not in e for e in _assistant_entries(captured["payload"]))
         assert "preserve_thinking" not in captured["payload"].get("chat_template_kwargs", {})
 
@@ -347,6 +379,6 @@ async def test_a_non_preserving_local_model_gets_no_reasoning_back() -> None:
 async def test_a_cloud_provider_never_gets_reasoning_back() -> None:
     # Even under the Flash-Next served name, a cloud provider is not the local template.
     captured, client = _capturing_client(provider="xai")
-    await client.converse(model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS)
+    await client.converse(model=FLASH, system="s", messages=_two_turns(), replay_reasoning=True)
     assert all("reasoning_content" not in e for e in _assistant_entries(captured["payload"]))
     assert "chat_template_kwargs" not in captured["payload"]

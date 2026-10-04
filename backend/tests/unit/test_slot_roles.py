@@ -14,7 +14,13 @@ from jbrain.llm.slot_roles import (
     pool_shape,
     role_for,
 )
-from jbrain.llm.types import AssistantMessage, LlmMessage, UserMessage, current_turn_start
+from jbrain.llm.types import (
+    AssistantMessage,
+    LlmMessage,
+    UserMessage,
+    current_turn_start,
+    replayed_steps,
+)
 
 
 def test_flash_next_pool_shape() -> None:
@@ -176,19 +182,30 @@ def test_the_video_charge_adds_to_the_prompt_estimate() -> None:
     assert with_video - base == 8192
 
 
+FLASH = "qwen3.8-flash-next"
+
+
 def _replay_messages() -> list[LlmMessage]:
     return [
         UserMessage(text="earlier"),
-        AssistantMessage(text="a", reasoning="old" * 10),
+        AssistantMessage(text="a", reasoning="old" * 10, reasoning_model=FLASH),
         UserMessage(text="now"),
-        AssistantMessage(text="", reasoning="new" * 5),
+        AssistantMessage(text="", reasoning="new" * 5, reasoning_model=FLASH),
+        AssistantMessage(text="", reasoning="other" * 3, reasoning_model="gpt-oss-120b"),
     ]
 
 
 def test_prompt_chars_counts_only_the_in_flight_reasoning_when_replayed() -> None:
     messages = _replay_messages()
     without = slot_roles.prompt_chars("s", messages, ())
-    assert slot_roles.prompt_chars("s", messages, (), replay_reasoning=True) == without + 15
+    assert slot_roles.prompt_chars("s", messages, (), replay_model=FLASH) == without + 15
+
+
+def test_replayed_steps_are_the_in_flight_ones_the_same_model_thought() -> None:
+    messages = _replay_messages()
+    assert replayed_steps(messages, FLASH) == {3}
+    assert replayed_steps(messages, "gpt-oss-120b") == {4}
+    assert replayed_steps(messages, "") == frozenset()
 
 
 def test_prompt_chars_ignores_reasoning_a_model_is_not_sent() -> None:
