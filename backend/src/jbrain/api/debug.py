@@ -202,6 +202,10 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # the assistant may not use, and a session that believes it cannot deploy
             # waits on a human for something it was handed the means to do.
             "ops.update",
+            # Freeing what `GET /disk` reports as reclaimable (`POST /disk/cleanup`): the
+            # build cache, unused non-stack images and allowlisted orphan volumes. Listed
+            # for the same reason as `ops.update`.
+            "ops.disk_cleanup",
             # A panel's own console over USB (`GET /endpoint/console`). Listed for the
             # same reason as the two above: without it an assistant reads "cannot see the
             # device" and hands the owner an errand instead of looking.
@@ -3321,8 +3325,10 @@ async def disk(
 ) -> dict[str, object]:
     """Where the box's disk went, proxied from the supervisor (the only holder of the
     docker socket): filesystem totals, `docker system df` (images with reclaimable bytes,
-    container writable layers, volumes, build cache), and per-entry sizes of PROJECT_DIR
-    one level deeper under the model and backup dirs. Passed through as the supervisor
+    container writable layers, volumes, build cache), per-entry sizes of PROJECT_DIR
+    one level deeper under the model and backup dirs, and `host_dirs` — the same `du`
+    over a fixed allowlist of host folders (/home, /root, /var, ...), top 60 entries
+    each, for space neither the project nor docker holds. Passed through as the supervisor
     shapes it — a partial build carries an `errors` list rather than failing.
     `?refresh=1` bypasses the supervisor's ~60 s cache."""
     request.state.debug_detail = "disk usage" + (" (refresh)" if refresh else "")
@@ -3332,6 +3338,58 @@ async def disk(
         headers={"Authorization": f"Bearer {settings.supervisor_token}"},
         timeout=_DISK_TIMEOUT,
     )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+class DiskCleanupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actions: list[Literal["build_cache", "unused_images", "orphan_volumes"]] = Field(min_length=1)
+    # Safe by default: forgetting the flag only reports what WOULD be freed.
+    dry_run: bool = True
+
+
+@router.post("/disk/cleanup")
+async def disk_cleanup(
+    body: DiskCleanupRequest, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """**Free what `/disk` reports as reclaimable**, proxied to the supervisor's
+    `/disk/cleanup`. A dry run (the default) reports per action what it WOULD free and
+    removes nothing; `dry_run: false` applies it and reports what was freed.
+
+    The action set is fixed and each is narrow, decided on the supervisor where the
+    docker socket is: `build_cache` (`docker builder prune --all`), `unused_images` (no
+    container uses them AND nothing the stack could need names their repository — the
+    compose file's images and build-arg bases with the box's `.env` overrides, every
+    Dockerfile `FROM`, `jbrain2-*`, `jbrain-*`, `alpine`, `docker`; an unknown shared
+    size keeps an image; no image at all when any of that cannot be read),
+    `orphan_volumes` (only names on an explicit allowlist — `jbrain_llm_kv` — and only
+    at ref count 0; never `blobs` or `db_data`). Nothing is forced, so the daemon's own
+    in-use refusal still stands.
+
+    Same trust as `POST /update`, which this surface already grants: a token that can
+    roll the box to `main` can also drop caches the next build would have reused. It
+    cannot name what to remove — only pick from three actions. 409 while an update or
+    other one-shot runs (applying only) or while another cleanup runs, and while an
+    apply runs the supervisor refuses every one-shot start. An applied cleanup
+    invalidates the supervisor's `/disk` cache. An apply can outlast this call's
+    timeout; it still finishes on the supervisor, so re-run the dry run to see what is
+    left rather than re-applying."""
+    request.state.debug_detail = (
+        f"disk cleanup {'dry run' if body.dry_run else 'APPLY'}: {', '.join(body.actions)}"
+    )
+    resp = await _supervisor(request).post(
+        "/disk/cleanup",
+        json=body.model_dump(),
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+        timeout=_DISK_TIMEOUT,
+    )
+    if resp.status_code in (409, 503):
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=_sidecar_detail(resp, "the supervisor refused the cleanup"),
+        )
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())
 

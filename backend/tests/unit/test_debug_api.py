@@ -97,11 +97,41 @@ class _FakeSupervisor:
         # the 404 its live-service validation returns.
         self.services = {"sdr", "api", "supervisor"}
         self.oneshot_running = False
+        # The supervisor's 409 detail for /disk/cleanup (a one-shot or cleanup running).
+        self.cleanup_refusal: str | None = None
 
     async def post(
-        self, url: str, json: dict | None = None, headers: dict | None = None
+        self,
+        url: str,
+        json: dict | None = None,
+        headers: dict | None = None,
+        timeout: Any = None,  # noqa: ASYNC109 - mirrors httpx.AsyncClient.post
     ) -> _FakeResp:
         self.posts.append((url, json or {}))
+        if url == "/disk/cleanup":
+            self.headers = headers or {}
+            self.timeout = timeout
+            if self.cleanup_refusal is not None:
+                return _FakeResp(409, "", json_body={"detail": self.cleanup_refusal})
+            dry = (json or {}).get("dry_run", True)
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "dry_run": dry,
+                    "total_bytes": 26,
+                    "actions": [
+                        {
+                            "action": "orphan_volumes",
+                            "dry_run": dry,
+                            "bytes": 26,
+                            "items": [{"name": "jbrain_llm_kv", "bytes": 26}],
+                            "kept": [],
+                            "errors": [],
+                        }
+                    ],
+                },
+            )
         if url == "/update":
             if self.update_running:
                 return _FakeResp(409, "")
@@ -1298,6 +1328,80 @@ def test_disk_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> 
     client, _ = debug_client
     assert client.get("/api/debug/disk").status_code == 401
     assert ("/disk", {}) not in _state(client).supervisor_client.calls
+
+
+def test_disk_cleanup_dry_run_is_the_default(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/disk/cleanup", headers=_auth(key), json={"actions": ["orphan_volumes"]}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["actions"][0]["items"][0]["name"] == "jbrain_llm_kv"
+    sup = _state(client).supervisor_client
+    assert sup.posts == [("/disk/cleanup", {"actions": ["orphan_volumes"], "dry_run": True})]
+    assert sup.headers == {"Authorization": "Bearer sek"}
+    # A cold df walks every volume; the default client timeout would cut it off.
+    assert sup.timeout.read >= 120
+
+
+def test_disk_cleanup_applies_only_when_asked(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/disk/cleanup",
+        headers=_auth(key),
+        json={"actions": ["build_cache", "unused_images"], "dry_run": False},
+    )
+    assert resp.status_code == 200 and resp.json()["dry_run"] is False
+    assert _state(client).supervisor_client.posts == [
+        ("/disk/cleanup", {"actions": ["build_cache", "unused_images"], "dry_run": False})
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"actions": []},
+        {"actions": ["everything"]},
+        {"actions": ["orphan_volumes"], "volumes": ["jbrain_db_data"]},
+    ],
+)
+def test_disk_cleanup_takes_only_the_fixed_actions(
+    debug_client: tuple[TestClient, str], body: dict[str, Any]
+) -> None:
+    client, key = debug_client
+    resp = client.post("/api/debug/disk/cleanup", headers=_auth(key), json=body)
+    assert resp.status_code == 422
+    assert _state(client).supervisor_client.posts == []
+
+
+def test_disk_cleanup_passes_the_supervisors_refusal_through(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+    _state(client).supervisor_client.cleanup_refusal = "a update one-shot is running"
+    resp = client.post(
+        "/api/debug/disk/cleanup",
+        headers=_auth(key),
+        json={"actions": ["unused_images"], "dry_run": False},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "a update one-shot is running"
+
+
+def test_disk_cleanup_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    resp = client.post(
+        "/api/debug/disk/cleanup", json={"actions": ["build_cache"], "dry_run": False}
+    )
+    assert resp.status_code == 401
+    assert _state(client).supervisor_client.posts == []
+
+
+def test_whoami_lists_the_disk_cleanup_scope(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    assert (
+        "ops.disk_cleanup" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
+    )
 
 
 def test_whoami_reports_host_scope(debug_client: tuple[TestClient, str]) -> None:

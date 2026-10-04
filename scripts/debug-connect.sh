@@ -36,7 +36,12 @@
 #      level deeper under local-models, comfyui-models, whisper-models, backups. Cached ~60 s
 #      on the supervisor; --refresh rebuilds. A cold build can outlast the tunnel's ~100 s
 #      edge limit — it still finishes and caches, so rerun WITHOUT --refresh a minute later.
-#      A du that hits its 140 s cap is PARTIAL (said in `errors`); a retry hits the same cap.)
+#      A du that hits its 140 s cap is PARTIAL (said in `errors`); a retry hits the same cap.
+#      `host_dirs` sizes /home /root /var /tmp /opt /srv /usr /snap the same way, top 60 each.)
+#   scripts/debug-connect.sh disk-clean [--apply] [build_cache unused_images orphan_volumes]
+#     (Frees what `disk` reports as reclaimable. A DRY RUN unless --apply: it prints what each
+#      action WOULD free. No actions = all three. unused_images never touches a compose/stack
+#      image; orphan_volumes only removes allowlisted, unreferenced volumes (jbrain_llm_kv).)
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
 #   scripts/debug-connect.sh upstream-logs --tail 400  # llama-server's OWN log (slot lifecycle)
 #   scripts/debug-connect.sh drop-cache [ids]          # reclaim stale weights page cache
@@ -513,6 +518,20 @@ except Exception: print("")')
   disk) # [--refresh] — disk usage breakdown: filesystems, docker df, PROJECT_DIR sizes
     q=""; [ "${1:-}" = "--refresh" ] && q="?refresh=1"
     _call GET "/api/debug/disk$q" | _pp
+    ;;
+
+  disk-clean) # [--apply] [build_cache unused_images orphan_volumes] — dry run unless --apply
+    dry=true
+    [ "${1:-}" = "--apply" ] && { dry=false; shift; }
+    [ "$#" -gt 0 ] || set -- build_cache unused_images orphan_volumes
+    acts=""
+    for a in "$@"; do
+      case "$a" in
+        build_cache|unused_images|orphan_volumes) acts="$acts${acts:+,}\"$a\"" ;;
+        *) echo "unknown action: $a (build_cache, unused_images, orphan_volumes)" >&2; exit 2 ;;
+      esac
+    done
+    _call POST /api/debug/disk/cleanup "{\"actions\":[$acts],\"dry_run\":$dry}" | _pp
     ;;
 
   gateway-logs) # [--tail N] — the model engine's OWN stdout (slot lifecycle), not the container log

@@ -212,6 +212,12 @@ exit $rc
 DISK_HELPER_IMAGE = "jbrain2-supervisor:local"
 # Kept apart from ONESHOT_LABEL so a probe never trips the one-shot mutual exclusion.
 DISK_HELPER_LABEL = "jbrain.diskprobe"
+DISK_HELPER_PREFIX = "jbrain-diskprobe-"
+# A helper older than this is a crash's leftover, not a run in flight: the longest a
+# helper lives is its du cap (140 s) plus create/log/remove. The age gate is what lets
+# the report run its project and host du helpers side by side — a blanket sweep from
+# one helper's start would kill the others mid-run.
+DISK_HELPER_STALE_S = 600.0
 
 
 # Docker reports this zero-value timestamp for containers that never started.
@@ -559,7 +565,7 @@ class ComposeDockerGateway:
         container = self._client.containers.create(
             DISK_HELPER_IMAGE,
             command=list(argv),
-            name=f"jbrain-diskprobe-{time.time_ns()}",
+            name=f"{DISK_HELPER_PREFIX}{time.time_ns()}",
             labels={DISK_HELPER_LABEL: "1"},
             network_mode="none",
             read_only=True,
@@ -595,13 +601,35 @@ class ComposeDockerGateway:
 
     def _sweep_disk_helpers(self) -> None:
         """Force-remove any helper a crash left behind (the supervisor died between
-        create and remove). Best-effort: a sweep failure never blocks the probe."""
+        create and remove), judged by the creation time in its name; a helper whose
+        name does not parse is left alone. Best-effort: a sweep failure never blocks
+        the probe."""
+        cutoff = time.time_ns() - int(DISK_HELPER_STALE_S * 1e9)
         with contextlib.suppress(Exception):
             for stale in self._client.containers.list(
                 all=True, filters={"label": DISK_HELPER_LABEL}
             ):
+                born = (stale.name or "").removeprefix(DISK_HELPER_PREFIX)
+                if not born.isdigit() or int(born) > cutoff:
+                    continue
                 with contextlib.suppress(Exception):
                     stale.remove(force=True)
+
+    def prune_build_cache(self) -> int:
+        """`docker builder prune --all`: every build cache record no build holds.
+        Returns the bytes the daemon says it reclaimed."""
+        result = cast("dict[str, Any]", self._client.api.prune_builds(all=True))
+        reclaimed = result.get("SpaceReclaimed")
+        return reclaimed if isinstance(reclaimed, int) else 0
+
+    def remove_image(self, ref: str) -> None:
+        """`docker rmi` of one id or tag, never forced: the daemon refuses an image a
+        container (running or not) still uses, which is a guard this keeps."""
+        self._client.images.remove(image=ref, force=False, noprune=False)
+
+    def remove_volume(self, name: str) -> None:
+        """`docker volume rm`, never forced: the daemon refuses a volume in use."""
+        self._client.volumes.get(name).remove(force=False)
 
     def _run_oneshot(self, prefix: str, labels: dict[str, str], command: str) -> str:
         if self._oneshot_running():

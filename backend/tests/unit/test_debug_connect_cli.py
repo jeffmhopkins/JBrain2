@@ -37,8 +37,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _respond(self) -> None:
         status = 422 if "refuse" in self.path else 200
-        if "/sdr/sweep" in self.path:
-            payload: dict[str, object] = {"job_id": "sweep-1"}
+        if "/disk/cleanup" in self.path:
+            # Echoes the request body, so a test reads exactly what the CLI sent.
+            length = int(self.headers.get("Content-Length") or 0)
+            payload: dict[str, object] = {"received": json.loads(self.rfile.read(length))}
+        elif "/sdr/sweep" in self.path:
+            payload = {"job_id": "sweep-1"}
         elif "/jobs/" in self.path:
             # Done on the first poll, so the test does not sit through a sleep.
             payload = {
@@ -173,3 +177,31 @@ def test_sweep_can_hand_back_the_job_id_without_waiting(box: str) -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "sweep-1"
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_disk_clean_is_a_dry_run_of_every_action_unless_told_otherwise(box: str) -> None:
+    result = _run(box, "disk-clean")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["received"] == {
+        "actions": ["build_cache", "unused_images", "orphan_volumes"],
+        "dry_run": True,
+    }
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_disk_clean_apply_sends_only_the_named_actions(box: str) -> None:
+    result = _run(box, "disk-clean", "--apply", "orphan_volumes")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["received"] == {
+        "actions": ["orphan_volumes"],
+        "dry_run": False,
+    }
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_disk_clean_refuses_an_unknown_action_before_calling(box: str) -> None:
+    result = _run(box, "disk-clean", "--apply", "jbrain_db_data")
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "unknown action" in result.stderr
