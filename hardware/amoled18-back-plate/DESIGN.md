@@ -175,7 +175,7 @@ the printed parts exported from the model, Waveshare's STEP of the board and pan
 checksummed), and a pet frame drawn by the firmware's own `face.c`. The STEP has no case, so the
 black front shell in those shots is drawn from the case outline and the [photos](#screws): the
 board hangs on standoffs that end at the seam (taken as 4 mm), which puts the glass just under
-the shell's face. It takes about 40 minutes on four cores and needs `python3.11`; re-run it only
+the shell's face. It takes about 25 minutes on four cores and needs `python3.11`; re-run it only
 when a change shows from outside.
 
 ## Photos of the real unit
