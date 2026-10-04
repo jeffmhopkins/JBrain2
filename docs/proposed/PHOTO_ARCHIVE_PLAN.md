@@ -106,6 +106,58 @@ only on the local sidecar.
 - **Enrolment from chat.** "Number the faces" → canvas draws 1..n → "2 is Emma" → a
   `face_refs` row. The owner confirms before anything is stored.
 
+### Identical twins
+
+The family includes identical twin girls, and a generic face model cannot tell them apart.
+ArcFace is trained to separate *different people* by facial structure, and identical twins
+share almost all of it. Their twin-to-twin similarity lands in the same range as two photos
+of one girl, so no threshold splits them without also failing to recognise each as
+herself. Published twin evaluations of commercial matchers found the same: identical twins
+routinely score as one person. Children make it harder still — less developed faces that
+change quickly. What does tell these two apart is small and real: **one has a facial mole
+the other does not, and they smile slightly differently.** The design stacks four layers so
+the answer is right when it can be and honest when it can't.
+
+1. **A pair, not two people.** The twins are enrolled as two people and marked as a
+   *twin pair*. A face that matches either one is first resolved only to the pair:
+   "one of the twins". Names are never assigned by ArcFace's margin between the two.
+2. **Both in one photo.** When two faces both match the pair, the photo has both twins —
+   stated with confidence even when which-is-which is not, and the two are always assigned
+   different names (one assignment over the pair, never the same name twice).
+3. **The tiebreaker — a classifier for these two only.** ArcFace deliberately throws away
+   skin texture and expression, which is exactly where the difference lives, so the
+   tiebreaker reads the face again:
+   - **Input:** the aligned face crop at a higher resolution than ArcFace's 112 px
+     (224–448 px, so a mole is several pixels across), taken from the same detection.
+   - **Model:** a general image embedding that keeps fine texture (DINOv2-class, CPU,
+     same sidecar) with a small two-class head trained on the family's own labelled photos
+     of the twins. Expression is kept, not normalised away, so the smile difference is
+     learnable; smiling and neutral photos are both needed in training.
+   - **Data:** labels come from enrolment and from every correction in chat ("that's
+     Twin B"). It does not run until each twin has a minimum labelled set (~30 photos,
+     both expressions), and retrains as labels arrive, weighting recent photos — their
+     faces will keep changing.
+   - **Trusted only when measured:** held-out accuracy is shown in the People launcher,
+     and the tiebreaker names a twin only above a confidence bar set from that held-out
+     set. Below it, the answer stays "one of the twins".
+4. **The mole check — a known mark at a known place.** In the People launcher the owner
+   marks the mole on a reference face. It is stored relative to facial landmarks, so it
+   can be found again on any aligned face. When a face is sharp and large enough
+   (inter-eye distance over a measured minimum), the sidecar inspects that patch for a
+   dark spot against the surrounding skin. A clear mark names that twin; a clean patch on
+   a sharp face names the other. The check abstains on blur, a low angle, shadow or makeup.
+   - **Mirrored selfies.** Front cameras often save a mirror image, which moves the mole
+     to the other side. The check looks on both sides and only trusts the side that
+     matches the photo's orientation when EXIF or the camera says which it is; when it
+     can't tell, it reports presence but not which side.
+
+**Combining them:** name a twin only when the evidence agrees — the mole check and the
+tiebreaker pointing the same way, or one of them confident while the other abstains. If
+they disagree, the answer is "one of the twins". Within one burst or event, a twin named
+with confidence (or by the owner) carries to the same child in the rest of the set by
+clothing and hair. Standing hints the owner gives ("Twin A's hair is shorter right now")
+go to Flash-Next as text, with an expiry, since hair and clothes change.
+
 ### The People launcher
 
 A launcher app, like Images: the family, and nothing else.
@@ -115,6 +167,9 @@ A launcher app, like Images: the family, and nothing else.
   detects faces; the owner picks which one is this person when there are several);
   **remove** a bad reference; **rename**; **link** to the graph's person node; **delete**
   the person and all their data.
+- **Twin pair** — mark two people as identical twins; **mark a distinguishing feature**
+  (the mole) on a reference face; see the tiebreaker's held-out accuracy and how many
+  labelled photos each twin still needs.
 - **Quality hints** — warn when a person has fewer than three references, or none from
   the last few years (children).
 - **Test a photo** — drop a photo, see who it would recognise, at what band. This is how
@@ -253,11 +308,14 @@ Browsing reads the database directly and never waits on a model. Its own GUI gat
    bands; `identify_people`; the chat hook so every photo jerv sees carries its names.
 3. **P3 — People launcher** (GUI gate first): enrol by upload, remove, rename, link, delete,
    test a photo. Enrolment from chat.
-4. **A1 — archive spine.** `assets` / `asset_paths`, ingest + dedup, EXIF + filename dates.
-5. **A2 — model passes.** classify, caption, OCR, CLIP, faces across the archive.
-6. **A3 — Photos launcher** (GUI gate first): timeline, people filter, search, similar,
+4. **P4 — the twins.** Pair rule and both-in-one-photo assignment (cheap, ship with P2's
+   matching if possible); then the mole check and the two-class tiebreaker once enough
+   labelled photos exist, each shown with its measured accuracy before it is trusted.
+5. **A1 — archive spine.** `assets` / `asset_paths`, ingest + dedup, EXIF + filename dates.
+6. **A2 — model passes.** classify, caption, OCR, CLIP, faces across the archive.
+7. **A3 — Photos launcher** (GUI gate first): timeline, people filter, search, similar,
    detail, queues.
-7. **A4 — residual dating** over the owner's notes.
+8. **A4 — residual dating** over the owner's notes.
 </content>
 </invoke>
 <invoke name="Bash">
