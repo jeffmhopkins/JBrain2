@@ -767,9 +767,15 @@ services:
   # tools), and the api's jcode search bridge on behalf of the sandbox CLIs (the sandbox
   # can't reach searxng directly) — so no personal context ever rides a query
   # (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
+  #
+  # PINNED to a dated build, not `latest`: the update never re-pulls a floating tag, so
+  # `latest` froze at whatever the box first pulled. Builds before 2026-09-04 query engines
+  # with httpx, whose TLS/header fingerprint is what DuckDuckGo and Startpage captcha and
+  # Brave/Qwant throttle; SearXNG #6620 moved to curl_cffi (Chrome's fingerprint). Bumping
+  # this tag is how the box gets a newer SearXNG — compose pulls the new tag on update.
   searxng:
     logging: *logbound
-    image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}
+    image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:2026.10.2-19ffbcd30}
     restart: unless-stopped
     mem_limit: 512m
     environment:

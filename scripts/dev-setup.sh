@@ -138,7 +138,7 @@ fi
 # (tests/conftest.py pgvector_container, scripts/llm-harness.sh). Never fatal:
 # unit tests and linters don't need Docker.
 HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used by the harness
-SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}"  # jerv web search (stock stack service)
+SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:2026.10.2-19ffbcd30}"  # jerv web search (stock stack service)
 MQTT_IMAGE="${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}"  # opt-in JBrain360 broker (`mqtt` profile); pin by digest for deploy
 BYPARR_IMAGE="${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr:latest}"  # bot-challenge solver (stock stack service)
 # Base image for the locally-built `htmlrender` sidecar (HTML -> PNG). Pre-pulled because
