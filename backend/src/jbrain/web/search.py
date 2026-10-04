@@ -1,19 +1,26 @@
-"""Web search: Tavily's hosted index first, the self-hosted SearXNG instance behind it
-(docs/reference/ASSISTANT.md "Agent selection").
+"""Web search: the self-hosted SearXNG instance first, then two metered hosted tiers behind it —
+Brave's Search API, then Tavily's (docs/reference/ASSISTANT.md "Agent selection",
+docs/plans/BROWSER_AGENT_PLAN.md B3).
 
-SearXNG is a metasearch engine the owner runs on their own box, so a jerv search
-leaves the box only as far as SearXNG's own upstreams — the same local-first
-posture as the on-box geocoder. The base URL is pinned from config and never
-model-supplied; only the query text is. This client speaks SearXNG's JSON API
-(`/search?format=json`) and returns the top result rows; it never executes a tool
-policy itself — the handler does.
+SearXNG is a metasearch engine the owner runs on their own box, so most searches leave the box
+only as far as SearXNG's own upstreams — the same local-first posture as the on-box geocoder.
+When it errors, comes back thin (fewer than `THIN_RESULT_HITS`) or degraded (one engine left
+standing), a general search falls through to Brave (keyed, enabled and under the owner's monthly
+query budget) and then Tavily, each spending real money or credit only on the searches SearXNG
+could not carry. Base URLs are pinned from config and never model-supplied; only the query text
+is. The clients return result rows; they never execute a tool policy themselves — the handler
+does. News and science searches stay on SearXNG's category engines.
 """
 
 from __future__ import annotations
 
+import asyncio
+import html
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 import httpx
 import structlog
@@ -24,6 +31,9 @@ from jbrain.web.tavily_health import TavilyHealth
 log = structlog.get_logger()
 
 _TIMEOUT = 15.0
+# How long a general search waits on SearXNG when hosted tiers stand behind it: a hung instance
+# would otherwise stall every search the full _TIMEOUT before Brave or Tavily is even asked.
+SEARXNG_CHAIN_TIMEOUT_S = 8.0
 _DEFAULT_LIMIT = 6
 
 # Repeat-search cache. A deep-research fan re-queries the same terms across its
@@ -37,6 +47,11 @@ _CACHE_TTL_S = 3600.0  # 60 min: a long deep-research run can itself exceed the 
 # folds a whole run plus a near re-run, and daily-news queries are date-qualified so a fresh
 # day is a distinct key anyway — freshness within the hour isn't at risk.
 _CACHE_MAX_ENTRIES = 256  # LRU bound so the cache can't grow without limit.
+
+# A SearXNG answer with fewer hits than this (or than the caller's own limit, if smaller) is too
+# thin to stand alone, so the hosted tiers are asked. Three is "a lead, a second opinion and a
+# spare": below it the agent is one dead link away from nothing.
+THIN_RESULT_HITS = 3
 
 
 class WebSearchError(RuntimeError):
@@ -62,8 +77,8 @@ _MAX_SITES = 10  # domains per include/exclude list — a filter, not a crawl li
 @dataclass(frozen=True)
 class SearchOptions:
     """The agent's search controls beyond the query (docs.tavily.com best practices). Tavily
-    honours all of them; the SearXNG fallback honours the site filters as `site:` operators and
-    ignores the rest.
+    honours all of them; SearXNG and Brave honour the site filters as `site:` operators (the
+    same spelling serves both) and ignore the rest.
 
     `depth` is Tavily's `search_depth`: `basic` (1 credit) or `advanced` (2 credits — higher
     relevance on niche, local or multi-faceted queries, and up to three relevant passages per
@@ -142,9 +157,10 @@ class SearchResult:
     # included) and the ones whose results actually came back.
     engines_down: tuple[str, ...] = ()
     engines_answered: tuple[str, ...] = ()
-    # `source` is where the hits came from: "tavily" (the primary) or "searxng". When the
-    # primary was tried and FAILED, `hosted_failure` says why, so the agent knows it is reading
-    # the weaker fallback and the owner's quota problem is not mistaken for an empty web.
+    # `source` is where the hits came from: "searxng", "brave" or "tavily". When SearXNG's own
+    # thin answer is returned because every hosted tier that was tried FAILED, `hosted_failure`
+    # says why, so the agent knows nothing better was available and the owner's quota problem
+    # is not mistaken for an empty web.
     source: str = "searxng"
     hosted_failure: str = ""
 
@@ -313,7 +329,7 @@ def _answered_engines(body: dict[str, object]) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class HostedOutcome:
-    """One primary-search attempt: the hits, and `failure` — a human reason when the call
+    """One hosted-search attempt: the hits, and `failure` — a human reason when the call
     FAILED (quota, rate limit, rejected key, transport), "" when it was simply off, keyless,
     cooling down after a known failure, or found nothing."""
 
@@ -327,14 +343,14 @@ _TAVILY_SEARCH_TIMEOUT = 20.0
 
 
 class TavilySearch:
-    """Tavily's hosted Search API — `web_search`'s PRIMARY index, because it does not share the
-    box's residential IP, which is what the scraper engines behind SearXNG block (2026-10-03:
-    DuckDuckGo, Brave, Qwant, Startpage and Mojeek all refused it, leaving Bing alone). Reads the
-    SAME live toggle + key as the Tavily fetch tier (`settings` -> (enabled, key)), so the PWA's
-    Tavily panel governs both and an unkeyed box goes straight to SearXNG. One basic search is
-    one credit; a successful result is cached for the TTL so a research fan's repeats collapse to
-    one call. Failures feed `health` (quota/rate/key state, the owner's notice, a cooldown). Only
-    the query text and the owner's key travel."""
+    """Tavily's hosted Search API — `web_search`'s LAST tier, behind SearXNG and Brave. It does not
+    share the box's residential IP, which is what the scraper engines behind SearXNG block
+    (2026-10-03: DuckDuckGo, Brave, Qwant, Startpage and Mojeek all refused it, leaving Bing
+    alone). Reads the SAME live toggle + key as the Tavily fetch tier (`settings` -> (enabled,
+    key)), so the PWA's Tavily panel governs both and an unkeyed box never calls it. One basic
+    search is one credit; a successful result is cached for the TTL so a research fan's repeats
+    collapse to one call. Failures feed `health` (quota/rate/key state, the owner's notice, a
+    cooldown). Only the query text and the owner's key travel."""
 
     def __init__(
         self,
@@ -432,6 +448,293 @@ class TavilySearch:
         return HostedOutcome(hits)
 
 
+_BRAVE_SEARCH_TIMEOUT = 15.0
+_BRAVE_MAX_COUNT = 20  # the API's ceiling for `count`
+# The recency windows as Brave's `freshness` codes (past day / week / month / year).
+_BRAVE_FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def utc_month(now: datetime | None = None) -> str:
+    """The UTC calendar month a Brave query is billed to, as "YYYY-MM"."""
+    return (now or datetime.now(UTC)).strftime("%Y-%m")
+
+
+def usage_count(raw: object, month: str) -> int:
+    """Queries already spent in `month` from a stored {"month", "count"} record. Another month's
+    record — or junk — reads as zero, which is how the counter rolls over without a reset job."""
+    if isinstance(raw, dict) and raw.get("month") == month:
+        count = raw.get("count")
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            return count
+    return 0
+
+
+@dataclass(frozen=True)
+class BraveConfig:
+    """The owner's live Brave settings: toggle, effective key (stored or env), monthly budget."""
+
+    enabled: bool
+    api_key: str
+    budget: int
+
+
+class BraveUsage:
+    """This month's Brave query count, persisted through `load`/`save` (one app.settings row).
+
+    `reserve` is a check-and-increment under an in-process asyncio.Lock, so a research fan's
+    concurrent searches cannot both read count = budget - 1 and both spend. That is sound because
+    one API process owns web search on this single-owner box; a second process would need the
+    increment moved into one conditional SQL UPDATE. A storage failure fails CLOSED (no query
+    is sent), because the counter is what keeps the owner's spending cap from ever being met."""
+
+    def __init__(
+        self,
+        load: Callable[[], Awaitable[object]],
+        save: Callable[[dict[str, object]], Awaitable[None]],
+        *,
+        month: Callable[[], str] = utc_month,
+    ):
+        self._load = load
+        self._save = save
+        self._month = month
+        self._lock = asyncio.Lock()
+
+    async def reserve(self, budget: int) -> bool:
+        """Count one query against this month if it is under `budget`; False = do not send.
+        Counted BEFORE the request goes out, so a request whose outcome is unknown (a timeout
+        after Brave received it) is never missed — the count can only err high."""
+        async with self._lock:
+            try:
+                month = self._month()
+                count = usage_count(await self._load(), month)
+                if count >= budget:
+                    return False
+                await self._save({"month": month, "count": count + 1})
+            except Exception:  # noqa: BLE001 — fail closed: an unrecorded query is unbudgeted
+                log.warning("web.brave_usage_unavailable", exc_info=True)
+                return False
+            return True
+
+
+def _brave_text(raw: object) -> str:
+    """Brave marks query terms with <strong> and HTML-escapes the rest; the agent wants text."""
+    return html.unescape(_TAG_RE.sub("", str(raw or ""))).strip()
+
+
+class BraveSearch:
+    """Brave's Search API — `web_search`'s metered MIDDLE tier, asked only when SearXNG errored or
+    came back thin. Brave runs its own index (not a scrape of someone else's) from Brave's IP, so
+    it answers exactly the queries the box's blocked scraper engines cannot.
+
+    Every request is counted against the owner's monthly budget first (`BraveUsage`), so the free
+    monthly credit is never overrun: at the budget, Brave is skipped until the month turns. A
+    successful result is cached for the TTL, so a research fan's repeats cost one query. Failures
+    are mapped to what they mean for the next call: 401/403 = the key is rejected (skipped until
+    the owner saves a different one), 402 or a quota 429 = the plan's credit is spent (skipped for
+    the rest of the month), a plain 429 = rate-limited (this query only). Key and credit failures
+    are recorded for the Settings panel through `save_error`. Only the query text, the window and
+    the owner's key travel."""
+
+    def __init__(
+        self,
+        base_url: str,
+        settings: Callable[[], Awaitable[BraveConfig]],
+        usage: BraveUsage,
+        transport: httpx.AsyncBaseTransport | None = None,
+        *,
+        save_error: Callable[[dict[str, str]], Awaitable[None]] | None = None,
+        cache_ttl_s: float = _CACHE_TTL_S,
+        clock: Callable[[], float] = time.monotonic,
+        month: Callable[[], str] = utc_month,
+    ):
+        self._base_url = base_url.rstrip("/")
+        self._settings = settings
+        self._usage = usage
+        self._transport = transport
+        self._save_error = save_error
+        self._month = month
+        self._cache: TTLCache[tuple[str, str, int, SearchOptions], list[SearchHit]] | None = (
+            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
+            if cache_ttl_s > 0
+            else None
+        )
+        # In-process memory of a dead key / a spent month, so a search does not spend a request
+        # re-learning either. A restart forgets both and re-learns with one call.
+        self._rejected_key = ""
+        self._exhausted_month = ""
+        # Whether a last-error record may be on file (None = unknown since start), so a success
+        # clears it with one write rather than one write per search.
+        self._error_on_file: bool | None = None
+
+    @property
+    def wired(self) -> bool:
+        return bool(self._base_url)
+
+    def blocked(self, api_key: str) -> str:
+        """Why a search would skip Brave right now on what this process has learned: "key_rejected"
+        (this key was refused), "credit_spent" (the plan ran out this month), or "" — so the
+        Settings status agrees with what a search will actually do."""
+        if api_key and api_key == self._rejected_key:
+            return "key_rejected"
+        if self._exhausted_month and self._exhausted_month == self._month():
+            return "credit_spent"
+        return ""
+
+    async def search(
+        self,
+        query: str,
+        limit: int,
+        *,
+        time_range: str = "",
+        options: SearchOptions | None = None,
+    ) -> HostedOutcome:
+        if not self._base_url:
+            return HostedOutcome([])
+        opts = options or SearchOptions()
+        tr = time_range if time_range in TIME_RANGES else ""
+        try:
+            cfg = await self._settings()
+        except Exception:  # noqa: BLE001 — a settings hiccup must not fail the search it backs
+            log.warning("web.brave_search_settings_unreadable", exc_info=True)
+            return HostedOutcome([])
+        # Before the cache: switching Brave off (or clearing its key) must take effect at once,
+        # not after an hour of cached answers still labelled "brave".
+        if not cfg.enabled or not cfg.api_key:
+            return HostedOutcome([])
+        key = (query.strip(), tr, limit, opts)
+        if self._cache is not None and (cached := self._cache.get(key)) is not None:
+            return HostedOutcome(cached)
+        if cfg.api_key == self._rejected_key:
+            return HostedOutcome([], "Brave rejected the API key")
+        if self._exhausted_month == self._month():
+            return HostedOutcome([], "Brave's plan credit is used up for this month")
+        outcome = await self._call(cfg, query, limit, tr, opts)
+        if outcome is None:
+            log.info("web.brave_budget_reached", budget=cfg.budget)
+            return HostedOutcome([])  # the owner's own stop, not a failure
+        if self._cache is not None and outcome.hits:
+            self._cache[key] = outcome.hits
+        return outcome
+
+    async def probe(self) -> tuple[bool, int, str]:
+        """The Settings "Test key" button: one LIVE query, counted like any other (it spends a
+        real query, and the panel says so). Bypasses the cache and the dead-key / spent-month
+        memory, so a fixed key or a renewed plan is seen at once. -> (ok, hits, detail)."""
+        if not self._base_url:
+            return False, 0, "The Brave tier isn't wired on this box (no JBRAIN_BRAVE_URL)."
+        try:
+            cfg = await self._settings()
+        except Exception:  # noqa: BLE001 — reported, not raised: this is a diagnostic
+            log.warning("web.brave_search_settings_unreadable", exc_info=True)
+            return False, 0, "Couldn't read the Brave settings — try again."
+        if not cfg.api_key:
+            return False, 0, "No Brave API key is set — paste one, then Save & test."
+        if not cfg.enabled:
+            return False, 0, "Brave is switched off — turn it on to test the key."
+        outcome = await self._call(cfg, "test", 3, "", SearchOptions())
+        if outcome is None:
+            return False, 0, f"This month's budget of {cfg.budget} queries is used up."
+        if outcome.failure:
+            return False, 0, outcome.failure
+        n = len(outcome.hits)
+        return True, n, f"Brave answered with {n} result(s) — the key works."
+
+    async def _call(
+        self, cfg: BraveConfig, query: str, limit: int, tr: str, opts: SearchOptions
+    ) -> HostedOutcome | None:
+        """One budgeted request. None = the budget is reached and nothing was sent."""
+        if not await self._usage.reserve(cfg.budget):
+            return None
+        params: dict[str, str | int] = {
+            "q": opts.searxng_query(query),
+            "count": min(max(1, limit), _BRAVE_MAX_COUNT),
+            "safesearch": "moderate",
+        }
+        if tr:
+            params["freshness"] = _BRAVE_FRESHNESS[tr]
+        headers = {"X-Subscription-Token": cfg.api_key, "Accept": "application/json"}
+        try:
+            async with httpx.AsyncClient(
+                timeout=_BRAVE_SEARCH_TIMEOUT, transport=self._transport
+            ) as client:
+                resp = await client.get(
+                    f"{self._base_url}/res/v1/web/search", params=params, headers=headers
+                )
+                resp.raise_for_status()
+                body = resp.json()
+        except httpx.HTTPStatusError as exc:
+            return HostedOutcome([], await self._failed(exc.response, cfg.api_key))
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("web.brave_search_failed", error=repr(exc))
+            return HostedOutcome([], "Brave could not be reached")
+        await self._succeeded(cfg.api_key)
+        web = body.get("web") if isinstance(body, dict) else None
+        rows = web.get("results") if isinstance(web, dict) else None
+        hits = [
+            SearchHit(
+                title=_brave_text(r.get("title")) or str(r["url"]).strip(),
+                url=str(r["url"]).strip(),
+                snippet=_brave_text(r.get("description")),
+                published=str(r.get("page_age") or r.get("age") or "").strip(),
+            )
+            for r in (rows if isinstance(rows, list) else [])
+            if isinstance(r, dict) and str(r.get("url") or "").strip()
+        ][: max(limit, 0)]
+        return HostedOutcome(hits)
+
+    async def _failed(self, resp: httpx.Response, api_key: str) -> str:
+        status = resp.status_code
+        code = _brave_error_code(resp)
+        # The status and Brave's machine code only: the body's prose and the headers stay out of
+        # the log (the request headers carry the key).
+        log.warning("web.brave_search_failed", status=status, code=code)
+        why = f"HTTP {status}, {code}" if code else f"HTTP {status}"
+        # Observed live 2026-10-04: a bad token is a 422 SUBSCRIPTION_TOKEN_INVALID, not a 401.
+        # A 422 carrying some OTHER code is a request problem, not the key's.
+        token_code = "TOKEN_INVALID" in code or "SUBSCRIPTION_TOKEN" in code
+        if status in (401, 403) or token_code or (status == 422 and not code):
+            self._rejected_key = api_key
+            detail = f"Brave rejected the API key ({why}) — check it in the Brave dashboard"
+        elif status == 429 and code in ("", "RATE_LIMITED"):
+            return "Brave is rate-limiting this box (HTTP 429)"  # transient; nothing to record
+        elif status in (402, 429):
+            self._exhausted_month = self._month()
+            detail = f"Brave's plan credit is used up for this month ({why})"
+        else:
+            detail = f"Brave returned {why}"
+        await self._record_error(detail)
+        return detail
+
+    async def _succeeded(self, api_key: str) -> None:
+        if api_key == self._rejected_key:
+            self._rejected_key = ""
+        self._exhausted_month = ""
+        if self._error_on_file is not False:
+            await self._record_error("")
+
+    async def _record_error(self, detail: str) -> None:
+        if self._save_error is None:
+            return
+        at = datetime.now(UTC).isoformat(timespec="seconds") if detail else ""
+        try:
+            await self._save_error({"detail": detail, "at": at})
+            self._error_on_file = bool(detail)
+        except Exception:  # noqa: BLE001 — bookkeeping must never fail the search
+            log.warning("web.brave_error_save_failed", exc_info=True)
+
+
+def _brave_error_code(resp: httpx.Response) -> str:
+    """Brave's machine error code (`{"error": {"code": "QUOTA_LIMITED", ...}}`), upper-cased,
+    or "" — tolerant because it only refines a status we already have."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return ""
+    err = body.get("error") if isinstance(body, dict) else None
+    return str(err.get("code") or "").upper() if isinstance(err, dict) else ""
+
+
 class SearxngClient:
     """Query a pinned SearXNG instance. `transport` is injectable so tests run
     against a mock with no network (DEVELOPMENT.md "no network in tests")."""
@@ -443,13 +746,17 @@ class SearxngClient:
         *,
         cache_ttl_s: float = _CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
+        brave: HostedSearch | None = None,
         hosted: HostedSearch | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._transport = transport
-        # The primary index for a general search; SearXNG answers only when it is off, failed
-        # or found nothing (news and science stay on SearXNG's category engines).
-        self._hosted = hosted
+        # The hosted tiers behind a general search, in order: Brave, then Tavily (`hosted`).
+        # Asked only when SearXNG errored or came back thin; news and science stay on SearXNG's
+        # category engines.
+        self._tiers: tuple[tuple[str, HostedSearch], ...] = tuple(
+            (source, tier) for source, tier in (("brave", brave), ("tavily", hosted)) if tier
+        )
         # One repeat-search cache per client (the client is an app-lifetime singleton),
         # keyed on (query, time_range, limit). cachetools.TTLCache supplies the TTL + LRU
         # eviction; `timer` threads our injectable clock for deterministic expiry tests. None
@@ -473,7 +780,12 @@ class SearxngClient:
         return TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
 
     async def _query(
-        self, query: str, *, categories: str = "", time_range: str = ""
+        self,
+        query: str,
+        *,
+        categories: str = "",
+        time_range: str = "",
+        wait_s: float = _TIMEOUT,
     ) -> dict[str, object]:
         """Issue one SearXNG JSON query and return the parsed body. Shared by every category
         method so the base URL, the JSON format, the SSRF-free pinned host, and the identical
@@ -487,7 +799,7 @@ class SearxngClient:
         if time_range:
             params["time_range"] = time_range
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
+            async with httpx.AsyncClient(timeout=wait_s, transport=self._transport) as client:
                 resp = await client.get(f"{self._base_url}/search", params=params)
                 resp.raise_for_status()
                 body = resp.json()
@@ -536,15 +848,21 @@ class SearxngClient:
         time_range: str = "",
         options: SearchOptions | None = None,
     ) -> SearchResult:
-        """A general web search: the hosted primary (Tavily) first when wired, SearXNG when it is
-        off, failed or found nothing. Returns a SearchResult: the ranked hits PLUS the zero-click
-        extras SearXNG returns in the same response — a Wikidata/Wikipedia `infobox` and any
-        instant `answers` (definitions, conversions, calculations) — so a plain fact can be
-        answered without a web_fetch. `time_range` (one of TIME_RANGES; anything else = no
-        window) optionally bounds recency for a general query, the same filter news uses.
+        """A general web search: SearXNG first; when it errors, comes back thin (`_thin`) or
+        degraded, the hosted tiers in order — Brave (enabled, keyed, under its monthly budget),
+        then Tavily — and the first with hits answers (`source` names it). When every tier that
+        was tried failed, SearXNG's own thin result is returned with `hosted_failure` saying why;
+        when SearXNG errored and no tier answered, its WebSearchError is raised. Each tier keeps
+        its own one-hour cache, so a repeat costs neither SearXNG's upstreams nor a metered query.
 
-        A window that comes back with NOTHING is retried once WITHOUT it, and the widened
-        result is returned flagged (`window_dropped`). A recency window is far more
+        Returns a SearchResult: the ranked hits PLUS the zero-click extras SearXNG returns in the
+        same response — a Wikidata/Wikipedia `infobox` and any instant `answers` (definitions,
+        conversions, calculations) — so a plain fact can be answered without a web_fetch; they
+        ride along when a hosted tier supplies the hits. `time_range` (one of TIME_RANGES;
+        anything else = no window) optionally bounds recency, the same filter news uses.
+
+        A window that comes back with NOTHING from SearXNG is retried once WITHOUT it, and the
+        widened result is returned flagged (`window_dropped`). A recency window is far more
         destructive than it looks: SearXNG SKIPS every engine that lacks `time_range_support`
         outright (on this deployment that drops bing and wikipedia — the latter being the
         infobox source, so the knowledge panel goes too), and the engines that survive filter
@@ -554,26 +872,58 @@ class SearxngClient:
         rewording the query because the filter, not the wording, was the problem."""
         tr = time_range if time_range in TIME_RANGES else ""
         opts = options or SearchOptions()
-        hosted_failure = ""
-        if self._hosted is not None:
-            outcome = await self._hosted(query, limit, time_range=tr, options=opts)
+        result: SearchResult | None = None
+        error = WebSearchError("the web search service is unavailable right now")
+        try:
+            result = await self._searxng(opts.searxng_query(query), limit, tr)
+        except WebSearchError as exc:
+            if not self._tiers:
+                raise
+            error = exc
+        if result is not None and not self._thin(result, limit):
+            return result
+        failures: list[str] = []
+        for source, tier in self._tiers:
+            outcome = await tier(query, limit, time_range=tr, options=opts)
             if outcome.hits:
-                return SearchResult(hits=outcome.hits, source="tavily")
-            hosted_failure = outcome.failure
-        query = opts.searxng_query(query)
+                return SearchResult(
+                    hits=outcome.hits,
+                    infobox=result.infobox if result else None,
+                    answers=result.answers if result else (),
+                    source=source,
+                )
+            if outcome.failure:
+                failures.append(outcome.failure)
+        if result is None:
+            if failures:
+                log.warning("web.search_all_tiers_failed", reasons=failures)
+                raise WebSearchError(f"{error} (hosted search also failed: {'; '.join(failures)})")
+            raise error
+        return replace(result, hosted_failure="; ".join(failures)) if failures else result
+
+    @staticmethod
+    def _thin(result: SearchResult, limit: int) -> bool:
+        """Too little to stand alone: fewer hits than THIN_RESULT_HITS (or the caller's own,
+        smaller limit), or a degraded index — one surviving engine's hits are the off-topic
+        list the 2026-10-03 cinema search drowned in, however many of them there are."""
+        return len(result.hits) < min(THIN_RESULT_HITS, max(limit, 1)) or result.degraded
+
+    async def _searxng(self, query: str, limit: int, tr: str) -> SearchResult:
+        """SearXNG at the window, retried once without a window that blanked it."""
         result = await self._search_window(query, limit, tr)
         if tr and result.is_empty:
             widened = await self._search_window(query, limit, "")
             if not widened.is_empty:
                 result = replace(widened, window_dropped=True)
-        return replace(result, hosted_failure=hosted_failure) if hosted_failure else result
+        return result
 
     async def _search_window(self, query: str, limit: int, tr: str) -> SearchResult:
         """One general search at one (already validated) recency window, through the cache."""
         key = (query.strip(), tr, limit)
         if self._cache is not None and (cached := self._cache.get(key)) is not None:
             return cached
-        body = await self._query(query, time_range=tr)
+        wait_s = SEARXNG_CHAIN_TIMEOUT_S if self._tiers else _TIMEOUT
+        body = await self._query(query, time_range=tr, wait_s=wait_s)
         hits = [
             SearchHit(
                 title=str(r.get("title") or "").strip() or str(r["url"]).strip(),

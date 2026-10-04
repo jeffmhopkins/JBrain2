@@ -17,12 +17,23 @@ from jbrain.web.nhc_surge import NhcSurgeClient, NhcSurgeError
 from jbrain.web.nppes import NppesClient, Provider, Taxonomy
 from jbrain.web.nws import NwsClient, NwsOutOfCoverage, NwsUnavailable
 from jbrain.web.public_records import CourtListenerClient, Person, Record
-from jbrain.web.search import SearchHit, SearxngClient, TavilySearch, WebSearchError
+from jbrain.web.search import (
+    BraveConfig,
+    BraveSearch,
+    BraveUsage,
+    SearchHit,
+    SearxngClient,
+    TavilySearch,
+    WebSearchError,
+)
 from jbrain.web.weather import Weather, WeatherClient, WeatherError
 from jbrain.web.weather_history import HistoryStats, WeatherHistoryClient
 from jbrain.web.wikidata import WikidataClient, WikidataEntity
 
 __all__ = [
+    "BraveConfig",
+    "BraveSearch",
+    "BraveUsage",
     "CourtListenerClient",
     "DomainSkipRepo",
     "FaviconFetcher",

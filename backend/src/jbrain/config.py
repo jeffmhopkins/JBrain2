@@ -201,6 +201,12 @@ class Settings(BaseSettings):
     tavily_url: str = "https://api.tavily.com"
     tavily_extract_depth: str = "advanced"
     tavily_api_key: str = ""
+    # Brave Search API — web_search's metered middle tier (SearXNG → Brave → Tavily,
+    # docs/plans/BROWSER_AGENT_PLAN.md B3). The base URL is pinned here; the key, toggle and
+    # monthly query budget are owner-set from the PWA Settings panel, the stored key taking
+    # precedence over this JBRAIN_BRAVE_API_KEY fallback. Empty `brave_url` unwires the tier.
+    brave_url: str = "https://api.search.brave.com"
+    brave_api_key: str = ""
     # Moltbook bearer key env fallback (docs/plans/JMOLT_PLAN.md). The stored key in
     # app.settings takes precedence; this JBRAIN_MOLTBOOK_API_KEY value is the fallback,
     # like the Tavily key. Empty (stored AND env) leaves jmolt unregistered/inert.

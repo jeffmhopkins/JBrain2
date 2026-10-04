@@ -33,11 +33,20 @@ function stubSettingsFetch(
     tavilyEnabled: true,
     tavilyKeySet: false,
     tavilyHealth: "ok",
+    braveEnabled: true,
+    braveKeySource: "none" as "stored" | "env" | "none",
+    braveBudget: 900,
+    braveUsed: 0,
+    braveLastError: "",
+    braveBlocked: "" as "" | "key_rejected" | "credit_spent",
+    braveFailPut: false,
     callsign: null as string | null,
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
   const puts: unknown[] = [];
   const tavilyPuts: unknown[] = [];
+  const bravePuts: unknown[] = [];
+  let braveTests = 0;
   const ttsUrls: string[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
@@ -91,6 +100,59 @@ function stubSettingsFetch(
           client_secret_set: false,
           refresh_token_set: false,
           connected: false,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    // The Brave section: a stateful stub round-trips toggle, key and budget; a test counts.
+    if (path === "/api/settings/brave/test") {
+      braveTests += 1;
+      state.braveUsed += 1;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          hits: 3,
+          detail: "Brave answered with 3 result(s) — the key works.",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (path === "/api/settings/brave") {
+      if ((init?.method ?? "GET").toUpperCase() === "PUT") {
+        const patch = JSON.parse(String(init?.body)) as {
+          enabled?: boolean;
+          api_key?: string;
+          monthly_budget?: number;
+        };
+        bravePuts.push(patch);
+        if (state.braveFailPut) {
+          return new Response(JSON.stringify({ detail: "database unavailable" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (patch.enabled != null) state.braveEnabled = patch.enabled;
+        if (patch.monthly_budget != null) state.braveBudget = patch.monthly_budget;
+        if (patch.api_key != null) state.braveKeySource = patch.api_key ? "stored" : "none";
+      }
+      const keyed = state.braveKeySource !== "none";
+      return new Response(
+        JSON.stringify({
+          enabled: state.braveEnabled,
+          key_present: keyed,
+          key_source: state.braveKeySource,
+          wired: true,
+          effective:
+            state.braveEnabled &&
+            keyed &&
+            state.braveUsed < state.braveBudget &&
+            !state.braveBlocked,
+          blocked: state.braveBlocked,
+          budget: state.braveBudget,
+          used_this_month: state.braveUsed,
+          month: "2026-10",
+          last_error: state.braveLastError,
+          last_error_at: state.braveLastError ? "2026-10-04T12:00:00+00:00" : "",
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -184,7 +246,7 @@ function stubSettingsFetch(
     );
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, tavilyPuts, state, ttsUrls };
+  return { puts, tavilyPuts, bravePuts, braveTests: () => braveTests, state, ttsUrls };
 }
 
 beforeEach(() => {
@@ -282,6 +344,113 @@ describe("SettingsScreen Tavily health", () => {
     const status = await screen.findByLabelText("Tavily status");
     await waitFor(() => expect(status).toHaveTextContent("Active"));
     expect(screen.queryByLabelText("Tavily health")).toBeNull();
+  });
+});
+
+describe("SettingsScreen Brave Search panel", () => {
+  it("saves+tests a key without echoing it, and the test counts toward the budget", async () => {
+    const { bravePuts, braveTests } = stubSettingsFetch();
+    setup();
+    const status = await screen.findByLabelText("Brave status");
+    await waitFor(() => expect(status).toHaveTextContent("No key"));
+    expect(screen.getByLabelText("Brave usage")).toHaveTextContent("Used 0 of 900 this month.");
+    expect(
+      screen.getByText(/Searches go SearXNG first, then Brave, then Tavily/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Brave dashboard" })).toHaveAttribute(
+      "href",
+      "https://api-dashboard.search.brave.com/app/keys",
+    );
+
+    const keyField = screen.getByLabelText("Brave API key") as HTMLInputElement;
+    expect(keyField.type).toBe("password");
+    fireEvent.change(keyField, { target: { value: "BSA-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & test Brave key" }));
+    await waitFor(() => expect(bravePuts).toContainEqual({ api_key: "BSA-secret" }));
+    expect(await screen.findByText(/the key works/)).toBeInTheDocument();
+    await waitFor(() => expect(status).toHaveTextContent("Active"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Brave usage")).toHaveTextContent("Used 1 of 900 this month."),
+    );
+    expect(keyField.value).toBe("");
+    expect(keyField.placeholder).toBe("•••••• (saved)");
+    expect(braveTests()).toBe(1);
+    expect(screen.getByText(/A test spends one real query/)).toBeInTheDocument();
+  });
+
+  it("toggles off, clears the key and saves a new budget", async () => {
+    const { bravePuts, state } = stubSettingsFetch();
+    state.braveKeySource = "stored";
+    setup();
+    const status = await screen.findByLabelText("Brave status");
+    await waitFor(() => expect(status).toHaveTextContent("Active"));
+
+    const budget = screen.getByLabelText("Monthly budget (queries)") as HTMLInputElement;
+    fireEvent.change(budget, { target: { value: "500" } });
+    fireEvent.blur(budget);
+    await waitFor(() => expect(bravePuts).toContainEqual({ monthly_budget: 500 }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Brave usage")).toHaveTextContent("Used 0 of 500 this month."),
+    );
+
+    // Zero (no "unlimited") or junk snaps back and saves nothing.
+    fireEvent.change(budget, { target: { value: "0" } });
+    fireEvent.keyDown(budget, { key: "Enter" });
+    await waitFor(() => expect(budget.value).toBe("500"));
+    expect(bravePuts).not.toContainEqual({ monthly_budget: 0 });
+
+    fireEvent.click(screen.getByRole("switch", { name: "Enable Brave" }));
+    await waitFor(() => expect(bravePuts).toContainEqual({ enabled: false }));
+    await waitFor(() => expect(status).toHaveTextContent("Off"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear Brave key" }));
+    await waitFor(() => expect(bravePuts).toContainEqual({ api_key: "" }));
+  });
+
+  it("says when Brave refused the key, and shows a failed save", async () => {
+    const { state } = stubSettingsFetch();
+    state.braveKeySource = "stored";
+    state.braveBlocked = "key_rejected";
+    setup();
+    const status = await screen.findByLabelText("Brave status");
+    await waitFor(() => expect(status).toHaveTextContent("Key rejected"));
+    expect(screen.getByText(/resets on the 1st \(UTC\)/)).toBeInTheDocument();
+    state.braveFailPut = true;
+    fireEvent.click(screen.getByRole("switch", { name: "Enable Brave" }));
+    expect(await screen.findByText(/Couldn't save: database unavailable/)).toBeInTheDocument();
+  });
+
+  it("saves a key while Brave is off and still runs the test", async () => {
+    const { bravePuts, braveTests, state } = stubSettingsFetch();
+    state.braveEnabled = false;
+    setup();
+    const status = await screen.findByLabelText("Brave status");
+    await waitFor(() => expect(status).toHaveTextContent("Off"));
+    const save = screen.getByRole("button", { name: "Save & test Brave key" });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Brave API key"), { target: { value: "BSA-new" } });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(bravePuts).toContainEqual({ api_key: "BSA-new" }));
+    await waitFor(() => expect(braveTests()).toBe(1));
+  });
+
+  it("says when the month's budget is reached and shows the last error", async () => {
+    const { state } = stubSettingsFetch();
+    state.braveKeySource = "env";
+    state.braveBudget = 10;
+    state.braveUsed = 10;
+    state.braveLastError = "Brave rejected the API key (HTTP 401)";
+    setup();
+    const status = await screen.findByLabelText("Brave status");
+    await waitFor(() => expect(status).toHaveTextContent("Budget reached"));
+    expect(await screen.findByLabelText("Brave health")).toHaveTextContent(
+      "Brave rejected the API key (HTTP 401)",
+    );
+    const keyField = screen.getByLabelText("Brave API key") as HTMLInputElement;
+    expect(keyField.placeholder).toBe("•••••• (from server config)");
+    // An env key isn't the panel's to clear.
+    expect(screen.getByRole("button", { name: "Clear Brave key" })).toBeDisabled();
   });
 });
 

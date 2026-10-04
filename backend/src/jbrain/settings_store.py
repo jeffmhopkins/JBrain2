@@ -217,6 +217,23 @@ TAVILY_API_KEY_KEY = "tavily_api_key"
 # key_rejected, when it began and why — written on a change of state, read by the Settings panel.
 TAVILY_HEALTH_KEY = "tavily_health"
 
+# Brave Search API — web_search's metered middle tier (docs/plans/BROWSER_AGENT_PLAN.md B3). Key +
+# toggle mirror Tavily's above (stored key over the JBRAIN_BRAVE_API_KEY fallback, toggle defaults
+# ON but inert until a key is set, key never echoed). The BUDGET is queries per UTC calendar month:
+# the default leaves headroom under the ~1,000-query free monthly credit, and there is no
+# "unlimited" — every month stops at a number the owner chose. USAGE is {"month", "count"} for the
+# current month (jbrain.web.search.BraveUsage owns its read-modify-write); LAST_ERROR is the
+# most recent failure ({"detail", "at"}), cleared by the next success, for the Settings panel.
+BRAVE_ENABLED_KEY = "brave_enabled"
+BRAVE_ENABLED_DEFAULT = True
+BRAVE_API_KEY_KEY = "brave_api_key"
+BRAVE_BUDGET_KEY = "brave_monthly_budget"
+BRAVE_BUDGET_DEFAULT = 900
+BRAVE_BUDGET_MIN = 1
+BRAVE_BUDGET_MAX = 100_000
+BRAVE_USAGE_KEY = "brave_usage"
+BRAVE_LAST_ERROR_KEY = "brave_last_error"
+
 # Moltbook (docs/plans/JMOLT_PLAN.md) — the jmolt persona's account credential + operating
 # switches, all in owner-only `app.settings` so NO agent tool can read or write them (M7/M17):
 # the bearer key is injected into the pinned client from a live provider callable and never
@@ -679,6 +696,48 @@ class SqlSettingsStore:
 
     async def set_tavily_health(self, ctx: SessionContext, record: dict[str, str]) -> None:
         await self.upsert(ctx, TAVILY_HEALTH_KEY, record)
+
+    async def brave_enabled(self, ctx: SessionContext) -> bool:
+        """Whether the Brave tier is on. DEFAULTS ON like Tavily's, inert until a key is set."""
+        return await self.get(ctx, BRAVE_ENABLED_KEY, BRAVE_ENABLED_DEFAULT) is True
+
+    async def set_brave_enabled(self, ctx: SessionContext, enabled: bool) -> None:
+        await self.upsert(ctx, BRAVE_ENABLED_KEY, bool(enabled))
+
+    async def brave_api_key(self, ctx: SessionContext) -> str:
+        """The stored Brave key, or "" (the caller falls back to JBRAIN_BRAVE_API_KEY). A
+        non-string store reads as unset. Never echoed back by the API."""
+        raw = await self.get(ctx, BRAVE_API_KEY_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_brave_api_key(self, ctx: SessionContext, api_key: str) -> None:
+        """Store the key; "" clears it back to the env fallback."""
+        await self.upsert(ctx, BRAVE_API_KEY_KEY, api_key)
+
+    async def brave_monthly_budget(self, ctx: SessionContext) -> int:
+        """Queries per calendar month. A junk or out-of-range store reads as the default, so a
+        bad value can never mean "unlimited"."""
+        raw = await self.get(ctx, BRAVE_BUDGET_KEY, BRAVE_BUDGET_DEFAULT)
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            return BRAVE_BUDGET_DEFAULT
+        return raw if BRAVE_BUDGET_MIN <= raw <= BRAVE_BUDGET_MAX else BRAVE_BUDGET_DEFAULT
+
+    async def set_brave_monthly_budget(self, ctx: SessionContext, budget: int) -> None:
+        await self.upsert(ctx, BRAVE_BUDGET_KEY, int(budget))
+
+    async def brave_usage(self, ctx: SessionContext) -> object:
+        """The raw usage record (`jbrain.web.search.usage_count` sanitizes it), or None."""
+        return await self.get(ctx, BRAVE_USAGE_KEY, None)
+
+    async def set_brave_usage(self, ctx: SessionContext, record: dict[str, object]) -> None:
+        await self.upsert(ctx, BRAVE_USAGE_KEY, record)
+
+    async def brave_last_error(self, ctx: SessionContext) -> object:
+        """The raw last-failure record ({"detail", "at"}), or None."""
+        return await self.get(ctx, BRAVE_LAST_ERROR_KEY, None)
+
+    async def set_brave_last_error(self, ctx: SessionContext, record: dict[str, str]) -> None:
+        await self.upsert(ctx, BRAVE_LAST_ERROR_KEY, record)
 
     async def moltbook_api_key(self, ctx: SessionContext) -> str:
         """The stored Moltbook bearer key, or "" when unset — the caller falls back to the

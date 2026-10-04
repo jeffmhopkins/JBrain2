@@ -362,8 +362,8 @@ def _search_health_note(result: "SearchResult") -> str:
     notes: list[str] = []
     if result.hosted_failure:
         notes.append(
-            f"[Search note: the primary search (Tavily) failed — {result.hosted_failure} — so"
-            " these results come from the box's own fallback engines, which are less reliable.]"
+            f"[Search note: the box's own engines came back thin and the hosted search tiers"
+            f" failed — {result.hosted_failure} — so these are the box's own results alone.]"
         )
     if result.degraded:
         down = ", ".join(result.engines_down)

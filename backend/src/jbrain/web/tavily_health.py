@@ -1,13 +1,13 @@
 """Whether the owner's Tavily key is still working — and telling him when it stops.
 
-Tavily is the box's primary web search and the last web_fetch recovery tier, on a free plan
-with a monthly credit allowance. When that runs out every call fails the same way until the
-month resets, and before this the only trace was a `web.tavily_failed` log line the owner (no
-terminal) never sees: search quietly fell back to the scraper engines it was brought in to
-replace. This module turns those failures into a STATE: kept in owner-only app.settings so the
-Settings panel can show it, announced once per change on the owner's devices, and used to stop
-calling a key that cannot answer (a cooldown) instead of paying a round trip per search to
-learn it again.
+Tavily is the box's last web-search tier (after SearXNG and Brave) and the last web_fetch
+recovery tier, on a free plan with a monthly credit allowance. When that runs out every call
+fails the same way until the month resets, and before this the only trace was a
+`web.tavily_failed` log line the owner (no terminal) never sees: search quietly fell back to the
+scraper engines it was brought in to replace. This module turns those failures into a STATE:
+kept in owner-only app.settings so the Settings panel can show it, announced once per change on
+the owner's devices, and used to stop calling a key that cannot answer (a cooldown) instead of
+paying a round trip per search to learn it again.
 
 Tavily's documented statuses: 429 is a per-minute rate limit, 432 the plan's credit limit, 433
 the pay-as-you-go spending cap, 401/403 a rejected key. Anything else is a transient error and

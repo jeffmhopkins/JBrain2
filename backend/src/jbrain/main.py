@@ -119,6 +119,7 @@ from jbrain.api import (
 from jbrain.api import (
     appointments as appointments_api,
 )
+from jbrain.api import brave_settings as brave_settings_api
 from jbrain.api import (
     endpoint as endpoint_api,
 )
@@ -214,6 +215,9 @@ from jbrain.usage import SqlUsageRecorder
 from jbrain.vision import RapidOcrClient
 from jbrain.vitals_ring import VitalsRing, sample_loop
 from jbrain.web import (
+    BraveConfig,
+    BraveSearch,
+    BraveUsage,
     CourtListenerClient,
     DomainSkipRepo,
     FaviconFetcher,
@@ -718,11 +722,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             record_solver_failed=domain_skips.record_solver_failed,
             tavily_health=tavily_health,
         )
-        # Tavily's Search API is web_search's primary index and SearXNG the fallback: the
-        # scraper engines block this box's IP. Same live toggle + key as the fetch tier, so the
-        # Tavily panel governs both.
+
+        # web_search asks SearXNG first, then Brave, then Tavily (docs/plans/BROWSER_AGENT_PLAN.md
+        # B3): the on-box metasearch is free, and the metered tiers spend only on what it can't
+        # carry. Brave's toggle, key and monthly budget are read LIVE from app.settings like
+        # Tavily's (stored key over the env fallback); its usage counter lives there too, so the
+        # Settings panel shows the month's spend. Tavily keeps the same live toggle + key as the
+        # fetch tier, so its panel governs both.
+        async def _brave_settings() -> BraveConfig:
+            return BraveConfig(
+                enabled=await settings_store.brave_enabled(SYSTEM_CTX),
+                api_key=await settings_store.brave_api_key(SYSTEM_CTX) or settings.brave_api_key,
+                budget=await settings_store.brave_monthly_budget(SYSTEM_CTX),
+            )
+
+        brave_search = BraveSearch(
+            settings.brave_url,
+            _brave_settings,
+            BraveUsage(
+                load=lambda: settings_store.brave_usage(SYSTEM_CTX),
+                save=lambda record: settings_store.set_brave_usage(SYSTEM_CTX, record),
+            ),
+            save_error=lambda record: settings_store.set_brave_last_error(SYSTEM_CTX, record),
+        )
+        app.state.brave_search = brave_search
         searxng = SearxngClient(
             settings.searxng_url,
+            brave=brave_search.search,
             hosted=TavilySearch(settings.tavily_url, _tavily_settings, health=tavily_health).search,
         )
         # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool
@@ -1739,6 +1765,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(settings_api.router, prefix="/api")
     app.include_router(gmail_settings_api.router, prefix="/api")
     app.include_router(tavily_settings_api.router, prefix="/api")
+    app.include_router(brave_settings_api.router, prefix="/api")
     app.include_router(moltbook_settings_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")

@@ -140,6 +140,10 @@ listed and revocable in Settings, and never extend to the Never tier.
 - The Brave key is set **in Settings**, never `.env` — a panel mirroring the Tavily one
   (`api/tavily_settings.py`): stored key with the env as fallback, enable toggle, a "Test
   key" button, and this month's usage against the budget.
+- **Brave provider and Settings panel landed in PR #1557:** `BraveSearch` + a per-month query
+  budget (default 900, counted in `app.settings`), the chain reordered to SearXNG → Brave →
+  Tavily, and the **Brave Search** Settings panel (`api/brave_settings.py`). The rest of B3
+  is still open.
 - A week of per-engine health on the new pin (including a 50-query burst) decides whether
   Brave's free credit covers the overflow.
 
@@ -151,7 +155,3 @@ listed and revocable in Settings, and never extend to the Never tier.
 ## 5. Open questions
 1. **The judge's model.** Flash-Next itself at low effort in a small slot, or a smaller
    dedicated classifier? Decided by B2's measured false-auto rate.
-</content>
-</invoke>
-<invoke name="Bash">
-<parameter name="command">cd /home/user/JBrain2 && mkdir -p docs/research/browser-agent && { printf '%s\n\n%s\n\n' "# Self-hosted browser agent options — prior-art survey" "> **Status:** Research · **Last verified:** 2026-10-04 · Feeds \`../../plans/BROWSER_AGENT_PLAN.md\`."; tail -n +3 "reports/Self hosted browser agent options.md" | sed '1s/^/## Summary\n\n/'; } > docs/research/browser-agent/SELF_HOSTED_BROWSER_AGENT_OPTIONS.md && head -8 docs/research/browser-agent/SELF_HOSTED_BROWSER_AGENT_OPTIONS.md | cut -c1-120

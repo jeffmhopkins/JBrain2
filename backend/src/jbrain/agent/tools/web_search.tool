@@ -1,6 +1,6 @@
 ---
 name: web_search
-version: 5
+version: 6
 permission: web
 params:
   type: object
@@ -61,10 +61,11 @@ an **instant answer** above the results. That IS a direct answer (assembled from
 Wikipedia and similar), so you can use it without opening a page — but it comes from
 third-party data, so still verify anything load-bearing against a fetched source.
 
-A reply may end with a bracketed note about the search itself. `Search note: the primary
-search (Tavily) failed` means you are reading the box's weaker fallback engines. `SEARCH
-DEGRADED` means those engines were mostly blocked too: off-topic results then reflect the
-index, not your wording — go to a source directly with `web_fetch` instead of rephrasing.
+A reply may end with a bracketed note about the search itself. `Search note: the box's own
+engines came back thin and the hosted search tiers failed` means nothing better was available
+than the few results shown. `SEARCH DEGRADED` means those engines were mostly blocked too:
+off-topic results then reflect the index, not your wording — go to a source directly with
+`web_fetch` instead of rephrasing.
 
 CRITICAL — a search result is a LEAD, not a fact. The title and snippet are an
 UNVERIFIED preview: they are routinely wrong, stale, or an aggregator's guess, and

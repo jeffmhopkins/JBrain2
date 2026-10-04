@@ -655,6 +655,42 @@ export interface TavilyTestResult {
   detail: string;
 }
 
+/** The Brave Search tier (GET /api/settings/brave) — web_search's metered middle tier. The API
+ * key is stored server-side and NEVER returned; `key_source` says whether the stored key or the
+ * env fallback is in use. `effective` = a search would reach Brave now (wired, enabled, keyed and
+ * under this month's budget). Usage is counted per UTC calendar month (`month`, "YYYY-MM"). */
+export interface BraveSettings {
+  enabled: boolean;
+  key_present: boolean;
+  key_source: "stored" | "env" | "none";
+  wired: boolean;
+  effective: boolean;
+  /** What the server learned from Brave itself: the key was refused, or the plan's credit ran
+   * out this month. "" = neither. */
+  blocked: "" | "key_rejected" | "credit_spent";
+  budget: number;
+  used_this_month: number;
+  month: string;
+  /** The last key/credit failure Brave reported ("" = none since the last success). */
+  last_error: string;
+  last_error_at: string;
+}
+
+/** Partial Brave write — omit a field to leave it unchanged. A non-empty `api_key` sets the key;
+ * `""` removes the stored key (reverting to the env fallback). */
+export interface BravePatch {
+  enabled?: boolean;
+  api_key?: string;
+  monthly_budget?: number;
+}
+
+/** Result of POST /api/settings/brave/test — one real (counted) query. */
+export interface BraveTestResult {
+  ok: boolean;
+  hits: number;
+  detail: string;
+}
+
 /** jmolt's Moltbook account + operating switches (GET /api/settings/moltbook). The bearer
  * key is stored server-side and NEVER returned — only whether one is set. `autonomy` is
  * the queue-vs-auto switch (default off); `killed` is the global pause; `disclosure` is
@@ -3247,6 +3283,23 @@ export const api = {
       jsonInit("POST", url ? { url } : {}),
     );
     return (await response.json()) as TavilyTestResult;
+  },
+
+  // The Brave Search tier. Status hides the key; saving a patch leaves omitted fields intact; the
+  // test spends one real query, counted against the month's budget.
+  async getBraveSettings(): Promise<BraveSettings> {
+    const response = await request("/api/settings/brave");
+    return (await response.json()) as BraveSettings;
+  },
+
+  async updateBraveSettings(patch: BravePatch): Promise<BraveSettings> {
+    const response = await request("/api/settings/brave", jsonInit("PUT", patch));
+    return (await response.json()) as BraveSettings;
+  },
+
+  async testBraveSettings(): Promise<BraveTestResult> {
+    const response = await request("/api/settings/brave/test", { method: "POST" });
+    return (await response.json()) as BraveTestResult;
   },
 
   // jmolt's Moltbook account + switches. Status hides the key (key_set boolean only);
