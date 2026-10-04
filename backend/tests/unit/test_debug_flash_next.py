@@ -1281,3 +1281,87 @@ def test_slot_probe_names_any_slot_pair_on_a_pool(
     assert resp.status_code == 200
     assert upstream.calls[:2] == ["/slots/5?erase", "/slots/6?erase"]
     assert "/slots/6?restore" in upstream.calls
+
+
+async def test_the_probe_records_the_restore_gate_for_the_running_flash_next(
+    tmp_path: Path,
+) -> None:
+    """kv_prefix restores nothing on Flash-Next until a probe PASSED, sidecar included, against
+    the running launch line and build; the probe is what writes that verdict."""
+    from types import SimpleNamespace
+
+    from jbrain.llm import engine as engines
+    from jbrain.llm import kv_prefix, llama_swap_config
+
+    served = "qwen3.8-flash-next"
+    line = f"llama-server -c 524288 --slot-save-path /models/.kvslots/{served} --port 9001"
+    (tmp_path / engines.CONFIG_FILE[engines.FLASH_NEXT]).write_text(
+        f"models:\n  {served}:\n    cmd: {line}\n"
+    )
+    folder = tmp_path / llama_swap_config.KVSLOT_DIR / served
+    folder.mkdir(parents=True)
+
+    class _Gateway:
+        async def props(self, _served: str) -> dict[str, object]:
+            return {"build_info": "b1-869034b"}
+
+    class _Store:
+        def __init__(self) -> None:
+            self.forgot: list[str] = []
+
+        def forget_gate(self, served_model: str) -> None:
+            self.forgot.append(served_model)
+
+    store = _Store()
+    gw: Any = _Gateway()
+    request: Any = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(kv_prefix=store)))
+    got = await debug._record_restore_gate(
+        request,
+        str(tmp_path),
+        gw,
+        engines.FLASH_NEXT,
+        served,
+        passed=True,
+        detail={"sidecar": True},
+    )
+    assert got == "passed" and store.forgot == [served]
+    verdict = kv_prefix.read_gate_verdict(str(folder))
+    assert verdict is not None
+    assert verdict["fingerprint"] == kv_prefix.gate_fingerprint(line, "b1-869034b")
+    assert verdict["verdict"] == "passed"
+    got = await debug._record_restore_gate(
+        request,
+        str(tmp_path),
+        gw,
+        engines.FLASH_NEXT,
+        served,
+        passed=False,
+        detail={},
+    )
+    assert got == "failed"
+    # A model without the gate records nothing.
+    assert (
+        await debug._record_restore_gate(
+            request,
+            str(tmp_path),
+            gw,
+            engines.STANDARD,
+            "gpt-oss-120b",
+            passed=True,
+            detail={},
+        )
+        is None
+    )
+
+
+def test_only_a_chat_that_cannot_hold_firewalled_data_names_its_conversation() -> None:
+    """The chat's conversation key — what lets its slot state reach disk — is guarded by the
+    privacy rule, so a Brain/curator chat (or one scoped to a firewalled domain) never has one."""
+    src = (Path(debug.__file__).parent / "agent.py").read_text()
+    call = src[
+        src.index("conversation_key=(") : src.index("else None", src.index("conversation_key=("))
+    ]
+    assert "kv_conversation.conversation_cache_allowed(" in call
+    assert "reads_knowledge_base=profile.reads_knowledge_base" in call
+    assert "domain_scopes=session.domain_scopes" in call
+    assert "subject_ids=session.subject_ids" in call

@@ -90,7 +90,15 @@ from jbrain.api.settings import get_settings_store
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
-from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage, local_catalog
+from jbrain.llm import (
+    AssistantMessage,
+    LlmImage,
+    LlmMessage,
+    LlmRouter,
+    UserMessage,
+    kv_conversation,
+    local_catalog,
+)
 from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.llm.kv_pool_guard import KvPoolBusyError
 from jbrain.llm.providers import REASONING_EFFORTS
@@ -1071,7 +1079,17 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         effort_override=effort_override,
         hidden_tools_provider=hidden_provider,
         slot_role=SlotRole.INTERACTIVE,
-        conversation_key=str(session.id),
+        # Named only for a chat that cannot hold firewalled data — its slot state may then be
+        # written to disk (FLASH_NEXT F4c). A Brain/curator chat never is.
+        conversation_key=(
+            str(session.id)
+            if kv_conversation.conversation_cache_allowed(
+                reads_knowledge_base=profile.reads_knowledge_base,
+                domain_scopes=session.domain_scopes,
+                subject_ids=session.subject_ids,
+            )
+            else None
+        ),
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain

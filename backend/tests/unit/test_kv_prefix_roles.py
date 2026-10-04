@@ -14,7 +14,7 @@ import pytest
 
 from jbrain import box_events
 from jbrain.llm import engine as engines
-from jbrain.llm import kv_conversation, llama_swap_config
+from jbrain.llm import kv_conversation, kv_prefix, llama_swap_config
 from jbrain.llm.kv_conversation import ConversationHold, ConversationMeta
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayError
@@ -22,6 +22,7 @@ from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotRole
 from jbrain.llm.types import AssistantMessage, LlmTool, UserMessage
 
 FLASH = "qwen3.8-flash-next"
+BUILD = "b9999-869034b"
 PRIME = 29_000
 TOOLS = [LlmTool(name="notes", description="read notes", input_schema={"type": "object"})]
 LINE = (
@@ -51,6 +52,10 @@ class FakeGateway:
         self.restore_error: Exception | None = None
         self.saved: list[tuple[int, str]] = []
         self.restored: list[tuple[int, str]] = []
+        self.build = BUILD
+
+    async def props(self, served: str) -> dict[str, object]:
+        return {"build_info": self.build}
 
     async def slots(self, served: str) -> list[dict[str, object]]:
         return [dict(s) for s in self.slot_state]
@@ -101,9 +106,24 @@ def _folder(root: Path) -> Path:
     return root / llama_swap_config.KVSLOT_DIR / FLASH
 
 
+def _record_gate(root: Path, verdict: str, *, build: str = BUILD) -> None:
+    """What a slot probe run leaves beside the files (api/debug `_record_restore_gate`)."""
+    assert kv_prefix.write_gate_verdict(
+        str(_folder(root)),
+        {"fingerprint": kv_prefix.gate_fingerprint(LINE, build), "verdict": verdict},
+    )
+
+
 def _store(
-    root: Path, *, patched: bool = True, conversations: bool = True, budget: int = 40 * 1024**3
+    root: Path,
+    *,
+    patched: bool = True,
+    conversations: bool = True,
+    budget: int = 40 * 1024**3,
+    gate: str | None = "passed",
 ) -> tuple[KvPrefixStore, FakeGateway]:
+    if gate is not None:
+        _record_gate(root, gate)
     gw = FakeGateway(_folder(root), patched=patched)
     store = KvPrefixStore(
         gw,  # type: ignore[arg-type]
@@ -243,7 +263,7 @@ async def test_a_save_without_its_sidecar_proves_the_build_unpatched(root: Path)
     assert not await store.save_after_prime(
         FLASH, "persona", TOOLS, PRIME, role=SlotRole.INTERACTIVE
     )
-    assert list(_folder(root).iterdir()) == [], "the unusable file is removed"
+    assert list(_folder(root).glob("*.kvslot*")) == [], "the unusable file is removed"
     assert store.identity_of(FLASH, "persona", TOOLS, None) is None, "out of the disk layer"
     assert "checkpoint-sidecar patch" in store._ineligible_reason(FLASH)
     assert store._counters.get("patch_absent") == 1
@@ -502,3 +522,96 @@ async def test_the_state_read_shows_roles_conversations_and_hit_counts(root: Pat
     assert conv["enabled"] is True
     assert conv["held"][0]["unsaved"] is True
     assert state["summary"]["hits"] == 1
+
+
+# ---- the restore gate (a passing slot probe for the running server) -------------------------
+
+
+async def test_nothing_is_restored_until_a_probe_passes_but_saves_still_happen(root: Path) -> None:
+    store, gw = _store(root, gate=None)
+    fp = await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
+    assert (_folder(root) / f"{fp}.kvslot").exists(), "saves are not gated"
+    gw.slot_state = _slots()
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.INTERACTIVE)
+    assert gw.restored == []
+    assert store._counters.get("restore_gated_awaiting_probe") == 1
+    state: Any = await store.snapshot([(FLASH, "persona", TOOLS, None)])
+    assert state["restore_gate"] == {FLASH: "awaiting_probe"}
+    # The probe passes: the next read opens the gate.
+    _record_gate(root, "passed")
+    store.forget_gate(FLASH)
+    assert await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.INTERACTIVE)
+
+
+async def test_a_failed_probe_keeps_restores_off_and_says_so(root: Path) -> None:
+    store, gw = _store(root, gate="failed")
+    await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
+    gw.slot_state = _slots()
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
+    assert await store.restore_gate(FLASH) == "failed"
+    assert store.gate_states() == {FLASH: "failed"}
+
+
+async def test_a_new_build_needs_a_new_probe(root: Path) -> None:
+    store, gw = _store(root, gate="passed")
+    await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
+    gw.build = "b10000-newer"  # the image was rebuilt on another commit
+    store.forget_gate()
+    gw.slot_state = _slots()
+    assert await store.restore_gate(FLASH) == "awaiting_probe"
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.INTERACTIVE)
+
+
+async def test_an_unreadable_build_reads_as_unproven(root: Path) -> None:
+    store, gw = _store(root, gate="passed")
+
+    async def _boom(served: str) -> dict[str, object]:
+        raise LocalGatewayError("not resident")
+
+    gw.props = _boom  # type: ignore[method-assign]
+    assert await store.restore_gate(FLASH) == "awaiting_probe"
+
+
+async def test_conversation_restores_wait_for_the_probe_too(root: Path) -> None:
+    store, gw = _store(root, gate=None)
+    a1 = _msgs("q")
+    await _turn(store, gw, "chat-A", a1, 40_000)
+    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
+    assert len(gw.saved) == 1, "the leaving conversation is still saved"
+    assert not await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None, a1)
+    assert gw.restored == []
+
+
+def test_a_model_without_the_gate_has_none(root: Path) -> None:
+    import asyncio
+
+    store, _gw = _store(root)
+    assert asyncio.run(store.restore_gate("gpt-oss-120b")) is None
+
+
+# ---- privacy scope and replayed reasoning ------------------------------------------------------
+
+
+def test_only_chats_that_cannot_hold_firewalled_data_get_files() -> None:
+    allowed = kv_conversation.conversation_cache_allowed
+    assert allowed(reads_knowledge_base=False, domain_scopes=(), subject_ids=())
+    assert allowed(reads_knowledge_base=False, domain_scopes=("general",), subject_ids=())
+    # A Brain/curator chat reads the knowledge base: never on disk.
+    assert not allowed(reads_knowledge_base=True, domain_scopes=("general",), subject_ids=())
+    for domain in ("health", "finance", "location", "something-new"):
+        assert not allowed(
+            reads_knowledge_base=False, domain_scopes=("general", domain), subject_ids=()
+        )
+    assert not allowed(reads_knowledge_base=False, domain_scopes=(), subject_ids=("s-1",))
+
+
+def test_digests_ignore_reasoning_replayed_within_a_turn() -> None:
+    # Within a turn a tool step carries its own thinking; the next turn's history does not.
+    with_thinking = [
+        UserMessage("q"),
+        AssistantMessage(text="", reasoning="let me look", reasoning_model=FLASH),
+    ]
+    history = [UserMessage("q"), AssistantMessage(text="")]
+    assert kv_conversation.message_digests(with_thinking) == kv_conversation.message_digests(
+        history
+    )

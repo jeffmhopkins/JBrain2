@@ -16,8 +16,18 @@ re-evaluates from the first divergence (the previous answer re-rendered without 
 thinking, typically), so a wrong guess here costs a re-prefill, never a wrong answer.
 
 No conversation text is stored in the metadata — only digests and counts. The slot file
-itself holds the conversation's token ids, like the KV in RAM it was taken from; the budget,
-the owner's toggle and `DELETE /api/debug/llm/kv-prefix` are what bound and remove it.
+itself holds the conversation's token ids, like the KV in RAM it was taken from — on disk,
+outside Postgres, where the domain firewalls (health, finance, location) cannot reach it. So a
+conversation gets a file ONLY when it cannot hold firewalled data at all
+(`conversation_cache_allowed`): a persona that does not read the knowledge base, in a session
+with no firewalled domain and no subject. A Brain/curator chat never gets one. The budget, the
+owner's toggle and `DELETE /api/debug/llm/kv-prefix` bound and remove the rest.
+
+Replayed reasoning (FLASH_NEXT F3b follow-on): within a turn the router sends each tool step's
+own thinking back as `reasoning_content`; the next turn's history is text-only, and the
+template renders earlier turns with `preserve_thinking=false`. The digests therefore leave the
+reasoning fields out — they describe what the NEXT request resends — and llama-server re-reads
+from the first token where the re-render differs (the previous turn's first tool step).
 """
 
 from __future__ import annotations
@@ -47,10 +57,31 @@ SAVE_SLACK_TOKENS: Final = 8
 Decision = Literal["restore", "no_file", "base_mismatch", "prefix_mismatch"]
 
 
+# Domains whose rows Postgres firewalls; anything else unknown is treated the same way.
+_UNFIREWALLED = frozenset({"general"})
+# Per-step thinking replayed within a turn only; never part of the next turn's history.
+_REPLAY_ONLY_FIELDS = ("reasoning", "reasoning_model")
+
+
+def conversation_cache_allowed(
+    *, reads_knowledge_base: bool, domain_scopes: Sequence[str], subject_ids: Sequence[str]
+) -> bool:
+    """Whether a chat may have its slot state written to disk. Only when nothing firewalled can
+    be in it: the persona reads no knowledge base (jerv, research-type agents — their turns run
+    with empty read scopes), the session names no domain but `general` (an unknown domain counts
+    as firewalled) and no subject. Conservative by construction: any doubt keeps it in RAM."""
+    if reads_knowledge_base or subject_ids:
+        return False
+    return all(domain in _UNFIREWALLED for domain in domain_scopes)
+
+
 def _canonical(message: LlmMessage) -> bytes:
-    """One message as stable bytes. Images and their base64 payloads are included: a
-    different picture under the same words is a different prompt."""
+    """One message as stable bytes, without the replay-only reasoning fields. Images and their
+    base64 payloads are included: a different picture under the same words is a different
+    prompt."""
     body = dataclasses.asdict(message)
+    for field in _REPLAY_ONLY_FIELDS:
+        body.pop(field, None)
     return json.dumps(
         {"type": type(message).__name__, "body": body}, sort_keys=True, default=str
     ).encode()

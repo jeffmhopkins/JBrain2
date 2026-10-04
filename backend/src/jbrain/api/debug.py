@@ -65,7 +65,7 @@ from jbrain.ingest.ocr import (
 from jbrain.ingest.video import FRAME_CAPTION_TASK as VIDEO_FRAME_TASK
 from jbrain.ingest.video import SUMMARY_TASK as VIDEO_SUMMARY_TASK
 from jbrain.ingest.video import run_video_analysis, transcribe_audio_chunked
-from jbrain.llm import LlmImage, llama_swap_config, local_catalog, slot_roles
+from jbrain.llm import LlmImage, kv_prefix, llama_swap_config, local_catalog, slot_roles
 from jbrain.llm import engine as llm_engine
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
@@ -3889,6 +3889,11 @@ class SlotProbeOut(BaseModel):
     # Whether the save wrote its checkpoint sidecar (`<file>.ckpt`) — the patched engine's
     # signature. None when this process cannot see the save directory.
     sidecar: bool | None
+    # The disk prefix cache's restore gate this run recorded for a patch-gated model
+    # (Flash-Next): `passed` only when `passed` AND `sidecar` held, keyed by the running
+    # launch line and llama.cpp build; `failed` otherwise. None when nothing was recorded (a
+    # model without the gate, or a save directory this process cannot see).
+    restore_gate: str | None = None
     n_saved: int | None
     n_restored: int | None
     file_bytes: int | None
@@ -3966,6 +3971,47 @@ def _probe_sidecar_path(models_dir: str, served: str) -> Path | None:
         return None
     folder = Path(models_dir) / llama_swap_config.KVSLOT_DIR / model_id
     return folder / f"{_SLOT_PROBE_FILE}.ckpt" if folder.is_dir() else None
+
+
+async def _record_restore_gate(
+    request: Request,
+    models_dir: str,
+    gateway: LocalGatewayClient,
+    engine: llm_engine.Engine,
+    served: str,
+    *,
+    passed: bool,
+    detail: dict[str, Any],
+) -> str | None:
+    """Write this run's verdict as the disk prefix cache's restore gate (kv_prefix: restores
+    on a patch-gated model wait for a passing probe against the server running now). Keyed by
+    the launch line and `/props` build_info, so a new image or launch line needs a new run."""
+    model = local_catalog.get_by_served(served)
+    if model is None or not model.kv_restore_needs_patch:
+        return None
+    line = llama_swap_config.launch_line(models_dir, served, engine)
+    save_dir = None if line is None else kv_prefix.save_dir_for(line, models_dir)
+    if line is None or save_dir is None:
+        return None
+    try:
+        build = str((await gateway.props(served)).get("build_info") or "")
+    except LocalGatewayError:
+        return None
+    verdict = "passed" if passed else "failed"
+    record = {
+        "fingerprint": kv_prefix.gate_fingerprint(line, build),
+        "verdict": verdict,
+        "model": served,
+        "build_info": build,
+        "at": dt.datetime.now(dt.UTC).isoformat(),
+        **detail,
+    }
+    if not await asyncio.to_thread(kv_prefix.write_gate_verdict, save_dir, record):
+        return None
+    store = getattr(request.app.state, "kv_prefix", None)
+    if store is not None:
+        store.forget_gate(served)
+    return verdict
 
 
 def _needs_save_path(resp: httpx.Response) -> bool:
@@ -4125,6 +4171,24 @@ async def slot_probe(
     )
     within = None if None in checks else all(checks)
     effective = _restore_effective(cold, restored)
+    passed = bool(effective) and within is True
+    sidecar = None if sidecar_path is None else sidecar_path.exists()
+    gate = await _record_restore_gate(
+        request,
+        settings.local_models_dir,
+        gateway,
+        engine,
+        served,
+        passed=passed and sidecar is True,
+        detail={
+            "within_tolerance": within,
+            "restore_effective": effective,
+            "sidecar": sidecar,
+            "tolerance": body.tolerance,
+            "max_abs_diff_vs_cold": vs_cold.max_abs_diff,
+            "slots": [slot_a, slot_b],
+        },
+    )
     return SlotProbeOut(
         engine=engine,
         model=served,
@@ -4139,8 +4203,9 @@ async def slot_probe(
         restore_effective=effective,
         tolerance=body.tolerance,
         within_tolerance=within,
-        passed=bool(effective) and within is True,
-        sidecar=None if sidecar_path is None else sidecar_path.exists(),
+        passed=passed,
+        sidecar=sidecar,
+        restore_gate=gate,
         n_saved=num(saved, "n_saved"),
         n_restored=num(restored_meta, "n_restored"),
         file_bytes=num(saved, "n_written"),

@@ -146,6 +146,22 @@ POOLED_RESTORE_MEMO_S = 600.0
 # every turn of an active one.
 CONVERSATION_IDLE_SAVE_S = 600.0
 
+# THE RESTORE GATE (FLASH_NEXT_ENGINE_PLAN F4). On a patch-gated model nothing is restored —
+# no role prefix, no conversation — until the debug slot probe has PASSED (the restored slot's
+# logits within tolerance, and the save's checkpoint sidecar present) against the server that
+# is running now: its launch line and its llama.cpp build (`/props` build_info). The probe
+# writes its verdict beside the slot files, keyed by that fingerprint, so a new image or a new
+# launch line reads as `awaiting_probe` until someone runs it again. Saves are not gated: they
+# cost a disk write, and their files are what a passing probe then makes restorable.
+RestoreGate = Literal["awaiting_probe", "passed", "failed"]
+GATE_FILE = "restore-gate.json"
+# How long a computed gate state is trusted before `/props` and the verdict are read again. A
+# probe's own verdict replaces it at once (`forget_gate`); an image swap restarts the server,
+# whose new build moves the fingerprint within this window.
+GATE_TTL_S = 120.0
+# How long an unreadable build (model not resident, `/props` failing) is remembered as unproven.
+GATE_UNREADABLE_TTL_S = 15.0
+
 
 def _slot_int(slot: dict[str, object], key: str) -> int:
     value = slot.get(key)
@@ -197,6 +213,11 @@ def _save_dir_from_line(launch_line: str, models_root: str) -> str | None:
     if not raw.startswith(prefix):
         return None  # an override pointing outside the shared volume is unreachable from here
     return os.path.join(models_root, raw[len(prefix) :].rstrip("/"))
+
+
+def save_dir_for(launch_line: str, models_root: str) -> str | None:
+    """Public form of `_save_dir_from_line`, for the slot probe recording its verdict."""
+    return _save_dir_from_line(launch_line, models_root)
 
 
 def _fingerprint(
@@ -307,6 +328,42 @@ def _pool_cells(launch_line: str, pool: KvPool) -> int:
     return value if value > 0 else pool.n_ctx
 
 
+def gate_fingerprint(launch_line: str, build_info: str) -> str:
+    """What a probe verdict is valid for: the launch line (minus `--port`, as everywhere in this
+    store) and the engine build. The checkpoint-sidecar patch itself is not visible over HTTP;
+    the probe's `sidecar` check proves it at probe time, and every save proves it again."""
+    digest = hashlib.sha256()
+    for part in (_stable_launch_line(launch_line), build_info):
+        digest.update(part.encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()[:24]
+
+
+def read_gate_verdict(save_dir: str) -> dict[str, object] | None:
+    """Runs in a thread — the last probe verdict beside a model's slot files, or None."""
+    try:
+        with open(os.path.join(save_dir, GATE_FILE), encoding="utf-8") as fh:
+            data = json.loads(fh.read())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_gate_verdict(save_dir: str, verdict: dict[str, object]) -> bool:
+    """Runs in a thread — record a probe verdict atomically beside the model's slot files."""
+    path = os.path.join(save_dir, GATE_FILE)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(verdict, sort_keys=True))
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        return False
+    return True
+
+
 def _by_slot_id(slots: Sequence[dict[str, object]], slot_id: int) -> dict[str, object] | None:
     return next((s for s in slots if isinstance(s, dict) and s.get("id") == slot_id), None)
 
@@ -388,6 +445,8 @@ class KvPrefixStore:
         # Per pooled served model: the conversation its interactive slot holds, as far as this
         # process knows. None/absent = unknown, which is never saved.
         self._conv_hold: dict[str, ConversationHold] = {}
+        # Per patch-gated served model: (monotonic read time, gate fingerprint, state).
+        self._gate_cache: dict[str, tuple[float, str, RestoreGate]] = {}
         # ---- instrumentation (see `snapshot`) ----
         # Every outcome this store reaches, counted since process start. Cheap, unbounded in
         # value but not in keys (one per outcome name), and the only way to tell "the cache
@@ -417,6 +476,71 @@ class KvPrefixStore:
             if not conversations:
                 # Nothing more is saved; what the slot holds stays, unclaimed.
                 self._conv_hold.clear()
+
+    # ---- the restore gate ------------------------------------------------------------
+
+    async def restore_gate(self, served_model: str) -> RestoreGate | None:
+        """This model's restore gate, or None when it has none (only patch-gated models do).
+        Anything unreadable — no launch line, a model not resident, `/props` failing — reads as
+        `awaiting_probe`: the conservative state, which saves but never restores."""
+        model = local_catalog.get_by_served(served_model)
+        if model is None or not model.kv_restore_needs_patch:
+            return None
+        cached = self._gate_cache.get(served_model)
+        if cached is not None and time.monotonic() - cached[0] < GATE_TTL_S:
+            return cached[2]
+        await self._refresh_engine()
+        line = await asyncio.to_thread(
+            llama_swap_config.launch_line, self._models_root, served_model, self._current_engine()
+        )
+        save_dir = None if line is None else _save_dir_from_line(line, self._models_root)
+        build: str | None = None
+        if line is not None:
+            try:
+                build = str((await self._gateway.props(served_model)).get("build_info") or "")
+            except Exception:  # noqa: BLE001 — unreadable means unproven, never an error
+                build = None
+        if line is None or save_dir is None or build is None:
+            # Unproven. Remembered briefly, so a model that is not resident is not asked for
+            # its build on every keeper tick and settings read; a probe clears it at once.
+            self._gate_cache[served_model] = (
+                time.monotonic() - GATE_TTL_S + GATE_UNREADABLE_TTL_S,
+                "",
+                "awaiting_probe",
+            )
+            return "awaiting_probe"
+        fingerprint = gate_fingerprint(line, build)
+        verdict = await asyncio.to_thread(read_gate_verdict, save_dir)
+        state: RestoreGate = "awaiting_probe"
+        if verdict is not None and verdict.get("fingerprint") == fingerprint:
+            state = "passed" if verdict.get("verdict") == "passed" else "failed"
+        self._gate_cache[served_model] = (time.monotonic(), fingerprint, state)
+        return state
+
+    def gate_states(self) -> dict[str, RestoreGate]:
+        """The last gate state computed per model, without any I/O — for the settings read."""
+        return {served: entry[2] for served, entry in sorted(self._gate_cache.items())}
+
+    def forget_gate(self, served_model: str | None = None) -> None:
+        """Drop the cached gate state so the next restore reads the verdict afresh — the slot
+        probe calls this right after recording one."""
+        if served_model is None:
+            self._gate_cache.clear()
+        else:
+            self._gate_cache.pop(served_model, None)
+
+    async def _gate_open(self, served_model: str, role: SlotRole | None) -> bool:
+        """Whether restores may run on this model now; counts the ones the gate holds back."""
+        state = await self.restore_gate(served_model)
+        if state is None or state == "passed":
+            return True
+        self._count(f"restore_gated_{state}")
+        self._last_role_outcome[(served_model, str(role or SlotRole.INTERACTIVE))] = {
+            "at": time.time(),
+            "model": served_model,
+            "outcome": f"restore_gated_{state}",
+        }
+        return False
 
     def _count(self, outcome: str) -> None:
         """Count an outcome too frequent or too ordinary for the ring and the log (a held
@@ -532,6 +656,11 @@ class KvPrefixStore:
                     "restored_unused" if interactive in self._restored_unused else "file_present"
                 )
             models.append(entry)
+        gates: dict[str, RestoreGate] = {}
+        for served_model, *_rest in probes:
+            gate = await self.restore_gate(served_model)
+            if gate is not None:
+                gates[served_model] = gate
         counters = dict(sorted(self._counters.items()))
         return {
             "counters": counters,
@@ -552,6 +681,7 @@ class KvPrefixStore:
                 "files": [r for r in usage[2] if r.get("kind") == "conversation"],
             },
             "patch_absent": sorted(self._patch_absent),
+            "restore_gate": gates,
             "recent": list(self._events),
             "store": {
                 "bytes": usage[0],
@@ -1296,6 +1426,8 @@ class KvPrefixStore:
         Never over an occupied slot, whatever it holds — on a pool each role's traffic is
         pinned to its slot, so anything there is that role's own live cache. Never past the
         pool either: llama-server answers a full pool by failing every busy request."""
+        if not await self._gate_open(served_model, role):
+            return False
         if not await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
             # A hybrid restore with no checkpoints re-prefills from zero (Discussion #27950);
             # the next prime's save writes the sidecar (`save_after_prime`).
@@ -1505,6 +1637,8 @@ class KvPrefixStore:
             return False
         if not await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
             self._count("conversation_skipped_no_sidecar")
+            return False
+        if not await self._gate_open(served_model, SlotRole.INTERACTIVE):
             return False
         slot_id = pool.slot(SlotRole.INTERACTIVE)
         try:

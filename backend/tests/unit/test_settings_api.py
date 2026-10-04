@@ -66,6 +66,7 @@ def test_get_settings_defaults_to_full_analysis(
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
@@ -90,6 +91,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
     assert store.values["image_analysis_mode"] == "ocr"
@@ -109,6 +111,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
@@ -128,6 +131,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
@@ -154,6 +158,7 @@ def test_put_settings_round_trips_the_timezone(
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
     assert store.values["owner_timezone"] == "America/New_York"
@@ -372,6 +377,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
+        "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
     }
 
