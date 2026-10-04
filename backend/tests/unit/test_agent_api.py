@@ -333,7 +333,7 @@ def test_chat_streams_text_then_done(
         {"type": "done", "stop_reason": "end_turn"},
     ]
     # The run was opened, the session touched, and the run closed with its summary.
-    assert runlog.started == [("sess-1", "agent-system-v14")]
+    assert runlog.started == [("sess-1", "agent-system-v15")]
     assert sessions_store.touched == ["sess-1"]
     assert runlog.finished == [
         {"status": "done", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
@@ -2432,7 +2432,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v54") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v55") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def _note_write_registry() -> ToolRegistry:

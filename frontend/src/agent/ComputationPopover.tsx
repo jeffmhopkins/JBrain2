@@ -12,8 +12,16 @@
 // duplication the `code_run` STEP had against its own prose. One tap on the marker is the
 // only tap; the body is capped at 46% of the frame and scrolls, so a long program is still
 // a glance rather than a mode.
+//
+// What closes it is exactly three things: a tap OUTSIDE the panel (the scrim), Escape, and
+// the close control. It used to close on ANY scroll as well — a capture-phase listener on
+// window — and a scroll event's capture reaches window from every element, the panel's own
+// scrolling body included. So the gesture the 46vh cap exists for (scroll a long program)
+// shut the panel on its first pixel, and a tap inside that nudged the body did the same: on
+// the box it read as "touching the popover closes it".
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { XIcon } from "../components/icons";
 import type { CalcTarget } from "./markdown";
 import { ToolView } from "./views/registry";
 
@@ -44,44 +52,65 @@ function place(anchor: DOMRect, height: number): Placement {
   return { left, top: above ? Math.max(MARGIN, anchor.top - 8 - height) : below, width, above };
 }
 
+/** The marker's rect NOW when we hold the element, else the rect it had when tapped. A
+ * marker re-rendered out from under us (the paced reveal settling) keeps the last rect it
+ * had rather than collapsing the panel to the corner. */
+function rectOf(anchor: HTMLElement | DOMRect, last: DOMRect | null): DOMRect {
+  if (!(anchor instanceof Element)) return anchor;
+  return anchor.isConnected
+    ? anchor.getBoundingClientRect()
+    : (last ?? anchor.getBoundingClientRect());
+}
+
 export function ComputationPopover({
   target,
   anchor,
   onClose,
 }: {
   target: CalcTarget;
-  /** The marker's rect at the moment it was tapped. */
-  anchor: DOMRect;
+  /** The tapped marker — the element, so the panel can follow it when the transcript
+   * scrolls — or a fixed rect. */
+  anchor: HTMLElement | DOMRect;
   onClose: () => void;
 }): ReactNode {
   const [placement, setPlacement] = useState<Placement | null>(null);
   const panel = useRef<HTMLDialogElement>(null);
+  const lastRect = useRef<DOMRect | null>(null);
 
-  // Re-placed whenever the panel's own SIZE changes. The height is what decides which side
-  // of the marker it opens on, and an observer covers every way the body can grow (a long
-  // error, a wrapped line, a rotated phone) rather than only the ones thought of here.
+  // Re-placed whenever the panel's own SIZE changes, and whenever something OUTSIDE it
+  // scrolls. The height is what decides which side of the marker it opens on, and an
+  // observer covers every way the body can grow (a long error, a wrapped line, a rotated
+  // phone) rather than only the ones thought of here. A transcript scroll moves the marker,
+  // so the panel follows it instead of closing — a glance the owner did not dismiss stays
+  // open. Its OWN scroll is ignored: that is the owner reading the working.
   useLayoutEffect(() => {
     const el = panel.current;
     if (!el) return;
-    const measure = () => setPlacement(place(anchor, el.offsetHeight));
+    const measure = () => {
+      const rect = rectOf(anchor, lastRect.current);
+      lastRect.current = rect;
+      setPlacement(place(rect, el.offsetHeight));
+    };
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && el.contains(e.target)) return;
+      measure();
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("scroll", onScroll, true);
+    };
   }, [anchor]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    // Any scroll of the transcript takes the marker out from under the panel, and a panel
-    // pointing at nothing is worse than no panel.
     window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onClose, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onClose, true);
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   return (
@@ -106,6 +135,16 @@ export function ComputationPopover({
         }
         aria-label="how this number was worked out"
       >
+        <div className="fb-calc-head">
+          <button
+            type="button"
+            className="fb-calc-x"
+            aria-label="close the working"
+            onClick={onClose}
+          >
+            <XIcon size={14} />
+          </button>
+        </div>
         <div className="fb-calc-body">
           <ToolView payload={target.payload} />
         </div>

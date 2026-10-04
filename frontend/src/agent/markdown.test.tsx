@@ -688,16 +688,17 @@ describe("Markdown", () => {
     expect(onCalc).toHaveBeenCalledWith(1, marker);
   });
 
-  it("a marker that resolves to no call renders as plain text, never as a claim", () => {
+  it("a marker that resolves to no call is dropped, never shown as a claim or as raw text", () => {
     // The rule that keeps a marker from asserting a computation that did not happen: the
     // model authors the marker, and everything shown comes from the persisted call. Two
     // computations here, so the DIGIT is load-bearing — it is the only thing that could say
-    // which of them is meant, and [=3] names neither.
+    // which of them is meant, and [=3] names neither. The figure stays; the marker goes,
+    // with the space before it, so the sentence reads as if it had never been written.
     const { container } = render(
-      <Markdown text="I worked it out[=3]." calcs={[calc("2568"), calc("99")]} />,
+      <Markdown text="That is 82 days [=3]." calcs={[calc("2568"), calc("99")]} />,
     );
     expect(container.querySelector(".md-calc")).toBeNull();
-    expect(container.textContent).toContain("[=3]");
+    expect(container.textContent).toBe("That is 82 days.");
   });
 
   it("forgives the digit when this message has only one computation to point at", () => {
@@ -727,7 +728,31 @@ describe("Markdown", () => {
       <Markdown text="first[=1] and then[=5]." calcs={[calc("1"), calc("2")]} />,
     );
     expect(container.querySelectorAll(".md-calc")).toHaveLength(1);
-    expect(container.textContent).toContain("[=5]");
+    expect(container.textContent).not.toContain("[=5]");
+    expect(container.textContent).toContain("and then.");
+  });
+
+  it("with no computations at all, a marker is dropped rather than left as [=1]", () => {
+    const { container } = render(<Markdown text="biweekly is $5,030.40 [=1] gross." />);
+    expect(container.querySelector(".md-calc")).toBeNull();
+    expect(container.textContent).toBe("biweekly is $5,030.40 gross.");
+  });
+
+  it("never sends a computation marker down the footnote path", () => {
+    // The owner saw a turn whose only tool was run_python render [=1] as "f1" and asked
+    // whether it had become a web footnote. It had not: `ƒ1` IS the computation chip. This
+    // pins that a resolved [=n] is the calc button and never a [^n] superscript, even when
+    // the message also carries web sources numbered from 1.
+    const { container } = render(
+      <Markdown
+        text="biweekly is $5,030.40[=1]."
+        cites={[{ kind: "web", url: "https://irs.gov/a", title: "IRS" }]}
+        calcs={[calc("5030.40")]}
+      />,
+    );
+    expect(container.querySelector(".md-cite")).toBeNull();
+    expect(container.querySelector(".md-webcite")).toBeNull();
+    expect(container.querySelector(".md-calc")?.textContent).toBe("\u01921");
   });
 
   it("keeps computations in their own namespace, separate from source citations", () => {
@@ -742,5 +767,35 @@ describe("Markdown", () => {
     );
     expect(container.querySelector(".md-cite")).not.toBeNull();
     expect(container.querySelector(".md-calc")).not.toBeNull();
+  });
+  // --- an arithmetic flag anchors on its NUMBER -----------------------------
+
+  it("anchors an untraced number's flag right after the number, once", () => {
+    // The arithmetic verdict's claims are bare numbers. On sentence boundaries they never
+    // anchored, so each one fell to the end of the bubble as an anonymous ⚠ — three in a
+    // row on the box, with nothing to say which figure each meant.
+    const { container } = render(
+      <Markdown
+        text="That is 252.7 cm², and 252.7 again; 32138.49 mm² is fine."
+        flags={[{ id: "ug-0", claim: "252.7", reason: "Not traced", token: true }]}
+      />,
+    );
+    const claims = container.querySelectorAll(".md-claim");
+    expect(claims).toHaveLength(1);
+    expect(claims[0]?.textContent).toBe("252.7");
+    expect(container.querySelectorAll(".md-flag")).toHaveLength(1);
+    expect(container.querySelector(".md-flag-fallback")).toBeNull();
+  });
+
+  it("does not anchor a number flag inside a longer number", () => {
+    const { container } = render(
+      <Markdown
+        text="In 1252.75 there is no match."
+        flags={[{ id: "ug-0", claim: "252.7", reason: "Not traced", token: true }]}
+      />,
+    );
+    expect(container.querySelector(".md-claim")).toBeNull();
+    // Unplaced, so it degrades to the end-of-bubble flag rather than mis-anchoring.
+    expect(container.querySelector(".md-flag-fallback .md-flag")).not.toBeNull();
   });
 });

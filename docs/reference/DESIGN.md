@@ -1891,16 +1891,29 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   `docs/mocks/code-run/g-cited-floating.html`). Its own marker namespace, separate from the
   `[^n]` source citation: *from your note* and *from arithmetic I did* are different claims.
   The model authors the MARKER only — the panel is filled from the persisted call, and a
-  marker that resolves to nothing renders as plain text rather than as an unbacked claim.
+  marker that resolves to nothing is DROPPED (with the space before it), leaving the figure
+  as plain prose: neither an unbacked chip nor a raw `[=n]`. The numbering is over the
+  message's SUCCESSFUL computations — a `code_run` whose `ok` is false takes no number —
+  and the backend hands the model each result's marker in the result itself, by the same
+  rule, so the two sides cannot disagree about which call `ƒ2` is. (Turn the owner saw:
+  a wrong-tool `calculate` that returned 0, then the `run_python` that answered, cited
+  `[=1]` — the model had counted, and the chip opened the wrong working.) The chip reads
+  `ƒn` (U+0192, the function sign), which is why it can look like "f1"; it is never the
+  `[^n]` footnote path.
   With ONE exception, measured rather than assumed: the model numbers `[=n]` across the
   CONVERSATION while the surface builds the targets per MESSAGE, so a later turn's only
   computation arrives as `[=2]` and rendered as raw prose beside the answer. Where a message
   holds one computation and one marker the digit cannot be saying anything the message's own
   shape does not, so the marker resolves and renders as `ƒ1` — the position it really is.
   Two of either and the digit is load-bearing again: a marker pointing at the WRONG call is
-  worse than one that reads as text. The
+  worse than one that is not shown at all. The
   panel floats and is clamped rather than reflowing the transcript, and opens ON the working,
-  capped at 46vh and scrolling: it is the same `code_run` component the Worked step renders,
+  capped at 46vh and scrolling (`overscroll-behavior: contain`, so the end of the working does
+  not drag the transcript). Exactly three things close it: a tap OUTSIDE (the transparent
+  scrim), Escape, and its own close control (a slim top-right ✕, 44px wide). A tap, touch or
+  scroll INSIDE never does — it used to, because a capture-phase scroll listener on `window`
+  heard the panel's own body scroll — and a transcript scroll moves the panel with its marker
+  rather than closing it: it is the same `code_run` component the Worked step renders,
   so the two entry points cannot drift. It used to open compact — an expression-and-answer
   head over a "show the working" link — and on the box that head only restated what the body
   labelled properly one line below, the same duplication the step itself had against its
@@ -1908,6 +1921,16 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   The marker covers `run_python` exactly as it covers `calculate`: one namespace, one
   numbering, one panel, because *a number a program printed* and *a number an expression
   evaluated to* are the same claim about where a figure came from.
+- **A reflexion flag says which check it is, and anchors on what it checked**
+  (`FullBrainSurface.mdFlags`, `markdown.FlagMark`). An amber ⚠ after flagged prose, tap for
+  the reason. A `grounding` verdict flags answer SENTENCES the surfaced notes did not support
+  ("Not in your notes — …"), anchored on sentence boundaries; it is shown only on a persona
+  that reads the notes (`useFullBrain.readsNotes`: curator, note_ingest) — on jerv and every
+  other KB-blind persona there are no notes for a sentence to be missing from, and the
+  backend no longer sends one. An `arithmetic` verdict flags bare NUMBERS that traced to no
+  result this turn ("Not traced to a calculation — …"), anchored right after the number's
+  first occurrence. It used to borrow the grounding reason and its sentence anchoring, so a
+  jerv answer ended in three anonymous ⚠ that each claimed a figure was "not in your notes".
 - **`code_run` is a STEP view, not a bubble card** (`views/codeRun.tsx`, build plan
   `docs/archive/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
   belongs where the owner goes to check a number, not stacked under every reply that did some

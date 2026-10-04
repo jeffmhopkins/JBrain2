@@ -236,6 +236,10 @@ export interface VerdictEvent {
   score: number;
   issues?: string[];
   ungrounded_claims?: string[];
+  /** Which check failed: `grounding` claims are answer SENTENCES the owner's notes did not
+   * support; `arithmetic` claims are bare NUMBERS that traced to no tool result. Absent
+   * from an older server, which only ever sent grounding verdicts. */
+  kind?: "grounding" | "arithmetic";
 }
 /** Neutral provenance label — rides *after* `done` when a turn was answered purely
  * from the model's own world knowledge (zero retrieval) with a substantive claim.

@@ -2,7 +2,7 @@
 // shape the owner asked for after seeing it on the box: it opens ON the working, and it
 // does not say the same thing twice on the way there.
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ComputationPopover } from "./ComputationPopover";
 
@@ -63,5 +63,70 @@ describe("ComputationPopover", () => {
     expect(screen.getByText("code")).toBeTruthy();
     expect(screen.getByText("95")).toBeTruthy();
     expect(screen.getByText("no network · scratch only")).toBeTruthy();
+  });
+  // --- what closes it: a tap outside, Escape, the close control — and nothing else ------
+  // On the box, touching the panel closed it: a capture-phase scroll listener on window
+  // heard the panel's OWN body scrolling and treated it as the transcript moving.
+
+  const long = () =>
+    target({
+      language: "python",
+      code: Array.from({ length: 60 }, (_, i) => `x${i} = ${i}`).join("\n"),
+      result: "4271",
+      ok: true,
+    });
+
+  it("stays open when tapped, touched or scrolled INSIDE", () => {
+    const onClose = vi.fn();
+    render(<ComputationPopover target={long()} anchor={anchor} onClose={onClose} />);
+    const panel = screen.getByRole("dialog", { name: "how this number was worked out" });
+    const body = panel.querySelector(".fb-calc-body") as HTMLElement;
+    fireEvent.pointerDown(body);
+    fireEvent.touchStart(body);
+    fireEvent.click(body);
+    fireEvent.touchMove(body);
+    fireEvent.scroll(body, { target: { scrollTop: 120 } });
+    fireEvent.touchEnd(body);
+    fireEvent.click(screen.getByText("4271"));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("stays open when the transcript behind it scrolls — it follows the marker instead", () => {
+    const onClose = vi.fn();
+    const marker = document.createElement("button");
+    document.body.append(marker);
+    let top = 200;
+    marker.getBoundingClientRect = () =>
+      ({ left: 40, top, bottom: top + 14, width: 12, height: 14 }) as DOMRect;
+    render(<ComputationPopover target={long()} anchor={marker} onClose={onClose} />);
+    const panel = screen.getByRole("dialog");
+    const before = panel.style.top;
+    top = 100;
+    fireEvent.scroll(window);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel.style.top).not.toBe(before);
+    marker.remove();
+  });
+
+  it("closes on a tap outside", () => {
+    const onClose = vi.fn();
+    render(<ComputationPopover target={long()} anchor={anchor} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes on Escape", () => {
+    const onClose = vi.fn();
+    render(<ComputationPopover target={long()} anchor={anchor} onClose={onClose} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes from its own close control", () => {
+    const onClose = vi.fn();
+    render(<ComputationPopover target={long()} anchor={anchor} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "close the working" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

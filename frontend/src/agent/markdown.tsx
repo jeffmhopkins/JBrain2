@@ -19,7 +19,7 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { Fragment, type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
@@ -66,6 +66,17 @@ const DATE = new RegExp(
 // real `<br>` node in every inline context (cells, list items, headings, prose).
 const INLINE =
   /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(\[=\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)|(<[bB][rR]\s*\/?>)/;
+
+/** Remove every `[=n]` that names no computation this message holds, with the space before
+ * it, so the figure it followed reads as plain prose. A raw `[=2]` beside the number told the
+ * owner nothing, and a chip pointing at some OTHER call would be worse: a marker that cannot
+ * be backed by a call is simply not shown. */
+function dropUnresolvedCalcs(text: string, calcCount: number, soleCalc: boolean): string {
+  return text.replace(/[ \t]?\[=(\d+)\]/g, (marker, digits: string) => {
+    const n = soleCalc ? 1 : Number(digits);
+    return n >= 1 && n <= calcCount ? marker : "";
+  });
+}
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
@@ -320,6 +331,11 @@ export interface MdFlag {
   claim: string;
   /** The reason to show on tap (drawn from the matching issue). */
   reason: string;
+  /** `claim` is a bare NUMBER (the arithmetic check), not a sentence: it anchors on the
+   * number's own boundaries, once, instead of on sentence boundaries — which a figure
+   * mid-sentence never meets, so every one used to strand at the bubble's end as an
+   * anonymous ⚠ with nothing to say which number it meant. */
+  token?: boolean;
 }
 
 /** A matcher over the ungrounded-claim sentences, plus a lookup from a matched
@@ -339,7 +355,7 @@ interface Ctx {
    * target renders as a favicon link, a note (or absent) as the numbered chip. */
   cites?: CiteTarget[] | undefined;
   /** The turn's computations, positional with the `[=n]` numbering — one per `calculate`
-   * or `run_python` call that produced a number. */
+   * or `run_python` call that succeeded (the backend's `is_computation`). */
   calcs?: CalcTarget[] | undefined;
   /** This message states exactly ONE computation and carries exactly ONE marker, so the
    * marker's DIGIT cannot be telling us anything the position does not — see `soleCalc`. */
@@ -480,9 +496,15 @@ function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
       // flags it instead — degrade safely, never mis-anchor.
       const before = text.slice(0, at);
       const after = text.slice(at + m[0].length);
-      const leftOk = at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
-      const rightOk = after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
+      const leftOk = flag?.token
+        ? !/[\p{L}\p{N}]$|\d[.,]$/u.test(before)
+        : at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
+      const rightOk = flag?.token
+        ? !/^[\p{L}\p{N}]|^[.,]\d/u.test(after)
+        : after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
       if (!flag || !leftOk || !rightOk) continue; // not a clean sentence match — scan as prose
+      // A number repeats far more often than a sentence does; flag its first occurrence.
+      if (flag.token && ctx.flags.placed.has(flag.id)) continue;
       if (at > last) out.push(...scanPlaces(text.slice(last, at), `${key}-g${i}`, ctx));
       // Mark the flagged TEXT (subtle amber), not just the trailing ⚠ — so the
       // reader sees *which* prose is unverified. The interior still scans for
@@ -610,17 +632,17 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       //
       // The model authors the MARKER and nothing else. What the popover shows is read from
       // the persisted call, so a marker cannot assert a computation that did not happen; one
-      // that resolves to no call renders as plain text, the same rule `ToolView` applies to
-      // an unknown view name.
+      // that resolves to no call is not shown at all, the same rule `ToolView` applies to an
+      // unknown view name.
       const stated = Number(tok.slice(2, -1));
       // `soleCalc` means the digit carries no information this message's shape does not
       // already fix, so the one computation wins and the marker RENDERS as the position it
       // really is — showing ƒ2 beside a single call would be its own small lie.
       const num = ctx.soleCalc ? 1 : stated;
       const target = ctx.calcs?.[num - 1];
-      if (!target) {
-        out.push(<Fragment key={k}>{tok}</Fragment>);
-      } else {
+      // Unresolved markers are stripped before parsing (`dropUnresolvedCalcs`); this is the
+      // same rule for one that slips through: no chip, and no raw `[=n]` either.
+      if (target) {
         out.push(
           <button
             key={k}
@@ -1029,7 +1051,8 @@ export function Markdown({
    * a favicon link; a note (or absent) renders as the numbered chip. */
   cites?: CiteTarget[] | undefined;
   /** The turn's computations, positional with `[=n]`: the `code_run` view of each call that
-   * produced a number, in call order. A marker past the end renders as plain text. */
+   * succeeded, in call order. A marker that resolves to none is dropped, leaving the figure as
+   * plain prose. */
   calcs?: CalcTarget[] | undefined;
   /** Tap handler for a `[=n]` computation marker — opens its working. */
   onCalc?: ((n: number, anchor: HTMLElement) => void) | undefined;
@@ -1052,10 +1075,6 @@ export function Markdown({
    * of stripping it as browse noise. Off everywhere else. */
   harmonyCitations?: boolean;
 }): ReactNode {
-  const blocks = useMemo(
-    () => parseBlocks(stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text)),
-    [text, harmonyCitations],
-  );
   const index = useMemo(() => buildIndex(entities), [entities]);
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.
@@ -1066,11 +1085,25 @@ export function Markdown({
   // as raw text. The prompt already says "this turn" and the model does not honour it, so
   // the renderer forgives the digit — but ONLY where it cannot be wrong: one computation and
   // one marker leaves nothing for the number to disambiguate. Two of either and the digit is
-  // load-bearing again, and a marker that still resolves to nothing stays plain text rather
-  // than pointing at the wrong call.
+  // load-bearing again, and a marker that still resolves to nothing is dropped rather than
+  // pointing at the wrong call.
+  // Only the COUNT decides whether a marker resolves, and it is a stable dependency where
+  // the surface's freshly built `calcs` array is not — so a re-render does not re-parse.
+  const calcCount = calcs?.length ?? 0;
   const soleCalc = useMemo(
-    () => (calcs?.length ?? 0) === 1 && (text.match(/\[=\d+\]/g) ?? []).length === 1,
-    [calcs, text],
+    () => calcCount === 1 && (text.match(/\[=\d+\]/g) ?? []).length === 1,
+    [calcCount, text],
+  );
+  const blocks = useMemo(
+    () =>
+      parseBlocks(
+        dropUnresolvedCalcs(
+          stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text),
+          calcCount,
+          soleCalc,
+        ),
+      ),
+    [text, harmonyCitations, calcCount, soleCalc],
   );
   const ctx: Ctx = {
     onCite,

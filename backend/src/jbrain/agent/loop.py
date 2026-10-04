@@ -230,6 +230,23 @@ def guardrails_for_effort(
     )
 
 
+def is_computation(view: ViewPayload | None) -> bool:
+    """Whether a tool's view makes its call a CITABLE computation — a `[=n]` target.
+
+    A `code_run` view that did not fail: a run that raised has no figure to cite, so it
+    takes no number, and the PWA's `calcTargets` applies this same rule to the persisted
+    steps — the two sides must agree or every marker after a failed run points one call
+    early."""
+    return view is not None and view.view == "code_run" and view.data.get("ok") is not False
+
+
+def computation_marker_note(n: int) -> str:
+    """The line a computation's result ends with: the exact marker to cite it by. Handed
+    over rather than described, because the model, told to number its calls, counted a
+    `calculate` that was the wrong tool and cited the `run_python` beside it as `[=1]`."""
+    return f"\n\nCite a figure from this result as [={n}] (exactly that marker)."
+
+
 @dataclass
 class ToolCallBudget:
     """A hard, engine-enforced ceiling on how many times one agent may call a given tool
@@ -342,6 +359,12 @@ class ToolContext:
     # `render_html`'s ceiling — same reasoning as the canvas pair above, one counter for
     # the render and the optional look it may carry.
     html_render_budget: "ToolCallBudget | None" = None
+    # The call ids of this turn's SUCCESSFUL computations, in call order — the `[=n]`
+    # numbering. `_dispatch` appends to it and tells the model each one's marker in the
+    # result itself, so the model copies a number rather than counting calls (it counted
+    # a failed one and pointed the owner's marker at the wrong working). Per turn for the
+    # same reason as `failed_fetches`: the PWA numbers the markers per message.
+    computations: list[str] = field(default_factory=list)
 
 
 def _ms_since(started: float) -> int:
@@ -1640,12 +1663,13 @@ class AgentLoop:
             corpus = _grounding_corpus(turn.sources, turn.entities)
             cited = len(turn.sources) + len(turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
-            # pass so reflexion neither retries nor flags a turn it cannot judge.
+            # pass so reflexion neither retries nor flags a turn it cannot judge. A KB-blind
+            # agent is in the same position by design — it has no notes to ground in.
             verdict = (
                 aggregate(
                     [verify_grounding(claims_from(turn.answer), corpus, cited_source_count=cited)]
                 )
-                if corpus
+                if corpus and general_knowledge_label
                 else VerificationResult(PASS_SCORE, ())
             )
             if incumbent[0] is None:
@@ -1676,7 +1700,9 @@ class AgentLoop:
             # contrast with, so the provenance chip is meaningless and is suppressed.
             if general_knowledge_label and has_substantive_claim(kept.answer):
                 yield GeneralKnowledgeEvent()
-        elif not kept_verdict.passed and _buffered_critique_worthy(kept):
+        elif (
+            general_knowledge_label and not kept_verdict.passed and _buffered_critique_worthy(kept)
+        ):
             cited = len(kept.sources) + len(kept.entities)
             yield VerdictEvent(
                 passed=False,
@@ -1924,7 +1950,10 @@ class AgentLoop:
           notes to contrast with, so the provenance chip would be meaningless.
         - **Retrieval + a critique-worthy turn whose claim failed grounding →** the
           amber `VerdictEvent`. A non-empty corpus that grounds cleanly, or a turn
-          that isn't critique-worthy, emits nothing.
+          that isn't critique-worthy, emits nothing. Knowledge-base agents only: the
+          same `general_knowledge_label` bit (it IS the persona's `reads_knowledge_base`)
+          skips it for a KB-blind agent, which has no notes for a claim to be missing from.
+          The arithmetic tail above is not a notes check and runs for every agent.
 
         The two can never co-occur: general_knowledge requires an empty corpus, the
         verdict a non-empty one."""
@@ -1943,6 +1972,7 @@ class AgentLoop:
                     score=numbers.score,
                     issues=list(numbers.issues),
                     ungrounded_claims=untraceable_numbers("".join(answer_parts), list(seen_texts)),
+                    kind="arithmetic",
                 )
                 return
         corpus = _grounding_corpus(sources, entities)
@@ -1953,6 +1983,11 @@ class AgentLoop:
             # the agent has no notes to contrast with (a non-KB agent: jerv, teacher).
             if general_knowledge_label and has_substantive_claim("".join(answer_parts)):
                 yield GeneralKnowledgeEvent()
+            return
+        if not general_knowledge_label:
+            # The notes-grounding verdict is a claim about the owner's NOTES, so it belongs
+            # only to an agent that reads them. A KB-blind persona (jerv, teacher) has none to
+            # be grounded in, and "not in your notes" on its turn is wrong by construction.
             return
         if not critique_worthy(
             source_count=len(sources),
@@ -2018,7 +2053,11 @@ class AgentLoop:
             return _Dispatched(err, (), None, (), None, None, duration_ms=elapsed)
         elapsed = _ms_since(started)
         out = observation if isinstance(observation, ToolOutput) else None
-        result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        content = str(observation)
+        if out is not None and is_computation(out.view):
+            tool_ctx.computations.append(call.id)
+            content += computation_marker_note(len(tool_ctx.computations))
+        result = ToolResult(tool_call_id=call.id, content=content, is_error=False)
         self._log_call(call, ok=True, duration_ms=elapsed, result_chars=len(result.content))
         # By keyword: this list has grown past the point where a reader can check a
         # positional call against the dataclass, and inserting a field mid-list silently

@@ -5,7 +5,7 @@ import { type ModelLoad, api } from "../api/client";
 import { AgentStatusLine, FullBrainSurface, resolveSelectionClamp } from "./FullBrainSurface";
 import type { AgentStatus } from "./status";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
-import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
+import { type ConvMode, type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
 function session(over: Partial<AgentSession> = {}): AgentSession {
   return {
@@ -61,6 +61,7 @@ function Harness({
   files,
   readAloud,
   modelLoad,
+  mode = "fullbrain",
 }: {
   d: FullBrainDeps;
   onOpenNote?: (id: string) => void;
@@ -75,8 +76,10 @@ function Harness({
       }
     | undefined;
   modelLoad?: ModelLoad | null;
+  /** Which tab hosts the conversation — `research` for a jerv session. */
+  mode?: ConvMode;
 }) {
-  const fb = useFullBrain("fullbrain", d);
+  const fb = useFullBrain(mode, d);
   const [text, setText] = useState("");
   return (
     <>
@@ -2505,6 +2508,120 @@ describe("FullBrainSurface", () => {
     // The amber flag stands; the neutral provenance chip must not appear.
     expect(await screen.findByRole("button", { name: "unverified claim" })).toBeInTheDocument();
     expect(document.querySelector(".fb-genknow")).toBeNull();
+  });
+
+  // --- the notes-grounding flag belongs to a notes persona ------------------------------
+  // On the box a jerv turn ended in three amber ⚠ reading "Not in your notes". jerv reads no
+  // notes; the flags were the ARITHMETIC check's untraced numbers worded as a notes check,
+  // and each stranded at the bubble's end because a number never meets a sentence boundary.
+
+  function verdictTurn(kind: "grounding" | "arithmetic" | undefined, text: string, claim: string) {
+    return async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text };
+      yield { type: "done", stop_reason: "end_turn" };
+      yield {
+        type: "verdict",
+        passed: false,
+        score: 0,
+        ungrounded_claims: [claim],
+        ...(kind ? { kind } : {}),
+      };
+    };
+  }
+
+  async function sendOn(d: FullBrainDeps, mode: ConvMode, text: string) {
+    render(<Harness d={d} mode={mode} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(document.querySelector(".bubble.ai")?.textContent).toContain(text));
+  }
+
+  it("shows no notes-grounding flag on a jerv conversation", async () => {
+    const text = "The roof needs replacing soon.";
+    await sendOn(
+      deps({
+        listSessions: vi.fn(async () => [session({ agent: "jerv", domain_scopes: [] })]),
+        // No `kind`: an older server's verdict is a grounding one, and still not for jerv.
+        chat: verdictTurn(undefined, text, text),
+      }),
+      "research",
+      text,
+    );
+    expect(document.querySelector(".md-flag")).toBeNull();
+    expect(document.querySelector(".md-claim")).toBeNull();
+  });
+
+  it("words an untraced number as arithmetic and pins its flag to the number", async () => {
+    const text = "Your biweekly check is $5,030.40 before tax.";
+    await sendOn(
+      deps({
+        listSessions: vi.fn(async () => [session({ agent: "jerv", domain_scopes: [] })]),
+        chat: verdictTurn("arithmetic", text, "5,030.40"),
+      }),
+      "research",
+      text,
+    );
+    const flag = await screen.findByRole("button", { name: "unverified claim" });
+    expect(document.querySelector(".md-claim")?.textContent).toBe("5,030.40");
+    expect(document.querySelector(".md-flag-fallback")).toBeNull();
+    fireEvent.click(flag);
+    expect(screen.getByRole("note")).toHaveTextContent(/Not traced to a calculation/);
+    expect(screen.getByRole("note")).not.toHaveTextContent(/notes/);
+  });
+
+  it("keeps the notes-grounding flag on curator", async () => {
+    const text = "The roof needs replacing soon.";
+    await sendOn(deps({ chat: verdictTurn("grounding", text, text) }), "fullbrain", text);
+    const flag = await screen.findByRole("button", { name: "unverified claim" });
+    fireEvent.click(flag);
+    expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
+  });
+
+  it("numbers computations by the SUCCESSFUL calls, so [=1] skips a failed run", async () => {
+    // The backend tells the model each result's marker and gives a failed run none; the
+    // surface must number the same way or the marker opens the call before the right one.
+    const codeRun = (code: string, ok: boolean) => ({
+      view: "code_run",
+      surface: "inline" as const,
+      data: { language: "python", code, result: ok ? "82" : null, ok },
+      refs: [],
+    });
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "how long until christmas?", tools: [] },
+        {
+          role: "assistant",
+          content: "82 days[=1] until Christmas.",
+          tools: [
+            {
+              id: "c1",
+              name: "run_python",
+              ok: true,
+              sources: [],
+              summary: "NameError",
+              view: codeRun("print(christmas - today)", false),
+            },
+            {
+              id: "c2",
+              name: "run_python",
+              ok: true,
+              sources: [],
+              summary: "82",
+              view: codeRun("print((date(2026, 12, 25) - date(2026, 10, 4)).days)", true),
+            },
+          ],
+        },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    const chip = await screen.findByRole("button", { name: /show the working/ });
+    expect(chip.textContent).toBe("\u01921");
+    fireEvent.click(chip);
+    const panel = await screen.findByRole("dialog", { name: "how this number was worked out" });
+    expect(panel.textContent).toContain("date(2026, 12, 25)");
+    expect(panel.textContent).not.toContain("christmas - today");
   });
 
   it("a send with no chosen session surfaces the picker instead", async () => {

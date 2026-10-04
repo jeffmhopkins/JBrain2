@@ -145,6 +145,9 @@ export interface Verdict {
   score: number;
   issues: string[];
   ungroundedClaims: string[];
+  /** Which check flagged the turn — it decides the flag's reason and what it anchors on,
+   * and whether a KB-blind persona's surface shows it at all (see `mdFlags`). */
+  kind: "grounding" | "arithmetic";
 }
 
 export interface TranscriptMessage {
@@ -410,6 +413,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         score: event.score,
         issues: event.issues ?? [],
         ungroundedClaims: event.ungrounded_claims ?? [],
+        kind: event.kind ?? "grounding",
       };
       break;
     case "general_knowledge":
