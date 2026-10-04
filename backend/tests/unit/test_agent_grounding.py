@@ -41,6 +41,11 @@ def test_qualified_models_resolve_to_the_measured_base() -> None:
     assert convention_for("qwen3.8-27b-q4") is Convention.NORM_1000
 
 
+def test_flash_next_is_admitted_in_the_qwen38_base() -> None:
+    # Owner decision 2026-10-04: admitted without its own probe, in its family's base.
+    assert convention_for("qwen3.8-flash-next") is Convention.NORM_1000
+
+
 def test_the_measured_reply_lands_where_the_probe_put_it() -> None:
     # A real reply from the probe run: the dog's nose on a 4080x3072 photo. Read in the
     # WRONG base the same numbers collapse to a zero-width box clamped at the frame

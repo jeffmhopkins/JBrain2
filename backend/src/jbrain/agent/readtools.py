@@ -173,7 +173,11 @@ OPTIONAL_CROP_TOOLS = frozenset({"crop_regions"})
 # it would silently place every box wrong. Each entry earns its place by passing the
 # `POST /api/debug/grounding` probe, and `agent/grounding.py` refuses anything not here.
 # The two Qwen3.8 twins share weights, repo and projector, so one probe qualifies both.
-CANVAS_MODELS = frozenset({"qwen3.8-27b", "qwen3.8-27b-q4"})
+# Flash-Next is the one entry admitted WITHOUT its own probe, by owner decision
+# (2026-10-04): it is the box's sole engine while it serves, so leaving it out meant
+# no photo markup at all, and its free-text replies already answer in the same Qwen3.8
+# 0-1000 base. A wrong box there is a visible miss the owner can report, not a silent one.
+CANVAS_MODELS = frozenset({"qwen3.8-27b", "qwen3.8-27b-q4", "qwen3.8-flash-next"})
 
 
 def canvas_hidden_for_model(

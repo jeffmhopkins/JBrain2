@@ -59,6 +59,11 @@ def test_unqualified_models_hide_the_canvas(model: str | None) -> None:
     assert canvas_hidden_for_model(model, JERV_LIKE) == GATED
 
 
+def test_flash_next_keeps_the_canvas() -> None:
+    # The sole engine while it serves: without it there is no photo markup at all.
+    assert "qwen3.8-flash-next" in CANVAS_MODELS
+
+
 def test_a_persona_without_the_canvas_hides_nothing() -> None:
     # curator never holds it, so its turn must not probe or hide on its behalf.
     assert canvas_hidden_for_model("gpt-oss-120b", frozenset({"search"})) == frozenset()
