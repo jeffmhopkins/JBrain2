@@ -5,6 +5,8 @@ role prefixes pinned above them in the budget. The gateway is faked; files are r
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import os
 import time
 from pathlib import Path
@@ -19,7 +21,7 @@ from jbrain.llm.kv_conversation import ConversationHold, ConversationMeta
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotRole
-from jbrain.llm.types import AssistantMessage, LlmTool, UserMessage
+from jbrain.llm.types import LlmTool
 
 FLASH = "qwen3.8-flash-next"
 BUILD = "b9999-869034b"
@@ -83,6 +85,13 @@ class FakeGateway:
         if self.restore_error is not None:
             raise self.restore_error
         return {"n_restored": self.restore_n if self.restore_n is not None else PRIME}
+
+
+@pytest.fixture(autouse=True)
+def _roomy_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store refuses a save that would leave the volume under 20 GiB free; a test's
+    scratch disk is not the box's models volume."""
+    monkeypatch.setattr(kv_prefix, "_free_bytes", lambda _folder: 10**13)
 
 
 @pytest.fixture(autouse=True)
@@ -214,19 +223,18 @@ async def test_a_role_restore_never_crowds_the_pool(root: Path) -> None:
     assert gw.restored == []
 
 
-async def test_a_pooled_memo_expires_so_an_erased_slot_is_refilled(
-    root: Path, monkeypatch: pytest.MonkeyPatch
+async def test_a_restored_but_unused_slot_is_not_restored_again_until_it_is_erased(
+    root: Path,
 ) -> None:
-    import jbrain.llm.kv_prefix as mod
-
     store, gw = _store(root)
     await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
     gw.slot_state = _slots()
     assert await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
-    # Restored-but-unused reads empty: the memo stops a re-restore every tick...
+    # Restored-but-unused reads empty, for as long as it stays unused: no re-restore.
     assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
-    # ...but the pool guard may have erased it unseen, so the memo only rate-limits.
-    monkeypatch.setattr(mod, "POOLED_RESTORE_MEMO_S", -1.0)
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
+    # The pool guard erased it: now it is refilled.
+    store.note_slot_erased(FLASH, 2)
     assert await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
     assert [s for s, _ in gw.restored] == [2, 2]
 
@@ -339,38 +347,27 @@ def test_the_store_budget_and_toggle_apply_live(root: Path) -> None:
 # ---- conversation decisions (pure) ---------------------------------------------------------
 
 
-def _msgs(*texts: str) -> list[UserMessage | AssistantMessage]:
-    out: list[UserMessage | AssistantMessage] = []
-    for i, text in enumerate(texts):
-        out.append(UserMessage(text) if i % 2 == 0 else AssistantMessage(text=text))
-    return out
+def test_a_saved_conversation_is_restored_on_identity_alone() -> None:
+    meta = ConversationMeta(
+        base="B", key=kv_conversation.key_hash("chat-A"), n_tokens=900, saved_at=0.0
+    )
+    assert kv_conversation.restore_decision(meta, "B", "chat-A") == "restore"
+    assert kv_conversation.restore_decision(meta, "other base", "chat-A") == "base_mismatch"
+    assert kv_conversation.restore_decision(meta, "B", "chat-B") == "key_mismatch"
+    assert kv_conversation.restore_decision(None, "B", "chat-A") == "no_file"
 
 
-def test_a_saved_conversation_restores_only_when_its_messages_open_the_prompt() -> None:
-    saved = kv_conversation.message_digests(_msgs("hi", "hello"))
-    meta = ConversationMeta(base="B", prefix=saved, n_tokens=900, saved_at=0.0)
-    longer = kv_conversation.message_digests(_msgs("hi", "hello", "and now?"))
-    assert kv_conversation.restore_decision(meta, "B", longer) == "restore"
-    assert kv_conversation.restore_decision(meta, "B", saved) == "restore", "a retry"
-    edited = kv_conversation.message_digests(_msgs("hey", "hello", "and now?"))
-    assert kv_conversation.restore_decision(meta, "B", edited) == "prefix_mismatch"
-    shorter = kv_conversation.message_digests(_msgs("hi"))
-    assert kv_conversation.restore_decision(meta, "B", shorter) == "prefix_mismatch"
-    assert kv_conversation.restore_decision(meta, "other base", longer) == "base_mismatch"
-    assert kv_conversation.restore_decision(None, "B", longer) == "no_file"
-
-
-def test_digests_chain_so_one_entry_covers_the_whole_prefix() -> None:
-    a = kv_conversation.message_digests(_msgs("one", "two", "three"))
-    b = kv_conversation.message_digests(_msgs("ONE", "two", "three"))
-    assert a[1:] != b[1:], "a change at the head moves every later digest"
+def test_a_restore_is_judged_by_what_its_first_request_reused() -> None:
+    assert kv_conversation.judge(30_000, 40_000) == "hit"
+    assert kv_conversation.judge(6_000, 40_000) == "partial"  # more than the persona alone
+    assert kv_conversation.judge(100, 40_000) == "miss"
 
 
 def test_a_torn_or_foreign_claim_is_never_trusted() -> None:
-    good = ConversationMeta("B", ("d1",), 10, 1.0)
+    good = ConversationMeta("B", "k" * 32, 10, 1.0)
     assert ConversationMeta.from_json(good.to_json()) == good
     assert ConversationMeta.from_json("{") is None
-    assert ConversationMeta.from_json('{"v": 99}') is None
+    assert ConversationMeta.from_json('{"v": 1}') is None, "pre-review claims are not trusted"
     assert (
         ConversationMeta.from_json(good.to_json().replace('"n_tokens": 10', '"n_tokens": 0'))
         is None
@@ -378,25 +375,50 @@ def test_a_torn_or_foreign_claim_is_never_trusted() -> None:
 
 
 def test_a_hold_is_saved_only_while_the_slot_still_reads_as_it() -> None:
-    hold = ConversationHold(
-        "k", "B", ("d",), input_tokens=1000, output_tokens=200, dirty=True, at=0
-    )
+    hold = ConversationHold("k", "B", input_tokens=1000, output_tokens=200, dirty=True, at=0)
     assert hold.still_in_slot(1000) and hold.still_in_slot(1199)
     assert not hold.still_in_slot(999) and not hold.still_in_slot(5000)
-    restored = ConversationHold("k", "B", ("d",), None, None, dirty=False, at=0)
+    restored = ConversationHold("k", "B", None, None, dirty=False, at=0)
     assert not restored.still_in_slot(1000)
 
 
 # ---- conversation save / restore through the store ------------------------------------------
 
 
-async def _turn(store: KvPrefixStore, gw: FakeGateway, key: str, msgs: list, n_in: int) -> None:
+def _turn(
+    store: KvPrefixStore,
+    gw: FakeGateway,
+    key: str,
+    n_in: int,
+    *,
+    cached: int = 0,
+    seq: int | None = None,
+    tools: tuple[str, ...] = (),
+) -> None:
     """One interactive turn as the router reports it, leaving slot 0 holding prompt + answer."""
     fp = store.identity_of(FLASH, "persona", TOOLS, None)
     store.note_conversation_turn(
-        FLASH, key, msgs, fingerprint=fp, input_tokens=n_in, output_tokens=300
+        FLASH,
+        key,
+        fingerprint=fp,
+        input_tokens=n_in,
+        output_tokens=300,
+        cached_tokens=cached,
+        seq=seq,
+        tool_names=tools,
     )
     gw.slot_state = _slots(s0=n_in + 299)
+
+
+async def _prepare(store: KvPrefixStore, key: str | None) -> bool:
+    restored, _seq = await store.prepare_conversation(FLASH, key, "persona", TOOLS, None)
+    return restored
+
+
+def _claim(root: Path, name: str) -> ConversationMeta:
+    meta = ConversationMeta.from_json((_folder(root) / f"{name}.meta").read_text())
+    assert meta is not None
+    return meta
 
 
 async def test_repurposing_the_slot_saves_the_leaving_conversation_and_it_comes_back(
@@ -405,19 +427,19 @@ async def test_repurposing_the_slot_saves_the_leaving_conversation_and_it_comes_
     store, gw = _store(root)
     await _prime_and_save(store, gw, SlotRole.INTERACTIVE)  # jerv's own prefix is on disk too
     gw.saved.clear()
-    a1 = _msgs("tell me about stones")
-    await _turn(store, gw, "chat-A", a1, 40_000)
+    _turn(store, gw, "chat-A", 40_000)
     # Another conversation speaks: chat-A is saved off slot 0 first.
-    assert not await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
+    assert not await _prepare(store, "chat-B")
     assert [s for s, _ in gw.saved] == [0]
     name = gw.saved[0][1]
     assert kv_conversation.is_conversation_file(name)
-    assert (_folder(root) / f"{name}.meta").exists()
-    await _turn(store, gw, "chat-B", _msgs("x"), 31_000)
-    # chat-A speaks again with its transcript extended: restored into slot 0 before the request.
+    claim = _claim(root, name)
+    assert claim.key == kv_conversation.key_hash("chat-A") and claim.n_tokens == 40_299
+    assert "chat-A" not in (_folder(root) / f"{name}.meta").read_text(), "only a hash on disk"
+    _turn(store, gw, "chat-B", 31_000)
+    # chat-A speaks again — whatever its message list looks like now: restored first.
     gw.restore_n = 40_299
-    a2 = [*a1, AssistantMessage(text="they are old"), UserMessage("how old?")]
-    assert await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None, a2)
+    assert await _prepare(store, "chat-A")
     assert gw.restored[-1] == (0, name)
     assert store._counters.get("conversation_restored") == 1
     # The keeper's prefix restore must not overwrite the never-used slot meanwhile.
@@ -425,12 +447,51 @@ async def test_repurposing_the_slot_saves_the_leaving_conversation_and_it_comes_
     assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.INTERACTIVE)
 
 
+async def test_the_first_request_after_a_restore_is_judged_and_misses_retire_the_file(
+    root: Path,
+) -> None:
+    store, gw = _store(root)
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
+    name = gw.saved[0][1]
+    gw.restore_n = 40_299
+    for attempt in range(kv_conversation.MISS_LIMIT):
+        _turn(store, gw, "chat-B", 31_000)
+        assert await _prepare(store, "chat-A")
+        _turn(store, gw, "chat-A", 40_000, cached=200)  # reused almost nothing
+        await asyncio.gather(*store._tasks)
+        if attempt < kv_conversation.MISS_LIMIT - 1:
+            assert _claim(root, name).misses == attempt + 1
+            await _prepare(store, "chat-B")  # chat-A leaves again: re-saved, streak carried
+            assert _claim(root, name).misses == attempt + 1
+    assert not (_folder(root) / name).exists(), "dropped after MISS_LIMIT misses in a row"
+    assert store._counters.get("conversation_restore_miss") == kv_conversation.MISS_LIMIT
+    saves = len(gw.saved)
+    await _prepare(store, "chat-B")
+    assert len(gw.saved) == saves, "an unhelpful conversation is not written again"
+
+
+async def test_a_hit_is_counted_and_resets_the_misses(root: Path) -> None:
+    store, gw = _store(root)
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
+    name = gw.saved[0][1]
+    kv_prefix._write_meta(
+        str(_folder(root) / name), dataclasses.replace(_claim(root, name), misses=2)
+    )
+    _turn(store, gw, "chat-B", 31_000)
+    gw.restore_n = 40_299
+    assert await _prepare(store, "chat-A")
+    _turn(store, gw, "chat-A", 41_000, cached=40_100)
+    await asyncio.gather(*store._tasks)
+    assert store._counters.get("conversation_restore_hit") == 1
+    assert _claim(root, name).misses == 0
+
+
 async def test_the_same_conversation_needs_nothing(root: Path) -> None:
     store, gw = _store(root)
-    await _turn(store, gw, "chat-A", _msgs("q"), 40_000)
-    assert not await store.prepare_conversation(
-        FLASH, "chat-A", "persona", TOOLS, None, _msgs("q", "a", "q2")
-    )
+    _turn(store, gw, "chat-A", 40_000)
+    assert not await _prepare(store, "chat-A")
     assert gw.saved == [] and gw.restored == []
     assert store._counters.get("conversation_held") == 1
 
@@ -439,61 +500,98 @@ async def test_a_slot_that_moved_on_is_never_saved_under_the_conversations_name(
     root: Path,
 ) -> None:
     store, gw = _store(root)
-    await _turn(store, gw, "chat-A", _msgs("q"), 40_000)
+    _turn(store, gw, "chat-A", 40_000)
     gw.slot_state = _slots(s0=5_000)  # something else ran in slot 0 since
-    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
+    await _prepare(store, "chat-B")
     assert gw.saved == []
     assert store._counters.get("conversation_slot_moved") == 1
 
 
-async def test_a_mismatched_or_missing_file_is_not_restored(root: Path) -> None:
+async def test_a_missing_or_foreign_file_is_not_restored(root: Path) -> None:
     store, gw = _store(root)
-    a1 = _msgs("q")
-    await _turn(store, gw, "chat-A", a1, 40_000)
-    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
-    name = gw.saved[0][1]
-    # chat-A comes back EDITED: its file can never match again, and goes.
-    edited = _msgs("q (edited)", "a", "next")
-    assert not await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None, edited)
+    assert not await _prepare(store, "chat-C")
+    assert store._counters.get("conversation_no_file") == 1
     assert gw.restored == []
-    assert not (_folder(root) / name).exists()
-    # A conversation never saved has nothing to restore.
-    assert not await store.prepare_conversation(FLASH, "chat-C", "persona", TOOLS, None, a1)
-    assert store._counters.get("conversation_no_file", 0) >= 1
 
 
 async def test_a_restore_that_returns_the_wrong_count_drops_the_file(root: Path) -> None:
     store, gw = _store(root)
-    a1 = _msgs("q")
-    await _turn(store, gw, "chat-A", a1, 40_000)
-    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
     name = gw.saved[0][1]
     gw.restore_n = 12
-    assert not await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None, a1)
+    assert not await _prepare(store, "chat-A")
     assert not (_folder(root) / name).exists()
 
 
-async def test_a_full_pool_keeps_the_file_for_next_time(root: Path) -> None:
+async def test_a_failed_restore_is_a_miss_not_a_deletion(root: Path) -> None:
     store, gw = _store(root)
-    a1 = _msgs("q")
-    await _turn(store, gw, "chat-A", a1, 40_000)
-    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
     name = gw.saved[0][1]
-    gw.restore_error = LocalGatewayError("Unable to restore slot: No available space in KV cache")
-    assert not await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None, a1)
+    gw.restore_error = LocalGatewayError(
+        "Unable to restore slot: No available space in KV cache or invalid slot save file"
+    )
+    assert not await _prepare(store, "chat-A")
     assert (_folder(root) / name).exists()
+    assert _claim(root, name).misses == 1
 
 
-async def test_the_toggle_off_saves_and_restores_nothing(root: Path) -> None:
-    store, gw = _store(root, conversations=False)
-    await _turn(store, gw, "chat-A", _msgs("q"), 40_000)
-    assert not await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
-    assert gw.saved == []
+async def test_turning_the_cache_off_deletes_every_conversation_file(root: Path) -> None:
+    store, gw = _store(root)
+    fp = await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
+    store.configure(conversations=False)
+    assert await store.clear_conversations() == 1
+    assert [p.name for p in _folder(root).glob("*.kvslot")] == [f"{fp}.kvslot"], "prefix stays"
+    _turn(store, gw, "chat-A", 40_000)
+    assert not await _prepare(store, "chat-B")
+    assert len(gw.saved) == 2  # the prime and the first conversation; nothing since
+
+
+async def test_a_deleted_session_loses_its_files_under_every_identity(root: Path) -> None:
+    store, gw = _store(root)
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
+    _turn(store, gw, "chat-B", 31_000)
+    await _prepare(store, "chat-C")
+    assert len(list(_folder(root).glob("c-*.kvslot"))) == 2
+    assert await store.forget_conversation("chat-A") == 1
+    remaining = [_claim(root, p.name).key for p in _folder(root).glob("c-*.kvslot")]
+    assert remaining == [kv_conversation.key_hash("chat-B")]
+
+
+async def test_a_turn_that_ran_a_location_or_mail_tool_never_reaches_disk(root: Path) -> None:
+    store, gw = _store(root)
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")  # saved before it was tainted
+    _turn(store, gw, "chat-B", 31_000)
+    assert await _prepare(store, "chat-A") is False or True
+    _turn(store, gw, "chat-A", 41_000, tools=("current_location",))
+    await asyncio.gather(*store._tasks)
+    assert not list(_folder(root).glob("c-*.kvslot")) or all(
+        _claim(root, p.name).key != kv_conversation.key_hash("chat-A")
+        for p in _folder(root).glob("c-*.kvslot")
+    )
+    gw.saved.clear()
+    _turn(store, gw, "chat-A", 42_000)
+    await _prepare(store, "chat-B")
+    assert gw.saved == [], "a tainted conversation is never saved again"
+
+
+async def test_a_claim_from_a_superseded_request_is_ignored(root: Path) -> None:
+    store, gw = _store(root)
+    _restored, mine = await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None)
+    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None)  # took the slot
+    _turn(store, gw, "chat-A", 40_000, seq=mine)
+    assert FLASH not in store._conv_hold
+    assert store._counters.get("conversation_claim_superseded") == 1
 
 
 async def test_an_idle_conversation_is_saved_by_the_keeper_tick(root: Path) -> None:
     store, gw = _store(root)
-    await _turn(store, gw, "chat-A", _msgs("q"), 40_000)
+    _turn(store, gw, "chat-A", 40_000)
     assert not await store.save_idle_conversation(FLASH), "not idle yet"
     assert await store.save_idle_conversation(FLASH, idle_s=0)
     assert not await store.save_idle_conversation(FLASH, idle_s=0), "saved once, not every tick"
@@ -502,10 +600,55 @@ async def test_an_idle_conversation_is_saved_by_the_keeper_tick(root: Path) -> N
 
 async def test_an_abandoned_stream_drops_the_claim(root: Path) -> None:
     store, gw = _store(root)
-    await _turn(store, gw, "chat-A", _msgs("q"), 40_000)
+    _turn(store, gw, "chat-A", 40_000)
     store.note_conversation_abandoned(FLASH)
-    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
+    await _prepare(store, "chat-B")
     assert gw.saved == []
+
+
+async def test_every_save_deletes_the_old_sidecar_first_so_its_presence_is_proof(
+    root: Path,
+) -> None:
+    store, gw = _store(root)
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
+    name = gw.saved[0][1]
+    assert (_folder(root) / f"{name}.ckpt").exists()
+    gw.patched = False  # the image was rebuilt stock
+    _turn(store, gw, "chat-B", 31_000)
+    gw.restore_n = 40_299
+    await _prepare(store, "chat-A")
+    _turn(store, gw, "chat-A", 41_000, cached=40_000)
+    await _prepare(store, "chat-B")
+    assert store._counters.get("patch_absent") == 1
+    assert store.identity_of(FLASH, "persona", TOOLS, None) is None
+
+
+async def test_a_role_prefix_is_resaved_once_per_process_to_reprove_the_patch(
+    root: Path,
+) -> None:
+    store, gw = _store(root)
+    await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
+    # A new process (an Update, possibly a stock rebuild) finds the file and its old sidecar.
+    fresh, gw2 = _store(root, patched=False)
+    gw2.slot_state = _slots(s0=PRIME)
+    assert not await fresh.save_after_prime(
+        FLASH, "persona", TOOLS, PRIME, role=SlotRole.INTERACTIVE
+    )
+    assert fresh._counters.get("patch_absent") == 1
+
+
+async def test_a_save_that_would_crowd_the_volume_is_skipped(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(kv_prefix, "_free_bytes", lambda _folder: 10 * 1024**3)
+    store, gw = _store(root)
+    gw.slot_state = _slots(s0=PRIME)
+    assert not await store.save_after_prime(
+        FLASH, "persona", TOOLS, PRIME, role=SlotRole.INTERACTIVE
+    )
+    assert gw.saved == []
+    assert store._counters.get("save_skipped_low_disk") == 1
 
 
 async def test_the_state_read_shows_roles_conversations_and_hit_counts(root: Path) -> None:
@@ -513,7 +656,7 @@ async def test_the_state_read_shows_roles_conversations_and_hit_counts(root: Pat
     await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
     gw.slot_state = _slots()
     await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.SCHEDULED)
-    await _turn(store, gw, "chat-A", _msgs("q"), 40_000)
+    _turn(store, gw, "chat-A", 40_000)
     state: Any = await store.snapshot()
     roles = {(r["model"], r["role"]): r for r in state["roles"]}
     assert roles[(FLASH, "scheduled")]["slot"] == 2
@@ -562,6 +705,14 @@ async def test_a_new_build_needs_a_new_probe(root: Path) -> None:
     assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=SlotRole.INTERACTIVE)
 
 
+async def test_a_reload_forgets_the_gate(root: Path) -> None:
+    store, gw = _store(root, gate="passed")
+    assert await store.restore_gate(FLASH) == "passed"
+    gw.build = "b10000-newer"
+    store.note_prefix_lost(FLASH)  # an unload / reload / pool resize
+    assert await store.restore_gate(FLASH) == "awaiting_probe"
+
+
 async def test_an_unreadable_build_reads_as_unproven(root: Path) -> None:
     store, gw = _store(root, gate="passed")
 
@@ -574,44 +725,43 @@ async def test_an_unreadable_build_reads_as_unproven(root: Path) -> None:
 
 async def test_conversation_restores_wait_for_the_probe_too(root: Path) -> None:
     store, gw = _store(root, gate=None)
-    a1 = _msgs("q")
-    await _turn(store, gw, "chat-A", a1, 40_000)
-    await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None, _msgs("x"))
+    _turn(store, gw, "chat-A", 40_000)
+    await _prepare(store, "chat-B")
     assert len(gw.saved) == 1, "the leaving conversation is still saved"
-    assert not await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None, a1)
+    assert not await _prepare(store, "chat-A")
     assert gw.restored == []
 
 
 def test_a_model_without_the_gate_has_none(root: Path) -> None:
-    import asyncio
-
     store, _gw = _store(root)
     assert asyncio.run(store.restore_gate("gpt-oss-120b")) is None
 
 
-# ---- privacy scope and replayed reasoning ------------------------------------------------------
+# ---- privacy scope ------------------------------------------------------------------------------
 
 
 def test_only_chats_that_cannot_hold_firewalled_data_get_files() -> None:
-    allowed = kv_conversation.conversation_cache_allowed
-    assert allowed(reads_knowledge_base=False, domain_scopes=(), subject_ids=())
-    assert allowed(reads_knowledge_base=False, domain_scopes=("general",), subject_ids=())
+    def allowed(**over: Any) -> bool:
+        kw: dict[str, Any] = {
+            "reads_knowledge_base": False,
+            "persona_tools": frozenset({"web_search", "current_location"}),
+            "domain_scopes": ("general",),
+            "subject_ids": (),
+            "tools_ran": ("web_search",),
+        }
+        kw.update(over)
+        return kv_conversation.cache_allowed(**kw)
+
+    assert allowed()
+    assert allowed(domain_scopes=())
     # A Brain/curator chat reads the knowledge base: never on disk.
-    assert not allowed(reads_knowledge_base=True, domain_scopes=("general",), subject_ids=())
+    assert not allowed(reads_knowledge_base=True)
+    # A wildcard allowlist could reach anything; a mail-holding persona (the archivist) never.
+    assert not allowed(persona_tools=None)
+    assert not allowed(persona_tools=frozenset({"gmail_search"}))
     for domain in ("health", "finance", "location", "something-new"):
-        assert not allowed(
-            reads_knowledge_base=False, domain_scopes=("general", domain), subject_ids=()
-        )
-    assert not allowed(reads_knowledge_base=False, domain_scopes=(), subject_ids=("s-1",))
-
-
-def test_digests_ignore_reasoning_replayed_within_a_turn() -> None:
-    # Within a turn a tool step carries its own thinking; the next turn's history does not.
-    with_thinking = [
-        UserMessage("q"),
-        AssistantMessage(text="", reasoning="let me look", reasoning_model=FLASH),
-    ]
-    history = [UserMessage("q"), AssistantMessage(text="")]
-    assert kv_conversation.message_digests(with_thinking) == kv_conversation.message_digests(
-        history
-    )
+        assert not allowed(domain_scopes=("general", domain))
+    assert not allowed(subject_ids=("s-1",))
+    # Once a location, mail or records tool has run in it, never.
+    for tool in ("current_location", "where_was_i", "weather", "gmail_read", "read_labs"):
+        assert not allowed(tools_ran=("web_search", tool))

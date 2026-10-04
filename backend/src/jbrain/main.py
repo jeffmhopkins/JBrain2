@@ -622,6 +622,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Which engine's config launch lines are fingerprinted from, re-read per call.
             engine=app.state.active_engine,
             conversations=kv_conversations,
+            # Restores into a pool are fitted under the same guard every pinned call uses.
+            pool_guard=getattr(app.state, "kv_pool_guard", None),
         )
         app.state.llm_router = build_router(
             settings,

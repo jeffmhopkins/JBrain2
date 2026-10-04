@@ -44,6 +44,14 @@ from jbrain.llm.types import (
 
 log = structlog.get_logger()
 
+
+def _cached_tokens(usage_body: Any) -> int:
+    """`prompt_tokens_details.cached_tokens`, 0 when absent or malformed."""
+    details = usage_body.get("prompt_tokens_details") if isinstance(usage_body, dict) else None
+    value = details.get("cached_tokens") if isinstance(details, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
 DEFAULT_TIMEOUT = 120.0
 
 # OpenAI finish_reason → our normalized stop reason.
@@ -252,6 +260,7 @@ class OpenAiCompatClient:
         usage = LlmUsage(
             input_tokens=int(usage_body.get("prompt_tokens", 0)),
             output_tokens=int(usage_body.get("completion_tokens", 0)),
+            cached_tokens=_cached_tokens(usage_body),
         )
         parsed = parse_json_payload(text) if json_schema is not None else None
         return LlmResult(text=text, parsed=parsed, usage=usage, reasoning=reasoning)
@@ -391,6 +400,7 @@ class OpenAiCompatClient:
         usage = LlmUsage(
             input_tokens=int(usage_body.get("prompt_tokens", 0)),
             output_tokens=int(usage_body.get("completion_tokens", 0)),
+            cached_tokens=_cached_tokens(usage_body),
         )
         return LlmTurn(
             text=text,
@@ -457,6 +467,7 @@ class OpenAiCompatClient:
         calls_by_index: dict[int, dict[str, Any]] = {}
         input_tokens = 0
         output_tokens = 0
+        cached_tokens = 0
         stop: StopReason = "end_turn"
         # Whether the provider ever told us the turn was over. A stream that ends without
         # it was cut mid-generation, and the difference is invisible in the deltas — see
@@ -467,6 +478,7 @@ class OpenAiCompatClient:
             if usage_body:
                 input_tokens = int(usage_body.get("prompt_tokens", input_tokens))
                 output_tokens = int(usage_body.get("completion_tokens", output_tokens))
+                cached_tokens = _cached_tokens(usage_body) or cached_tokens
             for choice in event.get("choices") or ():
                 delta = choice.get("delta") or {}
                 # A reasoning model (gpt-oss/GLM via the local gateway) streams its
@@ -512,7 +524,9 @@ class OpenAiCompatClient:
             text="".join(text_parts),
             tool_calls=tool_calls,
             stop_reason=stop,
-            usage=LlmUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+            usage=LlmUsage(
+                input_tokens=input_tokens, output_tokens=output_tokens, cached_tokens=cached_tokens
+            ),
             reasoning="".join(reasoning_parts),
         )
 

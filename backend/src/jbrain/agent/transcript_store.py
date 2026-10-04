@@ -177,6 +177,26 @@ class AgentTranscript:
                 out.append((content_by_id.get(tid, ""), images))
         return out
 
+    async def tool_names(self, ctx: SessionContext, session_id: str) -> set[str]:
+        """Every tool name any assistant turn of this session ran — the disk prompt cache's
+        privacy check (a conversation in which a location or mail tool ran never reaches disk).
+        One RLS-scoped read of the `tools` column only."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    select(AgentTurn.tools).where(
+                        AgentTurn.session_id == uuid.UUID(session_id), AgentTurn.role == "assistant"
+                    )
+                )
+            ).scalars()
+            names: set[str] = set()
+            for tools in rows:
+                for step in tools or ():
+                    name = step.get("name") if isinstance(step, dict) else None
+                    if isinstance(name, str):
+                        names.add(name)
+        return names
+
     async def load(self, ctx: SessionContext, session_id: str) -> list[TurnRecord]:
         async with scoped_session(self._maker, ctx) as session:
             rows = (

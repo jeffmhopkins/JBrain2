@@ -88,12 +88,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import json
 import os
+import shutil
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from typing import Literal
 
 import structlog
@@ -104,7 +106,7 @@ from jbrain.llm import kv_conversation, kv_pool_guard, llama_swap_config, local_
 from jbrain.llm.kv_conversation import ConversationHold, ConversationMeta
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.slot_roles import KvPool, SlotRole, layout_matches
-from jbrain.llm.types import LlmMessage, LlmTool
+from jbrain.llm.types import LlmTool
 
 log = structlog.get_logger()
 
@@ -134,12 +136,12 @@ _SIDECAR_EXT = ".ckpt"
 # A conversation file's claim (kv_conversation.ConversationMeta) lives beside it and goes with it.
 _META_EXT = kv_conversation.META_EXT
 
-# On a pooled model a restored-but-unused slot is indistinguishable from an erased one (both
-# report no size), and the pool guard erases idle slots without telling this store. So the
-# pooled memo only rate-limits: past this age the slot is restored again, which at worst
-# re-reads a file into a slot already holding it — never an overwrite of something else,
-# because only an empty slot is ever restored into.
-POOLED_RESTORE_MEMO_S = 600.0
+# Free disk a save must leave: twice the file it is about to write, and never under this floor.
+# The models volume also holds every model's weights; a prompt cache must not be what fills it.
+SAVE_MIN_FREE_BYTES = 20 * 1024**3
+# A save's size before it exists, per token: generous (gpt-oss measured ~72 KiB/token with its
+# full-history KV; Flash-Next ~20), so the free-space check errs toward skipping.
+SAVE_BYTES_PER_TOKEN_ESTIMATE = 80 * 1024
 # How long the interactive slot's conversation must sit untouched before the keeper saves it
 # on its own. Repurposing the slot saves at once; this catches a conversation the owner walked
 # away from before a restart or an engine switch takes it, without rewriting the file after
@@ -303,12 +305,13 @@ MISS_OUTCOMES = frozenset(
 
 # Outcomes counted as the cache HELPING / NOT HELPING in the owner's summary. Conversation
 # misses are not faults (a new conversation has no file), so they are counted, never narrated.
-HIT_OUTCOMES = frozenset({"restored", "conversation_restored"})
+HIT_OUTCOMES = frozenset({"restored", "conversation_restore_hit", "conversation_restore_partial"})
 CONVERSATION_MISS_OUTCOMES = frozenset(
     {
         "conversation_no_file",
         "conversation_base_mismatch",
-        "conversation_prefix_mismatch",
+        "conversation_key_mismatch",
+        "conversation_restore_miss",
         "conversation_restore_failed",
         "conversation_restore_rejected",
         "conversation_skipped_busy",
@@ -383,8 +386,16 @@ class KvPrefixStore:
         max_store_bytes: int = MAX_STORE_BYTES,
         engine: engines.Engine | engines.ActiveEngine = engines.STANDARD,
         conversations: bool = False,
+        pool_guard: kv_pool_guard.KvPoolGuard | None = None,
     ) -> None:
         self._gateway = gateway
+        # The router's pool guard, when wired: a restore's fit is judged under its lock and
+        # with its pending calls, it charges what a restore put in a never-used slot, and it
+        # reports the slots it erases (`note_slot_erased`). None (tests, a DB-less caller)
+        # falls back to a local projection off one `/slots` read.
+        self._pool_guard = pool_guard
+        if pool_guard is not None:
+            pool_guard.add_erase_listener(self.note_slot_erased)
         self._models_root = models_root
         # Which engine's llama-swap config launch lines are read from (`_resolve`). The
         # fingerprint is the launch line, so reading the wrong engine's file would describe a
@@ -424,10 +435,11 @@ class KvPrefixStore:
         # (served model, role) restored-but-not-yet-used -> (fingerprint, monotonic time): such
         # a slot reports NO n_prompt_tokens (see module docstring), so without this memo every
         # keeper tick would re-restore the same file until the first message. Cleared when a
-        # turn uses it or a fresh prime supersedes it. A model without a pool has one memo (the
-        # interactive key) whatever role asks, as before F4: its slots are not pinned, so two
-        # roles' memos would plant the same prefix in two slots. A pooled memo also expires
-        # (`POOLED_RESTORE_MEMO_S`).
+        # turn uses it, a fresh prime supersedes it, the model reloads, or this process's pool
+        # guard erases the slot. A model without a pool has one memo (the interactive key)
+        # whatever role asks, as before F4: its slots are not pinned, so two roles' memos would
+        # plant the same prefix in two slots. (The worker's guard can erase a pooled slot
+        # unseen; the memo then holds until that role's next turn, which pays one prefill.)
         self._restored_unused: dict[tuple[str, SlotRole], tuple[str, float]] = {}
         # One restore at a time: a keeper tick and an inbound turn discovering the same
         # loss must not both stream the file into different slots.
@@ -447,6 +459,24 @@ class KvPrefixStore:
         self._conv_hold: dict[str, ConversationHold] = {}
         # Per patch-gated served model: (monotonic read time, gate fingerprint, state).
         self._gate_cache: dict[str, tuple[float, str, RestoreGate]] = {}
+        # Every multi-GB slot write, and the prune that follows it, one at a time — and never
+        # under `self._lock`, which every turn's restore check takes.
+        self._save_lock = asyncio.Lock()
+        # Patch-gated models whose patch a save in THIS process life proved. Until then an
+        # existing file does not short-circuit a prime's save: the image may have been rebuilt.
+        self._patch_seen: set[str] = set()
+        # Per pooled served model: a counter bumped by every interactive request's prepare. A
+        # turn claims the slot only if no other prepare ran after its own (`note_conversation_
+        # turn`), so a concurrent request cannot leave a stale claim behind.
+        self._prepare_seq: dict[str, int] = {}
+        # Hashes of conversations in which an excluded tool ran: never saved again this process
+        # life (the transcript check in the chat path covers restarts).
+        self._tainted: set[str] = set()
+        # Hashes of conversations whose restores missed MISS_LIMIT times in a row: their file
+        # was dropped, and saving them again would only repeat the waste.
+        self._unhelpful: set[str] = set()
+        # Background deletions started from synchronous notes, kept so they are not collected.
+        self._tasks: set[asyncio.Task[object]] = set()
         # ---- instrumentation (see `snapshot`) ----
         # Every outcome this store reaches, counted since process start. Cheap, unbounded in
         # value but not in keys (one per outcome name), and the only way to tell "the cache
@@ -474,7 +504,8 @@ class KvPrefixStore:
         if conversations is not None:
             self._conversations = conversations
             if not conversations:
-                # Nothing more is saved; what the slot holds stays, unclaimed.
+                # Nothing more is saved, and what was saved goes (`clear_conversations`, which
+                # the routes await after this).
                 self._conv_hold.clear()
 
     # ---- the restore gate ------------------------------------------------------------
@@ -670,9 +701,12 @@ class KvPrefixStore:
                     counters.get(k, 0) for k in MISS_OUTCOMES | CONVERSATION_MISS_OUTCOMES
                 ),
                 "role_restores": counters.get("restored", 0),
-                "conversation_hits": counters.get("conversation_restored", 0),
+                "conversation_restores": counters.get("conversation_restored", 0),
                 "conversation_misses": sum(counters.get(k, 0) for k in CONVERSATION_MISS_OUTCOMES),
                 "conversation_saves": counters.get("conversation_saved", 0),
+                "conversation_restore_hits": counters.get("conversation_restore_hit", 0),
+                "conversation_restore_partials": counters.get("conversation_restore_partial", 0),
+                "conversation_restore_misses": counters.get("conversation_restore_miss", 0),
             },
             "roles": self._role_rows(),
             "conversations": {
@@ -724,7 +758,7 @@ class KvPrefixStore:
             {
                 "model": served,
                 "conversation": kv_conversation.short_key(hold.key),
-                "messages": len(hold.prefix),
+                "awaiting_judgement": hold.restored_tokens is not None,
                 "input_tokens": hold.input_tokens,
                 "unsaved": hold.dirty,
                 "idle_s": round(now - hold.at),
@@ -844,14 +878,18 @@ class KvPrefixStore:
         return (served_model, role or SlotRole.INTERACTIVE)
 
     def _memo_active(self, key: tuple[str, SlotRole]) -> bool:
-        memo = self._restored_unused.get(key)
-        if memo is None:
-            return False
-        pooled = local_catalog.pool_of(key[0]) is not None
-        if pooled and time.monotonic() - memo[1] > POOLED_RESTORE_MEMO_S:
-            del self._restored_unused[key]
-            return False
-        return True
+        return key in self._restored_unused
+
+    def note_slot_erased(self, served_model: str, slot: int) -> None:
+        """The pool guard erased `slot`: whatever was restored there is gone. Drops that role's
+        memo, and the conversation claim when it is the interactive slot."""
+        pool = local_catalog.pool_of(served_model)
+        if pool is None or not 0 <= slot < pool.n_slots:
+            return
+        role = pool.by_slot(slot).role
+        self._restored_unused.pop((served_model, role), None)
+        if role is SlotRole.INTERACTIVE:
+            self._conv_hold.pop(served_model, None)
 
     def set_engine(self, engine: engines.Engine) -> None:
         """Pin launch-line resolution to `engine`'s config, for a store built without a live
@@ -925,6 +963,10 @@ class KvPrefixStore:
         for key in [k for k in self._restored_unused if k[0] == served_model]:
             del self._restored_unused[key]
         self._conv_hold.pop(served_model, None)
+        # A reload may be a new image or a resized pool: the gate is read afresh.
+        self.forget_gate(served_model)
+        if self._pool_guard is not None:
+            self._pool_guard.forget_restored(served_model)
 
     def note_agent_turn(
         self,
@@ -1031,7 +1073,12 @@ class KvPrefixStore:
             # would freeze it in that state forever. The slot just finished a real prime,
             # so falling through to a fresh save captures the live checkpoints and writes
             # the sidecar — a one-time upgrade per stale file, not a recurring cost.
-            if not model.recurrent or await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
+            # A patch-gated model's file also needs THIS process to have proven the patch: the
+            # api restarts with every image rebuild, and a stock rebuild would otherwise keep
+            # trusting files a patched build wrote.
+            proven = not model.kv_restore_needs_patch or served_model in self._patch_seen
+            has_sidecar = await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT)
+            if proven and (not model.recurrent or has_sidecar):
                 await asyncio.to_thread(self._touch, path)
                 return True
             await self._note("resaving_for_sidecar", served_model, role=role)
@@ -1068,6 +1115,26 @@ class KvPrefixStore:
             )
             return False
         slot_id = _slot_int(matches[0], "id")
+        async with self._save_lock:
+            return await self._save_prime_locked(
+                model, served_model, slot_id, fingerprint, path, prime_tokens, role
+            )
+
+    async def _save_prime_locked(
+        self,
+        model: local_catalog.LocalModel,
+        served_model: str,
+        slot_id: int,
+        fingerprint: str,
+        path: str,
+        prime_tokens: int,
+        role: SlotRole | None,
+    ) -> bool:
+        """`save_after_prime`'s write, under `self._save_lock`."""
+        if not await self._disk_room(path, prime_tokens, served_model):
+            return False
+        # The sidecar left by an earlier save would otherwise "prove" a build that writes none.
+        await asyncio.to_thread(self._remove_sidecar, path)
         try:
             resp = await self._gateway.save_slot(
                 served_model, slot_id, f"{fingerprint}{_SLOT_FILE_SUFFIX}"
@@ -1125,11 +1192,32 @@ class KvPrefixStore:
         if not model.kv_restore_needs_patch:
             return True
         if await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
+            self._patch_seen.add(served_model)
             return True
         self._patch_absent.add(served_model)
         await asyncio.to_thread(self._remove_quietly, path)
         await self._note("patch_absent", served_model, warn=True, role=role)
         return False
+
+    async def _disk_room(self, path: str, tokens: int, served_model: str) -> bool:
+        """Whether the volume can take this save and keep `SAVE_MIN_FREE_BYTES` free."""
+        estimate = max(tokens, 1) * SAVE_BYTES_PER_TOKEN_ESTIMATE
+        stat = await asyncio.to_thread(self._stat_quietly, path)
+        if stat is not None:
+            estimate = stat[0]  # rewriting a file: its own size is the better guess
+        try:
+            free = await asyncio.to_thread(_free_bytes, os.path.dirname(path))
+        except OSError:
+            return True  # unknown is not full; the save's own failure is still caught
+        if free >= max(2 * estimate, SAVE_MIN_FREE_BYTES):
+            return True
+        await self._note("save_skipped_low_disk", served_model, free=free, estimate=estimate)
+        return False
+
+    def _remove_sidecar(self, path: str) -> None:
+        """Runs in a thread."""
+        with contextlib.suppress(OSError):
+            os.remove(path + _SIDECAR_EXT)
 
     async def _prune_and_note(self, served_model: str, keep_path: str) -> None:
         for gone, size in await asyncio.to_thread(self._prune_to_budget, keep_path):
@@ -1150,7 +1238,8 @@ class KvPrefixStore:
         Conversation files go too, and with them the claim on whatever the slot holds."""
         model = local_catalog.get_by_served(served_model) if served_model else None
         only = model.id if model is not None else served_model
-        removed = await asyncio.to_thread(self._clear_files, only)
+        async with self._save_lock:
+            removed = await asyncio.to_thread(self._clear_files, only)
         if served_model is None:
             self._prime_tokens.clear()
             self._restored_unused.clear()
@@ -1468,15 +1557,27 @@ class KvPrefixStore:
         need = self._prime_tokens.get(fingerprint) or await asyncio.to_thread(
             _file_token_bound, path
         )
-        cells = _pool_cells(line, pool)
-        if need is None or kv_pool_guard.projected_cells(pool, slots, exclude=slot_id) + need > (
-            cells
-        ):
-            await self._note(
-                "restore_skipped_pool_full", served_model, role=role, need=need, cells=cells
-            )
+        if need is None or not await self._fits(served_model, pool, slot_id, need, slots, line):
+            await self._note("restore_skipped_pool_full", served_model, role=role, need=need)
             return False
         return await self._restore_file(served_model, slot_id, fingerprint, path, role=role)
+
+    async def _fits(
+        self,
+        served_model: str,
+        pool: KvPool,
+        slot_id: int,
+        need: int,
+        slots: Sequence[dict[str, object]],
+        line: str,
+    ) -> bool:
+        """Whether `need` restored cells fit in `slot_id` — through the pool guard when wired
+        (its lock, its pending calls, its charge for never-used restored slots), else off the
+        `/slots` read in hand and the pool size on the launch line."""
+        if self._pool_guard is not None:
+            return await self._pool_guard.fits(served_model, pool, slot_id, need)
+        cells = _pool_cells(line, pool)
+        return kv_pool_guard.projected_cells(pool, slots, exclude=slot_id) + need <= cells
 
     async def _restore_file(
         self,
@@ -1541,6 +1642,8 @@ class KvPrefixStore:
             fingerprint,
             time.monotonic(),
         )
+        if self._pool_guard is not None and role is not None:
+            self._pool_guard.note_restored(served_model, slot_id, n_restored)
         await box_events.record(
             box_events.KV_PREFIX_RESTORED,
             served_model,
@@ -1575,43 +1678,54 @@ class KvPrefixStore:
         system: str,
         tools: Sequence[LlmTool],
         reasoning_effort: str | None,
-        messages: Sequence[LlmMessage],
-    ) -> bool:
+    ) -> tuple[bool, int]:
         """Before an interactive request on a pooled model: save the conversation the slot
         holds if this request is about to repurpose it, then restore this request's own
-        conversation if a file whose messages open this prompt is on disk. Returns True when
-        it restored — the caller then skips the base prefix restore, which would see the
-        never-used slot as empty and overwrite it.
+        conversation if a file for it (same key, same base identity) is on disk. Returns
+        (restored, sequence): on True the caller skips the persona restore, which would see the
+        never-used slot as empty and overwrite it; the sequence goes back with the turn's note.
 
-        A request with no conversation (the keeper's prime, an omnibox turn) repurposes the
-        slot too, so it saves the holder and restores nothing. Best-effort throughout."""
+        A request with no conversation (the keeper's prime, an omnibox turn, a chat that may
+        not reach disk) repurposes the slot too, so it saves the holder and restores nothing.
+        The save runs outside `self._lock` (under `self._save_lock`): it streams gigabytes,
+        and every other turn's restore check takes the main lock. Best-effort throughout."""
+        seq = self._prepare_seq.get(served_model, 0) + 1
+        self._prepare_seq[served_model] = seq
         pool = self._conversation_pool(served_model)
         if pool is None:
-            return False
+            return False, seq
+        if conversation_key is not None and kv_conversation.key_hash(conversation_key) in (
+            self._tainted
+        ):
+            conversation_key = None
         async with self._lock:
             hold = self._conv_hold.get(served_model)
             if hold is not None and conversation_key is not None and hold.key == conversation_key:
                 self._count("conversation_held")
-                return False
+                return False, seq
             if hold is None and conversation_key is None:
-                return False
+                return False, seq
             await self._refresh_engine()
             resolved = await asyncio.to_thread(
                 self._resolve_line, served_model, system, tools, reasoning_effort
             )
             if resolved is None:
-                return False
+                return False, seq
             base, save_dir, _identity, line = resolved
-            if hold is not None:
-                if hold.dirty:
-                    await self._save_conversation(served_model, pool, hold, save_dir)
-                # Whatever the save did, this request replaces what the slot held.
-                self._conv_hold.pop(served_model, None)
-            if conversation_key is None:
-                return False
-            return await self._restore_conversation(
-                served_model, pool, conversation_key, base, save_dir, line, messages
+            # Whatever happens next, this request replaces what the slot held.
+            self._conv_hold.pop(served_model, None)
+        if hold is not None and hold.dirty:
+            async with self._save_lock:
+                await self._save_conversation(served_model, pool, hold)
+        if conversation_key is None:
+            return False, seq
+        async with self._lock:
+            if self._prepare_seq.get(served_model) != seq:
+                return False, seq  # another request is already taking the slot
+            restored = await self._restore_conversation(
+                served_model, pool, conversation_key, base, save_dir, line
             )
+        return restored, seq
 
     async def _restore_conversation(
         self,
@@ -1621,19 +1735,13 @@ class KvPrefixStore:
         base: str,
         save_dir: str,
         line: str,
-        messages: Sequence[LlmMessage],
     ) -> bool:
         name = kv_conversation.file_name(base, conversation_key)
         path = os.path.join(save_dir, name)
         meta = await asyncio.to_thread(_read_meta, path)
-        digests = kv_conversation.message_digests(messages)
-        decision = kv_conversation.restore_decision(meta, base, digests)
+        decision = kv_conversation.restore_decision(meta, base, conversation_key)
         if decision != "restore" or meta is None:
             self._count(f"conversation_{decision}")
-            if decision == "prefix_mismatch":
-                # The conversation moved on without this file (edited, or answered elsewhere):
-                # it can never match again.
-                await asyncio.to_thread(self._remove_quietly, path)
             return False
         if not await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
             self._count("conversation_skipped_no_sidecar")
@@ -1652,28 +1760,28 @@ class KvPrefixStore:
             # it and overwrites whatever it leaves, so a restore now would be wasted.
             self._count("conversation_skipped_busy")
             return False
-        cells = _pool_cells(line, pool)
-        if kv_pool_guard.projected_cells(pool, slots, exclude=slot_id) + meta.n_tokens > cells:
+        if not await self._fits(served_model, pool, slot_id, meta.n_tokens, slots, line):
             self._count("conversation_skipped_pool_full")
             return False
         started = time.perf_counter()
         try:
             resp = await self._gateway.restore_slot(served_model, slot_id, name)
         except LocalGatewayError as exc:
+            # llama-server words a full KV cache and a bad file the same way ("No available
+            # space in KV cache or invalid slot save file"), so the error text cannot say which.
+            # Count it as a miss: a file that keeps failing goes after MISS_LIMIT in a row, one
+            # that failed on a momentarily full pool survives.
             await self._note(
                 "conversation_restore_failed",
                 served_model,
                 role=SlotRole.INTERACTIVE,
                 error=str(exc),
             )
-            # A full KV cache is the pool's state, not the file's; anything else may be a torn
-            # file, which must not be retried every turn.
-            if "space" not in str(exc).lower():
-                await asyncio.to_thread(self._remove_quietly, path)
+            await asyncio.to_thread(_bump_misses, path)
             return False
         elapsed_ms = round((time.perf_counter() - started) * 1000)
         n_restored = resp.get("n_restored")
-        if n_restored != meta.n_tokens:
+        if n_restored != meta.n_tokens or not isinstance(n_restored, int):
             await self._note(
                 "conversation_restore_rejected",
                 served_model,
@@ -1691,14 +1799,16 @@ class KvPrefixStore:
             base,
             time.monotonic(),
         )
+        if self._pool_guard is not None:
+            self._pool_guard.note_restored(served_model, slot_id, n_restored)
         self._conv_hold[served_model] = ConversationHold(
             key=conversation_key,
             base=base,
-            prefix=meta.prefix,
             input_tokens=None,
             output_tokens=None,
             dirty=False,
             at=time.monotonic(),
+            restored_tokens=n_restored,
         )
         await box_events.record(
             box_events.KV_PREFIX_RESTORED,
@@ -1716,12 +1826,22 @@ class KvPrefixStore:
         return True
 
     async def _save_conversation(
-        self, served_model: str, pool: KvPool, hold: ConversationHold, save_dir: str
+        self, served_model: str, pool: KvPool, hold: ConversationHold
     ) -> Literal["saved", "busy", "failed"]:
         """Save the interactive slot as `hold`'s conversation — only when `/slots`, read just
         before, still shows that conversation's cache (see `ConversationHold.still_in_slot`)
-        and the server saves exactly that many tokens. Lock held by the caller. `busy` means
-        try again later; `failed` means the claim is no longer good."""
+        and the server saves exactly that many tokens. Under `self._save_lock`, never the main
+        lock. `busy` means try again later; `failed` means the claim is no longer good."""
+        digest = kv_conversation.key_hash(hold.key)
+        if digest in self._tainted or digest in self._unhelpful:
+            return "failed"
+        await self._refresh_engine()
+        line = await asyncio.to_thread(
+            llama_swap_config.launch_line, self._models_root, served_model, self._current_engine()
+        )
+        save_dir = None if line is None else _save_dir_from_line(line, self._models_root)
+        if save_dir is None:
+            return "failed"
         slot_id = pool.slot(SlotRole.INTERACTIVE)
         try:
             slots = [s for s in await self._gateway.slots(served_model) if isinstance(s, dict)]
@@ -1744,6 +1864,10 @@ class KvPrefixStore:
             return "failed"
         name = kv_conversation.file_name(hold.base, hold.key)
         path = os.path.join(save_dir, name)
+        if not await self._disk_room(path, n_slot, served_model):
+            return "failed"
+        previous = await asyncio.to_thread(_read_meta, path)
+        await asyncio.to_thread(self._remove_sidecar, path)
         try:
             resp = await self._gateway.save_slot(served_model, slot_id, name)
         except LocalGatewayError as exc:
@@ -1768,8 +1892,13 @@ class KvPrefixStore:
             model, served_model, path, SlotRole.INTERACTIVE
         ):
             return "failed"
+        # A re-save carries the miss streak: it judges the conversation, not one file.
         meta = ConversationMeta(
-            base=hold.base, prefix=hold.prefix, n_tokens=n_saved, saved_at=time.time()
+            base=hold.base,
+            key=digest,
+            n_tokens=n_saved,
+            saved_at=time.time(),
+            misses=previous.misses if previous is not None else 0,
         )
         if not await asyncio.to_thread(_write_meta, path, meta):
             await asyncio.to_thread(self._remove_quietly, path)
@@ -1777,11 +1906,7 @@ class KvPrefixStore:
         hold.dirty = False
         await self._prune_and_note(served_model, path)
         await self._note(
-            "conversation_saved",
-            served_model,
-            role=SlotRole.INTERACTIVE,
-            tokens=n_saved,
-            messages=len(hold.prefix),
+            "conversation_saved", served_model, role=SlotRole.INTERACTIVE, tokens=n_saved
         )
         return "saved"
 
@@ -1789,34 +1914,140 @@ class KvPrefixStore:
         self,
         served_model: str,
         conversation_key: str | None,
-        messages: Sequence[LlmMessage],
         *,
         fingerprint: str | None,
         input_tokens: int,
         output_tokens: int,
+        cached_tokens: int = 0,
+        seq: int | None = None,
+        tool_names: Sequence[str] = (),
     ) -> None:
         """An interactive turn completed in the pooled interactive slot: the slot now holds
-        this request's prompt plus its answer, unsaved. No conversation, no base identity,
-        or no real usage leaves the slot unclaimed, which is never saved."""
+        this request's prompt plus its answer, unsaved.
+
+        Judges a restore by the first request it served (`cached_tokens` against what was
+        restored). Claims the slot only if no other request prepared after this one (`seq`).
+        A turn that ran an excluded tool taints the conversation: its files go, and it is never
+        saved again. No conversation, no base identity, or no real usage leaves the slot
+        unclaimed, which is never saved."""
         if self._conversation_pool(served_model) is None:
             return
+        if conversation_key is not None and kv_conversation.any_excluded(tool_names):
+            self._tainted.add(kv_conversation.key_hash(conversation_key))
+            self._conv_hold.pop(served_model, None)
+            self._spawn(self.forget_conversation(conversation_key))
+            self._count("conversation_tainted")
+            return
+        if seq is not None and self._prepare_seq.get(served_model) != seq:
+            self._count("conversation_claim_superseded")
+            return
+        previous = self._conv_hold.get(served_model)
+        if (
+            previous is not None
+            and conversation_key is not None
+            and previous.key == conversation_key
+            and previous.restored_tokens is not None
+        ):
+            verdict = kv_conversation.judge(cached_tokens, previous.restored_tokens)
+            self._count(f"conversation_restore_{verdict}")
+            path = self._conversation_path(served_model, previous.base, conversation_key)
+            if path is not None:
+                self._spawn(self._judged(path, conversation_key, verdict))
         if conversation_key is None or fingerprint is None or input_tokens <= 0:
             self._conv_hold.pop(served_model, None)
             return
         self._conv_hold[served_model] = ConversationHold(
             key=conversation_key,
             base=fingerprint,
-            prefix=kv_conversation.message_digests(messages),
             input_tokens=input_tokens,
             output_tokens=max(0, output_tokens),
             dirty=True,
             at=time.monotonic(),
         )
 
+    async def _judged(
+        self, path: str, conversation_key: str, verdict: kv_conversation.Judgement
+    ) -> None:
+        """Record a judgement on the file's claim; a conversation whose restores keep missing
+        is not saved again this process life — each save of it would be a wasted write."""
+        if await asyncio.to_thread(_record_judgement, path, verdict):
+            self._unhelpful.add(kv_conversation.key_hash(conversation_key))
+            self._count("conversation_dropped_unhelpful")
+
+    def _conversation_path(self, served_model: str, base: str, key: str) -> str | None:
+        line = llama_swap_config.launch_line(
+            self._models_root, served_model, self._current_engine()
+        )
+        save_dir = None if line is None else _save_dir_from_line(line, self._models_root)
+        return (
+            None
+            if save_dir is None
+            else os.path.join(save_dir, kv_conversation.file_name(base, key))
+        )
+
+    def _spawn(self, work: Awaitable[object]) -> None:
+        """Run a best-effort file task from a synchronous note, holding a reference to it."""
+
+        async def _run() -> object:
+            try:
+                return await work
+            except Exception:  # noqa: BLE001 — a cache's housekeeping never fails a turn
+                log.warning("kv_prefix.background_task_failed", exc_info=True)
+                return None
+
+        try:
+            task = asyncio.get_running_loop().create_task(_run())
+        except RuntimeError:
+            return
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     def note_conversation_abandoned(self, served_model: str) -> None:
         """A request reached the interactive slot without a final turn (a stopped stream): what
         the slot holds is unknown, so nothing may be saved under any conversation's name."""
         self._conv_hold.pop(served_model, None)
+
+    async def forget_conversation(self, conversation_key: str) -> int:
+        """Delete every file this conversation has, under any base identity and model, and
+        drop any claim on a slot holding it. For a deleted or re-scoped session, and a
+        conversation an excluded tool ran in. Returns how many files went."""
+        digest = kv_conversation.key_hash(conversation_key)
+        for served, hold in list(self._conv_hold.items()):
+            if hold.key == conversation_key:
+                del self._conv_hold[served]
+        async with self._save_lock:
+            removed = await asyncio.to_thread(self._remove_conversation_files, digest)
+        if removed:
+            await self._note("conversation_forgotten", "*", files=removed)
+        return removed
+
+    async def clear_conversations(self) -> int:
+        """Delete every conversation file (the toggle turned off). Role prefixes stay."""
+        self._conv_hold.clear()
+        async with self._save_lock:
+            removed = await asyncio.to_thread(self._remove_conversation_files, None)
+        if removed:
+            await self._note("conversation_cleared", "*", files=removed)
+        return removed
+
+    def _remove_conversation_files(self, digest: str | None) -> int:
+        """Runs in a thread — remove conversation files whose claim names `digest` (all of them
+        when None), with their sidecars and claims. A file with no readable claim goes too:
+        nothing can say whose it is."""
+        root = os.path.join(self._models_root, llama_swap_config.KVSLOT_DIR)
+        removed = 0
+        for folder, _dirs, names in os.walk(root):
+            for name in names:
+                if not kv_conversation.is_conversation_file(name):
+                    continue
+                path = os.path.join(folder, name)
+                if digest is not None:
+                    meta = _read_meta(path)
+                    if meta is not None and meta.key != digest:
+                        continue
+                self._remove_quietly(path)
+                removed += 1
+        return removed
 
     async def save_idle_conversation(
         self, served_model: str, *, idle_s: float = CONVERSATION_IDLE_SAVE_S
@@ -1829,25 +2060,37 @@ class KvPrefixStore:
             return False
         if time.monotonic() - hold.at < idle_s:
             return False
-        async with self._lock:
-            hold = self._conv_hold.get(served_model)
-            if hold is None or not hold.dirty:
+        async with self._save_lock:
+            if self._conv_hold.get(served_model) is not hold or not hold.dirty:
                 return False
-            await self._refresh_engine()
-            line = await asyncio.to_thread(
-                llama_swap_config.launch_line,
-                self._models_root,
-                served_model,
-                self._current_engine(),
-            )
-            save_dir = None if line is None else _save_dir_from_line(line, self._models_root)
-            if save_dir is None:
-                return False
-            outcome = await self._save_conversation(served_model, pool, hold, save_dir)
-            if outcome == "failed":
-                # The slot moved on or the save failed: the claim is no longer good.
-                self._conv_hold.pop(served_model, None)
-            return outcome == "saved"
+            outcome = await self._save_conversation(served_model, pool, hold)
+        if outcome == "failed" and self._conv_hold.get(served_model) is hold:
+            # The slot moved on or the save failed: the claim is no longer good.
+            self._conv_hold.pop(served_model, None)
+        return outcome == "saved"
+
+
+def _record_judgement(path: str, verdict: kv_conversation.Judgement) -> bool:
+    """Runs in a thread — a hit or partial resets the file's miss count; a miss bumps it, and
+    the file goes at `MISS_LIMIT` in a row. True when the file was dropped."""
+    meta = _read_meta(path)
+    if meta is None:
+        return False
+    misses = meta.misses + 1 if verdict == "miss" else 0
+    if misses == meta.misses:
+        return False
+    if misses >= kv_conversation.MISS_LIMIT:
+        for part in (path, path + _SIDECAR_EXT, path + _META_EXT):
+            with contextlib.suppress(OSError):
+                os.remove(part)
+        return True
+    _write_meta(path, dataclasses.replace(meta, misses=misses))
+    return False
+
+
+def _bump_misses(path: str) -> None:
+    """Runs in a thread — a failed restore counts as a miss."""
+    _record_judgement(path, "miss")  # a drop here is seen at the next restore: no file
 
 
 def _read_meta(path: str) -> ConversationMeta | None:
@@ -1875,6 +2118,11 @@ def _write_meta(path: str, meta: ConversationMeta) -> bool:
             os.remove(tmp)
         return False
     return True
+
+
+def _free_bytes(folder: str) -> int:
+    """Runs in a thread — free bytes on the volume holding `folder`."""
+    return shutil.disk_usage(folder).free
 
 
 def _file_token_bound(path: str) -> int | None:

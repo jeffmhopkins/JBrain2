@@ -2635,12 +2635,18 @@ async def set_kv_conversation_cache(
     kv_prefix: "KvPrefixStore | None" = None,
 ) -> dict[str, object]:
     """Turn conversation files on or off (FLASH_NEXT_ENGINE_PLAN F4c) — stored and applied
-    live. Off stops new saves and restores; files already saved stay until the budget ages
-    them out or `DELETE /llm/kv-prefix` removes them."""
+    live. Off stops new saves and restores and deletes every conversation file."""
     await store.set_llm_kv_conversation_cache(ctx, enabled)
+    removed = 0
     if kv_prefix is not None:
         kv_prefix.configure(conversations=enabled)
-    return {"conversation_cache": enabled, "applies": "now" if kv_prefix else "on restart"}
+        if not enabled:
+            removed = await kv_prefix.clear_conversations()
+    return {
+        "conversation_cache": enabled,
+        "files_removed": removed,
+        "applies": "now" if kv_prefix else "on restart",
+    }
 
 
 async def gateway_prime(

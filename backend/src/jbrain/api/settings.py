@@ -283,6 +283,9 @@ async def update_settings(
         await store.set_llm_kv_conversation_cache(ctx, body.llm_kv_conversation_cache)
         if kv_prefix is not None:
             kv_prefix.configure(conversations=body.llm_kv_conversation_cache)
+            if not body.llm_kv_conversation_cache:
+                # Off means off the disk too: every saved conversation goes.
+                await kv_prefix.clear_conversations()
     if body.pronunciation_lexicon is not None:
         # Replace semantics; the store sanitizes + bounds it, so a junk entry is dropped rather
         # than stored (an empty map clears the lexicon).

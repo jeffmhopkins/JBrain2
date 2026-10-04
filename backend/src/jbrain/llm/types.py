@@ -37,6 +37,9 @@ class LlmVideo:
 class LlmUsage:
     input_tokens: int
     output_tokens: int
+    # Of `input_tokens`, how many the server took from its prompt cache (OpenAI
+    # `prompt_tokens_details.cached_tokens`; llama-server reports it). 0 when unreported.
+    cached_tokens: int = 0
 
 
 # Decode-time sampling controls, one immutable bundle threaded from the router to

@@ -3684,7 +3684,7 @@ async def kv_prefix_conversations(
     """Turn the conversation cache on or off (FLASH_NEXT_ENGINE_PLAN F4c): the Flash-Next
     interactive slot saving each chat conversation as it moves on and restoring it when that
     conversation speaks again. The owner's twin is the Ops switch (`PUT /api/settings`).
-    Applied live; files already saved stay until the budget or `DELETE /llm/kv-prefix`."""
+    Applied live; off also deletes every saved conversation file."""
     request.state.debug_detail = f"kv conversation cache {'on' if enabled else 'off'}"
     return await llm_settings.set_kv_conversation_cache(
         _store(request),

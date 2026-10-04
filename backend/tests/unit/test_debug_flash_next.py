@@ -1352,16 +1352,3 @@ async def test_the_probe_records_the_restore_gate_for_the_running_flash_next(
         )
         is None
     )
-
-
-def test_only_a_chat_that_cannot_hold_firewalled_data_names_its_conversation() -> None:
-    """The chat's conversation key — what lets its slot state reach disk — is guarded by the
-    privacy rule, so a Brain/curator chat (or one scoped to a firewalled domain) never has one."""
-    src = (Path(debug.__file__).parent / "agent.py").read_text()
-    call = src[
-        src.index("conversation_key=(") : src.index("else None", src.index("conversation_key=("))
-    ]
-    assert "kv_conversation.conversation_cache_allowed(" in call
-    assert "reads_knowledge_base=profile.reads_knowledge_base" in call
-    assert "domain_scopes=session.domain_scopes" in call
-    assert "subject_ids=session.subject_ids" in call

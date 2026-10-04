@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import jbrain.llm.kv_prefix as _kv_prefix_mod
 from jbrain.api import llm_settings
 from jbrain.llm import (
     admission,
@@ -34,6 +35,13 @@ from tests.unit.test_llm_settings_api import _authed_client, _cloud_settings
 FLASH_ID = "qwen3.8-flash-next"
 # A catalog model the prompt cache saves for, so its fingerprint is not gated off.
 SAVER = "qwen3-vl-30b-a3b"
+
+
+@pytest.fixture(autouse=True)
+def _roomy_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store refuses a save that would leave the volume under 20 GiB free; a test's
+    scratch disk is not the box's models volume."""
+    monkeypatch.setattr(_kv_prefix_mod, "_free_bytes", lambda _folder: 10**13)
 
 
 def _flash() -> local_catalog.LocalModel:

@@ -10,6 +10,7 @@ not to the session list.
 from datetime import datetime
 from typing import Any, cast
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,8 @@ from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, EngineSessi
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/sessions", dependencies=[Depends(owner_only)])
 
@@ -150,6 +153,9 @@ async def rescope_session(
         )
     except EngineSessionRescope as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # A conversation's saved slot state on disk was judged against its OLD scope; any change
+    # drops it (the next turn re-judges under the new one).
+    await _forget_disk_conversation(request, session_id)
     return Response(status_code=204)
 
 
@@ -169,9 +175,21 @@ async def unarchive_session(request: Request, principal: PrincipalDep, session_i
 
 @router.delete("/{session_id}")
 async def delete_session(request: Request, principal: PrincipalDep, session_id: str) -> Response:
-    """Delete a session; its runs and transcript cascade with it."""
+    """Delete a session; its runs and transcript cascade with it — and so does any slot
+    state the disk prompt cache saved for it (FLASH_NEXT F4c)."""
     await get_agent_sessions(request).delete(ctx_for(principal), session_id)
+    await _forget_disk_conversation(request, session_id)
     return Response(status_code=204)
+
+
+async def _forget_disk_conversation(request: Request, session_id: str) -> None:
+    store = getattr(request.app.state, "kv_prefix", None)
+    if store is None:
+        return
+    try:
+        await store.forget_conversation(session_id)
+    except Exception:  # noqa: BLE001 — the session change already happened; log, never fail it
+        log.warning("sessions.kv_conversation_forget_failed", exc_info=True)
 
 
 class TurnAttachmentOut(BaseModel):

@@ -465,6 +465,10 @@ def test_the_prompt_cache_budget_and_conversation_toggle_round_trip_and_apply_li
         def configure(self, **kw: object) -> None:
             self.applied.append(kw)
 
+        async def clear_conversations(self) -> int:
+            self.applied.append({"cleared": True})
+            return 0
+
     live = _Live()
     c.app.state.kv_prefix = live  # type: ignore[attr-defined]
     got = c.put(
@@ -473,6 +477,11 @@ def test_the_prompt_cache_budget_and_conversation_toggle_round_trip_and_apply_li
     assert got["llm_kv_prefix_budget_gb"] == 60 and got["llm_kv_conversation_cache"] is False
     assert store.values["llm_kv_prefix_budget_gb"] == 60
     assert store.values["llm_kv_conversation_cache"] is False
-    assert live.applied == [{"max_store_bytes": 60 * 1024**3}, {"conversations": False}]
+    # Off also deletes every saved conversation file.
+    assert live.applied == [
+        {"max_store_bytes": 60 * 1024**3},
+        {"conversations": False},
+        {"cleared": True},
+    ]
     assert c.put("/api/settings", json={"llm_kv_prefix_budget_gb": 1}).status_code == 422
     assert c.put("/api/settings", json={"llm_kv_prefix_budget_gb": 501}).status_code == 422

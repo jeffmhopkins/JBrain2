@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+import jbrain.llm.kv_prefix as _kv_prefix_mod
 from jbrain import box_events
 from jbrain.llm import kv_prefix, llama_swap_config, local_catalog
 from jbrain.llm.kv_prefix import MIN_PREFIX_TOKENS, KvPrefixStore
@@ -37,6 +38,13 @@ MODEL_ID = "qwen3-vl-30b"
 _LIVE_SLOT: dict[str, object] = json.loads(
     (Path(__file__).parent / "fixtures" / "llama_slots_idle.json").read_text()
 )["slot"]
+
+
+@pytest.fixture(autouse=True)
+def _roomy_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store refuses a save that would leave the volume under 20 GiB free; a test's
+    scratch disk is not the box's models volume."""
+    monkeypatch.setattr(_kv_prefix_mod, "_free_bytes", lambda _folder: 10**13)
 
 
 def fresh_slot(**over: object) -> dict[str, object]:

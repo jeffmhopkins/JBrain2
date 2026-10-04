@@ -12,7 +12,7 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.db.session import SessionContext
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, UserMessage
 from jbrain.llm.slot_roles import SlotRole
-from jbrain.llm.types import LlmMessage, LlmTool
+from jbrain.llm.types import LlmTool
 
 FLASH = "qwen3.8-flash-next"
 STANDARD = "gpt-oss-120b"
@@ -30,10 +30,9 @@ class RecordingStore:
         system: str,
         tools: Sequence[LlmTool],
         effort: str | None,
-        messages: Sequence[LlmMessage],
-    ) -> bool:
-        self.calls.append(("prepare", {"model": model, "key": key, "n": len(messages)}))
-        return self._restores_conversation
+    ) -> tuple[bool, int]:
+        self.calls.append(("prepare", {"model": model, "key": key}))
+        return self._restores_conversation, 7
 
     async def restore_if_lost(self, model: str, system: str, tools: Any, **kw: Any) -> bool:
         self.calls.append(("restore", {"model": model, **kw}))
@@ -45,7 +44,7 @@ class RecordingStore:
     def note_agent_turn(self, model: str, input_tokens: int, **kw: Any) -> None:
         self.calls.append(("turn", {"model": model, **kw}))
 
-    def note_conversation_turn(self, model: str, key: str | None, messages: Any, **kw: Any) -> None:
+    def note_conversation_turn(self, model: str, key: str | None, **kw: Any) -> None:
         self.calls.append(("conversation_turn", {"model": model, "key": key, **kw}))
 
     def note_conversation_abandoned(self, model: str) -> None:
@@ -93,11 +92,13 @@ async def test_an_interactive_turn_prepares_its_conversation_then_records_it() -
         conversation_key="chat-1",
     )
     assert _kinds(store) == ["prepare", "restore", "turn", "conversation_turn"]
-    assert store.calls[0][1] == {"model": FLASH, "key": "chat-1", "n": 1}
+    assert store.calls[0][1] == {"model": FLASH, "key": "chat-1"}
     recorded = store.calls[3][1]
     assert recorded["key"] == "chat-1"
     assert (recorded["input_tokens"], recorded["output_tokens"]) == (500, 40)
     assert recorded["fingerprint"] == "fp"
+    # The prepare's sequence rides back so a superseded turn cannot claim the slot.
+    assert recorded["seq"] == 7
 
 
 async def test_a_restored_conversation_is_not_overwritten_by_the_persona() -> None:
@@ -179,3 +180,12 @@ async def test_a_loop_without_a_conversation_keeps_the_old_call_shape() -> None:
         conversation=[UserMessage(text="hello")],
     )
     assert seen == [False]
+
+
+def test_the_servers_cached_prompt_tokens_reach_the_turns_usage() -> None:
+    from jbrain.llm.openai_compat import _cached_tokens
+
+    assert _cached_tokens({"prompt_tokens": 9, "prompt_tokens_details": {"cached_tokens": 7}}) == 7
+    assert _cached_tokens({"prompt_tokens": 9}) == 0
+    assert _cached_tokens({"prompt_tokens_details": {"cached_tokens": "x"}}) == 0
+    assert LlmUsage(1, 2).cached_tokens == 0

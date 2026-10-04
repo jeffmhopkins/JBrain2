@@ -395,8 +395,8 @@ LLM_KV_PREFIX_BUDGET_GB_MAX = 500
 
 # Whether the pooled interactive slot saves each chat conversation to disk as the slot moves on
 # and restores it when that conversation speaks again (FLASH_NEXT_ENGINE_PLAN F4c). ON by
-# default (owner, 2026-10-04); applied live. Off stops new saves and restores — files already
-# on disk age out of the budget or go with `DELETE /api/debug/llm/kv-prefix`.
+# default (owner, 2026-10-04); applied live. Off stops new saves and restores and deletes every
+# conversation file already on disk.
 LLM_KV_CONVERSATION_CACHE_KEY = "llm_kv_conversation_cache"
 LLM_KV_CONVERSATION_CACHE_DEFAULT = True
 
