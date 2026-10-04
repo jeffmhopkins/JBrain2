@@ -238,7 +238,7 @@ export interface VerdictEvent {
   ungrounded_claims?: string[];
   /** Which check failed: `grounding` claims are answer SENTENCES the owner's notes did not
    * support; `arithmetic` claims are bare NUMBERS that traced to no tool result. Absent
-   * from an older server, which only ever sent grounding verdicts. */
+   * from an older server, which sent BOTH kinds untagged — `verdictKind` infers it. */
   kind?: "grounding" | "arithmetic";
 }
 /** Neutral provenance label — rides *after* `done` when a turn was answered purely

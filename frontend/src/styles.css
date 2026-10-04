@@ -10994,15 +10994,16 @@ button.small {
 .fb-shell .fb-calc-head {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: calc(-4px * var(--font-scale));
 }
+/* a full 44×44 hit area (DESIGN.md: touch targets ≥ 44px) whose negative vertical margins
+   let the row it sits in paint only ~16px tall, so the working still starts near the top. */
 .fb-shell .fb-calc-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 44px;
-  min-height: 28px;
-  margin: calc(-6px * var(--font-scale)) calc(-6px * var(--font-scale)) 0 0;
+  min-height: 44px;
+  margin: -14px -8px -14px 0;
   padding: 0;
   background: none;
   border: none;

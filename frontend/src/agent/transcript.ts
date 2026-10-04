@@ -137,6 +137,15 @@ export interface ToolActivity {
   reasoningOffset?: number;
 }
 
+/** An untagged verdict's kind. An older server sent both checks without a `kind`, so it is
+ * read off the claims: the arithmetic check's are bare numbers ("252.7", "5,030.40"), the
+ * grounding check's are sentences. No claims at all carries no flags, so either is safe. */
+export function verdictKind(claims: readonly string[]): Verdict["kind"] {
+  return claims.length > 0 && claims.every((c) => /^[\d.,\u202f\u00a0]+$/.test(c.trim()))
+    ? "arithmetic"
+    : "grounding";
+}
+
 /** Reflexion's verdict on this turn — present only when the verifiers flagged
  * something (a passing/absent verdict leaves the message unflagged). Drives the
  * inline "unverified" flags on the ungrounded answer sentences. */
@@ -413,7 +422,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         score: event.score,
         issues: event.issues ?? [],
         ungroundedClaims: event.ungrounded_claims ?? [],
-        kind: event.kind ?? "grounding",
+        kind: event.kind ?? verdictKind(event.ungrounded_claims ?? []),
       };
       break;
     case "general_knowledge":

@@ -9,6 +9,7 @@ from jbrain.agent.agents import (
     AGENT_NAMES,
     AGENTS,
     ARCHIVIST_TOOLS,
+    CITES_COMPUTATIONS,
     DEFAULT_AGENT,
     ENGINE_ONLY_PERSONAS,
     GMAIL_TOOLS,
@@ -1019,3 +1020,14 @@ def test_asking_stays_a_deliberate_grant_rather_than_a_class() -> None:
         if "ask_owner" in (profile.tools or frozenset()) | (profile.extra_tools or frozenset())
     )
     assert holders == ["curator", "note_ingest", "teacher"]
+
+
+def test_cites_computations_matches_the_prompts() -> None:
+    """The `[=n]` marker note goes only to personas whose prompt tells the model what to do
+    with it — and every persona whose prompt does gets it."""
+    defines_marker = {
+        name
+        for name, profile in AGENTS.items()
+        if "Cite a figure from this result" in profile.prompt
+    }
+    assert defines_marker == CITES_COMPUTATIONS

@@ -52,14 +52,24 @@ function place(anchor: DOMRect, height: number): Placement {
   return { left, top: above ? Math.max(MARGIN, anchor.top - 8 - height) : below, width, above };
 }
 
-/** The marker's rect NOW when we hold the element, else the rect it had when tapped. A
- * marker re-rendered out from under us (the paced reveal settling) keeps the last rect it
- * had rather than collapsing the panel to the corner. */
-function rectOf(anchor: HTMLElement | DOMRect, last: DOMRect | null): DOMRect {
-  if (!(anchor instanceof Element)) return anchor;
-  return anchor.isConnected
-    ? anchor.getBoundingClientRect()
-    : (last ?? anchor.getBoundingClientRect());
+/** What the panel points at: a fixed rect, the marker element, or a function that finds the
+ * marker afresh (the surface re-queries it by number inside its bubble, so a re-render that
+ * replaces the node — a verdict landing, the paced reveal settling — cannot strand it). */
+export type CalcAnchor = DOMRect | Element | (() => Element | null);
+
+function resolve(anchor: CalcAnchor): Element | DOMRect | null {
+  if (typeof anchor === "function") return anchor();
+  return anchor;
+}
+
+/** The marker's rect NOW, else the last rect it had: a marker momentarily out of the page
+ * keeps the panel where it was rather than collapsing it to the corner. */
+function rectOf(anchor: CalcAnchor, last: DOMRect | null): DOMRect {
+  const at = resolve(anchor);
+  if (at instanceof Element) {
+    return at.isConnected ? at.getBoundingClientRect() : (last ?? at.getBoundingClientRect());
+  }
+  return at ?? last ?? ({ left: 0, top: 0, bottom: 0, right: 0, width: 0, height: 0 } as DOMRect);
 }
 
 export function ComputationPopover({
@@ -68,24 +78,26 @@ export function ComputationPopover({
   onClose,
 }: {
   target: CalcTarget;
-  /** The tapped marker — the element, so the panel can follow it when the transcript
-   * scrolls — or a fixed rect. */
-  anchor: HTMLElement | DOMRect;
+  anchor: CalcAnchor;
   onClose: () => void;
 }): ReactNode {
   const [placement, setPlacement] = useState<Placement | null>(null);
   const panel = useRef<HTMLDialogElement>(null);
+  const closeBtn = useRef<HTMLButtonElement>(null);
   const lastRect = useRef<DOMRect | null>(null);
 
   // Re-placed whenever the panel's own SIZE changes, and whenever something OUTSIDE it
   // scrolls. The height is what decides which side of the marker it opens on, and an
   // observer covers every way the body can grow (a long error, a wrapped line, a rotated
-  // phone) rather than only the ones thought of here. A transcript scroll moves the marker,
-  // so the panel follows it instead of closing — a glance the owner did not dismiss stays
-  // open. Its OWN scroll is ignored: that is the owner reading the working.
+  // phone) rather than only the ones thought of here. The scrim catches touch, so the
+  // transcript only moves under the panel programmatically (the stream's follow-to-bottom)
+  // or by wheel/keyboard — and then the panel follows its marker instead of closing. A
+  // scroll fires per frame at most but in bursts, so placement is rAF-throttled. Its OWN
+  // scroll is ignored: that is the owner reading the working.
   useLayoutEffect(() => {
     const el = panel.current;
     if (!el) return;
+    let frame = 0;
     const measure = () => {
       const rect = rectOf(anchor, lastRect.current);
       lastRect.current = rect;
@@ -93,7 +105,11 @@ export function ComputationPopover({
     };
     const onScroll = (e: Event) => {
       if (e.target instanceof Node && el.contains(e.target)) return;
-      measure();
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -102,8 +118,22 @@ export function ComputationPopover({
     return () => {
       ro.disconnect();
       window.removeEventListener("scroll", onScroll, true);
+      if (frame) cancelAnimationFrame(frame);
     };
   }, [anchor]);
+
+  // Focus lands on the close control when the panel opens and goes back to the marker when
+  // it closes, so a keyboard or screen-reader user is neither left behind on the marker nor
+  // dropped at the top of the page. `preventScroll`, because a focus that scrolls would move
+  // the transcript the panel is pointing into.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: open/close only — the anchor is read at close time.
+  useEffect(() => {
+    closeBtn.current?.focus({ preventScroll: true });
+    return () => {
+      const at = resolve(anchor);
+      if (at instanceof HTMLElement && at.isConnected) at.focus({ preventScroll: true });
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -137,6 +167,7 @@ export function ComputationPopover({
       >
         <div className="fb-calc-head">
           <button
+            ref={closeBtn}
             type="button"
             className="fb-calc-x"
             aria-label="close the working"

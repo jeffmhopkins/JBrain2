@@ -359,10 +359,15 @@ class ToolContext:
     # `render_html`'s ceiling — same reasoning as the canvas pair above, one counter for
     # the render and the optional look it may carry.
     html_render_budget: "ToolCallBudget | None" = None
+    # Whether this turn's computations are CITED: only an owner-facing root turn of a
+    # persona whose prompt defines the `[=n]` marker (`agents.CITES_COMPUTATIONS`). A child,
+    # a task run or any other persona gets no marker note — the instruction would mean
+    # nothing to a prompt that never mentions it, and nothing renders a child's markers.
+    cite_computations: bool = False
     # The call ids of this turn's SUCCESSFUL computations, in call order — the `[=n]`
-    # numbering. `_dispatch` appends to it and tells the model each one's marker in the
-    # result itself, so the model copies a number rather than counting calls (it counted
-    # a failed one and pointed the owner's marker at the wrong working). Per turn for the
+    # numbering. `_dispatch` appends to it and tells the model each one's marker beside the
+    # result, so the model copies a number rather than counting calls (it counted a
+    # wrong-tool one and pointed the owner's marker at the wrong working). Per turn for the
     # same reason as `failed_fetches`: the PWA numbers the markers per message.
     computations: list[str] = field(default_factory=list)
 
@@ -588,6 +593,17 @@ class _Dispatched:
     duration_ms: int = 0
     # The handler's one-line answer for the Worked row (`ToolResultEvent.result_brief`).
     result_brief: str = ""
+    # The `[=n]` marker line for a cited computation, appended to what the MODEL reads
+    # (`model_result`) and nowhere else: the step's summary, the persisted transcript and
+    # the number verifier's evidence all keep the tool's own text, so the owner never sees
+    # an instruction addressed to the model, and `[=12]` never "traces" a stated 12.
+    cite_note: str = ""
+
+    @property
+    def model_result(self) -> ToolResult:
+        if not self.cite_note:
+            return self.result
+        return replace(self.result, content=self.result.content + self.cite_note)
 
 
 @dataclass(frozen=True)
@@ -1091,7 +1107,7 @@ class AgentLoop:
             halt_seen: str | None = None
             for call in turn.tool_calls:
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
-                results.append(dispatched.result)
+                results.append(dispatched.model_result)
                 if dispatched.halt is not None:
                     halt_seen = dispatched.halt
                 web_sources.extend(dispatched.web_sources)
@@ -1161,6 +1177,7 @@ class AgentLoop:
         depth: int = 0,
         tree: TreeState | None = None,
         run_id: str | None = None,
+        cite_computations: bool = False,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -1205,6 +1222,7 @@ class AgentLoop:
                 depth,
                 tree,
                 run_id,
+                cite_computations=cite_computations,
             ):
                 yield ev
             return
@@ -1243,6 +1261,7 @@ class AgentLoop:
             canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
+            cite_computations=cite_computations,
         )
         cost = 0
         consecutive_errors = 0
@@ -1492,7 +1511,7 @@ class AgentLoop:
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
                     raise
-                results.append(dispatched.result)
+                results.append(dispatched.model_result)
                 any_error = any_error or dispatched.result.is_error
                 surfaced_sources.extend(dispatched.sources)
                 surfaced_entities.extend(dispatched.entities)
@@ -1623,6 +1642,7 @@ class AgentLoop:
         depth: int = 0,
         tree: TreeState | None = None,
         run_id: str | None = None,
+        cite_computations: bool = False,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -1659,6 +1679,7 @@ class AgentLoop:
                 depth,
                 tree,
                 run_id,
+                cite_computations=cite_computations,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             cited = len(turn.sources) + len(turn.entities)
@@ -1730,6 +1751,7 @@ class AgentLoop:
         depth: int = 0,
         tree: TreeState | None = None,
         run_id: str | None = None,
+        cite_computations: bool = False,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
@@ -1755,6 +1777,7 @@ class AgentLoop:
             canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
+            cite_computations=cite_computations,
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []
@@ -1843,7 +1866,7 @@ class AgentLoop:
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
                 if dispatched.halt is not None:
                     halt_seen = dispatched.halt
-                results.append(dispatched.result)
+                results.append(dispatched.model_result)
                 any_error = any_error or dispatched.result.is_error
                 sources.extend(dispatched.sources)
                 entities.extend(dispatched.entities)
@@ -1953,7 +1976,10 @@ class AgentLoop:
           that isn't critique-worthy, emits nothing. Knowledge-base agents only: the
           same `general_knowledge_label` bit (it IS the persona's `reads_knowledge_base`)
           skips it for a KB-blind agent, which has no notes for a claim to be missing from.
-          The arithmetic tail above is not a notes check and runs for every agent.
+          The arithmetic tail above is knowledge-base agents only as well — by the owner's
+          ruling, not because it is a notes check (it is not): a KB-blind surface (jerv)
+          shows no ⚠ at all, and the tail verdict has no other consumer (Loop 1 persists
+          nothing, and buffer-retry scores grounding alone), so it is not computed there.
 
         The two can never co-occur: general_knowledge requires an empty corpus, the
         verdict a non-empty one."""
@@ -1963,8 +1989,9 @@ class AgentLoop:
         # falls into the empty-corpus branch below and used to return unverified — which is
         # how a figure that traced to nothing reached the owner sitting one line under a
         # correct tool result. Scored, never a veto: the answer he saw still stands here,
-        # exactly as it does for grounding.
-        if computed:
+        # exactly as it does for grounding. Not on a KB-blind agent: the owner ruled that
+        # its surface shows no reflexion flags at all, and nothing else reads this event.
+        if computed and general_knowledge_label:
             numbers = verify_computed_numbers("".join(answer_parts), list(seen_texts))
             if not numbers.passed:
                 yield VerdictEvent(
@@ -2053,11 +2080,17 @@ class AgentLoop:
             return _Dispatched(err, (), None, (), None, None, duration_ms=elapsed)
         elapsed = _ms_since(started)
         out = observation if isinstance(observation, ToolOutput) else None
-        content = str(observation)
-        if out is not None and is_computation(out.view):
+        result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        view = out.view if out else None
+        cite_note = ""
+        if tool_ctx.cite_computations and view is not None and is_computation(view):
             tool_ctx.computations.append(call.id)
-            content += computation_marker_note(len(tool_ctx.computations))
-        result = ToolResult(tool_call_id=call.id, content=content, is_error=False)
+            n = len(tool_ctx.computations)
+            cite_note = computation_marker_note(n)
+            # Stamped on the PERSISTED view, so the PWA resolves `[=n]` by the index the
+            # model was actually given — and can tell a turn numbered this way from an older
+            # one that counted every call (see `calcTargets`).
+            view = view.model_copy(update={"data": {**view.data, "computation_index": n}})
         self._log_call(call, ok=True, duration_ms=elapsed, result_chars=len(result.content))
         # By keyword: this list has grown past the point where a reader can check a
         # positional call against the dataclass, and inserting a field mid-list silently
@@ -2067,7 +2100,7 @@ class AgentLoop:
             sources=out.sources if out else (),
             proposal=out.proposal if out else None,
             entities=out.entities if out else (),
-            view=out.view if out else None,
+            view=view,
             job=out.job if out else None,
             web_sources=out.web_sources if out else (),
             deferred=out.deferred if out else None,
@@ -2077,6 +2110,7 @@ class AgentLoop:
             recorded_args=out.recorded_args if out else None,
             result_brief=out.result_brief if out else "",
             duration_ms=elapsed,
+            cite_note=cite_note,
         )
 
     def _log_call(self, call: ToolCall, *, ok: bool, duration_ms: int, result_chars: int) -> None:

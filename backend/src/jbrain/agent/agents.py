@@ -999,6 +999,12 @@ AGENTS: dict[str, AgentProfile] = {
 
 AGENT_NAMES = frozenset(AGENTS)
 
+# The personas whose prompt defines the `[=n]` computation marker (system/jerv/archivist
+# .prompt). Only their owner-facing root turn is handed each result's marker
+# (`ToolContext.cite_computations`); `test_cites_computations_matches_the_prompts` holds the
+# set to the prompts, so a persona is never told a marker its prompt does not define.
+CITES_COMPUTATIONS = frozenset({"curator", "jerv", "archivist"})
+
 # Two different exclusions sit between AGENT_NAMES and what an owner may select, and they
 # are not the same question. `intake` lives in AGENTS (so it is resolvable +
 # version-pinned) but is a NON-owner persona — it belongs to an intake_link principal, is

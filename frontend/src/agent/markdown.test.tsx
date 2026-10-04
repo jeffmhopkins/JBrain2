@@ -777,7 +777,7 @@ describe("Markdown", () => {
     const { container } = render(
       <Markdown
         text="That is 252.7 cm², and 252.7 again; 32138.49 mm² is fine."
-        flags={[{ id: "ug-0", claim: "252.7", reason: "Not traced", token: true }]}
+        flags={[{ id: "ug-0", claim: "252.7", reason: "Not traced", kind: "arithmetic" as const }]}
       />,
     );
     const claims = container.querySelectorAll(".md-claim");
@@ -785,13 +785,28 @@ describe("Markdown", () => {
     expect(claims[0]?.textContent).toBe("252.7");
     expect(container.querySelectorAll(".md-flag")).toHaveLength(1);
     expect(container.querySelector(".md-flag-fallback")).toBeNull();
+    // Its hover title names the check it failed — never "your notes".
+    expect(container.querySelector(".md-flag")?.getAttribute("title")).toBe(
+      "unverified — not traced to a calculation",
+    );
+  });
+
+  it("leaves a marker quoted in code alone", () => {
+    // Dropping an unresolved marker is a PROSE rule: a `[=3]` inside a fenced block or
+    // inline code is the owner's (or the model's) literal text and stays exactly as written.
+    const { container } = render(
+      <Markdown text={"Use `x[=3]` like so:\n\n```\ny = a [=3]\n```\n\nThat is 82 days [=3]."} />,
+    );
+    expect(container.querySelector(".md-code")?.textContent).toBe("x[=3]");
+    expect(container.querySelector("pre")?.textContent).toContain("y = a [=3]");
+    expect(container.textContent).toContain("That is 82 days.");
   });
 
   it("does not anchor a number flag inside a longer number", () => {
     const { container } = render(
       <Markdown
         text="In 1252.75 there is no match."
-        flags={[{ id: "ug-0", claim: "252.7", reason: "Not traced", token: true }]}
+        flags={[{ id: "ug-0", claim: "252.7", reason: "Not traced", kind: "arithmetic" as const }]}
       />,
     );
     expect(container.querySelector(".md-claim")).toBeNull();

@@ -2552,7 +2552,8 @@ describe("FullBrainSurface", () => {
     expect(document.querySelector(".md-claim")).toBeNull();
   });
 
-  it("words an untraced number as arithmetic and pins its flag to the number", async () => {
+  it("shows no arithmetic flag on a jerv conversation either", async () => {
+    // The owner's ruling: no ⚠ at all on a persona that reads no notes.
     const text = "Your biweekly check is $5,030.40 before tax.";
     await sendOn(
       deps({
@@ -2562,6 +2563,13 @@ describe("FullBrainSurface", () => {
       "research",
       text,
     );
+    expect(document.querySelector(".md-flag")).toBeNull();
+    expect(document.querySelector(".md-claim")).toBeNull();
+  });
+
+  it("words an untraced number as arithmetic and pins its flag to the number", async () => {
+    const text = "Your biweekly check is $5,030.40 before tax.";
+    await sendOn(deps({ chat: verdictTurn("arithmetic", text, "5,030.40") }), "fullbrain", text);
     const flag = await screen.findByRole("button", { name: "unverified claim" });
     expect(document.querySelector(".md-claim")?.textContent).toBe("5,030.40");
     expect(document.querySelector(".md-flag-fallback")).toBeNull();
@@ -2578,21 +2586,26 @@ describe("FullBrainSurface", () => {
     expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
   });
 
-  it("numbers computations by the SUCCESSFUL calls, so [=1] skips a failed run", async () => {
-    // The backend tells the model each result's marker and gives a failed run none; the
-    // surface must number the same way or the marker opens the call before the right one.
-    const codeRun = (code: string, ok: boolean) => ({
-      view: "code_run",
-      surface: "inline" as const,
-      data: { language: "python", code, result: ok ? "82" : null, ok },
-      refs: [],
-    });
-    const getTranscript = vi.fn(
+  const codeRun = (code: string, ok: boolean, index?: number) => ({
+    view: "code_run",
+    surface: "inline" as const,
+    data: {
+      language: "python",
+      code,
+      result: ok ? "82" : null,
+      ok,
+      ...(index ? { computation_index: index } : {}),
+    },
+    refs: [],
+  });
+
+  function christmasTurn(index: number | undefined, marker: string) {
+    return vi.fn(
       async (): Promise<TranscriptTurn[]> => [
         { role: "user", content: "how long until christmas?", tools: [] },
         {
           role: "assistant",
-          content: "82 days[=1] until Christmas.",
+          content: `82 days${marker} until Christmas, and two runs to get there.`,
           tools: [
             {
               id: "c1",
@@ -2608,13 +2621,18 @@ describe("FullBrainSurface", () => {
               ok: true,
               sources: [],
               summary: "82",
-              view: codeRun("print((date(2026, 12, 25) - date(2026, 10, 4)).days)", true),
+              view: codeRun("print((date(2026, 12, 25) - date(2026, 10, 4)).days)", true, index),
             },
           ],
         },
       ],
     );
-    render(<Harness d={deps({ getTranscript })} />);
+  }
+
+  it("resolves [=n] by the index the backend stamped, skipping a failed run", async () => {
+    // The backend handed the model `[=1]` for the run that worked and gave the failed one
+    // no number; the persisted view carries that index, and the surface resolves by it.
+    render(<Harness d={deps({ getTranscript: christmasTurn(1, "[=1]") })} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
     const chip = await screen.findByRole("button", { name: /show the working/ });
     expect(chip.textContent).toBe("\u01921");
@@ -2622,6 +2640,19 @@ describe("FullBrainSurface", () => {
     const panel = await screen.findByRole("dialog", { name: "how this number was worked out" });
     expect(panel.textContent).toContain("date(2026, 12, 25)");
     expect(panel.textContent).not.toContain("christmas - today");
+  });
+
+  it("keeps the count-every-call numbering on an older turn with no stamped index", async () => {
+    // Before the index existed the model counted every code_run call, the failed one too,
+    // so this turn's `[=2]` meant the second CALL. Renumbering it by success would point it
+    // at nothing (or, with more calls, at the wrong working).
+    render(<Harness d={deps({ getTranscript: christmasTurn(undefined, "[=2]") })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    const chips = await screen.findAllByRole("button", { name: /show the working/ });
+    expect(chips).toHaveLength(1);
+    fireEvent.click(chips[0] as HTMLElement);
+    const panel = await screen.findByRole("dialog", { name: "how this number was worked out" });
+    expect(panel.textContent).toContain("date(2026, 12, 25)");
   });
 
   it("a send with no chosen session surfaces the picker instead", async () => {

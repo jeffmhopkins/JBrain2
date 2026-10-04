@@ -2,7 +2,7 @@
 // shape the owner asked for after seeing it on the box: it opens ON the working, and it
 // does not say the same thing twice on the way there.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ComputationPopover } from "./ComputationPopover";
 
@@ -92,20 +92,55 @@ describe("ComputationPopover", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
-  it("stays open when the transcript behind it scrolls — it follows the marker instead", () => {
-    const onClose = vi.fn();
+  function markerAt(top: number): HTMLButtonElement {
     const marker = document.createElement("button");
-    document.body.append(marker);
-    let top = 200;
+    marker.dataset.calc = "1";
     marker.getBoundingClientRect = () =>
       ({ left: 40, top, bottom: top + 14, width: 12, height: 14 }) as DOMRect;
+    document.body.append(marker);
+    return marker;
+  }
+
+  it("stays open when the transcript behind it scrolls — it follows the marker instead", async () => {
+    const onClose = vi.fn();
+    let top = 200;
+    const marker = document.createElement("button");
+    marker.getBoundingClientRect = () =>
+      ({ left: 40, top, bottom: top + 14, width: 12, height: 14 }) as DOMRect;
+    document.body.append(marker);
     render(<ComputationPopover target={long()} anchor={marker} onClose={onClose} />);
     const panel = screen.getByRole("dialog");
     const before = panel.style.top;
     top = 100;
     fireEvent.scroll(window);
+    await waitFor(() => expect(panel.style.top).not.toBe(before));
     expect(onClose).not.toHaveBeenCalled();
-    expect(panel.style.top).not.toBe(before);
+    marker.remove();
+  });
+
+  it("re-finds a marker that a re-render replaced", async () => {
+    // A verdict landing (or the paced reveal settling) can swap the marker's node. The
+    // surface hands a finder, not a node, so the panel follows the REPLACEMENT.
+    const first = markerAt(300);
+    const finder = () => document.querySelector('[data-calc="1"]');
+    render(<ComputationPopover target={long()} anchor={finder} onClose={vi.fn()} />);
+    const panel = screen.getByRole("dialog");
+    const before = panel.style.top;
+    first.remove();
+    const second = markerAt(60);
+    fireEvent.scroll(window);
+    await waitFor(() => expect(panel.style.top).not.toBe(before));
+    second.remove();
+  });
+
+  it("moves focus to its close control, and back to the marker when it closes", () => {
+    const marker = markerAt(200);
+    const { unmount } = render(
+      <ComputationPopover target={long()} anchor={() => marker} onClose={vi.fn()} />,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "close the working" }));
+    unmount();
+    expect(document.activeElement).toBe(marker);
     marker.remove();
   });
 

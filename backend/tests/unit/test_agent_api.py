@@ -802,6 +802,37 @@ def test_chat_suppresses_general_knowledge_label_for_a_non_kb_agent(
     assert not any(e["type"] == "general_knowledge" for e in events)
 
 
+@pytest.mark.parametrize(("agent", "cited"), [("jerv", True), ("jmolt_observer", False)])
+def test_chat_hands_the_marker_only_to_a_persona_whose_prompt_defines_it(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    agent: str,
+    cited: bool,
+) -> None:
+    # jmolt_observer holds `calculate` too, but its prompt never mentions `[=n]`: an
+    # instruction it cannot place is noise in its context, and nothing renders the marker.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-c", "", "active", (), (), NOW, NOW, agent=agent))
+
+    async def calculate(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput("exact: 82", view=ViewPayload(view="code_run", data={"ok": True}))
+
+    client.app.state.agent_registry = registry_with_tool("calculate", calculate)  # type: ignore[attr-defined]
+    router = stream_router(
+        [
+            LlmTurn("", (ToolCall("c1", "calculate", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("82 days", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["82 days"]],
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.post("/api/chat", json={"session_id": "sess-c", "message": "days?"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    seen = fake.stream_calls[1]["messages"][-1].results[0].content
+    assert ("[=1]" in seen) is cited
+
+
 def test_chat_buffer_retry_gate_default_off_streams_live(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:

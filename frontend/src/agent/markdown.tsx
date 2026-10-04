@@ -67,17 +67,6 @@ const DATE = new RegExp(
 const INLINE =
   /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(\[=\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)|(<[bB][rR]\s*\/?>)/;
 
-/** Remove every `[=n]` that names no computation this message holds, with the space before
- * it, so the figure it followed reads as plain prose. A raw `[=2]` beside the number told the
- * owner nothing, and a chip pointing at some OTHER call would be worse: a marker that cannot
- * be backed by a call is simply not shown. */
-function dropUnresolvedCalcs(text: string, calcCount: number, soleCalc: boolean): string {
-  return text.replace(/[ \t]?\[=(\d+)\]/g, (marker, digits: string) => {
-    const n = soleCalc ? 1 : Number(digits);
-    return n >= 1 && n <= calcCount ? marker : "";
-  });
-}
-
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 // A browsing model (gpt-oss) emits source citations in its own notation —
@@ -331,12 +320,18 @@ export interface MdFlag {
   claim: string;
   /** The reason to show on tap (drawn from the matching issue). */
   reason: string;
-  /** `claim` is a bare NUMBER (the arithmetic check), not a sentence: it anchors on the
-   * number's own boundaries, once, instead of on sentence boundaries — which a figure
-   * mid-sentence never meets, so every one used to strand at the bubble's end as an
-   * anonymous ⚠ with nothing to say which number it meant. */
-  token?: boolean;
+  /** Which reflexion check raised it (default `grounding`). An `arithmetic` claim is a bare
+   * NUMBER, not a sentence: it anchors on the number's own boundaries, once, instead of on
+   * sentence boundaries — which a figure mid-sentence never meets, so every one used to
+   * strand at the bubble's end as an anonymous ⚠ with nothing to say which number it meant.
+   * The kind also picks the hover title: an untraced number is never "not in your notes". */
+  kind?: "grounding" | "arithmetic";
 }
+
+const FLAG_TITLE: Record<NonNullable<MdFlag["kind"]>, string> = {
+  grounding: "unverified — not grounded in your notes",
+  arithmetic: "unverified — not traced to a calculation",
+};
 
 /** A matcher over the ungrounded-claim sentences, plus a lookup from a matched
  * (normalized) sentence back to its flag and a set the scanner marks as it places
@@ -455,7 +450,7 @@ function FlagMark({ flag, ctx, fkey }: { flag: MdFlag; ctx: Ctx; fkey: string })
         className="md-flag"
         aria-expanded={open}
         aria-label="unverified claim"
-        title="unverified — not grounded in your notes"
+        title={FLAG_TITLE[flag.kind ?? "grounding"]}
         onClick={() => ctx.onFlag?.(flag.id)}
       >
         ⚠
@@ -496,15 +491,16 @@ function scanPlain(text: string, key: string, ctx: Ctx): ReactNode[] {
       // flags it instead — degrade safely, never mis-anchor.
       const before = text.slice(0, at);
       const after = text.slice(at + m[0].length);
-      const leftOk = flag?.token
+      const token = flag?.kind === "arithmetic";
+      const leftOk = token
         ? !/[\p{L}\p{N}]$|\d[.,]$/u.test(before)
         : at === 0 || /[.!?]['")\]]?\s+$/.test(before) || /\n\s*$/.test(before);
-      const rightOk = flag?.token
+      const rightOk = token
         ? !/^[\p{L}\p{N}]|^[.,]\d/u.test(after)
         : after === "" || /^['")\]]?\s*[.!?]/.test(after) || /^\s*\n/.test(after);
       if (!flag || !leftOk || !rightOk) continue; // not a clean sentence match — scan as prose
       // A number repeats far more often than a sentence does; flag its first occurrence.
-      if (flag.token && ctx.flags.placed.has(flag.id)) continue;
+      if (token && ctx.flags.placed.has(flag.id)) continue;
       if (at > last) out.push(...scanPlaces(text.slice(last, at), `${key}-g${i}`, ctx));
       // Mark the flagged TEXT (subtle amber), not just the trailing ⚠ — so the
       // reader sees *which* prose is unverified. The interior still scans for
@@ -602,8 +598,17 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       out.push(...scanPlain(rest, `${key}-${n++}`, ctx));
       break;
     }
-    if (m.index > 0) out.push(...scanPlain(rest.slice(0, m.index), `${key}-${n++}`, ctx));
     const tok = m[0];
+    // A `[=n]` naming no computation this message holds is dropped along with the space
+    // before it, so the figure it followed reads as plain prose: a raw `[=2]` told the owner
+    // nothing, and a chip on some OTHER call would be worse. Done here, on prose tokens only,
+    // so a marker quoted in code (a fenced block, `inline code`) is never touched.
+    const calcNum = /^\[=\d+\]$/.test(tok) ? (ctx.soleCalc ? 1 : Number(tok.slice(2, -1))) : 0;
+    const unresolvedCalc = calcNum > 0 && !ctx.calcs?.[calcNum - 1];
+    const prefix = unresolvedCalc
+      ? rest.slice(0, m.index).replace(/[ \t]+$/, "")
+      : rest.slice(0, m.index);
+    if (prefix.length > 0) out.push(...scanPlain(prefix, `${key}-${n++}`, ctx));
     const k = `${key}-${n++}`;
     if (tok.startsWith("`")) {
       out.push(
@@ -640,14 +645,16 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       // really is — showing ƒ2 beside a single call would be its own small lie.
       const num = ctx.soleCalc ? 1 : stated;
       const target = ctx.calcs?.[num - 1];
-      // Unresolved markers are stripped before parsing (`dropUnresolvedCalcs`); this is the
-      // same rule for one that slips through: no chip, and no raw `[=n]` either.
+      // An unresolved marker renders nothing (its leading space went with it, above).
       if (target) {
         out.push(
           <button
             key={k}
             type="button"
             className="md-calc"
+            // The popover re-finds its marker by this, so a re-render that replaces the
+            // node (a verdict landing, the paced reveal settling) cannot strand the panel.
+            data-calc={num}
             aria-label={`show the working for this number (${num})`}
             onClick={(e) => ctx.onCalc?.(num, e.currentTarget)}
           >
@@ -1087,23 +1094,14 @@ export function Markdown({
   // one marker leaves nothing for the number to disambiguate. Two of either and the digit is
   // load-bearing again, and a marker that still resolves to nothing is dropped rather than
   // pointing at the wrong call.
-  // Only the COUNT decides whether a marker resolves, and it is a stable dependency where
-  // the surface's freshly built `calcs` array is not — so a re-render does not re-parse.
   const calcCount = calcs?.length ?? 0;
   const soleCalc = useMemo(
     () => calcCount === 1 && (text.match(/\[=\d+\]/g) ?? []).length === 1,
     [calcCount, text],
   );
   const blocks = useMemo(
-    () =>
-      parseBlocks(
-        dropUnresolvedCalcs(
-          stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text),
-          calcCount,
-          soleCalc,
-        ),
-      ),
-    [text, harmonyCitations, calcCount, soleCalc],
+    () => parseBlocks(stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text)),
+    [text, harmonyCitations],
   );
   const ctx: Ctx = {
     onCite,
