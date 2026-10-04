@@ -34,26 +34,32 @@ are in the front shell, so the plate has no other openings.
 
 ## Screws
 
-The brass nuts the screws thread into are soldered to the **board**, not the case. On the stock
-cover a post around each screw presses its nut, so tightening clamps the board. This plate does
-the same with four hollow towers:
+The screws thread into brass hex standoffs soldered to the **board**, not the case. They stand up
+from the board and end exactly level with the front shell's edge. On the stock cover a post
+around each screw presses its standoff, so tightening clamps the board. This plate does the same
+with four hollow towers:
 
 - The bore (Ø4.6) takes the screw head and hex key up to the **seat**, 2 mm of plastic at the top
-  (`head_seat`). The screw only passes through the seat into the nut, so short screws work at
-  any plate height.
-- The tower top is flat and full width (Ø7), level with the rim, and presses squarely on the
-  nut. If it ever needs to stand clear of parts near a nut (Waveshare's 3D model has small ones
-  about 3 mm from some), `nut_pad_h` raises a Ø4.5 pad around the nut instead.
+  (`head_seat`). The screw only passes through the seat into the standoff, so short screws work
+  at any plate height.
+- The tower top is flat and full width (Ø7) and stops at the seam, level with the front shell's
+  edge, where it presses squarely on the standoff (`tower_drop` = 2, the rim's height). The rim
+  then goes its full 2 mm into the shell. If the top ever needs to stand clear of parts near a
+  standoff, `nut_pad_h` raises a Ø4.5 pad around it instead.
 - A thin skin (`bridge_skin`, 0.4 mm — two layers) closes each bore so the printer can bridge it;
   it's cleared at assembly.
 
-![Top of a screw tower, with the screw, nut and board](renders/fig-tower-top.png)
+![Top of a screw tower, with the screw, the board's standoff and the board](renders/fig-tower-top.png)
 
-**Screw length.** Push a stock screw through the stock cover and measure how far it sticks out
-past its post — that's how far it goes into the nut. Length = 2 mm (seat) + that, rounded
-**down** to a size that's sold. The display sits right against the front of the board, so never
-exceed 2 mm + nut height + 1.2 mm (the board) − 0.5 mm. Without a stock screw to measure, use
-M2 × 4; M2 × 5 only if the nuts are at least 2 mm tall.
+| The standoffs end level with the front shell's edge | The four standoffs on the board |
+|---|---|
+| ![](photos/standoffs-level-with-shell-edge.jpg) | ![](photos/standoffs-in-front-shell.jpg) |
+
+**Screw length.** The screw passes the 2 mm seat and goes into the standoff; M2 × 4 gives 2 mm of
+thread in it, M2 × 5 gives 3. Push a stock screw through the stock cover to see how far it goes
+into its standoff, and don't go much past that: the standoff's thread may not run its full
+length. On the desk stand's head the seat is 1.4 mm (the head is too thin for a socket head
+under a 2 mm seat), so its M2 × 4 go 2.6 mm in.
 
 ## Hole plugs
 
@@ -113,14 +119,15 @@ cover's shape:
   `stand_angle`, so it prints with no supports; the band's walls lean at that angle too, the
   same as the front shell's. The band is 1.1 mm at the sides and about 1.3 mm along the long and
   short walls.
-- **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
-  3.5 mm deep). Six M2 × 8 countersunk lock screws hold the head in the box: two on each side,
-  `lock_spread` (14 mm) apart, and one each in the top and bottom, diagonally opposite so they
-  clear the battery slot and the head still fits either way round. Each goes through the band
-  round the box's angled end into a lock block in the head, cutting its own thread about 5.6 mm
-  deep. An M2 countersunk head needs only a 0.8 mm 90° seat, so the heads sit flush in the 1.1 mm
-  band. The holes are 1.45 mm up from the ledge, which keeps each seat under the seam with the
-  front shell; its lower edge dips into the solid wall below the ledge.
+- **Screws.** Four M2 × 4 hold the display to the head, as on the plate, though here the seat is
+  1.4 mm and the holes 2.1 mm deep so a socket head fits inside the thin head. Six M2 × 8
+  countersunk lock screws hold the head in the box: two on each side, `lock_spread` (14 mm) apart,
+  and one each in the top and bottom, diagonally opposite so they clear the battery slot and the
+  head still fits either way round. Each goes through the band round the box's angled end into a
+  lock block in the head, cutting its own thread about 5.6 mm deep. An M2 countersunk head needs
+  only a 0.8 mm 90° seat, so the heads sit flush in the 1.1 mm band. The holes are 1.45 mm up from
+  the ledge, which keeps each seat under the seam with the front shell; its lower edge dips into
+  the solid wall below the ledge.
 - **Pads and notches.** The band alone is 1.1 mm, thin for a screw to clamp on, so at each screw
   the box has a pad on the band's inside, 6 mm wide, reaching `lock_pad` (1.0 mm) in — no further
   than the ledge, so it stands on solid wall — and the head has a matching notch in its edge. The
@@ -147,7 +154,7 @@ and the photos in `photos/`. Copies are kept in [`reference/`](reference/README.
 | `lip_outer_x` × `lip_outer_y`, `lip_outer_r` | 35.0 × 42.6, 7.4 | Outline minus a ~1.3 mm front-shell wall, from the photos (the board is 33.0 × 40.6) | Estimate: measure |
 | `lip_h` | 2.0 | Not visible in any source | Guess: measure |
 | `stock_clear` | 3.9 | Stock cover shows 3.5 mm in the side view; derived with the rim height | Estimate |
-| `tower_drop` | 0 | Where the stock posts stop isn't visible | Guess: measure |
+| `tower_drop` | 2.0 (= `lip_h`) | The board's standoffs end level with the front shell's edge ([photos](#screws)); 0 left a 2 mm gap at the seam on the first print | Measured |
 | `lip_wall` | 0.8 | Chosen: the rim's inside is the cavity; 0.8 leaves a 40.7 mm opening | Design choice |
 | `screw_size` | M2 | Heads ~3.8 mm across in the drawing (stock ones are Phillips) | Likely |
 | Tower bore | Ø4.6 | ISO 4762 M2 head (Ø3.8) + `head_clear` 0.6 + `hole_slop` 0.2 | Standard |

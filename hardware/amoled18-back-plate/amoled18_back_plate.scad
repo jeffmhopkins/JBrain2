@@ -17,7 +17,7 @@
 // Workflow:  set values  >  F5 preview  >  F6 render  >  F7 export STL
 //
 // NOTE ON SCREWS: each screw sits in a hollow tower. Its head rests near
-// the top, so the tower presses on the board's nut as the stock cover's
+// the top, so the tower presses on the board's standoff as the stock cover's
 // posts do, and a short standard socket head screw is enough. Drive it
 // down the tower with a long hex key.
 //
@@ -112,20 +112,21 @@ screw_dx = 12.0;    // [5:0.1:40]
 screw_dy = 18.0;    // [5:0.1:40]
 // Thread size drives the default hole sizes
 screw_size = "M2";  // [M1.6, M2, M2.5, M3, Custom]
-// Optional raised pad around the nut, if the flat tower top ever needs to
-// stand clear of parts on the board near a nut
+// Optional raised pad around the standoff, if the flat tower top ever needs to
+// stand clear of parts on the board near a standoff
 nut_pad_d = 4.5;    // [3:0.1:7]
 // How far that pad stands above the rest of the tower top (0 = flat top, the default)
 nut_pad_h = 0.0;    // [0:0.1:2]
 // Room around the head so it slides down the tower and a hex key reaches
 head_clear = 0.6;   // [0:0.1:2]
-// Plastic between the screw head and the board's nut, at the top of each tower
+// Plastic between the screw head and the board's standoff, at the top of each tower
 head_seat = 2.0;    // [0.6:0.1:5]
 // Wall around the screw head in each tower
 tower_wall = 1.2;   // [0.8:0.1:3]
 // How far below the rim top the towers stop; negative = they stand above it.
-// Measure the stock cover: rim top to post top
-tower_drop = 0.0;   // [-5:0.1:10]
+// The board's brass standoffs end level with the front shell's edge (measured
+// on a real unit), so the towers stop at the seam: tower_drop = lip_h.
+tower_drop = 2.0;   // [-5:0.1:10]
 // Thin skin (two layers at 0.2 mm) closing the top of each tower's bore so it prints as a bridge;
 // poke it through with the screw. 0 = none
 bridge_skin = 0.4;  // [0:0.05:0.8]
@@ -306,7 +307,10 @@ chamfer_x = desk ? min(wall_chamfer, spacer_h) : min(wall_chamfer, tape_t + max(
 chamfer_y = desk ? min(wall_chamfer, spacer_h) : min(wall_chamfer, tape_t + max(0, (cav_y - fy) / 2 - 0.5));
 
 tower_top = total_h - tower_drop;
-bore_top  = tower_top - head_seat;
+// A desk head is only stock depth, so its seat thins until a socket head fits
+// below the back face instead of standing proud of it.
+seat      = desk ? min(head_seat, tower_top - shaft_table[2] - 0.1) : head_seat;
+bore_top  = tower_top - seat;
 
 // Clearances from the cell to each wall pair and to the nearest tower.
 side_gap  = (cav_x - fx) / 2;

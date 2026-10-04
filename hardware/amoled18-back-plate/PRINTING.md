@@ -43,12 +43,14 @@ Each screw runs up a hollow tower, and its hole is closed at the top by a thin p
 (`bridge_skin`, two layers) so the printer can bridge it. Drill it through with a 2 mm bit turned
 by hand; the screw alone may struggle.
 
-![Top of a screw tower: the thin layer to push through, the seat the screw head bears on, and the board's nut above](renders/fig-tower-top.png)
+![Top of a screw tower: the thin layer to push through, the seat the screw head bears on, and the board's standoff above](renders/fig-tower-top.png)
 
 ## 4. Test-fit
 
-With no battery in, set the plate on the front shell. The rim should slide in without forcing,
-and the four towers should line up with the four brass nuts on the board.
+With no battery in, set the plate on the front shell. The rim should slide in without forcing, and
+the four towers should line up with the four brass standoffs on the board. The plate should sit
+right down on the shell's edge with no gap; if it doesn't, see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#screws-and-towers).
 
 ![The rim slides inside the front shell's wall](renders/fig-rim-detail.png)
 
@@ -72,7 +74,7 @@ Check too that nothing on the board was resting on the stock cover's inner rails
 
 Seat the plate on the front shell. Drop a screw down each tower and turn it with the hex key
 until snug — the screw head bears on the seat at the top of the tower, and the tower top presses
-the board's nut. Don't crank it.
+the board's standoff. Don't crank it.
 
 ![Cut through two screw towers](renders/cutaway.png)
 
@@ -96,7 +98,7 @@ The two-part version ([README](README.md#or-the-desk-stand)). Parts are the same
 |---|---|
 | **Head** | `amoled18_stand_head.stl`: one, whatever the battery |
 | **Box** | `amoled18_stand_box_<battery>.stl`, for your battery |
-| **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short 1.5 mm hex key reaches: the towers are only 3.5 mm deep |
+| **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short 1.5 mm hex key reaches: the holes are only 2 mm deep |
 | **6 × M2 × 8 countersunk (flat head) screws** | Head to box: two on each side, one in the top, one in the bottom. DIN 965 (Phillips) or DIN 7991 (hex). Their heads sit flush in the box's countersunk holes, and they cut their own thread in the head. Shorter than 8 mm won't bite enough |
 | No plugs | The head's back is hidden inside the box |
 
@@ -108,8 +110,8 @@ on its bottom as the file loads, sloped top up. Neither needs supports.
 ![The head back face down, the box on its bottom](renders/stand-print-bed.png)
 
 The band round the box's angled end — the wall round the head, which the front shell sits on — is
-only 1.1 mm thick (2.25 mm at the six screw pads). Check the slicer preview shows it solid (two
-or three lines), as for the plate's rim.
+only 1.1 mm thick (2.25 mm at the six screw pads). Check the slicer preview shows it solid (two or
+three lines), as for the plate's rim.
 
 ![The box from above: the thin wall the front shell sits on, the six screw pads on its inside, and the ledge the head rests on](renders/stand-box-top.png)
 

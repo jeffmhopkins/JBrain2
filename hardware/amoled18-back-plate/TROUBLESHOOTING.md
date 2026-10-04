@@ -18,7 +18,7 @@ Back to the [README](README.md).
 | **Rim won't go into the front shell** | Rim a little big | Raise `lip_slop` by 0.1; or measure the stock rim and lower `lip_outer_x` / `lip_outer_y` |
 | **Plate wobbles or rattles on the shell** | Rim a little small | Lower `lip_slop` by 0.1 (not below 0); or raise `lip_outer_x` / `lip_outer_y` |
 | **Rim sits proud, won't go all the way in** | Rim too tall | Measure the stock rim and lower `lip_h` |
-| **Holes don't line up with the brass nuts** | Screw spacing | Measure hole to hole on the stock cover and set `screw_dx` / `screw_dy` to half of each ([outline figure](renders/fig-outline.png)) |
+| **Holes don't line up with the brass standoffs** | Screw spacing | Measure hole to hole on the stock cover and set `screw_dx` / `screw_dy` to half of each ([outline figure](renders/fig-outline.png)) |
 
 ## Screws and towers
 
@@ -27,8 +27,8 @@ Back to the [README](README.md).
 | Problem | Likely cause | Fix |
 |---|---|---|
 | **Screw won't go down the tower**, or the hex key jams | Thin top layer not cleared, or the bore printed small | Push the layer through with a 2 mm drill; if the bore itself is tight, raise `hole_slop` by 0.1 |
-| **Gap at the seam when the screws are tight**, or the board feels pushed forward | Towers too tall | Measure the gap and raise `tower_drop` by that much |
-| **Board rattles, or tightening pulls it backwards** | Towers too short to reach the nuts | Lower `tower_drop` by the gap (it can go negative) |
+| **Gap at the seam**, the rim won't go all the way into the shell, or the board feels pushed forward | Towers too tall: they hit the standoffs before the rim is in | Measure the gap and raise `tower_drop` by that much (2, the default, matches standoffs that end level with the shell's edge) |
+| **Board rattles, or tightening pulls it backwards** | Towers too short to reach the standoffs | Lower `tower_drop` by the gap (it can go negative) |
 | **Screw spins without gripping** | Screw too short | Next length up, staying under the [limit](DESIGN.md#screws) |
 | **Screw feels like it hits something, or the display looks pressed** | Screw too long | **Stop.** Use a shorter screw — the tip is reaching the display |
 
