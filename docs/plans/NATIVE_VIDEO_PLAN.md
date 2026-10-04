@@ -87,11 +87,17 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
 - Tests: the split at 60 s, unknown duration, gate off on the Standard engine and cloud
   routes, every fallback trigger, the serialised part, the charge.
 
-### V2 — Chat and links ◻️
-- A video of ≤ 60 s attached in chat goes into the agent turn as a native part, with its
-  transcript, when `agent.turn` resolves to a video-capable model; otherwise today's marker.
-- `analyze_stream`: a downloaded clip of ≤ 60 s takes the native path.
-- `jerv.prompt`: a short clip is seen directly; long ones go through `analyze_video`.
+### V2 — Chat and links, through a separate call ◻️
+- **The clip never enters jerv's own context** (owner decision 2026-10-04). A minute of video
+  is 60–120k tokens; inline, it would crowd the conversation out of the interactive slot and
+  be carried, or re-read, on every later turn. Instead a chat-attached video of ≤ 60 s goes
+  to `analyze_video` with jerv's question: one native call holding the clip and its
+  transcript, returning text only.
+- That call is pinned to one role, so the clip's prefix stays cached in the slot and a
+  follow-up question on the same clip re-reads it from cache rather than re-prefilling it.
+- `analyze_stream`: a downloaded clip of ≤ 60 s takes the same native path.
+- `jerv.prompt`: ask `analyze_video` about a video, with the question; a follow-up is
+  another call with the new question.
 
 ## 4. Open questions
 1. **fps 1 or 2.** One is cheaper and fits every role at 60 s; two sees faster motion.
