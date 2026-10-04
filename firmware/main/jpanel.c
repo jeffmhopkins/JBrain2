@@ -7,12 +7,10 @@
 #include <strings.h>
 
 #include "audio.h"
-#include "nudge.h"
+#include "link.h"
 #include "reach.h"
 #include "cJSON.h"
-#include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
-#include "esp_http_client.h"
 #include "mbedtls/sha256.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -56,7 +54,6 @@ typedef struct {
     int at;          /* CMD_FETCH: which queued message — 0 is the oldest */
 } cmd_t;
 
-static const cfg_t *s_cfg;
 static QueueHandle_t s_q;
 static volatile jpanel_state_t s_state;
 
@@ -199,18 +196,6 @@ static volatile int s_wait_count;
    and a guess would put the wrong child on the glass. */
 static char s_sibling[32];
 
-static void trust(esp_http_client_config_t *hc)
-{
-    if (s_cfg->ca != NULL && s_cfg->ca[0] != '\0') {
-        hc->cert_pem = s_cfg->ca;
-        return;
-    }
-    hc->crt_bundle_attach = esp_crt_bundle_attach;
-}
-
-/* CHECKED, BECAUSE snprintf TRUNCATES SILENTLY AND A TRUNCATED CREDENTIAL IS A 401 — the
-   same trap `talk.c` documents, and the same answer. Both strings come out of NVS with no
-   length bound. */
 /* `/api/jpanel/…`, NOT `/api/endpoint/jpanel/…`, AND THE DIFFERENCE WAS A 404 ON EVERY CALL.
  *
  * `JPANEL_PLAN.md` §3b wrote the panel's routes under the device surface, beside
@@ -223,36 +208,35 @@ static void trust(esp_http_client_config_t *hc)
  * Caught by asking the live box rather than by reading either file — `/api/jpanel/waiting`
  * answered 401 and `/api/endpoint/jpanel/waiting` answered 404. The paths are pinned from the
  * other end now by `test_the_panel_facing_routes_are_where_the_firmware_looks`, because
- * nothing on the host can check a URL this file builds. */
-static bool endpoint(char *url, size_t url_cap, char *auth, size_t auth_cap, const char *path)
+ * nothing on the host can check a URL this file builds.
+ *
+ * Relative to the api base since 0.3.39: `link.c` owns the base, the credential and the
+ * certificate for every request, whichever transport carries it. CHECKED still, because
+ * snprintf truncates silently and a truncated path is a 404 that looks like an empty house. */
+static bool jpath(char *out, size_t cap, const char *path)
 {
-    const int un = snprintf(url, url_cap, "%s/jpanel%s", s_cfg->api, path);
-    const int an = snprintf(auth, auth_cap, "Bearer %s", s_cfg->token);
-    if (un < 0 || un >= (int)url_cap || an < 0 || an >= (int)auth_cap) {
-        ESP_LOGE(TAG, "api url or token too long (%d, %d) — not sending", un, an);
+    const int n = snprintf(out, cap, "/jpanel%s", path);
+    if (n < 0 || n >= (int)cap) {
+        ESP_LOGE(TAG, "path too long (%d) — not sending", n);
         return false;
     }
     return true;
 }
 
-
-/* THE MESSAGE ID ARRIVES IN A RESPONSE HEADER, AND THERE IS ONLY ONE WAY TO READ ONE.
- *
- * `esp_http_client_get_header()` reads the REQUEST headers — it returns what this panel sent,
- * not what the box answered, which is a trap worth naming because the call compiles, runs and
- * hands back NULL forever. Response headers reach a caller through the event handler alone,
- * dispatched while `esp_http_client_fetch_headers()` parses them.
+/* THE MESSAGE ID ARRIVES IN A RESPONSE HEADER.
  *
  * `X-Jpanel-Id` is what `POST /played` names, so losing it means a message that plays every
- * time the panel asks. `X-Jpanel-From` is who the child hears it is from. */
-static void on_header(const esp_http_client_event_t *e)
+ * time the panel asks. `X-Jpanel-From` is who the child hears it is from. Case-insensitive,
+ * because the socket hands headers over lower-cased (the box's ASGI layer does) and the HTTPS
+ * fallback hands them over as the box spelled them. */
+static void on_header(void *ctx, const char *key, const char *value)
 {
-    if (e->header_key == NULL || e->header_value == NULL) return;
-    if (strcasecmp(e->header_key, "X-Jpanel-Id") == 0) {
-        strlcpy(s_in_id, e->header_value, sizeof(s_in_id));
-    } else if (strcasecmp(e->header_key, "X-Jpanel-From") == 0) {
-        strlcpy(s_in_from, e->header_value, sizeof(s_in_from));
-    } else if (strcasecmp(e->header_key, "X-Jpanel-From-Kind") == 0) {
+    (void)ctx;
+    if (strcasecmp(key, "X-Jpanel-Id") == 0) {
+        strlcpy(s_in_id, value, sizeof(s_in_id));
+    } else if (strcasecmp(key, "X-Jpanel-From") == 0) {
+        strlcpy(s_in_from, value, sizeof(s_in_from));
+    } else if (strcasecmp(key, "X-Jpanel-From-Kind") == 0) {
         /* WHERE A REPLY GOES, which is not the same question as who the child hears it is
            from. `X-Jpanel-From` is a NAME the owner can change; this is the kind, and it has
            only two answers. Matching the name against "Dad" would work until somebody was
@@ -260,141 +244,17 @@ static void on_header(const esp_http_client_event_t *e)
            send it, and the default below is the safer of the two: replying to the other panel
            is a message to a four-year-old, where replying to the owner is not what was asked
            for but is at least delivered to somebody who can work out what happened. */
-        s_in_from_dad = strcasecmp(e->header_value, "owner") == 0;
-    } else if (strcasecmp(e->header_key, "X-Jpanel-Sha256") == 0) {
-        strlcpy(s_in_sha, e->header_value, sizeof(s_in_sha));
+        s_in_from_dad = strcasecmp(value, "owner") == 0;
+    } else if (strcasecmp(key, "X-Jpanel-Sha256") == 0) {
+        strlcpy(s_in_sha, value, sizeof(s_in_sha));
     }
 }
 
-static esp_err_t http_event(esp_http_client_event_t *e)
-{
-    if (e->event_id == HTTP_EVENT_ON_HEADER) on_header(e);
-    return ESP_OK;
-}
-
-static esp_http_client_handle_t open_client(const char *path, esp_http_client_method_t method,
-                                            char *url, size_t url_cap)
-{
-    char auth[256];
-    if (!endpoint(url, url_cap, auth, sizeof(auth), path)) return NULL;
-    esp_http_client_config_t hc = {.url = url,
-                                   .timeout_ms = JPANEL_HTTP_TIMEOUT_MS,
-                                   .method = method,
-                                   .event_handler = http_event};
-    trust(&hc);
-    esp_http_client_handle_t c = esp_http_client_init(&hc);
-    if (c != NULL) esp_http_client_set_header(c, "Authorization", auth);
-    return c;
-}
-
-/* --- GET /events: THE PUSH CHANNEL ------------------------------------------------------- *
- *
- * A held-open HTTPS stream the box writes into. This is what makes a message arrive rather
- * than be discovered, and it is an ordinary authenticated request rather than a new protocol
- * precisely so that it inherits the device key, the TLS and the pinned certificate the panel
- * already uses instead of growing a second scheme to get right.
- *
- * WHAT IT CARRIES IS NOT DATA. Every event means "come and ask", and the panel answers by
- * making the poll it would have made anyway. So this stream can never become a second, weaker
- * path by which state reaches a child's panel, and nothing arriving on it is trusted.
- *
- * IT REPLACES POLLING RATHER THAN ADDING TO IT. While the stream is up, `main.c` stretches the
- * settings cadence from three seconds to `PUSH_SETTLED_MS`, because the box can now say when
- * something changed and no longer needs to be asked. That matters for more than tidiness: it
- * keeps the number of TLS sessions this panel holds at once the SAME as before rather than one
- * higher, which is the only real cost of a persistent connection on this board.
- *
- * THE READ TIMEOUT IS THE LIVENESS CHECK. The box writes a heartbeat comment every 20 s
- * (`_HEARTBEAT_S`), so a read that returns nothing for `PUSH_IDLE_MS` means the link is gone —
- * a router rebooted, the box restarted, the Wi-Fi dropped — rather than that nobody has sent a
- * message. A TCP connection nobody writes to is indistinguishable from a dead one, and this is
- * a channel whose whole job is to be idle. */
-#define PUSH_IDLE_MS 45000
-#define PUSH_RETRY_MIN_MS 2000
-#define PUSH_RETRY_MAX_MS 60000
-
-static volatile bool s_push_live;
-static volatile uint16_t s_push_events;
-static volatile uint16_t s_push_drops;
-
-bool jpanel_push_live(void)
-{
-    return s_push_live;
-}
-
-unsigned jpanel_push_events(void)
-{
-    return s_push_events;
-}
-
-unsigned jpanel_push_drops(void)
-{
-    return s_push_drops;
-}
-
-static void push_task(void *arg)
-{
-    (void)arg;
-    uint32_t backoff = PUSH_RETRY_MIN_MS;
-    while (true) {
-        char url[288];
-        char auth[256];
-        if (!endpoint(url, sizeof(url), auth, sizeof(auth), "/events")) {
-            vTaskDelay(pdMS_TO_TICKS(backoff));
-            continue;
-        }
-        esp_http_client_config_t hc = {.url = url,
-                                       /* Long, not absent: this is the liveness check above. */
-                                       .timeout_ms = PUSH_IDLE_MS,
-                                       .method = HTTP_METHOD_GET,
-                                       .event_handler = http_event};
-        trust(&hc);
-        esp_http_client_handle_t c = esp_http_client_init(&hc);
-        if (c == NULL) {
-            vTaskDelay(pdMS_TO_TICKS(backoff));
-            continue;
-        }
-        esp_http_client_set_header(c, "Authorization", auth);
-        /* Says what this is to anything in between, and makes a proxy that buffers by default
-           stop doing so. The box sets `X-Accel-Buffering: no` for the same reason. */
-        esp_http_client_set_header(c, "Accept", "text/event-stream");
-
-        bool opened = esp_http_client_open(c, 0) == ESP_OK &&
-                      esp_http_client_fetch_headers(c) >= 0 &&
-                      esp_http_client_get_status_code(c) == 200;
-        if (opened) {
-            ESP_LOGI(TAG, "push: stream open");
-            s_push_live = true;
-            backoff = PUSH_RETRY_MIN_MS; /* a connection that worked resets the patience */
-            char buf[128];
-            while (true) {
-                const int n = esp_http_client_read(c, buf, sizeof(buf) - 1);
-                if (n <= 0) break; /* timeout, close, or error — all mean reconnect */
-                buf[n] = '\0';
-                /* A HEARTBEAT IS NOT AN EVENT. The box writes ": \n\n" to keep the link
-                   provably alive; only a `data:` line means something changed. Counting
-                   heartbeats as events would make the panel poll three times a minute forever
-                   and quietly undo the cadence this stream exists to relax. */
-                if (strstr(buf, "data:") == NULL) continue;
-                if (s_push_events < 65535) s_push_events++;
-                /* THE SAME TWO HALVES THE DATAGRAM WAKES, for the same reason: the event says
-                   only that something changed, so the panel asks about everything it would
-                   have asked about anyway. */
-                jpanel_poll_soon();
-                nudge_wake_settings();
-            }
-            ESP_LOGW(TAG, "push: stream closed");
-            s_push_live = false;
-            if (s_push_drops < 65535) s_push_drops++;
-        }
-        esp_http_client_cleanup(c);
-        vTaskDelay(pdMS_TO_TICKS(backoff));
-        /* Doubling, capped. A box that is down stays down for minutes, and a panel retrying
-           every two seconds against it is a TLS handshake every two seconds on the one board
-           whose handshakes are expensive. */
-        backoff = backoff * 2 > PUSH_RETRY_MAX_MS ? PUSH_RETRY_MAX_MS : backoff * 2;
-    }
-}
+/* THE PUSH CHANNEL IS THE SOCKET NOW. `GET /events` — a held-open HTTPS stream, disabled since
+ * the 0.3.22 crash loop — is gone from this file: the box writes `{"t":"ev"}` into the one
+ * socket `link.c` holds, and `main.c` routes it to the same two halves a datagram wakes. What
+ * this stream promised (no address to go stale, the panel came to us) the socket keeps, and
+ * it costs no session of its own, which is what the stream never managed. */
 
 /* --- POST /send?to=panel|dad ------------------------------------------------------------- */
 
@@ -429,15 +289,13 @@ static void do_send(jpanel_to_t to)
 
 static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
 {
-    char url[288];
-    char path[32];
-    snprintf(path, sizeof(path), "/send?to=%s", to == JPANEL_TO_DAD ? "dad" : "panel");
-    esp_http_client_handle_t c = open_client(path, HTTP_METHOD_POST, url, sizeof(url));
-    if (c == NULL) {
-        reach_fail(REACH_SEND, "no-client", now_ms());
+    char path[48];
+    char rel[32];
+    snprintf(rel, sizeof(rel), "/send?to=%s", to == JPANEL_TO_DAD ? "dad" : "panel");
+    if (!jpath(path, sizeof(path), rel)) {
+        reach_fail(REACH_SEND, "url-too-long", now_ms());
         return JPANEL_FAILED;
     }
-    esp_http_client_set_header(c, "Content-Type", "application/octet-stream");
 
     /* WHAT THE BOX SHOULD END UP WITH, SAID BEFORE THE BYTES GO.
      *
@@ -460,7 +318,6 @@ static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
     if (mbedtls_sha256((const unsigned char *)s_pcm, s_bytes, digest, 0) == 0) {
         for (int i = 0; i < 32; i++) snprintf(&hex[i * 2], 3, "%02x", digest[i]);
         hex[64] = '\0';
-        esp_http_client_set_header(c, "X-Jpanel-Sha256", hex);
     } else {
         /* Not fatal: an older box ignores the header and a newer one treats its absence as
            "this panel cannot prove it", which is exactly what has been true all along. */
@@ -474,28 +331,24 @@ static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
        message did not go" without which half is exactly the report that had nowhere to land. */
     const char *why = "unknown";
 
-    if (esp_http_client_open(c, (int)s_bytes) != ESP_OK) {
-        ESP_LOGW(TAG, "connect failed");
-        why = "connect";
+    const link_req_t req = {.method = "POST",
+                            .path = path,
+                            .content_type = "application/octet-stream",
+                            /* Named twice in this file — here as what the panel sends, and in
+                               `on_header` as what the box answers — and once on the box. */
+                            .hdr_name = hex[0] ? "X-Jpanel-Sha256" : NULL,
+                            .hdr_value = hex[0] ? hex : NULL,
+                            .body = (const uint8_t *)s_pcm,
+                            .body_len = s_bytes,
+                            .timeout_ms = JPANEL_HTTP_TIMEOUT_MS};
+    const link_res_t res = link_request(&req);
+    if (res.status < 0) {
+        /* Not "connect" any more: the socket's esp-tls code and errno, or the fallback's. */
+        ESP_LOGW(TAG, "send: no answer (%s)", res.err);
+        why = res.err[0] ? res.err : "connect";
         goto done;
     }
-    const uint8_t *p = (const uint8_t *)s_pcm;
-    size_t left = s_bytes;
-    while (left > 0) {
-        const int n = esp_http_client_write(c, (const char *)p, left > 4096 ? 4096 : (int)left);
-        if (n <= 0) {
-            ESP_LOGW(TAG, "upload stalled with %u bytes left", (unsigned)left);
-            why = "upload-stall";
-            goto done;
-        }
-        p += n;
-        left -= (size_t)n;
-    }
-    if (esp_http_client_fetch_headers(c) < 0) {
-        why = "no-headers";
-        goto done;
-    }
-    const int status = esp_http_client_get_status_code(c);
+    const int status = res.status;
     if (status == 409) {
         /* THE REFUSAL THE PLAN REFUSED TO GUESS AT. "The other panel" is only obvious with
            exactly two, so with none or several the box says no rather than picking — and the
@@ -517,7 +370,7 @@ static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
         /* STATIC because `reach_fail` keeps the pointer rather than copying — the whole design
            is that a reason outlives the moment it was produced. A stack buffer here would be
            read back long after this frame was gone. One task sends, so one buffer is enough. */
-        static char code[12];
+        static char code[16];
         snprintf(code, sizeof(code), "http-%d", status);
         why = code;
         goto done;
@@ -528,7 +381,6 @@ done:
     ESP_LOGI(TAG, "send: %u B to %s in %d ms -> %d", (unsigned)s_bytes,
              to == JPANEL_TO_DAD ? "dad" : "panel",
              (int)((esp_timer_get_time() - t0) / 1000), (int)out);
-    esp_http_client_cleanup(c);
     /* NOBODY-TO-SEND-TO IS NOT A FAULT: the box is answering, there is simply no one to address.
        Counting it would bury the failures that LOSE a message under a house with one panel. */
     if (out == JPANEL_SENT) {
@@ -543,12 +395,6 @@ done:
 
 static void do_poll(void)
 {
-    char url[288];
-    esp_http_client_handle_t c = open_client("/waiting", HTTP_METHOD_GET, url, sizeof(url));
-    if (c == NULL) {
-        reach_fail(REACH_POLL, "no-client", now_ms());
-        return;
-    }
     const char *why = "unknown";
 
     /* STATIC, AND BIGGER THAN IT WAS, because the response grew a list.
@@ -574,26 +420,34 @@ static void do_poll(void)
        poll stopped, and "one task can reach the box and the other cannot" is what ruled out the
        network and pointed at the panel. A path that can only be inferred from the box's access log
        is a path that says nothing while the panel is silent, which is precisely when it is asked. */
-    if (esp_http_client_open(c, 0) != ESP_OK) {
-        why = "connect";
+    char path[32];
+    if (!jpath(path, sizeof(path), "/waiting")) {
+        why = "url-too-long";
         goto done;
     }
-    if (esp_http_client_fetch_headers(c) < 0) {
-        why = "no-headers";
+    const link_req_t req = {.method = "GET",
+                            .path = path,
+                            .timeout_ms = JPANEL_HTTP_TIMEOUT_MS,
+                            .buf = (uint8_t *)body,
+                            .cap = sizeof(body) - 1};
+    const link_res_t res = link_request(&req);
+    if (res.status < 0) {
+        why = res.err[0] ? res.err : "connect";
         goto done;
     }
-    const int status = esp_http_client_get_status_code(c);
-    if (status != 200) {
-        static char code[12];
-        snprintf(code, sizeof(code), "http-%d", status);
+    if (res.status != 200) {
+        static char code[16];
+        snprintf(code, sizeof(code), "http-%d", res.status);
         why = code;
         goto done;
     }
-    while (got < (int)sizeof(body) - 1) {
-        const int n = esp_http_client_read(c, body + got, (int)sizeof(body) - 1 - got);
-        if (n <= 0) break;
-        got += n;
+    /* A CUT BODY IS NOT AN EMPTY HOUSE. It would parse as nothing and read as "no messages",
+       which is the quiet-panel failure the buffer size below was sized against. */
+    if (res.cut) {
+        why = "cut";
+        goto done;
     }
+    got = (int)res.got;
     body[got] = '\0';
     if (got > 0) {
         cJSON *root = cJSON_Parse(body);
@@ -663,7 +517,6 @@ static void do_poll(void)
     }
 
 done:
-    esp_http_client_cleanup(c);
     if (why != NULL) {
         reach_fail(REACH_POLL, why, now_ms());
     } else {
@@ -681,69 +534,88 @@ done:
  * path exists to stop. Twenty milliseconds is half a chunk, so the codec never starves waiting
  * for this loop to come back.
  *
- * Returns the bytes handed over, which is how the caller tells a real message from an empty
- * one. */
-static int pump(esp_http_client_handle_t c, char *got_hex, size_t hex_cap)
-{
-    /* FIRST, NOT LAST. Every path out of this function — including the early one when a finger
-       stops the stream — must leave a readable string behind, or the caller compares the box's
-       digest against whatever was on the stack. */
-    if (got_hex != NULL && hex_cap > 0) got_hex[0] = '\0';
-
+ * A SINK NOW, called by `link.c` with each piece of the body as it arrives, on this task. Waiting
+ * here is still the backpressure: on the socket, the bytes this has not taken are bytes the box
+ * has not been told it may send (`wsp_credit`), so a slow speaker slows the box rather than
+ * stalling the socket every other request shares. */
+typedef struct {
     mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    bool hashing = mbedtls_sha256_starts(&sha, 0) == 0;
-    int total = 0;
-    /* AN ODD BYTE IS CARRIED, NOT OFFERED, and that is not tidiness — it is a hang.
-       `esp_http_client_read` returns whatever the transport has, which on a timeout or a FIN
-       mid-body is routinely an odd count; the ring deals in samples and refuses anything under
-       two bytes, so a lone trailing byte would be offered forever at 20 ms a go on the task
-       that also polls, sends and acknowledges. Held over and prepended to the next read
-       instead, which is also the only way the samples stay aligned. */
-    uint8_t odd = 0;
-    bool have_odd = false;
-    while (audio_stream_live()) {
-        const int n = esp_http_client_read(c, (char *)s_chunk + (have_odd ? 1 : 0),
-                                           (int)sizeof(s_chunk) - (have_odd ? 1 : 0));
-        if (n <= 0) break;
-        if (have_odd) s_chunk[0] = odd;
-        int avail = n + (have_odd ? 1 : 0);
-        have_odd = false;
-        if (avail % 2 == 1) {
-            odd = s_chunk[avail - 1];
-            have_odd = true;
-            avail -= 1;
-        }
-        if (hashing && mbedtls_sha256_update(&sha, s_chunk, (size_t)avail) != 0) hashing = false;
-        int off = 0;
-        while (off < avail) {
-            /* CHECKED EVERY TIME ROUND, because a refusal has two meanings. A full ring says
-               "not yet"; a stopped stream says "never" — and waiting out the second one would
-               hang this task forever on a speaker that is no longer listening. */
-            if (!audio_stream_live()) {
-                mbedtls_sha256_free(&sha);
-                return total;
-            }
-            const size_t took = audio_stream_write(s_chunk + off, (size_t)(avail - off));
-            if (took == 0) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                continue;
-            }
-            off += (int)took;
-        }
-        total += avail;
+    bool hashing;
+    int total; /* bytes handed to the ring — how the caller tells a real message from an empty one */
+    /* AN ODD BYTE IS CARRIED, NOT OFFERED, and that is not tidiness — it is a hang. A transport
+       returns whatever it has, which on a timeout or a FIN mid-body is routinely an odd count;
+       the ring deals in samples and refuses anything under two bytes, so a lone trailing byte
+       would be offered forever at 20 ms a go on the task that also polls, sends and
+       acknowledges. Held over and prepended to the next piece instead, which is also the only
+       way the samples stay aligned. */
+    uint8_t odd;
+    bool have_odd;
+    bool replay; /* which head this pull answers: replay never joins the run or the debt */
+    bool asked;
+    int at;
+    bool began;  /* the speaker was claimed and the stream begun */
+    jpanel_state_t out;
+} pull_t;
+
+static void pump_begin(pull_t *p)
+{
+    mbedtls_sha256_init(&p->sha);
+    p->hashing = mbedtls_sha256_starts(&p->sha, 0) == 0;
+    p->total = 0;
+    p->odd = 0;
+    p->have_odd = false;
+}
+
+static int pump(void *ctx, const uint8_t *data, size_t n)
+{
+    pull_t *p = ctx;
+    /* CHECKED BEFORE A BYTE IS TAKEN, because a refusal has two meanings. A full ring says
+       "not yet"; a stopped stream says "never" — and waiting out the second one would hang this
+       task forever on a speaker that is no longer listening. Nonzero ends the request. */
+    if (!audio_stream_live()) return 1;
+    size_t avail = 0;
+    if (p->have_odd) s_chunk[avail++] = p->odd;
+    p->have_odd = false;
+    const size_t take = n < sizeof(s_chunk) - avail ? n : sizeof(s_chunk) - avail;
+    memcpy(s_chunk + avail, data, take);
+    avail += take;
+    if (avail % 2 == 1) {
+        p->odd = s_chunk[avail - 1];
+        p->have_odd = true;
+        avail -= 1;
     }
-    /* A body that ended on an odd byte is a body that was cut: the digest will not match, and
-       the last half-sample is not worth playing. Hashed as received so the mismatch is honest
-       about what arrived. */
-    if (have_odd && hashing && mbedtls_sha256_update(&sha, &odd, 1) == 0) total += 1;
+    if (p->hashing && mbedtls_sha256_update(&p->sha, s_chunk, avail) != 0) p->hashing = false;
+    size_t off = 0;
+    while (off < avail) {
+        if (!audio_stream_live()) return 1;
+        const size_t took = audio_stream_write(s_chunk + off, avail - off);
+        if (took == 0) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        off += took;
+    }
+    p->total += (int)avail;
+    return 0;
+}
+
+/* What arrived, as hex. FILLED ON EVERY PATH, including a finger stopping the stream, so the
+   caller never compares the box's digest against whatever was on the stack. A body that ended
+   on an odd byte is a body that was cut: the digest will not match, and the last half-sample is
+   not worth playing. Hashed as received so the mismatch is honest about what arrived. */
+static void pump_end(pull_t *p, char *got_hex, size_t hex_cap)
+{
+    if (got_hex != NULL && hex_cap > 0) got_hex[0] = '\0';
+    if (p->have_odd && p->hashing && mbedtls_sha256_update(&p->sha, &p->odd, 1) == 0) {
+        p->total += 1;
+    }
     unsigned char digest[32];
-    if (got_hex != NULL && hex_cap >= 65 && hashing && mbedtls_sha256_finish(&sha, digest) == 0) {
+    if (got_hex != NULL && hex_cap >= 65 && p->hashing &&
+        mbedtls_sha256_finish(&p->sha, digest) == 0) {
         for (int i = 0; i < 32; i++) snprintf(&got_hex[i * 2], 3, "%02x", digest[i]);
         got_hex[64] = '\0';
     }
-    mbedtls_sha256_free(&sha);
-    return total;
+    mbedtls_sha256_free(&p->sha);
 }
 
 /* Did we get what the box said it was sending.
@@ -808,48 +680,21 @@ static bool stream_begin_waiting(const char *what)
     return true;
 }
 
-static void do_replay(void)
+/* The replay's answer has arrived and nothing has been read of its body yet: the moment to
+   claim the speaker, which is why this is a head callback rather than a line in `do_replay`. */
+static int replay_head(void *ctx, int status)
 {
-    /* BOTH EARLY RETURNS CLEAR IT. `jpanel_replay()` raises `s_fetching` on the RENDER task and
-       checks the id there, while `do_fetch` clears the id on THIS task — so the empty-id return
-       is genuinely reachable, not defensive, and either leak pins a pause button over a silent
-       panel forever. */
-    if (s_in_id[0] == '\0') {
-        s_fetching = false;
-        return;
-    }
-    bool ok = false;
-    char path[96];
-    snprintf(path, sizeof(path), "/message/%s/pcm", s_in_id);
-    char url[288];
-    esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
-    if (c == NULL) {
-        s_fetching = false;
-        s_state = JPANEL_FAILED;
-        return;
-    }
-    /* CLEARED AFTER `path` IS BUILT, because that used `s_in_id` — and cleared at all because
-       a box too old to send the header would otherwise leave the PREVIOUS message's digest
-       standing, and this replay would be judged against it. */
-    s_in_sha[0] = '\0';
+    pull_t *p = ctx;
     /* EVERY WAY OUT OF HERE SAYS SO. A replay that fails silently is the control a child
        presses when she missed something answering with nothing at all — which is exactly what
        the touch cue was added to stop, and the link being down is when she is most likely to
        be pressing it. */
-    if (esp_http_client_open(c, 0) != ESP_OK) {
-        ESP_LOGW(TAG, "replay: could not reach the box");
-        goto done;
+    if (status != 200) {
+        ESP_LOGW(TAG, "replay: box said %d", status);
+        return 1;
     }
-    if (esp_http_client_fetch_headers(c) < 0) {
-        ESP_LOGW(TAG, "replay: no answer from the box");
-        goto done;
-    }
-    if (esp_http_client_get_status_code(c) != 200) {
-        ESP_LOGW(TAG, "replay: box said %d", esp_http_client_get_status_code(c));
-        goto done;
-    }
-    if (!stream_begin_waiting("replay")) goto done;
-    ok = true;
+    if (!stream_begin_waiting("replay")) return 1;
+    p->began = true;
     /* NO `s_owed` AND NO `s_run`. This message was already acknowledged the first time it
        played; telling the box again would be a second `POST /played` for one listen, and
        joining the run would make "again" walk on into the next unheard message.
@@ -864,24 +709,59 @@ static void do_replay(void)
        press. The two lines above say what replay deliberately does not join; this one is not in
        that list, it was just missed. */
     s_state = JPANEL_PLAYING;
-    char heard[72];
-    const int got = pump(c, heard, sizeof(heard));
-    audio_stream_end();
-    if (got < 2) {
-        audio_stream_abort();
-    } else if (!verified(s_in_sha, heard)) {
-        /* Nothing to un-acknowledge — this message was acknowledged the first time it played.
-           Worth a line, because a replay that arrives short is the same network fault that
-           would cut a first play, and this is where it shows up without costing anything. */
-        ESP_LOGW(TAG, "replay arrived incomplete (%d B), id %s", got, s_in_id);
-    } else {
-        ESP_LOGI(TAG, "replayed %d B, id %s", got, s_in_id);
-    }
+    pump_begin(p);
+    return 0;
+}
 
-done:
-    esp_http_client_cleanup(c);
+static void do_replay(void)
+{
+    /* BOTH EARLY RETURNS CLEAR IT. `jpanel_replay()` raises `s_fetching` on the RENDER task and
+       checks the id there, while `do_fetch` clears the id on THIS task — so the empty-id return
+       is genuinely reachable, not defensive, and either leak pins a pause button over a silent
+       panel forever. */
+    if (s_in_id[0] == '\0') {
+        s_fetching = false;
+        return;
+    }
+    char rel[96];
+    char path[112];
+    snprintf(rel, sizeof(rel), "/message/%s/pcm", s_in_id);
+    if (!jpath(path, sizeof(path), rel)) {
+        s_fetching = false;
+        s_state = JPANEL_FAILED;
+        return;
+    }
+    /* CLEARED AFTER `path` IS BUILT, because that used `s_in_id` — and cleared at all because
+       a box too old to send the header would otherwise leave the PREVIOUS message's digest
+       standing, and this replay would be judged against it. */
+    s_in_sha[0] = '\0';
+    pull_t p = {.replay = true, .out = JPANEL_FAILED};
+    const link_req_t req = {.method = "GET",
+                            .path = path,
+                            .timeout_ms = JPANEL_HTTP_TIMEOUT_MS,
+                            .sink = pump,
+                            .on_header = on_header,
+                            .on_head = replay_head,
+                            .ctx = &p};
+    const link_res_t res = link_request(&req);
+    if (res.status < 0) ESP_LOGW(TAG, "replay: could not reach the box (%s)", res.err);
+    if (p.began) {
+        char heard[72];
+        pump_end(&p, heard, sizeof(heard));
+        audio_stream_end();
+        if (p.total < 2) {
+            audio_stream_abort();
+        } else if (!verified(s_in_sha, heard)) {
+            /* Nothing to un-acknowledge — this message was acknowledged the first time it played.
+               Worth a line, because a replay that arrives short is the same network fault that
+               would cut a first play, and this is where it shows up without costing anything. */
+            ESP_LOGW(TAG, "replay arrived incomplete (%d B), id %s", p.total, s_in_id);
+        } else {
+            ESP_LOGI(TAG, "replayed %d B, id %s", p.total, s_in_id);
+        }
+    }
     s_fetching = false;
-    if (!ok) s_state = JPANEL_FAILED;
+    if (!p.began) s_state = JPANEL_FAILED;
 }
 
 /* SEED THE SENDER FROM THE QUEUE THE BOX ALREADY DESCRIBED, and do it wherever a fetch is
@@ -915,55 +795,27 @@ static void seed_sender(int at)
     s_in_from_dad = s_wait[i].from_dad;
 }
 
-static void do_fetch(bool asked, int at)
+/* The message's answer has arrived; `s_in_id` and `s_in_from` were filled by `on_header` just
+   before this, and both were cleared before the request so a box that sends neither cannot
+   leave the last message's id standing. Nothing of the body has been read yet. */
+static int fetch_head(void *ctx, int status)
 {
-    char path[32];
-    /* THE INDEX RIDES THE PATH RATHER THAN A HEADER, because `open_client` signs and builds one
-       string and a query is part of it. 0 is spelled out rather than omitted: a request that says
-       what it means is one fewer thing to reason about when reading a box access log. */
-    snprintf(path, sizeof(path), "/next?at=%d", at < 0 ? 0 : at);
-    char url[288];
-    esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
-    if (c == NULL) {
-        /* CLEARED ON THE EARLY RETURN TOO, and the comment at `done:` promising "whatever the
-           outcome" was written one release before this path existed to contradict it. A leaked
-           `s_fetching` pins `starting` true forever, which draws a pause button and a sender's
-           face over a panel with nothing playing — the exact fault the flag was added to fix.
-           `open_client` returns NULL on no Wi-Fi and no key, so this is the ordinary case. */
-        s_fetching = false;
-        s_state = JPANEL_FAILED;
-        return;
-    }
-
-    jpanel_state_t out = JPANEL_FAILED;
-    int got = 0;
-    /* THE ID AND THE DIGEST ARE CLEARED; THE SENDER IS SEEDED. Both are about a box too old to
-       send the header — but a stale ID would acknowledge the WRONG MESSAGE and a stale digest
-       would judge this one against the last, where a stale sender costs a picture. So the two that
-       can do damage are cleared and the one that cannot is given the best answer available. */
-    s_in_id[0] = '\0';
-    s_in_sha[0] = '\0';
-    seed_sender(at);
-    if (esp_http_client_open(c, 0) != ESP_OK) goto done;
-    if (esp_http_client_fetch_headers(c) < 0) goto done;
-    const int status = esp_http_client_get_status_code(c);
+    pull_t *p = ctx;
     if (status == 204) {
         /* Someone else played it, the poll was stale, or the index is past the end of a queue that
            shrank under the finger. Not a failure — just nothing here. */
         s_wait_count = 0;
         s_wait_known = 0;
         s_wait[0].from[0] = '\0';
-        out = JPANEL_IDLE;
-        goto done;
+        p->out = JPANEL_IDLE;
+        return 1;
     }
     if (status != 200) {
         ESP_LOGW(TAG, "box said %d", status);
-        goto done;
+        return 1;
     }
-    /* `s_in_id` and `s_in_from` were filled by `on_header` while `fetch_headers` ran, and
-       both were cleared before the request so a box that sends neither cannot leave the last
-       message's id standing. */
-    if (!stream_begin_waiting("message")) goto done;
+    if (!stream_begin_waiting("message")) return 1;
+    p->began = true;
     s_stopped = false;
     /* CLAIMED BEFORE THE FIRST BYTE, and that ordering is the whole safety of this path.
        `audio_playing()` is true from here until the ring drains, so the renderer, the pop-up
@@ -985,7 +837,7 @@ static void do_fetch(bool asked, int at)
        declaration: a reader that sees a count must see that many valid entries, so the moment
        where the count is low and the entries are the old ones is safe and the reverse is not. */
     if (s_wait_count > 0) s_wait_count--;
-    const int taken = at >= 0 && at < s_wait_known ? at : 0;
+    const int taken = p->at >= 0 && p->at < s_wait_known ? p->at : 0;
     if (s_wait_known > 0) {
         const int n = s_wait_known - 1;
         s_wait_known = n;
@@ -995,10 +847,50 @@ static void do_fetch(bool asked, int at)
         s_wait_known = 0;
         s_wait[0].from[0] = '\0';
     }
+    pump_begin(p);
+    return 0;
+}
+
+static void do_fetch(bool asked, int at)
+{
+    char rel[32];
+    char path[48];
+    /* THE INDEX RIDES THE PATH RATHER THAN A HEADER, because a request names one string and a
+       query is part of it. 0 is spelled out rather than omitted: a request that says what it
+       means is one fewer thing to reason about when reading a box access log. */
+    snprintf(rel, sizeof(rel), "/next?at=%d", at < 0 ? 0 : at);
+    if (!jpath(path, sizeof(path), rel)) {
+        /* CLEARED ON THE EARLY RETURN TOO. A leaked `s_fetching` pins `starting` true forever,
+           which draws a pause button and a sender's face over a panel with nothing playing —
+           the exact fault the flag was added to fix. */
+        s_fetching = false;
+        s_state = JPANEL_FAILED;
+        return;
+    }
+
+    /* THE ID AND THE DIGEST ARE CLEARED; THE SENDER IS SEEDED. Both are about a box too old to
+       send the header — but a stale ID would acknowledge the WRONG MESSAGE and a stale digest
+       would judge this one against the last, where a stale sender costs a picture. So the two that
+       can do damage are cleared and the one that cannot is given the best answer available. */
+    s_in_id[0] = '\0';
+    s_in_sha[0] = '\0';
+    seed_sender(at);
+    pull_t p = {.asked = asked, .at = at, .out = JPANEL_FAILED};
+    const link_req_t req = {.method = "GET",
+                            .path = path,
+                            .timeout_ms = JPANEL_HTTP_TIMEOUT_MS,
+                            .sink = pump,
+                            .on_header = on_header,
+                            .on_head = fetch_head,
+                            .ctx = &p};
+    const link_res_t res = link_request(&req);
+    if (res.status < 0) ESP_LOGW(TAG, "message: no answer (%s)", res.err);
+    if (!p.began) goto done;
+
     char heard[72];
-    got = pump(c, heard, sizeof(heard));
+    pump_end(&p, heard, sizeof(heard));
     audio_stream_end();
-    if (got < 2) {
+    if (p.total < 2) {
         ESP_LOGW(TAG, "empty message");
         s_msg_err = "empty";
         s_msg_bad++;
@@ -1010,9 +902,9 @@ static void do_fetch(bool asked, int at)
     if (s_stopped) {
         /* Her choice, not a fault. `s_owed` stays set, so `POST /played` fires when the ring
            finishes draining and the message retires as it always did. */
-        ESP_LOGI(TAG, "stopped by a finger after %d B, id %s", got,
+        ESP_LOGI(TAG, "stopped by a finger after %d B, id %s", p.total,
                  s_in_id[0] ? s_in_id : "(none)");
-        out = JPANEL_PLAYING;
+        p.out = JPANEL_PLAYING;
         goto done;
     }
     if (!verified(s_in_sha, heard)) {
@@ -1022,22 +914,21 @@ static void do_fetch(bool asked, int at)
            `s_owed` clear keeps the row unplayed, so the pop-up comes back and the next tap
            fetches it whole. `deliveries` counts this attempt, and five of them is the box
            giving up loudly rather than a message quietly lost. */
-        ESP_LOGE(TAG, "message arrived incomplete (%d B) — not acknowledging, id %s", got,
+        ESP_LOGE(TAG, "message arrived incomplete (%d B) — not acknowledging, id %s", p.total,
                  s_in_id[0] ? s_in_id : "(none)");
         s_msg_err = "short";
         s_msg_bad++;
         s_owed = false;
         s_run = false;
-        out = JPANEL_PLAYING;
+        p.out = JPANEL_PLAYING;
         goto done;
     }
-    out = JPANEL_PLAYING;
-    s_msg_bytes = got;
-    ESP_LOGI(TAG, "streamed %d B from %s, id %s", got, s_in_from[0] ? s_in_from : "?",
+    p.out = JPANEL_PLAYING;
+    s_msg_bytes = p.total;
+    ESP_LOGI(TAG, "streamed %d B from %s, id %s", p.total, s_in_from[0] ? s_in_from : "?",
              s_in_id[0] ? s_in_id : "(none)");
 
 done:
-    esp_http_client_cleanup(c);
     /* CLEARED WHERE THE FETCH ENDS, whatever the outcome. The renderer holds the playback
        controls up on this, so a path that returned without clearing it would leave a pause
        button over a panel with nothing playing — the exact fault this flag was added to fix,
@@ -1049,10 +940,9 @@ done:
        lose the sound that told them their message went. Only a fetch a finger asked for has
        an outcome worth reporting.
      *
-       And never PLAYING: nothing was played. `jpanel_play_next` owns that transition. */
-    /* `out` is already PLAYING when a stream started — the sound IS the outcome, and it began
-       inside the loop above rather than after it. */
-    if (asked) s_state = out;
+       `out` is already PLAYING when a stream started — the sound IS the outcome, and it began
+       inside the head callback rather than after it. */
+    if (asked) s_state = p.out;
 }
 
 /* --- POST /played ------------------------------------------------------------------------ */
@@ -1060,25 +950,25 @@ done:
 static void do_played(void)
 {
     if (s_in_id[0] == '\0') return;
-    char url[288];
-    esp_http_client_handle_t c = open_client("/played", HTTP_METHOD_POST, url, sizeof(url));
-    if (c == NULL) return;
     char body[80];
     const int bn = snprintf(body, sizeof(body), "{\"id\":\"%s\"}", s_in_id);
-    if (bn > 0 && bn < (int)sizeof(body)) {
-        esp_http_client_set_header(c, "Content-Type", "application/json");
-        esp_http_client_set_post_field(c, body, bn);
-        if (esp_http_client_perform(c) == ESP_OK) {
-            const int status = esp_http_client_get_status_code(c);
-            if (status != 204) ESP_LOGW(TAG, "played returned HTTP %d", status);
-        } else {
-            /* NOT FATAL, AND NOT RETRIED HERE. An unacknowledged message stays unplayed on
-               the box, so the worst case is hearing it twice — which is strictly better than
-               a message that vanishes because the acknowledgement raced a flaky link. */
-            ESP_LOGW(TAG, "could not acknowledge %s", s_in_id);
-        }
+    char path[32];
+    if (bn <= 0 || bn >= (int)sizeof(body) || !jpath(path, sizeof(path), "/played")) return;
+    const link_req_t req = {.method = "POST",
+                            .path = path,
+                            .content_type = "application/json",
+                            .body = (const uint8_t *)body,
+                            .body_len = (size_t)bn,
+                            .timeout_ms = JPANEL_HTTP_TIMEOUT_MS};
+    const link_res_t res = link_request(&req);
+    if (res.status < 0) {
+        /* NOT FATAL, AND NOT RETRIED HERE. An unacknowledged message stays unplayed on the box,
+           so the worst case is hearing it twice — which is strictly better than a message that
+           vanishes because the acknowledgement raced a flaky link. */
+        ESP_LOGW(TAG, "could not acknowledge %s (%s)", s_in_id, res.err);
+    } else if (res.status != 204) {
+        ESP_LOGW(TAG, "played returned HTTP %d", res.status);
     }
-    esp_http_client_cleanup(c);
 }
 
 static void jpanel_task(void *arg)
@@ -1128,8 +1018,8 @@ static void jpanel_task(void *arg)
             }
         }
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-        /* Never while the speaker is running: a poll is a TLS handshake, and the audio task
-           is feeding I2S from the same core's spare cycles. */
+        /* Never while the speaker is running: a poll is a round trip (a TLS handshake, on the
+           HTTPS fallback), and the audio task is feeding I2S from the same core's spare cycles. */
         if (now >= next_poll && !audio_playing() && s_state != JPANEL_BUSY) {
             do_poll();
             next_poll = now + POLL_EVERY_MS;
@@ -1148,7 +1038,6 @@ static void jpanel_task(void *arg)
 bool jpanel_start(const cfg_t *cfg)
 {
     if (cfg == NULL) return false;
-    s_cfg = cfg;
     s_q = xQueueCreate(2, sizeof(cmd_t));
     if (s_q == NULL) {
         ESP_LOGE(TAG, "no memory for voice post");
@@ -1159,32 +1048,6 @@ bool jpanel_start(const cfg_t *cfg)
         ESP_LOGE(TAG, "task failed");
         return false;
     }
-    /* NOT STARTED, AND THIS IS A RETREAT FROM A CRASH LOOP RATHER THAN A DESIGN.
-     *
-     * MEASURED 2026-09-27: 0.3.22 put Lydian into `reset=panic(4)` every ~13 seconds, in a
-     * child's bedroom, within minutes of the OTA. The task is the only thing 0.3.22 added that
-     * runs code, and the fault is almost certainly the number in the line below this comment:
-     * I gave it 4096 bytes of stack, while EVERY other task in this firmware that opens a TLS
-     * connection — `jpanel` and `talk` — is given 6144, and an mbedTLS handshake alone wants
-     * about 3.6 KB before `esp_http_client` has taken any. The comment that shipped with it
-     * claimed 4096 was "ample" on the grounds that the task reads into a 128-byte buffer,
-     * which measures the wrong thing entirely: the buffer is not what sits on the stack, the
-     * handshake is.
-     *
-     * "ALMOST CERTAINLY" IS WHY THIS IS A GUARD AND NOT A BIGGER NUMBER. Twice today a
-     * confident diagnosis was shipped straight to these panels and was wrong — the QSPI
-     * framing that hung both renderers, and the memory argument this whole feature was built
-     * around. A panel that crashes every thirteen seconds is not a thing to iterate on
-     * remotely. The stack goes to 8192 and the task comes back when it can be watched on a
-     * bench with a cable, and the fix is one word on the line below. Everything else about the
-     * push channel is kept and untouched, including the box's half, which is harmless with
-     * nobody connected. */
-#define PUSH_TASK_ENABLED 0
-    if (PUSH_TASK_ENABLED &&
-        xTaskCreatePinnedToCore(push_task, "push", 8192, NULL, 4, NULL, 0) != pdPASS) {
-        ESP_LOGW(TAG, "no push task — messages will arrive on the poll instead");
-    }
-    if (!PUSH_TASK_ENABLED) ESP_LOGW(TAG, "push: disabled (0.3.22 crash loop) — polling only");
     ESP_LOGI(TAG, "ready");
     return true;
 }

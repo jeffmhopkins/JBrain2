@@ -19,3 +19,10 @@ dependencies:
   # feature exists rather than after. See ROOM_ENDPOINT_PLAN.md and firmware/README.md.
   espressif/esp-sr:
     version: "^2.5.4"
+  # THE ONE SOCKET (`link.c`). Every request this panel makes rides a single TLS WebSocket to
+  # the box instead of a fresh HTTPS session each — on 0.3.38 two handshakes in flight at once
+  # (~40 KB of internal RAM each) were what made every request fail with "connect". Espressif's
+  # own client, rather than a hand-rolled framer over esp-tls, because the TLS, the handshake,
+  # the masking and the ping/pong are exactly the parts not worth being the author of.
+  espressif/esp_websocket_client:
+    version: "^1.5.0"

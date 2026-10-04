@@ -132,6 +132,7 @@ from jbrain.api import jpanel as jpanel_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import moltbook_settings as moltbook_settings_api
+from jbrain.api import panel_ws as panel_ws_api
 from jbrain.api import pet as pet_api
 from jbrain.api import settings as settings_api
 from jbrain.api import (
@@ -1700,6 +1701,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(endpoint_api.router, prefix="/api")
     app.include_router(engine_api.router, prefix="/api")
     app.include_router(jpanel_api.router, prefix="/api")
+    app.include_router(panel_ws_api.router, prefix="/api")
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")

@@ -22,6 +22,7 @@
 #include "display.h"
 #include "imu.h"
 #include "jpanel.h"
+#include "link.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
@@ -90,16 +91,16 @@ static unsigned s_relinks;
    named the wrong field. */
 #define POLL_PERIOD_MS (3 * 1000)
 
-/* AND WHAT IT BECOMES ONCE THE BOX CAN SPEAK FIRST. While the push stream is up (`jpanel.h`)
+/* AND WHAT IT BECOMES ONCE THE BOX CAN SPEAK FIRST. While the one socket is up (`link.h`)
    the three-second ask is asking a question that will be answered before it is next posed, so
    it stretches to this — the owner's *"I want to get rid of polling all together"*, met in the
    only sense that is true: the poll stops being how anything is LEARNED and becomes the check
    that the push channel has not silently died.
  *
- * IT IS ALSO WHAT KEEPS THE TLS ARITHMETIC HONEST. A held-open stream is one more session on a
- * board where sessions are the expensive thing; taking twenty asks a minute down to one buys
- * that back several times over, so push costs LESS concurrency than polling did rather than
- * more. That is the whole reason the stream was affordable to add. */
+ * ON THE SOCKET THE ASK COSTS NO HANDSHAKE AT ALL — it is one small frame on a session already
+ * open — so this is no longer what keeps the TLS arithmetic honest; `link.c` is. It stays
+ * because twenty asks a minute per panel is still twenty requests a minute the box answers for
+ * nothing, and the socket's own events (`{"t":"ev"}`) say when there is something to ask. */
 #define PUSH_SETTLED_MS (60 * 1000)
 /* THE WIDEST THE SETTINGS ASK GETS WHILE THE BOX IS NOT ANSWERING, doubling from `POLL_PERIOD_MS`.
  * The old behaviour was to stop asking for the rest of the fifteen-minute period, which is
@@ -171,9 +172,10 @@ static bool apply_settings(const cfg_t *cfg, char *served, size_t served_cap, in
      *
        `jpanel.c` asks the box what is waiting every `POLL_EVERY_MS` — thirty seconds — and the fast
        paths that were supposed to make that a backstop are both unreliable: the nudge datagram
-       needs an address the box only learns FROM that poll, and the push stream is disabled after
-       the 0.3.22 crash loop. So a freshly-booted panel had no fast path at all, and the owner
-       watched it: *"When sending messages still took a long time for it to show up on the panel."*
+       needs an address the box only learns FROM that poll, and the push stream was disabled after
+       the 0.3.22 crash loop (the socket carries push now). So a freshly-booted panel had no fast
+       path at all, and the owner watched it: *"When sending messages still took a long time for
+       it to show up on the panel."*
      *
        This poll already runs every three seconds and the box already knows the number, so a change
        in it is all the signal needed — `jpanel_poll_soon()` is exactly what a nudge does, over a
@@ -409,6 +411,14 @@ static bool report(const cfg_t *cfg)
     const char *msg_err = "";
     int msg_waited = 0;
     jpanel_message_stats(&msg_bytes, &msg_ms, &msg_ok, &msg_bad, &msg_err, &msg_waited);
+    /* THE ONE SOCKET, and the two heap numbers that say whether it fits. `int_min` is the
+       low-water mark since boot: `int_free` is a snapshot taken while nothing is happening, and a
+       handshake that did not fit failed at the bottom of a dip only this remembers. `int_big` is
+       the largest internal 8-bit block — what mbedTLS actually allocates from, which
+       `int_largest` (internal DMA, a floor that never moves; see `nudge.h`) never described. */
+    unsigned ws_connects = 0, ws_drops = 0, ws_events = 0;
+    const char *ws_err = "";
+    link_stats(&ws_connects, &ws_drops, &ws_events, &ws_err);
     const uint32_t quiet = reach_quiet_ms(reach_now);
     const int quiet_s = quiet == REACH_NEVER ? -1 : (int)(quiet / 1000);
 
@@ -449,6 +459,8 @@ static bool report(const cfg_t *cfg)
                      "\"msg_err\":\"%s\",\"msg_waited_ms\":%d,"
                      "\"nudges\":%u,\"nudge_drop\":%u,"
                      "\"push\":%s,\"push_events\":%u,\"push_drops\":%u,"
+                     "\"int_min\":%u,\"int_big\":%u,\"ws\":\"%s\",\"ws_err\":\"%s\","
+                     "\"ws_connects\":%u,\"ws_drops\":%u,"
                      "\"tap\":[%d,%d,%d],\"swipes\":%u,\"swipe_dx\":%d,\"msg_sel\":%d,"
                      "\"panel_reset\":%s,\"screen\":\"%s\","
                      "\"pmu_history\":[",
@@ -472,8 +484,11 @@ static bool report(const cfg_t *cfg)
                      dashes, dash_err, (unsigned)(dash_ago / 1000),
                      quiet_s, s_relinks, msg_bytes, msg_ms, msg_ok, msg_bad, msg_err, msg_waited,
                      nudge_count(), nudge_dropped(),
-                     jpanel_push_live() ? "true" : "false", jpanel_push_events(),
-                     jpanel_push_drops(),
+                     link_live() ? "true" : "false", ws_events, ws_drops,
+                     (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                               MALLOC_CAP_8BIT),
+                     link_mode(), ws_err, ws_connects, ws_drops,
                      tap_x, tap_y, tap_zone, swipes, swipe_dx, msg_sel,
                      display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
@@ -533,6 +548,17 @@ static bool report(const cfg_t *cfg)
        `pmu_history: []` while the ring had in fact survived. */
     if (sent && n > 0) pmu_history_clear();
     return sent;
+}
+
+/* "COME AND ASK", from the box, over the one socket — the same two halves a nudge datagram
+   wakes, for the same reason: the event says only that something changed, so the panel asks
+   about everything it would have asked about anyway. Runs on the socket's task, so it only
+   posts. */
+static void on_box_event(const char *why)
+{
+    (void)why;
+    jpanel_poll_soon();
+    nudge_wake_settings();
 }
 
 static bool reach_box(const cfg_t *cfg, ota_manifest_t *manifest)
@@ -604,6 +630,12 @@ void app_main(void)
        nobody has to touch it. Thirty seconds of bad timing is not a reason to need hands. */
     bool joined = net_connect(&cfg, WIFI_TIMEOUT_MS) == ESP_OK;
     mem_log("wifi");
+    /* THE ONE SOCKET, BEFORE THE FIRST REQUEST, because the first request is the rollback
+       gate's manifest fetch and every request after it rides this connection (`link.h`). Only
+       once there is a network: a socket started with no radio would spend its three attempts on
+       nothing and fall back to per-request HTTPS for ten minutes it did not need to. */
+    link_on_event(on_box_event);
+    if (joined) link_start(&cfg);
     if (!joined) {
         /* Still gives up probation: no Wi-Fi means no possible update, which is the one
            thing a pending image must not persist through. On a settled image this is a
@@ -736,7 +768,7 @@ void app_main(void)
             /* The stream's own liveness decides the rate, re-read every slice rather than
                latched: a panel whose push channel drops must be back to a three-second ask by
                the next slice, not at the end of the period. */
-            const uint32_t base_ms = jpanel_push_live() ? PUSH_SETTLED_MS : POLL_PERIOD_MS;
+            const uint32_t base_ms = link_live() ? PUSH_SETTLED_MS : POLL_PERIOD_MS;
             /* BACKED OFF, NOT ABANDONED — see `cadence_backoff_ms`, which carries the argument.
                This used to latch a `box_answering` flag false on the first failure and then sleep
                out the entire remainder of the period; on 2026-09-29 that cost an hour of the
@@ -857,7 +889,10 @@ void app_main(void)
         }
         if (!joined) {
             joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;
-            if (joined) ESP_LOGI(TAG, "network recovered");
+            if (joined) {
+                ESP_LOGI(TAG, "network recovered");
+                link_start(&cfg); /* a no-op when it is already running */
+            }
         }
         reachable = joined && ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
         if (reachable) {

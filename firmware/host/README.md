@@ -5,7 +5,7 @@ ESP-IDF toolchain, or a network.
 
 | binary | source | what it is for |
 |---|---|---|
-| `run_tests` | `tests.c` | **Pure functions.** Given these numbers, what comes out: cue contours, face geometry, the rig's cooldowns, calibration fits, the tick-and-cross hit tests. ~4.1M checks, most of them swept over every input. |
+| `run_tests` | `tests.c` | **Pure functions.** Given these numbers, what comes out: cue contours, face geometry, the rig's cooldowns, calibration fits, the tick-and-cross hit tests, and the panel socket's framing, credit window and fallback (`main/wsproto.c`). ~4.1M checks, most of them swept over every input. |
 | `run_ui_tests` | `ui_tests.c` | **The interaction state machine** (`main/ui.c`), driven one frame at a time: a press, a clock advanced, an overlay arbitrated, a peripheral call recorded. ~440 checks. |
 
 They are separate because they need different things. The first wants to be a tight loop over

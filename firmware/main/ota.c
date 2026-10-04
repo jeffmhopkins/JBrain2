@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 
 #include "display.h"
+#include "link.h"
 #include "reach.h"
 
 static const char *TAG = "ota";
@@ -111,57 +112,42 @@ static void note_settings_fail(const char *why)
 
 esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
 {
-    char url[256];
-    snprintf(url, sizeof(url), "%s/endpoint/settings", cfg->api);
-
-    char *auth = bearer(cfg);
-    if (auth == NULL) {
-        note_settings_fail("no-mem-auth");
-        return ESP_ERR_NO_MEM;
-    }
-
-    esp_http_client_config_t hc = {.url = url, .timeout_ms = HTTP_TIMEOUT_MS};
-    trust(&hc, cfg);
-    esp_http_client_handle_t client = esp_http_client_init(&hc);
-    if (client == NULL) {
-        free(auth);
-        note_settings_fail("client-init");
+    (void)cfg;
+    /* OVER THE ONE SOCKET (`link.c`), which is the whole fix for 0.3.38: this poll runs every
+       three seconds on the main task, and as its own HTTPS session it was the handshake most
+       often in flight when a talk turn or a jpanel poll opened another. */
+    char body[MANIFEST_MAX];
+    const link_req_t req = {.method = "GET",
+                            .path = "/endpoint/settings",
+                            .timeout_ms = HTTP_TIMEOUT_MS,
+                            .buf = (uint8_t *)body,
+                            .cap = sizeof(body) - 1};
+    const link_res_t res = link_request(&req);
+    esp_err_t err = ESP_OK;
+    if (res.status < 0) {
+        /* THE ONE THAT MATTERS MOST. Everything below this line means the box answered; this
+           means the panel could not get a connection up at all — and `res.err` now says why
+           (esp-tls code, errno, upgrade status) instead of the bare "connect" of 0.3.38. */
+        note_settings_fail(res.err);
         return ESP_FAIL;
     }
-    esp_http_client_set_header(client, "Authorization", auth);
-
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
-        /* THE ONE THAT MATTERS MOST. Everything below this line means the box answered; this
-           means the panel could not get a connection up at all, which is the shape a TLS
-           handshake starved of the internal DMA memory these units are short of takes. */
-        note_settings_fail(esp_err_to_name(err));
-        goto done;
-    }
-    esp_http_client_fetch_headers(client);
-    const int status = esp_http_client_get_status_code(client);
-    if (status != 200) {
-        static char code[12];
-        snprintf(code, sizeof(code), "http-%d", status);
+    if (res.status != 200) {
+        static char code[16];
+        snprintf(code, sizeof(code), "http-%d", res.status);
         note_settings_fail(code);
-        err = ESP_FAIL;
-        goto done;
+        return ESP_FAIL;
     }
-
-    char body[MANIFEST_MAX];
-    const int len = esp_http_client_read_response(client, body, sizeof(body) - 1);
-    if (len <= 0) {
-        note_settings_fail("empty-body");
-        err = ESP_FAIL;
-        goto done;
+    const int len = (int)res.got;
+    if (len <= 0 || res.cut) {
+        note_settings_fail(res.cut ? "cut" : "empty-body");
+        return ESP_FAIL;
     }
     body[len] = '\0';
 
     cJSON *root = cJSON_Parse(body);
     if (root == NULL) {
         note_settings_fail("bad-json");
-        err = ESP_FAIL;
-        goto done;
+        return ESP_FAIL;
     }
     /* Each field independently: a box running older code that omits one should still deliver
        the others rather than leaving the panel on every default. */
@@ -213,127 +199,76 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     }
     reach_ok(REACH_SETTINGS, now_ms());
     cJSON_Delete(root);
-
-done:
-    esp_http_client_cleanup(client);
-    free(auth);
     return err;
 }
 
 esp_err_t ota_report(const cfg_t *cfg, const char *body)
 {
-    char url[256];
-    snprintf(url, sizeof(url), "%s/endpoint/telemetry", cfg->api);
-
-    char *auth = bearer(cfg);
-    if (auth == NULL) return ESP_ERR_NO_MEM;
-
-    esp_http_client_config_t hc = {
-        .url = url,
-        .method = HTTP_METHOD_POST,
-        .timeout_ms = HTTP_TIMEOUT_MS,
-    };
-    trust(&hc, cfg);
-    esp_http_client_handle_t client = esp_http_client_init(&hc);
-    if (client == NULL) {
-        free(auth);
+    (void)cfg;
+    const link_req_t req = {.method = "POST",
+                            .path = "/endpoint/telemetry",
+                            .content_type = "application/json",
+                            .body = (const uint8_t *)body,
+                            .body_len = strlen(body),
+                            .timeout_ms = HTTP_TIMEOUT_MS};
+    const link_res_t res = link_request(&req);
+    if (res.status < 0) {
+        ESP_LOGW(TAG, "telemetry unreachable: %s", res.err);
         return ESP_FAIL;
     }
-    esp_http_client_set_header(client, "Authorization", auth);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, body, (int)strlen(body));
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        const int status = esp_http_client_get_status_code(client);
-        /* A REJECTED REPORT IS A FAILED REPORT, and this used to call it success.
-           `esp_http_client_perform` returns ESP_OK for any status it managed to receive —
-           a 422 from a malformed body, a 401 from a rotated key, a 500 — so returning `err`
-           told the caller the telemetry had landed when the box had thrown it away. That
-           caller is `report()`, and what it does on success is `pmu_history_clear()`: the
-           crash ring, which exists precisely because a panel in a bedroom cannot be asked
-           what happened, was being wiped on the strength of a report nobody accepted.
-           Logged quietly still — a panel that cannot reach the box has a louder problem and
-           the manifest poll already reports it — but no longer called OK. */
-        if (status != 204) {
-            ESP_LOGW(TAG, "telemetry returned HTTP %d", status);
-            err = ESP_FAIL;
-        }
-    } else {
-        ESP_LOGW(TAG, "telemetry unreachable: %s", esp_err_to_name(err));
+    /* A REJECTED REPORT IS A FAILED REPORT, and this used to call it success. A transport that
+       managed to receive ANY status — a 422 from a malformed body, a 401 from a rotated key, a
+       500 — is not a report that landed. The caller is `report()`, and what it does on success
+       is `pmu_history_clear()`: the crash ring, which exists precisely because a panel in a
+       bedroom cannot be asked what happened, must not be wiped on the strength of a report
+       nobody accepted. */
+    if (res.status != 204) {
+        ESP_LOGW(TAG, "telemetry returned HTTP %d", res.status);
+        return ESP_FAIL;
     }
-    esp_http_client_cleanup(client);
-    free(auth);
-    return err;
+    return ESP_OK;
 }
 
 esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
 {
-    char url[256];
-    snprintf(url, sizeof(url), "%s/endpoint/firmware", cfg->api);
-
-    char *auth = bearer(cfg);
-    if (auth == NULL) return ESP_ERR_NO_MEM;
-
-    esp_http_client_config_t hc = {
-        .url = url,
-        .timeout_ms = HTTP_TIMEOUT_MS,
-    };
-    trust(&hc, cfg);
-    esp_http_client_handle_t client = esp_http_client_init(&hc);
-    if (client == NULL) {
-        free(auth);
+    (void)cfg;
+    char body[MANIFEST_MAX];
+    const link_req_t req = {.method = "GET",
+                            .path = "/endpoint/firmware",
+                            .timeout_ms = HTTP_TIMEOUT_MS,
+                            .buf = (uint8_t *)body,
+                            .cap = sizeof(body) - 1};
+    const link_res_t res = link_request(&req);
+    if (res.status < 0) {
+        ESP_LOGW(TAG, "manifest unreachable: %s", res.err);
         return ESP_FAIL;
     }
-    esp_http_client_set_header(client, "Authorization", auth);
-
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "manifest unreachable: %s", esp_err_to_name(err));
-        goto done;
+    if (res.status != 200) {
+        ESP_LOGW(TAG, "manifest returned HTTP %d", res.status);
+        return ESP_FAIL;
     }
-    esp_http_client_fetch_headers(client);
-
-    int status = esp_http_client_get_status_code(client);
-    if (status != 200) {
-        ESP_LOGW(TAG, "manifest returned HTTP %d", status);
-        err = ESP_FAIL;
-        goto done;
-    }
-
-    char body[MANIFEST_MAX];
-    int len = esp_http_client_read_response(client, body, sizeof(body) - 1);
-    if (len <= 0) {
+    if (res.got == 0 || res.cut) {
         ESP_LOGW(TAG, "manifest body empty");
-        err = ESP_FAIL;
-        goto done;
+        return ESP_FAIL;
     }
-    body[len] = '\0';
+    body[res.got] = '\0';
 
     cJSON *root = cJSON_Parse(body);
     if (root == NULL) {
         ESP_LOGW(TAG, "manifest is not JSON");
-        err = ESP_FAIL;
-        goto done;
+        return ESP_FAIL;
     }
     const cJSON *version = cJSON_GetObjectItemCaseSensitive(root, "version");
     const cJSON *bin = cJSON_GetObjectItemCaseSensitive(root, "url");
     if (!cJSON_IsString(version) || !cJSON_IsString(bin)) {
         ESP_LOGW(TAG, "manifest is missing version or url");
         cJSON_Delete(root);
-        err = ESP_FAIL;
-        goto done;
+        return ESP_FAIL;
     }
     strlcpy(out->version, version->valuestring, sizeof(out->version));
     strlcpy(out->url, bin->valuestring, sizeof(out->url));
     cJSON_Delete(root);
-    err = ESP_OK;
-
-done:
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    free(auth);
-    return err;
+    return ESP_OK;
 }
 
 const char *ota_running_version(void)
@@ -369,8 +304,13 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
         .http_config = &hc,
         .http_client_init_cb = attach_auth,
     };
+    /* ONE TLS SESSION AT A TIME, the OTA included. The image comes down its own HTTPS session
+       (`esp_https_ota` writes app slots and wants its own client), so the socket is closed first
+       and its ~40 KB returned, and every other request is held off until this is over. */
+    link_suspend();
     esp_err_t err = esp_https_ota(&oc);
     free(auth);
+    if (err != ESP_OK) link_resume();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "install failed: %s — staying on the current image", esp_err_to_name(err));
         /* REMEMBERED, because nobody reads the return. `main.c` calls this and discards the

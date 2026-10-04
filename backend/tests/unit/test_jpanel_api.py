@@ -195,10 +195,19 @@ class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
         src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
             encoding="utf-8"
         )
-        assert '"%s/jpanel%s", s_cfg->api, path' in src, (
-            "firmware/main/jpanel.c no longer builds <api>/jpanel/<path>; "
+        assert '"/jpanel%s", path' in src, (
+            "firmware/main/jpanel.c no longer builds /jpanel/<path>; "
             "the routes above moved with it or the panel is about to 404"
         )
+        # And `link.c` puts every path under the api base, on both transports: the HTTPS fallback
+        # appends it to the base, and the socket hands it to the box, which prefixes `/api`.
+        link = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "link.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"%s%s", s_cfg->api, r->path' in link
+        assert '"/api" + req.path' in (
+            Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api" / "panel_ws.py"
+        ).read_text(encoding="utf-8")
         # And the four suffixes it passes to that helper. `/next` carries a query string now —
         # `?at=` names which queued message to play — so it is pinned as a prefix, which is what
         # the route actually depends on: FastAPI matches the path and reads `at` as a parameter.

@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-29 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -6767,3 +6767,85 @@ last reason, its age, and seconds since the panel last reached the box by any ro
 the outage, because the one moment worth reporting is the one moment the panel cannot report.
 `GET /api/debug/endpoint/reach` is where they land, and `stale_s` is its headline: a panel that has
 gone silent shows a healthy row with an old timestamp, so the staleness is the finding.
+
+## One socket for everything (0.3.39, 2026-10-04)
+
+**Measured on Elora's panel, 0.3.38:** after about two talk turns every request failed with
+`connect` — the talk turn, the settings poll, the jpanel poll, a send. Internal heap sat near
+75 KB free with a 25.6 KB largest block. Every request was its own mbedTLS session (~40 KB of
+internal RAM, 1-2 s of handshake): the main task's three-second settings poll, the jpanel task's
+poll and a talk turn each opened one, and two handshakes in flight at once do not fit. A
+read-only pass found no per-turn leak. The owner's decision: **one bidirectional socket per panel,
+carrying everything.**
+
+**The box half is a tunnel, not a second implementation** (`backend/src/jbrain/api/panel_ws.py`,
+`/api/endpoint/ws`). A request frame names a method and a path; the box replays it in process,
+through the same ASGI app the panel's HTTPS requests reach, so it lands on the same route function
+with the same `PanelDep` auth (the connection's device key is presented again on every request, so
+a key revoked mid-connection is refused at the next one), the same RLS-scoped session and the same
+validation. Nothing panel-specific lives in the socket code, so the two paths cannot drift, and
+**every HTTP route is unchanged**: a panel on older firmware keeps working through the rollout.
+Only the panel routes are reachable over it (`_ALLOWED`); the OTA image and `/jpanel/events` are
+deliberately not. The connection is authenticated at the upgrade with the same bearer device key,
+and a revoke closes it at once.
+
+**The protocol** is JSON control frames plus binary frames `[id u32 LE][bytes]` for bodies, both
+ways; `panel_ws.py`'s docstring is the reference and `firmware/main/wsproto.h` spells the same
+thing from the panel's end (the shared constants are pinned from the box's test suite). Three
+decisions in it that were not obvious:
+
+- **Backpressure is a credit window, not TCP.** A voice-post message streams into a four-second
+  speaker ring. If the socket's own task waited on the speaker, every other request on the socket
+  would stall behind one message. So the panel says how many answer bytes it can hold (`win`,
+  16 KB — exactly its per-request stream buffer) and acks as the speaker drains; the box never
+  has more than the window in flight, and the socket task never blocks handing a frame over.
+- **Requests are multiplexed by id.** Up to four in flight (three tasks ask: main, talk, jpanel).
+  A 1.1 MB recording goes up in one-buffer frames, so the three-second settings poll interleaves
+  with a talk upload rather than queueing behind it.
+- **Server push is a frame, not a second channel.** `nudge.attach` registers the socket exactly as
+  the SSE stream did, so `nudge.fire` / `fire_all` reach it with no change on the box, and the
+  frame still means only "come and ask".
+
+**The panel half is `firmware/main/link.c`**, and its invariant is *never two TLS sessions at
+once*. One owner task holds the socket (connect, a heartbeat every 20 s, a dead-socket cut after
+60 s of silence from the box, reconnect with doubling backoff). Callers block on their own task in
+`link_request`, exactly where they used to block in `esp_http_client`. While the socket is the
+transport and is reconnecting, a request does **not** open its own HTTPS session as a shortcut —
+that would be the second handshake — it waits up to 8 s and otherwise fails with the socket's
+real error. **Fallback:** after three failed attempts (or at once, on a 404/405 upgrade — a box
+without the route), the panel goes back to one HTTPS session per request, serialised by one lock
+the socket's retry also takes, and tries the socket again every ten minutes. A socket the box
+accepts and then drops before it has stayed up 30 s counts as a failure, so a revoked key cannot
+become a two-second handshake loop. **OTA stays on `esp_https_ota`** but closes the socket first
+(`link_suspend`) so the download is the only session, then reopens it if the install failed.
+
+**What "connect" said is now a reason.** A failed upgrade records esp-tls's code, the TLS stack's,
+the socket errno and the upgrade's HTTP status (`connect tls=0x8006 sock=113`, `upgrade hs=403`,
+`closed=4000`), and it is what `set_err`/`poll_err`/`talk_err`/`send_err` carry. Telemetry gains
+`ws` (`ws` / `http` / `down`), `ws_err`, `ws_connects`, `ws_drops`, `int_min` (the internal-heap
+low-water mark since boot — a handshake that did not fit failed at the bottom of a dip a snapshot
+never sees) and `int_big` (the largest internal 8-bit block, which is what mbedTLS allocates
+from). `GET /api/debug/endpoint/reach` shows those beside the box's own live view of each socket
+(`socket`: uptime, last frame, requests, bytes, events, replacements).
+
+**The proxy needed nothing.** Caddy's `reverse_proxy` passes a WebSocket upgrade through as-is, and
+`/api/*` already covers the route on the public site, the LAN site (`tls internal`) and through the
+Cloudflare tunnel — the same handler the existing `/api/locations/live` and jcode terminal sockets
+already go through. The 20 s heartbeat keeps the socket under Cloudflare's 100 s idle cut.
+
+**Cost, honestly.** The socket's session is now held for the panel's whole uptime (~40 KB internal,
+as the SSE stream's would have been), plus the client's two 2 KB buffers, a 7 KB socket task and a
+4 KB owner task; static internal RAM grew ~2.3 KB (the slot table and frame buffers are in PSRAM).
+What it buys is that the PEAK is one session instead of two or three. If `int_min` shows the steady
+state is still too tight, the next lever is `CONFIG_MBEDTLS_DYNAMIC_BUFFER`, which frees an idle
+session's record buffers between reads — not enabled here, because it changes every TLS session on
+the panel, the OTA's included, and deserves its own measured release.
+
+**Verified vs not.** Verified in CI-equivalent checks: the box route against the real app (auth,
+every message type reaching the same route as HTTPS, byte-identical answers, chunked upload and
+reassembly, the window, one connection per device, idle cut, heartbeats, push, revoke); the
+protocol arithmetic on the host (`wsproto.c`: framing split across receive pieces, the credit
+window never exceeding its buffer, fallback and its clock rollover, the URI and the error string);
+and the image builds and fits (10% of the app slot free). **Not verified until it runs on a panel:**
+the live heap with a held session, reconnect behaviour across a box restart, the HTTPS fallback
+against an old box, and the OTA suspend/resume path.

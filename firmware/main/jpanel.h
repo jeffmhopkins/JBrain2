@@ -13,7 +13,7 @@
  * for a four-year-old: an intercom needing both ends present would be a toy that mostly
  * fails.
  *
- * ITS OWN TASK, for the same reason `talk.c` has one: every call here is an HTTPS round trip
+ * ITS OWN TASK, for the same reason `talk.c` has one: every call here is a round trip to the box
  * measured in seconds (a send is transcribed by whisper on the way in), and the render task
  * must never block. The renderer asks questions that return immediately — `jpanel_state()`,
  * `jpanel_waiting()` — and acts on the answers a frame later.
@@ -126,20 +126,14 @@ bool jpanel_replay(void);
    after a play, so the pop-up and the badge reflect what just happened. */
 void jpanel_poll_soon(void);
 
-/* THE PUSH STREAM. `jpanel_push_live()` is what lets `main.c` relax the settings cadence: a box
-   that can say when something changed does not need to be asked every three seconds, and the
-   relaxation is what keeps the concurrent-TLS count the same as before rather than one higher.
-   The counters ride in telemetry because a push channel that silently stopped working looks
-   exactly like a quiet house. */
 /* IS A MESSAGE ON ITS WAY TO THE SPEAKER. Distinct from `jpanel_state() == JPANEL_BUSY`, which
    also covers SENDING — using that to decide when to show the playback controls put a pause
    button and a sender's face over an outgoing message, where nothing was playing and nothing
    would answer a press. */
 bool jpanel_fetching(void);
 
-bool jpanel_push_live(void);
-unsigned jpanel_push_events(void);
-unsigned jpanel_push_drops(void);
+/* THE PUSH CHANNEL IS NOT HERE ANY MORE. It is the one socket (`link.h`): `link_live()` is what
+   lets `main.c` relax the settings cadence, and `link_stats()` carries its counters. */
 
 /* WHETHER THE LAST MESSAGE WAS ACTUALLY HEARD — see the counters' declaration in `jpanel.c`.
  *

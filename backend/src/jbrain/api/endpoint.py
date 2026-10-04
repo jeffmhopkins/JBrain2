@@ -48,7 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from jbrain.api import nudge
+from jbrain.api import nudge, panel_ws
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
@@ -499,6 +499,23 @@ class TelemetryIn(BaseModel):
     push: bool = False
     push_events: int = 0
     push_drops: int = 0
+    #: The low-water mark of free INTERNAL heap since boot (`heap_caps_get_minimum_free_size`),
+    #: and the largest free internal 8-bit block right now. `int_free` is a snapshot taken
+    #: while nothing is happening; a TLS handshake that did not fit happened at the bottom of a
+    #: dip, and `int_min` is the only number that remembers how deep the dip went. `int_big` is
+    #: the block mbedTLS actually allocates from (internal, 8-bit, NOT DMA-capable), which
+    #: `int_largest` — internal DMA — never described.
+    int_min: int = 0
+    int_big: int = 0
+    #: The panel's single socket (`jbrain.api.panel_ws`, firmware `link.c`): "ws" when it is
+    #: carrying everything, "http" when the panel fell back to one-request-per-connection
+    #: because the socket would not come up, "down" while it is reconnecting, "" from firmware
+    #: that predates it. `ws_err` is the last REAL reason a connection failed — the esp-tls
+    #: code, the socket errno and the handshake status — where "connect" said nothing.
+    ws: str = ""
+    ws_err: str = ""
+    ws_connects: int = 0
+    ws_drops: int = 0
     # What the codec last ACCEPTED, "90/36" — or "90!/36" when it refused the volume. Both
     # setters used to run with their returns dropped under a log line asserting success, on
     # the one path the owner drives remotely.
@@ -759,6 +776,18 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         push=body.push,
         push_events=body.push_events,
         push_drops=body.push_drops,
+        int_min=body.int_min,
+        int_big=body.int_big,
+        **(
+            {
+                "ws": body.ws,
+                "ws_connects": body.ws_connects,
+                "ws_drops": body.ws_drops,
+                **({"ws_err": body.ws_err} if body.ws_err else {}),
+            }
+            if body.ws
+            else {}
+        ),
         levels=body.levels,
         blit_fail_total=body.blit_fail_total,
         blit_recov=body.blit_recov,
@@ -1267,7 +1296,10 @@ async def revoke_panel(device_id: str, owner: OwnerDep, request: Request) -> Pan
         ).all()
         await session.commit()
     name = panel_display_name(str(row[0]))
-    log.info("endpoint.panel_revoked", name=name, keys=len(revoked))
+    # A revoked key's held-open socket would otherwise keep receiving events until its next
+    # request is refused; closing it is what makes "revoke" mean "stops now".
+    sockets = await panel_ws.disconnect([str(r[0]) for r in revoked])
+    log.info("endpoint.panel_revoked", name=name, keys=len(revoked), sockets=sockets)
     return PanelRevoked(name=name, keys=len(revoked))
 
 

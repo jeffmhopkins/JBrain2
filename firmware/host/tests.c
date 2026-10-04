@@ -30,6 +30,7 @@
 #include "variants.h"
 #include "cue.h"
 #include "vocab.h"
+#include "wsproto.h"
 
 static int checks;
 #define CHECK(c, msg)                                            \
@@ -3867,6 +3868,192 @@ static void test_the_fault_clocks_survive_a_rollover(void)
     CHECK(reach_quiet_ms(after) == 5000, "and so was the last contact");
 }
 
+/* ---- wsproto: the panel socket's framing, window and fallback ---------------------------- */
+
+static void test_a_frame_id_round_trips_little_endian(void)
+{
+    /* The box reads it with `struct.unpack_from("<I", ...)`; the bytes, not just the round trip,
+       are the contract. */
+    uint8_t b[WSP_ID_BYTES];
+    wsp_put_id(b, 0x11223344u);
+    CHECK(b[0] == 0x44 && b[1] == 0x33 && b[2] == 0x22 && b[3] == 0x11, "little-endian on the wire");
+    CHECK(wsp_get_id(b) == 0x11223344u, "and back");
+    wsp_put_id(b, 0xFFFFFFFFu);
+    CHECK(wsp_get_id(b) == 0xFFFFFFFFu, "the top of the range survives");
+}
+
+static void test_a_request_frame_is_the_json_the_box_parses(void)
+{
+    char out[256];
+    const int n = wsp_req(out, sizeof(out), 7, "POST", "/jpanel/send?to=dad",
+                          "application/octet-stream", "X-Jpanel-Sha256", "ab12", 960000, 0);
+    CHECK(n > 0 && (size_t)n == strlen(out), "it fits and says how long it is");
+    CHECK(strcmp(out, "{\"t\":\"req\",\"id\":7,\"m\":\"POST\",\"p\":\"/jpanel/send?to=dad\","
+                      "\"h\":{\"Content-Type\":\"application/octet-stream\","
+                      "\"X-Jpanel-Sha256\":\"ab12\"},\"len\":960000,\"win\":0}") == 0,
+          "exactly the shape panel_ws.py reads");
+    CHECK(wsp_req(out, sizeof(out), 1, "GET", "/endpoint/settings", NULL, NULL, NULL, 0, 4096) > 0,
+          "no headers at all is fine");
+    CHECK(strstr(out, "\"h\":{}") != NULL && strstr(out, "\"win\":4096") != NULL,
+          "an empty header object, and the window");
+}
+
+static void test_a_request_frame_refuses_what_it_cannot_say_plainly(void)
+{
+    char out[256];
+    CHECK(wsp_req(out, sizeof(out), 1, "GET", "/a\"b", NULL, NULL, NULL, 0, 0) == -1,
+          "a quote would need escaping, and nothing the firmware sends should");
+    CHECK(wsp_req(out, sizeof(out), 1, "GET", "/a\nb", NULL, NULL, NULL, 0, 0) == -1,
+          "nor a control character");
+    CHECK(wsp_req(out, 40, 1, "GET", "/endpoint/settings", NULL, NULL, NULL, 0, 0) == -1,
+          "a frame that does not fit is refused, never sent truncated");
+}
+
+static void test_the_small_frames_are_spelled_right(void)
+{
+    char out[64];
+    CHECK(wsp_ack(out, sizeof(out), 3, 8192) > 0 &&
+              strcmp(out, "{\"t\":\"ack\",\"id\":3,\"n\":8192}") == 0, "ack");
+    CHECK(wsp_cancel(out, sizeof(out), 3) > 0 && strcmp(out, "{\"t\":\"cancel\",\"id\":3}") == 0,
+          "cancel");
+    CHECK(wsp_hb(out, sizeof(out)) > 0 && strcmp(out, "{\"t\":\"hb\"}") == 0, "heartbeat");
+}
+
+static void test_a_frame_in_one_piece_yields_its_payload(void)
+{
+    uint8_t f[10];
+    wsp_put_id(f, 42);
+    memcpy(f + 4, "abcdef", 6);
+    wsp_rx_t rx = {0};
+    uint32_t id = 0;
+    const uint8_t *p = NULL;
+    CHECK(wsp_rx_feed(&rx, 0, f, 10, &id, &p) == 6, "six payload bytes");
+    CHECK(id == 42 && memcmp(p, "abcdef", 6) == 0, "the right id and bytes");
+}
+
+static void test_a_frame_split_inside_its_id_still_finds_it(void)
+{
+    /* The receive buffer can cut a frame anywhere, including two bytes into the id. */
+    uint8_t f[8];
+    wsp_put_id(f, 0x01020304u);
+    memcpy(f + 4, "wxyz", 4);
+    wsp_rx_t rx = {0};
+    uint32_t id = 0;
+    const uint8_t *p = NULL;
+    CHECK(wsp_rx_feed(&rx, 0, f, 2, &id, &p) == 0, "half an id is no payload yet");
+    CHECK(wsp_rx_feed(&rx, 2, f + 2, 4, &id, &p) == 2, "the rest of the id and two bytes");
+    CHECK(id == 0x01020304u && memcmp(p, "wx", 2) == 0, "assembled across the cut");
+    CHECK(wsp_rx_feed(&rx, 6, f + 6, 2, &id, &p) == 2 && memcmp(p, "yz", 2) == 0 &&
+              id == 0x01020304u, "and later pieces keep the id");
+}
+
+static void test_a_continuation_with_no_start_is_refused(void)
+{
+    wsp_rx_t rx = {0};
+    uint32_t id = 0;
+    const uint8_t *p = NULL;
+    const uint8_t junk[4] = {1, 2, 3, 4};
+    CHECK(wsp_rx_feed(&rx, 100, junk, 4, &id, &p) == -1, "a middle with no beginning");
+    CHECK(wsp_rx_feed(&rx, 0, junk, 2, &id, &p) == 0, "a fresh frame starts over");
+    CHECK(wsp_rx_feed(&rx, 3, junk, 1, &id, &p) == -1, "a piece that skips part of the id");
+}
+
+static void test_the_window_is_acked_at_half_and_never_twice(void)
+{
+    size_t acked = 0;
+    CHECK(wsp_credit(1000, &acked, 8192) == 0, "a little drained is not worth a frame");
+    CHECK(wsp_credit(4096, &acked, 8192) == 4096, "half the window drained is acked");
+    CHECK(acked == 4096, "and remembered");
+    CHECK(wsp_credit(4096, &acked, 8192) == 0, "the same bytes are not acked twice");
+    CHECK(wsp_credit(9000, &acked, 8192) == 4904, "the next half, exactly what was drained");
+    CHECK(wsp_credit(5, &acked, 0) == 0, "no window means nothing to ack");
+}
+
+static void test_the_window_never_lets_the_box_outrun_the_buffer(void)
+{
+    /* Model the box: it may have at most `granted - drained` bytes in flight. With acks at half,
+       the most ever outstanding is the window itself — which is what lets the panel size its
+       stream buffer to the window and never block the socket task on a full one. */
+    const size_t win = 8192;
+    size_t granted = win, sent = 0, drained = 0, acked = 0, worst = 0;
+    for (int step = 0; step < 1000; step++) {
+        const size_t room = granted - sent;
+        const size_t n = room < 2044 ? room : 2044;
+        sent += n;
+        if (sent - drained > worst) worst = sent - drained;
+        const size_t eat = (sent - drained) < 1500 ? (sent - drained) : 1500;
+        drained += eat;
+        granted += wsp_credit(drained, &acked, win);
+    }
+    CHECK(worst <= win, "nothing in flight beyond the window");
+    CHECK(drained > 100000, "and it keeps flowing");
+}
+
+static void test_the_socket_falls_back_after_three_failures_and_comes_back(void)
+{
+    wsp_policy_t p;
+    wsp_policy_init(&p);
+    CHECK(wsp_policy_try_ws(&p, 0), "a fresh panel tries the socket");
+    wsp_policy_failed(&p, 0, 1000);
+    wsp_policy_failed(&p, 0, 2000);
+    CHECK(!p.fallback && wsp_policy_try_ws(&p, 2000), "two failures are weather");
+    wsp_policy_failed(&p, 0, 3000);
+    CHECK(p.fallback && !wsp_policy_try_ws(&p, 3001), "three are a fallback");
+    CHECK(!wsp_policy_try_ws(&p, 3000 + WSP_FALLBACK_RETRY_MS - 1), "held for the retry period");
+    CHECK(wsp_policy_try_ws(&p, 3000 + WSP_FALLBACK_RETRY_MS), "then the socket is tried again");
+    wsp_policy_up(&p);
+    CHECK(!p.fallback && p.fails == 0, "and one success ends it");
+}
+
+static void test_a_box_with_no_socket_route_falls_back_at_once(void)
+{
+    /* A 404 on the upgrade is a box older than this firmware: not weather, and not worth three
+       handshakes to learn. */
+    wsp_policy_t p;
+    wsp_policy_init(&p);
+    wsp_policy_failed(&p, 404, 50);
+    CHECK(p.fallback, "404 falls back on the first try");
+    wsp_policy_init(&p);
+    wsp_policy_failed(&p, 403, 50);
+    CHECK(!p.fallback, "a refused key is not a missing route");
+}
+
+static void test_the_fallback_clock_survives_a_rollover(void)
+{
+    wsp_policy_t p;
+    wsp_policy_init(&p);
+    wsp_policy_failed(&p, 404, 0xFFFFFF00u);
+    CHECK(!wsp_policy_try_ws(&p, 0xFFFFFF00u + 1000u), "a second later, across the wrap, still held");
+}
+
+static void test_the_reconnect_backs_off_and_is_capped(void)
+{
+    CHECK(wsp_backoff_ms(0) == WSP_BACKOFF_MIN_MS && wsp_backoff_ms(1) == WSP_BACKOFF_MIN_MS,
+          "the first retry is quick");
+    CHECK(wsp_backoff_ms(2) == 2 * WSP_BACKOFF_MIN_MS, "and doubles");
+    CHECK(wsp_backoff_ms(50) == WSP_BACKOFF_MAX_MS, "up to the cap, never past it");
+}
+
+static void test_the_socket_uri_comes_from_the_api_base(void)
+{
+    char out[128];
+    CHECK(wsp_ws_uri(out, sizeof(out), "https://jbrain.local/api", "/endpoint/ws") > 0 &&
+              strcmp(out, "wss://jbrain.local/api/endpoint/ws") == 0, "TLS stays TLS");
+    CHECK(wsp_ws_uri(out, sizeof(out), "http://10.0.0.2:8000/api", "/endpoint/ws") > 0 &&
+              strcmp(out, "ws://10.0.0.2:8000/api/endpoint/ws") == 0, "plain stays plain");
+    CHECK(wsp_ws_uri(out, sizeof(out), "ftp://x", "/endpoint/ws") == -1, "nothing else");
+    CHECK(wsp_ws_uri(out, 10, "https://jbrain.local/api", "/endpoint/ws") == -1, "nor truncated");
+}
+
+static void test_the_reason_says_more_than_connect(void)
+{
+    char out[96];
+    CHECK(wsp_err_str(out, sizeof(out), "connect", 0x8006, -0x7780, 113, 0) > 0, "fits");
+    CHECK(strcmp(out, "connect tls=0x8006 mbed=-0x7780 sock=113") == 0, "every nonzero field");
+    CHECK(wsp_err_str(out, sizeof(out), "upgrade", 0, 0, 0, 403) > 0 &&
+              strcmp(out, "upgrade hs=403") == 0, "and only those");
+}
+
 static void test_a_failure_with_nothing_to_say_keeps_the_last_real_reason(void)
 {
     /* A caller that passes NULL or "" must not blank a name an earlier failure gave: the reason
@@ -4258,6 +4445,21 @@ int main(void)
     test_never_having_reached_the_box_is_not_zero_seconds_ago();
     test_a_never_failed_path_reports_an_age_of_zero_and_says_so();
     test_the_fault_clocks_survive_a_rollover();
+    test_a_frame_id_round_trips_little_endian();
+    test_a_request_frame_is_the_json_the_box_parses();
+    test_a_request_frame_refuses_what_it_cannot_say_plainly();
+    test_the_small_frames_are_spelled_right();
+    test_a_frame_in_one_piece_yields_its_payload();
+    test_a_frame_split_inside_its_id_still_finds_it();
+    test_a_continuation_with_no_start_is_refused();
+    test_the_window_is_acked_at_half_and_never_twice();
+    test_the_window_never_lets_the_box_outrun_the_buffer();
+    test_the_socket_falls_back_after_three_failures_and_comes_back();
+    test_a_box_with_no_socket_route_falls_back_at_once();
+    test_the_fallback_clock_survives_a_rollover();
+    test_the_reconnect_backs_off_and_is_capped();
+    test_the_socket_uri_comes_from_the_api_base();
+    test_the_reason_says_more_than_connect();
     test_a_failure_with_nothing_to_say_keeps_the_last_real_reason();
     test_the_streak_is_consecutive_and_the_total_is_not();
     test_a_bad_path_is_ignored_rather_than_scribbling();
