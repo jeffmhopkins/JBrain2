@@ -351,13 +351,15 @@ class PanelSocket:
         except WebSocketDisconnect:
             why = "disconnect"
         finally:
+            # Deregister before the first await: a cancelled run (a client torn down mid-close)
+            # can be interrupted at any await below and must not leave a dead socket live.
+            nudge.detach(self.device, queue)
+            if _live.get(self.device) is self:
+                del _live[self.device]
             running = [*background, *self.tasks.values()]
             for t in running:
                 t.cancel()
             await asyncio.gather(*running, return_exceptions=True)
-            nudge.detach(self.device, queue)
-            if _live.get(self.device) is self:
-                del _live[self.device]
             await self._http.aclose()
             await self.close(1000)
             s = self.stats
