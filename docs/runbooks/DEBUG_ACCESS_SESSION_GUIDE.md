@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-10-04 — `disk [--refresh]` added (host disk usage breakdown, `GET /api/debug/disk`).
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -222,6 +222,17 @@ scripts/debug-connect.sh extra-args qwen3.8-27b-q4      # no args = clear, back 
 
 # Host hardware telemetry: GPU busy %, APU power, load — watch the device across a Stop.
 scripts/debug-connect.sh metrics
+
+# Where the disk went (no terminal needed): filesystem totals, docker images / container
+# writable layers / volumes / build cache with reclaimable bytes, and per-entry sizes of the
+# project dir — one level deeper under local-models, comfyui-models, whisper-models, backups.
+# Cached ~60 s on the supervisor; --refresh rebuilds. A cold build can outlast the tunnel's
+# ~100 s edge limit: it still finishes and caches, so rerun WITHOUT --refresh a minute later.
+# `stale: true` = served from the last build while a new one runs. A du timeout (140 s cap)
+# leaves project_dirs PARTIAL and says so in `errors`; a retry hits the same cap. Image
+# `reclaimable_bytes` is docker system df's figure, an upper bound (shared layers).
+scripts/debug-connect.sh disk
+scripts/debug-connect.sh disk --refresh
 
 # See the live LLM routing, then switch which model serves a task — no restart.
 # The provider is the model's BARE id. `local:gpt-oss-120b` is refused with a 422

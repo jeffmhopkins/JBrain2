@@ -31,6 +31,12 @@
 #   scripts/debug-connect.sh tavily https://example.com/walled # force ONLY the hosted Tavily tier
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
+#   scripts/debug-connect.sh disk [--refresh]          # where the disk went: fs, docker df, project dirs
+#     (Images/containers/volumes/build cache with reclaimable bytes, and du of PROJECT_DIR one
+#      level deeper under local-models, comfyui-models, whisper-models, backups. Cached ~60 s
+#      on the supervisor; --refresh rebuilds. A cold build can outlast the tunnel's ~100 s
+#      edge limit — it still finishes and caches, so rerun WITHOUT --refresh a minute later.
+#      A du that hits its 140 s cap is PARTIAL (said in `errors`); a retry hits the same cap.)
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
 #   scripts/debug-connect.sh upstream-logs --tail 400  # llama-server's OWN log (slot lifecycle)
 #   scripts/debug-connect.sh drop-cache [ids]          # reclaim stale weights page cache
@@ -503,6 +509,11 @@ except Exception: print("")')
     ;;
 
   host) _call GET /api/debug/host | _pp ;;   # host memory/swap/disk/load + per-container + per-process RSS
+
+  disk) # [--refresh] — disk usage breakdown: filesystems, docker df, PROJECT_DIR sizes
+    q=""; [ "${1:-}" = "--refresh" ] && q="?refresh=1"
+    _call GET "/api/debug/disk$q" | _pp
+    ;;
 
   gateway-logs) # [--tail N] — the model engine's OWN stdout (slot lifecycle), not the container log
     tail=200

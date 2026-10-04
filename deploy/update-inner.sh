@@ -1099,8 +1099,15 @@ fi
 # counts only with an image to run. The OWNER'S selection is passed, not this update's
 # working engine: a Flash-Next whose weights only landed in the sync above starts now, not
 # one update later (local_engine_start falls back on its own if it cannot).
+#
+# The cache drop comes first, for BOTH engines: a build or pull above can leave tens of GB
+# of page cache, and the api's load guard counts cache as used — so without it a Flash-Next
+# that needs ~88 GB is refused ("only 84 GB safely available") with 109 GB really free, and
+# stays refused, since nothing on an idle box reclaims that cache. Only the standard path's
+# smoke test dropped it before (2026-10-04: Flash-Next never came back after an update).
 if [ -n "$LOCAL_LLM_RUNNING" ]; then
   _fn_final="$(local_engine_flash_next_installed)"
+  drop_page_cache
   echo "[update] restarting the local engine ($SELECTED_ENGINE selected)"
   local_engine_start "$SELECTED_ENGINE" "$_fn_final" || true
 fi
