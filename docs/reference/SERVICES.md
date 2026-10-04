@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-10-04 — the `searxng` row: general web search goes to SearXNG FIRST again, with Brave Search then Tavily as hosted backstops. Prior: the `searxng`, `reader` and `byparr` rows: images pinned (dated tag / digest) — an update never re-pulls `latest`. Prior: general web search now goes to Tavily first, SearXNG is its fallback. Prior: the `sdr` row now carries the two PER-RADIO signal-path settings (tuner gain, upconverter offset). Prior: the **`note_ingest`** persona's allowlist filled: the two note-bound graph writes, `ask_owner`, and the inherited entity reads + clock — and it now reads the knowledge base, narrowed to the note's own domain plus `general`. Prior: added the persona (the note conversation) to the persona table.
+> **Status:** Living · **Last verified:** 2026-10-04 — backups: `deploy/backup.sh` retention is by stamp (every backup from the last 48 h, then the newest per day for 14 days, run before and after writing), stamps are UTC, a failed step leaves no final-named file, an unchanged blob tarball is skipped and each dump's `.blobs` sidecar names its tarball, which `restore.sh` uses. Prior: the `searxng` row: general web search goes to SearXNG FIRST again, with Brave Search then Tavily as hosted backstops. Prior: the `searxng`, `reader` and `byparr` rows: images pinned (dated tag / digest) — an update never re-pulls `latest`. Prior: general web search now goes to Tavily first, SearXNG is its fallback. Prior: the `sdr` row now carries the two PER-RADIO signal-path settings (tuner gain, upconverter offset). Prior: the **`note_ingest`** persona's allowlist filled: the two note-bound graph writes, `ask_owner`, and the inherited entity reads + clock — and it now reads the knowledge base, narrowed to the note's own domain plus `general`. Prior: added the persona (the note conversation) to the persona table.
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -269,6 +269,23 @@ transitions emit workflow events).
   the main CLI: image-gen (`scripts/comfyui-setup.sh`), jcode
   (`scripts/jcode-setup.sh`), tunnel (chosen at install), and the debug console
   (`scripts/debug-connect.sh`).
+- **Backups** (`deploy/backup.sh`, nightly cron + before every update/import/reset):
+  `backups/jbrain-<stamp>.dump` (pg_dump), `backups/blobs-<stamp>.tar.gz` (the blob
+  volume) and the sidecar `backups/jbrain-<stamp>.blobs` naming the blob tarball that
+  dump pairs with (or `none`). Stamps are **UTC** (`date -u`), whichever of the host
+  cron or the UTC updater container wrote them. **A backup is all or nothing**: dump
+  and tarball are written as dot-prefixed `.tmp` files and renamed only once every
+  step succeeded (stale `.tmp`s are cleared after a day), so a failed pg_dump never
+  lands as a 0-byte "newest" backup. **Retention is by stamp**, run before writing
+  (so a full disk recovers) and after: every backup from the last 48 h, then the
+  newest per calendar day back 14 days (`KEEP_DAYS`), the rest deleted with their
+  sidecars. **A blob tarball is skipped when the volume is unchanged** since the
+  newest one (a path/size/mtime fingerprint stored as `blobs-<stamp>.sha`; logged as
+  `blobs unchanged since <stamp>, skipped`), and the dump's sidecar then names the
+  reused tarball. `restore.sh <stamp>` restores the tarball the sidecar names (with
+  `none` or a missing tarball it leaves the blob volume as-is rather than wipe it);
+  only a dump from before sidecars falls back to the newest tarball at or before its
+  stamp. Pruning never drops a tarball a kept dump pairs with.
 - **Supervisor + Ops screen** — per-container health, restart, live log tails,
   and the update / export / import flows (a detached one-shot updater container
   that survives the stack restarting beneath it). See `../runbooks/OPERATIONS.md` and the

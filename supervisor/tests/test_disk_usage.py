@@ -8,21 +8,25 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
 
 from supervisor import disk_usage
+from supervisor import gateway as gateway_mod
 from supervisor.app import create_app
 from supervisor.config import Settings
 from supervisor.disk_usage import (
     DOCKER_ROOT_MOUNT,
+    HOST_MOUNT,
     PROJECT_MOUNT,
     DiskUsage,
     parse_build_cache,
     parse_containers,
     parse_du,
+    parse_du_tree,
     parse_images,
     parse_statfs,
     parse_volumes,
@@ -268,7 +272,10 @@ class FakeProbe:
         df_raises: bool = False,
         root: str | None = "/var/lib/docker",
         gate: threading.Event | None = None,
+        host: dict[str, HelperRun | Exception] | None = None,
     ) -> None:
+        # Host du answers keyed by host root; a root not listed answers empty.
+        self.host = host or {}
         # When set, docker_df signals `entered` and blocks on `gate`: a build held
         # open so a test can race other callers against it.
         self.gate = gate
@@ -300,6 +307,12 @@ class FakeProbe:
         self.runs.append((list(argv), dict(mounts), timeout_s))
         if argv[0] == "stat":
             return HelperRun(exit_code=0, stdout=self.stat_out, stderr="")
+        if argv[-1].startswith(HOST_MOUNT):
+            (root,) = mounts
+            answer = self.host.get(root, HelperRun(0, "", ""))
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
         if self.du_raises:
             raise RuntimeError("image not found")
         return HelperRun(
@@ -319,13 +332,18 @@ class Clock:
         return self.t
 
 
-def _usage(probe: FakeProbe, clock: Clock | None = None) -> DiskUsage:
+def _usage(
+    probe: FakeProbe,
+    clock: Clock | None = None,
+    host_roots: Sequence[tuple[str, int]] = (),
+) -> DiskUsage:
     return DiskUsage(
         probe,
         "jbrain",
         "/opt/jbrain2",
         clock=clock or Clock(),
         statvfs=lambda _p: _vfs(1000, 300, 250),
+        host_roots=host_roots,
     )
 
 
@@ -536,8 +554,14 @@ def test_disk_route_without_a_probe_is_503() -> None:
 
 class _HelperContainer:
     def __init__(
-        self, *, hang: bool = False, fail_start: bool = False, fail_logs: bool = False
+        self,
+        *,
+        hang: bool = False,
+        fail_start: bool = False,
+        fail_logs: bool = False,
+        age_s: float = 3600.0,
     ) -> None:
+        self.name = f"jbrain-diskprobe-{time.time_ns() - int(age_s * 1e9)}"
         self.hang = hang
         self.fail_start = fail_start
         self.fail_logs = fail_logs
@@ -576,10 +600,12 @@ class _HelperContainers:
         self.image = ""
         self.kwargs: dict[str, Any] = {}
         self.list_filters: dict[str, Any] = {}
+        self.check_removed = True
 
     def create(self, image: str, **kwargs: Any) -> _HelperContainer:
         # Every leftover is already gone by the time a new helper is created.
-        assert all(c.removed for c in self.leftovers)
+        if self.check_removed:
+            assert all(c.removed for c in self.leftovers)
         self.image, self.kwargs = image, kwargs
         return self.container
 
@@ -652,6 +678,20 @@ def test_gateway_helper_removed_when_logs_fail() -> None:
     assert container.removed
 
 
+def test_gateway_sweep_spares_a_helper_still_running_beside_it() -> None:
+    # The project and host du helpers run side by side; one starting must not kill
+    # another mid-run. A name that does not parse is never guessed at either.
+    fresh = _HelperContainer(age_s=5)
+    odd = _HelperContainer()
+    odd.name = "jbrain-diskprobe-notanumber"
+    stale = _HelperContainer(age_s=gateway_mod.DISK_HELPER_STALE_S + 60)
+    client = _HelperClient(_HelperContainer(), [])
+    client.containers.leftovers = [fresh, odd, stale]
+    client.containers.check_removed = False
+    _gw(client).run_readonly_helper(["du"], {}, 1.0)
+    assert stale.removed and not fresh.removed and not odd.removed
+
+
 def test_gateway_sweeps_leftover_helpers_first() -> None:
     leftovers = [_HelperContainer(), _HelperContainer()]
     client = _HelperClient(_HelperContainer(), leftovers)
@@ -661,3 +701,167 @@ def test_gateway_sweeps_leftover_helpers_first() -> None:
         "all": True,
         "label": DISK_HELPER_LABEL,
     }
+
+
+def test_parse_du_tree_keeps_every_depth_capped_biggest_first() -> None:
+    inside = f"{HOST_MOUNT}/home"
+    out = "\n".join(
+        [
+            f"400\t{inside}/jeff/.cache/huggingface",
+            f"450\t{inside}/jeff/.cache",
+            f"500\t{inside}/jeff",
+            f"3\t{inside}/jeff/notes.txt",
+            "junk",
+            f"9\t{HOST_MOUNT}/homeother/x",
+            f"510\t{inside}",
+        ]
+    )
+    total, entries = parse_du_tree(out, inside, "/home", limit=3)
+    assert total == 510 * 1024
+    assert [e.path for e in entries] == [
+        "/home/jeff",
+        "/home/jeff/.cache",
+        "/home/jeff/.cache/huggingface",
+    ]
+
+
+def test_host_dirs_run_one_sandboxed_du_per_root_at_its_depth() -> None:
+    probe = FakeProbe(
+        stat_out=SAME_DISK_STAT,
+        host={
+            "/home": HelperRun(
+                0,
+                f"300\t{HOST_MOUNT}/home/jeff/.cache/huggingface\n"
+                f"310\t{HOST_MOUNT}/home\n",
+                "",
+            ),
+            "/var": HelperRun(
+                0,
+                f"900\t{HOST_MOUNT}/var/lib/docker\n"
+                f"950\t{HOST_MOUNT}/var/lib\n"
+                f"1000\t{HOST_MOUNT}/var\n",
+                "",
+            ),
+        },
+    )
+    report = _usage(probe, host_roots=(("/home", 3), ("/var", 2))).report()
+    assert report.errors == []
+    assert report.host_dirs is not None and report.host_dirs.missing == []
+    home, var = report.host_dirs.roots
+    assert home.root == "/home" and home.depth == 3 and not home.partial
+    assert home.total_bytes == 310 * 1024
+    assert home.entries[0].path == "/home/jeff/.cache/huggingface"
+    # /var/lib/docker is listed under /var like any other entry.
+    assert [e.path for e in var.entries] == ["/var/lib", "/var/lib/docker"]
+    host_runs = [r for r in probe.runs if r[0][-1].startswith(HOST_MOUNT)]
+    by_root = sorted(host_runs, key=lambda r: r[0][-1])
+    assert [(r[0], r[1]) for r in by_root] == [
+        (
+            ["du", "-a", "-x", "-k", "-d", "3", f"{HOST_MOUNT}/home"],
+            {"/home": f"{HOST_MOUNT}/home"},
+        ),
+        (
+            ["du", "-a", "-x", "-k", "-d", "2", f"{HOST_MOUNT}/var"],
+            {"/var": f"{HOST_MOUNT}/var"},
+        ),
+    ]
+    assert all(r[2] == disk_usage.DU_TIMEOUT_S for r in host_runs)
+
+
+def test_default_host_roots_are_the_fixed_allowlist() -> None:
+    assert dict(disk_usage.HOST_ROOTS) == {
+        "/home": 3,
+        "/root": 2,
+        "/var": 2,
+        "/tmp": 1,
+        "/opt": 1,
+        "/srv": 1,
+        "/usr": 1,
+        "/snap": 1,
+    }
+
+
+def test_a_missing_host_root_is_listed_not_an_error() -> None:
+    probe = FakeProbe(
+        stat_out=SAME_DISK_STAT,
+        host={
+            "/snap": RuntimeError(
+                'invalid mount config for type "bind": bind source path does not '
+                "exist: /snap"
+            ),
+            "/srv": RuntimeError("daemon hiccup"),
+        },
+    )
+    report = _usage(probe, host_roots=(("/snap", 1), ("/srv", 1))).report()
+    assert report.host_dirs is not None
+    assert report.host_dirs.missing == ["/snap"]
+    assert report.host_dirs.roots == []
+    assert report.errors == ["host du /srv: RuntimeError: daemon hiccup"]
+
+
+def test_a_host_du_that_hits_the_cap_is_partial() -> None:
+    probe = FakeProbe(
+        stat_out=SAME_DISK_STAT,
+        host={"/var": HelperRun(None, f"5\t{HOST_MOUNT}/var/log\n", "")},
+    )
+    report = _usage(probe, host_roots=(("/var", 2),)).report()
+    assert report.host_dirs is not None
+    (var,) = report.host_dirs.roots
+    assert var.partial and var.total_bytes is None
+    assert [e.path for e in var.entries] == ["/var/log"]
+    assert any("host du /var" in e and "PARTIAL" in e for e in report.errors)
+
+
+def test_host_and_project_du_run_concurrently() -> None:
+    # Each du blocks until the other has started: run one after the other, this
+    # would deadlock (and the wait would time out).
+    started = threading.Barrier(2, timeout=5)
+
+    class Concurrent(FakeProbe):
+        def run_readonly_helper(
+            self, argv: Sequence[str], mounts: Mapping[str, str], timeout_s: float
+        ) -> HelperRun:
+            if argv[0] == "du":
+                started.wait()
+            return super().run_readonly_helper(argv, mounts, timeout_s)
+
+    probe = Concurrent(stat_out=SAME_DISK_STAT, du_out=f"1\t{PROJECT_MOUNT}\n")
+    report = _usage(probe, host_roots=(("/tmp", 1),)).report()
+    assert report.project_dirs is not None
+    assert report.errors == []
+
+
+def test_invalidate_drops_the_cache_and_a_build_in_flight_is_not_cached() -> None:
+    clock = Clock()
+    probe = FakeProbe(stat_out=SAME_DISK_STAT)
+    usage = _usage(probe, clock)
+    usage.report()
+    usage.invalidate()
+    assert not usage.report().cached and probe.df_calls == 2
+
+    # A cleanup lands while a build is running: that build answers its caller but
+    # must not become the cached report.
+    probe.gate = threading.Event()
+    probe.entered.clear()
+    worker = threading.Thread(target=lambda: usage.report(refresh=True))
+    worker.start()
+    assert probe.entered.wait(5)
+    usage.invalidate()
+    probe.gate.set()
+    worker.join(5)
+    probe.gate = None
+    assert not usage.report().cached and probe.df_calls == 4
+
+
+def test_var_lib_docker_is_listed_even_below_the_cap() -> None:
+    inside = f"{HOST_MOUNT}/var"
+    lines = [f"{1000 - i}\t{inside}/big{i}" for i in range(5)]
+    lines.append(f"7\t{inside}/lib/docker")
+    lines.append(f"6\t{inside}/lib/other")
+    _, entries = parse_du_tree("\n".join(lines), inside, "/var", limit=3)
+    assert [e.path for e in entries] == [
+        "/var/big0",
+        "/var/big1",
+        "/var/big2",
+        "/var/lib/docker",
+    ]

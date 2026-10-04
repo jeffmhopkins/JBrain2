@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-10-04 — `disk [--refresh]` added (host disk usage breakdown, `GET /api/debug/disk`).
+> **Status:** Living · **Last verified:** 2026-10-04 — `disk-clean [--apply] [actions]` added (frees build cache, unused non-stack images, the allowlisted orphan volume; dry run by default) and `disk` now reports `host_dirs`. Prior: `disk [--refresh]` added (host disk usage breakdown, `GET /api/debug/disk`).
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -231,8 +231,20 @@ scripts/debug-connect.sh metrics
 # `stale: true` = served from the last build while a new one runs. A du timeout (140 s cap)
 # leaves project_dirs PARTIAL and says so in `errors`; a retry hits the same cap. Image
 # `reclaimable_bytes` is docker system df's figure, an upper bound (shared layers).
+# `host_dirs` sizes /home /root /var /tmp /opt /srv /usr /snap the same way (top 60 entries
+# each; /home 3 levels deep, /var 2 with /var/lib/docker always listed) — where space goes that neither the project dir nor docker holds.
 scripts/debug-connect.sh disk
 scripts/debug-connect.sh disk --refresh
+
+# Free what `disk` reports as reclaimable. A DRY RUN unless --apply: read the per-action
+# `bytes`, `items` and `kept` first. No actions = all three. `unused_images` never removes an
+# image the stack could need (compose images and build bases, .env overrides, Dockerfile FROM
+# lines, jbrain2-*/jbrain-*/alpine/docker), and removes nothing if any of that cannot be read; `orphan_volumes` only removes allowlisted
+# volumes nothing references (today `jbrain_llm_kv`), never blobs/db_data. 409 while an update
+# runs, and no update can start while an apply runs. The next `disk` is rebuilt fresh. An
+# apply that outlasts the timeout keeps running on the box: re-run the dry run, don't re-apply.
+scripts/debug-connect.sh disk-clean
+scripts/debug-connect.sh disk-clean --apply build_cache orphan_volumes
 
 # See the live LLM routing, then switch which model serves a task — no restart.
 # The provider is the model's BARE id. `local:gpt-oss-120b` is refused with a 422

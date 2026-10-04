@@ -11,6 +11,9 @@ Three views, each best-effort so one failing never hides the others:
 - `project_dirs`: `du` over PROJECT_DIR's top level, one level deeper under the
   model and backup dirs, run in a read-only, network-less helper container (the
   supervisor itself does not mount the project tree).
+- `host_dirs`: the same `du` over a fixed allowlist of host folders (/home, /root,
+  /var, ...), each in its own helper, concurrently with the project `du` — the space
+  the project tree and docker do not account for (a home's model caches, logs).
 
 The result is cached in-process so a polling client cannot keep a `du` running.
 """
@@ -20,13 +23,14 @@ from __future__ import annotations
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from supervisor.gateway import HelperRun
 
@@ -44,6 +48,26 @@ DOCKER_ROOT_MOUNT = "/mnt/docker-root"
 # Dirs whose children are the interesting unit (one model, one backup), so the
 # breakdown goes one level deeper under them.
 DEEP_DIRS = frozenset({"local-models", "comfyui-models", "whisper-models", "backups"})
+# Host folders sized for `host_dirs`, with how many levels deep each is listed. Fixed:
+# a path never comes from a request. /home goes one deeper than /root so a user's
+# `~/.cache/huggingface` shows under either. /var stays at 2: at 3, `-a` lists every
+# file in /var/lib/docker's layer dirs and the run routinely hit its cap.
+HOST_ROOTS: tuple[tuple[str, int], ...] = (
+    ("/home", 3),
+    ("/root", 2),
+    ("/var", 2),
+    ("/tmp", 1),
+    ("/opt", 1),
+    ("/srv", 1),
+    ("/usr", 1),
+    ("/snap", 1),
+)
+# Always listed when du printed them, even below the per-root cap: the docker data
+# root on /var's filesystem is the entry this section most often exists to find.
+HOST_PINNED = frozenset({"/var/lib/docker"})
+HOST_MOUNT = "/mnt/host"
+# Per root, after sorting: `-a` at depth 3 lists thousands of files under /var.
+TOP_HOST_ENTRIES = 60
 TOP_IMAGES = 15
 TOP_CONTAINERS = 10
 COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
@@ -159,6 +183,24 @@ class ProjectDirsOut(BaseModel):
     entries: list[DirSizeOut]
 
 
+class HostRootOut(BaseModel):
+    root: str
+    depth: int
+    total_bytes: int | None
+    # The du hit its cap: entries finished by then are listed, total_bytes is None.
+    partial: bool
+    # The biggest TOP_HOST_ENTRIES at any depth, so a parent and its children both
+    # appear; read them as a tree, not a sum.
+    entries: list[DirSizeOut]
+
+
+class HostDirsOut(BaseModel):
+    roots: list[HostRootOut]
+    # Allowlisted paths this host does not have (a bind of a missing source fails,
+    # and the probe never creates one).
+    missing: list[str]
+
+
 class DiskReport(BaseModel):
     generated_at: str
     cached: bool = False
@@ -169,6 +211,7 @@ class DiskReport(BaseModel):
     filesystem: list[FilesystemOut]
     docker: DockerOut | None
     project_dirs: ProjectDirsOut | None
+    host_dirs: HostDirsOut | None = None
     errors: list[str]
 
 
@@ -296,33 +339,62 @@ def parse_build_cache(payload: dict[str, Any]) -> BuildCacheOut:
     )
 
 
-def parse_du(
-    stdout: str, inside_root: str, host_root: str
-) -> tuple[int | None, list[DirSizeOut]]:
-    """`du -a -k -d 2` lines (`KiB<TAB>path`) to host paths, keeping the top level
-    and the children of DEEP_DIRS. The size leads and the tab is du's own separator,
-    so a name with spaces or tabs survives; a line that does not parse (the tail of
-    a name with a newline in it) is skipped rather than guessed at."""
-    total: int | None = None
-    entries: list[DirSizeOut] = []
-    host = host_root.rstrip("/")
+def _du_lines(stdout: str, inside_root: str) -> Iterator[tuple[str | None, int]]:
+    """`du -a -k` lines (`KiB<TAB>path`) as (path relative to the root, bytes); the
+    root itself is None. The size leads and the tab is du's own separator, so a name
+    with spaces or tabs survives; a line that does not parse (the tail of a name with
+    a newline in it) is skipped rather than guessed at."""
     for line in stdout.splitlines():
         size, sep, path = line.partition("\t")
         if not sep or not size.isdigit():
             continue
         if path == inside_root:
-            total = int(size) * 1024
+            yield None, int(size) * 1024
+        elif path.startswith(inside_root + "/"):
+            yield path[len(inside_root) + 1 :], int(size) * 1024
+
+
+def _by_size(entries: list[DirSizeOut]) -> list[DirSizeOut]:
+    # Ties by path, so a dir sits just above its only child of the same size.
+    return sorted(entries, key=lambda e: (-e.bytes, e.path))
+
+
+def parse_du(
+    stdout: str, inside_root: str, host_root: str
+) -> tuple[int | None, list[DirSizeOut]]:
+    """`du -a -k -d 2` output to host paths, keeping the top level and the children
+    of DEEP_DIRS."""
+    total: int | None = None
+    entries: list[DirSizeOut] = []
+    host = host_root.rstrip("/")
+    for rel, size in _du_lines(stdout, inside_root):
+        if rel is None:
+            total = size
             continue
-        if not path.startswith(inside_root + "/"):
-            continue
-        rel = path[len(inside_root) + 1 :]
         parts = rel.split("/")
         if len(parts) > 2 or (len(parts) == 2 and parts[0] not in DEEP_DIRS):
             continue
-        entries.append(DirSizeOut(path=f"{host}/{rel}", bytes=int(size) * 1024))
-    # Ties by path, so a dir sits just above its only child of the same size.
-    entries.sort(key=lambda e: (-e.bytes, e.path))
-    return total, entries
+        entries.append(DirSizeOut(path=f"{host}/{rel}", bytes=size))
+    return total, _by_size(entries)
+
+
+def parse_du_tree(
+    stdout: str, inside_root: str, host_root: str, limit: int
+) -> tuple[int | None, list[DirSizeOut]]:
+    """Every entry du printed (its own `-d` already bounds the depth), mapped to host
+    paths, the biggest `limit` kept plus any HOST_PINNED path past it."""
+    total: int | None = None
+    entries: list[DirSizeOut] = []
+    host = host_root.rstrip("/")
+    for rel, size in _du_lines(stdout, inside_root):
+        if rel is None:
+            total = size
+        else:
+            entries.append(DirSizeOut(path=f"{host}/{rel}", bytes=size))
+    ranked = _by_size(entries)
+    kept = ranked[:limit]
+    kept += [e for e in ranked[limit:] if e.path in HOST_PINNED]
+    return total, kept
 
 
 def parse_statfs(stdout: str) -> dict[str, FilesystemOut]:
@@ -353,6 +425,12 @@ def _error(stage: str, exc: Exception) -> str:
     return f"{stage}: {type(exc).__name__}: {_tail(str(exc))}"
 
 
+def _missing_source(exc: Exception) -> bool:
+    """The daemon's refusal of a bind whose host path does not exist ("bind source
+    path does not exist"): an absent allowlisted folder, not a failure."""
+    return "does not exist" in str(exc)
+
+
 class DiskUsage:
     """Builds and caches the report. One build at a time: a second caller waits on
     the lock and then reads the fresh cache instead of starting another `du`."""
@@ -366,15 +444,20 @@ class DiskUsage:
         ttl_s: float = CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
         statvfs: Callable[[str], os.statvfs_result] = os.statvfs,
+        host_roots: Sequence[tuple[str, int]] = HOST_ROOTS,
     ) -> None:
         self._probe = probe
         self._project = project
         self._project_dir = project_dir
+        self._host_roots = tuple(host_roots)
         self._ttl_s = ttl_s
         self._clock = clock
         self._statvfs = statvfs
         self._lock = threading.Lock()
         self._cached: tuple[float, DiskReport] | None = None
+        # Bumped by invalidate(), so a build that started before a cleanup is served
+        # to its caller but never cached as current.
+        self._generation = 0
 
     def report(self, *, refresh: bool = False) -> DiskReport:
         asked = self._clock()
@@ -394,11 +477,19 @@ class DiskUsage:
                     return self._served(self._cached, stale=False)
                 if not refresh and self._clock() - at < self._ttl_s:
                     return self._served(self._cached, stale=False)
+            generation = self._generation
             fresh = self._build()
-            self._cached = (self._clock(), fresh)
+            if generation == self._generation:
+                self._cached = (self._clock(), fresh)
             return fresh
         finally:
             self._lock.release()
+
+    def invalidate(self) -> None:
+        """Drop the cached report, so the next read rebuilds — after a cleanup has
+        changed what it would say."""
+        self._generation += 1
+        self._cached = None
 
     def _served(self, cached: tuple[float, DiskReport], *, stale: bool) -> DiskReport:
         at, report = cached
@@ -424,12 +515,74 @@ class DiskUsage:
             )
         except Exception as exc:
             errors.append(_error("docker df", exc))
+        filesystem = self._filesystems(docker_root, errors)
+        # The du runs are I/O-bound helpers, not work here: run concurrently, the
+        # slowest bounds the build (DU_TIMEOUT_S) instead of their sum, which keeps
+        # df + stat + du inside the backend's read budget.
+        project_errors: list[str] = []
+        host_errors: list[list[str]] = [[] for _ in self._host_roots]
+        with ThreadPoolExecutor(max_workers=1 + len(self._host_roots)) as pool:
+            project_job = pool.submit(self._project_dirs, project_errors)
+            host_jobs = [
+                pool.submit(self._host_root, root, depth, errs)
+                for (root, depth), errs in zip(
+                    self._host_roots, host_errors, strict=True
+                )
+            ]
+            project_dirs = project_job.result()
+            host_results = [job.result() for job in host_jobs]
+        errors.extend(project_errors)
+        for errs in host_errors:
+            errors.extend(errs)
+        host_dirs: HostDirsOut | None = None
+        if self._host_roots:
+            host_dirs = HostDirsOut(
+                roots=[r for r in host_results if isinstance(r, HostRootOut)],
+                missing=[r for r in host_results if isinstance(r, str)],
+            )
         return DiskReport(
             generated_at=datetime.now(UTC).isoformat(),
-            filesystem=self._filesystems(docker_root, errors),
+            filesystem=filesystem,
             docker=docker,
-            project_dirs=self._project_dirs(errors),
+            project_dirs=project_dirs,
+            host_dirs=host_dirs,
             errors=errors,
+        )
+
+    def _host_root(
+        self, root: str, depth: int, errors: list[str]
+    ) -> HostRootOut | str | None:
+        """du one allowlisted host folder: its entries, the root itself when it does
+        not exist on this host, or None when the helper failed outright."""
+        inside = f"{HOST_MOUNT}{root}"
+        argv = ["du", "-a", "-x", "-k", "-d", str(depth), inside]
+        stage = f"host du {root}"
+        try:
+            run = self._probe.run_readonly_helper(argv, {root: inside}, DU_TIMEOUT_S)
+        except Exception as exc:
+            if _missing_source(exc):
+                return root
+            errors.append(_error(stage, exc))
+            return None
+        if run.exit_code is None:
+            errors.append(
+                f"{stage}: timed out after {DU_TIMEOUT_S:.0f} s; PARTIAL (only "
+                "entries finished before the cap)"
+            )
+        total, entries = parse_du_tree(run.stdout, inside, root, TOP_HOST_ENTRIES)
+        if run.exit_code not in (0, None):
+            errors.append(
+                f"{stage}: exit {run.exit_code}"
+                f"{' (partial)' if entries else ''}: {_tail(run.stderr)}"
+            )
+        if total is None and not entries:
+            return None
+        return HostRootOut(
+            root=root,
+            depth=depth,
+            total_bytes=total,
+            partial=run.exit_code is None,
+            entries=entries,
         )
 
     def _filesystems(

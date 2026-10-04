@@ -28,6 +28,12 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from supervisor import host_metrics, usb_devices, watchdog
+from supervisor.disk_cleanup import (
+    CleanupAction,
+    CleanupBusyError,
+    CleanupResult,
+    DiskCleanup,
+)
 from supervisor.disk_usage import DiskReport, DiskUsage
 from supervisor.gateway import (
     ENGINE_SERVICES,
@@ -50,6 +56,14 @@ MAX_LOG_TAIL = 2000
 
 class RestartRequest(BaseModel):
     service: str
+
+
+class DiskCleanupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actions: list[CleanupAction] = Field(min_length=1)
+    # Safe by default: a body that forgets the flag only reports.
+    dry_run: bool = True
 
 
 class RestartResponse(BaseModel):
@@ -266,12 +280,14 @@ def create_app(
     *,
     watch_api: bool = True,
     disk: DiskUsage | None = None,
+    cleanup: DiskCleanup | None = None,
 ) -> FastAPI:
     """Build the supervisor app around an injected gateway.
 
     `watch_api` off is for tests: the watchdog is a background task that probes over the
     network, which a route test has no business starting. `disk` is the cached disk
-    breakdown; without one `/disk` answers 503."""
+    breakdown; without one `/disk` answers 503, and without `cleanup` so does
+    `/disk/cleanup`."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -370,6 +386,12 @@ def create_app(
         reason = _switch_refusal()
         if reason is not None:
             raise HTTPException(status_code=409, detail=reason)
+        # Every one-shot start runs this under engine_lock, which is also where an
+        # applied cleanup claims its slot: neither can begin under the other.
+        if cleanup is not None and cleanup.applying:
+            raise HTTPException(
+                status_code=409, detail="a disk cleanup is running; try again shortly"
+            )
 
     @authed.post("/engine-switch/hold")
     def hold_switch(body: SwitchHoldRequest) -> SwitchHoldResponse:
@@ -605,6 +627,33 @@ def create_app(
         if disk is None:
             raise HTTPException(status_code=503, detail="disk probe not configured")
         return disk.report(refresh=refresh)
+
+    @authed.post("/disk/cleanup")
+    def disk_cleanup(body: DiskCleanupRequest) -> CleanupResult:
+        # Frees what `/disk` reports as reclaimable, from a fixed action set; see
+        # disk_cleanup.py for what each action may and may never remove.
+        if cleanup is None:
+            raise HTTPException(status_code=503, detail="disk cleanup not configured")
+        busy_detail = "a cleanup is already running"
+        if body.dry_run:
+            try:
+                return cleanup.run(body.actions, dry_run=True)
+            except CleanupBusyError:
+                raise HTTPException(status_code=409, detail=busy_detail) from None
+        # Under the lock every one-shot start takes, so the check and the claim are one
+        # step: an update builds and pulls images that have no container until its
+        # `up`, and pruning under it is a race refused both ways (see
+        # _refuse_while_switching).
+        with engine_lock:
+            _refuse_while_switching()
+            busy = gateway.running_oneshot()
+            if busy is not None:
+                raise HTTPException(
+                    status_code=409, detail=f"a {busy} one-shot is running"
+                )
+            if not cleanup.reserve_apply():
+                raise HTTPException(status_code=409, detail=busy_detail)
+        return cleanup.run_reserved(body.actions)
 
     @authed.post("/update", status_code=202)
     def start_update() -> UpdateStartResponse:
