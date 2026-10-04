@@ -11,7 +11,8 @@ import yaml
 
 from jbrain.llm import engine
 
-_COMPOSE = Path(__file__).resolve().parents[3] / "deploy" / "docker-compose.yml"
+_REPO = Path(__file__).resolve().parents[3]
+_COMPOSE = _REPO / "deploy" / "docker-compose.yml"
 
 
 def _services() -> dict:
@@ -53,6 +54,14 @@ def test_flash_next_mirrors_the_standard_gateway_hardware_access() -> None:
         assert services["flash-next"][key] == services["local-llm"][key], key
 
 
-def test_the_flash_next_patch_build_arg_is_off_unless_set() -> None:
+def test_the_flash_next_patch_build_arg_is_on_unless_set() -> None:
+    # F4: the disk prefix cache needs the checkpoint sidecar on this hybrid; the api proves the
+    # patch per save, so an operator override to 0 degrades to no disk layer, not garbage.
     args = _services()["flash-next"]["build"]["args"]
-    assert args["PATCH_RESTORE_CHECKPOINT"] == "${FLASH_NEXT_PATCH_RESTORE_CHECKPOINT:-0}"
+    assert args["PATCH_RESTORE_CHECKPOINT"] == "${FLASH_NEXT_PATCH_RESTORE_CHECKPOINT:-1}"
+
+
+def test_the_flash_next_dockerfile_builds_the_patch_by_default() -> None:
+    text = (_REPO / "deploy" / "Dockerfile.flash-next").read_text()
+    assert "ARG PATCH_RESTORE_CHECKPOINT=1" in text
+    assert "/apply-llama-patches.sh /llama" in text

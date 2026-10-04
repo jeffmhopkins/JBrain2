@@ -495,8 +495,8 @@ services:
         # is built from a pinned commit inside the Dockerfile, so the base only supplies the
         # Vulkan toolchain and runtime.
         FLASH_NEXT_BASE: ${FLASH_NEXT_BASE:-docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:cea7c7e723b8feed67c5a4f4094652f4a0c63207be60584d8088eb5c6e62ef92}
-        # The checkpoint-sidecar patch, OFF until F4 re-validates its anchors on this pin.
-        PATCH_RESTORE_CHECKPOINT: ${FLASH_NEXT_PATCH_RESTORE_CHECKPOINT:-0}
+        # The checkpoint-sidecar patch, ON since F4 re-validated its anchors on this pin.
+        PATCH_RESTORE_CHECKPOINT: ${FLASH_NEXT_PATCH_RESTORE_CHECKPOINT:-1}
     restart: unless-stopped
     # Its OWN config file (jbrain.llm.engine.CONFIG_FILE), so the standard gateway never
     # renders a model its llama.cpp cannot load, and this one never renders gpt-oss.
