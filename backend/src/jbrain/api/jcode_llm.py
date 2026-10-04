@@ -20,6 +20,10 @@ authed with the shared jcode gateway token (the sandbox already holds it — com
 it as GROK_API_KEY). Contrast `external_llm`, a metered proxy for a REMOTE coder that PINS
 the model and refuses an unloaded one; here we honour the caller's choice and trigger the
 load — that is the whole point.
+
+While a non-Standard engine (Flash-Next) serves, both of code mode's roles run on its one model
+and carry the owner's Flash-Next level for that role (`_engine_level`): the executor is grok's
+default model, the planner its `plan` subagent, told apart by the model name grok sends.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -38,7 +42,9 @@ from jbrain import queue
 from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, local_catalog
+from jbrain.llm.engine_effort import EngineEfforts
 from jbrain.llm.kv_pool_guard import KvPoolBusyError
+from jbrain.llm.openai_compat import apply_local_reasoning
 from jbrain.llm.openai_slot_fit import (
     context_length_exceeded,
     error_bytes,
@@ -47,7 +53,9 @@ from jbrain.llm.openai_slot_fit import (
     pool_busy,
 )
 from jbrain.llm.residency import ResidencyError
+from jbrain.llm.router import CODE_TIER, JCODE_EXECUTOR_TASK, JCODE_PLANNER_TASK
 from jbrain.llm.slot_roles import JCODE_ROLE, SlotCapError
+from jbrain.settings_store import JCODE_PLANNER_SAME
 from jbrain.vision import OcrServiceError
 from jbrain.web.fetch import JS_SHELL_MESSAGE, JS_SHELL_NOTE, WebFetchError
 from jbrain.web.search import WebSearchError
@@ -126,6 +134,76 @@ async def _served_on_engine(
     return models[0].served_model if models else requested
 
 
+def _served(model_id: str) -> str:
+    model = local_catalog.get(model_id)
+    return model.served_model if model is not None else model_id
+
+
+async def _role_task(request: Request, requested: str) -> str:
+    """The engine-effort task a request is for: `jcode.planner` when grok named the owner's
+    planner, else `jcode.executor`.
+
+    grok sends only the model of the block it picked — the default (the executor) or the one
+    pinned to its `plan` subagent — so the name, BEFORE any remap, is the role. The picks are
+    the owner's current ones (a session fixes its own at create, so one changed since reads as
+    the executor). Single-model ("same", or the same model in both picks) has no separate
+    planner request: everything is the executor."""
+    settings = request.app.state.settings
+    store = getattr(request.app.state, "settings_store", None)
+    executor = planner = ""
+    if store is not None:
+        with contextlib.suppress(Exception):
+            executor = await store.jcode_model(queue.SYSTEM_CTX)
+            planner = await store.jcode_planner_model(queue.SYSTEM_CTX)
+    if planner == JCODE_PLANNER_SAME:
+        return JCODE_EXECUTOR_TASK
+    executor_served = _served(executor or getattr(settings, "jcode_model", ""))
+    planner_served = _served(planner or getattr(settings, "jcode_planner_model", ""))
+    if planner_served and requested == planner_served and planner_served != executor_served:
+        return JCODE_PLANNER_TASK
+    return JCODE_EXECUTOR_TASK
+
+
+async def _engine_efforts(request: Request) -> EngineEfforts | None:
+    """The owner's per-engine levels (the router's own TTL cache), or None when unwired."""
+    cache = getattr(request.app.state, "engine_efforts", None)
+    if cache is None:
+        return None
+    try:
+        return await cache.get()
+    except Exception:  # noqa: BLE001 — a settings hiccup keeps grok's own level
+        return None
+
+
+def _engine_level(efforts: EngineEfforts | None, task: str, served: str) -> str | None:
+    """The owner's level for `task` on the engine `served` runs on — the role's row, else the
+    "code" tier's — or None: a Standard model, or no row, and the request goes as grok sent it."""
+    engine = local_catalog.engine_of(served)
+    if efforts is None or engine == engines.STANDARD:
+        return None
+    level, _scope = efforts.resolve(engine, task, CODE_TIER)
+    return level
+
+
+def _apply_level(payload: dict[str, Any], level: str) -> None:
+    """Put the owner's level on the request in place of any grok sent, encoded the way the
+    adapter encodes a local call's (`apply_local_reasoning`). The owner's level wins: it was
+    set for this engine's model, where grok's is a level it sends every model it talks to —
+    so every reasoning field the client may have set is cleared first, or a leftover would
+    contradict the one applied."""
+    payload.pop("reasoning_effort", None)
+    payload.pop("reasoning", None)
+    kwargs = payload.get("chat_template_kwargs")
+    if isinstance(kwargs, dict):
+        kwargs.pop("enable_thinking", None)
+        kwargs.pop("reasoning_effort", None)
+        if not kwargs:
+            payload.pop("chat_template_kwargs")
+    elif kwargs is not None:
+        payload.pop("chat_template_kwargs")
+    apply_local_reasoning(payload, level)
+
+
 # Short, unique `/model` handles for the sandbox's grok CLI, keyed by served name. grok's
 # config block key — what `/model`, `[models] default`, and `[subagents.models]` reference —
 # becomes the alias; the block's `model =` stays the real served name the proxy validates
@@ -157,6 +235,30 @@ def _window(model: local_catalog.LocalModel) -> int:
     return model.kv_pool.cap(JCODE_ROLE) if model.kv_pool is not None else model.context_window
 
 
+async def _standard_handles(request: Request) -> str:
+    """While an engine with a sole model serves, a block per installed Standard coder that runs
+    on that model, so the grok config keeps the session's executor and planner names.
+
+    A session's executor and planner are Standard served names (fixed at create). Without
+    their blocks a config rendered under Flash-Next has no block for its default and drops the
+    `plan` pin — and with one name for both roles, the proxy cannot tell a planner request
+    from an executor one to give each its own level. Each block names the sole model and its
+    window; the proxy remaps the request onto it (`_served_on_engine`)."""
+    sole = local_catalog.sole_model(await _engine(request))
+    if sole is None:
+        return ""
+    settings = request.app.state.settings
+    standard = local_catalog.jcode_models(
+        getattr(settings, "local_llm_enabled", False),
+        getattr(settings, "local_models", []),
+        engines.STANDARD,
+    )
+    return "".join(
+        f"{_alias(m.served_model)}|{m.served_model}|{sole.label}|{_window(sole)}\n"
+        for m in standard
+    )
+
+
 @router.get("/jcode/llm/v1/models")
 async def list_models(request: Request) -> Response:
     """The installed tool-capable models the sandbox offers via grok's `/model`.
@@ -171,7 +273,7 @@ async def list_models(request: Request) -> Response:
         body = "".join(
             f"{_alias(m.served_model)}|{m.served_model}|{m.label}|{_window(m)}\n" for m in models
         )
-        return Response(content=body, media_type="text/plain")
+        return Response(content=body + await _standard_handles(request), media_type="text/plain")
     data = [
         {"id": m.served_model, "object": "model", "created": 0, "owned_by": "jbrain"}
         for m in models
@@ -201,10 +303,18 @@ async def chat_completions(request: Request) -> Response:
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
 
     models = await _models(request)
-    served = await _served_on_engine(request, str(payload.get("model") or ""), models)
+    requested = str(payload.get("model") or "")
+    served = await _served_on_engine(request, requested, models)
     if served not in {m.served_model for m in models}:
         raise HTTPException(status_code=400, detail=f"unknown or unavailable model: {served!r}")
     payload["model"] = served
+    # Read only when a non-Standard model is in play, so a Standard request costs nothing new
+    # and is forwarded exactly as before.
+    efforts: EngineEfforts | None = None
+    task = JCODE_EXECUTOR_TASK
+    if local_catalog.engine_of(served) != engines.STANDARD:
+        efforts = await _engine_efforts(request)
+        task = await _role_task(request, requested)
     # Before the swap lock: a request too long for its slot must not wait behind another
     # model's turn just to be refused.
     try:
@@ -262,6 +372,10 @@ async def chat_completions(request: Request) -> Response:
                     # The engine switched under the request: the cap checked above was the
                     # other model's.
                     prompt_tokens = fit_openai_request(admitted, payload, JCODE_ROLE)
+                # Judged on the model actually sent, after admission, like the router's.
+                level = _engine_level(efforts, task, str(payload["model"]))
+                if level is not None:
+                    _apply_level(payload, level)
                 # Stream the gateway's response back verbatim (SSE or whole JSON). The
                 # gateway is unauthenticated on the internal network — no upstream credential.
                 async with (

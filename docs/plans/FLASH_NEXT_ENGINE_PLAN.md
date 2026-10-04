@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-03 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4◻️ F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4◻️ F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -573,6 +573,33 @@ unless it has its own:
 - PWA: per-tier and per-task controls on the LLM settings screen — mocks first (`PROCESS.md`).
 - Tests: resolution precedence, Standard unchanged, the override still winning, the cache,
   the warm-up, API validation and snapshot shape; the table's RLS isolation on real Postgres.
+- **Code mode on Flash-Next** (owner, 2026-10-04: "code mode needs to also be auto routed and
+  just be added to the flash choices"). While Flash-Next serves, both of jcode's roles already
+  ran on it — the proxy (`api/jcode_llm.py`, `_served_on_engine`) remaps any Standard name the
+  sandbox sends. Now they take Flash-Next levels too:
+  - A `code` tier (*Code mode*) with two tasks, `jcode.executor` and `jcode.planner`
+    (`router.CODE_TASKS`; not router tasks — nothing routes them). The engine-effort routes,
+    validation and the debug twin accept them; the table's CHECKs never constrained keys. The
+    snapshot lists them last, with a `label` (*Code mode — executor* / *— planner*), no Standard
+    fallback, and `applies` while Flash-Next serves and code mode is on.
+  - **Role at the proxy.** grok sends only the model of the block it picked: its default (the
+    executor) or the one pinned to its `plan` subagent (the planner). A request naming the
+    owner's planner pick, when that differs from the executor pick, is the planner; anything
+    else (including single-model, "same") is the executor. Judged on the name grok sent,
+    before the remap.
+  - So a shell opened while Flash-Next serves keeps those names, the proxy's `?format=lines`
+    list adds a block per installed Standard coder, each naming Flash-Next and its jcode slot
+    window. Without them grok's default had no block and its `plan` pin was dropped, leaving
+    one name for both roles.
+  - **Precedence: the owner's level wins.** The role's row, else the `code` tier row, replaces
+    every reasoning field grok sent (`reasoning_effort`, `reasoning`, the template kwargs'
+    `enable_thinking` / `reasoning_effort`) and is encoded as the adapter encodes any local call
+    (`apply_local_reasoning`). grok sends one level to every model it talks to, while the
+    owner's was set for this one. With no row the request goes as grok sent it. A Standard model
+    never reads the table: its body is forwarded unchanged.
+  - PWA: the Flash-Next reasoning card gains the *Code mode* row. While Flash-Next serves, the
+    Code mode card drops its two model selects for one line naming the model, with a link that
+    opens the reasoning card at that row.
 
 ### F4 — Per-role disk prefix cache ◻️
 Begins with the check moved out of F2, and gated on it:

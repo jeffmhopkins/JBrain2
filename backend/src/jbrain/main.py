@@ -579,6 +579,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)
         # cold-swaps instead of stacking two large models. Bound to this app's event loop.
         app.state.jcode_llm_swap_lock = asyncio.Lock()
+        # The owner's per-engine reasoning levels, TTL-cached and shared by the router and the
+        # jcode proxy; the settings routes' writes invalidate it (jbrain.llm.engine_effort).
+        app.state.engine_efforts = EngineEffortCache(
+            lambda: settings_store.llm_engine_efforts(SYSTEM_CTX)
+        )
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do. The overrides loader reads
         # the live per-task routing/reasoning settings (SYSTEM_CTX owner session)
@@ -630,9 +635,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             admission_gate=app.state.admission_gate.wait_open,
             # The owner's Flash-Next reasoning levels, TTL-cached; the settings routes'
             # writes invalidate it in this process (jbrain.llm.engine_effort).
-            engine_efforts_loader=EngineEffortCache(
-                lambda: settings_store.llm_engine_efforts(SYSTEM_CTX)
-            ).get,
+            engine_efforts_loader=app.state.engine_efforts.get,
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.

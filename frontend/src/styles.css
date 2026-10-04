@@ -29374,3 +29374,24 @@ button.wf-sigpill {
   color: var(--steel);
   cursor: pointer;
 }
+/* The row a link jumped to, so the eye lands on it after the scroll. */
+.llm-fx-flash {
+  animation: llm-fx-flash 1.2s ease-out 1;
+}
+@keyframes llm-fx-flash {
+  0% {
+    box-shadow: inset 0 0 0 2px var(--steel);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .llm-fx-flash {
+    animation: none;
+  }
+}
+/* The Code mode card's one line while an engine with a single model serves. */
+.llm-jcode-serving {
+  margin-top: 8px;
+}

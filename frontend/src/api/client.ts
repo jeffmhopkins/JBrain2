@@ -1231,6 +1231,9 @@ export interface EngineEffortTask {
   id: string;
   /** Its role tier, or null for a task in none (it can only be set on its own). */
   tier: string | null;
+  /** Its name, for a task with no routing pick to read one from (code mode's roles); null or
+   * absent for a routed task. */
+  label?: string | null | undefined;
   /** The owner's level for this task, or null (Default — it inherits). */
   level: ReasoningEffort | null;
   /** What Default resolves to: the tier's level, else today's Standard effort. Null = no
@@ -1239,8 +1242,8 @@ export interface EngineEffortTask {
   fallback_source: "tier" | "standard";
   /** `level` if set, else `fallback`. */
   effective: ReasoningEffort | null;
-  /** The engine serves and this task's route is local, so the level is what it runs at now.
-   * A cloud-routed task never reads these levels. */
+  /** The engine serves and this task's route is local (code mode's roles: code mode is on),
+   * so the level is what it runs at now. A cloud-routed task never reads these levels. */
   applies: boolean;
 }
 
