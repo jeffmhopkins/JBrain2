@@ -63,6 +63,10 @@ def prompt_chars(payload: dict[str, Any]) -> tuple[int, int]:
         text, pictures = _text_chars(message.get("content"))
         chars += text
         images += pictures
+        # A client that sends its thinking back has it rendered by a preserving template.
+        reasoning = message.get("reasoning_content")
+        if isinstance(reasoning, str):
+            chars += len(reasoning)
         for call in message.get("tool_calls") or []:
             function = call.get("function") if isinstance(call, dict) else None
             if isinstance(function, dict):

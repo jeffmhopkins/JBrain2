@@ -298,3 +298,37 @@ async def test_a_video_call_does_not_calibrate_the_estimate() -> None:
     clip = LlmVideo(media_type="video/x-matroska", data="x", seconds=20.0)
     await router.complete("debug.whatever", system="s", user_text="u" * 20_000, videos=[clip])
     assert FLASH not in prefill._ratio
+
+
+def _thinking_turn(*, in_flight: bool) -> list[LlmMessage]:
+    """A tool loop whose one step thought ~162k tokens' worth — past the ingest slot's 128k
+    cap only if that thinking is replayed, i.e. only when it sits in the turn in flight."""
+    from jbrain.llm.types import AssistantMessage
+
+    step = AssistantMessage(text="", reasoning="x" * 600_000)
+    if in_flight:
+        return [UserMessage("q"), step]
+    return [step, UserMessage("q")]
+
+
+async def test_replayed_reasoning_counts_against_the_slot_cap() -> None:
+    fake = FakeLlmClient()
+    with pytest.raises(SlotCapError):
+        await _router(fake).converse(
+            "agent.turn",
+            system="s",
+            messages=_thinking_turn(in_flight=True),
+            slot_role=SlotRole.INGEST,
+        )
+    assert fake.converse_calls == []
+
+
+async def test_reasoning_that_is_not_replayed_is_not_counted() -> None:
+    fake = FakeLlmClient()
+    await _router(fake).converse(
+        "agent.turn",
+        system="s",
+        messages=_thinking_turn(in_flight=False),
+        slot_role=SlotRole.INGEST,
+    )
+    assert len(fake.converse_calls) == 1

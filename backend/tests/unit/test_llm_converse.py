@@ -147,9 +147,9 @@ async def test_complete_captures_reasoning_content() -> None:
     assert res.reasoning == "the title should name the topic…"
 
 
-def _capturing_client() -> tuple[dict[str, Any], OpenAiCompatClient]:
-    """A local client whose transport records the request payload it sends, so a
-    test can assert exactly what reached the gateway."""
+def _capturing_client(provider: str = "local") -> tuple[dict[str, Any], OpenAiCompatClient]:
+    """A client (local by default) whose transport records the request payload it sends,
+    so a test can assert exactly what reached the gateway."""
     captured: dict[str, Any] = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -160,7 +160,7 @@ def _capturing_client() -> tuple[dict[str, Any], OpenAiCompatClient]:
         )
 
     client = OpenAiCompatClient(
-        "http://localhost:11434/v1", "", provider="local", transport=httpx.MockTransport(handler)
+        "http://localhost:11434/v1", "", provider=provider, transport=httpx.MockTransport(handler)
     )
     return captured, client
 
@@ -254,3 +254,99 @@ async def test_glm_keeps_its_genuine_none() -> None:
     captured, client = _capturing_client()
     await client.complete(model="glm-4.5-air", system="s", user_text="u", reasoning_effort="none")
     assert captured["payload"]["reasoning_effort"] == "none"
+
+
+# --- Preserved thinking within a turn -----------------------------------------------
+
+_CALL = ToolCall(id="c1", name="search", arguments={"q": "x"})
+_TWO_TURNS = [
+    UserMessage(text="earlier"),
+    # An earlier turn's step cannot carry a trace in practice; given one anyway, it must not
+    # be replayed — the boundary is the serializer's, not the caller's good behaviour.
+    AssistantMessage(text="earlier answer", reasoning="old thinking"),
+    UserMessage(text="now"),
+    AssistantMessage(text="", tool_calls=(_CALL,), reasoning="step one thinking"),
+    ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="r1")]),
+    AssistantMessage(text="", tool_calls=(_CALL,), reasoning="step two thinking"),
+    ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="r2")]),
+]
+
+
+def _assistant_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return [m for m in payload["messages"] if m["role"] == "assistant"]
+
+
+async def test_flash_next_replays_reasoning_only_after_the_last_user_message() -> None:
+    captured, client = _capturing_client()
+    await client.converse(model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS)
+    entries = _assistant_entries(captured["payload"])
+    assert "reasoning_content" not in entries[0]
+    assert [e["reasoning_content"] for e in entries[1:]] == [
+        "step one thinking",
+        "step two thinking",
+    ]
+    # The template's own boundary matches the serializer's: thinking of the latest query only.
+    assert captured["payload"]["chat_template_kwargs"]["preserve_thinking"] is False
+
+
+async def test_preserve_thinking_rides_beside_the_reasoning_toggle() -> None:
+    captured, client = _capturing_client()
+    await client.converse(
+        model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS, reasoning_effort="low"
+    )
+    assert captured["payload"]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_effort": "low",
+        "preserve_thinking": False,
+    }
+
+
+async def test_flash_next_stream_replays_reasoning_too() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(req.content)
+        body = (
+            'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1", "", provider="local", transport=httpx.MockTransport(handler)
+    )
+    async for _part in client.converse_stream(
+        model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS
+    ):
+        pass
+    entries = _assistant_entries(captured["payload"])
+    assert [e.get("reasoning_content") for e in entries] == [
+        None,
+        "step one thinking",
+        "step two thinking",
+    ]
+
+
+async def test_a_step_with_no_trace_sends_no_reasoning_field() -> None:
+    captured, client = _capturing_client()
+    messages = [UserMessage(text="u"), AssistantMessage(text="", tool_calls=(_CALL,))]
+    await client.converse(model="qwen3.8-flash-next", system="s", messages=messages)
+    assert "reasoning_content" not in _assistant_entries(captured["payload"])[0]
+
+
+async def test_a_non_preserving_local_model_gets_no_reasoning_back() -> None:
+    # Qwen3.8-27B shares the family but its served template is not shown to preserve
+    # reasoning, so it keeps the pre-existing wire shape exactly.
+    for model in ("qwen3.8-27b-q4", "gpt-oss-120b", "not-in-the-catalog"):
+        captured, client = _capturing_client()
+        await client.converse(model=model, system="s", messages=_TWO_TURNS)
+        assert all("reasoning_content" not in e for e in _assistant_entries(captured["payload"]))
+        assert "preserve_thinking" not in captured["payload"].get("chat_template_kwargs", {})
+
+
+async def test_a_cloud_provider_never_gets_reasoning_back() -> None:
+    # Even under the Flash-Next served name, a cloud provider is not the local template.
+    captured, client = _capturing_client(provider="xai")
+    await client.converse(model="qwen3.8-flash-next", system="s", messages=_TWO_TURNS)
+    assert all("reasoning_content" not in e for e in _assistant_entries(captured["payload"]))
+    assert "chat_template_kwargs" not in captured["payload"]

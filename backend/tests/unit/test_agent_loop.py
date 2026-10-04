@@ -53,6 +53,7 @@ from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
+    AssistantMessage,
     FakeLlmClient,
     LlmRouter,
     LlmTurn,
@@ -2311,3 +2312,91 @@ async def test_a_turn_that_computed_nothing_is_left_alone() -> None:
     )
     events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
     assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+# --- Preserved thinking within a turn (FLASH_NEXT_ENGINE_PLAN) ----------------------
+
+
+def _thinking_tool_turns() -> list[LlmTurn]:
+    return [
+        LlmTurn(
+            "",
+            (ToolCall("c1", "search", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(10, 5),
+            reasoning="I should search for x first.",
+        ),
+        LlmTurn("the answer", (), "end_turn", LlmUsage(8, 3), reasoning="Got it."),
+    ]
+
+
+async def test_run_carries_each_tool_steps_reasoning_into_the_next_round() -> None:
+    router, fake = router_with(_thinking_tool_turns())
+    await run(AgentLoop(router, registry_with(make_tool("search", search))))
+    step = fake.converse_calls[1]["messages"][1]
+    assert isinstance(step, AssistantMessage)
+    assert step.reasoning == "I should search for x first."
+
+
+async def test_run_stream_carries_each_tool_steps_reasoning_into_the_next_round() -> None:
+    router, fake = stream_router_local(_thinking_tool_turns(), model="qwen3.8-flash-next")
+    await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    step = fake.stream_calls[1]["messages"][1]
+    assert isinstance(step, AssistantMessage)
+    assert step.reasoning == "I should search for x first."
+
+
+async def test_buffered_turn_carries_each_tool_steps_reasoning_into_the_next_round() -> None:
+    router, fake = stream_router_with(_thinking_tool_turns())
+    await collect_buffered(AgentLoop(router, registry_with(make_tool("search", search))))
+    step = fake.converse_calls[1]["messages"][1]
+    assert isinstance(step, AssistantMessage)
+    assert step.reasoning == "I should search for x first."
+
+
+async def test_earlier_turn_history_reaches_the_model_without_reasoning() -> None:
+    # History rebuilt from a stored conversation is text-only; only the turn in flight's own
+    # steps carry a trace, and they all sit after the newest user message.
+    router, fake = router_with(_thinking_tool_turns())
+    await AgentLoop(router, registry_with(make_tool("search", search))).run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[
+            UserMessage(text="earlier"),
+            AssistantMessage(text="earlier answer"),
+            UserMessage(text="now"),
+        ],
+    )
+    messages = fake.converse_calls[1]["messages"]
+    assert messages[1] == AssistantMessage(text="earlier answer")
+    traced = [i for i, m in enumerate(messages) if isinstance(m, AssistantMessage) and m.reasoning]
+    assert traced == [3]
+
+
+async def test_a_folded_tool_round_is_not_replayed_as_reasoning_twice() -> None:
+    # A sub-agent's hidden tool-round narration is folded onto `reasoning` for the persisted
+    # trace; it already replays as the step's `text`, so the step message must not repeat it.
+    turns = [
+        LlmTurn(
+            "Now search.",
+            (ToolCall("c1", "search", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(10, 5),
+            reasoning="Plan: search.",
+        ),
+        LlmTurn("done", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, fake = stream_router_local(
+        turns, stream_chunks=[["Now search."], ["done"]], model="qwen3.8-flash-next"
+    )
+    await AgentLoop(router, registry_with(make_tool("search", search))).run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="scout")],
+        on_text=lambda _t: None,
+        on_reasoning=lambda _r: None,
+    )
+    step = fake.stream_calls[1]["messages"][1]
+    assert step == AssistantMessage(
+        text="Now search.", tool_calls=turns[0].tool_calls, reasoning="Plan: search."
+    )

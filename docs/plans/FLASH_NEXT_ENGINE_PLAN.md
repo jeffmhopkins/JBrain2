@@ -601,6 +601,30 @@ unless it has its own:
     Code mode card drops its two model selects for one line naming the model, with a link that
     opens the reasoning card at that row.
 
+#### F3b follow-on — preserved thinking within a turn (backend built 2026-10-04)
+The Qwen3.8-Flash-Next card recommends keeping the model's own thinking across an agent's
+steps (decision consistency, less re-reasoning, better KV reuse), and the served template reads
+`reasoning_content` on assistant messages (llama-server: "chat template supports preserving
+reasoning"). The adapter never sent it back. Owner decision: the card's lighter
+`preserve_thinking: false` mode — replay only the turn in flight's tool steps.
+- `AssistantMessage.reasoning`; the agent loop sets it on each tool step it appends (`run`,
+  `run_stream`, the buffered reflexion path). History rebuilt from earlier turns stays text-only.
+- `openai_compat._openai_messages` emits `reasoning_content` only for assistant steps after the
+  last user message (`types.current_turn_start`), and the payload carries
+  `chat_template_kwargs.preserve_thinking=false` so the template draws the same line. An injected
+  directive (budget warning, forced final answer) is a user message, so it starts a new boundary
+  for both alike.
+- Gate: the catalog flag `LocalModel.preserves_reasoning`, set on Flash-Next only, read through
+  `local_catalog.replays_reasoning(provider, served)` — never a cloud provider, an unknown served
+  name, or a Standard model. The Qwen3.8-27B entries stay off until their served template is shown
+  to read both fields.
+- Slot fit: `slot_roles.prompt_chars(..., replay_reasoning=…)` counts the replayed trace, so the
+  router's cap check and pool guard book what is actually sent; the raw-body proxies'
+  `openai_slot_fit.prompt_chars` counts a client's own `reasoning_content`.
+- Expect one cold prefill per conversation after deploy: if the template's default rendered an
+  (empty) think block on earlier turns' assistant messages, `preserve_thinking=false` drops it,
+  so the history prefix changes once. Not yet observed on-box.
+
 ### F4 — Per-role disk prefix cache ◻️
 Begins with the check moved out of F2, and gated on it:
 - Re-validate the sidecar patch against the new pin (anchors fail hard on drift, by

@@ -1098,7 +1098,12 @@ class LlmRouter:
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
-        chars = slot_roles.prompt_chars(system, messages, tools)
+        chars = slot_roles.prompt_chars(
+            system,
+            messages,
+            tools,
+            replay_reasoning=local_catalog.replays_reasoning(provider, model),
+        )
         n_images = slot_roles.image_count(messages)
         start = time.perf_counter()
         async with self._slot_pin(
@@ -1184,7 +1189,12 @@ class LlmRouter:
         # it (`prefill._fraction`).
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
-        prompt_chars = slot_roles.prompt_chars(system, messages, tools)
+        prompt_chars = slot_roles.prompt_chars(
+            system,
+            messages,
+            tools,
+            replay_reasoning=local_catalog.replays_reasoning(provider, model),
+        )
         n_images = slot_roles.image_count(messages)
         # The row is opened by the first fraction that shows a wait, so a turn that answers
         # off a primed prefix — which is most of them — writes nothing at all.

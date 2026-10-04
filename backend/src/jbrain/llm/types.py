@@ -179,10 +179,17 @@ class UserMessage:
 @dataclass(frozen=True)
 class AssistantMessage:
     """A prior assistant turn: any text it produced plus the tool calls it made.
-    Replayed back so the model sees its own tool requests in context."""
+    Replayed back so the model sees its own tool requests in context.
+
+    `reasoning` is that step's own thinking trace, set only by the agent loop on the tool
+    steps of the turn in flight. The adapter replays it solely to a model whose chat
+    template preserves reasoning (`LocalModel.preserves_reasoning`) and solely after the
+    last user message (`current_turn_start`) — history rebuilt from earlier turns never
+    carries it."""
 
     text: str = ""
     tool_calls: Sequence[ToolCall] = ()
+    reasoning: str = ""
 
 
 @dataclass(frozen=True)
@@ -193,6 +200,19 @@ class ToolResultMessage:
 
 
 LlmMessage = UserMessage | AssistantMessage | ToolResultMessage
+
+
+def current_turn_start(messages: Sequence[LlmMessage]) -> int:
+    """Index just past the last user message: where the turn in flight's own steps begin.
+
+    The boundary the Qwen3.8 template draws for `preserve_thinking=False` (its
+    `last_query_index`), shared by the serializer that replays reasoning and the slot
+    estimate that must count it, so the two cannot disagree on which steps are replayed."""
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], UserMessage):
+            return index + 1
+    return 0
+
 
 # Why the model stopped: it finished its turn, it wants tools run, or it hit the
 # token ceiling. Providers' own reasons are normalized onto these three.

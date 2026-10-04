@@ -484,6 +484,12 @@ def test_the_openai_estimate_counts_text_the_way_the_router_does() -> None:
     )
 
 
+def test_a_forwarded_bodys_reasoning_content_is_counted() -> None:
+    # A client that sends its own thinking back has it rendered by a preserving template.
+    payload = {"messages": [{"role": "assistant", "content": "a", "reasoning_content": "r" * 40}]}
+    assert openai_slot_fit.prompt_chars(payload) == (41, 0)
+
+
 # --- the owner's Flash-Next level per code-mode role ------------------------------------------
 
 

@@ -38,6 +38,7 @@ from jbrain.llm.types import (
     TextChunk,
     ToolCall,
     UserMessage,
+    current_turn_start,
     parse_json_payload,
 )
 
@@ -119,15 +120,24 @@ def _user_content(text: str, images: Sequence[LlmImage]) -> str | list[dict[str,
     return parts
 
 
-def _openai_messages(system: str, messages: Sequence[LlmMessage]) -> list[dict[str, Any]]:
+def _openai_messages(
+    system: str, messages: Sequence[LlmMessage], *, replay_reasoning: bool = False
+) -> list[dict[str, Any]]:
     """Flatten provider-agnostic messages into the OpenAI chat array. Tool
-    results become individual `tool`-role messages, one per result."""
+    results become individual `tool`-role messages, one per result.
+
+    `replay_reasoning` (a preserving local model only) puts each assistant step's own
+    trace back as `reasoning_content` — but only for steps after the last user message,
+    the turn in flight: an earlier turn's thinking would grow every prompt without bound."""
     out: list[dict[str, Any]] = [{"role": "system", "content": system}]
-    for msg in messages:
+    turn_start = current_turn_start(messages) if replay_reasoning else len(messages)
+    for index, msg in enumerate(messages):
         if isinstance(msg, UserMessage):
             out.append({"role": "user", "content": _user_content(msg.text, msg.images)})
         elif isinstance(msg, AssistantMessage):
             entry: dict[str, Any] = {"role": "assistant", "content": msg.text or None}
+            if index >= turn_start and msg.reasoning:
+                entry["reasoning_content"] = msg.reasoning
             if msg.tool_calls:
                 entry["tool_calls"] = [
                     {
@@ -300,14 +310,20 @@ class OpenAiCompatClient:
         sampling: Sampling | None = None,
         id_slot: int | None = None,
     ) -> dict[str, Any]:
+        replay = local_catalog.replays_reasoning(self.provider, model)
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "messages": _openai_messages(system, messages),
+            "messages": _openai_messages(system, messages, replay_reasoning=replay),
         }
         if tools:
             payload["tools"] = openai_tools(tools)
         self._apply_reasoning(payload, reasoning_effort)
+        if replay:
+            # The template's own default keeps EVERY historical assistant's thinking; false
+            # bounds it to the turn in flight, the same line the replay above draws.
+            kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
+            kwargs["preserve_thinking"] = False
         self._apply_sampling(payload, sampling)
         self._apply_slot(payload, id_slot)
         return payload

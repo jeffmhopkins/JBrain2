@@ -611,6 +611,20 @@ def _user_text(conversation: Sequence[LlmMessage]) -> str:
     return "\n".join(m.text for m in conversation if isinstance(m, UserMessage))
 
 
+def _step_message(turn: LlmTurn) -> AssistantMessage:
+    """A tool step of the turn in flight, appended for the next round — with its reasoning.
+
+    Only these in-flight steps ever carry a trace (history rebuilt from earlier turns is
+    text-only); the adapter decides whether it goes on the wire. `_converse_turn` folds a
+    hidden tool round's content onto `reasoning` for the persisted trace, but that content
+    already replays as `text` — the fold is cut back off so it is never sent twice, which
+    would also break the re-rendered step's match with the tokens the model generated."""
+    reasoning = turn.reasoning
+    if turn.text and reasoning.endswith(turn.text):
+        reasoning = reasoning[: -len(turn.text)]
+    return AssistantMessage(text=turn.text, tool_calls=turn.tool_calls, reasoning=reasoning)
+
+
 def _prompt_message(message: LlmMessage) -> dict[str, Any]:
     """One conversation message as plain {role, content}, for the prompt capture.
 
@@ -1023,7 +1037,7 @@ class AgentLoop:
                     return await _forced_final("budget", step + 1)
                 return _result(turn.text, "budget", step + 1)
 
-            messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
+            messages.append(_step_message(turn))
             results: list[ToolResult] = []
             any_error = False
             halt_seen: str | None = None
@@ -1379,7 +1393,7 @@ class AgentLoop:
                     yield ev
                 return
 
-            messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
+            messages.append(_step_message(turn))
             results: list[ToolResult] = []
             any_error = False
             deferred_seen: DeferredRef | None = None
@@ -1769,7 +1783,7 @@ class AgentLoop:
                     "budget",
                 )
 
-            messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
+            messages.append(_step_message(turn))
             results: list[ToolResult] = []
             any_error = False
             halt_seen: str | None = None
