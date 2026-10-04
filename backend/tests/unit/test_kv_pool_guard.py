@@ -577,3 +577,47 @@ async def test_a_per_call_wait_overrides_the_guards_default() -> None:
         ):
             pass
     assert clock.now <= 6.0
+
+
+# --- disk restores fitted through the guard (FLASH_NEXT F4) -------------------------------------
+
+
+def _never_run(sid: int) -> dict[str, object]:
+    # A slot that never ran a request: llama-server sends no `n_prompt_tokens` at all.
+    return {"id": sid, "n_ctx": 262_144, "is_processing": False}
+
+
+async def test_a_restore_fits_only_beside_the_calls_this_process_has_placed() -> None:
+    gw = _Gateway(_layout(s1=_slot(1, 100_000)))
+    guard = _guard(gw)
+    assert await guard.fits(MODEL, POOL, 2, 100_000)
+    async with guard.placed(MODEL, POOL, SlotRole.RESEARCH, prompt_tokens=200_000, max_tokens=4):
+        # The placed research call is not running yet (it reads idle), but it is counted.
+        assert not await guard.fits(MODEL, POOL, 2, 800_000)
+        assert await guard.fits(MODEL, POOL, 2, 100_000)
+
+
+async def test_a_restored_never_run_slot_is_charged_until_it_reports_or_is_erased() -> None:
+    restored = [_never_run(i) if i == 2 else _slot(i) for i in range(POOL.n_slots)]
+    restored[1] = _slot(1, 700_000)
+    gw = _Gateway(restored)
+    guard = _guard(gw)
+    erased: list[tuple[str, int]] = []
+    guard.add_erase_listener(lambda model, slot: erased.append((model, slot)))
+    guard.note_restored(MODEL, 2, 300_000)
+    # 700k + the 300k restored into slot 2 leaves no room for 100k more.
+    assert not await guard.fits(MODEL, POOL, 3, 100_000)
+    # A call that needs the room frees the restored slot like any idle one, and says so.
+    async with guard.placed(MODEL, POOL, SlotRole.SMALL, prompt_tokens=50_000, max_tokens=1_000):
+        pass
+    assert 2 in gw.erased and (MODEL, 2) in erased
+    assert await guard.fits(MODEL, POOL, 3, 100_000)
+
+
+async def test_a_reload_forgets_what_was_restored() -> None:
+    gw = _Gateway([_never_run(i) for i in range(POOL.n_slots)])
+    guard = _guard(gw)
+    guard.note_restored(MODEL, 2, 1_000_000)
+    assert not await guard.fits(MODEL, POOL, 3, 100_000)
+    guard.forget_restored(MODEL)
+    assert await guard.fits(MODEL, POOL, 3, 100_000)

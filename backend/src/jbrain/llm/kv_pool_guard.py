@@ -210,6 +210,12 @@ class KvPoolGuard:
         self._no_erase: dict[str, float] = {}
         # Model -> when a `/slots` read last matched its pool's layout.
         self._layout_seen: dict[str, float] = {}
+        # (served model, slot) -> tokens the disk prefix store restored there and no request
+        # has used yet. Such a slot's `/slots` entry carries no `n_prompt_tokens` when it never
+        # ran a request, so without this it would read as free while its cells are taken.
+        self._restored: dict[tuple[str, int], int] = {}
+        # Told of each slot this guard erases (the disk store drops its memo for that slot).
+        self._erase_listeners: list[Callable[[str, int], None]] = []
 
     async def _slots(self, model: str) -> list[dict[str, object]] | None:
         try:
@@ -331,6 +337,33 @@ class KvPoolGuard:
     def _pending_on(self, model: str, slot: int) -> int:
         return max(self._pending.get((model, slot), {}).values(), default=0)
 
+    def note_restored(self, model: str, slot: int, tokens: int) -> None:
+        """A disk restore put `tokens` cells into `slot`; charge them until a read shows the
+        slot's own size or this guard erases it."""
+        self._restored[(model, slot)] = tokens
+
+    def forget_restored(self, model: str) -> None:
+        """The model was unloaded or reloaded: every restored slot of it is gone."""
+        for key in [k for k in self._restored if k[0] == model]:
+            del self._restored[key]
+
+    def add_erase_listener(self, listener: Callable[[str, int], None]) -> None:
+        self._erase_listeners.append(listener)
+
+    async def fits(self, model: str, pool: KvPool, slot: int, need: int) -> bool:
+        """Whether writing `need` cells into idle `slot` keeps the pool within its size, judged
+        like a placement: a fresh `/slots` read under the decision lock, this process's pending
+        calls included. A writer outside the router — the disk prefix store's restores — asks
+        here so it can never push the pool past `n_ctx` under a busy call. An unreadable or
+        mismatched layout fits nothing."""
+        pool = await self._sized(model, pool)
+        async with self._lock:
+            read = await self._layout(model, pool)
+            if read is None:
+                return False
+            total, _freeable = self._occupancy(model, pool, read, slot, need)
+            return total <= pool.n_ctx
+
     def _occupancy(
         self,
         model: str,
@@ -347,12 +380,16 @@ class KvPoolGuard:
         for r in pool.reservations:
             slot = live.get(r.slot, {})
             pending = self._pending_on(model, r.slot)
+            if "n_prompt_tokens" in slot:
+                self._restored.pop((model, r.slot), None)
+            restored = self._restored.get((model, r.slot), 0)
             if r.slot == target:
                 # This call replaces the slot's contents, but a busy occupant finishes first.
                 current = _charge(slot, r.cap_tokens, pending) if _busy(slot) else pending
                 total += max(current, need)
                 continue
-            projected = _charge(slot, r.cap_tokens, pending)
+            # A restored-unused slot is charged its restored size, and stays erasable.
+            projected = max(_charge(slot, r.cap_tokens, pending), restored)
             total += projected
             if not _busy(slot) and pending == 0 and projected > 0:
                 freeable[r.slot] = projected
@@ -492,6 +529,9 @@ class KvPoolGuard:
                 return True
             if erased is None:
                 continue
+            self._restored.pop((model, slot), None)
+            for listener in self._erase_listeners:
+                listener(model, slot)
             log.info(
                 "llm.slot_evicted",
                 model=model,
