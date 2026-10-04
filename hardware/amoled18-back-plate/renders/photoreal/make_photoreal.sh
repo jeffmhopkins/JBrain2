@@ -28,7 +28,8 @@ if [ ! -x "$CACHE/blender/bin/python" ]; then
 fi
 if [ ! -x "$CACHE/tools/bin/python" ]; then
   python3.11 -m venv "$CACHE/tools"
-  "$CACHE/tools/bin/pip" install -q "cadquery-ocp==8.0.1.0.0" "trimesh==5.1.0" "pillow==12.3.0"
+  "$CACHE/tools/bin/pip" install -q "cadquery-ocp==8.0.1.0.0" "trimesh==5.1.0" "networkx==3.6.1" \
+    "pillow==12.3.0"
 fi
 
 echo "Display module (Waveshare's STEP)"
