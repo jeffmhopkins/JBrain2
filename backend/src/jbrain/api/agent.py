@@ -1071,6 +1071,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         effort_override=effort_override,
         hidden_tools_provider=hidden_provider,
         slot_role=SlotRole.INTERACTIVE,
+        conversation_key=str(session.id),
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain

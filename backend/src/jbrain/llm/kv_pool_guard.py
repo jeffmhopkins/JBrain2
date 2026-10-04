@@ -154,6 +154,22 @@ def _by_id(slots: Sequence[Mapping[str, object]]) -> dict[int, Mapping[str, obje
     return {i: s for i, s in ((s.get("id"), s) for s in slots) if isinstance(i, int)}
 
 
+def projected_cells(
+    pool: KvPool, slots: Sequence[Mapping[str, object]], *, exclude: int | None = None
+) -> int:
+    """Cells the pool will hold at most, off one `/slots` read, leaving out slot `exclude`.
+
+    For a writer outside the router — the disk prefix store restoring a file into an idle slot
+    — that must not push the pool past `n_ctx` under a busy call, which llama-server answers by
+    failing every busy request. Same charging rule as the guard's own projection."""
+    live = _by_id(slots)
+    return sum(
+        _projected(live.get(r.slot, {}), r.cap_tokens)
+        for r in pool.reservations
+        if r.slot != exclude
+    )
+
+
 class KvPoolGuard:
     def __init__(
         self,

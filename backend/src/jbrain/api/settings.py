@@ -30,6 +30,10 @@ from jbrain.settings_store import (
     BRAIN_READ_ALOUD_ENGINE_KEY,
     BRAIN_READ_ALOUD_KEY,
     IMAGE_ANALYSIS_KEY,
+    LLM_KV_CONVERSATION_CACHE_DEFAULT,
+    LLM_KV_PREFIX_BUDGET_GB_DEFAULT,
+    LLM_KV_PREFIX_BUDGET_GB_MAX,
+    LLM_KV_PREFIX_BUDGET_GB_MIN,
     LOCAL_LLM_AUTO_UPDATE_DEFAULT,
     LOCAL_LLM_AUTO_UPDATE_KEY,
     LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT,
@@ -86,6 +90,11 @@ class SettingsOut(BaseModel):
     # MTP-hybrid loads). OFF by default; surfaced here because it lived only in `.env`,
     # which the owner has no terminal to reach.
     local_llm_patch_restore_checkpoint: bool = LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT
+    # The prompt cache's disk allowance in GiB (role prefixes and conversation files), and
+    # whether chat conversations are saved and restored around the Flash-Next interactive slot
+    # (FLASH_NEXT_ENGINE_PLAN F4c). Both apply live.
+    llm_kv_prefix_budget_gb: int = LLM_KV_PREFIX_BUDGET_GB_DEFAULT
+    llm_kv_conversation_cache: bool = LLM_KV_CONVERSATION_CACHE_DEFAULT
     # The owner's read-aloud respelling map {word: "say it like"} — applied as a whole-word text
     # substitution before a clip is rendered (jbrain.api.brain). Empty by default.
     pronunciation_lexicon: dict[str, str] = {}
@@ -135,6 +144,10 @@ class SettingsPatch(BaseModel):
     brain_answer_robot: bool | None = None
     local_llm_auto_update: bool | None = None
     local_llm_patch_restore_checkpoint: bool | None = None
+    llm_kv_prefix_budget_gb: (
+        Annotated[int, Field(ge=LLM_KV_PREFIX_BUDGET_GB_MIN, le=LLM_KV_PREFIX_BUDGET_GB_MAX)] | None
+    ) = None
+    llm_kv_conversation_cache: bool | None = None
     # The full respelling map to store (replace semantics). The store sanitizes/bounds it; the
     # Field caps the raw payload so a client can't post an unbounded body.
     pronunciation_lexicon: Annotated[dict[str, str], Field(max_length=200)] | None = None
@@ -155,6 +168,8 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
         brain_answer_robot=await store.brain_answer_robot(ctx),
         local_llm_auto_update=await store.local_llm_auto_update(ctx),
         local_llm_patch_restore_checkpoint=await store.local_llm_patch_restore_checkpoint(ctx),
+        llm_kv_prefix_budget_gb=await store.llm_kv_prefix_budget_gb(ctx),
+        llm_kv_conversation_cache=await store.llm_kv_conversation_cache(ctx),
         pronunciation_lexicon=await store.pronunciation_lexicon(ctx),
     )
 
@@ -228,6 +243,17 @@ async def update_settings(
             LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY,
             body.local_llm_patch_restore_checkpoint,
         )
+    # The prompt cache's two knobs are stored, then handed to the api's live store — the
+    # only one (the worker wires none) — so neither waits for a restart.
+    kv_prefix = getattr(request.app.state, "kv_prefix", None)
+    if body.llm_kv_prefix_budget_gb is not None:
+        await store.set_llm_kv_prefix_budget_gb(ctx, body.llm_kv_prefix_budget_gb)
+        if kv_prefix is not None:
+            kv_prefix.configure(max_store_bytes=body.llm_kv_prefix_budget_gb * 1024**3)
+    if body.llm_kv_conversation_cache is not None:
+        await store.set_llm_kv_conversation_cache(ctx, body.llm_kv_conversation_cache)
+        if kv_prefix is not None:
+            kv_prefix.configure(conversations=body.llm_kv_conversation_cache)
     if body.pronunciation_lexicon is not None:
         # Replace semantics; the store sanitizes + bounds it, so a junk entry is dropped rather
         # than stored (an empty map clears the lexicon).

@@ -320,11 +320,12 @@ def test_kv_prefix_fingerprints_the_active_engines_launch_line(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_the_pools_slot_save_path_does_not_make_kv_prefix_save_or_restore(
+async def test_the_rendered_pool_is_in_the_disk_layer_until_a_save_proves_the_build_stock(
     tmp_path: Path,
 ) -> None:
-    """The pool renders `--slot-save-path` for slot erase only; the disk layer gates on the
-    catalog (recurrent, no MTP), so it stays out of Flash-Next until F4 — patch on or off."""
+    """F4: the pool's `--slot-save-path` is now the disk layer's too. Flash-Next is admitted by
+    its catalog patch gate, independent of the standard engine's Fast-Qwen-loads setting, and
+    leaves it the moment a save writes no checkpoint sidecar (a stock build)."""
     flash = dataclasses.asdict(_flash())
     (tmp_path / FLASH_ID / "UD-IQ4_XS").mkdir(parents=True)
     (tmp_path / FLASH_ID / "UD-IQ4_XS" / "m-UD-IQ4_XS-00001-of-00001.gguf").write_bytes(b"\0")
@@ -333,18 +334,30 @@ async def test_the_pools_slot_save_path_does_not_make_kv_prefix_save_or_restore(
     line = llama_swap_config.launch_line(str(tmp_path), FLASH_ID, engine.FLASH_NEXT)
     assert line is not None and "--slot-save-path" in line
     for patch in (False, True):
+        gateway = FakeLocalGateway()
         store = KvPrefixStore(
-            FakeLocalGateway(),  # type: ignore[arg-type]
+            gateway,  # type: ignore[arg-type]
             str(tmp_path),
             patch_active=patch,
             engine=engine.FLASH_NEXT,
         )
-        assert store._eligible(FLASH_ID) is None
-        assert store._ineligible_reason(FLASH_ID).startswith("recurrent")
+        assert store._eligible(FLASH_ID) is not None
+        assert store.identity_of(FLASH_ID, "sys", [], None) is not None
+
+        async def _slots(_served: str) -> list[dict[str, object]]:
+            return [
+                {"id": i, "is_processing": False, "n_prompt_tokens": 50_000 if i == 0 else 0}
+                for i in range(8)
+            ]
+
+        async def _save(_served: str, _slot: int, _name: str) -> dict[str, object]:
+            return {"n_saved": 50_000}  # a stock server: no sidecar written
+
+        gateway.slots = _slots  # type: ignore[method-assign]
+        gateway.save_slot = _save  # type: ignore[attr-defined]
         assert not await store.save_after_prime(FLASH_ID, "sys", [], 50_000)
-        assert not await store.restore_if_lost(FLASH_ID, "sys", [])
-        # Nothing hashes a prefix for it either, and the snapshot names the refusal.
-        assert store.identity_of(FLASH_ID, "sys", [], None) is None
+        assert store._eligible(FLASH_ID) is None
+        assert "checkpoint-sidecar patch" in store._ineligible_reason(FLASH_ID)
         snap = await store.snapshot([(FLASH_ID, "sys", [], None)])
         row = snap["models"][0]  # type: ignore[index]
         assert row["state"] == "ineligible" and row["eligible"] is False

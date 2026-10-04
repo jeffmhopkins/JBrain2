@@ -731,12 +731,20 @@ class FakeSettingsStore:
         return self.values.get("local_llm_patch_restore_checkpoint", False) is True
 
     async def llm_kv_prefix_budget_gb(self, ctx: object) -> int:
-        stored = self.values.get("llm_kv_prefix_budget_gb", 25)
-        return stored if isinstance(stored, int) and 1 <= stored <= 500 else 25
+        stored = self.values.get("llm_kv_prefix_budget_gb", 40)
+        return stored if isinstance(stored, int) and 1 <= stored <= 500 else 40
 
     async def set_llm_kv_prefix_budget_gb(self, ctx: object, gb: int) -> int:
         self.values["llm_kv_prefix_budget_gb"] = gb
         return gb
+
+    async def llm_kv_conversation_cache(self, ctx: object) -> bool:
+        # Default ON; only an explicit false turns it off (mirrors the SQL store).
+        return self.values.get("llm_kv_conversation_cache", True) is not False
+
+    async def set_llm_kv_conversation_cache(self, ctx: object, on: bool) -> bool:
+        self.values["llm_kv_conversation_cache"] = on
+        return on
 
     async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
         raw = self.values.get("pronunciation_lexicon", {})

@@ -222,6 +222,17 @@ def slot_pin(role: SlotRole | None) -> SlotPin:
     return {"slot_role": role} if role is not None else {}
 
 
+class ConversationPin(TypedDict, total=False):
+    conversation_key: str
+
+
+def conversation_pin(key: str | None) -> ConversationPin:
+    """The `conversation_key` keyword for a router turn — the chat conversation whose state the
+    disk store may save and restore around the interactive slot (FLASH_NEXT F4c). Absent when
+    there is none, for the same reason as `slot_pin`."""
+    return {"conversation_key": key} if key else {}
+
+
 def layout_matches(pool: KvPool, slots: Sequence[object]) -> bool:
     """Whether a live `/slots` read is this pool's layout. A server still on a pre-pool config
     (fewer slots, until the next re-stamp) WRAPS an `id_slot` past its count onto some other

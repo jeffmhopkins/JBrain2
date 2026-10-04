@@ -383,13 +383,22 @@ LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY = "local_llm_patch_restore_checkpoint"
 LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT = False
 
 
-# The jerv prompt cache's disk allowance, in GiB (jbrain.llm.kv_prefix). It was a module
-# constant whose own comment conceded the gap — "changing it is a release, there is no knob"
-# — on a box whose owner has no terminal (CLAUDE.md #10) and whose store was measured at 94%
-# of it. Read once at startup, like the patch toggle: raising it takes effect on the next api
-# restart, which the PWA's Ops → Update performs anyway.
+# The prompt cache's disk allowance, in GiB (jbrain.llm.kv_prefix) — role prefixes and,
+# on Flash-Next, conversation files share it. It was a module constant whose own comment
+# conceded the gap — "changing it is a release, there is no knob" — on a box whose owner has no
+# terminal (CLAUDE.md #10). Read at startup and applied live by the settings and debug routes.
+# 40 since 2026-10-04 (owner): room for conversation files beside every engine's prefixes.
 LLM_KV_PREFIX_BUDGET_GB_KEY = "llm_kv_prefix_budget_gb"
-LLM_KV_PREFIX_BUDGET_GB_DEFAULT = 25
+LLM_KV_PREFIX_BUDGET_GB_DEFAULT = 40
+LLM_KV_PREFIX_BUDGET_GB_MIN = 2
+LLM_KV_PREFIX_BUDGET_GB_MAX = 500
+
+# Whether the pooled interactive slot saves each chat conversation to disk as the slot moves on
+# and restores it when that conversation speaks again (FLASH_NEXT_ENGINE_PLAN F4c). ON by
+# default (owner, 2026-10-04); applied live. Off stops new saves and restores — files already
+# on disk age out of the budget or go with `DELETE /api/debug/llm/kv-prefix`.
+LLM_KV_CONVERSATION_CACHE_KEY = "llm_kv_conversation_cache"
+LLM_KV_CONVERSATION_CACHE_DEFAULT = True
 
 
 # The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
@@ -1151,12 +1160,24 @@ class SqlSettingsStore:
         return stored is True
 
     async def llm_kv_prefix_budget_gb(self, ctx: SessionContext) -> int:
-        """The prompt cache's disk allowance in GiB. Defaults to 25; a stored value outside
+        """The prompt cache's disk allowance in GiB. Defaults to 40; a stored value outside
         1..500 is ignored rather than trusted, because this number bounds a delete loop."""
         stored = await self.get(ctx, LLM_KV_PREFIX_BUDGET_GB_KEY, LLM_KV_PREFIX_BUDGET_GB_DEFAULT)
         if isinstance(stored, int) and not isinstance(stored, bool) and 1 <= stored <= 500:
             return stored
         return LLM_KV_PREFIX_BUDGET_GB_DEFAULT
+
+    async def llm_kv_conversation_cache(self, ctx: SessionContext) -> bool:
+        """Whether conversation files are saved and restored. Defaults ON; only an explicit
+        `false` turns it off."""
+        stored = await self.get(
+            ctx, LLM_KV_CONVERSATION_CACHE_KEY, LLM_KV_CONVERSATION_CACHE_DEFAULT
+        )
+        return stored is not False
+
+    async def set_llm_kv_conversation_cache(self, ctx: SessionContext, on: bool) -> bool:
+        await self.upsert(ctx, LLM_KV_CONVERSATION_CACHE_KEY, on)
+        return on
 
     async def set_llm_kv_prefix_budget_gb(self, ctx: SessionContext, gb: int) -> int:
         """Store the allowance. Bounds are the API's job, as everywhere else here."""

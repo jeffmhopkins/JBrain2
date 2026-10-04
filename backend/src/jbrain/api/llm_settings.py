@@ -79,6 +79,8 @@ from jbrain.llm.router import (
 from jbrain.llm.types import LlmTool
 from jbrain.settings_store import (
     JCODE_PLANNER_SAME,
+    LLM_KV_PREFIX_BUDGET_GB_MAX,
+    LLM_KV_PREFIX_BUDGET_GB_MIN,
     LLM_TASK_OVERRIDES_KEY,
     SqlSettingsStore,
 )
@@ -2602,18 +2604,43 @@ async def kv_prefix_clear(
 
 
 async def set_kv_prefix_budget(
-    store: SqlSettingsStore, ctx: SessionContext, *, gb: int
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    *,
+    gb: int,
+    kv_prefix: "KvPrefixStore | None" = None,
 ) -> dict[str, object]:
-    """Set the prompt cache's disk allowance, in GiB.
-
-    Takes effect on the next api start — the store reads it once at construction, like the
-    patch toggle — and Ops → Update restarts it anyway. Bounded here rather than in the store
+    """Set the prompt cache's disk allowance, in GiB — stored, and applied to the live store
+    when one is wired (the next save prunes to it). Bounded here rather than in the store
     because this number bounds a delete loop: the floor is one file's worth (a ~1.1 GB slot
     file plus its sidecar), below which the store would evict everything it just saved."""
-    if not 2 <= gb <= 500:
-        raise HTTPException(status_code=422, detail="budget must be 2..500 GiB")
+    if not LLM_KV_PREFIX_BUDGET_GB_MIN <= gb <= LLM_KV_PREFIX_BUDGET_GB_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"budget must be {LLM_KV_PREFIX_BUDGET_GB_MIN}..{LLM_KV_PREFIX_BUDGET_GB_MAX}"
+            " GiB",
+        )
     await store.set_llm_kv_prefix_budget_gb(ctx, gb)
-    return {"budget_gb": gb, "applies": "on the next api restart"}
+    if kv_prefix is None:
+        return {"budget_gb": gb, "applies": "on the next api restart"}
+    kv_prefix.configure(max_store_bytes=gb * 1024**3)
+    return {"budget_gb": gb, "applies": "now (the next save prunes to it)"}
+
+
+async def set_kv_conversation_cache(
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    *,
+    enabled: bool,
+    kv_prefix: "KvPrefixStore | None" = None,
+) -> dict[str, object]:
+    """Turn conversation files on or off (FLASH_NEXT_ENGINE_PLAN F4c) — stored and applied
+    live. Off stops new saves and restores; files already saved stay until the budget ages
+    them out or `DELETE /llm/kv-prefix` removes them."""
+    await store.set_llm_kv_conversation_cache(ctx, enabled)
+    if kv_prefix is not None:
+        kv_prefix.configure(conversations=enabled)
+    return {"conversation_cache": enabled, "applies": "now" if kv_prefix else "on restart"}
 
 
 async def gateway_prime(

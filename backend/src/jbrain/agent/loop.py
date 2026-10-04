@@ -74,7 +74,13 @@ from jbrain.llm import (
 )
 from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
-from jbrain.llm.slot_roles import SlotPin, SlotRole, slot_pin
+from jbrain.llm.slot_roles import (
+    ConversationPin,
+    SlotPin,
+    SlotRole,
+    conversation_pin,
+    slot_pin,
+)
 
 log = structlog.get_logger()
 
@@ -742,6 +748,7 @@ class AgentLoop:
         effort_override: str | None = None,
         hidden_tools_provider: Callable[[], Awaitable[Collection[str]]] | None = None,
         slot_role: SlotRole | None = None,
+        conversation_key: str | None = None,
     ):
         self._router = router
         self._registry = registry
@@ -767,6 +774,10 @@ class AgentLoop:
         # in jerv's slot and evict its prefix. None keeps the task's default (interactive) and
         # the router call exactly as it was, so a caller that names no role changes nothing.
         self._slot_pin: SlotPin = slot_pin(slot_role)
+        # The chat conversation this loop's turns belong to, named so the disk store can save
+        # it when the interactive slot moves on and restore it when it speaks again. Only the
+        # owner's chat passes one; every other caller's turns stay exactly as they were.
+        self._conversation: ConversationPin = conversation_pin(conversation_key)
 
     async def _hidden(self) -> Collection[str]:
         """Tool names hidden this turn by the runtime provider (empty when no provider
@@ -865,6 +876,7 @@ class AgentLoop:
                 effort_override=effort,
                 spec_override=self._model_override,
                 **self._slot_pin,
+                **self._conversation,
             )
             return plain, plain.reasoning
         turn: LlmTurn | None = None
@@ -882,6 +894,7 @@ class AgentLoop:
             effort_override=effort,
             spec_override=self._model_override,
             **self._slot_pin,
+            **self._conversation,
         ):
             if isinstance(part, TextChunk):
                 if part.text:
@@ -1327,6 +1340,7 @@ class AgentLoop:
                 effort_override=self._effort_override,
                 spec_override=self._model_override,
                 **self._slot_pin,
+                **self._conversation,
             ):
                 if isinstance(part, TextChunk):
                     if part.text:
@@ -1801,6 +1815,7 @@ class AgentLoop:
                 effort_override=self._effort_override,
                 spec_override=self._model_override,
                 **self._slot_pin,
+                **self._conversation,
             )
             spent = _billable_tokens(turn)
             budget[0] -= spent
