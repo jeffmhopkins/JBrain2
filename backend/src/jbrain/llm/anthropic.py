@@ -224,6 +224,7 @@ class AnthropicClient:
         reasoning_effort: str | None = None,  # ignored — see `complete`
         sampling: Sampling | None = None,
         id_slot: int | None = None,  # a llama-server slot pin; ignored here
+        replay_reasoning: bool = False,  # local preserving templates only; ignored here
     ) -> LlmTurn:
         payload = self._converse_payload(
             model=model,
@@ -270,6 +271,7 @@ class AnthropicClient:
         reasoning_effort: str | None = None,  # ignored — see `complete`
         sampling: Sampling | None = None,
         id_slot: int | None = None,  # a llama-server slot pin; ignored here
+        replay_reasoning: bool = False,  # local preserving templates only; ignored here
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over the Messages SSE events. Text deltas stream live;
         tool_use blocks arrive as `input_json_delta` fragments accumulated per

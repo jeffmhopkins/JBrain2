@@ -179,10 +179,18 @@ class UserMessage:
 @dataclass(frozen=True)
 class AssistantMessage:
     """A prior assistant turn: any text it produced plus the tool calls it made.
-    Replayed back so the model sees its own tool requests in context."""
+    Replayed back so the model sees its own tool requests in context.
+
+    `reasoning` is that step's own thinking trace, set only by the agent loop on the tool
+    steps of the turn in flight, and `reasoning_model` the served model that thought it.
+    The adapter replays it solely to that same model, solely when its chat template
+    preserves reasoning (`LocalModel.preserves_reasoning`), and solely after the last user
+    message (`replayed_steps`) — history rebuilt from earlier turns never carries it."""
 
     text: str = ""
     tool_calls: Sequence[ToolCall] = ()
+    reasoning: str = ""
+    reasoning_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -193,6 +201,36 @@ class ToolResultMessage:
 
 
 LlmMessage = UserMessage | AssistantMessage | ToolResultMessage
+
+
+def current_turn_start(messages: Sequence[LlmMessage]) -> int:
+    """Index just past the last user message: where the turn in flight's own steps begin.
+
+    The boundary the Qwen3.8 template draws for `preserve_thinking=False` (its
+    `last_query_index`), shared by the serializer that replays reasoning and the slot
+    estimate that must count it, so the two cannot disagree on which steps are replayed."""
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], UserMessage):
+            return index + 1
+    return 0
+
+
+def replayed_steps(messages: Sequence[LlmMessage], model: str) -> frozenset[int]:
+    """Indices of the steps whose reasoning goes back to `model`: assistant steps of the turn
+    in flight that have a trace, and that `model` itself produced. Another model's thinking
+    (a mid-turn engine switch) is not this template's to render. An empty `model` is no replay.
+    The one rule the serializer and the slot estimate both apply."""
+    if not model:
+        return frozenset()
+    start = current_turn_start(messages)
+    return frozenset(
+        index
+        for index in range(start, len(messages))
+        if isinstance(step := messages[index], AssistantMessage)
+        and step.reasoning
+        and step.reasoning_model == model
+    )
+
 
 # Why the model stopped: it finished its turn, it wants tools run, or it hit the
 # token ceiling. Providers' own reasons are normalized onto these three.
@@ -213,6 +251,12 @@ class LlmTurn:
     stop_reason: StopReason
     usage: LlmUsage
     reasoning: str = ""
+    # Stamped by the router, not the client: the served model that produced this turn (so a
+    # replayed step names its thinker), and the ESTIMATED share of `usage.input_tokens` that was
+    # this turn's own earlier reasoning replayed back — re-billed every round, so the agent
+    # loop's cost guardrail leaves it out rather than spending its budget on it.
+    model: str = ""
+    replayed_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -271,6 +315,7 @@ class LlmClient(Protocol):
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> LlmTurn: ...
 
     def converse_stream(
@@ -284,6 +329,7 @@ class LlmClient(Protocol):
         reasoning_effort: str | None = None,
         sampling: Sampling | None = None,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> AsyncIterator[StreamPart]:
         """Stream one tool-aware turn: incremental TextChunks then one final
         LlmTurn (see StreamPart). An async generator, so it is declared — not

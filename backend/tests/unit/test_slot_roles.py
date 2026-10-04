@@ -14,6 +14,13 @@ from jbrain.llm.slot_roles import (
     pool_shape,
     role_for,
 )
+from jbrain.llm.types import (
+    AssistantMessage,
+    LlmMessage,
+    UserMessage,
+    current_turn_start,
+    replayed_steps,
+)
 
 
 def test_flash_next_pool_shape() -> None:
@@ -173,3 +180,48 @@ def test_the_video_charge_adds_to_the_prompt_estimate() -> None:
     base = slot_roles.estimate_prompt_tokens("unknown-model", chars=3700)
     with_video = slot_roles.estimate_prompt_tokens("unknown-model", chars=3700, video_tokens=8192)
     assert with_video - base == 8192
+
+
+FLASH = "qwen3.8-flash-next"
+
+
+def _replay_messages() -> list[LlmMessage]:
+    return [
+        UserMessage(text="earlier"),
+        AssistantMessage(text="a", reasoning="old" * 10, reasoning_model=FLASH),
+        UserMessage(text="now"),
+        AssistantMessage(text="", reasoning="new" * 5, reasoning_model=FLASH),
+        AssistantMessage(text="", reasoning="other" * 3, reasoning_model="gpt-oss-120b"),
+    ]
+
+
+def test_prompt_chars_counts_only_the_in_flight_reasoning_when_replayed() -> None:
+    messages = _replay_messages()
+    without = slot_roles.prompt_chars("s", messages, ())
+    assert slot_roles.prompt_chars("s", messages, (), replay_model=FLASH) == without + 15
+
+
+def test_replayed_steps_are_the_in_flight_ones_the_same_model_thought() -> None:
+    messages = _replay_messages()
+    assert replayed_steps(messages, FLASH) == {3}
+    assert replayed_steps(messages, "gpt-oss-120b") == {4}
+    assert replayed_steps(messages, "") == frozenset()
+
+
+def test_prompt_chars_ignores_reasoning_a_model_is_not_sent() -> None:
+    messages = _replay_messages()
+    bare = [AssistantMessage(m.text) if isinstance(m, AssistantMessage) else m for m in messages]
+    assert slot_roles.prompt_chars("s", messages, ()) == slot_roles.prompt_chars("s", bare, ())
+
+
+def test_current_turn_start_is_just_past_the_last_user_message() -> None:
+    assert current_turn_start(_replay_messages()) == 3
+    assert current_turn_start([AssistantMessage(text="a")]) == 0
+    assert current_turn_start([UserMessage(text="u")]) == 1
+
+
+def test_only_flash_next_replays_reasoning_and_only_locally() -> None:
+    assert local_catalog.replays_reasoning("local", "qwen3.8-flash-next")
+    assert not local_catalog.replays_reasoning("xai", "qwen3.8-flash-next")
+    assert not local_catalog.replays_reasoning("local", "qwen3.8-27b-q4")
+    assert not local_catalog.replays_reasoning("local", "not-in-the-catalog")

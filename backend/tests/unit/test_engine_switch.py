@@ -1607,3 +1607,92 @@ async def test_missing_weights_point_at_on_box_models() -> None:
             engines.FLASH_NEXT,
             source="owner",
         )
+
+
+# --- preserved thinking across the remap ---------------------------------------------------
+
+
+def _wire_router(
+    engine_now: dict[str, Any], picks: dict[str, dict[str, str]]
+) -> tuple[LlmRouter, dict[str, list[dict[str, Any]]]]:
+    """A router over REAL OpenAI-compatible clients whose transports record each body, so a
+    test sees exactly what reached the local gateway or the cloud."""
+    from jbrain.llm.openai_compat import OpenAiCompatClient
+
+    seen: dict[str, list[dict[str, Any]]] = {"local": [], "xai": []}
+
+    def client(provider: str) -> OpenAiCompatClient:
+        def handle(req: httpx.Request) -> httpx.Response:
+            seen[provider].append(json.loads(req.content))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                },
+            )
+
+        return OpenAiCompatClient(
+            "http://gw/v1", "", provider=provider, transport=httpx.MockTransport(handle)
+        )
+
+    async def _overrides() -> dict[str, dict[str, str]]:
+        return picks
+
+    router = LlmRouter(
+        {"local": client("local"), "xai": client("xai")},
+        resolve_tasks({}),
+        overrides_loader=_overrides,
+        residency=_Admit(),
+        engine_loader=_engine_loader(engine_now),
+    )
+    return router, seen
+
+
+def _in_flight_step(model: str) -> list[Any]:
+    from jbrain.llm.types import AssistantMessage, ToolCall, ToolResult, ToolResultMessage
+    from jbrain.llm.types import UserMessage as User
+
+    call = ToolCall(id="c1", name="search", arguments={})
+    return [
+        User(text="q"),
+        AssistantMessage(text="", tool_calls=(call,), reasoning="plan", reasoning_model=model),
+        ToolResultMessage(results=[ToolResult(tool_call_id="c1", content="r")]),
+    ]
+
+
+def _reasoning_on_wire(body: dict[str, Any]) -> list[Any]:
+    return [m.get("reasoning_content") for m in body["messages"] if m["role"] == "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_a_standard_pick_remapped_to_flash_next_replays_its_thinking() -> None:
+    router, seen = _wire_router(
+        {"engine": engines.FLASH_NEXT}, {"agent.turn": {"spec": "local:gpt-oss-120b"}}
+    )
+    turn = await router.converse("agent.turn", system="s", messages=_in_flight_step(FN))
+    assert _reasoning_on_wire(seen["local"][-1]) == ["plan"]
+    assert seen["local"][-1]["chat_template_kwargs"]["preserve_thinking"] is False
+    assert turn.model == FN
+
+
+@pytest.mark.asyncio
+async def test_a_cloud_fallback_never_gets_the_flash_next_thinking() -> None:
+    # The Flash-Next pick while Standard serves falls back to the cloud task default.
+    router, seen = _wire_router(
+        {"engine": engines.STANDARD}, {"agent.turn": {"spec": f"local:{FN}"}}
+    )
+    turn = await router.converse("agent.turn", system="s", messages=_in_flight_step(FN))
+    assert seen["local"] == [] and _reasoning_on_wire(seen["xai"][-1]) == [None]
+    assert "chat_template_kwargs" not in seen["xai"][-1]
+    assert turn.model == "grok-4.3" and turn.replayed_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_a_mid_turn_engine_switch_drops_the_other_models_thinking() -> None:
+    # The steps so far were thought on gpt-oss (Standard); Flash-Next now serves the next round.
+    router, seen = _wire_router(
+        {"engine": engines.FLASH_NEXT}, {"agent.turn": {"spec": "local:gpt-oss-120b"}}
+    )
+    await router.converse("agent.turn", system="s", messages=_in_flight_step("gpt-oss-120b"))
+    assert _reasoning_on_wire(seen["local"][-1]) == [None]

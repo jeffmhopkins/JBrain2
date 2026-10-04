@@ -298,3 +298,86 @@ async def test_a_video_call_does_not_calibrate_the_estimate() -> None:
     clip = LlmVideo(media_type="video/x-matroska", data="x", seconds=20.0)
     await router.complete("debug.whatever", system="s", user_text="u" * 20_000, videos=[clip])
     assert FLASH not in prefill._ratio
+
+
+def _thinking_turn(*, in_flight: bool, chars: int = 600_000) -> list[LlmMessage]:
+    """A tool loop whose one step thought `chars` of reasoning — by default ~162k tokens'
+    worth, past the ingest slot's 128k cap only if that thinking is replayed, i.e. only when
+    it sits in the turn in flight."""
+    from jbrain.llm.types import AssistantMessage
+
+    step = AssistantMessage(text="", reasoning="x" * chars, reasoning_model=FLASH)
+    if in_flight:
+        return [UserMessage("q"), step]
+    return [step, UserMessage("q")]
+
+
+async def test_a_turn_that_overflows_only_because_of_replay_runs_without_it() -> None:
+    fake = FakeLlmClient()
+    turn = await _router(fake).converse(
+        "agent.turn", system="s", messages=_thinking_turn(in_flight=True), slot_role=SlotRole.INGEST
+    )
+    assert fake.converse_calls[0]["replay_reasoning"] is False
+    assert turn.replayed_tokens == 0
+
+
+async def test_the_stream_degrades_the_same_way() -> None:
+    fake = FakeLlmClient()
+    parts = [
+        part
+        async for part in _router(fake).converse_stream(
+            "agent.turn",
+            system="s",
+            messages=_thinking_turn(in_flight=True),
+            slot_role=SlotRole.INGEST,
+        )
+    ]
+    assert fake.stream_calls[0]["replay_reasoning"] is False
+    final = parts[-1]
+    assert isinstance(final, LlmTurn) and final.model == FLASH and final.replayed_tokens == 0
+
+
+async def test_replay_that_fits_is_sent_and_its_tokens_reported() -> None:
+    fake = FakeLlmClient()
+    turn = await _router(fake).converse(
+        "agent.turn", system="s", messages=_thinking_turn(in_flight=True, chars=3_700)
+    )
+    assert fake.converse_calls[0]["replay_reasoning"] is True
+    assert turn.model == FLASH and turn.replayed_tokens == 1_000  # 3,700 chars at 3.7/token
+
+
+async def test_a_streamed_replay_stamps_its_closing_turn() -> None:
+    fake = FakeLlmClient()
+    parts = [
+        part
+        async for part in _router(fake).converse_stream(
+            "agent.turn", system="s", messages=_thinking_turn(in_flight=True, chars=3_700)
+        )
+    ]
+    assert fake.stream_calls[0]["replay_reasoning"] is True
+    final = parts[-1]
+    assert isinstance(final, LlmTurn) and final.replayed_tokens == 1_000
+
+
+async def test_a_prompt_too_big_even_without_replay_is_still_refused() -> None:
+    fake = FakeLlmClient()
+    with pytest.raises(SlotCapError):
+        await _router(fake).converse(
+            "agent.turn",
+            system="x" * 600_000,
+            messages=_thinking_turn(in_flight=True, chars=10),
+            slot_role=SlotRole.INGEST,
+        )
+    assert fake.converse_calls == []
+
+
+async def test_reasoning_that_is_not_replayed_is_not_counted() -> None:
+    fake = FakeLlmClient()
+    turn = await _router(fake).converse(
+        "agent.turn",
+        system="s",
+        messages=_thinking_turn(in_flight=False),
+        slot_role=SlotRole.INGEST,
+    )
+    assert fake.converse_calls[0]["replay_reasoning"] is False
+    assert turn.replayed_tokens == 0

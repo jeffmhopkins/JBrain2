@@ -334,6 +334,16 @@ class LocalModel:
     # minimum instead of a no-op. False for a model with a genuine off switch (a Qwen hybrid's
     # `enable_thinking`, GLM's own template), which keeps its true "none".
     no_reasoning_off: bool = False
+    # The chat template renders a prior assistant step's `reasoning_content` back into the
+    # prompt and honours a `preserve_thinking` kwarg. When set, the adapter replays the
+    # reasoning of the turn in flight's own tool steps (never an earlier user turn's) and
+    # sends `preserve_thinking=false` so the template draws that same boundary — the card's
+    # lighter mode, which keeps the agent's decisions consistent across a tool loop and the
+    # re-rendered steps byte-equal to what was generated (KV reuse). Set only where the
+    # served template is KNOWN to read both: Flash-Next (llama-server logs "chat template
+    # supports preserving reasoning"). Unset elsewhere, a template that ignores the field
+    # would gain nothing and one that renders it differently would break the prefix.
+    preserves_reasoning: bool = False
     # Extra `llama-server` flags appended verbatim to the gateway command
     # (jbrain.llm.llama_swap_config). Carries the MTP self-speculative-decoding flags
     # (`--spec-type draft-mtp …`) for the MTP variant; empty for every model whose
@@ -1229,6 +1239,9 @@ CATALOG: tuple[LocalModel, ...] = (
         hybrid_thinking=True,
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         template_default_effort=QWEN38_TEMPLATE_DEFAULT_EFFORT,
+        # Verified live 2026-10-04 on the served template (`preserve_thinking` /
+        # `last_query_index`); the 27B entries are not set until theirs is shown to match.
+        preserves_reasoning=True,
         # The longest single sequence: any slot may grow to `n_ctx_train` inside the pool. The
         # served shape is `kv_pool`, which the window and slot overrides cannot change; each
         # role's own limit is its pool cap (slot_roles).
@@ -1354,6 +1367,16 @@ def tool_round_text_is_analysis(served_model: str) -> bool:
     outside the catalog keeps the harmony assumption (the prior behaviour)."""
     model = _BY_SERVED.get(served_model)
     return model is None or model.reasoning_format != "deepseek"
+
+
+def replays_reasoning(provider: str, served_model: str) -> bool:
+    """Whether the turn in flight's reasoning goes back on the wire to (provider, model).
+    The ONE gate the adapter's serializer and the router's slot estimate share. Never a cloud
+    provider, and never a served name outside the catalog (an unknown template)."""
+    if provider != LOCAL_PROVIDER:
+        return False
+    model = _BY_SERVED.get(served_model)
+    return model.preserves_reasoning if model else False
 
 
 def id_for_served(served_model: str) -> str | None:

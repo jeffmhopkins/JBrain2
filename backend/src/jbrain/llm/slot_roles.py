@@ -30,6 +30,7 @@ from jbrain.llm.types import (
     LlmTool,
     ToolResultMessage,
     UserMessage,
+    replayed_steps,
 )
 
 # No single sequence may exceed what the model was trained on, whatever the pool holds.
@@ -315,7 +316,13 @@ def tool_schema_chars(name: str, description: str, schema: object) -> int:
     return len(name) + len(description) + len(json.dumps(schema, default=str))
 
 
-def prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[LlmTool]) -> int:
+def prompt_chars(
+    system: str,
+    messages: Sequence[LlmMessage],
+    tools: Sequence[LlmTool],
+    *,
+    replay_model: str = "",
+) -> int:
     """Roughly how much text this turn puts in front of the model, in characters.
 
     The input to `prefill`'s token estimate, so it wants to be proportional to the real
@@ -325,15 +332,22 @@ def prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[Ll
     measured), and a turn deep in a tool loop is mostly its own transcript.
 
     Images are counted as their encoded size deliberately not at all: a vision model prices
-    them per tile, not per byte, so their characters would swamp the estimate."""
+    them per tile, not per byte, so their characters would swamp the estimate.
+
+    `replay_model` mirrors the adapter's replay to a preserving model (`replayed_steps`):
+    the turn in flight's own thinking goes back into the prompt, and a deep tool loop's traces
+    can outweigh its transcript — left out, the pool guard would book a slot short."""
     total = len(system)
-    for message in messages:
+    replayed = replayed_steps(messages, replay_model)
+    for index, message in enumerate(messages):
         if isinstance(message, UserMessage):
             total += len(message.text)
         elif isinstance(message, AssistantMessage):
             total += len(message.text) + sum(
                 tool_call_chars(call.name, call.arguments) for call in message.tool_calls
             )
+            if index in replayed:
+                total += len(message.reasoning)
         elif isinstance(message, ToolResultMessage):
             total += sum(len(str(result.content)) for result in message.results)
     for tool in tools:

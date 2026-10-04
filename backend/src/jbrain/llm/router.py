@@ -13,6 +13,7 @@ refactor — docs/reference/ANALYSIS.md "Privacy routing".
 """
 
 import contextlib
+import dataclasses
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
@@ -302,6 +303,11 @@ def warm_reasoning_effort(
     if not _reasoning_capable(local_catalog.LOCAL_PROVIDER, served_model):
         return None
     return effort
+
+
+def _replay_kw(replay: bool) -> dict[str, bool]:
+    # Passed only when on, so a client call that replays nothing keeps its old shape.
+    return {"replay_reasoning": True} if replay else {}
 
 
 def _reasoning_capable(provider: str, model: str) -> bool:
@@ -959,6 +965,43 @@ class LlmRouter:
             yield placement.slot, placement.max_tokens
 
     @staticmethod
+    def _fit_replay(
+        task: str,
+        slot_role: SlotRole | None,
+        provider: str,
+        model: str,
+        *,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool],
+        n_images: int,
+        max_tokens: int,
+    ) -> tuple[bool, int, int]:
+        """(replay?, prompt chars to book, estimated replayed tokens) for one tool-aware turn.
+
+        Replays the turn in flight's own reasoning to a model that preserves it — unless that
+        is what would push the prompt past its role's slot cap. Then the turn runs WITHOUT the
+        replay rather than failing: the thinking is an aid to consistency, the turn is the
+        thing the owner asked for. Only the cap is checked here (pure, nothing is reserved);
+        the pin that follows books whichever size was chosen."""
+        bare = slot_roles.prompt_chars(system, messages, tools)
+        if not local_catalog.replays_reasoning(provider, model):
+            return False, bare, 0
+        chars = slot_roles.prompt_chars(system, messages, tools, replay_model=model)
+        if chars == bare:
+            return False, bare, 0
+        pool = local_catalog.pool_of(model)
+        if pool is not None:
+            role = slot_roles.role_for(task, slot_role)
+            prompt_tokens = slot_roles.estimate_prompt_tokens(model, chars=chars, n_images=n_images)
+            try:
+                slot_roles.admit(pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens)
+            except slot_roles.SlotCapError:
+                log.info("llm.reasoning_replay_dropped", task=task, model=model, chars=chars)
+                return False, bare, 0
+        return True, chars, round(prefill.estimate_tokens(model, chars - bare))
+
+    @staticmethod
     def _calibrate(provider: str, model: str, chars: int, n_images: int, usage: LlmUsage) -> None:
         # Every local call's real prompt size tightens the estimate the slot caps are checked
         # with. An image's tokens have no characters behind them, and on a short prompt the
@@ -1098,8 +1141,18 @@ class LlmRouter:
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
-        chars = slot_roles.prompt_chars(system, messages, tools)
         n_images = slot_roles.image_count(messages)
+        replay, chars, replayed_tokens = self._fit_replay(
+            task,
+            slot_role,
+            provider,
+            model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            n_images=n_images,
+            max_tokens=max_tokens,
+        )
         start = time.perf_counter()
         async with self._slot_pin(
             task,
@@ -1119,7 +1172,9 @@ class LlmRouter:
                 reasoning_effort=reasoning_effort,
                 sampling=resolved_sampling,
                 **({} if id_slot is None else {"id_slot": id_slot}),
+                **_replay_kw(replay),
             )
+        turn = dataclasses.replace(turn, model=model, replayed_tokens=replayed_tokens)
         elapsed = time.perf_counter() - start
         self._calibrate(provider, model, chars, n_images, turn.usage)
         self._note_agent_turn(
@@ -1184,8 +1239,18 @@ class LlmRouter:
         # it (`prefill._fraction`).
         await self._ensure_agent_prefix(task, provider, model, system, tools, reasoning_effort)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
-        prompt_chars = slot_roles.prompt_chars(system, messages, tools)
         n_images = slot_roles.image_count(messages)
+        replay, prompt_chars, replayed_tokens = self._fit_replay(
+            task,
+            slot_role,
+            provider,
+            model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            n_images=n_images,
+            max_tokens=max_tokens,
+        )
         # The row is opened by the first fraction that shows a wait, so a turn that answers
         # off a primed prefix — which is most of them — writes nothing at all.
         async with (
@@ -1210,7 +1275,8 @@ class LlmRouter:
                 slot_id=id_slot,
             ) as streaming,
         ):
-            slot_kw: dict[str, int] = {} if id_slot is None else {"id_slot": id_slot}
+            slot_kw: dict[str, Any] = {} if id_slot is None else {"id_slot": id_slot}
+            slot_kw.update(_replay_kw(replay))
             # Tracked so a truncated stream can be recovered ONLY when nothing visible has
             # been shown yet: re-issuing after answer text has streamed would replay it to
             # the reader. Reasoning chunks don't count — they are a scratch channel the PWA
@@ -1237,6 +1303,9 @@ class LlmRouter:
                         await prefill_done()
                     streaming()
                     if isinstance(part, LlmTurn):
+                        part = dataclasses.replace(  # noqa: PLW2901 - the stamped turn IS the part
+                            part, model=model, replayed_tokens=replayed_tokens
+                        )
                         final = part
                     elif isinstance(part, TextChunk):
                         answered = True
@@ -1276,8 +1345,8 @@ class LlmRouter:
                     yield ReasoningChunk(text=turn.reasoning[reasoned:])
                 if turn.text:
                     yield TextChunk(text=turn.text)
-                final = turn
-                yield turn
+                final = dataclasses.replace(turn, model=model, replayed_tokens=replayed_tokens)
+                yield final
             finally:
                 # A stream the owner STOPS never reaches the tail below: GeneratorExit is
                 # thrown at a `yield`, so `_note_agent_turn` and everything after it is

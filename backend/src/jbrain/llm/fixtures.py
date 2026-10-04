@@ -284,6 +284,7 @@ class FixtureLlmClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> LlmTurn:
         prompt = _converse_prompt(model=model, system=system, messages=messages, tools=tools)
         key = _key(prompt)
@@ -299,6 +300,7 @@ class FixtureLlmClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         id_slot: int | None = None,
+        replay_reasoning: bool = False,
     ) -> AsyncIterator[StreamPart]:
         turn = await self.converse(
             model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
