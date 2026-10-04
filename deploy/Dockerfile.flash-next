@@ -149,6 +149,27 @@ RUN set -eu; \
     printf '%s\n' "$pver" | grep -q "$short" \
         || { echo "FATAL: llama-perplexity on PATH does not report commit $short: $pver"; exit 1; }
 
+# Native video (docs/plans/NATIVE_VIDEO_PLAN.md): llama-server decodes an `input_video` part by
+# running ffmpeg/ffprobe from PATH, and without them answers every video with a 400. Fedora's
+# `ffmpeg-free` ships no H.264 decoder we can count on, so the api transcodes each clip to
+# Motion-JPEG first — which makes the `mjpeg` decoder the one this image must prove it has.
+# Checked rather than assumed, so a base that loses it fails here, not on the first clip.
+RUN set -eu; \
+    if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then \
+        if command -v dnf >/dev/null 2>&1; then \
+            dnf -y --setopt=install_weak_deps=False install ffmpeg-free && dnf clean all; \
+        elif command -v microdnf >/dev/null 2>&1; then \
+            microdnf -y --setopt=install_weak_deps=0 install ffmpeg-free && microdnf clean all; \
+        elif command -v apt-get >/dev/null 2>&1; then \
+            apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+                && rm -rf /var/lib/apt/lists/*; \
+        else echo "FATAL: ffmpeg missing and no known package manager (dnf/microdnf/apt-get)"; exit 1; fi; \
+    fi; \
+    ffprobe -version >/dev/null 2>&1 || { echo "FATAL: ffprobe on PATH does not run"; exit 1; }; \
+    ffmpeg -hide_banner -decoders 2>/dev/null | grep -Eq '^ V[^ ]* +mjpeg ' \
+        || { echo "FATAL: ffmpeg on PATH has no mjpeg decoder; native video would fail every clip"; exit 1; }; \
+    ffmpeg -hide_banner -version | head -n1
+
 # Fixed path the F2 perplexity one-shot reads; do not move it without moving that job.
 COPY --from=wikitext /out/wiki.test.raw /opt/jbrain/eval/wiki.test.raw
 

@@ -1026,3 +1026,16 @@ def test_the_overhead_override_does_not_leak_to_models_that_did_not_set_it() -> 
     assert m is not None and m.runtime_overhead_gb is None
     host, _ = local_catalog.declared_gb(m, 131072, slots=1)
     assert host == 69.57
+
+
+def test_only_flash_next_sets_a_video_sampling_rate() -> None:
+    """`--video-fps` is server-wide and sizes every native clip's charge, so it is rendered
+    from slot_roles.VIDEO_FPS and set only on the one engine that is sent video."""
+    from jbrain.llm import slot_roles
+
+    carriers = [m.id for m in local_catalog.CATALOG if "--video-fps" in m.extra_server_args]
+    assert carriers == ["qwen3.8-flash-next"]
+    flash = local_catalog.get("qwen3.8-flash-next")
+    assert flash is not None
+    args = flash.extra_server_args
+    assert args[args.index("--video-fps") + 1] == f"{slot_roles.VIDEO_FPS:g}" == "1"

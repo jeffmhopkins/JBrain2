@@ -1280,6 +1280,13 @@ CATALOG: tuple[LocalModel, ...] = (
             "q8_0",
             "-ctv",
             "q8_0",
+            # Server-wide video sampling rate. Two frames merge into one image's tokens, so
+            # the engine's default 4 fps costs >= 4k tokens per second of clip and a minute
+            # fits no slot; at 1 fps a 60 s clip is ~30 pairs. Rendered from the same
+            # constant the slot charge uses so the two cannot drift; NATIVE_VIDEO_PLAN V0's
+            # on-box measurement confirms or moves it.
+            "--video-fps",
+            f"{slot_roles.VIDEO_FPS:g}",
         ),
     ),
 )

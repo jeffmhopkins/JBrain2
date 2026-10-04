@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-29
+> **Status:** Living · **Last verified:** 2026-10-04
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -116,6 +116,16 @@ scripts/debug-connect.sh complete --strength low \
 # OCR/caption prose against the real vision model. The image-layer twin of `complete`.
 scripts/debug-connect.sh vision <attachment_id> --task vision.caption
 scripts/debug-connect.sh vision <attachment_id> --task vision.ocr --system "ONLY transcribe legible text."
+
+# Native video probe (NATIVE_VIDEO_PLAN V0) — one on-box clip sent natively to the routed
+# `video.summarize` model (first 60 s as Motion-JPEG, one `input_video` part) or through the
+# frame pipeline; prints prompt_tokens, payload_bytes and elapsed_ms beside the answer. Runs
+# as a job and polls. Find a clip with `sql` (media_type like 'video/%').
+scripts/debug-connect.sh video <attachment_id>
+scripts/debug-connect.sh video <attachment_id> --mode frames
+# Pin the native call to Flash-Next for this probe only (video.summarize stays routed as is).
+scripts/debug-connect.sh video <attachment_id> --spec local:qwen3.8-flash-next
+scripts/debug-connect.sh video <attachment_id> --question "What does the person pick up?" --max-tokens 1024
 
 # Tool-calling probe — send a CHOSEN set of tool schemas (by registry name) to a routed
 # model and get back its PROPOSED tool calls; NO handler runs. Built to bisect a tool-calling

@@ -1102,6 +1102,8 @@ def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
     assert "--jinja" in tokens
     assert _value(tokens, "--mmproj") == "/models/qwen3.8-flash-next/mmproj-F16.gguf"
     assert _value(tokens, "--image-min-tokens") == "2048"
+    # NATIVE_VIDEO_PLAN: rendered from the constant the slot charge uses.
+    assert _value(tokens, "--video-fps") == "1"
     assert _value(tokens, "-m").endswith("-00001-of-00002.gguf")
     assert not any(t.startswith("--spec") for t in tokens)
     # A hybrid: no cache-reuse crash path. The save path is there only so the router can erase

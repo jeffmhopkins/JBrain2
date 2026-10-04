@@ -19,10 +19,12 @@ import decimal
 import json
 import math
 import re
+import tempfile
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 import httpx
 import structlog
@@ -33,7 +35,8 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain import box_events
+from jbrain import box_events, media
+from jbrain.agent.attachments import is_video_media_type
 from jbrain.agent.chat_images import ImageTooLarge, UndecodableImage, image_dimensions
 from jbrain.agent.grounding import (
     Convention,
@@ -58,8 +61,10 @@ from jbrain.ingest.ocr import (
     OCR_MAX_TOKENS,
     OCR_SYSTEM,
 )
-from jbrain.ingest.video import transcribe_audio_chunked
-from jbrain.llm import LlmImage, llama_swap_config, local_catalog
+from jbrain.ingest.video import FRAME_CAPTION_TASK as VIDEO_FRAME_TASK
+from jbrain.ingest.video import SUMMARY_TASK as VIDEO_SUMMARY_TASK
+from jbrain.ingest.video import run_video_analysis, transcribe_audio_chunked
+from jbrain.llm import LlmImage, llama_swap_config, local_catalog, slot_roles
 from jbrain.llm import engine as llm_engine
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
@@ -71,6 +76,7 @@ from jbrain.llm.types import (
     LlmMessage,
     LlmTool,
     LlmTurn,
+    LlmVideo,
     ReasoningChunk,
     Sampling,
     TextChunk,
@@ -1052,6 +1058,191 @@ async def vision(body: VisionRequest, request: Request, _p: DebugDep) -> VisionO
         return await _run_vision(_llm_router(request), _blobs(request), att, body)
 
 
+# --- Native video probe (NATIVE_VIDEO_PLAN V0) -------------------------------
+# The measuring instrument for native video on Flash-Next: one clip already on the box, sent
+# either natively (transcoded, one `input_video` part) or through today's frame pipeline, so
+# tokens, latency and the two answers can be compared with a token and no terminal. The clip
+# is capped at the native path's one minute whatever its length; the threshold that picks a
+# path in V1 is not applied here, because measuring is the point.
+
+NATIVE_VIDEO_MAX_SECONDS = 60.0
+_VIDEO_DEFAULT_QUESTION = "Describe what happens in this video, in order, with timestamps."
+
+
+class VideoProbeRequest(BaseModel):
+    attachment_id: uuid.UUID
+    mode: Literal["native", "frames"] = "native"
+    # Native only: the frame pipeline runs its shipped prompts unchanged.
+    question: str = ""
+    system: str = ""
+    max_tokens: int = Field(default=2048, ge=1, le=32768)
+    # Native only: a `provider:model` spec for this one call (e.g. `local:qwen3.8-flash-next`),
+    # so the probe can reach Flash-Next without re-routing `video.summarize` for everyone.
+    spec: str | None = None
+
+
+class VideoProbeOut(BaseModel):
+    mode: str
+    # The model that wrote `text`: the native call's, or in frames mode the summary step's.
+    provider: str
+    model: str
+    text: str
+    duration_s: float | None
+    # What reached the model: the clipped length and the transcoded body (native only; the
+    # frame pipeline makes many calls and sends stills).
+    sent_seconds: float | None = None
+    payload_bytes: int | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    transcode_ms: int | None = None
+    elapsed_ms: int
+    # Frames mode only: the vision route that captioned each still before the summary.
+    caption_provider: str | None = None
+    caption_model: str | None = None
+
+
+async def _run_video(
+    router_: LlmRouter, blobs: BlobStore, att: Attachment | TurnAttachment, body: VideoProbeRequest
+) -> VideoProbeOut:
+    """Run one clip through the chosen path. Pure of the DB so it unit-tests with fakes; the
+    route owns the lookup."""
+    if not is_video_media_type(att.media_type):
+        raise HTTPException(status_code=400, detail=f"not a video: {att.media_type}")
+    if not media.ffmpeg_available():
+        raise HTTPException(status_code=400, detail="ffmpeg/ffprobe are not on the api's PATH")
+    if body.mode == "frames" and body.spec:
+        # The frame pipeline routes its own tasks; a spec silently ignored would mislabel the
+        # comparison it exists to make.
+        raise HTTPException(status_code=400, detail="spec applies to native mode only")
+    raw = await blobs.get(att.sha256)
+    if body.mode == "frames":
+        return await _run_video_frames(router_, blobs, att, raw)
+    with tempfile.TemporaryDirectory(prefix="jbrain-dbgvid-") as tmp:
+        src = Path(tmp) / "in"
+        src.write_bytes(raw)
+        duration = await media.probe_duration_s(src)
+        started = time.perf_counter()
+        try:
+            clip = await media.transcode_for_native_video(
+                src, max_seconds=NATIVE_VIDEO_MAX_SECONDS, fps=slot_roles.VIDEO_FPS
+            )
+        except media.TranscodeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        transcode_ms = round((time.perf_counter() - started) * 1000)
+    sent = min(duration, NATIVE_VIDEO_MAX_SECONDS) if duration is not None else None
+    part = LlmVideo(
+        media_type=media.NATIVE_VIDEO_MEDIA_TYPE,
+        data=base64.b64encode(clip).decode("ascii"),
+        seconds=sent,
+    )
+    started = time.perf_counter()
+    try:
+        provider, model = await router_.effective_spec(VIDEO_SUMMARY_TASK, spec_override=body.spec)
+        result = await router_.complete(
+            VIDEO_SUMMARY_TASK,
+            spec_override=body.spec,
+            system=body.system,
+            user_text=body.question or _VIDEO_DEFAULT_QUESTION,
+            videos=[part],
+            max_tokens=body.max_tokens,
+        )
+    except LlmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    elapsed_ms = round((time.perf_counter() - started) * 1000)
+    log.info(
+        "debug.video",
+        mode="native",
+        provider=provider,
+        model=model,
+        attachment=str(att.id),
+        payload_bytes=len(clip),
+        prompt_tokens=result.usage.input_tokens,
+        elapsed_ms=elapsed_ms,
+    )
+    return VideoProbeOut(
+        mode="native",
+        provider=provider,
+        model=model,
+        text=result.text,
+        duration_s=duration,
+        sent_seconds=sent,
+        payload_bytes=len(clip),
+        prompt_tokens=result.usage.input_tokens,
+        output_tokens=result.usage.output_tokens,
+        transcode_ms=transcode_ms,
+        elapsed_ms=elapsed_ms,
+    )
+
+
+async def _run_video_frames(
+    router_: LlmRouter, blobs: BlobStore, att: Attachment | TurnAttachment, raw: bytes
+) -> VideoProbeOut:
+    # Frames only, no whisper: the native path cannot hear either, so the comparison is
+    # vision against vision. Frame thumbnails land in the blob store, content-addressed, as
+    # they do for analyze_video.
+    started = time.perf_counter()
+    try:
+        provider, model = await router_.effective_spec(VIDEO_SUMMARY_TASK)
+        caption_provider, caption_model = await router_.effective_spec(VIDEO_FRAME_TASK)
+        result = await run_video_analysis(
+            raw,
+            filename=att.filename,
+            media_type=att.media_type,
+            router=router_,
+            blobs=blobs,
+            sampler=media.sample_frames,
+        )
+    except LlmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=400, detail="no frames could be read from that clip")
+    elapsed_ms = round((time.perf_counter() - started) * 1000)
+    duration_ms = result.analysis.get("duration_ms")
+    log.info("debug.video", mode="frames", provider=provider, model=model, elapsed_ms=elapsed_ms)
+    return VideoProbeOut(
+        mode="frames",
+        provider=provider,
+        model=model,
+        text=result.summary,
+        duration_s=duration_ms / 1000 if isinstance(duration_ms, int | float) else None,
+        elapsed_ms=elapsed_ms,
+        caption_provider=caption_provider,
+        caption_model=caption_model,
+    )
+
+
+async def _video_attachment(
+    request: Request, attachment_id: uuid.UUID
+) -> Attachment | TurnAttachment:
+    # Either table, as /grounding reads: a chat-attached clip is a turn attachment, and those
+    # are the clips V2 sends natively.
+    async with scoped_session(_maker(request), _OWNER_CTX) as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        found: Attachment | TurnAttachment | None = (
+            await session.execute(select(Attachment).where(Attachment.id == attachment_id))
+        ).scalar_one_or_none()
+        if found is None:
+            found = (
+                await session.execute(
+                    select(TurnAttachment).where(TurnAttachment.id == attachment_id)
+                )
+            ).scalar_one_or_none()
+    if found is None:
+        raise HTTPException(
+            status_code=404,
+            detail="no attachment with that id in app.attachments or app.turn_attachments",
+        )
+    return found
+
+
+@router.post("/video")
+async def video(body: VideoProbeRequest, request: Request, _p: DebugDep) -> VideoProbeOut:
+    """Run one on-box clip natively or through the frame pipeline and report what it cost."""
+    request.state.debug_detail = f"{body.mode} {body.attachment_id}"
+    att = await _video_attachment(request, body.attachment_id)
+    return await _run_video(_llm_router(request), _blobs(request), att, body)
+
+
 # --- Async completion jobs (for slow models behind a short proxy timeout) ----
 # A long local extraction can take minutes — longer than a Cloudflare Tunnel (or
 # any proxy) will hold a request open. So the caller SUBMITS a job (returns at
@@ -1130,7 +1321,7 @@ class JobSubmitOut(BaseModel):
 class JobStatusOut(BaseModel):
     job_id: str
     status: str  # "pending" | "done" | "error"
-    result: CompleteOut | SdrSweepOut | None = None
+    result: CompleteOut | SdrSweepOut | VideoProbeOut | None = None
     error: str | None = None
 
 
@@ -1140,9 +1331,15 @@ async def complete_async(body: CompleteRequest, request: Request, _p: DebugDep) 
     result. Lets the console/harness drive minutes-long calls through a proxy whose
     request timeout is far shorter than the model takes."""
     request.state.debug_detail = body.user_text
+    router_ = _llm_router(request)
+    return _submit_job(request, lambda: _run_completion(router_, body))
+
+
+def _submit_job(
+    request: Request, work: Callable[[], Awaitable[CompleteOut | VideoProbeOut]]
+) -> JobSubmitOut:
     jobs = request.app.state.debug_jobs
     tasks = request.app.state.debug_job_tasks
-    router_ = _llm_router(request)
     job_id = uuid.uuid4().hex
     jobs[job_id] = {"status": "pending", "result": None, "error": None}
     # Keep the map bounded: drop the oldest already-finished jobs.
@@ -1153,7 +1350,7 @@ async def complete_async(body: CompleteRequest, request: Request, _p: DebugDep) 
 
     async def _run() -> None:
         try:
-            out = await _run_completion(router_, body)
+            out = await work()
             jobs[job_id] = {"status": "done", "result": out, "error": None}
         except HTTPException as exc:
             jobs[job_id] = {"status": "error", "result": None, "error": str(exc.detail)}
@@ -1176,6 +1373,16 @@ async def job_status(job_id: str, request: Request, _p: DebugDep) -> JobStatusOu
     return JobStatusOut(
         job_id=job_id, status=job["status"], result=job["result"], error=job["error"]
     )
+
+
+@router.post("/video-async", status_code=202)
+async def video_async(body: VideoProbeRequest, request: Request, _p: DebugDep) -> JobSubmitOut:
+    """/video as a background job; poll GET /jobs/{job_id}. A minute of video is a long
+    prefill, and the frame pipeline makes two dozen calls — either outlasts a proxy timeout."""
+    request.state.debug_detail = f"{body.mode} {body.attachment_id}"
+    att = await _video_attachment(request, body.attachment_id)
+    router_, blobs = _llm_router(request), _blobs(request)
+    return _submit_job(request, lambda: _run_video(router_, blobs, att, body))
 
 
 # --- Read-only SQL ----------------------------------------------------------

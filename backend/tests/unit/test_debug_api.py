@@ -32,7 +32,9 @@ class _StubRouter:
     """The three LlmRouter methods the debug complete route touches. Raises for the
     sentinel task 'bad' so the 400 mapping is exercised."""
 
-    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+    async def effective_spec(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ) -> tuple[str, str]:
         if task == "bad":
             raise LlmError("unknown LLM task: 'bad'")
         return ("local", "gpt-oss-120b")
@@ -468,8 +470,13 @@ class _RecordingVisionRouter:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
-        return ("local", "qwen3-vl-30b")
+    async def effective_spec(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ) -> tuple[str, str]:
+        if spec_override:
+            provider, _, model = spec_override.partition(":")
+            return (provider, model)
+        return ("local", "qwen3-vl-30b" if task != "video.summarize" else "gpt-oss-120b")
 
     async def complete(self, task: str, **kw: Any) -> LlmResult:
         self.calls.append({"task": task, **kw})
@@ -543,6 +550,237 @@ def test_vision_route_requires_a_valid_bearer(debug_client: tuple[TestClient, st
     client, _ = debug_client
     resp = client.post("/api/debug/vision", json={"attachment_id": str(uuid.uuid4())})
     assert resp.status_code == 401
+
+
+# --- native video probe -----------------------------------------------------
+
+
+def _video_attachment(media_type: str = "video/mp4") -> Any:
+    return cast(
+        Any,
+        SimpleNamespace(id=uuid.uuid4(), sha256="cafe", media_type=media_type, filename="clip.mp4"),
+    )
+
+
+@pytest.fixture
+def fake_media(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """ffmpeg faked: a 75 s clip that transcodes to a fixed body, recording each transcode."""
+    from jbrain import media
+
+    seen: list[dict[str, Any]] = []
+
+    async def probe(path: Any) -> float:
+        return 75.0
+
+    async def transcode(src: Any, **kw: Any) -> bytes:
+        seen.append({"src_bytes": src.read_bytes(), **kw})
+        return b"MJPEG-MKV"
+
+    monkeypatch.setattr(media, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(media, "probe_duration_s", probe)
+    monkeypatch.setattr(media, "transcode_for_native_video", transcode)
+    return seen
+
+
+def test_run_video_native_sends_one_capped_clip(fake_media: list[dict[str, Any]]) -> None:
+    import base64
+
+    from jbrain.api.debug import VideoProbeRequest, _run_video
+    from jbrain.llm.slot_roles import VIDEO_FPS
+    from jbrain.llm.types import LlmVideo
+
+    router = _RecordingVisionRouter()
+    body = VideoProbeRequest(attachment_id=uuid.uuid4())
+    out = asyncio.run(
+        _run_video(cast(Any, router), cast(Any, _FakeBlobs(b"RAW")), _video_attachment(), body)
+    )
+    # The attachment's bytes were transcoded at the engine's own rate, first minute only.
+    assert fake_media == [{"src_bytes": b"RAW", "max_seconds": 60.0, "fps": VIDEO_FPS}]
+    call = router.calls[0]
+    assert call["task"] == "video.summarize" and "strength" not in call
+    assert call["user_text"].startswith("Describe what happens in this video")
+    assert call["videos"] == [
+        LlmVideo(
+            media_type="video/x-matroska",
+            data=base64.b64encode(b"MJPEG-MKV").decode("ascii"),
+            seconds=60.0,
+        )
+    ]
+    assert out.mode == "native" and out.duration_s == 75.0 and out.sent_seconds == 60.0
+    assert out.payload_bytes == len(b"MJPEG-MKV")
+    assert (out.prompt_tokens, out.output_tokens) == (7, 11)
+    assert out.text.startswith("caption:")
+
+
+def test_run_video_rejects_a_non_video_attachment(fake_media: list[dict[str, Any]]) -> None:
+    from jbrain.api.debug import VideoProbeRequest, _run_video
+
+    body = VideoProbeRequest(attachment_id=uuid.uuid4())
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            _run_video(
+                cast(Any, _RecordingVisionRouter()),
+                cast(Any, _FakeBlobs(_png_bytes())),
+                _video_attachment("image/png"),
+                body,
+            )
+        )
+    assert excinfo.value.status_code == 400 and "not a video" in str(excinfo.value.detail)
+    assert fake_media == []
+
+
+def test_run_video_frames_runs_the_frame_pipeline(
+    fake_media: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import debug as debug_mod
+    from jbrain.api.debug import VideoProbeRequest, _run_video
+    from jbrain.ingest.video import VideoAnalysis
+
+    seen: list[dict[str, Any]] = []
+
+    async def analysis(data: bytes, **kw: Any) -> VideoAnalysis:
+        seen.append({"data": data, **kw})
+        return VideoAnalysis(summary="a dog runs", analysis={"duration_ms": 9000}, tool="x")
+
+    monkeypatch.setattr(debug_mod, "run_video_analysis", analysis)
+    body = VideoProbeRequest(attachment_id=uuid.uuid4(), mode="frames")
+    out = asyncio.run(
+        _run_video(
+            cast(Any, _RecordingVisionRouter()),
+            cast(Any, _FakeBlobs(b"RAW")),
+            _video_attachment(),
+            body,
+        )
+    )
+    assert out.mode == "frames" and out.text == "a dog runs" and out.duration_s == 9.0
+    # `model` is the summary step's; the captions ran on the vision route.
+    assert out.model == "gpt-oss-120b" and out.caption_model == "qwen3-vl-30b"
+    assert seen[0]["data"] == b"RAW" and fake_media == []
+
+
+def test_run_video_native_honours_a_spec_override(fake_media: list[dict[str, Any]]) -> None:
+    from jbrain.api.debug import VideoProbeRequest, _run_video
+
+    router = _RecordingVisionRouter()
+    body = VideoProbeRequest(attachment_id=uuid.uuid4(), spec="local:qwen3.8-flash-next")
+    out = asyncio.run(
+        _run_video(cast(Any, router), cast(Any, _FakeBlobs(b"RAW")), _video_attachment(), body)
+    )
+    assert router.calls[0]["spec_override"] == "local:qwen3.8-flash-next"
+    assert (out.provider, out.model) == ("local", "qwen3.8-flash-next")
+    assert out.caption_model is None
+
+
+def test_run_video_frames_refuses_a_spec(fake_media: list[dict[str, Any]]) -> None:
+    from jbrain.api.debug import VideoProbeRequest, _run_video
+
+    body = VideoProbeRequest(attachment_id=uuid.uuid4(), mode="frames", spec="local:x")
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            _run_video(
+                cast(Any, _RecordingVisionRouter()),
+                cast(Any, _FakeBlobs(b"RAW")),
+                _video_attachment(),
+                body,
+            )
+        )
+    assert excinfo.value.status_code == 400 and "native mode only" in str(excinfo.value.detail)
+
+
+class _LookupSession:
+    """Answers the lookup's two SELECTs from canned rows, by the table each one reads."""
+
+    def __init__(self, rows: dict[str, Any]) -> None:
+        self._rows = rows
+        self.tables: list[str] = []
+
+    async def __aenter__(self) -> "_LookupSession":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    def begin(self) -> "_LookupSession":
+        return self
+
+    async def execute(self, stmt: Any, params: Any = None) -> Any:
+        from sqlalchemy import Select
+
+        if not isinstance(stmt, Select):
+            return None  # the GUC set_config calls and SET TRANSACTION READ ONLY
+        table = stmt.column_descriptions[0]["entity"].__tablename__
+        self.tables.append(table)
+        row = self._rows.get(table)
+        return SimpleNamespace(scalar_one_or_none=lambda: row)
+
+
+def _lookup(rows: dict[str, Any]) -> tuple[Any, _LookupSession]:
+    from jbrain.api.debug import _video_attachment
+
+    session = _LookupSession(rows)
+    state = SimpleNamespace(session_maker=lambda: session)
+    request = SimpleNamespace(app=SimpleNamespace(state=state))
+    try:
+        return asyncio.run(_video_attachment(cast(Any, request), uuid.uuid4())), session
+    except HTTPException as exc:
+        return exc, session
+
+
+def test_video_attachment_lookup_reads_note_attachments_first() -> None:
+    note, chat = object(), object()
+    found, session = _lookup({"attachments": note, "turn_attachments": chat})
+    assert found is note and session.tables == ["attachments"]
+
+
+def test_video_attachment_lookup_falls_back_to_chat_uploads() -> None:
+    chat = object()
+    found, session = _lookup({"turn_attachments": chat})
+    assert found is chat and session.tables == ["attachments", "turn_attachments"]
+
+
+def test_video_attachment_lookup_404s_when_neither_table_has_it() -> None:
+    found, _ = _lookup({})
+    assert isinstance(found, HTTPException) and found.status_code == 404
+
+
+def test_video_route_runs_with_the_owner_token(
+    debug_client: tuple[TestClient, str],
+    fake_media: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jbrain.api import debug as debug_mod
+
+    client, key = debug_client
+    att = _video_attachment()
+
+    async def lookup(request: Any, attachment_id: uuid.UUID) -> Any:
+        return att
+
+    monkeypatch.setattr(debug_mod, "_video_attachment", lookup)
+    cast(Any, client.app).state.blob_store = _FakeBlobs(b"RAW")
+    body = {"attachment_id": str(att.id), "question": "who is there?"}
+    resp = client.post("/api/debug/video", headers=_auth(key), json=body)
+    assert resp.status_code == 200
+    out = resp.json()
+    assert out["mode"] == "native" and out["text"] == "echo:who is there?"
+    assert out["prompt_tokens"] == 3 and out["sent_seconds"] == 60.0
+
+    sub = client.post("/api/debug/video-async", headers=_auth(key), json=body)
+    assert sub.status_code == 202
+    job_id = sub.json()["job_id"]
+    status: dict[str, Any] = {"status": "pending"}
+    for _ in range(60):
+        status = client.get(f"/api/debug/jobs/{job_id}", headers=_auth(key)).json()
+        if status["status"] != "pending":
+            break
+    assert status["status"] == "done" and status["result"]["payload_bytes"] == 9
+
+
+def test_video_routes_require_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    body = {"attachment_id": str(uuid.uuid4())}
+    assert client.post("/api/debug/video", json=body).status_code == 401
+    assert client.post("/api/debug/video-async", json=body).status_code == 401
 
 
 # --- async completion jobs --------------------------------------------------

@@ -258,3 +258,43 @@ async def test_only_the_interactive_role_gives_up_on_a_busy_pool_early() -> None
     await router.complete("research.title", system="s", user_text="u")
     await router.converse("agent.turn", system="s", messages=[UserMessage("hi")])
     assert guard.waits == [None, INTERACTIVE_WAIT_S]
+
+
+async def test_complete_passes_videos_through_and_charges_them_against_the_cap() -> None:
+    from jbrain.llm.types import LlmVideo
+
+    fake = FakeLlmClient()
+    clip = LlmVideo(media_type="video/x-matroska", data="x", seconds=60.0)
+    await _router(fake).complete("debug.whatever", system="s", user_text="u", videos=[clip])
+    assert fake.calls[0]["videos"] == [clip]
+    # 60 s at 1 fps is up to 61 frames, 31 pairs x 4096 = 126,976 tokens: fits the workshop
+    # slot's 128k (output clamped), but not the 64k small one a short title would have taken.
+    with pytest.raises(SlotCapError) as caught:
+        await _router(fake).complete("research.title", system="s", user_text="u", videos=[clip])
+    assert caught.value.role is SlotRole.SMALL and caught.value.prompt_tokens > 120_000
+
+
+async def test_a_call_without_video_keeps_the_old_client_call_shape() -> None:
+    seen: list[dict[str, Any]] = []
+
+    class _NoVideoKw(FakeLlmClient):
+        async def complete(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            seen.append(kwargs)
+            return await super().complete(**kwargs)
+
+    await _router(_NoVideoKw()).complete("debug.whatever", system="s", user_text="u")
+    assert "videos" not in seen[0]
+
+
+async def test_a_video_call_does_not_calibrate_the_estimate() -> None:
+    from jbrain.llm.types import LlmResult, LlmVideo
+
+    class _BigUsage(FakeLlmClient):
+        async def complete(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            await super().complete(**kwargs)
+            return LlmResult(text="ok", parsed=None, usage=LlmUsage(60_000, 1))
+
+    router = _router(_BigUsage())
+    clip = LlmVideo(media_type="video/x-matroska", data="x", seconds=20.0)
+    await router.complete("debug.whatever", system="s", user_text="u" * 20_000, videos=[clip])
+    assert FLASH not in prefill._ratio

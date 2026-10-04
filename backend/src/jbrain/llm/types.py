@@ -22,6 +22,18 @@ class LlmImage:
 
 
 @dataclass(frozen=True)
+class LlmVideo:
+    """One base64-encoded video clip, sent natively to a video-capable local engine.
+
+    `seconds` is the clip's length as sent; it sizes the slot charge (each merged frame pair
+    costs an image), and None books the longest clip the native path sends."""
+
+    media_type: str
+    data: str
+    seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class LlmUsage:
     input_tokens: int
     output_tokens: int
@@ -240,6 +252,7 @@ class LlmClient(Protocol):
         system: str,
         user_text: str,
         images: Sequence[LlmImage] = (),
+        videos: Sequence[LlmVideo] = (),
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
