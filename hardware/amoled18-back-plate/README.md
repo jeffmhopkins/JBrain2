@@ -2,6 +2,10 @@
 
 > **Status:** Living · **Last verified:** 2026-10-04
 
+> **Also its own repo:** [jeffmhopkins/esp32-s3-touch-amoled-1.8-case](https://github.com/jeffmhopkins/esp32-s3-touch-amoled-1.8-case)
+> has this whole folder at its root, with its history, so it can be grabbed without the rest of
+> JBrain2. It is licensed CC BY-SA 4.0 there.
+
 A 3D-printable back cover for the [Waveshare
 ESP32-S3-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-s3-touch-amoled-1.8.htm), the little
 touchscreen that runs the kids' pet (firmware in [`../../firmware/`](../../firmware/README.md)).
