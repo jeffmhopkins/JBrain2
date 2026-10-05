@@ -124,6 +124,11 @@ TASK_LABELS: dict[str, str] = {
 # `browse.step` is hidden for the same reason: the browse sub-agent follows agent.turn, so a
 # picker entry for it would be a control that does nothing.
 _HIDDEN_TASKS: frozenset[str] = frozenset({"research.title", "browse.step"})
+# Following agent.turn's MODEL does not make a task's reasoning LEVEL meaningless: the router
+# still applies a per-engine level to a followed task. So the browse step stays on the
+# per-engine reasoning list (named there, since no picker row names it) — its level sets how
+# long each click thinks.
+_EFFORT_HIDDEN_TASKS: frozenset[str] = _HIDDEN_TASKS - {"browse.step"}
 
 
 # Tasks that send image content to the model and so require a vision-capable provider:
@@ -762,7 +767,7 @@ async def _engine_efforts_info(
         ]
         tasks: list[EngineEffortTaskOut] = []
         for task in TASK_DEFAULTS:
-            if task in _HIDDEN_TASKS:
+            if task in _EFFORT_HIDDEN_TASKS:
                 continue
             tier = task_tier(task)
             tier_level = stored.level(engine, "tier", tier) if tier is not None else None
@@ -773,6 +778,7 @@ async def _engine_efforts_info(
                 EngineEffortTaskOut(
                     id=task,
                     tier=tier,
+                    label=TASK_LABELS[task] if task in _HIDDEN_TASKS else None,
                     level=level,
                     fallback=fallback,
                     fallback_source="tier" if tier_level is not None else "standard",
@@ -2152,7 +2158,7 @@ def validate_engine_efforts(
             if (
                 scope == "task"
                 and key not in CODE_TASKS
-                and (key not in TASK_DEFAULTS or key in _HIDDEN_TASKS)
+                and (key not in TASK_DEFAULTS or key in _EFFORT_HIDDEN_TASKS)
             ):
                 raise HTTPException(status_code=422, detail=f"unknown task: {key}")
             if level is not None and level not in levels:

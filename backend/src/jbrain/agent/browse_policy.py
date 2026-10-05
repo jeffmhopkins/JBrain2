@@ -95,6 +95,9 @@ class PageView:
     # `finish` evidence quote is verified against.
     text: str = ""
     truncated: bool = False
+    # The same strings as the page shows them, one per line — what a run that stops before an
+    # answer hands back (quarantined) so the caller can still read the page it ended on.
+    readable: str = ""
 
     @property
     def tokens(self) -> int:
@@ -216,7 +219,24 @@ def parse_page(tool_text: str, *, cap: int = MAX_SNAPSHOT_CHARS) -> PageView:
         elements=elements,
         text=_normalize(" ".join(texts)),
         truncated=truncated,
+        readable=_readable(texts, cap),
     )
+
+
+def _readable(texts: list[str], cap: int) -> str:
+    """The page's strings, each on one line, a repeat of the line before dropped (a link's
+    name and its text often say the same thing), bounded like the outline."""
+    out: list[str] = []
+    size = 0
+    for text in texts:
+        line = " ".join(text.split())
+        if not line or (out and out[-1] == line):
+            continue
+        if size + len(line) + 1 > cap:
+            break
+        out.append(line)
+        size += len(line) + 1
+    return "\n".join(out)
 
 
 # --- The action gate ----------------------------------------------------------

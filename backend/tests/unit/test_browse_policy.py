@@ -55,6 +55,21 @@ def test_the_view_is_capped() -> None:
     assert page.truncated
     assert len(page.outline) <= 120
     assert "longer than this view" in page.render()
+    assert 0 < len(page.readable) <= 120
+
+
+def test_the_readable_text_keeps_the_pages_wording_once_per_line() -> None:
+    page = _page(TITUSVILLE)
+    lines = page.readable.split("\n")
+    # As the page writes it (not lowercased like the evidence text), no refs, no addresses.
+    assert "Epic Titusville 15" in lines and "7:15 PM, 9:40 PM" in lines
+    assert "ref=" not in page.readable and "/locations" not in page.readable
+    # A link whose name and inner text say the same thing reads once.
+    snap = (
+        "### Page\n- Page URL: https://x.example/\n### Snapshot\n```yaml\n"
+        '- link "Showtimes" [ref=e2]:\n  - text: Showtimes\n- text: "   "\n```\n'
+    )
+    assert policy.parse_page(snap).readable == "Showtimes"
 
 
 def test_an_action_result_without_a_snapshot_reads_as_an_empty_page() -> None:

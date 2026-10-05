@@ -175,6 +175,36 @@ listed and revocable in Settings, and never extend to the Never tier.
   wording is a location/store picker (`fetch.looks_like_location_gate`, under 1,500 chars) is
   now flagged `gated` whatever its length, says so, and — for a caller holding `browse` —
   suggests it, as an unrendered JS shell now does too.
+- **First live run, and the step-cost fix (2026-10-05).** jerv's browse for "Epic Titusville
+  showtimes tonight" on Flash-Next (`qwen3.8-flash-next`, research slot) ran 8 steps and hit
+  the 240 s wall with outcome `timeout` and NO answer — while its final page was the
+  showtimes page. Per-step `browse.step` input grew 2.7k → 6.8k → 7.9k → 6.7k → 13.3k →
+  14.5k → 13.5k tokens, at 4, 15, 18, 17, 49, 40 and 58 s, writing 50–631 tokens each; a
+  debug run of the same goal took 165 s over 6 steps, its `finish` alone 92 s for 1,443
+  tokens. Three causes, three fixes:
+  1. **The whole prompt was re-prefilled every step.** The current page sat in the FIRST
+     message, so each step's prompt diverged at its start and llama-server (Flash-Next is a
+     hybrid; it reuses only a stable prefix) prefilled everything again. Now the messages are
+     append-only: the opening is the goal and static instructions, every older page is its
+     one-line note, and the page in full rides only on the last message. Step N's messages
+     minus the last are a prefix of step N+1's (pinned by a test), so a step prefills only
+     the previous page's note, its action, and the new page.
+  2. **Every click thought at `xhigh`.** `browse.step` sat in the medium bucket, which sends
+     no level, and Qwen3.8's template then defaults to `xhigh`. It is now in the **low**
+     bucket (as `research.title`, which also follows the chat model, is), and — though it has
+     no picker row — it is listed by name on the Flash-Next reasoning card so the owner can
+     raise it; the `low` tier's level applies too. The prompt (`agent-browse-v2`) asks for a
+     compact answer (a short list, under ~150 words) and to finish at once when the page
+     already answers; once two steps or 60 s remain, the page carries a note to finish now.
+     `STEP_MAX_TOKENS` (4,096) is left as is: at low effort a step's reply is the tool call.
+  3. **A stop threw the page away.** A run that ends on `timeout`, `step_budget`,
+     `page_budget`, `no_action`, `loop` or `stuck` now returns its final page's text
+     (quarantined like the answer, capped at 6,000 chars, one line between
+     `<<<BROWSE PAGE TEXT BEGIN/END>>>` markers after the host lines, labelled UNVERIFIED),
+     with the final URL, so jerv can answer from it (`browse.tool` v2 says so). The forgery
+     test covers this path. `gave_up` and `error` carry none.
+  The wall stays at 240 s: with cache reuse and low effort a step should cost seconds, not a
+  minute, and a run that still runs out now hands back the page. Re-measure on the box.
 - **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
   untested. The snapshot pruning measured ~3x on Epic's home page (9.0k → 2.8k chars) and
   ~1.4k tokens on wikipedia.org against the real image.

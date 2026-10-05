@@ -1719,10 +1719,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # jerv's hand-off to the browse sub-agent (BROWSER_AGENT_PLAN.md B1). Its prose is
         # the calibration lever for WHEN to browse (after web_fetch reports a gate or a JS
         # shell, never instead of a search) and for treating the result as quoted data.
+        # v2: a run that stops before an answer returns its last page's text, UNVERIFIED,
+        # and the prose tells jerv to read from it rather than fetch the page again.
         "browse.tool": (
             "browse",
-            1,
-            "3b25ce2fcbebf553f69c5a4cc5176e6fcef86616a627ab688d9e255682473ede",
+            2,
+            "ce4dc08a417178658a3bbc24556aa9f331179aad70f5b0f404ca7699a7b030a2",
         ),
         "ask_owner.tool": (
             "ask_owner",

@@ -14,8 +14,15 @@ matter, each of which a test pins:
 - **Budgets.** Steps, wall clock and distinct pages are capped; repeating the same action or
   making no progress stops the run. Success is checked on the final page (`finish` must
   quote text that is really there), never taken from the model's word.
-- **Context stays small.** Only the latest page is shown in full; earlier steps shrink to
-  a one-line note, so a twenty-step run does not carry twenty snapshots.
+- **Context stays small, and its prefix stays put.** Only the latest page is shown in
+  full, and only as the LAST message; earlier steps shrink to a one-line note, so a
+  twenty-step run does not carry twenty snapshots. Messages are append-only — the opening is
+  the goal alone, and the only message that differs from the last step's is the one at the
+  end — so a local server reuses its cache for everything but the newest step instead of
+  prefilling the whole run again each time.
+- **A stop still hands back the page.** A run that ends on a budget, a loop or a silent
+  model returns the final page's text, quarantined and marked unverified, so the caller can
+  read what the browser reached instead of fetching it again.
 
 All model calls go through the LLM adapter under the `browse.step` task, pinned to the
 research slot so a browse run never evicts jerv's interactive prefix.
@@ -24,6 +31,7 @@ research slot so a browse run never evicts jerv's interactive prefix.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import re
 import time
@@ -80,6 +88,17 @@ NO_PROGRESS_STOP_AT = 6
 IDLE_STOP_AT = 2
 # `finish` calls whose evidence is not on the page before the answer is accepted unverified.
 UNVERIFIED_FINISH_ACCEPT_AT = 2
+# When this little is left, the latest page carries a note telling the model to finish.
+LOW_STEPS_LEFT = 2
+LOW_SECONDS_LEFT = 60.0
+# The final page's text a stopped run hands back — enough for a showtimes or price page,
+# small enough not to crowd the caller's context.
+PARTIAL_PAGE_CHARS = 6_000
+# Stops where the browser may well be sitting on the answer. Not `gave_up` (the model said
+# the page cannot answer) or `error` (there may be no page at all).
+PARTIAL_OUTCOMES = frozenset(
+    {"timeout", "step_budget", "page_budget", "no_action", "loop", "stuck"}
+)
 
 # Which playwright-mcp tool each host action maps onto — the ENTIRE surface of the server
 # this loop can reach. Asserted against the `browse_actions` sidecars in tests.
@@ -119,6 +138,12 @@ _NUDGE = (
     "Reply with exactly one action: a browser action, `finish` with the answer and evidence,"
     " or `give_up` with the reason."
 )
+# The first message never changes during a run: the cache-stable head of every step's prompt.
+_OPENING = (
+    "GOAL: {goal}\n\n"
+    "After each action you are shown the page as it is NOW, as the last message; earlier"
+    " pages are cut to one line. Choose ONE action each turn."
+)
 # Actions that only look; they never change the page, so they are not loop candidates.
 _LOOKING = frozenset({"snapshot", "wait_for"})
 
@@ -148,6 +173,8 @@ class BrowseRun:
     verified: bool = False
     final_url: str = ""
     sources: tuple[str, ...] = ()
+    # A stopped run's last page, already quarantined: unverified page text, not an answer.
+    page_text: str = ""
     steps: list[BrowseStep] = field(default_factory=list)
     elapsed_ms: int = 0
     error: str = ""
@@ -209,8 +236,15 @@ class _Run:
         self.unverified_finishes = 0
         # The URL a gated `type_text` last succeeded on — the only page `Enter` may submit.
         self.typed_url: str | None = None
-        # (assistant message, [(call id, short text, full text)]) per model turn.
-        self.turns: list[tuple[AssistantMessage, list[tuple[str, str, str]]]] = []
+        # Every message sent so far, in its SHORT form, append-only: nothing already sent is
+        # rewritten, so each step's prompt extends the last one's. `tail` is the full form of
+        # the last entry (the current page), sent in its place.
+        self.history: list[LlmMessage] = [UserMessage(text=_OPENING.format(goal=goal))]
+        self.tail: UserMessage | ToolResultMessage | None = None
+
+    def observe(self, short: LlmMessage, full: UserMessage | ToolResultMessage) -> None:
+        self.history.append(short)
+        self.tail = full
 
     def note_page(self, page: policy.PageView) -> None:
         self.page = page
@@ -288,10 +322,13 @@ class BrowseAgent:
         run = state.result
         run.elapsed_ms = int((self._clock() - started) * 1000)
         run.sources = policy.sources_from(state.visited)
+        if run.outcome in PARTIAL_OUTCOMES:
+            run.page_text = _page_text(state.page)
         log.info(
             "browse.run",
             outcome=run.outcome,
             verified=run.verified,
+            page_text_chars=len(run.page_text),
             steps=len(run.steps),
             pages=len(state.visited),
             elapsed_ms=run.elapsed_ms,
@@ -315,46 +352,43 @@ class BrowseAgent:
                     state.result.steps.append(
                         BrowseStep(0, "navigate", {"url": start_url}, False, problem)
                     )
+            url = state.page.url
+            state.observe(
+                UserMessage(text=f"The browser opened on {url}." if url else "No page is open."),
+                UserMessage(text="This is the current page.\n\n" + state.page.render()),
+            )
             for n in range(1, max_steps + 1):
-                if self._clock() - started > self._wall:
+                spent = self._clock() - started
+                if spent > self._wall:
                     state.result.outcome = "timeout"
                     return
-                if await self._step(session, state, n, spec_override):
+                hint = _budget_hint(max_steps - n + 1, self._wall - spent)
+                if await self._step(session, state, n, spec_override, hint):
                     return
             state.result.outcome = "step_budget"
 
-    def _messages(self, state: _Run) -> list[LlmMessage]:
-        opening = (
-            f"GOAL: {state.result.goal}\n\n"
-            "This is the current page. Choose ONE action.\n\n" + state.page.render()
-        )
-        messages: list[LlmMessage] = [UserMessage(text=opening)]
-        last = len(state.turns) - 1
-        for i, (assistant, results) in enumerate(state.turns):
-            messages.append(assistant)
-            if not results:
-                # A reply that chose no action gets a user turn back, not a tool result.
-                messages.append(UserMessage(text=_NUDGE))
-                continue
-            messages.append(
-                ToolResultMessage(
-                    results=[
-                        ToolResult(tool_call_id=cid, content=full if i == last else short)
-                        for cid, short, full in results
-                    ]
-                )
-            )
+    @staticmethod
+    def _messages(state: _Run, hint: str = "") -> list[LlmMessage]:
+        """What the model reads this step: the history as sent, its last entry in full."""
+        messages = list(state.history)
+        if state.tail is not None:
+            messages[-1] = _with_hint(state.tail, hint)
         return messages
 
     async def _step(
-        self, session: McpSession, state: _Run, n: int, spec_override: str | None
+        self,
+        session: McpSession,
+        state: _Run,
+        n: int,
+        spec_override: str | None,
+        hint: str = "",
     ) -> bool:
         """One model turn and the action it picked. True when the run is over."""
         t0 = self._clock()
         turn = await self._router.converse(
             BROWSE_TASK,
             system=_PROMPT.body,
-            messages=self._messages(state),
+            messages=self._messages(state, hint),
             tools=ACTION_TOOLS,
             max_tokens=STEP_MAX_TOKENS,
             spec_override=spec_override,
@@ -370,7 +404,12 @@ class BrowseAgent:
             if state.idle >= IDLE_STOP_AT:
                 state.result.outcome = "no_action"
                 return True
-            state.turns.append((AssistantMessage(text=turn.text), []))
+            # A reply that chose no action gets a user turn back, not a tool result.
+            state.history.append(AssistantMessage(text=turn.text))
+            state.observe(
+                UserMessage(text=_NUDGE),
+                UserMessage(text=_NUDGE + "\n\n" + state.page.render()),
+            )
             return False
         state.idle = 0
         call, extra = calls[0], calls[1:]
@@ -380,7 +419,11 @@ class BrowseAgent:
         for skipped in extra:
             note = "Not run: one action per step. Look at the page above and choose again."
             results.append((skipped.id, note, note))
-        state.turns.append((AssistantMessage(text=turn.text, tool_calls=list(calls)), results))
+        state.history.append(AssistantMessage(text=turn.text, tool_calls=list(calls)))
+        state.observe(
+            ToolResultMessage(results=[ToolResult(cid, short) for cid, short, _ in results]),
+            ToolResultMessage(results=[ToolResult(cid, full) for cid, _, full in results]),
+        )
         return done
 
     async def _dispatch(
@@ -598,6 +641,36 @@ class BrowseAgent:
         return False, message, message + "\n\n" + state.page.render()
 
 
+def _budget_hint(steps_left: int, seconds_left: float) -> str:
+    """A note on the latest page once the run is nearly out of steps or time — the stop that
+    used to land while the browser sat on the answer, unread."""
+    if steps_left > LOW_STEPS_LEFT and seconds_left > LOW_SECONDS_LEFT:
+        return ""
+    return (
+        f"\n\n[Budget: {steps_left} step(s) and about {max(0, int(seconds_left))} s left."
+        " If this page shows what the goal asks, call finish now.]"
+    )
+
+
+def _with_hint(message: UserMessage | ToolResultMessage, hint: str) -> LlmMessage:
+    if not hint:
+        return message
+    if isinstance(message, UserMessage):
+        return dataclasses.replace(message, text=message.text + hint)
+    # A tool result always has one entry per call, and a step has at least one call.
+    first, *rest = message.results
+    return ToolResultMessage(
+        results=[dataclasses.replace(first, content=first.content + hint), *rest]
+    )
+
+
+def _page_text(page: policy.PageView) -> str:
+    """The page a stopped run ended on, as inert text, its strings separated by `|`."""
+    if not page.readable:
+        return ""
+    return policy.quarantine(" | ".join(page.readable.splitlines()), cap=PARTIAL_PAGE_CHARS)
+
+
 # --- What jerv receives ---------------------------------------------------------
 
 RESULT_FENCE = (
@@ -609,7 +682,9 @@ RESULT_FENCE = (
 
 ANSWER_BEGIN = "<<<BROWSE ANSWER BEGIN>>>"
 ANSWER_END = "<<<BROWSE ANSWER END>>>"
-_MARKER = re.compile(r"<<<\s*browse\s+answer\s+(?:begin|end)\s*>>>", re.IGNORECASE)
+PAGE_BEGIN = "<<<BROWSE PAGE TEXT BEGIN>>>"
+PAGE_END = "<<<BROWSE PAGE TEXT END>>>"
+_MARKER = re.compile(r"<<<\s*browse\s+(?:answer|page\s*text)\s+(?:begin|end)\s*>>>", re.IGNORECASE)
 
 
 def _one_line(text: str) -> str:
@@ -619,9 +694,9 @@ def _one_line(text: str) -> str:
 
 
 def render_for_caller(run: BrowseRun) -> str:
-    """The text jerv reads. Every line but the quoted answer is the host's own; the answer is
-    one line between markers, last. URLs come from the pages the host loaded, never the
-    model, and only in a shape that cannot carry a line break."""
+    """The text jerv reads. Every line but the quoted answer and page text is the host's own;
+    each of those is one line between markers, last. URLs come from the pages the host
+    loaded, never the model, and only in a shape that cannot carry a line break."""
     lines = [RESULT_FENCE, f"Outcome: {OUTCOME_TEXT.get(run.outcome, run.outcome)}"]
     if run.outcome == "answered":
         lines.append(
@@ -639,7 +714,14 @@ def render_for_caller(run: BrowseRun) -> str:
     lines.append(f"Steps: {len(run.steps)}")
     if run.error:
         lines.append(f"Error: {_one_line(policy.quarantine(run.error, cap=300))}")
-    if run.outcome != "answered":
+    page_text = run.page_text if run.outcome != "answered" else ""
+    if page_text:
+        lines.append(
+            "No answer was confirmed, but the text of the page the browser stopped on is"
+            " below. If it plainly shows what was asked, answer from it and say it was read"
+            " off that page unverified; if it does not, say so rather than guessing."
+        )
+    elif run.outcome != "answered":
         lines.append(
             "No answer was read off a page. Say so plainly rather than guessing; another"
             " source (web_search, a different site) may have it."
@@ -650,4 +732,12 @@ def render_for_caller(run: BrowseRun) -> str:
         lines.append(ANSWER_BEGIN)
         lines.append(_one_line(policy.quarantine(run.answer)))
         lines.append(ANSWER_END)
+    if page_text:
+        lines.append(
+            "UNVERIFIED page text (the final page as the browser last saw it, its strings"
+            " separated by |, between the markers):"
+        )
+        lines.append(PAGE_BEGIN)
+        lines.append(_one_line(policy.quarantine(page_text, cap=PARTIAL_PAGE_CHARS)))
+        lines.append(PAGE_END)
     return "\n".join(lines)
