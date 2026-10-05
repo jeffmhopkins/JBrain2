@@ -21,6 +21,7 @@ import hashlib
 import ipaddress
 import re
 import socket
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
@@ -486,20 +487,39 @@ _MD_REF_LINK = re.compile(r"\[([^\]]*)\]\[[^\]]*\]")
 _HTML_TAG = re.compile(r"<[^>\n]{0,500}>")
 _SCHEME_URL = re.compile(r"\b(?:https?|ftp|data|javascript|file|mailto|blob):\S+", re.IGNORECASE)
 _WWW = re.compile(r"\bwww\.\S+", re.IGNORECASE)
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏‪-‮⁦-⁩]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+# Invisible characters that are not Unicode format (Cf) characters but still hide text:
+# variation selectors and their supplement (emoji steganography). Every Cf character —
+# zero-width, bidi, word joiners, the BOM, the Arabic letter mark, the Mongolian vowel
+# separator, the Tag block used for ASCII smuggling — is caught by category instead.
+_INVISIBLE_RANGES = ((0xFE00, 0xFE0F), (0xE0100, 0xE01EF))
+
+
+def _visible(c: str) -> bool:
+    if unicodedata.category(c) == "Cf" or _CONTROL.match(c):
+        return False
+    point = ord(c)
+    return not any(lo <= point <= hi for lo, hi in _INVISIBLE_RANGES)
+
+
+def strip_invisible(text: str) -> str:
+    """`text` without control, format or other invisible characters, and NFKC-folded, so a
+    fullwidth `＜` or a ligature reads as the plain character a later check looks for."""
+    return "".join(c for c in unicodedata.normalize("NFKC", text) if _visible(c))
 
 
 def quarantine(text: str, *, cap: int = MAX_ANSWER_CHARS) -> str:
     """Reduce the sub-agent's answer to inert plain text: no markdown images or links, no
-    markup, no addresses, no control or bidi characters, bounded length. The URLs jerv may
-    cite come from the pages the HOST saw, never from this text."""
+    markup, no addresses, no control, bidi or other invisible characters, bounded length. The
+    URLs jerv may cite come from the pages the HOST saw, never from this text. Invisibles go
+    FIRST, so `ht<ZWSP>tp://` cannot slip past the address check and close up afterwards."""
+    text = strip_invisible(text)
     text = _MD_IMAGE.sub("", text)
     text = _MD_LINK.sub(r"\1", text)
     text = _MD_REF_LINK.sub(r"\1", text)
     text = _HTML_TAG.sub("", text)
     text = _SCHEME_URL.sub("[link removed]", text)
     text = _WWW.sub("[link removed]", text)
-    text = _CONTROL.sub("", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if len(text) > cap:
         text = text[: cap - 1].rstrip() + "…"
@@ -527,7 +547,7 @@ def safe_url(url: str) -> str | None:
     cleaned = clean_source(url)
     if cleaned is None or len(cleaned) > MAX_SOURCE_CHARS:
         return None
-    if any(c.isspace() or not c.isprintable() or _CONTROL.match(c) for c in cleaned):
+    if any(c.isspace() or not c.isprintable() or not _visible(c) for c in cleaned):
         return None
     return cleaned
 

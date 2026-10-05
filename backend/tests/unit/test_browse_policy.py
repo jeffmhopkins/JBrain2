@@ -338,6 +338,38 @@ def test_the_quarantine_leaves_inert_plain_text() -> None:
     assert "\n\n\n" not in out
 
 
+@pytest.mark.parametrize(
+    "point",
+    [
+        0x00AD,  # soft hyphen
+        0x061C,  # Arabic letter mark
+        0x180E,  # Mongolian vowel separator
+        0x200B,  # zero-width space
+        0x2060,  # word joiner
+        0x2064,  # invisible plus
+        0x2066,  # bidi isolate
+        0xFE0F,  # variation selector
+        0xFEFF,  # BOM / zero-width no-break space
+        0xE0041,  # Tag "A": ASCII smuggling
+        0xE007F,  # cancel tag
+        0xE0100,  # variation selector supplement
+    ],
+)
+def test_the_quarantine_strips_every_invisible_character(point: int) -> None:
+    hidden = chr(point)
+    out = policy.quarantine(f"7:15{hidden} PM ht{hidden}tps://evil.example/x")
+    assert hidden not in out
+    # Stripped BEFORE the address check, so a split address cannot close up afterwards.
+    assert out == "7:15 PM [link removed]"
+    assert policy.safe_url(f"https://cinema.example/a{hidden}b") is None
+
+
+def test_the_quarantine_folds_lookalikes_to_plain_characters() -> None:
+    # A fullwidth address reads as an address, and is removed as one.
+    assert policy.quarantine("ｈｔｔｐｓ：／／evil.example/x ok") == "[link removed] ok"
+    assert policy.strip_invisible("＜＜＜ＢＲＯＷＳＥ") == "<<<BROWSE"
+
+
 def test_the_quarantine_caps_length() -> None:
     out = policy.quarantine("a" * 5_000)
     assert len(out) == policy.MAX_ANSWER_CHARS

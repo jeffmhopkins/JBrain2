@@ -52,6 +52,7 @@ from jbrain.llm.types import (
     AssistantMessage,
     LlmMessage,
     LlmTool,
+    LlmTurn,
     ToolCall,
     ToolResult,
     ToolResultMessage,
@@ -161,6 +162,11 @@ class BrowseStep:
     snapshot_tokens: int = 0
     model_ms: int = 0
     browser_ms: int = 0
+    # The step's model call as the server counted it: prompt tokens, how many of those came
+    # from its cache, and tokens written. 0 for a step the model did not choose.
+    prompt_tokens: int = 0
+    cached_tokens: int = 0
+    output_tokens: int = 0
 
 
 @dataclass
@@ -324,6 +330,10 @@ class BrowseAgent:
         run.sources = policy.sources_from(state.visited)
         if run.outcome in PARTIAL_OUTCOMES:
             run.page_text = _page_text(state.page)
+            if run.page_text:
+                # The URL shown beside the text must be the page it came from — not an
+                # earlier one, when the last page reported none.
+                run.final_url = state.page.url
         log.info(
             "browse.run",
             outcome=run.outcome,
@@ -395,6 +405,19 @@ class BrowseAgent:
             slot_role=SlotRole.RESEARCH,
         )
         model_ms = int((self._clock() - t0) * 1000)
+        mark = len(state.result.steps)
+        done = await self._take_turn(session, state, n, turn, model_ms)
+        # The prompt and cache counts the server reported, on the step this turn produced — how
+        # the debug trace shows whether a step's prompt really reused the last one's prefix.
+        for step in state.result.steps[mark:]:
+            step.prompt_tokens = turn.usage.input_tokens
+            step.cached_tokens = turn.usage.cached_tokens
+            step.output_tokens = turn.usage.output_tokens
+        return done
+
+    async def _take_turn(
+        self, session: McpSession, state: _Run, n: int, turn: LlmTurn, model_ms: int
+    ) -> bool:
         calls: Sequence[ToolCall] = turn.tool_calls
         if not calls:
             state.idle += 1
@@ -689,8 +712,17 @@ _MARKER = re.compile(r"<<<\s*browse\s+(?:answer|page\s*text)\s+(?:begin|end)\s*>
 
 def _one_line(text: str) -> str:
     """Page-controlled text on ONE line, with the answer markers taken out, so nothing in it
-    can start a line that reads like one the host wrote ("Outcome: answered")."""
-    return " ".join(_MARKER.sub("", text).split())
+    can start a line that reads like one the host wrote ("Outcome: answered").
+
+    Folded and cleaned first (`strip_invisible`), so a fullwidth or zero-width-split marker
+    is caught as a marker; then stripped until none is left, since taking out a marker
+    nested inside another closes the outer one up into a real one."""
+    text = policy.strip_invisible(text)
+    while True:
+        stripped = _MARKER.sub("", text)
+        if stripped == text:
+            return " ".join(text.split())
+        text = stripped
 
 
 def render_for_caller(run: BrowseRun) -> str:

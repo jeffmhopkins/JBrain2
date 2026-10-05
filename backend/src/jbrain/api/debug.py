@@ -1341,6 +1341,11 @@ class BrowseStepOut(BaseModel):
     snapshot_tokens: int
     model_ms: int
     browser_ms: int
+    # The step's model call as the server counted it. `cached_tokens` of `prompt_tokens` came
+    # from the prompt cache: near prompt_tokens means the step reused the last one's prefix.
+    prompt_tokens: int
+    cached_tokens: int
+    output_tokens: int
 
 
 class BrowseOut(BaseModel):
@@ -1451,6 +1456,9 @@ async def _run_browse(agent: BrowseAgent, body: BrowseRequest) -> BrowseOut:
                 snapshot_tokens=s.snapshot_tokens,
                 model_ms=s.model_ms,
                 browser_ms=s.browser_ms,
+                prompt_tokens=s.prompt_tokens,
+                cached_tokens=s.cached_tokens,
+                output_tokens=s.output_tokens,
             )
             for s in run.steps
         ],

@@ -187,13 +187,23 @@ listed and revocable in Settings, and never extend to the Never tier.
      hybrid; it reuses only a stable prefix) prefilled everything again. Now the messages are
      append-only: the opening is the goal and static instructions, every older page is its
      one-line note, and the page in full rides only on the last message. Step N's messages
-     minus the last are a prefix of step N+1's (pinned by a test), so a step prefills only
-     the previous page's note, its action, and the new page.
+     minus the last are a prefix of step N+1's (pinned by a test). That is prefix stability
+     at the MESSAGE level; reuse at the TOKEN level is **unmeasured**. The prompt still
+     diverges where the previous page (in full last step, a one-line note now) begins, and
+     on the hybrid a cache can only be resumed from a context checkpoint at or before that
+     point: the end-of-prompt checkpoint sits after it, and the mid-prefill ones
+     (`--checkpoint-min-step 1024`, 8 per slot) can be evicted by a big page's own prefill.
+     The research slot is shared, so concurrent research tasks can evict it too. Check it on
+     the box: the debug `/browse` step trace now reports each step's `prompt_tokens`,
+     `cached_tokens` and `output_tokens` (from `LlmUsage`), and llama-server's log says
+     "restored context checkpoint" or "forcing full prompt re-processing" per request.
   2. **Every click thought at `xhigh`.** `browse.step` sat in the medium bucket, which sends
      no level, and Qwen3.8's template then defaults to `xhigh`. It is now in the **low**
      bucket (as `research.title`, which also follows the chat model, is), and — though it has
      no picker row — it is listed by name on the Flash-Next reasoning card so the owner can
-     raise it; the `low` tier's level applies too. The prompt (`agent-browse-v2`) asks for a
+     raise it; the `low` tier's level applies too. On a cloud `agent.turn` (Grok) the step
+     now sends `reasoning_effort=low` as well — intended: a click needs no deep thought on
+     any model. The prompt (`agent-browse-v2`) asks for a
      compact answer (a short list, under ~150 words) and to finish at once when the page
      already answers; once two steps or 60 s remain, the page carries a note to finish now.
      `STEP_MAX_TOKENS` (4,096) is left as is: at low effort a step's reply is the tool call.
@@ -201,8 +211,13 @@ listed and revocable in Settings, and never extend to the Never tier.
      `page_budget`, `no_action`, `loop` or `stuck` now returns its final page's text
      (quarantined like the answer, capped at 6,000 chars, one line between
      `<<<BROWSE PAGE TEXT BEGIN/END>>>` markers after the host lines, labelled UNVERIFIED),
-     with the final URL, so jerv can answer from it (`browse.tool` v2 says so). The forgery
-     test covers this path. `gave_up` and `error` carry none.
+     with the final URL — that page's own, blank when it reported none, never an earlier
+     page's — so jerv can answer from it (`browse.tool` v2 says so). The forgery test covers
+     this path. `gave_up` and `error` carry none. The quarantine now NFKC-folds and strips
+     every Unicode format (Cf) character — zero-width, bidi, word joiners, BOM, the Tag
+     block — plus variation selectors, before its address check; marker stripping folds
+     too and repeats until no marker is left, so fullwidth, split and nested markers cannot
+     pose as an END line (regression tests for each).
   The wall stays at 240 s: with cache reuse and low effort a step should cost seconds, not a
   minute, and a run that still runs out now hands back the page. Re-measure on the box.
 - **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
