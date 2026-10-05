@@ -691,6 +691,10 @@ class FakeSettingsStore:
     async def brain_llm_stream(self, ctx: object) -> bool:
         return self.values.get("brain_llm_stream", False) is True
 
+    async def browse_loop(self, ctx: object) -> str:
+        raw = self.values.get("browse_loop", "fast")
+        return raw if raw in ("fast", "b1") else "fast"
+
     async def brain_read_aloud(self, ctx: object) -> bool:
         return self.values.get("brain_read_aloud", False) is True
 

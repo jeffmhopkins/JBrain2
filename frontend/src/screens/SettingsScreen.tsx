@@ -86,6 +86,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // Stream real prompt/answer text to the on-box wall display (:8800). Off by default;
   // null until the server answers so the toggle doesn't flash the wrong state.
   const [brainStream, setBrainStream] = useState<boolean | null>(null);
+  const [browseLoop, setBrowseLoop] = useState<"fast" | "b1" | null>(null);
   // Read the streamed wall-display turns aloud (on-box TTS). Off by default;
   // null until the server answers. Companion to the stream toggle above.
   const [brainReadAloud, setBrainReadAloud] = useState<boolean | null>(null);
@@ -163,6 +164,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (stale) return;
         setImageMode(s.image_analysis_mode);
         setBrainStream(s.brain_llm_stream);
+        setBrowseLoop(s.browse_loop ?? "fast");
         applyReadAloud(s);
         setLexicon(s.pronunciation_lexicon ?? {});
         if (s.owner_timezone) setTimezone(s.owner_timezone);
@@ -175,6 +177,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (!stale) {
           setImageMode("full");
           setBrainStream(false);
+          setBrowseLoop("fast");
           setBrainReadAloud(false);
           setBrainAnswerVoice("kokoro-af_heart");
           setBrainEngine("piper");
@@ -543,6 +546,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   function pickImageMode(mode: ImageAnalysisMode) {
     setImageMode(mode); // optimistic — the sync dot reports trouble
     void api.updateSettings({ image_analysis_mode: mode }).catch(() => {});
+  }
+
+  function pickBrowseLoop(loop: "fast" | "b1") {
+    setBrowseLoop(loop); // optimistic
+    void api.updateSettings({ browse_loop: loop }).catch(() => {});
   }
 
   function pickBrainStream(on: boolean) {
@@ -1524,6 +1532,35 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             {braveTest.detail}
           </p>
         )}
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Browser agent</h2>
+        <p className="settings-meta">
+          how the assistant drives a web page it has to use (a location picker, a search box). fast
+          takes several steps per decision and reads the answer in the same call; classic is the
+          earlier one-step-at-a-time loop, kept as a fallback if fast gets a site wrong. applies to
+          the next browse.
+        </p>
+        <div className="theme-picker" aria-label="Browser agent">
+          {(
+            [
+              ["fast", "Fast"],
+              ["b1", "Classic"],
+            ] as const
+          ).map(([loop, label]) => (
+            <button
+              key={loop}
+              type="button"
+              aria-pressed={browseLoop === loop}
+              className={`seg${browseLoop === loop ? " seg-on" : ""}`}
+              disabled={browseLoop === null}
+              onClick={() => pickBrowseLoop(loop)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="settings-card">

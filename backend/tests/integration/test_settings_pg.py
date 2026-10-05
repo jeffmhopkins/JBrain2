@@ -107,6 +107,20 @@ async def test_free_ram_fraction_round_trips_and_sanitizes(
         assert await store.llm_local_free_ram_fraction(OWNER) is None, junk
 
 
+async def test_browse_loop_defaults_fast_and_junk_reads_as_fast(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import BROWSE_LOOP_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.browse_loop(OWNER) == "fast"
+    await store.upsert(OWNER, BROWSE_LOOP_KEY, "b1")
+    assert await store.browse_loop(OWNER) == "b1"
+    for junk in ("turbo", 1, True, None):
+        await store.upsert(OWNER, BROWSE_LOOP_KEY, junk)
+        assert await store.browse_loop(OWNER) == "fast", junk
+
+
 async def test_brain_llm_stream_defaults_off_and_round_trips(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

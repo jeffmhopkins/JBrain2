@@ -395,6 +395,7 @@ const SETTINGS: AppSettings = {
   llm_kv_conversation_cache: true,
   llm_kv_restore_gate: "awaiting_probe",
   pronunciation_lexicon: {},
+  browse_loop: "fast",
 };
 
 // The box's installed Kokoro voices, for the read-aloud voice picker mock.
@@ -4429,6 +4430,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "brain_llm_stream") {
         if (typeof value !== "boolean") return json({ detail: "bad brain_llm_stream" }, 422);
         SETTINGS.brain_llm_stream = value;
+      } else if (key === "browse_loop") {
+        if (value !== "fast" && value !== "b1") return json({ detail: "bad browse_loop" }, 422);
+        SETTINGS.browse_loop = value;
       } else if (key === "brain_read_aloud") {
         if (typeof value !== "boolean") return json({ detail: "bad brain_read_aloud" }, 422);
         SETTINGS.brain_read_aloud = value;
