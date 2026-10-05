@@ -302,6 +302,9 @@ MOLTBOOK_NIGHT_HOUR_DEFAULT = 3
 # box's own monitor / localhost (BRAIN_HOST_BIND=127.0.0.1), never on an exposed LAN port.
 # DB-backed, read live per turn (jbrain.api.agent) so it flips with no redeploy; an absent
 # or non-true value reads as OFF — text never leaks off a junk value.
+BRAIN_LLM_STREAM_KEY = "brain_llm_stream"
+BRAIN_LLM_STREAM_DEFAULT = False
+
 # Which loop jerv's `browse` sub-agent runs (docs/plans/BROWSER_FAST_LOOP_PLAN.md L1): "fast"
 # (batched commands, thinking off, `done` carrying the answer) or "b1", the earlier loop kept as
 # the fallback until the fast one meets its targets on the box. Read per run, so flipping it in
@@ -309,10 +312,6 @@ MOLTBOOK_NIGHT_HOUR_DEFAULT = 3
 BROWSE_LOOP_KEY = "browse_loop"
 BROWSE_LOOPS = ("fast", "b1")
 BROWSE_LOOP_DEFAULT = "fast"
-
-BRAIN_LLM_STREAM_KEY = "brain_llm_stream"
-BRAIN_LLM_STREAM_DEFAULT = False
-
 
 # Read the wall display's streamed turns ALOUD, rendered on the box by Kokoro TTS
 # (deploy/tts-stt, GET /tts). The runtime companion to brain_llm_stream: it is

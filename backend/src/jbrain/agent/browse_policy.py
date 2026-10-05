@@ -605,9 +605,10 @@ _CLOCK_TOKEN = re.compile(r"\b\d{1,2}(?::\d{2})? [ap]m\b")
 # "10/05", "2,000"). Not a digit inside a word ("F1", "7th"): it would never match whole.
 _NUMBER = re.compile(r"(?<!\w)[$€£]?\d+(?:[.,/:-]\d+)*(?!\w)")
 # A bare one- or two-digit number is on almost every page (a screen, a rating, a date), so
-# finding it proves nothing — and missing it proves nothing either: it is neither evidence nor
-# a reason to doubt a line. L0 (2026-10-05) saw correct answers ("11 results." beside the first
-# title, "July 1, 1962") marked UNVERIFIED because their small numbers disqualified the line.
+# finding it proves nothing: it is never evidence for a line. But it must still BE on the page
+# — a missing one is an invented number ("12 screens" off a page saying "3 screens"), and sinks
+# its line. L0 (2026-10-05) saw correct answers ("11 results." beside the first title, "July 1,
+# 1962") marked UNVERIFIED when a line made of small numbers counted as unbacked outright.
 _SMALL_INT = re.compile(r"\d{1,2}")
 _CURRENCY = "$€£"
 _WORD = re.compile(r"[^\W\d_][\w'’-]*")
@@ -628,15 +629,15 @@ def _is_strict(token: str) -> bool:
     return bool(_CLOCK_TOKEN.fullmatch(token)) or token[0] in _CURRENCY
 
 
-def _line_tokens(line: str) -> list[str]:
-    """The line's salient tokens; a bare small number is not one (see `_SMALL_INT`)."""
+def _line_tokens(line: str) -> tuple[list[str], list[str]]:
+    """The line's salient tokens, and its bare small numbers apart (see `_SMALL_INT`)."""
     folded = _fold(line)
     tokens = _CLOCK_TOKEN.findall(folded)
     rest = _CLOCK_TOKEN.sub(" ", folded)
+    smalls: list[str] = []
     for number in _NUMBER.findall(rest):
         number = number.rstrip(".,/:-")
-        if not _SMALL_INT.fullmatch(number):
-            tokens.append(number)
+        (smalls if _SMALL_INT.fullmatch(number) else tokens).append(number)
     for word in _WORD.findall(_CLOCK.sub(" ", unicodedata.normalize("NFKC", line))):
         word = word.strip("'’-")
         if (
@@ -645,7 +646,7 @@ def _line_tokens(line: str) -> list[str]:
             and word.casefold() not in _COMMON_WORDS
         ):
             tokens.append(word.casefold())
-    return tokens
+    return tokens, smalls
 
 
 def salient_tokens(line: str) -> list[str]:
@@ -653,7 +654,7 @@ def salient_tokens(line: str) -> list[str]:
     other numbers (not a bare one- or two-digit one) and its capitalised words (a film, a
     place, a month) — the parts a model gets wrong when it invents or misreads an answer.
     Folded like the page text."""
-    return _line_tokens(line)
+    return _line_tokens(line)[0]
 
 
 @dataclass(frozen=True)
@@ -666,7 +667,8 @@ class FactCheck:
     # Times and prices: every one must be found.
     strict_found: int = 0
     strict_total: int = 0
-    # Lines with checkable tokens of which none was found: an invented line.
+    # Lines nothing found backs (an invented line), or that state a small number the page
+    # does not have.
     lines_missed: int = 0
 
     @property
@@ -694,13 +696,16 @@ def facts_on_page(answer: str, page: PageView) -> FactCheck:
     from the page, never from the model's word. Each line's salient tokens are looked up, as
     whole tokens, in the page's FULL text (not the capped view): every time and price must be
     there, most of the rest, and every line with something checkable must be backed by at
-    least one, so one invented line or showtime fails the answer. A line with nothing
-    checkable ("11 results.") neither backs nor sinks it."""
+    least one, so one invented line or showtime fails the answer. A bare small number is
+    never evidence, but must be on the page too: one that is not sinks its line. A line of
+    nothing but small numbers that are all there ("11 results.") neither backs nor sinks it."""
     text = _fold(page.text)
     found = total = strict_found = strict_total = missed = 0
     for line in answer.splitlines():
-        tokens = _line_tokens(line)
+        tokens, smalls = _line_tokens(line)
+        invented = any(not _on_page(n, text) for n in smalls)
         if not tokens:
+            missed += invented
             continue
         hits = 0
         for token in tokens:
@@ -712,7 +717,7 @@ def facts_on_page(answer: str, page: PageView) -> FactCheck:
             else:
                 found += hit
                 total += 1
-        missed += hits == 0
+        missed += hits == 0 or invented
     return FactCheck(
         found=found,
         total=total,
