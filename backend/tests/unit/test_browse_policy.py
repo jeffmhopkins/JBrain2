@@ -396,7 +396,11 @@ def test_bare_small_numbers_are_not_evidence_but_must_be_on_the_page() -> None:
     assert policy.facts_on_page(titles, hn).verified
     # A small number never stands in for a time: an invented showtime still fails.
     assert not policy.facts_on_page("Dune: 7:15 PM (screen 7)", page).verified
-    assert policy.facts_on_page("Dune: 7:15 PM (screen 7)", _page(TITUSVILLE)).verified
+    # A small number is not backed by a piece of a bigger one: no "screen 7" on a page whose
+    # only 7 is in "7:15" or "7/10".
+    assert not policy.facts_on_page("Dune: 7:15 PM (screen 7)", _page(TITUSVILLE)).verified
+    assert not policy.facts_on_page("Dune: screen 7", _text_page("Dune rated 7/10")).verified
+    assert policy.facts_on_page("Dune: screen 7", _text_page("Dune, screen 7.")).verified
     assert policy.facts_on_page("Dune: Part Three: 7:15 PM", _page(TITUSVILLE)).verified
 
 

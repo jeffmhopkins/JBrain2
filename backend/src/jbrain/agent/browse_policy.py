@@ -703,7 +703,7 @@ def facts_on_page(answer: str, page: PageView) -> FactCheck:
     found = total = strict_found = strict_total = missed = 0
     for line in answer.splitlines():
         tokens, smalls = _line_tokens(line)
-        invented = any(not _on_page(n, text) for n in smalls)
+        invented = any(not _small_on_page(n, text) for n in smalls)
         if not tokens:
             missed += invented
             continue
@@ -761,6 +761,13 @@ def goal_names_on_page(goal: str, page: PageView) -> bool:
 
 def _on_page(token: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text) is not None
+
+
+def _small_on_page(number: str, text: str) -> bool:
+    """A small number standing alone on the page, not a piece of a bigger one: the "7" of
+    "screen 7" is not backed by "7:15" or "7/10"."""
+    pattern = rf"(?<!\w)(?<!\d[.,/:-]){re.escape(number)}(?!\w)(?![.,/:-]\d)"
+    return re.search(pattern, text) is not None
 
 
 _MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
