@@ -163,7 +163,7 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   of trap as the dead `speculative.types` field. All of these are lifetime totals, so delta them
   around a single request. A warm prime on this box measured 32,485 of 32,489 tokens reused.
 - `POST /api/debug/complete` takes an optional `sampling` object (`{"temperature": 0.1,
-  "min_p": 0.0}`), merged over the model's catalog defaults exactly as a prompt's
+  "min_p": 0.0}`, or `{"reasoning_budget": 320}` to cap a local model's thinking), merged over the model's catalog defaults exactly as a prompt's
   `config: sampling:` block is. This is the ONLY way to vary sampling from the box: it is
   catalog-static per model with no settings key and no endpoint, so repetition loops, a model
   that will not stop, or malformed tool-call blocks could not otherwise be A/B'd against a live

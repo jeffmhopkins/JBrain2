@@ -34,6 +34,11 @@ matter, each of which a test pins:
   read what the browser reached instead of fetching it again — after trying the same
   extraction on it when there is time left, and keeping its answer only if it checks out.
 
+- **Each step thinks briefly.** A step runs at low effort with its thinking capped
+  per request (the prompt's `reasoning_budget`, sent by the adapter to llama-server, which
+  forces the end of thinking at the cap). Effort "none" for every step made the model wander;
+  the cap only cuts the long deliberation, which was always the `finish` decision.
+
 All model calls go through the LLM adapter under the `browse.step` task, pinned to a slot
 of its own, so a browse run neither evicts jerv's interactive prefix nor is evicted mid-run
 by a research agent (which will often be what asked for the browse).
@@ -477,6 +482,10 @@ class BrowseAgent:
             tools=ACTION_TOOLS,
             max_tokens=STEP_MAX_TOKENS,
             spec_override=spec_override,
+            # The prompt's thinking cap (`config: sampling: reasoning_budget`): a step is one
+            # quick decision, and the one that kept running long was `finish` — 83-86 s and
+            # ~1,550 thinking tokens deciding the page answers it, measured live 2026-10-05.
+            sampling=_PROMPT.sampling,
             slot_role=SlotRole.BROWSE,
         )
         model_ms = int((self._clock() - t0) * 1000)
