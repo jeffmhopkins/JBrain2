@@ -30,7 +30,7 @@ from jbrain.db.session import SessionContext
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
 from jbrain.llm.errors import LlmTransientError
 from jbrain.llm.slot_roles import TASK_ROLES, SlotRole
-from jbrain.llm.types import ToolResultMessage, UserMessage
+from jbrain.llm.types import Sampling, ToolResultMessage, UserMessage
 from jbrain.web.mcp_client import McpError, McpHttpClient, _parse_sse
 from tests.unit.browse_fakes import (
     HOME,
@@ -224,7 +224,7 @@ async def test_the_extraction_step_records_its_own_calls_counts() -> None:
 
 async def test_the_extraction_runs_in_the_browse_slot_with_thinking_off_on_flash_next() -> None:
     """On the hybrid Flash-Next, "none" is a real off: the extraction request carries
-    `enable_thinking=false` and no tools, while a step's carries thinking on, at low."""
+    `enable_thinking=false` and no tools, while a step's carries thinking on, at low, capped."""
     import json
 
     from jbrain.llm import OpenAiCompatClient
@@ -256,6 +256,10 @@ async def test_the_extraction_runs_in_the_browse_slot_with_thinking_off_on_flash
     assert run.outcome == "answered" and run.verified
     step, extract = sent
     assert step["chat_template_kwargs"]["enable_thinking"] is True
+    # A step's thinking is capped per request; the extraction does not think at all.
+    assert step["reasoning_budget_tokens"] == 320
+    assert step["reasoning_budget_message"].strip()
+    assert "reasoning_budget_tokens" not in extract
     assert extract["chat_template_kwargs"]["enable_thinking"] is False
     assert "reasoning_effort" not in extract["chat_template_kwargs"]
     assert "tools" not in extract or not extract["tools"]
@@ -384,6 +388,8 @@ async def test_each_step_runs_in_the_browse_slot_under_its_own_task() -> None:
     assert {s["spec_override"] for s in seen} == {"local:some-model"}
     # Only the extraction overrides the effort, and only to turn thinking off.
     assert [s.get("effort_override") for s in seen] == [None, None, None, "none"]
+    # Only the steps carry the prompt's thinking cap.
+    assert [s.get("sampling") for s in seen] == [browse._PROMPT.sampling] * 3 + [None]
     assert TASK_ROLES["browse.step"] is SlotRole.BROWSE
 
 
@@ -516,11 +522,13 @@ def test_the_action_sidecars_are_pinned() -> None:
 def test_the_browse_prompt_is_pinned() -> None:
     import hashlib
 
-    assert browse._PROMPT.version == "agent-browse-v4"
+    assert browse._PROMPT.version == "agent-browse-v5"
     assert (
         hashlib.sha256(browse._PROMPT.body.encode()).hexdigest()
-        == "4ae42a0a6923d94ac41a0f13e3d143fa0bf4d498ac1e1a28da5dc01fd1b04f51"
+        == "9dc8d32140ce214f0417bd54be08171676c471cce9e40f4242f3347bf223029b"
     )
+    # The step's thinking cap rides the prompt, and nothing else of its sampling does.
+    assert browse._PROMPT.sampling == Sampling(reasoning_budget=320)
     assert browse._EXTRACT_PROMPT.version == "agent-browse-extract-v1"
     assert (
         hashlib.sha256(browse._EXTRACT_PROMPT.body.encode()).hexdigest()

@@ -51,6 +51,9 @@ class LlmUsage:
 # per-task. Provider quirks (Anthropic rejecting temperature+top_p together, xAI's
 # reasoning models rejecting penalties, llama.cpp's non-OpenAI knob names) are the
 # CLIENT's job, not this bundle's — see each client's `_apply_sampling`.
+_INT_KNOBS = frozenset({"top_k", "reasoning_budget"})
+
+
 @dataclass(frozen=True)
 class Sampling:
     temperature: float | None = None
@@ -62,6 +65,12 @@ class Sampling:
     # llama.cpp's `repeat_penalty` (1.0 = off). Named `repetition_penalty` here for
     # the HF/vendor convention; the local client maps it onto llama.cpp's flag name.
     repetition_penalty: float | None = None
+    # A cap on THINKING tokens for one call, local-only: llama-server (from the Flash-Next
+    # pin) counts the tokens after the template's think-start tag and, at the cap, forces
+    # its think-end tag, so the reply goes on to its answer or tool call. It is a sampler
+    # there (`common/reasoning-budget.cpp`), so it lives with the others. Never sent to a
+    # cloud model; ignored by a server or template without a think tag.
+    reasoning_budget: int | None = None
 
     def merge(self, other: "Sampling | None") -> "Sampling":
         """Overlay `other` on top of self: every field `other` sets (non-None) wins,
@@ -96,7 +105,9 @@ class Sampling:
         for key, value in raw.items():
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"sampling {key!r} must be a number, got {value!r}")
-            values[key] = int(value) if key == "top_k" else float(value)
+            if key == "reasoning_budget" and value < 0:
+                raise ValueError(f"sampling {key!r} must be 0 or more, got {value!r}")
+            values[key] = int(value) if key in _INT_KNOBS else float(value)
         return cls(**values)
 
 

@@ -12,7 +12,7 @@ import pytest
 
 from jbrain.llm import local_catalog, model_sampling
 from jbrain.llm.anthropic import AnthropicClient
-from jbrain.llm.openai_compat import OpenAiCompatClient
+from jbrain.llm.openai_compat import REASONING_BUDGET_MESSAGE, OpenAiCompatClient
 from jbrain.llm.types import Sampling
 
 # --- the Sampling value object ---------------------------------------------
@@ -158,6 +158,33 @@ def test_xai_client_sends_only_temperature_and_top_p() -> None:
         Sampling(temperature=0.1, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5),
     )
     assert payload == {"temperature": 0.1, "top_p": 0.95}
+
+
+def test_a_thinking_budget_goes_to_llama_server_only() -> None:
+    """llama-server's per-request budget fields (pin 869034b, server-common.cpp): the cap
+    and the line spliced in before the forced think-end tag. A cloud API never sees them."""
+    local: dict = {}
+    _openai("local")._apply_sampling(local, Sampling(reasoning_budget=320))
+    assert local == {
+        "reasoning_budget_tokens": 320,
+        "reasoning_budget_message": REASONING_BUDGET_MESSAGE,
+    }
+    cloud: dict = {}
+    _openai("xai")._apply_sampling(cloud, Sampling(temperature=0.5, reasoning_budget=320))
+    assert cloud == {"temperature": 0.5}
+    anthropic: dict = {}
+    AnthropicClient._apply_sampling(anthropic, Sampling(reasoning_budget=320))
+    assert anthropic == {}
+
+
+def test_a_thinking_budget_parses_as_a_whole_non_negative_count() -> None:
+    s = Sampling.from_mapping({"reasoning_budget": 320})
+    assert s.reasoning_budget == 320 and isinstance(s.reasoning_budget, int)
+    assert Sampling.from_mapping({"reasoning_budget": 0}).reasoning_budget == 0
+    with pytest.raises(ValueError, match="0 or more"):
+        Sampling.from_mapping({"reasoning_budget": -1})
+    # A model default without one keeps a prompt's cap, and the prompt's wins over none.
+    assert Sampling(temperature=0.7).merge(s) == Sampling(temperature=0.7, reasoning_budget=320)
 
 
 def test_openai_client_no_op_on_empty_sampling() -> None:

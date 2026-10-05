@@ -62,6 +62,10 @@ _OPENAI_STOP: dict[str, StopReason] = {
 }
 
 
+# What a capped thought ends on, before the forced think-end tag.
+REASONING_BUDGET_MESSAGE = "\n\nThat is enough thinking; I will act on it now.\n"
+
+
 def openai_tools(tools: Sequence[LlmTool]) -> list[dict[str, Any]]:
     """Serialize adapter tools into the OpenAI `tools` array. The single source of
     this shape so a gateway warm-up (jbrain.agent.priming) primes the SAME tool JSON a
@@ -306,6 +310,12 @@ class OpenAiCompatClient:
             payload["frequency_penalty"] = sampling.frequency_penalty
         if sampling.repetition_penalty is not None:
             payload["repeat_penalty"] = sampling.repetition_penalty
+        if sampling.reasoning_budget is not None:
+            # llama-server's per-request fields (server-common.cpp, pin 869034b). The message
+            # is spliced in before the forced think-end tag, so the cut reads as a decision
+            # to act rather than a sentence chopped off mid-thought.
+            payload["reasoning_budget_tokens"] = sampling.reasoning_budget
+            payload["reasoning_budget_message"] = REASONING_BUDGET_MESSAGE
 
     def _converse_payload(
         self,

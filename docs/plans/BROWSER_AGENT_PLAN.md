@@ -362,6 +362,40 @@ listed and revocable in Settings, and never extend to the Never tier.
   revisit if it bites. The debug `POST /browse` route is NOT gated (it is the measuring
   instrument); an optional `require_fetch_gate` flag was skipped because the route has no turn
   whose fetches it could consult. `jerv.prompt` `agent-jerv-v57`, `browse.tool` v5.
+- **Fourth live run, and a thinking cap on each step (2026-10-05).** After #1572 the Epic
+  Titusville goal (warm, effort low) ran **161 s**, answered and verified: four navigation
+  clicks ~33 s in all, the extraction 25 s — and the step where the model decided to call
+  `finish` took **83 s writing ~1,543 tokens** of thinking (86 s / 1,593 in a second run).
+  Effort `none` on every step was tried and made the model wander (12–14 steps, 216 s), so
+  steps stay at low. Fix (owner-approved):
+  1. **A per-request thinking budget.** llama.cpp at the Flash-Next pin (`869034b`) takes one
+     per request: `tools/server/server-common.cpp` reads `reasoning_budget_tokens` (alias
+     `thinking_budget_tokens`, default the server's `--reasoning-budget`) and
+     `reasoning_budget_message` from the body (~L1412–1426) and passes them to the sampler
+     whenever the template has a think-end tag (the autoparser finds Qwen's `</think>`,
+     `common/chat.cpp` ~L1356–1363); `common/reasoning-budget.cpp` counts the tokens after the
+     think-start tag (the generation prompt's own `<think>` included, `common/sampling.cpp`
+     ~L311–322) and at the cap forces the message plus `</think>`, so the reply continues to its
+     tool call. No server flag changes. `Sampling` gained `reasoning_budget` (it is a sampler
+     there): the OpenAI-compatible client sends it, with a short "enough thinking; act now"
+     line as the message, to `local` only — never to xAI, never to Anthropic — and a server or
+     template without a think tag ignores it (gpt-oss's harmony template, the standard
+     engine's older pin). `browse.prompt` declares `config: sampling: reasoning_budget: 320`
+     and every STEP call passes it; the extraction does not (thinking is off there). It is a
+     sampling field, not part of the prompt, so the strict-extension prefix cache is
+     untouched. The debug `/complete` `sampling` object takes it too, so the cap can be A/B'd
+     from the PWA's debug console.
+  2. **Firmer finishing guidance** (`agent-browse-v5`): the moment the page shows what the goal
+     asks, `finish` is the whole decision — no re-checking, no working out or weighing the
+     answer (the host reads and filters it).
+  Why not the host-side alternatives: a stream-and-abort-then-retry spends the wasted tokens
+  first and adds a second call; a "page looks like the answer" heuristic switching effort to
+  none per step needs a target-shape guess and, at none, risks the wandering measured above.
+  The server-side cap needs neither. **Expected:** the finish step ~320 thinking tokens plus a
+  ~30-token call, ~18–20 s at the measured ~18.6 tok/s instead of 83 s; navigation steps
+  (~100–200 tokens of thinking each) are rarely capped. **~95 s for the run**, toward ~90 s
+  if v5's guidance shortens the decision further. Re-measure on the box: the `finish` step's
+  `output_tokens` in the debug `/browse` trace should read at most ~360.
 - **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
   untested. The snapshot pruning measured ~3x on Epic's home page (9.0k → 2.8k chars) and
   ~1.4k tokens on wikipedia.org against the real image (before the tighter cap above).

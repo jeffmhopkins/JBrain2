@@ -1,6 +1,6 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
-> **Status:** Living · **Last verified:** 2026-09-11 — R4 deleted the `note.extract` and
+> **Status:** Living · **Last verified:** 2026-10-05 — a `config: sampling:` block may set `reasoning_budget`, a per-request thinking cap for llama-server (`browse.prompt` uses it). Prior (2026-09-11): R4 deleted the `note.extract` and
 > `integrate.note` tasks with their prompts; the note conversation runs on `agent.turn` under
 > the `note_ingest` persona.
 
@@ -418,6 +418,13 @@ presence_penalty 1.5 — verbatim transcription must not drift or loop). `vision
 and the deterministic `low` classify/title jobs run at their model's defaults; the
 primary lever for the latter is the low reasoning effort they already carry, not the
 Qwen VL numbers — tune temperature down per-prompt if one shows variance.
+
+`reasoning_budget` (whole tokens, ≥0) caps a call's THINKING rather than shaping its
+sampling distribution: the local client sends it as llama-server's per-request
+`reasoning_budget_tokens` (with a short "act now" line as `reasoning_budget_message`), and
+the server forces the template's think-end tag at the cap. Local only; a template without a
+think tag ignores it. `browse.prompt` uses it (320) so a browse step cannot deliberate for a
+minute over one action.
 
 Server-wide `--temp/--top-p` flags in `llama_swap_config.py` remain the blunt
 alternative we deliberately did NOT take: they apply to a whole served model and can't
