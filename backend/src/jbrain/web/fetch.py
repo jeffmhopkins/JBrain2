@@ -1358,9 +1358,13 @@ class WebFetcher:
                     resp = await self._get_following_safe_redirects(client, page_data)
                     body, _ = await _read_capped(resp)
                 extra = gatsby_lines(body.decode("utf-8", errors="replace"))
-            except (httpx.HTTPError, WebFetchError) as exc:
+            except Exception as exc:  # noqa: BLE001 - page-data is a bonus; never fail the fetch
                 log.info("web.gatsby_page_data_missed", url=page_data, error=repr(exc))
-        return embedded_data(raw_html, extra=extra)
+        try:
+            return embedded_data(raw_html, extra=extra)
+        except Exception as exc:  # noqa: BLE001 - same: the page text still goes back
+            log.warning("web.structured_failed", url=url, error=repr(exc))
+            return ""
 
     async def _fetch_post(
         self,

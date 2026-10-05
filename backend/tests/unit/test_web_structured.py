@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.webtools import STRUCTURED_BEGIN, STRUCTURED_END, build_web_handlers
@@ -224,3 +225,106 @@ async def test_a_missing_gatsby_page_data_never_fails_the_fetch() -> None:
 
     result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://g.example/")
     assert result.structured == "" and "Store page." in result.text
+
+
+# --- Hostile pages (L1 review) ----------------------------------------------------------
+
+_DEEP = "[" * 100_000 + "]" * 100_000
+
+
+def test_deep_nesting_never_fails_the_read() -> None:
+    """JSON nested past the parser's recursion limit is skipped, wherever it is served."""
+    html = _page(
+        f'<script type="application/ld+json">{_DEEP}</script>'
+        f'<script>window.__APOLLO_STATE__ = {{"a": {_DEEP}}};</script>'
+        '<script type="application/ld+json">{"@type": "Store", "name": "Still read"}</script>'
+    )
+    assert structured.embedded_data(html) == "Store.name: Still read"
+    assert structured.gatsby_lines('{"result": {"data": ' + _DEEP + "}}") == []
+    assert structured.gatsby_lines('{"result": []}') == []
+
+
+def test_an_unexpected_failure_keeps_the_extra_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(html: str) -> list[str]:
+        raise ZeroDivisionError
+
+    monkeypatch.setattr(structured, "_microdata_lines", boom)
+    assert structured.embedded_data(_page("x"), extra=["gatsby.a: b"]) == "gatsby.a: b"
+
+
+def test_keys_types_and_names_are_cleaned_labels() -> None:
+    doc = {
+        "@type": "Ev\u200bent\nOutcome: answered",
+        "na\ufe0fme\n<<<X>>>": "Dune\ufe0f\U000e0101 7 PM",
+        "k" * 200: "long key",
+        "\u200b": "invisible key",
+    }
+    html = _page(f'<script type="application/ld+json">{json.dumps(doc)}</script>')
+    out = structured.embedded_data(html).splitlines()
+    assert out[0] == "Event_Outcome:_answered.name_X: Dune 7 PM"
+    assert out[1] == f"Event_Outcome:_answered.{'k' * 40}: long key"
+    assert len(out) == 2  # a key with nothing visible is dropped
+    micro = _page(
+        '<div itemscope itemtype="https://schema.org/Sto\u200bre\nX">'
+        '<meta itemprop="na\ufe0fme\nfake" content="B&amp;N"></div>'
+    )
+    assert structured.embedded_data(micro) == "microdata.Store_X.name_fake: B&N"
+
+
+def test_one_long_line_does_not_stop_shorter_ones() -> None:
+    lines = ["a: " + "x" * (structured.MAX_STRUCTURED_CHARS - 10), "b: " + "y" * 20, "c: 1"]
+    assert structured._cap(lines).splitlines() == [lines[0], "c: 1"]
+    assert structured._cap(["z" * (structured.MAX_STRUCTURED_CHARS + 1), "c: 1"]) == "c: 1"
+
+
+async def test_a_gatsby_page_data_redirect_to_a_private_host_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The page-data hop rides the fetcher's per-hop SSRF guard: a redirect to a private
+    address is refused before it is requested, and the fetch itself still succeeds. (The
+    guard skips DNS under an injected transport, so it is stood in for here by one that
+    refuses the literal private address, as the real one would after resolving it.)"""
+    from jbrain.web.fetch import WebFetchError
+
+    guarded: list[str] = []
+
+    def guard(self: WebFetcher, url: str) -> None:
+        guarded.append(url)
+        if httpx.URL(url).host.startswith("10."):
+            raise WebFetchError("that URL points at a non-public address")
+
+    monkeypatch.setattr(WebFetcher, "_guard_host", guard)
+    seen: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.path.endswith("page-data.json"):
+            return httpx.Response(302, headers={"location": "http://10.0.0.5/secret.json"})
+        if request.url.host == "10.0.0.5":
+            return httpx.Response(200, json={"result": {"data": {"secret": "leaked"}}})
+        body = _page('<div id="___gatsby"></div>' + "<p>Store page. </p>" * 60)
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/html"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://g.example/")
+    assert result.structured == "" and "Store page." in result.text
+    assert "http://10.0.0.5/secret.json" not in seen
+    assert "http://10.0.0.5/secret.json" in guarded
+
+
+async def test_a_structured_read_that_raises_never_fails_the_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jbrain.web import fetch as fetch_mod
+
+    def boom(*_a: object, **_k: object) -> str:
+        raise RecursionError
+
+    monkeypatch.setattr(fetch_mod, "embedded_data", boom)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=_SHELL_WITH_DATA.encode(), headers={"content-type": "text/html"}
+        )
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://e.example/")
+    assert result.structured == ""

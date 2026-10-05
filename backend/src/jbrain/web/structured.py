@@ -65,6 +65,12 @@ _SKIP_KEYS = frozenset(
 # A value that is an opaque token (a hash, a base64 blob, an id) says nothing to a reader.
 _OPAQUE = re.compile(r"^[A-Za-z0-9+/=_-]{24,}$")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+# Invisible characters that are not format (Cf) characters: variation selectors and their
+# supplement (emoji steganography) — the same set `browse_policy.strip_invisible` removes.
+_INVISIBLE_RANGES = ((0xFE00, 0xFE0F), (0xE0100, 0xE01EF))
+# A key, a schema.org type or a microdata name is a label, not data: one short token.
+_MAX_KEY_CHARS = 40
+_KEY_JUNK = re.compile(r"[^\w@:$-]+")
 
 
 def is_gatsby(html: str) -> bool:
@@ -86,18 +92,33 @@ def gatsby_page_data_url(url: str) -> str | None:
 
 def gatsby_lines(body: str) -> list[str]:
     """The flattened `result.data` of a Gatsby page-data.json body."""
-    try:
-        doc = json.loads(body[:_MAX_SCRIPT_CHARS])
-    except ValueError:
-        return []
-    data = doc.get("result", {}).get("data") if isinstance(doc, dict) else None
+    doc = _parse(body[:_MAX_SCRIPT_CHARS])
+    result = doc.get("result") if isinstance(doc, dict) else None
+    data = result.get("data") if isinstance(result, dict) else None
     return list(_flatten(data, "gatsby")) if data is not None else []
 
 
+def _parse(text: str) -> Any:
+    """JSON, or None for anything that does not parse — including nesting deep enough to
+    exhaust the parser's recursion, which a hostile page can serve."""
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+
+
 def embedded_data(html: str, *, extra: list[str] | None = None) -> str:
-    """The page's embedded structured data as capped `path: value` lines, or ""."""
+    """The page's embedded structured data as capped `path: value` lines, or "". Never
+    raises: embedded data is a bonus on a fetch, never a reason for it to fail."""
     if not html:
         return ""
+    try:
+        return _embedded(html, extra or [])
+    except Exception:  # noqa: BLE001 - a page's junk must not fail the fetch it rides on
+        return _cap(extra or [])
+
+
+def _embedded(html: str, extra: list[str]) -> str:
     lines: list[str] = []
     for attrs, body in _SCRIPT.findall(html):
         if len(body) > _MAX_SCRIPT_CHARS:
@@ -111,7 +132,7 @@ def embedded_data(html: str, *, extra: list[str] | None = None) -> str:
         else:
             lines += _assigned_lines(body)
     lines += _microdata_lines(html)
-    lines += extra or []
+    lines += extra
     return _cap(lines)
 
 
@@ -124,9 +145,8 @@ _EMPTY = _NoMatch()
 
 
 def _json_lines(body: str, root: str, *, next_data: bool = False) -> list[str]:
-    try:
-        doc = json.loads(body.strip().removeprefix("<!--").removesuffix("-->"))
-    except ValueError:
+    doc = _parse(body.strip().removeprefix("<!--").removesuffix("-->"))
+    if doc is None:
         return []
     if next_data and isinstance(doc, dict) and isinstance(doc.get("props"), dict):
         # Next.js: the page's own data is `props.pageProps`; the rest is router plumbing.
@@ -142,7 +162,7 @@ def _assigned_lines(body: str) -> list[str]:
             continue  # Nuxt 2's `(function(a,b){…})` is code, not data
         try:
             doc, _ = json.JSONDecoder().raw_decode(rest)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         out += _flatten(doc, match.group(1).strip("_").lower())
     return out
@@ -152,12 +172,13 @@ def _flatten(node: Any, path: str, depth: int = 0) -> Iterator[str]:
     if depth > _MAX_DEPTH:
         return
     if isinstance(node, dict):
-        kind = node.get("@type")
-        if isinstance(kind, str) and kind:
+        kind = _key(node.get("@type"))
+        if kind:
             # A schema.org node is named by its type ("Event.startDate"), not its nesting.
             path = kind
-        for key, value in node.items():
-            if key in _SKIP_KEYS or key == "@type" or key.startswith("__"):
+        for raw, value in node.items():
+            key = _key(raw)
+            if not key or raw in _SKIP_KEYS or raw == "@type" or str(raw).startswith("__"):
                 continue
             yield from _flatten(value, f"{_tail(path)}.{key}", depth + 1)
     elif isinstance(node, list):
@@ -179,12 +200,26 @@ def _tail(path: str) -> str:
     return ".".join(path.split(".")[-2:])
 
 
-def _clean(value: str) -> str:
-    value = "".join(
+def _visible(text: str) -> str:
+    return "".join(
         c
-        for c in unicodedata.normalize("NFKC", value)
-        if unicodedata.category(c) != "Cf" and not _CONTROL.match(c)
+        for c in unicodedata.normalize("NFKC", text)
+        if unicodedata.category(c) != "Cf"
+        and not _CONTROL.match(c)
+        and not any(lo <= ord(c) <= hi for lo, hi in _INVISIBLE_RANGES)
     )
+
+
+def _key(raw: object) -> str:
+    """A key, type or name as a label: visible characters only, one token (no spaces or
+    line breaks, which could start a line that reads like another), bounded."""
+    if not isinstance(raw, str):
+        return ""
+    return _KEY_JUNK.sub("_", _visible(raw)).strip("_")[:_MAX_KEY_CHARS]
+
+
+def _clean(value: str) -> str:
+    value = _visible(value)
     value = " ".join(re.sub(r"<[^>]{0,200}>", " ", value).split())
     if len(value) > _MAX_VALUE_CHARS:
         value = value[: _MAX_VALUE_CHARS - 1].rstrip() + "…"
@@ -205,8 +240,8 @@ class _Microdata(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = {k: (v or "") for k, v in attrs}
         if "itemtype" in a:
-            self._types.append(a["itemtype"].rstrip("/").rsplit("/", 1)[-1])
-        prop = a.get("itemprop")
+            self._types.append(_key(a["itemtype"].rstrip("/").rsplit("/", 1)[-1]) or "item")
+        prop = _key(a.get("itemprop"))
         given = a.get("content") or a.get("datetime")
         if prop and given:
             self._emit(prop, given)
@@ -256,7 +291,7 @@ def _cap(lines: list[str]) -> str:
         if line in seen:
             continue
         if size + len(line) + 1 > MAX_STRUCTURED_CHARS:
-            break
+            continue  # a shorter line further on may still fit
         seen.add(line)
         out.append(line)
         size += len(line) + 1
