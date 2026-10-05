@@ -55,7 +55,8 @@ the benchmark set (L0), not this one site.
 - **Benchmark set** (generic, fixed, run through debug `/browse`): a cinema with a location
   picker, a store/stock lookup by location, a search box → result page, a paginated list, a
   tabbed detail page, a page needing one filter.
-- Arms: `reasoning_budget` 0 / 64 / 128 / 320 on steps (`/complete` already takes it); grammar
+- Arms: `reasoning_budget` 0 / 64 / 128 / 320 on steps (debug `/browse` takes a per-run
+  `reasoning_budget`, `debug-connect.sh browse --budget N`); grammar
   vs native tool call on a single-step probe; extraction appended to history vs fresh prompt.
 - Recorded per run: success (fact check), steps, model calls, and time per phase (navigation,
   finish decision, extraction). The result restates §1 and sets L1's numeric targets.

@@ -513,25 +513,27 @@ except Exception: print("")')
     _call POST /api/debug/fetch "$body" | _pp
     ;;
 
-  browse) # "<goal>" [--start-url URL] [--max-steps N] [--spec P:M] [--no-wait] — one goal through the browse sub-agent
-    GOAL="${1:-}"; [ -n "$GOAL" ] || { echo "usage: debug-connect.sh browse \"<goal>\" [--start-url URL] [--max-steps N] [--spec P:M] [--no-wait]" >&2; exit 2; }
+  browse) # "<goal>" [--start-url URL] [--max-steps N] [--spec P:M] [--budget N] [--no-wait] — one goal through the browse sub-agent
+    GOAL="${1:-}"; [ -n "$GOAL" ] || { echo "usage: debug-connect.sh browse \"<goal>\" [--start-url URL] [--max-steps N] [--spec P:M] [--budget N] [--no-wait]" >&2; exit 2; }
     shift
-    START="" STEPS="" SPEC="" NOWAIT=""
+    START="" STEPS="" SPEC="" BUDGET="" NOWAIT=""
     while [ "${1:-}" != "" ]; do
       case "$1" in
         --start-url) START="$2"; shift 2 ;;
         --max-steps) STEPS="$2"; shift 2 ;;
         --spec) SPEC="$2"; shift 2 ;;
+        --budget) BUDGET="$2"; shift 2 ;;
         --no-wait) NOWAIT=1; shift ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
       esac
     done
-    body="$(GOAL="$GOAL" START="$START" STEPS="$STEPS" SPEC="$SPEC" python3 - <<'PY'
+    body="$(GOAL="$GOAL" START="$START" STEPS="$STEPS" SPEC="$SPEC" BUDGET="$BUDGET" python3 - <<'PY'
 import json, os
 b = {"goal": os.environ["GOAL"]}
 if os.environ.get("START"): b["start_url"] = os.environ["START"]
 if os.environ.get("STEPS"): b["max_steps"] = int(os.environ["STEPS"])
 if os.environ.get("SPEC"): b["spec"] = os.environ["SPEC"]
+if os.environ.get("BUDGET"): b["reasoning_budget"] = int(os.environ["BUDGET"])
 print(json.dumps(b))
 PY
 )"

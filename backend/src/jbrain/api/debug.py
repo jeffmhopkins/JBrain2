@@ -1329,6 +1329,9 @@ class BrowseRequest(BaseModel):
     # A "provider:model" spec to run THIS goal on — the bake-off's lever, so two models can be
     # compared on the same task without re-routing the box. Empty = the routed model.
     spec: str | None = None
+    # Overrides the browse prompt's per-step thinking cap for this run (0 = no thinking) —
+    # BROWSER_FAST_LOOP_PLAN L0's sweep. Empty = the prompt's own cap.
+    reasoning_budget: int | None = Field(default=None, ge=0, le=4096)
 
 
 class BrowseStepOut(BaseModel):
@@ -1437,7 +1440,11 @@ async def video_async(body: VideoProbeRequest, request: Request, _p: DebugDep) -
 
 async def _run_browse(agent: BrowseAgent, body: BrowseRequest) -> BrowseOut:
     run = await agent.run(
-        body.goal, body.start_url, max_steps=body.max_steps, spec_override=body.spec or None
+        body.goal,
+        body.start_url,
+        max_steps=body.max_steps,
+        spec_override=body.spec or None,
+        reasoning_budget=body.reasoning_budget,
     )
     return BrowseOut(
         outcome=run.outcome,
