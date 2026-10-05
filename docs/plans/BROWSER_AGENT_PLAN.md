@@ -18,7 +18,7 @@ tool server and run our own small loop over it.**
 |---|---|---|
 | Browser layer | **Microsoft's `playwright-mcp`**, official image `mcr.microsoft.com/playwright/mcp`, pinned by tag, HTTP transport | Apache-2.0, actively maintained, bundles its own Chromium. Observes pages as a pruned accessibility tree with element refs, so each step is one small tool call (`browser_click ref=12`) — no pixel coordinates, no large JSON schema. That is the shape a ~6B-active model can do. |
 | Who runs the loop | **Our backend**, through the LLM adapter (non-negotiable 1) | browser-use and Stagehand own their model loop, bypass the adapter, and their own docs/maintainers say small Qwen models fail their schemas. playwright-mcp has no model of its own — the loop is ours, logged in the run-log. |
-| Where browsing happens | **A sub-agent with its own context** (owner decision 2026-10-04) | jerv calls `browse(goal, start_url?)` and gets back a short text answer with source URLs. Page snapshots never enter jerv's context. |
+| Where browsing happens | **A sub-agent with its own context** (owner decision 2026-10-04) | jerv calls `browse(goal, start_url)` (start_url required since the 2026-10-05 fetch-first gate) and gets back a short text answer with source URLs. Page snapshots never enter jerv's context. |
 | Runner-up | Vercel `agent-browser` (Apache-2.0) | Richer built-in policies (action allowlists, confirmations, delta snapshots); no confirmed official image. Measured against playwright-mcp in B1's bake-off. |
 | Stealth | Stock Chromium first | A 2026 benchmark across 31 Cloudflare sites from a residential IP: vanilla Playwright cleared 24, the best stealth tool 28. A theater picker needs JavaScript, not evasion. Byparr cannot be driven (FlareSolverr API, not CDP); if stealth matters later, a zendriver-launched Chrome over CDP is the upgrade path. |
 | Egress proxy | **Squid** (Canonical's `ubuntu/squid`, Ubuntu-LTS build, digest-pinned), built on the box with the deny list baked in and a build-time `squid -k parse` | Resolves DNS itself and checks the resolved address, so a public name pointing at a private address is refused. Smokescreen (Stripe) was the prior-art pick but publishes no official image; Squid's `dst` ACLs do the same job from a maintained distro package. Verified locally against the deny list (169.254/16, RFC1918, loopback, CGNAT, `db`, `searxng`, `localtest.me`, IPv4-mapped v6, CONNECT) — every one 403, a public site 200. |
@@ -326,6 +326,25 @@ listed and revocable in Settings, and never extend to the Never tier.
   seconds (a ~30-token tool call), the extraction ~10–20 s — **~60–70 s** for the run instead
   of 234 s. Re-measure on the box (debug `/browse`: the `finish` and `extract` steps'
   `model_ms` and tokens).
+- **Fetch first, enforced (owner decision 2026-10-05).** `browse` is refused — a fast tool
+  error telling jerv to `web_fetch` the URL first and use its result — unless, earlier in the
+  SAME turn, a `web_fetch` of the same registrable domain (eTLD+1 via the bundled Public
+  Suffix List, the `tld` package; `www.` and other subdomains match their parent, `bbc.co.uk`
+  is not every `.co.uk`; a suffix the list does not know falls back to the host less `www.`;
+  an IP or dotless host never passes) came back needing a browser: `gated` (location/store
+  picker), `js_shell` (unrendered JavaScript app), or thin (a plain read from the top whose
+  whole page is under the fetcher's own 200-character recovery bar, `fetch.THIN_PAGE_CHARS`).
+  `start_url` is now required. The tools decide it: web_fetch records the verdict from the
+  result's own flags on the turn's `ToolContext.browser_needed` (domain → reason; one per
+  turn, so an earlier turn's fetch does not count), and `agent/browse_gate.py` reads it before
+  any model call or browser session — never the model's judgment, never the result text. The
+  web_fetch browse hint uses the same test, so it never suggests a call the gate would refuse.
+  There is **no "needs interaction" bypass**: the owner's ruling is that the agent cannot be
+  trusted to judge it. **Accepted trade-off:** a page that fetches fine but needs a click to
+  reveal its data (a tab, a "show more", a date picker over a readable page) is refused —
+  revisit if it bites. The debug `POST /browse` route is NOT gated (it is the measuring
+  instrument); an optional `require_fetch_gate` flag was skipped because the route has no turn
+  whose fetches it could consult. `jerv.prompt` `agent-jerv-v57`, `browse.tool` v5.
 - **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
   untested. The snapshot pruning measured ~3x on Epic's home page (9.0k → 2.8k chars) and
   ~1.4k tokens on wikipedia.org against the real image (before the tighter cap above).

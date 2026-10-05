@@ -815,11 +815,14 @@ def test_the_caller_reads_fenced_data_with_host_observed_sources() -> None:
 
 
 def _ctx(tools: frozenset[str] = frozenset(), model: str | None = None) -> ToolContext:
+    """A turn in which web_fetch already found the cinema site needs a browser — the gate's
+    own tests (test_browse_gate.py) cover the turns where it did not."""
     return ToolContext(
         session=SessionContext(principal_kind="owner"),
         scopes=(),
         agent_tools=tools,
         model_override=model,
+        browser_needed={"cinema.example": "gated"},
     )
 
 
@@ -852,8 +855,9 @@ async def test_the_browse_tool_refuses_an_empty_or_rambling_goal() -> None:
 
 async def test_the_browse_tool_reports_a_stop_in_its_brief() -> None:
     agent, _, _ = _agent([_call("give_up", 1, reason="closed")])
-    out = await build_browse_handlers(agent)["browse"]({"goal": "g"}, _ctx())
-    assert isinstance(out, ToolOutput) and out.result_brief == "gave up · 1 steps"
+    out = await build_browse_handlers(agent)["browse"]({"goal": "g", "start_url": HOME}, _ctx())
+    # The host's start navigation, then the give-up.
+    assert isinstance(out, ToolOutput) and out.result_brief == "gave up · 2 steps"
 
 
 async def test_the_browse_tool_runs_on_the_conversation_model() -> None:
@@ -866,14 +870,16 @@ async def test_the_browse_tool_runs_on_the_conversation_model() -> None:
         return await original(goal, start_url, **kw)
 
     agent.run = spy  # type: ignore[method-assign]
-    await build_browse_handlers(agent)["browse"]({"goal": "g"}, _ctx(model="xai:grok-other"))
+    await build_browse_handlers(agent)["browse"](
+        {"goal": "g", "start_url": HOME}, _ctx(model="xai:grok-other")
+    )
     assert seen == ["xai:grok-other"]
 
 
 def test_the_jerv_tool_sidecar_is_web_gated() -> None:
     tool = load_tool(Path(browse.__file__).parent / "tools" / "browse.tool")
     assert tool.spec.permission == "web"
-    assert tool.spec.params["required"] == ["goal"]
+    assert tool.spec.params["required"] == ["goal", "start_url"]
 
 
 # --- The MCP client -------------------------------------------------------------------

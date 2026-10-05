@@ -343,6 +343,11 @@ class ToolContext:
     # loop reuses one ToolContext for a whole turn, and the default_factory gives each turn
     # its own memo, so the scope is exactly "this run"; only failed fetches ever land here.
     failed_fetches: dict[str, int] = field(default_factory=dict)
+    # Per-turn memo of sites whose web_fetch said they need a browser (registrable domain →
+    # why: gated, js_shell, thin), written by web_fetch from the result's own flags and read
+    # by `browse`'s fetch-first gate (agent/browse_gate.py). Per turn for the same reason as
+    # `failed_fetches`: a fetch in an earlier turn does not open the browser in this one.
+    browser_needed: dict[str, str] = field(default_factory=dict)
     # Per-turn memo of read results (call key → the observation it returned), for a tool
     # whose identical call cannot return anything new within a turn. The handler answers a
     # repeat from here with a note saying so, because a model that got nothing will
