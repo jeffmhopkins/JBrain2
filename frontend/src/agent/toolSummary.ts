@@ -98,6 +98,7 @@ const STEP_LABELS: Record<string, string> = {
   // Web + research
   web_search: "Searched the web",
   web_fetch: "Read a web page",
+  browse: "Browsed a site",
   news_search: "Searched the news",
   news_feed: "Read a news feed",
   science_search: "Searched scientific papers",
@@ -221,6 +222,7 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   recall: ["query"],
   web_search: ["query"],
   web_fetch: ["url"],
+  browse: ["goal"],
   news_search: ["query"],
   news_feed: ["category"],
   sdr_listen: ["frequency_mhz"],

@@ -180,6 +180,9 @@ TASK_ROLES: Final[Mapping[str, SlotRole]] = {
     # the live conversation between tool rounds.
     "agent.vision": SlotRole.SMALL,
     "research.title": SlotRole.SMALL,
+    # The browse sub-agent is a sub-agent: its page snapshots belong in the research slot,
+    # never in jerv's interactive prefix (docs/plans/BROWSER_AGENT_PLAN.md B1).
+    "browse.step": SlotRole.RESEARCH,
     "triage.classify": SlotRole.SMALL,
     "pet.turn": SlotRole.PET,
     "pet.thought": SlotRole.PET,

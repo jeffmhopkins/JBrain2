@@ -387,6 +387,66 @@ JS_SHELL_MESSAGE = (
     " page), or fetch a data endpoint if you have its URL (an RSS feed, or the JSON API the page"
     " itself calls). This is NOT evidence that the page is empty or that the topic doesn't exist."
 )
+
+
+# --- Location / store gate detection -----------------------------------------
+# A cinema or retail chain that keeps "which theater/store" in browser storage serves every
+# visitor without one the same template: a page that reads "Please select a location" and
+# nothing else (Epic Theatres, 2026-10-04: 221 characters on direct fetch, reader and solver
+# alike). It cleared `_MIN_RECOVERED_CHARS`, so it came back as a successful fetch of a page
+# with nothing on it, and jerv spent 48 steps on aggregators. Length cannot tell this page
+# from a genuinely short one — the WORDING can. A gate is flagged, never escalated: every
+# recovery tier renders the same template, because the choice lives in the visitor's browser,
+# not behind a wall. What helps is a browser that makes the choice (`browse`).
+_GATE_MARKERS = (
+    "select a location",
+    "select your location",
+    "choose a location",
+    "choose your location",
+    "set your location",
+    "select a theater",
+    "select a theatre",
+    "select your theater",
+    "select your theatre",
+    "choose a theater",
+    "choose a theatre",
+    "choose your theater",
+    "choose your theatre",
+    "select a cinema",
+    "choose your cinema",
+    "select a store",
+    "select your store",
+    "choose a store",
+    "choose your store",
+    "set your store",
+    "find your store",
+    "select your preferred",
+    "enter your zip",
+    "enter a zip",
+    "enter your postal code",
+)
+# A gate page is a template; a real page that merely MENTIONS "select your store" in its
+# header has thousands of characters of content around it.
+_GATE_MAX_CHARS = 1_500
+
+
+def looks_like_location_gate(title: str, text: str) -> bool:
+    """Whether a page is a location/store picker standing in for the content, rather than a
+    short page that happens to say so (see the block comment above)."""
+    if len(text.strip()) > _GATE_MAX_CHARS:
+        return False
+    lower = f"{title}\n{text}".lower()
+    return any(marker in lower for marker in _GATE_MARKERS)
+
+
+# What jerv's `web_fetch` appends to a gated page. Kept beside the detector like the JS-shell
+# message; the `browse` suggestion is added by the tool only for a caller that holds it.
+LOCATION_GATE_NOTE = (
+    "[Note: this page is a location/store picker, not the content — the site shows nothing"
+    " until a visitor chooses a theater, store or area, and it keeps that choice in the"
+    " browser. Re-fetching it, through any reader, returns the same template. This is NOT"
+    " evidence the information is missing.]"
+)
 # The same warning for the more dangerous half — a shell that leaked a few words of chrome. It
 # LOOKS like a successful (if short) read, so without the note the model quotes page furniture
 # as if it were the article.
@@ -574,6 +634,9 @@ class FetchResult:
     # tool can say the URL needs a browser we already tried instead of the ambiguous "no
     # readable text", which the model reads as "the page is empty".
     js_shell: bool = False
+    # True when the first page is a location/store picker standing in for the content
+    # (`looks_like_location_gate`) — a "successful" fetch of a page with nothing on it.
+    gated: bool = False
 
 
 def _find_offsets(
@@ -933,8 +996,36 @@ class WebFetcher:
         `method="POST"` sends `body` (with `content_type`) to a JSON/search API endpoint
         instead of a plain GET — the same SSRF host/redirect guard, no reader/solver
         escalation (those render a GET URL), no youtube path. A JSON response comes back
-        pretty-printed; anything else is extracted like a text page."""
-        offset = max(0, offset)
+        pretty-printed; anything else is extracted like a text page.
+
+        A first-page GET that reads as a location/store picker comes back flagged `gated`."""
+        result = await self._fetch_ladder(
+            url,
+            offset=max(0, offset),
+            find=find,
+            find_regex=find_regex,
+            method=method,
+            body=body,
+            content_type=content_type,
+        )
+        first_page = offset <= 0 and not find and method.upper() != "POST"
+        if first_page and looks_like_location_gate(result.title, result.full_text or result.text):
+            log.info("web.location_gate", url=url, chars=result.total_chars)
+            return replace(result, gated=True)
+        return result
+
+    async def _fetch_ladder(
+        self,
+        url: str,
+        *,
+        offset: int,
+        find: str,
+        find_regex: bool,
+        method: str,
+        body: str,
+        content_type: str,
+    ) -> FetchResult:
+        """`fetch` without the gate verdict: the direct → reader → solver → Tavily ladder."""
         if method.upper() == "POST":
             return await self._fetch_post(
                 url,

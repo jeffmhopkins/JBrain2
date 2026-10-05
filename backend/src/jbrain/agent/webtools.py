@@ -28,6 +28,7 @@ from jbrain.web.fetch import (
     _GONE_STATUSES,
     JS_SHELL_MESSAGE,
     JS_SHELL_NOTE,
+    LOCATION_GATE_NOTE,
     POST_CONTENT_TYPES,
     FetchResult,
     SearchFormError,
@@ -194,6 +195,8 @@ def _present_fetch(
     # a successful (if short) read, so without the note the model quotes page chrome as content.
     if result.js_shell:
         body += f"\n\n{JS_SHELL_NOTE}"
+    if result.gated:
+        body += f"\n\n{LOCATION_GATE_NOTE}"
     # Links only on the first page — they don't change across windows, and repeating the whole
     # list on every continuation is noise.
     if result.links and offset == 0:
@@ -379,6 +382,28 @@ def _search_health_note(result: "SearchResult") -> str:
             " web_fetch a site you already know or a link from a page you have read.]"
         )
     return "".join(f"\n\n{n}" for n in notes)
+
+
+# The hand-off to `browse` (BROWSER_AGENT_PLAN.md B1), appended only for a caller that holds
+# the tool: a research child reading the same page has no browser to reach for.
+_BROWSE_HINT = (
+    "\n\n[This page needs a real browser to get past it. Call `browse` with a goal that says"
+    " which choice to make and what to read back, and start_url={url} — e.g. the theater or"
+    " store to pick and the showtimes, hours or stock to report.]"
+)
+
+
+def _with_browse_hint(out: str, result: FetchResult, url: str, ctx: ToolContext) -> str:
+    """Suggest `browse` on a page web_fetch cannot get past — a location/store gate or an
+    unrendered JavaScript app — when this turn may call it. Keeps the citation chip."""
+    if not (result.gated or result.js_shell) or "browse" not in ctx.agent_tools:
+        return out
+    hint = _BROWSE_HINT.format(url=url)
+    if isinstance(out, ToolOutput):
+        return ToolOutput(
+            str(out) + hint, web_sources=out.web_sources, result_brief=out.result_brief
+        )
+    return out + hint
 
 
 def _with_budget_note(out: str, note: str) -> str:
@@ -988,18 +1013,16 @@ def build_web_handlers(
             await _record_block(url, exc)
             return _with_budget_note(str(exc), fetch_note)
         await _remember(ctx, result, url, "web_fetch")
-        return _with_budget_note(
-            _present_result(
-                result,
-                url=url,
-                offset=offset,
-                find=find,
-                find_regex=find_regex,
-                outline_only=outline_only,
-                extract=extract,
-            ),
-            fetch_note,
+        presented = _present_result(
+            result,
+            url=url,
+            offset=offset,
+            find=find,
+            find_regex=find_regex,
+            outline_only=outline_only,
+            extract=extract,
         )
+        return _with_budget_note(_with_browse_hint(presented, result, url, ctx), fetch_note)
 
     async def read_artifact_tool(arguments: dict, ctx: ToolContext) -> str:
         # read_artifact is only registered when the artifact store is wired, so these are

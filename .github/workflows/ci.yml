@@ -95,6 +95,11 @@ jobs:
               # check of a broken Dockerfile is the owner's Ops -> Update, on a box with
               # no terminal.
               - 'deploy/Dockerfile.pysandbox'
+              # The browser's egress proxy (BROWSER_AGENT_PLAN.md B0): its image is built on
+              # the box, and the build runs `squid -k parse` over the deny list — the same
+              # reason as the sandbox's image above. test_browser_compose.py reads squid.conf.
+              - 'deploy/Dockerfile.egress'
+              - 'deploy/egress/**'
               - 'deploy/docker-compose.yml'
               - '.github/workflows/ci.yml'
             supervisor:
@@ -187,6 +192,23 @@ jobs:
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         working-directory: .
         run: docker build -f deploy/Dockerfile.pysandbox .
+      # The browser's egress proxy, built as a PR gate for the same reason: the box builds it
+      # during Ops -> Update, and its `squid -k parse` step is what rejects a deny list Squid
+      # cannot read before it becomes a crash-looping proxy and a browser with no way out.
+      # ...and then RUN it and assert its deny matrix (deploy/egress/fence-check.sh): every
+      # internal destination 403s from Squid itself, a public site does not. The compose test
+      # proves the config SAYS this; this proves the built proxy DOES it.
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
+        working-directory: .
+        run: |
+          docker build -f deploy/Dockerfile.egress -t jbrain2-egress:ci .
+          docker run -d --name egress-ci -p 127.0.0.1:3128:3128 \
+            --cap-drop ALL --cap-add SETUID --cap-add SETGID jbrain2-egress:ci
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null -x http://127.0.0.1:3128 http://localhost/ && break
+            sleep 1
+          done
+          bash deploy/egress/fence-check.sh http://127.0.0.1:3128
 
   backend-unit:
     needs: changes

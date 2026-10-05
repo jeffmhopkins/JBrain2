@@ -29,6 +29,14 @@
 #   scripts/debug-connect.sh fetch https://example.com/walled --find "keyword"
 #   scripts/debug-connect.sh solve https://www.reuters.com/... # force ONLY the byparr solver tier
 #   scripts/debug-connect.sh tavily https://example.com/walled # force ONLY the hosted Tavily tier
+#   scripts/debug-connect.sh browse "On epictheatres.com pick Titusville; list today's showtimes" \
+#       [--start-url https://www.epictheatres.com/] [--max-steps 20] [--spec local:MODEL] [--no-wait]
+#     (One goal through jerv's browse sub-agent — the fenced browser, the action gate, the same
+#      loop jerv runs. Prints the step trace (action, snapshot tokens, model/browser ms), the
+#      answer, whether its evidence was found on the final page, and the final URL. A job it
+#      polls, since a run outlasts the tunnel's ~100 s. --spec runs it on one model for the
+#      bake-off without re-routing the box. Also the on-box fence test: a goal that names
+#      http://169.254.169.254/ or http://db:5432/ must come back refused or "access denied".)
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh disk [--refresh]          # where the disk went: fs, docker df, project dirs
@@ -504,6 +512,48 @@ except Exception: print("")')
     body="$(URL="$URL" OFF="$OFF" FIND="$FIND" python3 -c 'import json,os; print(json.dumps({"url": os.environ["URL"], "offset": int(os.environ["OFF"]), "find": os.environ["FIND"], "tier": "tavily"}))')"
     _call POST /api/debug/fetch "$body" | _pp
     ;;
+
+  browse) # "<goal>" [--start-url URL] [--max-steps N] [--spec P:M] [--no-wait] — one goal through the browse sub-agent
+    GOAL="${1:-}"; [ -n "$GOAL" ] || { echo "usage: debug-connect.sh browse \"<goal>\" [--start-url URL] [--max-steps N] [--spec P:M] [--no-wait]" >&2; exit 2; }
+    shift
+    START="" STEPS="" SPEC="" NOWAIT=""
+    while [ "${1:-}" != "" ]; do
+      case "$1" in
+        --start-url) START="$2"; shift 2 ;;
+        --max-steps) STEPS="$2"; shift 2 ;;
+        --spec) SPEC="$2"; shift 2 ;;
+        --no-wait) NOWAIT=1; shift ;;
+        *) echo "unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    body="$(GOAL="$GOAL" START="$START" STEPS="$STEPS" SPEC="$SPEC" python3 - <<'PY'
+import json, os
+b = {"goal": os.environ["GOAL"]}
+if os.environ.get("START"): b["start_url"] = os.environ["START"]
+if os.environ.get("STEPS"): b["max_steps"] = int(os.environ["STEPS"])
+if os.environ.get("SPEC"): b["spec"] = os.environ["SPEC"]
+print(json.dumps(b))
+PY
+)"
+    JOB=$(_call POST /api/debug/browse "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id",""))')
+    [ -n "$JOB" ] || { echo "no job id — the browse run was refused" >&2; exit 1; }
+    if [ -n "$NOWAIT" ]; then echo "$JOB"; exit 0; fi
+    # Six minutes: the run's own wall clock is four, and a cold model load lands in front of
+    # its first step.
+    DEADLINE=$(( $(date +%s) + 360 ))
+    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+      OUT=$(_call GET "/api/debug/jobs/$JOB" 2>/dev/null) || OUT=""
+      ST=$(printf '%s' "$OUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("status",""))
+except Exception: print("")')
+      if [ -n "$ST" ] && [ "$ST" != "pending" ]; then
+        printf '%s' "$OUT" | _pp
+        [ "$ST" = "done" ] || exit 1
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "browse $JOB still pending after 360s; poll: debug-connect.sh raw GET /api/debug/jobs/$JOB" >&2; exit 1 ;;
 
   logs)
     svc="${1:-}"; [ -n "$svc" ] || { echo "usage: debug-connect.sh logs <service> [--tail N]" >&2; exit 2; }

@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import box_events, media
 from jbrain.agent.attachments import is_video_media_type
+from jbrain.agent.browse import BrowseAgent, render_for_caller
 from jbrain.agent.chat_images import ImageTooLarge, UndecodableImage, image_dimensions
 from jbrain.agent.grounding import (
     Convention,
@@ -198,6 +199,9 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             "host.read",
             "host.metrics",
             "web.fetch",
+            # One goal through the browse sub-agent (`POST /browse`, a job): the fenced
+            # browser, the action gate and the step trace, exactly as jerv drives them.
+            "web.browse",
             # Deploy: pull main, rebuild, restart (`POST /update`). Listed for the same
             # reason `llm.gateway` is — a capability missing from this list reads as one
             # the assistant may not use, and a session that believes it cannot deploy
@@ -1316,6 +1320,42 @@ class SdrSweepOut(BaseModel):
     is what the absence of this forced) is not calibration."""
 
 
+class BrowseRequest(BaseModel):
+    """One goal for the browse sub-agent (docs/plans/BROWSER_AGENT_PLAN.md B0's instrument)."""
+
+    goal: str = Field(min_length=1, max_length=600)
+    start_url: str | None = None
+    max_steps: int | None = Field(default=None, ge=1, le=30)
+    # A "provider:model" spec to run THIS goal on — the bake-off's lever, so two models can be
+    # compared on the same task without re-routing the box. Empty = the routed model.
+    spec: str | None = None
+
+
+class BrowseStepOut(BaseModel):
+    n: int
+    action: str
+    args: dict[str, Any]
+    ok: bool
+    note: str
+    url: str
+    snapshot_tokens: int
+    model_ms: int
+    browser_ms: int
+
+
+class BrowseOut(BaseModel):
+    outcome: str
+    answer: str
+    verified: bool
+    final_url: str
+    sources: list[str]
+    steps: list[BrowseStepOut]
+    elapsed_ms: int
+    error: str
+    # Exactly what jerv would have read back, fence and all.
+    tool_result: str
+
+
 _MAX_JOBS = 256
 
 
@@ -1326,7 +1366,7 @@ class JobSubmitOut(BaseModel):
 class JobStatusOut(BaseModel):
     job_id: str
     status: str  # "pending" | "done" | "error"
-    result: CompleteOut | SdrSweepOut | VideoProbeOut | None = None
+    result: CompleteOut | SdrSweepOut | VideoProbeOut | BrowseOut | None = None
     error: str | None = None
 
 
@@ -1341,7 +1381,7 @@ async def complete_async(body: CompleteRequest, request: Request, _p: DebugDep) 
 
 
 def _submit_job(
-    request: Request, work: Callable[[], Awaitable[CompleteOut | VideoProbeOut]]
+    request: Request, work: Callable[[], Awaitable[CompleteOut | VideoProbeOut | BrowseOut]]
 ) -> JobSubmitOut:
     jobs = request.app.state.debug_jobs
     tasks = request.app.state.debug_job_tasks
@@ -1388,6 +1428,53 @@ async def video_async(body: VideoProbeRequest, request: Request, _p: DebugDep) -
     att = await _video_attachment(request, body.attachment_id)
     router_, blobs = _llm_router(request), _blobs(request)
     return _submit_job(request, lambda: _run_video(router_, blobs, att, body))
+
+
+async def _run_browse(agent: BrowseAgent, body: BrowseRequest) -> BrowseOut:
+    run = await agent.run(
+        body.goal, body.start_url, max_steps=body.max_steps, spec_override=body.spec or None
+    )
+    return BrowseOut(
+        outcome=run.outcome,
+        answer=run.answer,
+        verified=run.verified,
+        final_url=run.final_url,
+        sources=list(run.sources),
+        steps=[
+            BrowseStepOut(
+                n=s.n,
+                action=s.action,
+                args=s.args,
+                ok=s.ok,
+                note=s.note,
+                url=s.url,
+                snapshot_tokens=s.snapshot_tokens,
+                model_ms=s.model_ms,
+                browser_ms=s.browser_ms,
+            )
+            for s in run.steps
+        ],
+        elapsed_ms=run.elapsed_ms,
+        error=run.error,
+        tool_result=render_for_caller(run),
+    )
+
+
+@router.post("/browse", status_code=202)
+async def browse_async(body: BrowseRequest, request: Request, _p: DebugDep) -> JobSubmitOut:
+    """Run one goal through jerv's browse sub-agent as a background job; poll GET
+    /jobs/{job_id} for the step trace (action, snapshot tokens, model and browser latency),
+    the answer, whether it was verified on the final page, and the final URL. A run takes
+    minutes — longer than the tunnel holds a request — so it is always a job. The same
+    `BrowseAgent` jerv's tool uses, so the fence and the gate are exercised exactly as live."""
+    request.state.debug_detail = f"browse {body.goal[:120]}"
+    agent = cast(BrowseAgent | None, getattr(request.app.state, "browse_agent", None))
+    if agent is None or not agent.configured:
+        raise HTTPException(
+            status_code=400,
+            detail="the browser is not configured (JBRAIN_BROWSER_MCP_URL is empty)",
+        )
+    return _submit_job(request, lambda: _run_browse(agent, body))
 
 
 # --- Read-only SQL ----------------------------------------------------------
@@ -1531,6 +1618,9 @@ class FetchOut(BaseModel):
     # True when NO tier could paint a JavaScript app — the page is real but was never
     # rendered, so an empty/tiny `text` here is an unread page, not an empty one.
     js_shell: bool
+    # True when the page is a location/store picker standing in for the content (the Epic
+    # Theatres shape) — a page `browse` can get past and no fetch tier can.
+    gated: bool = False
 
 
 async def _run_tavily_tier(fetcher: WebFetcher, body: FetchRequest) -> Any:
@@ -1587,6 +1677,7 @@ async def fetch_url(body: FetchRequest, request: Request, _p: DebugDep) -> Fetch
         truncated=result.truncated,
         tier=result.tier,
         js_shell=result.js_shell,
+        gated=result.gated,
     )
 
 
@@ -1626,6 +1717,7 @@ async def solve_url(body: FetchRequest, request: Request, _p: DebugDep) -> Fetch
         truncated=result.truncated,
         tier=result.tier,
         js_shell=result.js_shell,
+        gated=result.gated,
     )
 
 

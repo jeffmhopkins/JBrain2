@@ -270,6 +270,16 @@ class Settings(BaseSettings):
     # the tool entirely — its sidecar is dropped from the registry and no persona is offered
     # it. The base URL is pinned here, never model-supplied.
     pysandbox_url: str = "http://pysandbox:8000"
+    # The fenced headless browser (deploy/docker-compose.yml `browser`, playwright-mcp) the
+    # `browse` sub-agent drives over MCP's streamable HTTP transport (docs/plans/
+    # BROWSER_AGENT_PLAN.md). Stock stack, so this points at the running service (the
+    # `pysandbox_url` pattern); empty drops the `browse` tool and the debug route reports
+    # it unconfigured. Pinned here, never model-supplied.
+    browser_mcp_url: str = "http://browser:8931/mcp"
+    # The browse run's budgets: actions per run, wall-clock seconds, and distinct pages.
+    browse_max_steps: int = 20
+    browse_wall_seconds: float = 240.0
+    browse_max_pages: int = 12
     # The `sdr` radio sidecar (deploy/sdr), OPT-IN behind the `sdr` compose profile and
     # egress-free by topology. Pinned here and never model-supplied: the SDR tools take a
     # frequency and a mode, never a URL, so the `stream.py` SSRF guard stays untouched

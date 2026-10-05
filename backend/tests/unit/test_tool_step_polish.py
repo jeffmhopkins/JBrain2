@@ -137,6 +137,7 @@ _AUTHORS_BRIEF = {
     "archivist_memory_read",
     "archivist_memory_write",
     "ask_owner",
+    "browse",
     "calculate",
     "canvas",
     "chart_measurements",

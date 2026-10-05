@@ -247,6 +247,12 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # resolver reports "not configured"). Granted to RESEARCH_TOOLS too so a research child
         # holds it under the parent⊆child clamp.
         "portal_search",
+        # browse (BROWSER_AGENT_PLAN.md B1): hand one goal to a sub-agent that drives a fenced
+        # headless browser — for a page that must be USED (a location picker, a tab, a filter,
+        # a JS shell web_fetch cannot read). `web`-gated and jerv-only: the sub-agent sees the
+        # goal and web pages and nothing else, and its answer returns as quarantined data.
+        # Absent from the registry when no browser sidecar is configured.
+        "browse",
         # The external-source video library read umbrella (TOOL_CATALOG_PLAN.md):
         # `external_video(action=search|list|read)` — search the analysed-YouTube corpus,
         # browse/count the whole library, or read one video's FULL transcript. Sandboxed

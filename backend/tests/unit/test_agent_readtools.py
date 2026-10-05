@@ -1716,6 +1716,14 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # v4 rewords `blocks`: it invited tool syntax ("the resolve call you are stuck
         # on"), the model duly wrote `resolve_entity("Dr. Chen")`, and `QuestionBlock`
         # renders that line VERBATIM to the owner. The field is read by a person.
+        # jerv's hand-off to the browse sub-agent (BROWSER_AGENT_PLAN.md B1). Its prose is
+        # the calibration lever for WHEN to browse (after web_fetch reports a gate or a JS
+        # shell, never instead of a search) and for treating the result as quoted data.
+        "browse.tool": (
+            "browse",
+            1,
+            "3b25ce2fcbebf553f69c5a4cc5176e6fcef86616a627ab688d9e255682473ede",
+        ),
         "ask_owner.tool": (
             "ask_owner",
             5,

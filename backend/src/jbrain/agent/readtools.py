@@ -159,6 +159,10 @@ OPTIONAL_HTML_TOOL = frozenset({"render_html"})
 # value is that the model can TRUST the number it returns, so a box without a sandbox should
 # not offer it at all rather than offer one that reports itself unavailable every call.
 OPTIONAL_PYTHON_TOOL = frozenset({"run_python"})
+# The browse sub-agent (docs/plans/BROWSER_AGENT_PLAN.md B1): dropped when no `browser`
+# sidecar URL is configured, so a box without the fenced browser never offers a tool that
+# could only report itself unavailable.
+OPTIONAL_BROWSE_TOOL = frozenset({"browse"})
 # The canvas pair (AGENT_CANVAS_PLAN.md): optional because the handlers are only wired
 # when the image/attachment stores exist, and because a box with no htmlrender sidecar
 # still gets the shape ops — the `html` op degrades with a note rather than vanishing.
@@ -1164,6 +1168,7 @@ def build_registry(
     ocr_handlers: dict[str, ToolHandler] | None = None,
     html_handlers: dict[str, ToolHandler] | None = None,
     python_handlers: dict[str, ToolHandler] | None = None,
+    browse_handlers: dict[str, ToolHandler] | None = None,
     canvas_handlers: dict[str, ToolHandler] | None = None,
     crop_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
@@ -1289,6 +1294,9 @@ def build_registry(
             # egress-free `pysandbox` container, never executed here. Present only when
             # that sidecar is configured; otherwise its sidecar is dropped below.
             **(python_handlers or {}),
+            # jerv's `browse` sub-agent (`web`-gated): drives the fenced `browser` sidecar and
+            # returns quarantined text. Present only when that sidecar is configured.
+            **(browse_handlers or {}),
             **(canvas_handlers or {}),
             **(crop_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
@@ -1385,6 +1393,7 @@ def build_registry(
             | OPTIONAL_OCR_TOOL
             | OPTIONAL_HTML_TOOL
             | OPTIONAL_PYTHON_TOOL
+            | OPTIONAL_BROWSE_TOOL
             | OPTIONAL_CANVAS_TOOLS
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
