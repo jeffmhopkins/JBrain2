@@ -35,7 +35,11 @@ models. So the rules are structural:
 
 - **Own network.** The browser joins a new `browser` network, which only the api and an
   egress proxy also join. It never touches `internal`, where `db`, the supervisor and the
-  model servers live.
+  model servers live. **Accepted risk (B0/B1):** because the api is on `browser` to reach the
+  MCP port, a *compromised* Chromium (it runs `--no-sandbox`) could open TCP to `api:8000`
+  directly, past Caddy — the same shape `pysandbox` and `jcode` already have. A page cannot:
+  every request goes through the proxy, which refuses private addresses. It takes a browser
+  exploit first. B2 closes it (below).
 - **Egress proxy that resolves DNS itself** (so DNS rebinding can't slip past) and denies
   RFC1918, loopback, link-local incl. 169.254/16, CGNAT 100.64/10, IPv6 ULA and link-local,
   and every compose service name.
@@ -107,7 +111,7 @@ listed and revocable in Settings, and never extend to the Never tier.
   injection canary page. Then the Epic Theatres goal end to end.
 - **Built:** `browser` (playwright-mcp `v0.0.82`, pinned by tag and digest, `--isolated`,
   `--proxy-server=http://egress:3128`, `--allowed-hosts=browser:8931`, `--no-webmcp`,
-  `--image-responses=omit`, no ports/volumes/env, `cap_drop: ALL`) on the `internal: true`
+  `--image-responses=omit`, no ports or env, only its read-only launch config mounted, `cap_drop: ALL`) on the `internal: true`
   `browser` network, which only `api` and `egress` also join; `egress` (`deploy/Dockerfile.egress`
   + `deploy/egress/squid.conf`) on `browser` + `browser_out` only. `test_browser_compose.py`
   pins the membership, the flags, the pins, and that every compose service name is in the
@@ -115,6 +119,13 @@ listed and revocable in Settings, and never extend to the Never tier.
   `/jobs/{id}`, `web.browse` scope) and `debug-connect.sh browse` return the step trace, the
   answer, whether it was verified, the final URL and the exact text jerv would read; `--spec`
   runs one goal on a chosen model for the bake-off. `/api/debug/fetch` now also reports `gated`.
+- **Hardened after review (2026-10-05):** the browser runs `read_only` with size-capped tmpfs
+  for `/tmp` (profile + MCP output, `--output-max-size`) and `/home/node`, so nothing a page
+  does can fill the box's disk; WebRTC may not send UDP around the proxy (a Chromium flag via
+  `deploy/browser/config.json`, verified applied on the real image); Squid caps a plain-HTTP
+  reply at 50 MB and also refuses `.localhost`, 6to4 and Teredo. CI now RUNS the built proxy
+  and asserts its 403 matrix (`deploy/egress/fence-check.sh` — verified locally against the
+  real image: 20 refusals, a public site through).
 - **Deferred:** `reader`/`byparr` behind the proxy (see §2). Ops does not yet group the two
   new containers (they show under "Other") — B2's Ops work.
 - **Pending on-box (owner notice):** the fence list above, through `debug-connect.sh browse`
@@ -146,10 +157,20 @@ listed and revocable in Settings, and never extend to the Never tier.
   unchanged stop it. `finish` must quote evidence the host finds on the page as it is NOW;
   one miss is sent back, a second is accepted but returned to jerv marked UNVERIFIED.
 - **The interim action rule** (until B2's risk gate): typing and selecting only into search,
-  filter, location and date fields (or anything inside the page's `search` landmark), never a
-  field whose label names an email, password, phone, card, account, name, message or code,
-  and never a value shaped like an email or a long number; buttons that buy, book, sign in,
-  send or submit are refused; links always pass (navigation is a GET).
+  filter, location and date fields (or anything inside the page's `search` landmark) — no bare
+  "address", "state", "type" or "format" — never a field whose label names an email, password,
+  phone, card, account, name, message or code, and never a value shaped like an email or a long
+  number; `Enter` only after such a field on the same page took the text; buttons that buy,
+  book, sign in, send, submit, continue, proceed or go "next" are refused; links always pass
+  (navigation is a GET). Numeric host spellings (`127.1`, octal, hex, one big decimal) and
+  CGNAT are refused before the browser sees them. Dialogs and file choosers are dismissed by
+  the HOST; the model is never offered either. One run at a time (a semaphore shared by jerv
+  and the debug route).
+- **The result jerv reads** is host lines plus the answer, last, on ONE line between
+  `<<<BROWSE ANSWER BEGIN>>>`/`END>>>` markers (which are stripped from the answer), so a page
+  cannot forge "Outcome:" or "Checked:" lines; error text and URLs are sanitized too (a URL that
+  could carry a line break or hidden text is dropped). `finish` evidence must be at least 20
+  characters or three words.
 - **web_fetch hand-off:** the 200-character bar is kept for recovery, but a first page whose
   wording is a location/store picker (`fetch.looks_like_location_gate`, under 1,500 chars) is
   now flagged `gated` whatever its length, says so, and — for a caller holding `browse` —
@@ -169,6 +190,9 @@ listed and revocable in Settings, and never extend to the Never tier.
   call; its decisions are logged per step.
 - Settings: browsing on/off, step budget. Ops: the browser container's health and the last
   runs' traces.
+- **Close the api hop** (the accepted risk in §2): put an MCP-only relay between the api and
+  the browser, or a network shape where the api reaches the browser without the browser being
+  able to reach the api, so a compromised Chromium has nothing on its network but the proxy.
 
 ### B3 — Search off Tavily ◻️
 - **Done ahead of the plan (PR #1557):** SearXNG, reader and byparr pinned to dated/digest

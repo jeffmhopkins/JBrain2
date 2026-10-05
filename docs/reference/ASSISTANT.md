@@ -918,14 +918,19 @@ runs in the research slot, so it never evicts jerv's prefix). The design is the 
   are refused (links always pass). This is B1's interim rule; B2's risk gate replaces it.
 - **Budgets and verification.** 20 steps, 240 s and 12 pages by default; the same action is
   refused on its third try and ends the run on its fourth; six actions that leave the page
-  unchanged end it. `finish` must quote evidence the host finds on the page as it is NOW — one
-  miss is sent back, a second is returned to jerv marked UNVERIFIED.
+  unchanged end it. `finish` must quote evidence (20+ characters or three words) the host
+  finds on the page as it is NOW — one miss is sent back, a second is returned to jerv marked
+  UNVERIFIED. One run at a time; dialogs and file choosers are dismissed by the host.
 - **Quarantined result.** jerv receives fenced plain text (links, images, markup, addresses
-  and control characters stripped) and citation chips built from the URLs the host loaded,
-  never from the model's text. jerv's prompt treats it as quoted data.
+  and control characters stripped), the answer last on one line between
+  `<<<BROWSE ANSWER BEGIN/END>>>` markers so it cannot forge the host's lines, and citation
+  chips built from the URLs the host loaded (only ones that cannot carry a line break), never
+  from the model's text. jerv's prompt treats it as quoted data.
 - **The network is the fence**, not the tool flags: the browser sits only on the
   `internal: true` `browser` network, whose one way out is the Squid `egress` proxy, which
-  refuses every non-public address and compose service (`SERVICES.md`).
+  refuses every non-public address and compose service (`SERVICES.md`). Accepted for now: the
+  api shares that network, so a compromised Chromium could reach `api:8000` directly; B2
+  removes the hop.
 `web_fetch` hands off to it: a first page that reads as a location/store picker comes back
 flagged `gated` (the 221-character Epic template had cleared the 200-character recovery bar as a
 "success"), says so, and — for a turn that holds `browse` — suggests it, as an unrendered JS
