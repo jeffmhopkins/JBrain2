@@ -239,12 +239,18 @@ listed and revocable in Settings, and never extend to the Never tier.
      `finish`. Growth is bounded by smaller views (2) and a total cap of 96k characters
      (~24k tokens): past it the run starts ONE fresh compacted prompt (the opening, a line per
      recent step, the page in full) — one full prefill — and extends that strictly again.
+     Accepted cost: on a cloud `agent.turn` model (browse follows it) every page now stays in
+     the input, so a step's billed input grows with the run rather than staying near one page.
+     Local is the default, and a cloud provider's own prefix cache bills the repeated prefix
+     at its cached rate, so this was not gated by provider.
   2. **Smaller views.** playwright-mcp v0.0.82 has no incremental snapshot (`--snapshot-mode` is
      `full` or `none` and governs action replies, not `browser_snapshot`), so the delta is
      host-side: the host still takes a FULL snapshot each step and gates every ref against
      it, but when the URL is the one the model last saw it is sent only what changed
-     (`browse_policy.page_delta`: changed and new lines, each under the line above it, a count
-     of lines gone; the whole page when the delta would be over 60% of it). A navigation sends
+     (`browse_policy.page_delta`: changed and new lines, each under the heading it sits in and
+     the line above it, so a time still says which film it is; the lines and refs that went
+     named; the whole page when the changes span more than one heading, run to more than six
+     hunks, or would be over 60% of the page). A navigation sends
      the new page whole; a refusal re-sends nothing ("The page is as shown above."). The view
      cap dropped from 24k to 16k characters, a text line is clipped at 400, and over the cap the
      pruning keeps controls, headings and the two lines either side first, filling with
@@ -256,7 +262,10 @@ listed and revocable in Settings, and never extend to the Never tier.
      slot, `browse` (slot 8, 131,072 cap, freed second). The owner first kept the shared
      research slot (accepting that a concurrent research task could evict a run mid-way),
      then reversed it: research agents will be searching and browsing a lot, so browsing
-     should not share their slot. Memory: none up front (FLASH_NEXT_ENGINE_PLAN §4a).
+     should not share their slot. Memory: none up front (FLASH_NEXT_ENGINE_PLAN §4a). One
+     side effect on rollout: `-np` is in the F4 fingerprint and restore-gate key, so the saved
+     role prefixes and conversation files start over and restores wait for the slot probe to
+     pass again.
   **Expected effect, to re-measure on the box** (debug `/browse` per-step `prompt_tokens` /
   `cached_tokens`; llama-server's "restored context checkpoint"): every step after the first
   caches all of the previous prompt, so it prefills only its tail — ~30 tokens of action plus

@@ -68,8 +68,12 @@ MAX_LINE_CHARS = 400
 # Text within this many lines of something the model can act on (or a heading) is what it
 # reads to choose; text further away is dropped first when a page is over the cap.
 _NEAR_LINES = 2
-# A changed page is sent as its delta only while that is clearly smaller than the page.
+# A changed page is sent as its delta only while that is clearly smaller than the page, and
+# only while it stays readable: a few hunks, all under one heading (a film, a day).
 _DELTA_MAX_SHARE = 0.6
+_DELTA_MAX_HUNKS = 6
+_GONE_REFS_NAMED = 12
+_HEADING_LINE = re.compile(r"^\s*- heading\b")
 
 # `- role "name" [attr] [ref=e12]: text` — the shape of one aria-snapshot line, optionally
 # wrapped in YAML single quotes when the name contains a colon.
@@ -267,8 +271,11 @@ def page_delta(before: PageView | None, after: PageView) -> str | None:
 
     Only for the SAME page (same URL): a navigation always sends the new page whole. The
     model reads the delta against the view it already holds, so unchanged lines — and their
-    refs — still stand; lines that went are counted, so it knows their refs are gone. The
-    gate never reads this: it checks refs against `after.elements`, the page as it is now."""
+    refs — still stand; lines that went are counted and their refs named. Each hunk carries
+    the heading it sits under, so "9:40 PM" still says which film it is; changes under more
+    than one heading, or too many hunks, send the page whole instead, since a scatter of
+    context-free lines is what a small model misreads. The gate never reads this: it checks
+    refs against `after.elements`, the page as it is now."""
     if before is None or not before.url or before.url != after.url:
         return None
     old, new = before.outline.splitlines(), after.outline.splitlines()
@@ -279,25 +286,59 @@ def page_delta(before: PageView | None, after: PageView) -> str | None:
         head.append(f"HTTP status: {after.status}")
     if old == new:
         return "\n".join([*head, "[The page is unchanged since the last view above.]"])
-    shown: list[str] = []
+    # The heading each new line sits under (its index), or -1 above the first heading.
+    section: list[int] = []
+    current = -1
+    for j, line in enumerate(new):
+        if _HEADING_LINE.match(line):
+            current = j
+        section.append(current)
+    hunks: list[tuple[int, int]] = []
+    sections: set[int] = set()
+    gone: list[str] = []
     removed = 0
-    last = -1
     matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
-        removed += i2 - i1 if tag in ("delete", "replace") else 0
+        if tag in ("delete", "replace"):
+            removed += i2 - i1
+            gone += [r for line in old[i1:i2] for r in _REF.findall(line)]
+        # A hunk that opens on its own heading needs none from above it.
+        if not (j2 > j1 and _HEADING_LINE.match(new[j1])):
+            sections.add(section[j1 - 1] if j1 > 0 else -1)
+        hunks.append((j1, j2))
+    if len(sections) > 1 or len(hunks) > _DELTA_MAX_HUNKS:
+        return None
+    shown: list[str] = []
+    last = -1
+    for j1, j2 in hunks:
         if j2 == j1:
             continue
-        # The unchanged line above a hunk says where on the page it is.
-        start = j1 - 1 if j1 > 0 and j1 - 1 > last else j1
-        if shown and start > last + 1:
+        above = section[j1 - 1] if j1 > 0 else -1
+        opens_section = bool(_HEADING_LINE.match(new[j1]))
+        lead = [] if opens_section else [i for i in (above, j1 - 1) if i >= 0 and i > last]
+        for i in sorted(set(lead)):
+            if shown and i > last + 1:
+                shown.append("  …")
+            shown.append(new[i])
+            last = i
+        if shown and j1 > last + 1:
             shown.append("  …")
-        shown.extend(new[start:j2])
+        shown.extend(new[j1:j2])
         last = j2 - 1
-    note = "[Same page; only changes are shown, each under the line before it. The rest stands."
+    note = (
+        "[Same page; only changes are shown, each under its heading and the line before it."
+        " The rest stands."
+    )
     if removed:
-        note += f" {removed} line(s) are gone, with their refs."
+        note += f" {removed} line(s) are gone"
+        names = [r for r in dict.fromkeys(gone) if r not in after.elements]
+        if names:
+            more = len(names) - _GONE_REFS_NAMED
+            note += ", and with them refs " + ", ".join(names[:_GONE_REFS_NAMED])
+            note += f" (and {more} more)" if more > 0 else ""
+        note += "."
     note += "]"
     body = "\n".join(shown) if shown else "(nothing new; only removals)"
     delta = "\n".join([*head, note, "", "Changed or new:", body])

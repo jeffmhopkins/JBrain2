@@ -93,7 +93,10 @@ def _listings(day: str) -> str:
     rows = []
     for i, film in enumerate(FILMS):
         times = TOMORROW if day == "Tomorrow" and i == 0 else TODAY
-        rows.append(f'    - text: "{film}"\n    - generic [ref=e{400 + i}]: {times}\n')
+        rows.append(
+            f'    - heading "{film}" [level=2] [ref=e{500 + i}]\n'
+            f"    - generic [ref=e{400 + i}]: {times}\n"
+        )
     return "  - generic [ref=e399]:\n" + "".join(rows)
 
 

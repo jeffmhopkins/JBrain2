@@ -674,12 +674,12 @@ permanent block at the top of Ops when nothing is happening.
 Sheet**; binding mock `docs/mocks/kv-pool/c-slot-sheet.html`, rivals A "summary that
 expands to a table" and B "stacked bar of caps" kept beside it with the round record in
 `docs/mocks/kv-pool/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` F3b).
-Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 512k tokens) across **eight
+Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 512k tokens) across **nine
 role-pinned slots**, each with a per-slot cap. Its window and slot count are the engine's,
 and the server refuses changes to them (409), so the per-model selects were a lie for it.
 
 - **Pool models only** (`kv_pool` non-null): the *context window* and *slots* selects give
-  way to one line — *KV pool · **512k** shared · 8 slots*, a strip of **eight slot ticks**,
+  way to one line — *KV pool · **512k** shared · 9 slots*, a strip of **nine slot ticks**,
   and **View slots →**. Standard rows keep their selects; *keep loaded* and *image detail*
   are unchanged on both.
 - **The Sheet** (the shared `Sheet`, "Modal system") is read-only and says so: a lock and

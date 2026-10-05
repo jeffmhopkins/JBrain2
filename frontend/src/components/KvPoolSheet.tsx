@@ -23,6 +23,7 @@ export const SLOT_SERVES: ReadonlyMap<string, string> = new Map([
   ["workshop", "Wiki writing, note edits and guided intake."],
   ["pet", "The kid pet."],
   ["small", "Short one-off prompts."],
+  ["browse", "The browser agent's steps, one run at a time."],
 ]);
 
 // Not the screen's fmtTokens: that one goes decimal at M, and the pool and its caps are

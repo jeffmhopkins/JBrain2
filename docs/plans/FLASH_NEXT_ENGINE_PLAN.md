@@ -253,8 +253,7 @@ the live slot count and sends unpinned (still capped) on a mismatch.
 **The ninth slot (browse, 2026-10-05).** Owner decision: research agents will search and
 browse a lot, so the browse sub-agent gets its own slot rather than sharing theirs — shared, a
 research turn between two browse steps evicts the run's cache and the next step re-prefills
-it whole. Appended as slot 8 so slots 0-7 keep their ids, their F4 role prefix files and their
-relative eviction order. Freed second (after small prompts): its prefix is worth something only
+it whole. Appended as slot 8 so slots 0-7 keep their ids and their relative eviction order. Freed second (after small prompts): its prefix is worth something only
 while a run is going. **Memory: nothing up front.** A slot reserves no cells — the pool is
 `-c 524288` whatever `-np` says, and caps are router-side limits, not allocations; F2 measured
 slot count moving GTT by noise. One more slot adds its recurrent state (~0.11 GiB, derived,
@@ -262,9 +261,15 @@ inside that noise) and up to 8 more context checkpoints (8 × 0.11 = ~0.9 GiB, h
 lazily as the slot fills), which the footprint books: ~82.1 GiB for eviction and the meter, up
 from ~81.2; the load is still admitted on the device figure (~74.2 GiB). Rollout needs no
 terminal: Ops → Update (and every model load) re-stamps the config with `-np 9`; llama-swap's
-config watch stops the running server and the next load serves nine slots. Until then the live `/slots` count (8) does not match the
-pool (9), so the router sends every call unpinned (still capped) rather than wrap an `id_slot`
-onto another role's slot — one cold prefix per role, then normal.
+config watch stops the running server and the next load serves nine slots. Until then the
+live `/slots` count (8) does not match the pool (9), so the router sends every call unpinned
+(still capped) rather than wrap an `id_slot` onto another role's slot — one cold prefix per
+role, then normal. **The F4 disk cache starts over:** `-np` is part of the launch line that the
+prefix fingerprint and the restore gate's key hash (deliberately — a different slot count is a
+different server), so every saved role prefix and conversation file is orphaned (they age out
+of the byte budget) and the gate is back to `awaiting_probe`. Role prefixes re-save on the next
+prime; nothing is restored until `POST /llm/slot-probe` passes again against the new launch line
+(its default pair is now slots 7 and 8 — overwriting the browse slot is harmless outside a run).
 
 `agent.turn` is shared by the chat and every background agent, so the task name alone cannot
 pick the slot: background callers name their role (`slot_role`), and an unnamed `agent.turn`

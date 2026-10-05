@@ -160,8 +160,9 @@ FLASH_NEXT_POOL: Final = KvPool(
         RoleReservation(SlotRole.WORKSHOP, 5, 131_072, 3, "Wiki, notes, intake"),
         RoleReservation(SlotRole.PET, 6, 32_768, 2, "Kid pet", overflow=SlotRole.SMALL),
         RoleReservation(SlotRole.SMALL, 7, 65_536, 0, "Small prompts"),
-        # Added last (2026-10-05) so slots 0-7 keep their ids, and with them every saved role
-        # prefix (F4) and the eviction order among the first eight. Its own slot because
+        # Added last (2026-10-05) so slots 0-7 keep their ids and the eviction order among the
+        # first eight. (Saved F4 files do NOT survive it: `-np` is in their fingerprint and the
+        # restore gate's key, so they re-save and the probe re-runs.) Its own slot because
         # research agents will browse a lot (owner): sharing theirs, a research turn between
         # two browse steps would evict the run's cache and re-prefill it whole. Research-sized
         # cap, though a browse prompt compacts at ~24k (agent/browse.py). Freed early: its
