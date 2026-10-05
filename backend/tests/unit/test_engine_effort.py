@@ -435,6 +435,35 @@ def test_the_batch_sets_and_clears_together(
     }
 
 
+def test_the_browse_step_thinks_low_and_its_level_is_the_owners_to_set(
+    box: tuple[TestClient, FakeSettingsStore, str],
+) -> None:
+    """It follows the chat MODEL, so it has no picker row — but its reasoning level is its
+    own: listed by name, low by default, and settable like any task's."""
+    client, store, _ = box
+    tasks = {t["id"]: t for t in _flash(client.get("/api/settings/llm").json())["tasks"]}
+    step = tasks["browse.step"]
+    assert (step["tier"], step["label"], step["fallback"]) == ("low", "Browser agent step", "low")
+    assert tasks["agent.turn"]["label"] is None  # a picker row still names its own task
+
+    resp = client.put(f"{_BASE}/task/browse.step", json={"effort": "medium"})
+    assert resp.status_code == 200
+    assert store.engine_effort_rows == {(FLASH, "task", "browse.step"): "medium"}
+
+
+@pytest.mark.asyncio
+async def test_a_browse_step_on_flash_next_sends_low_unless_the_owner_set_a_level() -> None:
+    # It follows agent.turn onto the local engine; medium would have sent no level at all,
+    # which Flash-Next's template reads as xhigh.
+    for rows, expected in (({}, "low"), ({(FLASH, "task", "browse.step"): "none"}, "none")):
+        router, local, _ = _router({"engine": FLASH}, rows, _ALL_LOCAL)
+        await router.converse("browse.step", system="s", messages=[UserMessage(text="u")])
+        assert (local.converse_calls[0]["model"], local.converse_calls[0]["reasoning_effort"]) == (
+            FN,
+            expected,
+        )
+
+
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [

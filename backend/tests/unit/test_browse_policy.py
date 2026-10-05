@@ -55,6 +55,21 @@ def test_the_view_is_capped() -> None:
     assert page.truncated
     assert len(page.outline) <= 120
     assert "longer than this view" in page.render()
+    assert 0 < len(page.readable) <= 120
+
+
+def test_the_readable_text_keeps_the_pages_wording_once_per_line() -> None:
+    page = _page(TITUSVILLE)
+    lines = page.readable.split("\n")
+    # As the page writes it (not lowercased like the evidence text), no refs, no addresses.
+    assert "Epic Titusville 15" in lines and "7:15 PM, 9:40 PM" in lines
+    assert "ref=" not in page.readable and "/locations" not in page.readable
+    # A link whose name and inner text say the same thing reads once.
+    snap = (
+        "### Page\n- Page URL: https://x.example/\n### Snapshot\n```yaml\n"
+        '- link "Showtimes" [ref=e2]:\n  - text: Showtimes\n- text: "   "\n```\n'
+    )
+    assert policy.parse_page(snap).readable == "Showtimes"
 
 
 def test_an_action_result_without_a_snapshot_reads_as_an_empty_page() -> None:
@@ -321,6 +336,38 @@ def test_the_quarantine_leaves_inert_plain_text() -> None:
     assert "‮" not in out and "​" not in out and "\x07" not in out
     assert "tickets" in out and "Showtimes: 7:15 PM" in out and "ref" in out
     assert "\n\n\n" not in out
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        0x00AD,  # soft hyphen
+        0x061C,  # Arabic letter mark
+        0x180E,  # Mongolian vowel separator
+        0x200B,  # zero-width space
+        0x2060,  # word joiner
+        0x2064,  # invisible plus
+        0x2066,  # bidi isolate
+        0xFE0F,  # variation selector
+        0xFEFF,  # BOM / zero-width no-break space
+        0xE0041,  # Tag "A": ASCII smuggling
+        0xE007F,  # cancel tag
+        0xE0100,  # variation selector supplement
+    ],
+)
+def test_the_quarantine_strips_every_invisible_character(point: int) -> None:
+    hidden = chr(point)
+    out = policy.quarantine(f"7:15{hidden} PM ht{hidden}tps://evil.example/x")
+    assert hidden not in out
+    # Stripped BEFORE the address check, so a split address cannot close up afterwards.
+    assert out == "7:15 PM [link removed]"
+    assert policy.safe_url(f"https://cinema.example/a{hidden}b") is None
+
+
+def test_the_quarantine_folds_lookalikes_to_plain_characters() -> None:
+    # A fullwidth address reads as an address, and is removed as one.
+    assert policy.quarantine("ｈｔｔｐｓ：／／evil.example/x ok") == "[link removed] ok"
+    assert policy.strip_invisible("＜＜＜ＢＲＯＷＳＥ") == "<<<BROWSE"
 
 
 def test_the_quarantine_caps_length() -> None:

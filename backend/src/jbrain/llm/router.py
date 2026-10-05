@@ -142,7 +142,6 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     "pet.statue": "high",
     # Medium reasoning
     "agent.turn": "medium",
-    "browse.step": "medium",
     "correction_note.extract": "medium",
     "video.summarize": "medium",
     "wiki.rewrite": "medium",
@@ -150,6 +149,9 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     # Low reasoning
     "entity.disambiguate": "low",
     "research.title": "low",
+    # One click per call: medium sent no level, so Flash-Next fell to its template's xhigh and
+    # thought for up to a minute per click (BROWSER_AGENT_PLAN.md B1, 2026-10-05).
+    "browse.step": "low",
     "triage.classify": "low",
     "pet.turn": "low",
     "pet.thought": "low",

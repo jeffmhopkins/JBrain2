@@ -2471,7 +2471,7 @@ def test_browse_route_runs_a_goal_and_returns_the_trace(
     client, key = debug_client
     turns = [
         LlmTurn("", [ToolCall("c1", "click", {"ref": "e1"})], "tool_use", LlmUsage(1, 1)),
-        LlmTurn("", [ToolCall("c2", "click", {"ref": "e10"})], "tool_use", LlmUsage(1, 1)),
+        LlmTurn("", [ToolCall("c2", "click", {"ref": "e10"})], "tool_use", LlmUsage(900, 20, 850)),
         LlmTurn(
             "",
             [ToolCall("c3", "finish", {"answer": "7:15 PM", "evidence": "7:15 PM, 9:40 PM"})],
@@ -2494,6 +2494,10 @@ def test_browse_route_runs_a_goal_and_returns_the_trace(
     assert result["final_url"] == TITUSVILLE
     assert [s["action"] for s in result["steps"]] == ["navigate", "click", "click", "finish"]
     assert all(s["snapshot_tokens"] > 0 for s in result["steps"])
+    # Each model-chosen step carries the server's prompt/cache counts; the host's own start
+    # navigation, which no model call chose, carries none.
+    counts = [(s["prompt_tokens"], s["cached_tokens"], s["output_tokens"]) for s in result["steps"]]
+    assert counts == [(0, 0, 0), (1, 0, 1), (900, 850, 20), (1, 0, 1)]
     assert result["tool_result"].startswith("[BROWSE RESULT")
 
 
