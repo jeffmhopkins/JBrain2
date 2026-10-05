@@ -612,7 +612,9 @@ W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropi
 
 **In progress:** Browser agent (build plans: `docs/plans/BROWSER_AGENT_PLAN.md`, then
 `docs/plans/BROWSER_FAST_LOOP_PLAN.md`) — a fenced Playwright browser jerv drives as a
-sub-agent; the fast-loop plan makes it a generic tool a local model finishes in seconds.
+sub-agent; the fast-loop plan makes it a generic tool a local model finishes in seconds. L0
+(measured) and L1 (the fast loop: batched commands, thinking off, `done` carrying the answer,
+`web_fetch` embedded data) are built; L1's on-box benchmark is next.
 
 **In progress:** Flash-Next engine (build plan: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`) — Qwen3.8-Flash-Next
 (text + image) as a switchable second local-LLM engine in its own container, either/or with the standard

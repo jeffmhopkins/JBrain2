@@ -1,6 +1,6 @@
 # Browser fast loop — a generic browse that a local model finishes in seconds
 
-> **Status:** Scheduled · **Last verified:** 2026-10-05 · **Waves:** L0✅ L1◻️ L2◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-10-05 · **Waves:** L0✅ L1🟡(built; on-box benchmark pending) L2◻️ L3◻️
 
 The B1 `browse` sub-agent (`BROWSER_AGENT_PLAN.md`) works and is fenced, but on Flash-Next a
 simple fact behind a location picker still takes about two minutes, and jerv has called it
@@ -94,7 +94,7 @@ Per phase on a 3-step task: navigation ~15–23 s, `finish` decision ~9–20 s, 
 - **L1 targets (the box, this set):** success ≥ 6/6; median run ≤ 27 s (half of 54 s); the
   cinema ≤ 45 s warm.
 
-### L1 — Fewer, cheaper decisions ◻️
+### L1 — Fewer, cheaper decisions 🟡 (built 2026-10-05; on-box benchmark pending)
 - `web_fetch` reads embedded structured data; browse tries extraction on the rendered start page
   before any action (JS-shell starts).
 - The `act` tool with batched commands, per-command re-resolution, monotonic indexes, the
@@ -103,6 +103,40 @@ Per phase on a 3-step task: navigation ~15–23 s, `finish` decision ~9–20 s, 
 - Fallback switch to the B1 loop (Settings + debug).
 - **Done when (on the box, benchmark):** success ≥ L0's best arm and median run time ≤ half of
   L0's best arm; the worked example ≤ 45 s warm.
+
+**Built (2026-10-05).** What landed, and the choices L0 forced:
+- **Thinking off** on every fast step: `browse_fast.prompt` declares `reasoning_budget: 0` (the
+  arm L0 validated; not effort "none", which made B1 wander). The debug `--budget` still
+  overrides it per run. Planner-executor is not built.
+- **`finish` and the extraction merged — as `done` carrying the answer.** The adapter has no
+  `tool_choice`, so an extraction turn appended to the history with the tools still offered
+  could not be forced to answer in text; and dropping tools breaks the cached prefix. So the
+  model's own last turn writes the facts: `done`'s value is the answer, written at thinking
+  off in the same append-only history (cache reuse, ONE call). The host fact check keeps its
+  role: a verified `done` ends the run; an unverified or empty one falls back to the fresh
+  extraction over the page's full text (the view the model answered from is clipped), whose
+  answer is kept. Common case: one call instead of two; worst case: B1's two.
+- **Extraction first:** a run with a start page that is not a location picker
+  (`web.fetch.looks_like_location_gate`) tries the no-thinking extraction on it before any
+  step, and ends there when verified.
+- **`web_fetch` embedded data:** `web/structured.py` (JSON-LD, microdata, `__NEXT_DATA__` page
+  props, the Nuxt payload, `__APOLLO_STATE__`/assigned state, Gatsby `page-data.json` through
+  the SSRF guard), capped at 6,000 characters, fenced as page data.
+- **`act`** (`browse_act/act.tool`, max 5 commands, enum `click select type enter goto read
+  back done`) over the **indexed view** (`browse_index.py`): per-run monotonic numbers bound to
+  (document, ref, role, name); text clipped at 200 characters; runs of identical controls
+  collapsed after three. **Not built: viewport-first ordering** — the aria snapshot carries no
+  geometry, so the view keeps page order with B1's anchor-first pruning. Per command: a 0.3 s
+  settle and a fresh look, re-resolution by role + name on the same document only, stop on
+  refusal, missing/changed target, browser error or a new address. Every browser command
+  runs as a B1 action through the B1 gate, unchanged.
+- **jerv:** a second browse of the same registrable domain in a turn is refused once one came
+  back (`ToolContext.browsed`); the prompt (`agent-jerv-v58`) says search for the place's or
+  item's own page first, then `web_fetch` it.
+- **Fallback:** Settings → Browser agent → Fast / Classic (`browse_loop`, read per run), and the
+  debug route's `loop`.
+- **Next:** run `scripts/browse-bench.sh L1` on the box against the targets above; flip to ✅ or
+  tune (settle time, view cap) from the per-phase numbers.
 
 ### L2 — Read the data, not the screen ◻️
 - Host-only response capture via `browser_run_code_unsafe` (constant scripts, Node memory, caps,
