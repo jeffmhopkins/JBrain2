@@ -286,7 +286,8 @@ listed and revocable in Settings, and never extend to the Never tier.
   1. **The model navigates; the host reads.** `finish` (v3) carries no answer — only an
      optional `note` of where on the page the answer is (`agent-browse-v4`). The host then
      makes ONE extraction call: its own small prompt (`prompts/browse_extract.prompt`,
-     `agent-browse-extract-v1`), one user message with the goal, the note and the final page's
+     `agent-browse-extract-v1`), one user message with the goal, the note (labelled as where to look — "The browsing
+     agent says to look at: …" — never as the answer) and the final page's
      readable text (quarantined, its strings one per line, up to the 16k view cap, fenced as
      data), **no tools, reasoning effort `none`, 700 max tokens**, same `browse.step` task and
      `browse` slot. Its reply is raw facts, one per line, quarantined and capped at 1,200
@@ -298,23 +299,33 @@ listed and revocable in Settings, and never extend to the Never tier.
      the prompt, so dropping them diverges at token ~0 and re-prefills the whole ~10–14k-token
      history, ~30 s), and a tools-present call can still answer with a tool call instead of
      text. A fresh prompt is ~2–4k tokens (system + goal + one page), ~5–10 s of prefill at
-     ~400 tok/s, and at effort none the reply is the facts themselves (~100–300 tokens). The
-     step history is untouched, so the strict-extension test still pins every STEP call.
+     ~400 tok/s, and at effort none the reply is the facts themselves (~100–300 tokens). It
+     is a FRESH prompt: no cache reuse is assumed for it (its whole prefill is in the
+     estimate). The step history is untouched, so the strict-extension test still pins every
+     STEP call.
+     **Its time is reserved.** No step starts inside the last 30 s of the wall
+     (`EXTRACT_RESERVE_SECONDS`), and the extraction runs after the browser session closes,
+     outside the drive's timeout, given at least that reserve — so a `finish` chosen right at
+     the deadline is still read; one that runs out of time is `not_found` with the page text.
   2. **Host-side verification replaces the evidence quote** (`browse_policy.facts_on_page`).
      From each answer line the host takes its salient tokens — clock times (folded so "7:15PM",
      "7:15 p.m." and "7:15 PM" are one), standalone numbers, prices and dates, and capitalised
      words of 3+ letters other than a few function words — and looks each up, as a whole token,
-     in the final page's FULL text (NFKC, casefolded, single-spaced). Verified needs ≥80% of
-     all tokens found AND every line with tokens to have at least one; an answer with nothing
-     checkable is UNVERIFIED. jerv's line reads "Checked: the answer's names, times and numbers
+     in the final page's FULL text (NFKC, casefolded, single-spaced). Verified needs EVERY
+     time and price found (one invented showtime fails the answer), ≥80% of the names and
+     other numbers, and every line backed by at least one match. A bare one- or two-digit
+     number is not evidence (a stray "7" is on every page): it is not counted, and a line
+     whose only numbers are such, with no time or price beside them ("Dune: 7, 10"), is
+     unbacked. An answer with nothing checkable is UNVERIFIED. jerv's line reads "Checked: the answer's names, times and numbers
      are on the final page." or UNVERIFIED (`browse.tool` v4). The `extract` step in the trace
-     carries the tally ("verified: 5 of 5 names, times and numbers on the page") and its own
+     carries the tally ("verified: 2 of 2 times and prices, 3 of 3 names and numbers on the page") and its own
      call's prompt/cached/output tokens.
   3. **A stopped run reads its last page too.** A run that ends on `step_budget`,
-     `page_budget`, `loop`, `stuck` or `no_action` with ≥30 s of the wall left runs the same
-     extraction on its final page (bounded by the time left); a verified result turns the run
-     into `answered`, an unverified one is dropped and the page text goes back as before.
-     `timeout` has no time left and is not tried.
+     `page_budget`, `loop`, `stuck`, `no_action` or the reserve's `timeout` with ≥10 s of the
+     wall left runs the same extraction on its final page (bounded by the time left); a
+     verified result turns the run into `answered`, an unverified or failed one is dropped
+     (logged, not shown as the run's error) and the page text goes back as before. The hard
+     cut (wall + 30 s, a hung browser) leaves no time and is not tried.
   4. **Effort `none` per call.** The extraction passes `effort_override="none"`: on Flash-Next
      (a hybrid) that is `chat_template_kwargs.enable_thinking=false`. On a cloud `agent.turn`
      model it is sent as `none`, exactly as any other per-call none.
@@ -330,9 +341,16 @@ listed and revocable in Settings, and never extend to the Never tier.
   SAME turn, a `web_fetch` of the same registrable domain (eTLD+1 via the bundled Public
   Suffix List, the `tld` package; `www.` and other subdomains match their parent, `bbc.co.uk`
   is not every `.co.uk`; a suffix the list does not know falls back to the host less `www.`;
-  an IP or dotless host never passes) came back needing a browser: `gated` (location/store
-  picker), `js_shell` (unrendered JavaScript app), or thin (a plain read from the top whose
-  whole page is under the fetcher's own 200-character recovery bar, `fetch.THIN_PAGE_CHARS`).
+  never down to a dotless name; an IP or dotless host never passes) came back needing a
+  browser: `gated` (location/store picker), `js_shell` (unrendered JavaScript app), thin (a
+  plain read from the top whose whole page is under the fetcher's own 200-character recovery
+  bar, `fetch.THIN_PAGE_CHARS`), or `blocked` — a fetch that FAILED on a bot wall, challenge
+  page, paywall or other hard block (`_block_reason`), or was refused because the host is on
+  the 24h skip list, which is exactly where a real browser can get through (a 404, a glitch
+  or a search form does not count). The gate keys on "some page of this domain, this turn, was
+  gated/JS/thin/blocked"; a fetch that redirected to another site records only the site it
+  ENDED on. Only `start_url` is checked: where the run navigates afterwards is governed by the
+  browse policy (`check_url`), not this gate.
   `start_url` is now required. The tools decide it: web_fetch records the verdict from the
   result's own flags on the turn's `ToolContext.browser_needed` (domain → reason; one per
   turn, so an earlier turn's fetch does not count), and `agent/browse_gate.py` reads it before

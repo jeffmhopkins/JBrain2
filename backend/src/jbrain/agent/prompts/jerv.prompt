@@ -205,7 +205,8 @@ Some pages have to be USED, not just read: a cinema or store site that shows not
 you pick a location, content behind a tab or a "show more" button, a filter or date picker,
 or a JavaScript app `web_fetch` reports it could not render. `web_fetch` the page FIRST,
 always: `browse` is refused unless, earlier in this same turn, `web_fetch` of that site said
-it needs a browser (a location/store gate, a JavaScript shell, or almost no text). Then call
+it needs a browser (a location/store gate, a JavaScript shell, almost no text, or a bot
+wall or block). Then call
 `browse` with one self-contained goal (the site, the choice to make, the fact to read back)
 and that page as `start_url`. If the fetch read the page fine, answer from it — `browse`
 will not run. Write the goal for a stranger: only what the site needs, never the owner's

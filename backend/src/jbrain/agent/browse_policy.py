@@ -592,7 +592,9 @@ def check_key(key: object) -> str | None:
 
 # The answer is raw facts for jerv to write up, not prose (B1's short-finish fix).
 MAX_ANSWER_CHARS = 1_200
-# Of an answer's salient tokens (names, times, numbers), the share that must be on the page.
+# Of an answer's names and other numbers, the share that must be on the page. Times and
+# prices are held to all of them: they are the facts a caller acts on, and one invented
+# showtime among real ones is still a wrong answer.
 MIN_FACT_SHARE = 0.8
 
 # A clock time in any of the spellings a page or a model writes — "7:15PM", "7:15 p.m.",
@@ -602,6 +604,10 @@ _CLOCK_TOKEN = re.compile(r"\b\d{1,2}(?::\d{2})? [ap]m\b")
 # A number standing on its own as a page writes one: a price, a date, a count ("$12.50",
 # "10/05", "2,000"). Not a digit inside a word ("F1", "7th"): it would never match whole.
 _NUMBER = re.compile(r"(?<!\w)[$€£]?\d+(?:[.,/:-]\d+)*(?!\w)")
+# A bare one- or two-digit number is on almost every page (a screen, a rating, a date), so
+# finding it proves nothing; a line that leans on such numbers is not checkable.
+_SMALL_INT = re.compile(r"\d{1,2}")
+_CURRENCY = "$€£"
 _WORD = re.compile(r"[^\W\d_][\w'’-]*")
 # Capitalised function words are on every page, so they prove nothing.
 _COMMON_WORDS = frozenset({"the", "and", "for", "with", "from", "not", "but", "you", "your"})
@@ -615,14 +621,24 @@ def _fold(text: str) -> str:
     return _CLOCK.sub(r"\1 \2m", text)
 
 
-def salient_tokens(line: str) -> list[str]:
-    """What in one answer line can be checked against the page: its times, its numbers and
-    its capitalised words (a film, a place, a month) — the parts a model gets wrong when it
-    invents or misreads an answer. Folded like the page text."""
+def _is_strict(token: str) -> bool:
+    """A time or a price: a fact that must be on the page exactly, every one of them."""
+    return bool(_CLOCK_TOKEN.fullmatch(token)) or token[0] in _CURRENCY
+
+
+def _line_tokens(line: str) -> tuple[list[str], bool]:
+    """The line's salient tokens, and whether it states a bare small number (which is not
+    one of them)."""
     folded = _fold(line)
     tokens = _CLOCK_TOKEN.findall(folded)
     rest = _CLOCK_TOKEN.sub(" ", folded)
-    tokens += [n.rstrip(".,/:-") for n in _NUMBER.findall(rest)]
+    small = False
+    for number in _NUMBER.findall(rest):
+        number = number.rstrip(".,/:-")
+        if _SMALL_INT.fullmatch(number):
+            small = True
+        else:
+            tokens.append(number)
     for word in _WORD.findall(_CLOCK.sub(" ", unicodedata.normalize("NFKC", line))):
         word = word.strip("'’-")
         if (
@@ -631,48 +647,83 @@ def salient_tokens(line: str) -> list[str]:
             and word.casefold() not in _COMMON_WORDS
         ):
             tokens.append(word.casefold())
-    return tokens
+    return tokens, small
+
+
+def salient_tokens(line: str) -> list[str]:
+    """What in one answer line can be checked against the page: its times, its prices and
+    other numbers (not a bare one- or two-digit one) and its capitalised words (a film, a
+    place, a month) — the parts a model gets wrong when it invents or misreads an answer.
+    Folded like the page text."""
+    return _line_tokens(line)[0]
 
 
 @dataclass(frozen=True)
 class FactCheck:
     """How much of an answer the host found on the final page."""
 
+    # Names and other numbers: most must be found.
     found: int = 0
     total: int = 0
-    # Lines with something to check of which nothing was found: an invented line.
+    # Times and prices: every one must be found.
+    strict_found: int = 0
+    strict_total: int = 0
+    # Lines nothing found backs: an invented line, or one whose only numbers are bare small
+    # ones with no time or price beside them ("Dune: 7, 10").
     lines_missed: int = 0
 
     @property
     def verified(self) -> bool:
         return (
-            self.total > 0 and self.lines_missed == 0 and self.found >= MIN_FACT_SHARE * self.total
+            self.total + self.strict_total > 0
+            and self.lines_missed == 0
+            and self.strict_found == self.strict_total
+            and self.found >= MIN_FACT_SHARE * self.total
         )
 
     def describe(self) -> str:
-        if self.total == 0:
+        if self.total + self.strict_total == 0:
             return "UNVERIFIED: nothing in the answer could be checked against the page"
         head = "verified" if self.verified else "UNVERIFIED"
-        missed = f"; {self.lines_missed} line(s) had none" if self.lines_missed else ""
-        return f"{head}: {self.found} of {self.total} names, times and numbers on the page{missed}"
+        missed = f"; {self.lines_missed} line(s) unbacked" if self.lines_missed else ""
+        return (
+            f"{head}: {self.strict_found} of {self.strict_total} times and prices,"
+            f" {self.found} of {self.total} names and numbers on the page{missed}"
+        )
 
 
 def facts_on_page(answer: str, page: PageView) -> FactCheck:
     """Whether an answer was read off the page it claims to come from — success is taken
     from the page, never from the model's word. Each line's salient tokens are looked up, as
-    whole tokens, in the page's FULL text (not the capped view): most of them must be there,
-    and every line must have at least one, so one invented line fails the answer."""
+    whole tokens, in the page's FULL text (not the capped view): every time and price must be
+    there, most of the rest, and every line must be backed by at least one, so one invented
+    line or showtime fails the answer."""
     text = _fold(page.text)
-    found = total = missed = 0
+    found = total = strict_found = strict_total = missed = 0
     for line in answer.splitlines():
-        tokens = salient_tokens(line)
-        if not tokens:
+        tokens, small = _line_tokens(line)
+        if not tokens and not small:
             continue
-        hits = sum(_on_page(token, text) for token in tokens)
-        found += hits
-        total += len(tokens)
-        missed += hits == 0
-    return FactCheck(found=found, total=total, lines_missed=missed)
+        hits = 0
+        strict_in_line = False
+        for token in tokens:
+            hit = _on_page(token, text)
+            hits += hit
+            if _is_strict(token):
+                strict_in_line = True
+                strict_found += hit
+                strict_total += 1
+            else:
+                found += hit
+                total += 1
+        missed += hits == 0 or (small and not strict_in_line)
+    return FactCheck(
+        found=found,
+        total=total,
+        strict_found=strict_found,
+        strict_total=strict_total,
+        lines_missed=missed,
+    )
 
 
 def _on_page(token: str, text: str) -> bool:

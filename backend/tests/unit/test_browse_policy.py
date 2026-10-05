@@ -317,40 +317,72 @@ def test_salient_tokens_are_the_names_times_and_numbers() -> None:
         "part",
         "three",
     ]
-    # Prices and dates are whole tokens; digits inside a word, short and function words and
-    # lowercase prose are not checkable facts.
+    # Prices and dates are whole tokens; digits inside a word, bare one- or two-digit
+    # numbers, short and function words and lowercase prose are not checkable facts.
     assert policy.salient_tokens("The F1 movie, 7th row: $12.50 on 10/05.") == ["$12.50", "10/05"]
+    assert policy.salient_tokens("Screen 3, row 12, 2026") == ["2026", "screen"]
     assert policy.salient_tokens("'Amélie' at the Ritz") == ["amélie", "ritz"]
     assert policy.salient_tokens("all day, every day") == []
+
+
+def _text_page(text: str) -> policy.PageView:
+    return policy.PageView(text=" ".join(text.split()).lower())
 
 
 def test_an_answer_read_off_the_page_is_verified() -> None:
     page = _page(TITUSVILLE)
     # Respaced, recased and lookalike-folded times still match the page.
-    check = policy.facts_on_page("Dune: Part Three: 7:15PM, ９:40 pm\n\nEpic Titusville 15", page)
-    assert check.verified and (check.found, check.total) == (8, 8)
-    assert check.describe() == "verified: 8 of 8 names, times and numbers on the page"
-    # Most but not all: a misspelt name among many good facts still passes.
+    check = policy.facts_on_page("Dune: Part Three: 7:15PM, ９:40 pm\n\nEpic Titusville", page)
+    assert check.verified
+    assert (check.strict_found, check.strict_total, check.found, check.total) == (2, 2, 5, 5)
+    assert check.describe() == (
+        "verified: 2 of 2 times and prices, 5 of 5 names and numbers on the page"
+    )
+    # Most of the names is enough: a misspelt one among many good facts still passes.
     assert policy.facts_on_page("Dune: Part Three: 7:15 PM, 9:40 PM, Epic Titusvile", page).verified
+    priced = _text_page("Large popcorn $8.50, small $6.25")
+    assert policy.facts_on_page("Large popcorn: $8.50", priced).verified
+
+
+def test_one_invented_showtime_fails_the_answer() -> None:
+    """Times and prices are held to all of them, whatever the share of the rest."""
+    page = _page(TITUSVILLE)
+    check = policy.facts_on_page("Dune: Part Three: 7:15 PM, 9:40 PM, 11:55 PM", page)
+    assert (check.strict_found, check.strict_total) == (2, 3) and check.found == check.total
+    assert not check.verified
+    assert check.describe().startswith("UNVERIFIED: 2 of 3 times and prices")
+    priced = _text_page("Large popcorn $8.50")
+    assert not policy.facts_on_page("Large popcorn: $9.50", priced).verified
+
+
+def test_bare_small_numbers_are_not_evidence() -> None:
+    """A page with a stray 7 and 10 on it does not back "Dune: 7, 10"."""
+    page = _text_page("Dune: Part Three. Screen 7. Row 10. Tickets on sale now.")
+    check = policy.facts_on_page("Dune: 7, 10", page)
+    assert not check.verified and check.lines_missed == 1
+    assert check.describe().endswith("1 line(s) unbacked")
+    # A line of nothing but small numbers is unbacked too, not skipped.
+    assert not policy.facts_on_page("Dune: Part Three\n7, 10", page).verified
+    # Beside a real time, a small number is just noise.
+    assert policy.facts_on_page("Dune: 7:15 PM (screen 7)", _page(TITUSVILLE)).verified
 
 
 def test_an_answer_not_on_the_page_is_not_verified() -> None:
     page = _page(TITUSVILLE)
-    # Whole tokens only: "7:15" is on the page, "7:1" and "15 pm" are not.
+    # Whole tokens only: "7:15" is on the page, "7:1 pm" is not.
     assert not policy.facts_on_page("Avatar: 7:1 PM", page).verified
-    # Too few found.
-    invented = policy.facts_on_page("Dune: Avatar Matrix Alien Gladiator 8:00 PM", page)
-    assert not invented.verified and invented.found == 1
-    assert invented.describe().startswith("UNVERIFIED: 1 of 6")
+    # Too few of the names found, with no time to lean on.
+    invented = policy.facts_on_page("Dune: Avatar Matrix Alien Gladiator", page)
+    assert not invented.verified and (invented.found, invented.total) == (1, 5)
     # One line with nothing on the page fails the whole answer, however good the rest.
     mixed = policy.facts_on_page(
-        "Dune: Part Three: 7:15 PM, 9:40 PM\nThe Long Walk: 4:00 PM\nAvatar: 11:55 PM", page
+        "Dune: Part Three: 7:15 PM, 9:40 PM\nThe Long Walk: 4:00 PM\nAvatar Returns", page
     )
-    assert mixed.found / mixed.total >= policy.MIN_FACT_SHARE and mixed.lines_missed == 1
-    assert not mixed.verified and mixed.describe().endswith("1 line(s) had none")
+    assert mixed.strict_found == mixed.strict_total and mixed.lines_missed == 1
+    assert not mixed.verified
     # Nothing checkable is never "verified": prose proves nothing about the page.
     empty = policy.facts_on_page("it is showing tonight", page)
-    assert not empty.verified and empty.total == 0
+    assert not empty.verified and empty.total + empty.strict_total == 0
     assert empty.describe().startswith("UNVERIFIED: nothing in the answer")
 
 

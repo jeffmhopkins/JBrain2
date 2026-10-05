@@ -107,7 +107,7 @@ async def test_a_goal_is_driven_to_a_verified_answer() -> None:
     assert [s.action for s in run.steps] == ["navigate", "click", "click", "finish", "extract"]
     assert all(s.snapshot_tokens > 0 for s in run.steps[:-1])
     assert run.steps[-1].url == TITUSVILLE and run.steps[-1].ok
-    assert run.steps[-1].note.startswith("verified: 5 of 5")
+    assert run.steps[-1].note.startswith("verified: 2 of 2 times and prices, 3 of 3")
     assert run.steps[2].url == TITUSVILLE
     # What the browser was asked: only allowlisted tools, with host-built arguments.
     assert [name for name, _ in browser.calls] == [
@@ -203,7 +203,7 @@ async def test_finish_reads_the_answer_in_one_no_thinking_call() -> None:
     (message,) = extract["messages"]
     assert isinstance(message, UserMessage)
     assert message.text.startswith(f"GOAL: {GOAL}\n")
-    assert "The browsing agent says the answer is: the Dune listing" in message.text
+    assert "The browsing agent says to look at: the Dune listing" in message.text
     # The page's text in full (the strings, not the outline), fenced as data.
     assert "<<<PAGE TEXT BEGIN>>>\nEpic Titusville 15\n" in message.text
     assert "Dune: Part Three\n7:15 PM, 9:40 PM" in message.text and "[ref=" not in message.text
@@ -541,7 +541,7 @@ async def test_an_answer_not_on_the_page_is_returned_unverified_never_retried() 
     assert run.outcome == "answered" and not run.verified
     assert run.answer == "Avatar: 8:00 PM buy"
     assert run.steps[-1].action == "extract" and not run.steps[-1].ok
-    assert run.steps[-1].note.startswith("UNVERIFIED: 0 of 2")
+    assert run.steps[-1].note.startswith("UNVERIFIED: 0 of 1 times and prices")
     assert len(fake.converse_calls) == 2
     text = render_for_caller(run)
     assert "UNVERIFIED: the answer's" in text and "evil.example" not in text
@@ -552,7 +552,7 @@ async def test_one_invented_line_unverifies_the_answer() -> None:
     agent, _, _ = _agent(turns)
     run = await agent.run(GOAL, TITUSVILLE)
     assert run.outcome == "answered" and not run.verified
-    assert "1 line(s) had none" in run.steps[-1].note
+    assert "1 line(s) unbacked" in run.steps[-1].note
 
 
 async def test_a_page_without_the_answer_ends_the_run_with_its_text() -> None:
@@ -609,16 +609,73 @@ async def test_a_stopped_runs_unchecked_extraction_is_dropped() -> None:
     assert "9:40 PM" in run.page_text
 
 
-async def test_no_late_extraction_without_time_left_or_after_a_timeout() -> None:
-    ticks = iter([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 220.0])
-    agent, fake, _ = _agent([_call("snapshot", 1)], clock=lambda: next(ticks, 220.0), max_steps=1)
+def _clocked(
+    replies: Sequence[LlmTurn], at: Sequence[float], **kwargs: Any
+) -> tuple[BrowseAgent, list[dict[str, Any]]]:
+    """An agent on a hand-moved clock: the n-th step's model call moves it to `at[n]`. The
+    extraction (no tools) leaves it where it is."""
+    now = [0.0]
+    agent, _, _ = _agent([], clock=lambda: now[0], **kwargs)
+    seen: list[dict[str, Any]] = []
+
+    async def converse(task: str, **kw: Any) -> LlmTurn:
+        seen.append(kw)
+        steps = [s for s in seen if s["tools"]]
+        if kw["tools"]:
+            now[0] = at[min(len(steps), len(at)) - 1]
+            return replies[min(len(steps), len(replies)) - 1]
+        return _say(DUNE)
+
+    agent._router.converse = converse  # type: ignore[method-assign]
+    return agent, seen
+
+
+async def test_no_late_extraction_without_time_left_or_after_the_hard_cut() -> None:
+    agent, seen = _clocked([_call("snapshot", 1)], [235.0], max_steps=1)
     run = await agent.run(GOAL, TITUSVILLE)
-    assert run.outcome == "step_budget" and _extractions(fake) == []
+    assert run.outcome == "step_budget" and [s for s in seen if not s["tools"]] == []
 
     ticks = iter([0.0, 0.0, 0.0, 0.0, 500.0])
     agent, fake, _ = _agent([_call("snapshot", 1)], clock=lambda: next(ticks, 500.0))
     run = await agent.run(GOAL, TITUSVILLE)
     assert run.outcome == "timeout" and _extractions(fake) == []
+
+
+async def test_no_step_starts_inside_the_extraction_reserve() -> None:
+    """With the reserve left, the run stops stepping and reads its last page instead."""
+    agent, seen = _clocked([_call("snapshot", 1)], [215.0], max_steps=5)
+    run = await agent.run(GOAL, TITUSVILLE)
+    assert len([s for s in seen if s["tools"]]) == 1
+    assert run.outcome == "answered" and run.verified and run.answer == DUNE
+
+
+@pytest.mark.parametrize("at", [209.0, 239.0, 260.0])
+async def test_a_finish_near_the_deadline_is_still_read(at: float) -> None:
+    """The extraction runs after the drive, outside its timeout, given at least the reserve."""
+    agent, seen = _clocked([_call("finish", 1)], [at])
+    run = await agent.run(GOAL, TITUSVILLE)
+    assert run.outcome == "answered" and run.verified
+    assert len([s for s in seen if not s["tools"]]) == 1
+
+
+async def test_a_finish_whose_extraction_runs_out_of_time_hands_back_the_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    monkeypatch.setattr(browse, "EXTRACT_RESERVE_SECONDS", 0.1)
+    agent, _, _ = _agent([], wall_seconds=0.3)
+
+    async def slow(task: str, **kwargs: Any) -> LlmTurn:
+        if kwargs["tools"]:
+            return _call("finish", 1)
+        await asyncio.sleep(5)
+        return _say(DUNE)
+
+    agent._router.converse = slow  # type: ignore[method-assign]
+    run = await agent.run(GOAL, TITUSVILLE)
+    assert run.outcome == "not_found" and "9:40 PM" in run.page_text
+    assert run.error == "reading the answer off the page failed: it ran out of time"
 
 
 async def test_a_late_extraction_is_cut_off_at_the_wall(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -635,7 +692,24 @@ async def test_a_late_extraction_is_cut_off_at_the_wall(monkeypatch: pytest.Monk
 
     agent._router.converse = slow  # type: ignore[method-assign]
     run = await agent.run(GOAL, TITUSVILLE)
-    assert run.outcome == "step_budget" and "9:40 PM" in run.page_text
+    # Inside the reserve from the start: no step ran, the extraction was tried and cut off.
+    assert run.outcome == "timeout" and "9:40 PM" in run.page_text
+    # Optional work that failed is not the run's error.
+    assert run.error == ""
+
+
+async def test_a_failed_late_extraction_is_not_the_runs_error() -> None:
+    agent, _, _ = _agent([], max_steps=1)
+
+    async def flaky(task: str, **kwargs: Any) -> LlmTurn:
+        if kwargs["tools"]:
+            return _call("snapshot", 1)
+        raise LlmTransientError("overloaded")
+
+    agent._router.converse = flaky  # type: ignore[method-assign]
+    run = await agent.run(GOAL, TITUSVILLE)
+    assert run.outcome == "step_budget" and run.error == "" and "9:40 PM" in run.page_text
+    assert "Error:" not in render_for_caller(run)
 
 
 async def test_an_injected_extraction_cannot_forge_the_hosts_lines() -> None:

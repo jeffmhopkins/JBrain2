@@ -25,7 +25,8 @@ answer from that rather than fetching the page again.
 
 web_fetch FIRST, always. browse is refused unless, earlier in this same turn, web_fetch of
 the same site said the page needs a browser — a location or store picker, a JavaScript app
-it could not render, or almost no text — and start_url is a page on that site. A page
+it could not render, almost no text, or a bot wall or block — and start_url is a page on
+that site. A page
 web_fetch can read is answered from the fetch, even if you think a click would show more.
 One goal per call; for two sites, make two calls.
 

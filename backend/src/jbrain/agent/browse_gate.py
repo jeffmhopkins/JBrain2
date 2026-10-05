@@ -3,8 +3,10 @@
 Owner decision 2026-10-05 (docs/plans/BROWSER_AGENT_PLAN.md B1): a browse run costs a minute
 or more of the box's model and a Chromium context, and jerv reached for it on pages an
 ordinary fetch reads in seconds. So `browse` is refused unless, earlier in the SAME turn,
-`web_fetch` of the same site came back needing a browser — a location/store picker
-(`gated`), an unrendered JavaScript app (`js_shell`), or a page too thin to be the content.
+`web_fetch` of some page of the same site came back needing a browser — a location/store
+picker (`gated`), an unrendered JavaScript app (`js_shell`), a page too thin to be the
+content, or a bot wall, challenge page or other hard block (`blocked`, including a site on the
+24h skip list), which is exactly where a real browser can get through.
 The tools decide it, from the fetch result's own flags recorded on the turn's ToolContext,
 never from the model's judgment or the result text: there is no "needs interaction"
 override, because the agent cannot be trusted to make that call. The accepted cost: a page
@@ -13,6 +15,9 @@ that fetches fine but hides its data behind a click is refused (revisit if it bi
 "The same site" is the registrable domain (eTLD+1, from the bundled Public Suffix List), so
 `www.` and other subdomains match their parent and `bbc.co.uk` is not lumped in with every
 other `.co.uk` site. An address with no registrable domain (an IP, `localhost`) never passes.
+A fetch that redirected to another site opens only the site it ended on: that is the page that
+needed the browser. Only `start_url` is checked here; where the run navigates afterwards is the
+browse policy's business (`browse_policy.check_url`), not this gate's.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from jbrain.web.fetch import THIN_PAGE_CHARS, FetchResult
 GATED = "gated"
 JS_SHELL = "js_shell"
 THIN = "thin"
+BLOCKED = "blocked"
 
 
 def registrable_domain(url: str) -> str | None:
@@ -43,7 +49,8 @@ def registrable_domain(url: str) -> str | None:
         return None
     if "." not in host or _is_ip(host):
         return None
-    return host.removeprefix("www.")
+    bare = host.removeprefix("www.")
+    return bare if "." in bare else host
 
 
 def _is_ip(host: str) -> bool:
@@ -69,15 +76,23 @@ def needs_browser(result: FetchResult, *, offset: int, find: str) -> str | None:
 def record_fetch(
     seen: dict[str, str], result: FetchResult, url: str, *, offset: int, find: str
 ) -> None:
-    """Note on this turn's memo that `url`'s site needs a browser, when the fetch says so —
-    under the requested URL's domain and the final (redirected) one's."""
+    """Note on this turn's memo that the site the fetch ENDED on needs a browser, when the
+    fetch says so (the requested URL's, when the result names no final URL)."""
     reason = needs_browser(result, offset=offset, find=find)
-    if reason is None:
-        return
-    for address in (url, result.url):
-        domain = registrable_domain(address)
-        if domain is not None:
-            seen[domain] = reason
+    if reason is not None:
+        _note(seen, result.url or url, reason)
+
+
+def record_blocked(seen: dict[str, str], url: str) -> None:
+    """Note that `url`'s site turned web_fetch away with a hard block — a bot wall, a challenge
+    page, a paywall, or the 24h skip list that remembers one."""
+    _note(seen, url, BLOCKED)
+
+
+def _note(seen: dict[str, str], url: str, reason: str) -> None:
+    domain = registrable_domain(url)
+    if domain is not None:
+        seen[domain] = reason
 
 
 def refusal(start_url: str | None, seen: dict[str, str]) -> str | None:
@@ -86,7 +101,8 @@ def refusal(start_url: str | None, seen: dict[str, str]) -> str | None:
         return (
             "browse needs a start_url: the page web_fetch could not read. web_fetch the site"
             " first; if the result says the page needs a browser (a location or store picker,"
-            " a JavaScript app, or no real text), call browse with that URL as start_url."
+            " a JavaScript app, no real text, or a bot wall), call browse with that URL as"
+            " start_url."
         )
     domain = registrable_domain(start_url)
     if domain is not None and domain in seen:
@@ -94,6 +110,6 @@ def refusal(start_url: str | None, seen: dict[str, str]) -> str | None:
     return (
         f"browse refused: web_fetch {start_url} first, this turn, and use what it returns."
         " browse is only for a site whose web_fetch result said it needs a browser (a"
-        " location or store picker, a JavaScript app, or no real text); a page web_fetch can"
-        " read is answered from the fetch."
+        " location or store picker, a JavaScript app, no real text, or a bot wall); a page"
+        " web_fetch can read is answered from the fetch."
     )

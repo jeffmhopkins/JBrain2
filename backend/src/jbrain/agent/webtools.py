@@ -868,6 +868,8 @@ def build_web_handlers(
         if domain_skips is not None:
             host = normalize_host(url)
             if host is not None and host in await domain_skips.active_hosts():
+                # A site skipped for a wall is one a real browser may still get through.
+                browse_gate.record_blocked(ctx.browser_needed, url)
                 return (
                     "that site was recently unreadable (paywall or bot-wall) and is being"
                     " skipped for the next day; web_search for the same information elsewhere"
@@ -1015,6 +1017,10 @@ def build_web_handlers(
         except WebFetchError as exc:
             # Remember the miss so an identical re-fetch this turn short-circuits above.
             ctx.failed_fetches[key] = exc.status or 0
+            # A hard block (bot wall, challenge page, paywall) is where a real browser helps:
+            # it opens `browse` for this site. A 404, a glitch or a search form does not.
+            if _block_reason(exc) is not None:
+                browse_gate.record_blocked(ctx.browser_needed, url)
             # A persistent hard block (paywall / bot-wall) also lands the DOMAIN on the 24h
             # skip list so later fetches/searches across turns skip it (best-effort, no-op for
             # a transient glitch / 404 / search form).

@@ -173,6 +173,8 @@ async def test_a_paged_or_searched_window_is_not_thin() -> None:
         ("https://shop.bbc.co.uk/a", "bbc.co.uk"),
         # A suffix the list does not know: the host itself, less www.
         ("https://www.cinema.example/", "cinema.example"),
+        # ...but never down to a dotless name.
+        ("https://www.example/", "www.example"),
         ("http://10.0.0.1/", None),
         ("http://127.1/", None),
         ("http://[::1]/", None),
@@ -198,16 +200,76 @@ def test_what_counts_as_needing_a_browser() -> None:
     assert browse_gate.needs_browser(shell, offset=0, find="") == browse_gate.JS_SHELL
 
 
-def test_a_redirect_opens_both_the_asked_and_the_final_site() -> None:
+def test_a_redirect_opens_only_the_site_it_ended_on() -> None:
+    """The page that needed a browser is the one the fetch landed on; the site that merely
+    redirected there is not opened."""
     seen: dict[str, str] = {}
     result = FetchResult(url="https://www.epictheatres.com/home", title="", text="", gated=True)
     browse_gate.record_fetch(seen, result, "https://epic.example/", offset=0, find="")
-    assert seen == {"epic.example": "gated", "epictheatres.com": "gated"}
+    assert seen == {"epictheatres.com": "gated"}
+    # A result that names no final URL keys on the requested one.
+    seen.clear()
+    unnamed = FetchResult(url="", title="", text="", gated=True)
+    browse_gate.record_fetch(seen, unnamed, "https://epic.example/", offset=0, find="")
+    assert seen == {"epic.example": "gated"}
     # An address with no site to key on records nothing.
     seen.clear()
-    blank = FetchResult(url="", title="", text="", gated=True)
-    browse_gate.record_fetch(seen, blank, "http://10.0.0.1/", offset=0, find="")
+    browse_gate.record_fetch(seen, unnamed, "http://10.0.0.1/", offset=0, find="")
+    browse_gate.record_blocked(seen, "http://10.0.0.1/")
     assert seen == {}
+
+
+class _Skips:
+    """A stand-in 24h skip list holding one host."""
+
+    def __init__(self, host: str) -> None:
+        self.host = host
+
+    async def active_hosts(self) -> frozenset[str]:
+        return frozenset({self.host})
+
+    async def record(self, host: str, reason: str, url: str) -> None:
+        return None
+
+
+def _status_fetch(status: int, domain_skips: object = None) -> ToolHandler:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, content=b"<html><body>no</body></html>")
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle))
+    return build_web_handlers(
+        SearxngClient(""),
+        fetcher,
+        domain_skips=domain_skips,  # type: ignore[arg-type]
+    )["web_fetch"]
+
+
+@pytest.mark.parametrize("status", [403, 429, 402])
+async def test_a_hard_block_opens_browse_for_that_site(status: int) -> None:
+    """A bot wall, a challenge or a paywall is exactly where a real browser can help."""
+    fetch = _status_fetch(status)
+    fake = _give_up()
+    browse, _ = _browse(fake)
+    ctx = _turn()
+    await fetch({"url": "https://www.epictheatres.com/"}, ctx)
+    assert ctx.browser_needed == {"epictheatres.com": browse_gate.BLOCKED}
+    out = await browse({"goal": "g", "start_url": "https://epictheatres.com/"}, ctx)
+    assert isinstance(out, ToolOutput) and out.startswith("[BROWSE RESULT")
+
+
+@pytest.mark.parametrize("status", [404, 500])
+async def test_a_missing_page_or_a_glitch_does_not(status: int) -> None:
+    ctx = _turn()
+    await _status_fetch(status)({"url": "https://www.epictheatres.com/x"}, ctx)
+    assert ctx.browser_needed == {}
+
+
+async def test_a_skip_listed_site_opens_browse_without_a_fetch() -> None:
+    fetch = _status_fetch(200, _Skips("www.epictheatres.com"))
+    ctx = _turn()
+    out = await fetch({"url": "https://www.epictheatres.com/"}, ctx)
+    assert "skipped for the next day" in out
+    assert ctx.browser_needed == {"epictheatres.com": browse_gate.BLOCKED}
 
 
 def test_an_address_with_no_site_never_passes() -> None:

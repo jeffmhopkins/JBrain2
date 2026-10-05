@@ -105,8 +105,11 @@ EXTRACT_EFFORT = "none"
 EXTRACT_MAX_TOKENS = 700
 # The page text the extraction reads: the whole of what `parse_page` keeps readable.
 EXTRACT_PAGE_CHARS = policy.MAX_SNAPSHOT_CHARS
+# The end of the wall clock kept for the extraction: no step starts inside it, so a `finish`
+# near the deadline is still read (the extraction runs after the drive, outside its timeout).
+EXTRACT_RESERVE_SECONDS = 30.0
 # A stopped run tries the extraction on its last page only with this much of the wall left.
-EXTRACT_MIN_SECONDS = 30.0
+EXTRACT_MIN_SECONDS = 10.0
 _NOT_FOUND = "NOT FOUND"
 _EXTRACT_STEP = "extract"
 # What the prompt's messages may grow to (~24k tokens) before the run compacts them into one
@@ -126,9 +129,9 @@ PARTIAL_PAGE_CHARS = 6_000
 PARTIAL_OUTCOMES = frozenset(
     {"timeout", "step_budget", "page_budget", "no_action", "loop", "stuck", "not_found"}
 )
-# The stops a late extraction is tried on: not a timeout (no time left) and not a finished
-# run whose extraction already found nothing.
-_LATE_EXTRACT_OUTCOMES = PARTIAL_OUTCOMES - {"timeout", "not_found"}
+# The stops a late extraction is tried on: not a finished run whose extraction already found
+# nothing. A timeout is tried when the reserve is what stopped it (the hard cut leaves none).
+_LATE_EXTRACT_OUTCOMES = PARTIAL_OUTCOMES - {"not_found"}
 
 # Which playwright-mcp tool each host action maps onto — the ENTIRE surface of the server
 # this loop can reach. Asserted against the `browse_actions` sidecars in tests.
@@ -271,6 +274,9 @@ class _Run:
         self.no_progress = 0
         self.idle = 0
         self.spec_override: str | None = None
+        # Set by `finish` (its note, "" for none): the run ends in the extraction.
+        self.finish_note: str | None = None
+        self.extract_error = ""
         # The URL a gated `type_text` last succeeded on — the only page `Enter` may submit.
         self.typed_url: str | None = None
         self.max_steps = DEFAULT_MAX_STEPS
@@ -389,7 +395,10 @@ class BrowseAgent:
         except LlmError as exc:
             state.result.outcome = "error"
             state.result.error = f"the model call failed: {exc}"
-        await self._late_extract(state)
+        if state.finish_note is not None:
+            await self._finish_extract(state)
+        else:
+            await self._late_extract(state)
         run = state.result
         run.elapsed_ms = int((self._clock() - started) * 1000)
         run.sources = policy.sources_from(state.visited)
@@ -435,7 +444,7 @@ class BrowseAgent:
                 )
             )
             for n in range(1, max_steps + 1):
-                if self._clock() - started > self._wall:
+                if self._clock() - started > self._wall - EXTRACT_RESERVE_SECONDS:
                     state.result.outcome = "timeout"
                     return
                 if await self._step(session, state, n, spec_override):
@@ -475,10 +484,7 @@ class BrowseAgent:
         done = await self._take_turn(session, state, n, turn, model_ms)
         # The prompt and cache counts the server reported, on the step this turn produced — how
         # the debug trace shows whether a step's prompt really reused the last one's prefix.
-        # The extraction a `finish` set off records its own call's counts.
         for step in state.result.steps[mark:]:
-            if step.action == _EXTRACT_STEP:
-                continue
             step.prompt_tokens = turn.usage.input_tokens
             step.cached_tokens = turn.usage.cached_tokens
             step.output_tokens = turn.usage.output_tokens
@@ -688,9 +694,9 @@ class BrowseAgent:
     async def _finish(
         self, session: McpSession, state: _Run, n: int, args: dict[str, Any], model_ms: int
     ) -> tuple[bool, str]:
-        """End the run on the page as it is NOW: read the answer off it in one extraction call.
-        Never sent back for another try — whatever the extraction finds is the answer, marked
-        verified or not by the host's own check."""
+        """End the run on the page as it is NOW; `_finish_extract` reads the answer off it once
+        the browser session is closed. Never sent back for another try — whatever the
+        extraction finds is the answer, marked verified or not by the host's own check."""
         t0 = self._clock()
         state.note_page(policy.parse_page(await _look(session)))
         browser_ms = int((self._clock() - t0) * 1000)
@@ -707,22 +713,37 @@ class BrowseAgent:
                 browser_ms=browser_ms,
             )
         )
-        found = await self._extract(state, n, str(args.get("note") or ""))
+        state.finish_note = str(args.get("note") or "")
+        return True, "reading the answer off this page"
+
+    async def _finish_extract(self, state: _Run) -> None:
+        """The extraction a `finish` asked for, outside the drive's timeout and given at least
+        the reserve, so a finish chosen near the deadline is still read."""
+        run = state.result
+        left = self._wall - (self._clock() - state.started)
+        n = run.steps[-1].n if run.steps else 0
+        try:
+            found = await asyncio.wait_for(
+                self._extract(state, n, state.finish_note or ""),
+                timeout=max(left, EXTRACT_RESERVE_SECONDS),
+            )
+        except TimeoutError:
+            state.extract_error = "it ran out of time"
+            found = None
         if found is None:
-            state.result.outcome = "not_found"
-            return True, "no answer on this page"
-        answer, check = found
-        state.result.outcome = "answered"
-        state.result.answer = answer
-        state.result.verified = check.verified
-        return True, check.describe()
+            run.outcome = "not_found"
+            if state.extract_error:
+                run.error = f"reading the answer off the page failed: {state.extract_error}"
+            return
+        run.outcome = "answered"
+        run.answer, run.verified = found[0], found[1].verified
 
     async def _extract(
         self, state: _Run, n: int, note: str = ""
     ) -> tuple[str, policy.FactCheck] | None:
         """ONE no-thinking call that copies the goal's facts off the current page's text, and
         the host's check of them against the page. None when the page has no text, the model
-        says it does not show the answer, or the call fails (recorded as the run's error, not
+        says it does not show the answer, or the call fails (noted on `state.extract_error`, not
         raised: the page text still goes back)."""
         page = state.page
         text = policy.quarantine(page.readable, cap=EXTRACT_PAGE_CHARS)
@@ -731,7 +752,7 @@ class BrowseAgent:
         hint = policy.quarantine(note, cap=200).replace("\n", " ")
         user = (
             f"GOAL: {state.result.goal}\n\n"
-            + (f"The browsing agent says the answer is: {hint}\n\n" if hint else "")
+            + (f"The browsing agent says to look at: {hint}\n\n" if hint else "")
             + f"PAGE: {page.title or '(untitled)'}\n"
             + "The page's text, one string per line, between the markers:\n"
             + f"<<<PAGE TEXT BEGIN>>>\n{text}\n<<<PAGE TEXT END>>>"
@@ -749,7 +770,7 @@ class BrowseAgent:
                 slot_role=SlotRole.BROWSE,
             )
         except LlmError as exc:
-            state.result.error = f"reading the answer off the page failed: {exc}"
+            state.extract_error = str(exc)
             state.result.steps.append(
                 BrowseStep(n, _EXTRACT_STEP, {}, False, "the model call failed", url=page.url)
             )
@@ -786,7 +807,12 @@ class BrowseAgent:
         try:
             found = await asyncio.wait_for(self._extract(state, n), timeout=left)
         except TimeoutError:
-            return
+            state.extract_error = "it ran out of time"
+            found = None
+        if state.extract_error:
+            # Optional work that failed: the stop and its page text stand, and the run's
+            # Error line stays about the run.
+            log.info("browse.late_extract_failed", outcome=run.outcome, why=state.extract_error)
         if found is not None and found[1].verified:
             run.answer, run.verified = found[0], True
             run.outcome = "answered"
