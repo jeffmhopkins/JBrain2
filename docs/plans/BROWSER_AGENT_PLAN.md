@@ -1,6 +1,6 @@
 # Browser agent — a real browser jerv can drive, and search off Tavily
 
-> **Status:** Proposed · **Last verified:** 2026-10-04 · **Waves:** B0◻️ B1◻️ B2◻️ B3◻️
+> **Status:** In progress · **Last verified:** 2026-10-05 · **Waves:** B0🟡(built; on-box fence tests + Epic run pending) B1🟡(built; bake-off pending) B2◻️ B3◻️
 
 `web_fetch` reads pages; it cannot *use* them. Epic Theatres is the case that started this
 (2026-10-04): every page reads "Please select a location" until a visitor picks a theater,
@@ -21,6 +21,9 @@ tool server and run our own small loop over it.**
 | Where browsing happens | **A sub-agent with its own context** (owner decision 2026-10-04) | jerv calls `browse(goal, start_url?)` and gets back a short text answer with source URLs. Page snapshots never enter jerv's context. |
 | Runner-up | Vercel `agent-browser` (Apache-2.0) | Richer built-in policies (action allowlists, confirmations, delta snapshots); no confirmed official image. Measured against playwright-mcp in B1's bake-off. |
 | Stealth | Stock Chromium first | A 2026 benchmark across 31 Cloudflare sites from a residential IP: vanilla Playwright cleared 24, the best stealth tool 28. A theater picker needs JavaScript, not evasion. Byparr cannot be driven (FlareSolverr API, not CDP); if stealth matters later, a zendriver-launched Chrome over CDP is the upgrade path. |
+| Egress proxy | **Squid** (Canonical's `ubuntu/squid`, Ubuntu-LTS build, digest-pinned), built on the box with the deny list baked in and a build-time `squid -k parse` | Resolves DNS itself and checks the resolved address, so a public name pointing at a private address is refused. Smokescreen (Stripe) was the prior-art pick but publishes no official image; Squid's `dst` ACLs do the same job from a maintained distro package. Verified locally against the deny list (169.254/16, RFC1918, loopback, CGNAT, `db`, `searxng`, `localtest.me`, IPv4-mapped v6, CONNECT) — every one 403, a public site 200. |
+| MCP client | **Hand-written over httpx** (`web/mcp_client.py`), not the `mcp` SDK | Four operations (open, list, call, close) against one server we run; the SDK would bring anyio/starlette/sse into the api for one caller. Handles JSON and SSE replies; verified against the real v0.0.82 image. |
+| Model route | **`browse.step`**, its own task, following `agent.turn`'s model, pinned to the **research slot** | A new slot role would mean a ninth slot in the Flash-Next pool; the research slot is already the sub-agents' and keeps browse snapshots out of jerv's interactive prefix. Following agent.turn means a local box never sends page text to a cloud default. |
 | Search | **SearXNG primary**, metered APIs as backstop, Tavily optional | The box ran a pre-2026-09-04 SearXNG; the pinned build's curl_cffi client fixed this exact block pattern elsewhere. See B3. |
 
 ## 2. The fence — security is the network, not the tool flags
@@ -46,7 +49,11 @@ models. So the rules are structural:
 - **Budgets.** ~20 steps, a wall-clock cap, a page cap, loop detection. Success is checked
   against the final page, never taken from the model's "done".
 - **Existing sidecars.** `reader` and `byparr` also take untrusted pages but sit on
-  `internal` beside the database. They move behind the same fence in B0.
+  `internal` beside the database. Moving them behind the same fence is **deferred from B0**:
+  each needs its own proxy plumbing verified (the reader's headless Chromium and byparr's
+  Camoufox take a proxy differently, and byparr's FlareSolverr API passes one per request),
+  and a mistake silently breaks two `web_fetch` tiers on a box the owner cannot reach by
+  shell. It is a follow-up with its own on-box check, not a compose one-liner.
 
 ## 2a. The risk gate — mundane actions run, risky ones ask
 
@@ -86,7 +93,7 @@ listed and revocable in Settings, and never extend to the Never tier.
 
 ## 3. Waves
 
-### B0 — The fenced browser, and the instrument ◻️
+### B0 — The fenced browser, and the instrument 🟡 (built 2026-10-05; on-box checks pending)
 - Compose: the `browser` service (playwright-mcp, pinned tag, `--isolated`, HTTP port,
   `shm_size`, `mem_limit`), the `browser` network, the egress proxy service. Move `reader`
   and `byparr` behind the proxy too.
@@ -98,8 +105,24 @@ listed and revocable in Settings, and never extend to the Never tier.
 - **On-box, with notice:** the fence tests must fail closed — 169.254.169.254, an RFC1918
   address, `db:5432`, `searxng:8080`, via a redirect and a rebinding hostname — plus an
   injection canary page. Then the Epic Theatres goal end to end.
+- **Built:** `browser` (playwright-mcp `v0.0.82`, pinned by tag and digest, `--isolated`,
+  `--proxy-server=http://egress:3128`, `--allowed-hosts=browser:8931`, `--no-webmcp`,
+  `--image-responses=omit`, no ports/volumes/env, `cap_drop: ALL`) on the `internal: true`
+  `browser` network, which only `api` and `egress` also join; `egress` (`deploy/Dockerfile.egress`
+  + `deploy/egress/squid.conf`) on `browser` + `browser_out` only. `test_browser_compose.py`
+  pins the membership, the flags, the pins, and that every compose service name is in the
+  proxy's deny list. CI builds the proxy image. `POST /api/debug/browse` (a job, polled at
+  `/jobs/{id}`, `web.browse` scope) and `debug-connect.sh browse` return the step trace, the
+  answer, whether it was verified, the final URL and the exact text jerv would read; `--spec`
+  runs one goal on a chosen model for the bake-off. `/api/debug/fetch` now also reports `gated`.
+- **Deferred:** `reader`/`byparr` behind the proxy (see §2). Ops does not yet group the two
+  new containers (they show under "Other") — B2's Ops work.
+- **Pending on-box (owner notice):** the fence list above, through `debug-connect.sh browse`
+  (the host gate refuses literal private addresses and internal names before the browser sees
+  them, so the proxy's own refusal is exercised with a public name that resolves privately, a
+  redirect, and a rebinding host); the injection canary; the Epic Theatres goal.
 
-### B1 — The `browse` sub-agent ◻️
+### B1 — The `browse` sub-agent 🟡 (built 2026-10-05; bake-off pending)
 - Host loop in the backend: the read-only tool allowlist mapped onto playwright-mcp's
   tools, snapshot pruning (interactive-only, delta where available), budgets, loop
   detection, final-page verification, the quarantined result. Its own task route and slot
@@ -112,6 +135,28 @@ listed and revocable in Settings, and never extend to the Never tier.
 - **Bake-off** on 20–30 of the owner's real tasks, playwright-mcp vs agent-browser behind
   the same loop: success (verified on the final page), steps, time, snapshot tokens,
   tool-call parse failures. The winner ships; the numbers go in this plan.
+- **Built:** `agent/browse.py` (the loop), `agent/browse_policy.py` (the gate, the page view,
+  the quarantine), `agent/browse_actions/*.tool` (the eleven actions the model may pick:
+  navigate, click, type_text, select_option, press_key, go_back, wait_for, tabs, snapshot,
+  finish, give_up — mapped onto eight playwright-mcp tools plus `browser_snapshot`; nothing
+  else on the server is reachable), `prompts/browse.prompt`, and jerv's `browse` tool
+  (`tools/browse.tool`, `agent/browsetools.py`) with jerv prompt guidance (`agent-jerv-v56`).
+  Budgets: 20 steps (ceiling 30), 240 s, 12 distinct pages, the same action refused on the
+  third try and stopping the run on the fourth, six actions in a row that leave the page
+  unchanged stop it. `finish` must quote evidence the host finds on the page as it is NOW;
+  one miss is sent back, a second is accepted but returned to jerv marked UNVERIFIED.
+- **The interim action rule** (until B2's risk gate): typing and selecting only into search,
+  filter, location and date fields (or anything inside the page's `search` landmark), never a
+  field whose label names an email, password, phone, card, account, name, message or code,
+  and never a value shaped like an email or a long number; buttons that buy, book, sign in,
+  send or submit are refused; links always pass (navigation is a GET).
+- **web_fetch hand-off:** the 200-character bar is kept for recovery, but a first page whose
+  wording is a location/store picker (`fetch.looks_like_location_gate`, under 1,500 chars) is
+  now flagged `gated` whatever its length, says so, and — for a caller holding `browse` —
+  suggests it, as an unrendered JS shell now does too.
+- **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
+  untested. The snapshot pruning measured ~3x on Epic's home page (9.0k → 2.8k chars) and
+  ~1.4k tokens on wikipedia.org against the real image.
 
 ### B2 — Seeing it in chat, and approving ◻️ (GUI gate: three mocks, owner picks)
 - A **tool card** in the chat that pops up while `browse` runs (owner decision 2026-10-04:
