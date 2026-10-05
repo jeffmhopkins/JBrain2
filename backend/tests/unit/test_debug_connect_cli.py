@@ -35,6 +35,9 @@ _PNG_B64 = (
 class _Handler(BaseHTTPRequestHandler):
     """Answers every path with the status encoded in it, so one server covers both cases."""
 
+    # What `browse` submitted, so a test reads the exact request the CLI built.
+    browse_bodies: list[dict[str, object]] = []
+
     def _respond(self) -> None:
         status = 422 if "refuse" in self.path else 200
         if "/disk/cleanup" in self.path:
@@ -43,6 +46,10 @@ class _Handler(BaseHTTPRequestHandler):
             payload: dict[str, object] = {"received": json.loads(self.rfile.read(length))}
         elif "/sdr/sweep" in self.path:
             payload = {"job_id": "sweep-1"}
+        elif "/debug/browse" in self.path:
+            length = int(self.headers.get("Content-Length") or 0)
+            _Handler.browse_bodies.append(json.loads(self.rfile.read(length)))
+            payload = {"job_id": "browse-1"}
         elif "/jobs/" in self.path:
             # Done on the first poll, so the test does not sit through a sleep.
             payload = {
@@ -205,3 +212,45 @@ def test_disk_clean_refuses_an_unknown_action_before_calling(box: str) -> None:
     assert result.returncode == 2
     assert result.stdout == ""
     assert "unknown action" in result.stderr
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_browse_submits_the_goal_and_polls_to_the_trace(box: str) -> None:
+    """A browse run takes minutes, so like `sweep` it is a job the CLI must redeem — and the
+    flags have to reach the route as the typed fields, not as strings or not at all."""
+    _Handler.browse_bodies.clear()
+    result = _run(
+        box,
+        "browse",
+        "pick Titusville and list showtimes",
+        "--start-url",
+        "https://www.epictheatres.com/",
+        "--max-steps",
+        "7",
+        "--spec",
+        "local:qwen",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "done"
+    assert _Handler.browse_bodies == [
+        {
+            "goal": "pick Titusville and list showtimes",
+            "start_url": "https://www.epictheatres.com/",
+            "max_steps": 7,
+            "spec": "local:qwen",
+        }
+    ]
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_browse_without_a_goal_is_a_usage_error() -> None:
+    result = subprocess.run(
+        ["bash", str(_SCRIPT), "--token", _token("http://127.0.0.1:1"), "browse"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "usage" in result.stderr

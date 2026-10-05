@@ -2440,3 +2440,103 @@ def test_the_panel_ring_routes_require_the_debug_token(
     bad = {"Authorization": "Bearer nonsense"}
     assert client.get("/api/debug/endpoint/heard", headers=bad).status_code == 401
     assert client.post("/api/debug/endpoint/report-now", headers=bad).status_code == 401
+
+
+# --- The browse sub-agent instrument (BROWSER_AGENT_PLAN.md B0) ------------------------
+
+
+def _browse_job(client: TestClient, key: str, body: dict[str, Any]) -> dict[str, Any]:
+    import time
+
+    sub = client.post("/api/debug/browse", headers=_auth(key), json=body)
+    assert sub.status_code == 202, sub.text
+    job_id = sub.json()["job_id"]
+    status: dict[str, Any] = {"status": "pending"}
+    for _ in range(100):
+        status = client.get(f"/api/debug/jobs/{job_id}", headers=_auth(key)).json()
+        if status["status"] != "pending":
+            break
+        time.sleep(0.05)
+    return status
+
+
+def test_browse_route_runs_a_goal_and_returns_the_trace(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    from jbrain.agent.browse import BrowseAgent
+    from jbrain.llm import FakeLlmClient, LlmRouter
+    from jbrain.web.mcp_client import McpHttpClient
+    from tests.unit.browse_fakes import HOME, TITUSVILLE, FakeBrowser
+
+    client, key = debug_client
+    turns = [
+        LlmTurn("", [ToolCall("c1", "click", {"ref": "e1"})], "tool_use", LlmUsage(1, 1)),
+        LlmTurn("", [ToolCall("c2", "click", {"ref": "e10"})], "tool_use", LlmUsage(1, 1)),
+        LlmTurn(
+            "",
+            [ToolCall("c3", "finish", {"answer": "7:15 PM", "evidence": "7:15 PM, 9:40 PM"})],
+            "tool_use",
+            LlmUsage(1, 1),
+        ),
+    ]
+    router = LlmRouter({"xai": FakeLlmClient(turns=turns)}, {"browse.step": ("xai", "grok-4.3")})
+    browser = FakeBrowser()
+    _state(client).browse_agent = BrowseAgent(
+        router, McpHttpClient("http://browser:8931/mcp", transport=browser.transport())
+    )
+    status = _browse_job(
+        client, key, {"goal": "Titusville showtimes", "start_url": HOME, "max_steps": 5}
+    )
+
+    assert status["status"] == "done", status
+    result = status["result"]
+    assert result["outcome"] == "answered" and result["verified"] is True
+    assert result["final_url"] == TITUSVILLE
+    assert [s["action"] for s in result["steps"]] == ["navigate", "click", "click", "finish"]
+    assert all(s["snapshot_tokens"] > 0 for s in result["steps"])
+    assert result["tool_result"].startswith("[BROWSE RESULT")
+
+
+def test_browse_route_400s_when_no_browser_is_configured(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    from jbrain.agent.browse import BrowseAgent
+    from jbrain.llm import FakeLlmClient, LlmRouter
+    from jbrain.web.mcp_client import McpHttpClient
+
+    client, key = debug_client
+    router = LlmRouter({"xai": FakeLlmClient()}, {"browse.step": ("xai", "grok-4.3")})
+    _state(client).browse_agent = BrowseAgent(router, McpHttpClient(""))
+    resp = client.post("/api/debug/browse", headers=_auth(key), json={"goal": "x"})
+    assert resp.status_code == 400 and "not configured" in resp.json()["detail"]
+
+
+def test_browse_route_validates_and_requires_a_bearer(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+    assert client.post("/api/debug/browse", json={"goal": "x"}).status_code == 401
+    too_many = {"goal": "x", "max_steps": 99}
+    assert client.post("/api/debug/browse", headers=_auth(key), json=too_many).status_code == 422
+    empty = {"goal": ""}
+    assert client.post("/api/debug/browse", headers=_auth(key), json=empty).status_code == 422
+
+
+def test_whoami_lists_the_browse_scope(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    assert "web.browse" in client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
+
+
+def test_fetch_route_flags_a_location_gate(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    gate = (
+        b"<html><head><title>Home - Cinema</title></head><body><p>Your theater:</p>"
+        b"<p>Please select a location</p></body></html>"
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=gate, headers={"content-type": "text/html"})
+
+    _state(client).web_fetcher = WebFetcher(transport=httpx.MockTransport(handle))
+    resp = client.post("/api/debug/fetch", headers=_auth(key), json={"url": "https://c.example/"})
+    assert resp.status_code == 200 and resp.json()["gated"] is True
