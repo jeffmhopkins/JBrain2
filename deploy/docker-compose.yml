@@ -866,6 +866,17 @@ services:
   # - `--no-webmcp` stops a page from registering tools of its own; `--image-responses omit`
   #   keeps screenshots out of the text loop.
   # - No host port: only the api (on `browser`) can reach the MCP endpoint.
+  # - `read_only` root with RAM-backed, size-capped scratch (`/tmp` holds the profile and the
+  #   MCP output dir, `--output-max-size` evicts old outputs): a page that downloads or writes
+  #   without end fills a tmpfs, never the box's disk.
+  # - `config.json` (deploy/browser, read-only from the checkout the box keeps current) adds the
+  #   one Chromium flag the CLI cannot: WebRTC may not send UDP around the proxy.
+  # - ACCEPTED RISK: the api is on `browser` too (it has to reach :8931), so a COMPROMISED
+  #   Chromium — it runs `--no-sandbox` — could open TCP to api:8000 directly, past Caddy. The
+  #   same shape as `pysandbox`/`jcode`, which also share a network with the api. A page cannot
+  #   do it (every request goes through the proxy, which refuses private addresses); it takes
+  #   a browser exploit first. B2 removes it with an MCP-only relay or a network the api reaches
+  #   the browser through without being reachable back (BROWSER_AGENT_PLAN.md §2).
   #
   # PINNED by tag AND digest (v0.0.82, resolved 2026-10-05 from mcr.microsoft.com): the update
   # never re-pulls a floating tag, and playwright-mcp has removed and restored flags between
@@ -888,8 +899,18 @@ services:
       - --image-responses=omit
       - --block-service-workers
       - --output-dir=/tmp/playwright-mcp
+      - --output-max-size=67108864
+      - --config=/etc/playwright-mcp/config.json
       - --timeout-navigation=30000
       - --idle-timeout=300000
+    # The directory, never the file alone: a single-file bind of a missing path makes Docker
+    # create a DIRECTORY there (the searxng note), and the server then fails to start.
+    volumes:
+      - ./src/deploy/browser:/etc/playwright-mcp:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=${BROWSER_SCRATCH_SIZE:-512m},mode=1777
+      - /home/node:size=64m,uid=1000,gid=1000
     mem_limit: ${BROWSER_MEM_LIMIT:-2g}
     shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
     pids_limit: 512

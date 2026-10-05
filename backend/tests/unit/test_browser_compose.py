@@ -96,12 +96,44 @@ def test_the_browser_is_launched_fenced_and_isolated() -> None:
 
 def test_the_browser_holds_nothing_worth_reaching() -> None:
     spec = _compose()["services"]["browser"]
-    assert not spec.get("volumes"), "the browser must mount nothing"
+    # One read-only mount: its launch config, from the checkout. No data, no credential.
+    assert spec["volumes"] == ["./src/deploy/browser:/etc/playwright-mcp:ro"]
     assert not spec.get("environment"), "the browser needs no env: no secrets, no data"
     assert not spec.get("ports"), "only the api, on `browser`, reaches the MCP endpoint"
     assert spec["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in spec["security_opt"]
     assert spec["shm_size"] and spec["mem_limit"] and spec["pids_limit"] > 0
+
+
+def test_the_browser_cannot_fill_the_disk() -> None:
+    """A page that downloads or writes without end fills a size-capped RAM disk, never the
+    box's disk: the root is read-only, every writable path is a sized tmpfs, and the MCP
+    server evicts its own old outputs."""
+    spec = _compose()["services"]["browser"]
+    assert spec["read_only"] is True
+    mounts = {m.split(":", 1)[0]: m for m in spec["tmpfs"]}
+    assert set(mounts) == {"/tmp", "/home/node"}
+    assert all("size=" in m for m in mounts.values())
+    flags = spec["command"]
+    assert "--output-dir=/tmp/playwright-mcp" in flags  # inside the capped /tmp
+    assert any(f.startswith("--output-max-size=") for f in flags)
+
+
+def test_webrtc_cannot_send_udp_around_the_proxy() -> None:
+    import json
+
+    spec = _compose()["services"]["browser"]
+    assert "--config=/etc/playwright-mcp/config.json" in spec["command"]
+    config = json.loads((_DEPLOY / "browser" / "config.json").read_text())
+    args = config["browser"]["launchOptions"]["args"]
+    assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in args
+
+
+def test_the_accepted_api_reachability_risk_is_written_down() -> None:
+    """The api shares `browser`, so a compromised Chromium could reach api:8000 past Caddy.
+    Accepted for now and owned by B2; the record of that lives beside the service."""
+    text = (_DEPLOY / "docker-compose.yml").read_text()
+    assert "ACCEPTED RISK" in text and "api:8000" in text
 
 
 def test_the_browser_and_its_proxy_are_stock_stack() -> None:
@@ -147,6 +179,8 @@ def test_the_proxy_denies_every_non_public_range() -> None:
         "fc00::/7",
         "fe80::/10",
         "::ffff:0:0/96",
+        "2002::/16",
+        "2001::/32",
     } <= _denied_ranges()
 
 
@@ -169,3 +203,17 @@ def test_the_denies_come_before_the_allow() -> None:
 def test_the_proxy_keeps_no_copies_and_names_no_one() -> None:
     assert "cache deny all" in _SQUID
     assert "forwarded_for delete" in _SQUID and "via off" in _SQUID
+
+
+def test_the_proxy_bounds_a_response_and_refuses_localhost_names() -> None:
+    assert re.search(r"^reply_body_max_size \d+ MB$", _SQUID, re.MULTILINE)
+    lan = re.search(r"^acl lan_suffix dstdomain (.+)$", _SQUID, re.MULTILINE)
+    assert lan is not None and ".localhost" in lan[1].split()
+
+
+def test_ci_runs_the_built_proxy_against_its_deny_matrix() -> None:
+    ci = (_DEPLOY.parent / ".github" / "workflows" / "ci.yml").read_text()
+    assert "bash deploy/egress/fence-check.sh http://127.0.0.1:3128" in ci
+    check = (_DEPLOY / "egress" / "fence-check.sh").read_text()
+    for target in ("169.254.169.254", "db:5432", "searxng:8080", "100.64.0.1", "localtest.me"):
+        assert target in check
