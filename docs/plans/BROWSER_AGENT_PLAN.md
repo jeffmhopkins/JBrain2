@@ -134,6 +134,8 @@ listed and revocable in Settings, and never extend to the Never tier.
   redirect, and a rebinding host); the injection canary; the Epic Theatres goal.
 
 ### B1 — The `browse` sub-agent 🟡 (built 2026-10-05; bake-off pending)
+
+> **Superseded host loop:** the step loop below is being replaced by `BROWSER_FAST_LOOP_PLAN.md` (L0–L3); the fence, gates, quarantine and extraction described here stay.
 - Host loop in the backend: the read-only tool allowlist mapped onto playwright-mcp's
   tools, snapshot pruning (interactive-only, delta where available), budgets, loop
   detection, final-page verification, the quarantined result. Its own task route and slot

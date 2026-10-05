@@ -7,34 +7,38 @@ measured 110–240 s for "tonight's showtimes at a cinema with a location picker
 The question was generic: how do people drive a browser with a small local model today, and
 what is our loop doing differently. Epic Theatres is only the worked example.
 
-## Where our time went (measured on the box)
+## Where our time went (measured on the box, B1 loop)
 
-Each step: ~5k tokens of page view prefilled at ~400 tok/s (~12 s on a new page), up to 320
-thinking tokens decoded at 10–20 tok/s (16–32 s), then a verbose tool-call JSON. ~25–35 s a
-step, 5–12 steps a run. Decode — mostly thinking — dominates, then step count, then prefill.
+Before prefix caching and the thinking cap (B1's first runs): ~25–35 s a step, 5–12 steps,
+110–240 s. After both (#1571–#1573, warm): 117–124 s — four navigation steps ~31 s, the
+`finish` decision 45–52 s (its first read of the result page), extraction ~21–25 s. Prompt
+totals of 4.6–8.7k tokens include the system prompt and history; a pruned page view itself is
+~0.7–3k tokens.
 
 ## Findings
 
 - **No framework publishes a quality benchmark for small local models.** browser-use's 89% on
   WebVoyager is GPT-4o (9.7–36 steps a site,
-  <https://browser-use.com/posts/sota-technical-report>). browser-use on a local qwen3:4b hit
-  75–180 s model timeouts where a scripted browser took 4.9 s
-  (<https://lite.ego.app/article/browser-use-local-llm>). Small open models become competitive
-  only after fine-tuning on web trajectories (<https://arxiv.org/html/2602.14721v1>).
-- **Text beats screenshots for small text models**, but only pruned: AgentOccam gained up to
-  +15.8% purely by pruning the observation and shrinking the action set
+  <https://browser-use.com/posts/sota-technical-report>). A company blog post (anecdotal, one
+  hands-on test, no fresh benchmark) reports browser-use on a local qwen3:4b hitting 75–180 s
+  model timeouts where a scripted browser took 4.9 s
+  (<https://lite.ego.app/article/browser-use-local-llm>). Fine-tuning on synthetic web
+  trajectories lifted Qwen3-14B by +9.2 on WebArena (<https://arxiv.org/html/2602.14721v1>).
+- **Text beats screenshots for small text models**, but only pruned: AgentOccam gained +26.6
+  points from aligning the observation and action space (pruning the view, a small action set)
   (<https://arxiv.org/html/2410.13825>); Agent-E switches between text-only, inputs-only and
   all-fields views (<https://arxiv.org/pdf/2407.13032>).
 - **Observation size.** browser-use's distilled DOM keeps interactive elements only, indexed
   `[12]<button>…`, ~1.5–3k tokens a page
   (<https://dev.to/ifnodoraemon/under-the-hood-of-browser-use-100k-stars-dom-tree-distillation-vision-grounding-and-5363>);
   raw playwright-mcp snapshots run 50–200k on app-like pages
-  (<https://github.com/microsoft/playwright-mcp/issues/1233>). Ours, pruned, is ~5k — 2–3×
-  browser-use.
-- **Thinking.** Nothing published shows reasoning helps small models act on the web; Qwen3's
-  report finds no consistent gain for small models (<https://arxiv.org/pdf/2505.09388>), and
-  browser-use's fastest mode (`flash_mode`) turns it off. The usual pattern is thinking off for
-  actions, on only after a failed step.
+  (<https://github.com/microsoft/playwright-mcp/issues/1233>; not independently checked).
+  Ours, pruned, is ~0.7–3k a page.
+- **Thinking.** Nothing published shows reasoning helps small models act on the web, but the
+  evidence against it is weak too: the Qwen3-report claim (<https://arxiv.org/pdf/2505.09388>)
+  is unverified here and concerns Qwen3, not Qwen3.8; browser-use's `flash_mode` drops its own
+  reasoning fields rather than measuring small models. On our box, thinking off wandered twice
+  (13 and 12–14 steps). Treat the thinking budget as something to measure.
 - **Fewer model calls.** Several actions per call — browser-use defaults to
   `max_actions_per_step=5`, stopping the batch when the page changes
   (<https://docs.browser-use.com/open-source/customize/agent/all-parameters>). Deterministic
@@ -42,7 +46,8 @@ step, 5–12 steps a run. Decode — mostly thinking — dominates, then step co
   (<https://docs.browser-use.com/cloud/agent/cache-script>), workflow-use
   (<https://github.com/browser-use/workflow-use>), Stagehand's action cache keyed on the
   instruction and page (<https://docs.stagehand.dev/v4/basics/observe>). Plan-once-then-execute
-  (<https://arxiv.org/pdf/2604.09718>, 80–94% zero-shot).
+  (<https://arxiv.org/pdf/2604.09718>, 80–94% zero-shot — with five frontier models, so not
+  transferable as-is to a ~6B-active model).
 - **Data off the wire.** Most location-picker sites (cinemas, retail) render an empty shell and
   load the data as JSON for the chosen location; the clicks only pick which request the page
   sends. Scrapers (Crawlee, Firecrawl, browser-use forks) record `application/json` responses
@@ -53,10 +58,11 @@ step, 5–12 steps a run. Decode — mostly thinking — dominates, then step co
   per-site `storageState` skips it next time. *Example:* Epic's site loads a theater's schedule
   as unauthenticated JSON after the pick, and every theater has its own URL.
 - **Gap in our stack.** playwright-mcp's `browser_network_requests` lists requests but not
-  their bodies, so capturing response JSON needs our own hook (a thin wrapper server, or an
-  init script installed through `browser_evaluate`).
+  their bodies. An init script via `browser_evaluate` would run after load and be lost on
+  navigation; the workable hook at v0.0.82 is a host-only `browser_run_code_unsafe` call that
+  attaches `context.on('response')` before the first navigation.
 
-## Estimated effect for the worked example (research arithmetic, not measured)
+## Estimated effect for the worked example (research arithmetic from pre-cache numbers, not measured; superseded by the plan's L0)
 
 | Configuration | Calls | Estimate |
 |---|---|---|

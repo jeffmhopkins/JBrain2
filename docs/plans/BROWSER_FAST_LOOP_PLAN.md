@@ -1,96 +1,102 @@
 # Browser fast loop — a generic browse that a local model finishes in seconds
 
-> **Status:** Scheduled · **Last verified:** 2026-10-05 · **Waves:** L1◻️ L2◻️ L3◻️
+> **Status:** Scheduled · **Last verified:** 2026-10-05 · **Waves:** L0◻️ L1◻️ L2◻️ L3◻️
 
-The B1 `browse` sub-agent (`BROWSER_AGENT_PLAN.md`) works and is fenced, but on Flash-Next it
-takes 110–240 s for a simple "showtimes at a cinema with a location picker" goal, sometimes
-times out, and jerv has called it twice in one turn. The owner's bar: a simple page fact should
-not take minutes, and the fix must be **generic** — no site-specific scrapers or reverse-
-engineered APIs. The research (`../research/browser-agent/LOCAL_MODEL_BROWSER_AGENTS.md`) says
-we built the textbook cloud-model loop — one verbose tool call per step, thinking on, a ~5k-token
-page view, clicking through the visible UI — and that local-model setups that work invert each
-of those. This plan supersedes B1's host loop; the fence (B0), the fetch-first gate, the
-quarantine, the risk tiers and the extraction + host fact check all stay.
+The B1 `browse` sub-agent (`BROWSER_AGENT_PLAN.md`) works and is fenced, but on Flash-Next a
+simple fact behind a location picker still takes about two minutes, and jerv has called it
+twice in one turn. The owner's bar: seconds, not minutes, and **generic** — no site-specific
+scrapers or reverse-engineered APIs. The research
+(`../research/browser-agent/LOCAL_MODEL_BROWSER_AGENTS.md`) says we built the textbook
+cloud-model loop — clicking through the visible UI one decision at a time — while setups that
+work on small models read the data the page already has, take fewer and cheaper decisions, and
+replay what worked. This plan supersedes B1's host loop. The B0 fence, the fetch-first gate,
+the action gate, quarantine, budgets, the no-thinking extraction and the host fact check stay.
+An adversarial review (2026-10-05) reshaped the first draft; its points are folded in below.
 
-## 1. Where the time goes, and the target
+## 1. Where the time goes now (measured, warm, after #1573)
 
-Measured per step on the box: ~12 s prefill for a new ~5k-token page (~400 tok/s), 16–32 s of
-capped thinking (10–20 tok/s decode), a few seconds of tool-call JSON. Five to twelve steps.
+Worked example (a cinema with a location picker), B1 loop with prefix caching, page deltas and
+the 320-token thinking cap: **117 s and 124 s**, answered and verified.
 
-| | Today | L1 | L1+L2 | L1+L2+L3 (repeat task) |
-|---|---|---|---|---|
-| Model calls | 5–12 | ~4 | 2–3 | 1 |
-| Worked example, warm | 110–240 s | ~40–60 s | ~20–30 s | ~5–10 s |
+| Phase | Time |
+|---|---|
+| 4 navigation steps (one is a stale-ref retry) | ~31 s |
+| `finish` decision (reads the result page for the first time, then decides) | 45–52 s |
+| Extraction (fresh ~2.7k-token prompt, thinking off) + host fact check | ~21–25 s |
 
-These are research estimates; every wave is measured on the box before the next starts, against
-a fixed **benchmark set** (L1) rather than one site.
+So the cost is spread across *how many decisions*, *the first read of the data page*, and *the
+separate extraction prefill* — not one knob. Targets per wave are stated as measured medians on
+the benchmark set (L0), not this one site.
 
 ## 2. Decisions
 
 | Question | Decision | Why |
 |---|---|---|
-| Thinking on action steps | **Off.** One retry of the same step with low effort + the existing 320-token cap only after a failed action, a refused action, or a no-progress step. | Thinking is most of the decode; no evidence it helps small models act (Qwen3 report, browser-use `flash_mode`). Measured caveat: thinking off *with the old 5k view and one action a step* wandered (13 steps). So it ships only together with the smaller view and batching, and the benchmark decides. |
-| Page view | **Indexed interactive view**: one line per actionable element `[n] role "name" (value)`, numbered from 1 per snapshot, viewport plus one screen below first, repeated rows collapsed, text clipped (~80 chars), a short heading outline. Target ≤1.5–2k tokens. Full readable text only via an explicit `read` action. | browser-use/AgentOccam: pruning the observation is the single biggest accuracy lever for small models, and prefill scales with it. Built host-side from playwright-mcp's snapshot (refs map to our short indexes); no new browser dependency. |
-| Actions per call | **2–5 commands per call**, executed in order; the batch stops at the first one that changes the URL or the page structure, or that the gate refuses; the model then sees the new page. | browser-use's default; pickers and filters become one call. |
-| Action format | **Compact text commands** (`click 12`, `select 4 "Titusville"`, `type 5 "Titusville"`, `enter 5`, `goto <url>`, `read`, `back`, `done "<where>"`), constrained by a **GBNF grammar** sent to llama-server, instead of native tool calling. Cloud models (if ever used) get the same commands without the grammar. | ~10–15 output tokens a command vs 50–100 for a tool call; a grammar makes malformed output impossible. Every command still passes the same host gate as today (refs must be on the latest page, type/select only into search/filter/location/date fields, commit buttons refused, public-http(s) navigation only). |
-| History | Append-only, as today (cache reuse proven on the box): the prompt only grows. Each past step is the commands + one-line outcomes; past *views* stay as sent (never edited); compaction past the cap as today. | Keeps the measured KV reuse. Smaller views make the growth cheap. |
-| Data sources (L2) | **Generic, ordered:** (1) embedded structured data on the page — JSON-LD/microdata and framework hydration blobs; (2) JSON responses the page fetched during the browse; (3) the readable page text. Fed to the existing no-thinking extraction as *quoted data*; the host fact check verifies against the union. | Most location-picker sites load the answer as JSON; scrapers read it this way. Data, not instructions — quarantine unchanged. |
-| Response capture | A thin host-controlled capture, not a playwright-mcp fork: an init script installed by the host through `browser_evaluate` that wraps `fetch`/XHR and keeps same-site `application/json` 2xx bodies (size-capped, analytics hosts dropped) in page memory, read back by the host. If that proves unreliable, a minimal wrapper tool in our own small sidecar image instead. Decided by a spike at the start of L2. | Stock playwright-mcp lists requests but not bodies. |
-| Start point (L2) | Before driving a home page, one web search for a **direct link** (the location/item page) when the goal names a place or item; the fetch-first gate still applies to whatever URL browse starts on. | Skips home-page and picker navigation on most sites. |
-| Site memory (L3) | After a **verified** run, save a per-site **recipe**: the URL template reached, the commands with element *descriptions* (role + name, never indexes), and which data source held the answer; plus the cookies/localStorage diff the run created. Next run with a matching goal shape replays it **without the model**, re-checking each element by description; any mismatch falls back to the normal loop. | Stagehand/browser-use replay. Repeat questions become seconds. |
-| What is never done | No site-specific code, no vendor API knowledge, no stored credentials or logged-in state, no replay of anything but GETs and the same gated commands. | Owner: generic tool. Rule of Two and the B0 fence unchanged. |
+| Measure first | **L0** sweeps the knobs that already exist before building anything. | The draft's diagnosis was stale; thinking-off already failed twice on the box (13 steps; then 12–14 steps, 216 s). Decide from numbers. |
+| Thinking on action steps | The **smallest `reasoning_budget` that keeps benchmark success**, chosen by the L0 sweep (0 / 64 / 128 / 320); "off" is one arm, not the default. Fallback if small budgets wander: **planner-executor** — one capped-thinking call at the start writes a short plan (which control, which value), then no-think execution steps. | Evidence for "off" is weak for this model (the Qwen3 claim is unverified and Qwen3 ≠ Qwen3.8; browser-use's `flash_mode` drops its own reasoning fields, not evidence about small models). |
+| Action format | A **native single `act` tool** whose argument is `commands`: an array (max 5) of a tiny enum schema (`click`, `select`, `type`, `enter`, `goto`, `read`, `back`, `done`) with an index and an optional value. llama-server already constrains tool calls; no adapter change; cloud parity. A raw GBNF grammar is an L0 A/B arm only. | At pin 869034b a custom grammar cannot be combined with tools (`server-common.cpp:1349` throws "Cannot use custom grammar constraints with tools"; `:1254` rejects json_schema with grammar), and whether it constrains thinking is unverified. A tool call is already ~30 tokens (~1 s). Dropping tools would let the extraction append to the cached history — the one real upside, kept as an L0 measurement. |
+| Several actions per call | Up to 5 per call. **Before each next command** the host takes a fresh snapshot after a short settle and re-resolves the command's target by role + name; the batch stops if the target is gone or different, on any gate refusal, or on navigation. The model sees the executed prefix and the first failure. | "Stop when the page changes" is unreliable on single-page apps (late XHR, modals, autocomplete). |
+| Element indexes | **Per-run monotonic** indexes bound to playwright refs (an element keeps its number across steps); "the index must be on the latest page" is enforced as today. | Append-only history keeps old views; per-snapshot numbering would collide with them. |
+| Page view | The **indexed interactive view**: one line per actionable element `[n] role "name" (value)`, viewport plus one screen first, repeated rows collapsed, text clipped; full text via the `read` command. Built host-side from the snapshot. | Smaller views help small models choose (AgentOccam: pruning the observation and action space gave +26.6 points). Today's pruned pages are already ~0.7–3k tokens, so the gain is accuracy and fewer steps more than prefill. |
+| Read data before clicking (L1) | Generic and ordered: (1) **embedded structured data** — schema.org JSON-LD, microdata, framework hydration blobs (`__NEXT_DATA__`, `__NUXT__`, `__APOLLO_STATE__`, Gatsby page-data) — read by **`web_fetch` itself** (`web/fetch.py` already detects these shells but does not read them); (2) when browse starts because the fetch was a **JS shell**, one **extraction attempt on the rendered start page** (text + captured JSON from L2 when available) **before any action step**. | Cheapest generic wins; many pages answer without a single click. |
+| Response capture (L2) | The host calls playwright-mcp's `browser_run_code_unsafe` **once, before the first navigate**, with a **fixed constant script** that attaches `context.on('response')` and keeps capped bodies of first-party `application/json` 2xx responses **in Node memory** (out of the page's reach); a second constant script reads them back. Host-only code: the model can never reach `run_code` (already pinned by `test_browse.py`). | An init script via `browser_evaluate` runs after load, misses the load-time requests that matter, is lost on navigation and is writable by the page. |
+| Fact check with captured data | **Each answer line must be backed by one source** — the page text or one captured response — and the trace names the source. | Checking against the union lets a multi-location JSON "verify" another location's times. |
+| Direct link to a location/item | **jerv's job, not browse's**: search for the location/item page first, then `web_fetch` it; a server-rendered page needs no browse, a JS shell passes the existing fetch-first gate. No gate change, no new egress path inside browse. | Keeps the browse sub-agent single-purpose and the gate unchanged. |
+| Second browse in a turn | Refused for the same registrable domain once a browse returned (answered, page text or timeout) this turn; jerv answers from what it has. | Seen live: a timeout followed by a second full browse. |
+| Site memory (L3) | **Bookmarks, not scripts**: after a *verified* run, remember the final URL per (registrable domain, entity) — e.g. the location page reached — plus which data source held the answer. Next time browse starts there. Replay = navigation only, through `check_url`, same registrable domain; **answers are never cached** (extraction + fact check always run). | Simplest thing that removes the picker on repeat questions; avoids replaying clicks or storing scripts a page could shape. |
+| Saved browser state (L3, optional) | Only after an **explicit B0 amendment**: keep first-party cookies/localStorage created during a verified run for that domain (never third-party/tracker state, never anything from a login — the browser never logs in), injected by a host-only constant script. Ships only if bookmarks alone leave pickers unsolved on the benchmark. | B0 promises an `--isolated` browser where nothing survives a run; changing that is an owner decision, not a side effect. |
+| Where L3 lives | A **DB table with RLS and an isolation test**, classified as **location-firewalled** (non-negotiable 3): keys like "a cinema in Titusville" reveal where the owner goes. Settings off switch; list/delete in Ops and the debug API (rule 10). | Decided now, not in the wave. |
+| Fallback | A Settings/debug switch selects the **B1 loop** until L1 meets its criteria on the box. | Roll back without a deploy or a terminal. |
+| Never | Site-specific code, vendor API knowledge, stored credentials or logged-in state, `run_code` reachable by the model, replay of anything but same-domain navigation through the gate. | Owner: generic. Rule of Two and the B0 fence unchanged. |
 
 ## 3. Waves
 
-### L1 — The fast action loop ◻️
-- Indexed interactive view builder (from the snapshot; refs ↔ indexes per snapshot; viewport-first;
-  collapsing; clip) and the `read` action for full text.
-- Compact command language + GBNF grammar through the LLM adapter (non-negotiable 1): a
-  `grammar` field on the request, local-only on the wire, like `reasoning_budget`.
-- Batched execution (2–5) with stop-on-change; every command through the existing gate;
-  per-command outcomes in the trace.
-- Thinking off on steps; one low-effort, capped retry after a failed/refused/no-progress step.
-- Jerv side: after a browse that returned page text or a timeout for a site, a second `browse`
-  of that registrable domain in the same turn is refused (answer from what you have).
-- **Benchmark set**, generic and fixed, run through debug `/browse` before and after: a cinema
-  with a location picker, a store/stock lookup with a location, a search box → result page, a
-  paginated list, a tabbed detail page, a page needing one filter. Recorded: success, steps,
-  model calls, time, tokens. A wave ships only if success does not drop and time falls.
-- The trace keeps per-step model ms, prompt/cached/output tokens, and now commands per call.
+### L0 — Measure with the knobs we have ◻️
+- **Benchmark set** (generic, fixed, run through debug `/browse`): a cinema with a location
+  picker, a store/stock lookup by location, a search box → result page, a paginated list, a
+  tabbed detail page, a page needing one filter.
+- Arms: `reasoning_budget` 0 / 64 / 128 / 320 on steps (`/complete` already takes it); grammar
+  vs native tool call on a single-step probe; extraction appended to history vs fresh prompt.
+- Recorded per run: success (fact check), steps, model calls, and time per phase (navigation,
+  finish decision, extraction). The result restates §1 and sets L1's numeric targets.
+- **Done when:** a table of arms × benchmark sites is in this plan and the step budget is chosen.
+
+### L1 — Fewer, cheaper decisions ◻️
+- `web_fetch` reads embedded structured data; browse tries extraction on the rendered start page
+  before any action (JS-shell starts).
+- The `act` tool with batched commands, per-command re-resolution, monotonic indexes, the
+  indexed view and `read`; thinking per L0; planner-executor if L0 shows small budgets wander.
+- jerv: search-for-the-page-first guidance; second-browse refusal (tests).
+- Fallback switch to the B1 loop (Settings + debug).
+- **Done when (on the box, benchmark):** success ≥ L0's best arm and median run time ≤ half of
+  L0's best arm; the worked example ≤ 45 s warm.
 
 ### L2 — Read the data, not the screen ◻️
-- Spike: init-script capture vs a wrapper tool; pick one, documented.
-- Embedded-data reader (JSON-LD, microdata, hydration blobs) on every page; response capture
-  during the browse; both summarised into the extraction prompt as fenced data with sizes capped
-  and ranked by overlap with the goal's terms.
-- Direct-link search before the first navigation when the goal names a place/item.
-- Fact check verifies against page text ∪ captured data.
+- Host-only response capture via `browser_run_code_unsafe` (constant scripts, Node memory, caps,
+  first-party JSON only, analytics hosts dropped); captured data and embedded data handed to the
+  extraction as fenced, quarantined data, ranked by overlap with the goal.
+- Single-source fact check, source named in the trace.
+- **Done when:** success ≥ L1 and median run time ≤ L1 − 30%; no answer verified across sources.
 
-### L3 — Site memory ◻️
-- Recipe store per registrable domain (storage abstraction or a table with an RLS isolation
-  test — decided in the wave), with the goal-shape key, element descriptions, URL template,
-  data-source hint, cookies/localStorage diff, last-verified time.
-- Replay without the model; mismatch → normal loop; a failed replay marks the recipe stale.
-- Owner controls: list and delete recipes (debug API + Ops), and an off switch.
+### L3 — Remember where the answer was ◻️
+- Bookmarks table (RLS, isolation test, location-firewalled), written only after verified runs,
+  read at browse start; Settings switch; Ops + debug list/delete.
+- Optional saved first-party state, only with the B0 amendment approved by the owner.
+- **Done when:** a repeat benchmark question runs with no picker interaction and ≤ 2 model calls.
 
 ## 4. Security — what must not move
 
-The B0 fence, the fetch-first gate, the action gate (refs on the latest page, field-type rules,
-commit refusal, public URLs only), quarantine of everything page-derived, budgets and the
-semaphore all apply unchanged to batched commands, the `read` action, captured data and
-replays. Captured JSON and embedded data are *data handed to the extractor*, never prompts the
-action model sees as instructions. Replays use the same gate as live commands. Saved site state
-holds no credentials (the browser never logs in) and stays per-site.
+The B0 fence, the fetch-first gate, the action gate (an index on the latest page, field-type
+rules, commit refusal, public URLs only), quarantine of everything page-derived, budgets and the
+semaphore apply unchanged to batched commands, `read`, captured data and bookmarks. Captured
+JSON is data for the extractor, never instructions to the action model. `run_code` is host-only
+with constant scripts. L3 data is location-firewalled.
 
 ## 5. Risks and open questions
 
-1. **Thinking off may still wander** with the new view; the retry-with-thinking rule and the
-   benchmark guard it. If success drops, keep low effort on the first step only.
-2. **Grammar + llama-server.** Per-request `grammar` is long-standing in llama-server, but it
-   must be confirmed at the Flash-Next pin together with chat templates and reasoning off.
-3. **Indexes vs refs.** Short indexes are per snapshot; a batch that crosses a page change
-   stops before using stale indexes.
-4. **Response capture** misses data loaded before the init script or via WebSocket; the
-   page-text path still covers it.
-5. **Recipes go stale** when sites change; replay re-checks every element and falls back.
-6. **Cloud models**: commands without a grammar; not a target of this plan.
+1. Small thinking budgets may still wander; planner-executor is the named fallback.
+2. Per-command re-resolution costs a snapshot per command; settle time is tuned in L1.
+3. Response capture misses WebSocket and service-worker-served data; page text still covers it.
+4. Bookmarks go stale when sites move pages; a bookmark that fails `check_url` or the gate is
+   dropped and the normal loop runs.
+5. Cloud models (if ever used) get the same `act` tool unchanged.

@@ -610,6 +610,10 @@ in, one way out for local-model loading. W0 and W2 partially landed (the compile
 admission coordinator; the unadmitted debug-console loads now admit); the access-point collapse,
 W1 (caller identity), W3 (five-consumer accounting), and W4 (delete the Anthropic/xAI providers) open.
 
+**In progress:** Browser agent (build plans: `docs/plans/BROWSER_AGENT_PLAN.md`, then
+`docs/plans/BROWSER_FAST_LOOP_PLAN.md`) — a fenced Playwright browser jerv drives as a
+sub-agent; the fast-loop plan makes it a generic tool a local model finishes in seconds.
+
 **In progress:** Flash-Next engine (build plan: `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`) — Qwen3.8-Flash-Next
 (text + image) as a switchable second local-LLM engine in its own container, either/or with the standard
 gateway and operated entirely from the PWA. F1 shipped (engine-aware container, provisioning, one-engine
