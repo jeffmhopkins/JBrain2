@@ -1,0 +1,484 @@
+"""The browse sub-agent's deterministic rules: what it may do, what it sees, what it returns.
+
+Everything here is pure and decided by code, never by the prompt (docs/plans/
+BROWSER_AGENT_PLAN.md §2): the model reading a page is the part an injected page talks to,
+so every action it picks passes these checks before the browser sees it.
+
+- **The action gate.** A ref must come from the latest page (no CSS selectors, no stale
+  refs); navigation is public http(s) only; typing and selecting are allowed only into
+  search, filter, location and date fields (B1's interim stand-in for B2's risk gate — no
+  form ever carries personal data); buttons that commit to something are refused.
+- **The page view.** playwright-mcp's accessibility snapshot, pruned to what the model can
+  act on and the text it needs to read, and capped, so one busy page cannot flood a small
+  model's context.
+- **The quarantine.** What returns to jerv is plain text: links, images and markup are
+  stripped so a poisoned page cannot turn the answer into a beacon or a clickable lure.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import ipaddress
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from urllib.parse import urlsplit, urlunsplit
+
+# --- The page view ------------------------------------------------------------
+
+# Roles the model may act on. Everything else is read, not driven.
+INTERACTIVE_ROLES = frozenset(
+    {
+        "button",
+        "link",
+        "textbox",
+        "searchbox",
+        "combobox",
+        "listbox",
+        "option",
+        "checkbox",
+        "radio",
+        "menuitem",
+        "menuitemcheckbox",
+        "menuitemradio",
+        "tab",
+        "switch",
+        "slider",
+        "spinbutton",
+        "treeitem",
+    }
+)
+# Containers whose only job is structure. Kept only when they carry text of their own.
+_STRUCTURAL_ROLES = frozenset(
+    {"generic", "group", "list", "listitem", "region", "none", "presentation", "separator"}
+)
+# What one page may occupy in the model's context (~6k tokens at 4 chars/token).
+MAX_SNAPSHOT_CHARS = 24_000
+_CHARS_PER_TOKEN = 4
+
+# `- role "name" [attr] [ref=e12]: text` — the shape of one aria-snapshot line, optionally
+# wrapped in YAML single quotes when the name contains a colon.
+_LINE = re.compile(
+    r"^(?P<indent>\s*)-\s+'?(?P<role>[a-z][\w-]*)"
+    r'(?:\s+"(?P<name>(?:[^"\\]|\\.)*)")?'
+    r"(?P<attrs>(?:\s+\[[^\]]*\])*)'?"
+    r"(?::\s*(?P<text>.*))?$"
+)
+_REF = re.compile(r"\[ref=([A-Za-z0-9]+)\]")
+_NOISE_ATTRS = re.compile(r"\s*\[(?:ref=[A-Za-z0-9]+|cursor=[\w-]+|active)\]")
+_TEXT_LINE = re.compile(r'^(?P<indent>\s*)-\s+text:\s*"?(?P<text>.*?)"?$')
+_URL_LINE = re.compile(r"^\s*-\s+/url:")
+
+
+@dataclass(frozen=True)
+class Element:
+    """One actionable element on the page: what the gates judge a click/type/select by."""
+
+    ref: str
+    role: str
+    name: str
+    # Inside a `search` landmark — the page's own declaration that this is a search form.
+    in_search: bool = False
+
+
+@dataclass(frozen=True)
+class PageView:
+    """The current page as the model sees it, plus what the host checks against."""
+
+    url: str = ""
+    title: str = ""
+    status: str = ""
+    outline: str = ""
+    elements: dict[str, Element] = field(default_factory=dict)
+    # Every readable string on the page, whitespace-normalized and lowercased — what a
+    # `finish` evidence quote is verified against.
+    text: str = ""
+    truncated: bool = False
+
+    @property
+    def tokens(self) -> int:
+        return len(self.outline) // _CHARS_PER_TOKEN
+
+    @property
+    def fingerprint(self) -> str:
+        """Changes when the page does — for spotting an action that achieved nothing."""
+        digest = hashlib.sha256(f"{self.url}\x00{self.outline}".encode()).hexdigest()
+        return digest[:16]
+
+    def render(self) -> str:
+        head = [f"URL: {self.url or '(none)'}", f"Title: {self.title or '(none)'}"]
+        if self.status:
+            head.append(f"HTTP status: {self.status}")
+        body = self.outline or "(the page shows nothing readable)"
+        note = (
+            "\n[The page was longer than this view; what is above is its first part.]"
+            if self.truncated
+            else ""
+        )
+        return "\n".join(head) + "\n\nPage:\n" + body + note
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def _unquote(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1]
+    return text.replace('\\"', '"')
+
+
+def _snapshot_yaml(tool_text: str) -> str:
+    """The aria snapshot inside a playwright-mcp result (its ```yaml fence), or ''."""
+    match = re.search(r"```yaml\n(.*?)(?:```|\Z)", tool_text, re.DOTALL)
+    return match.group(1) if match else ""
+
+
+def _page_field(tool_text: str, label: str) -> str:
+    match = re.search(rf"^- {re.escape(label)}:\s*(.*)$", tool_text, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def parse_page(tool_text: str, *, cap: int = MAX_SNAPSHOT_CHARS) -> PageView:
+    """Turn a `browser_snapshot` result into the pruned view the model reads.
+
+    Kept: every interactive element (with its ref), and every line that carries readable
+    text. Dropped: link targets (`/url:` — the model clicks refs, it never needs an
+    address), refs on non-interactive lines, and structural wrappers with nothing to say.
+    Indentation is halved, which is most of a deep tree's bytes."""
+    yaml = _snapshot_yaml(tool_text)
+    elements: dict[str, Element] = {}
+    texts: list[str] = []
+    out: list[str] = []
+    search_depth: int | None = None
+    size = 0
+    truncated = False
+    for raw in yaml.splitlines():
+        if not raw.strip() or _URL_LINE.match(raw):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if search_depth is not None and indent <= search_depth:
+            search_depth = None
+        text_line = _TEXT_LINE.match(raw)
+        if text_line:
+            value = _unquote(text_line.group("text"))
+            if not value:
+                continue
+            texts.append(value)
+            line = f"{' ' * (indent // 2)}- {value}"
+        else:
+            match = _LINE.match(raw)
+            if match is None:
+                continue
+            role = match.group("role")
+            name = _unquote(f'"{match.group("name")}"') if match.group("name") else ""
+            attrs = match.group("attrs") or ""
+            trailing = _unquote(match.group("text") or "")
+            if role == "search":
+                search_depth = indent
+            ref_match = _REF.search(attrs)
+            interactive = role in INTERACTIVE_ROLES and ref_match is not None
+            if name:
+                texts.append(name)
+            if trailing:
+                texts.append(trailing)
+            if not interactive and not name and not trailing:
+                continue
+            if role in _STRUCTURAL_ROLES and not interactive and not name:
+                line = f"{' ' * (indent // 2)}- {trailing}"
+            else:
+                shown_attrs = _NOISE_ATTRS.sub("", attrs).strip()
+                line = f"{' ' * (indent // 2)}- {role}"
+                if name:
+                    line += f' "{name}"'
+                if shown_attrs:
+                    line += f" {shown_attrs}"
+                if interactive and ref_match is not None:
+                    ref = ref_match.group(1)
+                    elements[ref] = Element(
+                        ref=ref, role=role, name=name, in_search=search_depth is not None
+                    )
+                    line += f" [ref={ref}]"
+                if trailing:
+                    line += f": {trailing}"
+        if size + len(line) + 1 > cap:
+            truncated = True
+            continue
+        out.append(line)
+        size += len(line) + 1
+    return PageView(
+        url=_page_field(tool_text, "Page URL"),
+        title=_page_field(tool_text, "Page Title"),
+        status=_page_field(tool_text, "HTTP status"),
+        outline="\n".join(out),
+        elements=elements,
+        text=_normalize(" ".join(texts)),
+        truncated=truncated,
+    )
+
+
+# --- The action gate ----------------------------------------------------------
+
+_REF_SHAPE = re.compile(r"^[A-Za-z0-9]{1,16}$")
+_LAN_SUFFIXES = (".local", ".internal", ".lan", ".localdomain", ".home.arpa", ".localhost")
+MAX_URL_CHARS = 2_000
+MAX_TYPED_CHARS = 200
+MAX_SELECT_VALUES = 5
+MAX_WAIT_SECONDS = 5.0
+ALLOWED_KEYS = frozenset(
+    {
+        "Enter",
+        "Tab",
+        "Escape",
+        "ArrowDown",
+        "ArrowUp",
+        "ArrowLeft",
+        "ArrowRight",
+        "PageDown",
+        "PageUp",
+        "Home",
+        "End",
+    }
+)
+TAB_ACTIONS = frozenset({"list", "select", "close", "new"})
+
+# Fields typing is allowed into: search and filter boxes, location pickers (a zip, a city, a
+# store), and dates. B1's interim rule until B2's risk gate: anything else is refused.
+_ALLOWED_FIELD = re.compile(
+    r"search|find|filter|query|keyword|look ?up|\bzip\b|zip ?code|postal|post ?code|"
+    r"\bcity\b|\btown\b|location|\bnear\b|\bwhere\b|\baddress\b|\bstate\b|region|"
+    r"\bdate\b|\bwhen\b|\bday\b|\bmonth\b|\byear\b|\bstore\b|theat(?:er|re)|cinema|"
+    r"\bsort\b|order by|\bshow\b|\bview\b|categor|genre|\btype\b|format|language|per page",
+    re.IGNORECASE,
+)
+# Fields refused even when the allow list also matches ("Search your account email").
+_DENIED_FIELD = re.compile(
+    r"pass(?:word|code|phrase)?\b|e-?mail|phone|mobile|\btel\b|card|\bcvv\b|\bcvc\b|"
+    r"security code|expir|\bssn\b|social security|account|routing|\biban\b|user ?name|"
+    r"\blog ?in\b|sign ?in|first name|last name|full name|your name|name on|birth|\bdob\b|"
+    r"\botp\b|one[- ]time|verification|\b2fa\b|\bpin\b|comment|message|review|reply|"
+    r"coupon|promo|gift ?card|licen[cs]e|passport|\btax\b|signature|quantity|\bqty\b",
+    re.IGNORECASE,
+)
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# A value with this many digits is a phone, card or account number, never a zip or a date.
+_MAX_DIGITS = 9
+# Buttons that commit the visitor to something. Links are navigation (a GET) and pass; a
+# button that buys, books, signs in or sends does not, whatever the page calls it.
+_COMMIT_BUTTON = re.compile(
+    r"\bplace (?:my )?order\b|\bpay\b|\bpay now\b|\bpurchase\b|\bcheck ?out\b|\bcheckout\b|"
+    r"\bcomplete (?:order|purchase|booking)\b|\bconfirm\b|\bsubmit\b|\bsign ?up\b|"
+    r"\bregister\b|\bsubscribe\b|\bsend\b|\bpost\b|\bpublish\b|\bdelete\b|\blog ?in\b|"
+    r"\bsign ?in\b|\bdonate\b|\bbook now\b|\breserve\b|\bcreate account\b|\bapply\b|"
+    r"\badd to (?:cart|bag|basket)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def check_url(url: str) -> str | None:
+    """Why `url` may not be opened, or None. Defense in depth: the egress proxy is the real
+    fence, but refusing here keeps an obviously internal address out of the trace and gives
+    the model a reason it can act on."""
+    url = url.strip()
+    if not url:
+        return "navigate needs a URL."
+    if len(url) > MAX_URL_CHARS:
+        return "That address is too long."
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return "That is not a valid web address."
+    if parts.scheme not in ("http", "https"):
+        return "Only http and https addresses can be opened."
+    if parts.username or parts.password:
+        return "Addresses with a user name or password in them are refused."
+    if not host:
+        return "That address has no host."
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        ip = None
+    if ip is not None:
+        return None if _is_public_ip(ip) else "That address is on a private network; refused."
+    if "." not in host or host == "localhost" or host.endswith(_LAN_SUFFIXES):
+        return "That is a local or internal host name, not a public site; refused."
+    return None
+
+
+def _element(page: PageView, ref: object) -> tuple[Element | None, str | None]:
+    if not isinstance(ref, str) or not _REF_SHAPE.match(ref.strip()):
+        return None, "Pass the element's ref exactly as shown on the latest page, e.g. e46."
+    element = page.elements.get(ref.strip())
+    if element is None:
+        return None, (
+            f"There is no actionable element with ref {ref.strip()} on the current page. Refs"
+            " change when the page changes — use one from the latest page."
+        )
+    return element, None
+
+
+def check_value(text: str) -> str | None:
+    """Why a value may not be typed, or None: too long, or shaped like personal data."""
+    if len(text) > MAX_TYPED_CHARS:
+        return "That is too much text for a search or filter field."
+    if _EMAIL.search(text):
+        return "Typing an email address is refused."
+    if sum(c.isdigit() for c in text) > _MAX_DIGITS:
+        return "Typing a long number (a phone, card or account number) is refused."
+    return None
+
+
+def _field_allowed(element: Element) -> bool:
+    if _DENIED_FIELD.search(element.name):
+        return False
+    return (
+        element.role == "searchbox"
+        or element.in_search
+        or bool(_ALLOWED_FIELD.search(element.name))
+    )
+
+
+def check_click(page: PageView, ref: object) -> tuple[Element | None, str | None]:
+    element, problem = _element(page, ref)
+    if element is None:
+        return None, problem
+    if element.role in {"button", "menuitem"} and _COMMIT_BUTTON.search(element.name):
+        return None, (
+            f'Clicking "{element.name}" is refused: it would buy, book, sign in, send or submit'
+            " something, and this browser only reads."
+        )
+    return element, None
+
+
+_TYPE_ROLES = frozenset({"textbox", "searchbox", "combobox", "spinbutton"})
+_SELECT_ROLES = frozenset({"combobox", "listbox"})
+
+
+def check_type(page: PageView, ref: object, text: object) -> tuple[Element | None, str | None]:
+    element, problem = _element(page, ref)
+    if element is None:
+        return None, problem
+    if not isinstance(text, str) or not text.strip():
+        return None, "type_text needs the text to type."
+    if element.role not in _TYPE_ROLES:
+        return None, f"Element {element.ref} is a {element.role}, not a text field."
+    if not _field_allowed(element):
+        label = f'"{element.name}"' if element.name else "an unlabelled field"
+        return None, (
+            f"Typing into {label} is refused: only search, filter, location and date fields"
+            " may be typed into. Click a link or choose from a list instead."
+        )
+    value_problem = check_value(text)
+    if value_problem is not None:
+        return None, value_problem
+    return element, None
+
+
+def check_select(page: PageView, ref: object, values: object) -> tuple[Element | None, str | None]:
+    element, problem = _element(page, ref)
+    if element is None:
+        return None, problem
+    if element.role not in _SELECT_ROLES:
+        return None, f"Element {element.ref} is a {element.role}, not a dropdown; click it instead."
+    if (
+        not isinstance(values, list)
+        or not values
+        or len(values) > MAX_SELECT_VALUES
+        or not all(isinstance(v, str) and v.strip() for v in values)
+    ):
+        return None, f"select_option needs 1 to {MAX_SELECT_VALUES} option labels."
+    if not _field_allowed(element):
+        label = f'"{element.name}"' if element.name else "an unlabelled dropdown"
+        return None, (
+            f"Choosing in {label} is refused: only location, store, date, sort and filter"
+            " dropdowns may be changed."
+        )
+    for value in values:
+        value_problem = check_value(value)
+        if value_problem is not None:
+            return None, value_problem
+    return element, None
+
+
+def check_key(key: object) -> str | None:
+    if not isinstance(key, str) or key not in ALLOWED_KEYS:
+        return f"Only these keys may be pressed: {', '.join(sorted(ALLOWED_KEYS))}."
+    return None
+
+
+# --- Verification and quarantine ------------------------------------------------
+
+MAX_EVIDENCE_CHARS = 300
+MAX_ANSWER_CHARS = 2_000
+
+
+def evidence_on_page(evidence: str, page: PageView) -> bool:
+    """Whether the model's quoted evidence is really on the page it is looking at — the
+    check that success is taken from the page, never from the model's word."""
+    quote = _normalize(evidence)
+    if len(quote) < 3 or len(quote) > MAX_EVIDENCE_CHARS:
+        return False
+    return quote in page.text
+
+
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_REF_LINK = re.compile(r"\[([^\]]*)\]\[[^\]]*\]")
+_HTML_TAG = re.compile(r"<[^>\n]{0,500}>")
+_SCHEME_URL = re.compile(r"\b(?:https?|ftp|data|javascript|file|mailto|blob):\S+", re.IGNORECASE)
+_WWW = re.compile(r"\bwww\.\S+", re.IGNORECASE)
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏‪-‮⁦-⁩]")
+
+
+def quarantine(text: str, *, cap: int = MAX_ANSWER_CHARS) -> str:
+    """Reduce the sub-agent's answer to inert plain text: no markdown images or links, no
+    markup, no addresses, no control or bidi characters, bounded length. The URLs jerv may
+    cite come from the pages the HOST saw, never from this text."""
+    text = _MD_IMAGE.sub("", text)
+    text = _MD_LINK.sub(r"\1", text)
+    text = _MD_REF_LINK.sub(r"\1", text)
+    text = _HTML_TAG.sub("", text)
+    text = _SCHEME_URL.sub("[link removed]", text)
+    text = _WWW.sub("[link removed]", text)
+    text = _CONTROL.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) > cap:
+        text = text[: cap - 1].rstrip() + "…"
+    return text
+
+
+def clean_source(url: str) -> str | None:
+    """A visited page's URL as a citation: http(s) only, credentials and fragment dropped."""
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    netloc = parts.hostname + (f":{parts.port}" if parts.port else "")
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, ""))
+
+
+def sources_from(urls: Sequence[str], *, limit: int = 8) -> tuple[str, ...]:
+    seen: list[str] = []
+    for url in urls:
+        cleaned = clean_source(url)
+        if cleaned and cleaned not in seen and check_url(cleaned) is None:
+            seen.append(cleaned)
+    return tuple(seen[-limit:])

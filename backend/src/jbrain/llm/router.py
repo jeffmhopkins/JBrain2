@@ -90,6 +90,12 @@ TASK_DEFAULTS: dict[str, str] = {
     # names its own chat mid-turn through the `name_session` tool, so there is no second call
     # to route at all. A report has no turn to name itself from, so this one stays.)
     "research.title": "xai:grok-4.3",
+    # One step of jerv's `browse` sub-agent (docs/plans/BROWSER_AGENT_PLAN.md B1): read the
+    # pruned page, pick one browser action. Its own task so the ledger and logs tell browsing
+    # apart from chat, and so TASK_ROLES can pin it to the research slot rather than jerv's.
+    # It FOLLOWS agent.turn (`_FOLLOW_PRIMARY_MODEL`): the browse loop runs on the model the
+    # owner chats with, so a local box never quietly sends page text to a cloud default.
+    "browse.step": "xai:grok-4.3",
     # The Phase-6 wiki builder (docs/plans/PHASE6_WIKI_PLAN.md): `wiki.rewrite` drafts a
     # type-guided article from an entity's cited facts; `wiki.ground` is the strict
     # grounding verifier (the entity graph wins on conflict). Without these the
@@ -136,6 +142,7 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     "pet.statue": "high",
     # Medium reasoning
     "agent.turn": "medium",
+    "browse.step": "medium",
     "correction_note.extract": "medium",
     "video.summarize": "medium",
     "wiki.rewrite": "medium",
@@ -191,14 +198,14 @@ def task_tier(task: str) -> str | None:
 
 # The one task whose model is "the model the operator is using" — the chat agent's turn.
 _PRIMARY_MODEL_TASK = "agent.turn"
-# Tasks that FOLLOW the primary chat model instead of carrying their own routing. Both are
-# cheap one-shot titles: a fresh box runs them wherever `agent.turn` runs (same TASK_DEFAULTS
-# spec, so unchanged out of the box), and the moment the operator re-routes `agent.turn` — e.g.
-# points it at a local model — the titles move with it, with no separate override to remember
-# (the gap that left `research.title` alone on the off-box default on a local-only box). They
-# keep their OWN low/none reasoning effort, and an explicit per-task pin still wins over the
+# Tasks that FOLLOW the primary chat model instead of carrying their own routing: the report
+# title and the browse sub-agent's step. A fresh box runs them wherever `agent.turn` runs (same
+# TASK_DEFAULTS spec, so unchanged out of the box), and the moment the operator re-routes
+# `agent.turn` — e.g. points it at a local model — they move with it, with no separate override
+# to remember (the gap that left `research.title` alone on the off-box default on a local-only
+# box). They keep their OWN reasoning effort, and an explicit per-task pin still wins over the
 # follow (see `_resolve_live`). A prompt that passes a `strength` tier opts out.
-_FOLLOW_PRIMARY_MODEL = frozenset({"research.title"})
+_FOLLOW_PRIMARY_MODEL = frozenset({"research.title", "browse.step"})
 
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a
 # tier, never a model, so swapping the model behind a tier is config, not a

@@ -97,6 +97,12 @@ ensure_uv() {
 # service (deploy/Dockerfile.pysandbox), deliberately a separate container so nothing it runs
 # shares this environment. A dev box without the stack running simply has the tool absent from
 # the registry (an unset pysandbox_url drops the sidecar), which is the intended degrade.
+#
+# The `browse` tool needs no dependency here either (docs/plans/BROWSER_AGENT_PLAN.md): the
+# browser is the `browser` compose service (Microsoft's playwright-mcp image) behind the
+# `egress` proxy (deploy/Dockerfile.egress), and the backend speaks MCP to it over the httpx
+# it already ships (jbrain/web/mcp_client.py) — no `mcp` SDK, no Playwright in this venv. The
+# tests fake the server (tests/unit/browse_fakes.py), so a dev box needs no browser at all.
 sync_python() { # sync_python <dir>
   local dir="$1" stamp="py-${1//\//-}"
   if [ ! -f "$dir/pyproject.toml" ]; then

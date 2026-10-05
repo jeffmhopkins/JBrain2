@@ -141,6 +141,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "grokipedia",
             "public_records",
             "portal_search",
+            # The browse sub-agent (BROWSER_AGENT_PLAN.md B1): jerv-only, never a child's.
+            "browse",
             "external_video",
             "show_external_video",
             "remove_external_video",
@@ -884,8 +886,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "db6b63a3e790ccfc861ddd23c806df9f2461ca5981f0c41df39103b8eae7621e",
         ),
         "jerv": (
-            "agent-jerv-v55",
-            "fc3248cfabeed854f1fc7c273ec2f35e7a41fc2273cef29d5bf176c9ce9e3a45",
+            "agent-jerv-v56",
+            "90c2ae0e47de67be30a0ea3ec323797f4ab6104b724d15882bb5070f62d66989",
         ),
         "archivist": (
             "agent-archivist-v15",

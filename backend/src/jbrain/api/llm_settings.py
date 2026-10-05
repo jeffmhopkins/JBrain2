@@ -101,6 +101,7 @@ TASK_LABELS: dict[str, str] = {
     "vision.caption": "Vision caption",
     "video.summarize": "Video summary",
     "research.title": "Research report title",
+    "browse.step": "Browser agent step",
     "wiki.rewrite": "Wiki rewrite",
     "wiki.ground": "Wiki grounding",
     "wiki.lint.contradiction": "Wiki lint — contradiction",
@@ -119,7 +120,10 @@ TASK_LABELS: dict[str, str] = {
 #
 # The chat-title twin is gone: jerv names its own chat mid-turn via `name_session`, so there
 # is no second completion to route or to hide (jbrain.agent.sessiontools).
-_HIDDEN_TASKS: frozenset[str] = frozenset({"research.title"})
+#
+# `browse.step` is hidden for the same reason: the browse sub-agent follows agent.turn, so a
+# picker entry for it would be a control that does nothing.
+_HIDDEN_TASKS: frozenset[str] = frozenset({"research.title", "browse.step"})
 
 
 # Tasks that send image content to the model and so require a vision-capable provider:

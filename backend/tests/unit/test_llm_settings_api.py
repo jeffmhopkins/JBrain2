@@ -84,6 +84,7 @@ def test_get_defaults_grok_and_low_for_empty_store(
     assert {t["id"] for t in body["tasks"]} == set(TASK_DEFAULTS) - {
         "session.title",
         "research.title",
+        "browse.step",
     }
     effort = {t["id"]: t["reasoning_effort"] for t in body["tasks"]}
     assert all(t["provider"] == "grok" for t in body["tasks"])

@@ -18,6 +18,8 @@ from jbrain.agent.brainevents import (
     build_flag_emitter,
     build_value_emitter,
 )
+from jbrain.agent.browse import BrowseAgent
+from jbrain.agent.browsetools import build_browse_handlers
 from jbrain.agent.continuation import PlanContinuationRunner, run_plan_continuation_loop
 from jbrain.agent.croptools import build_crop_handlers
 from jbrain.agent.deepest_tool import DeepestHandle
@@ -242,6 +244,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
+from jbrain.web.mcp_client import McpHttpClient
 from jbrain.web.portals import FlDfsResolver, FlSunbizResolver
 from jbrain.web.tavily_health import NOTIFY_KIND as TAVILY_NOTIFY_KIND
 from jbrain.web.tavily_health import TavilyHealth
@@ -1191,6 +1194,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         python_handlers = (
             build_python_handlers(app.state.pysandbox) if app.state.pysandbox.configured else None
         )
+        # jerv's `browse` sub-agent (docs/plans/BROWSER_AGENT_PLAN.md): our own loop, through
+        # the LLM adapter, over the fenced playwright-mcp `browser` sidecar. On app.state so
+        # the debug console's `/browse` drives the SAME agent jerv does. An empty URL drops the
+        # tool from the registry and the debug route reports it unconfigured.
+        app.state.browse_agent = BrowseAgent(
+            app.state.llm_router,
+            McpHttpClient(settings.browser_mcp_url),
+            max_steps=settings.browse_max_steps,
+            wall_seconds=settings.browse_wall_seconds,
+            max_pages=settings.browse_max_pages,
+        )
+        browse_handlers = (
+            build_browse_handlers(app.state.browse_agent, emit=brain_emit)
+            if app.state.browse_agent.configured
+            else None
+        )
         # jerv's canvas (docs/plans/AGENT_CANVAS_PLAN.md): mark up the owner's photo,
         # or sketch on a blank sheet, through a retained scene the model edits by id.
         # The `html` op renders through the egress-free htmlrender sidecar; with no
@@ -1261,6 +1280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ocr_handlers=ocr_handlers,
             html_handlers=html_handlers,
             python_handlers=python_handlers,
+            browse_handlers=browse_handlers,
             canvas_handlers=canvas_handlers,
             crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,
