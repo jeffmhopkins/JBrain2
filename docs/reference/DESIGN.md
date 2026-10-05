@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-10-05
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -143,6 +143,9 @@ accent as the glyph color — one tint formula, no per-type `-tint` tokens.
   titles) · 22 (screen titles) · 28 (wordmark/hero). Line-height 1.4. Two 20px
   steps sit above body for prose read at length: `--fs-editor` (the
   focused-writer page) and `--fs-chat`.
+- **Markdown headings scale with the prose they sit in** (`em`, not a size token): `#`
+  1.25×, `##` 1.15×, deeper 1.05×, weight 600. A fixed `--fs-note` heading read SMALLER
+  than the 20px chat body once Flash-Next started writing real `###` headings (2026-10-05).
 - **A conversation and the note it is about read at the SAME size**
   (`--fs-chat`, on both `.bubble` and `.fb-turn0-body`). They did not: the
   bubble carried a raw `15px` while turn 0 took `--fs-secondary`, so the
