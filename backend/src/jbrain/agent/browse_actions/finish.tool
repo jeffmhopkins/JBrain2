@@ -1,17 +1,13 @@
 ---
 name: finish
-version: 2
+version: 3
 permission: web
 params:
   type: object
   properties:
-    answer:
+    note:
       type: string
-      description: 'The raw facts the goal asks for, one per line, exactly as the page states them (e.g. "Dune: 7:15 PM, 9:40 PM"). No sentences or commentary.'
-    evidence:
-      type: string
-      description: A short phrase copied word for word from the current page that supports the answer.
-  required: [answer, evidence]
+      description: 'Optional, a few words: where on the page the answer is (e.g. "the Dune listing under Today").'
 ---
-Report the answer and stop. The evidence must appear on the current page exactly as
-written; it is checked.
+Stop here: the current page shows what the goal asks. Do not write the answer — the facts
+are read off this page for you. Call it while you are ON that page.

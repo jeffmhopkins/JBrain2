@@ -2472,12 +2472,9 @@ def test_browse_route_runs_a_goal_and_returns_the_trace(
     turns = [
         LlmTurn("", [ToolCall("c1", "click", {"ref": "e1"})], "tool_use", LlmUsage(1, 1)),
         LlmTurn("", [ToolCall("c2", "click", {"ref": "e10"})], "tool_use", LlmUsage(900, 20, 850)),
-        LlmTurn(
-            "",
-            [ToolCall("c3", "finish", {"answer": "7:15 PM", "evidence": "7:15 PM, 9:40 PM"})],
-            "tool_use",
-            LlmUsage(1, 1),
-        ),
+        LlmTurn("", [ToolCall("c3", "finish", {})], "tool_use", LlmUsage(1, 1)),
+        # The host's extraction call: text, no tools.
+        LlmTurn("Dune: Part Three: 7:15 PM, 9:40 PM", [], "end_turn", LlmUsage(300, 12)),
     ]
     router = LlmRouter({"xai": FakeLlmClient(turns=turns)}, {"browse.step": ("xai", "grok-4.3")})
     browser = FakeBrowser()
@@ -2492,12 +2489,19 @@ def test_browse_route_runs_a_goal_and_returns_the_trace(
     result = status["result"]
     assert result["outcome"] == "answered" and result["verified"] is True
     assert result["final_url"] == TITUSVILLE
-    assert [s["action"] for s in result["steps"]] == ["navigate", "click", "click", "finish"]
-    assert all(s["snapshot_tokens"] > 0 for s in result["steps"])
-    # Each model-chosen step carries the server's prompt/cache counts; the host's own start
+    assert [s["action"] for s in result["steps"]] == [
+        "navigate",
+        "click",
+        "click",
+        "finish",
+        "extract",
+    ]
+    assert all(s["snapshot_tokens"] > 0 for s in result["steps"][:-1])
+    assert result["steps"][-1]["note"].startswith("verified:")
+    # Each model call's step carries the server's prompt/cache counts; the host's own start
     # navigation, which no model call chose, carries none.
     counts = [(s["prompt_tokens"], s["cached_tokens"], s["output_tokens"]) for s in result["steps"]]
-    assert counts == [(0, 0, 0), (1, 0, 1), (900, 850, 20), (1, 0, 1)]
+    assert counts == [(0, 0, 0), (1, 0, 1), (900, 850, 20), (1, 0, 1), (300, 0, 12)]
     assert result["tool_result"].startswith("[BROWSE RESULT")
 
 

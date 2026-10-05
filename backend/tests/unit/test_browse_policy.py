@@ -309,17 +309,49 @@ def test_only_navigation_keys_may_be_pressed() -> None:
 # --- Verification and quarantine ------------------------------------------------------
 
 
-def test_evidence_must_be_on_the_page_as_written() -> None:
+def test_salient_tokens_are_the_names_times_and_numbers() -> None:
+    assert policy.salient_tokens("Dune: Part Three: 7:15PM, 9:40 p.m.") == [
+        "7:15 pm",
+        "9:40 pm",
+        "dune",
+        "part",
+        "three",
+    ]
+    # Prices and dates are whole tokens; digits inside a word, short and function words and
+    # lowercase prose are not checkable facts.
+    assert policy.salient_tokens("The F1 movie, 7th row: $12.50 on 10/05.") == ["$12.50", "10/05"]
+    assert policy.salient_tokens("'Amélie' at the Ritz") == ["amélie", "ritz"]
+    assert policy.salient_tokens("all day, every day") == []
+
+
+def test_an_answer_read_off_the_page_is_verified() -> None:
     page = _page(TITUSVILLE)
-    assert policy.evidence_on_page("7:15 PM,  9:40 PM", page)  # whitespace/case normalized
-    assert not policy.evidence_on_page("8:00 PM", page)
-    assert not policy.evidence_on_page("Du", page)  # too short to prove anything
-    # "the" or a single word is on almost every page: it proves nothing about this one.
-    assert not policy.evidence_on_page("the", _page(HOME))
-    assert not policy.evidence_on_page("Titusville", page.__class__(text="titusville"))
-    assert policy.evidence_on_page("Epic Titusville 15", page)  # three words
-    assert policy.evidence_on_page("dune: part three 7:15", page)
-    assert not policy.evidence_on_page("x" * 400, page)
+    # Respaced, recased and lookalike-folded times still match the page.
+    check = policy.facts_on_page("Dune: Part Three: 7:15PM, ９:40 pm\n\nEpic Titusville 15", page)
+    assert check.verified and (check.found, check.total) == (8, 8)
+    assert check.describe() == "verified: 8 of 8 names, times and numbers on the page"
+    # Most but not all: a misspelt name among many good facts still passes.
+    assert policy.facts_on_page("Dune: Part Three: 7:15 PM, 9:40 PM, Epic Titusvile", page).verified
+
+
+def test_an_answer_not_on_the_page_is_not_verified() -> None:
+    page = _page(TITUSVILLE)
+    # Whole tokens only: "7:15" is on the page, "7:1" and "15 pm" are not.
+    assert not policy.facts_on_page("Avatar: 7:1 PM", page).verified
+    # Too few found.
+    invented = policy.facts_on_page("Dune: Avatar Matrix Alien Gladiator 8:00 PM", page)
+    assert not invented.verified and invented.found == 1
+    assert invented.describe().startswith("UNVERIFIED: 1 of 6")
+    # One line with nothing on the page fails the whole answer, however good the rest.
+    mixed = policy.facts_on_page(
+        "Dune: Part Three: 7:15 PM, 9:40 PM\nThe Long Walk: 4:00 PM\nAvatar: 11:55 PM", page
+    )
+    assert mixed.found / mixed.total >= policy.MIN_FACT_SHARE and mixed.lines_missed == 1
+    assert not mixed.verified and mixed.describe().endswith("1 line(s) had none")
+    # Nothing checkable is never "verified": prose proves nothing about the page.
+    empty = policy.facts_on_page("it is showing tonight", page)
+    assert not empty.verified and empty.total == 0
+    assert empty.describe().startswith("UNVERIFIED: nothing in the answer")
 
 
 def test_the_quarantine_leaves_inert_plain_text() -> None:

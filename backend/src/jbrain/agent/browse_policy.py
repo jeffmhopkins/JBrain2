@@ -13,6 +13,8 @@ so every action it picks passes these checks before the browser sees it.
   model's context. When the page is the one the model last saw, only what changed is sent
   (`page_delta`): the loop never rewrites a page it already sent, so every page stays in the
   prompt and an unchanged one must not be paid for twice.
+- **The fact check.** An answer is verified by the host, not the model: its names, times and
+  numbers must be on the final page's full text (`facts_on_page`).
 - **The quarantine.** What returns to jerv is plain text: links, images and markup are
   stripped so a poisoned page cannot turn the answer into a beacon or a clickable lure.
 """
@@ -109,8 +111,8 @@ class PageView:
     status: str = ""
     outline: str = ""
     elements: dict[str, Element] = field(default_factory=dict)
-    # Every readable string on the page, whitespace-normalized and lowercased — what a
-    # `finish` evidence quote is verified against.
+    # Every readable string on the page, whitespace-normalized and lowercased — what an
+    # answer's facts are checked against (`facts_on_page`).
     text: str = ""
     truncated: bool = False
     # The same strings as the page shows them, one per line — what a run that stops before an
@@ -588,23 +590,93 @@ def check_key(key: object) -> str | None:
 
 # --- Verification and quarantine ------------------------------------------------
 
-MAX_EVIDENCE_CHARS = 300
-MIN_EVIDENCE_CHARS = 20
-MIN_EVIDENCE_WORDS = 3
 # The answer is raw facts for jerv to write up, not prose (B1's short-finish fix).
 MAX_ANSWER_CHARS = 1_200
+# Of an answer's salient tokens (names, times, numbers), the share that must be on the page.
+MIN_FACT_SHARE = 0.8
+
+# A clock time in any of the spellings a page or a model writes — "7:15PM", "7:15 p.m.",
+# "7 pm" — folded to one ("7:15 pm") on BOTH sides, so a respaced time still matches.
+_CLOCK = re.compile(r"\b(\d{1,2}(?::\d{2})?)\s*([ap])\.?\s?m\b\.?", re.IGNORECASE)
+_CLOCK_TOKEN = re.compile(r"\b\d{1,2}(?::\d{2})? [ap]m\b")
+# A number standing on its own as a page writes one: a price, a date, a count ("$12.50",
+# "10/05", "2,000"). Not a digit inside a word ("F1", "7th"): it would never match whole.
+_NUMBER = re.compile(r"(?<!\w)[$€£]?\d+(?:[.,/:-]\d+)*(?!\w)")
+_WORD = re.compile(r"[^\W\d_][\w'’-]*")
+# Capitalised function words are on every page, so they prove nothing.
+_COMMON_WORDS = frozenset({"the", "and", "for", "with", "from", "not", "but", "you", "your"})
+_MIN_NAME_CHARS = 3
 
 
-def evidence_on_page(evidence: str, page: PageView) -> bool:
-    """Whether the model's quoted evidence is really on the page it is looking at — the
-    check that success is taken from the page, never from the model's word."""
-    quote = _normalize(evidence)
-    # Long enough to be specific: "the" is on every page and proves nothing.
-    if len(quote) > MAX_EVIDENCE_CHARS:
-        return False
-    if len(quote) < MIN_EVIDENCE_CHARS and len(quote.split()) < MIN_EVIDENCE_WORDS:
-        return False
-    return quote in page.text
+def _fold(text: str) -> str:
+    """Text as the fact check compares it: NFKC, casefolded, single-spaced, times in one
+    shape."""
+    text = " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+    return _CLOCK.sub(r"\1 \2m", text)
+
+
+def salient_tokens(line: str) -> list[str]:
+    """What in one answer line can be checked against the page: its times, its numbers and
+    its capitalised words (a film, a place, a month) — the parts a model gets wrong when it
+    invents or misreads an answer. Folded like the page text."""
+    folded = _fold(line)
+    tokens = _CLOCK_TOKEN.findall(folded)
+    rest = _CLOCK_TOKEN.sub(" ", folded)
+    tokens += [n.rstrip(".,/:-") for n in _NUMBER.findall(rest)]
+    for word in _WORD.findall(_CLOCK.sub(" ", unicodedata.normalize("NFKC", line))):
+        word = word.strip("'’-")
+        if (
+            len(word) >= _MIN_NAME_CHARS
+            and word[0].isupper()
+            and word.casefold() not in _COMMON_WORDS
+        ):
+            tokens.append(word.casefold())
+    return tokens
+
+
+@dataclass(frozen=True)
+class FactCheck:
+    """How much of an answer the host found on the final page."""
+
+    found: int = 0
+    total: int = 0
+    # Lines with something to check of which nothing was found: an invented line.
+    lines_missed: int = 0
+
+    @property
+    def verified(self) -> bool:
+        return (
+            self.total > 0 and self.lines_missed == 0 and self.found >= MIN_FACT_SHARE * self.total
+        )
+
+    def describe(self) -> str:
+        if self.total == 0:
+            return "UNVERIFIED: nothing in the answer could be checked against the page"
+        head = "verified" if self.verified else "UNVERIFIED"
+        missed = f"; {self.lines_missed} line(s) had none" if self.lines_missed else ""
+        return f"{head}: {self.found} of {self.total} names, times and numbers on the page{missed}"
+
+
+def facts_on_page(answer: str, page: PageView) -> FactCheck:
+    """Whether an answer was read off the page it claims to come from — success is taken
+    from the page, never from the model's word. Each line's salient tokens are looked up, as
+    whole tokens, in the page's FULL text (not the capped view): most of them must be there,
+    and every line must have at least one, so one invented line fails the answer."""
+    text = _fold(page.text)
+    found = total = missed = 0
+    for line in answer.splitlines():
+        tokens = salient_tokens(line)
+        if not tokens:
+            continue
+        hits = sum(_on_page(token, text) for token in tokens)
+        found += hits
+        total += len(tokens)
+        missed += hits == 0
+    return FactCheck(found=found, total=total, lines_missed=missed)
+
+
+def _on_page(token: str, text: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text) is not None
 
 
 _MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")

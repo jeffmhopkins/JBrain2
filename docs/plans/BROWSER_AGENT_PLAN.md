@@ -154,8 +154,8 @@ listed and revocable in Settings, and never extend to the Never tier.
   (`tools/browse.tool`, `agent/browsetools.py`) with jerv prompt guidance (`agent-jerv-v56`).
   Budgets: 20 steps (ceiling 30), 240 s, 12 distinct pages, the same action refused on the
   third try and stopping the run on the fourth, six actions in a row that leave the page
-  unchanged stop it. `finish` must quote evidence the host finds on the page as it is NOW;
-  one miss is sent back, a second is accepted but returned to jerv marked UNVERIFIED.
+  unchanged stop it. `finish` only says "this page answers it"; the host reads the answer off
+  that page in one no-thinking call and checks it against the page (the fast finish, below).
 - **The interim action rule** (until B2's risk gate): typing and selecting only into search,
   filter, location and date fields (or anything inside the page's `search` landmark) — no bare
   "address", "state", "type" or "format" — never a field whose label names an email, password,
@@ -169,8 +169,8 @@ listed and revocable in Settings, and never extend to the Never tier.
 - **The result jerv reads** is host lines plus the answer, last, on ONE line between
   `<<<BROWSE ANSWER BEGIN>>>`/`END>>>` markers (which are stripped from the answer), so a page
   cannot forge "Outcome:" or "Checked:" lines; error text and URLs are sanitized too (a URL that
-  could carry a line break or hidden text is dropped). `finish` evidence must be at least 20
-  characters or three words.
+  could carry a line break or hidden text is dropped). (The original `finish` also had to quote
+  20+ characters or three words of evidence; the fast finish below replaced that check.)
 - **web_fetch hand-off:** the 200-character bar is kept for recovery, but a first page whose
   wording is a location/store picker (`fetch.looks_like_location_gate`, under 1,500 chars) is
   now flagged `gated` whatever its length, says so, and — for a caller holding `browse` —
@@ -276,6 +276,56 @@ listed and revocable in Settings, and never extend to the Never tier.
   at `finish` grows to ~10–14k tokens (all pages kept), still far under the compaction cap.
   Security is unchanged: the gate reads the host's full page, never the delta; quarantine,
   forgery, type/select/Enter, URL, budget and semaphore tests all still pass.
+- **Third live run, and the fast finish (2026-10-05).** After #1571 caching worked: each step's
+  prompt was cached up to about the previous prompt, and the four navigation steps of the Epic
+  Titusville goal (Flash-Next, effort low) took 8–10 s each. Then `finish` spent **148 s writing
+  2,942 tokens** (thinking out the answer) and was REJECTED because its evidence quote, "7:45
+  PM", was under the 20-character/three-word minimum; the re-finish took 29 s (604 tokens). Run
+  total 234 s. (The answer also listed the whole day's times though the goal said "only
+  upcoming this evening" — accepted: jerv filters.) Owner-approved fix:
+  1. **The model navigates; the host reads.** `finish` (v3) carries no answer — only an
+     optional `note` of where on the page the answer is (`agent-browse-v4`). The host then
+     makes ONE extraction call: its own small prompt (`prompts/browse_extract.prompt`,
+     `agent-browse-extract-v1`), one user message with the goal, the note and the final page's
+     readable text (quarantined, its strings one per line, up to the 16k view cap, fenced as
+     data), **no tools, reasoning effort `none`, 700 max tokens**, same `browse.step` task and
+     `browse` slot. Its reply is raw facts, one per line, quarantined and capped at 1,200
+     characters; "NOT FOUND" ends the run as `not_found` with the page text handed back. One
+     extraction only — never a bounce and retry; a failed call is `not_found` with the error,
+     not `error`, so the page still goes back.
+     **Why a fresh prompt, not the history plus a request:** appending to the step history
+     would reuse its cache only if the call kept the action tools (they render at the head of
+     the prompt, so dropping them diverges at token ~0 and re-prefills the whole ~10–14k-token
+     history, ~30 s), and a tools-present call can still answer with a tool call instead of
+     text. A fresh prompt is ~2–4k tokens (system + goal + one page), ~5–10 s of prefill at
+     ~400 tok/s, and at effort none the reply is the facts themselves (~100–300 tokens). The
+     step history is untouched, so the strict-extension test still pins every STEP call.
+  2. **Host-side verification replaces the evidence quote** (`browse_policy.facts_on_page`).
+     From each answer line the host takes its salient tokens — clock times (folded so "7:15PM",
+     "7:15 p.m." and "7:15 PM" are one), standalone numbers, prices and dates, and capitalised
+     words of 3+ letters other than a few function words — and looks each up, as a whole token,
+     in the final page's FULL text (NFKC, casefolded, single-spaced). Verified needs ≥80% of
+     all tokens found AND every line with tokens to have at least one; an answer with nothing
+     checkable is UNVERIFIED. jerv's line reads "Checked: the answer's names, times and numbers
+     are on the final page." or UNVERIFIED (`browse.tool` v4). The `extract` step in the trace
+     carries the tally ("verified: 5 of 5 names, times and numbers on the page") and its own
+     call's prompt/cached/output tokens.
+  3. **A stopped run reads its last page too.** A run that ends on `step_budget`,
+     `page_budget`, `loop`, `stuck` or `no_action` with ≥30 s of the wall left runs the same
+     extraction on its final page (bounded by the time left); a verified result turns the run
+     into `answered`, an unverified one is dropped and the page text goes back as before.
+     `timeout` has no time left and is not tried.
+  4. **Effort `none` per call.** The extraction passes `effort_override="none"`: on Flash-Next
+     (a hybrid) that is `chat_template_kwargs.enable_thinking=false`; xAI, which has no off
+     level, now gets `low` for any per-call `none` (`openai_compat`; this also floors the agent
+     loop's forced-final `none` on Grok); Anthropic ignores effort as before.
+  Security: the extraction sees only the goal and the page (Rule of Two unchanged); its output
+  takes the answer's path — quarantine (markup, links, invisibles), one line between the
+  answer markers, markers stripped — and a forgery test drives a poisoned extraction end to end.
+  **Expected:** navigation unchanged (~35–40 s for the Epic run's four steps), `finish` a few
+  seconds (a ~30-token tool call), the extraction ~10–20 s — **~60–70 s** for the run instead
+  of 234 s. Re-measure on the box (debug `/browse`: the `finish` and `extract` steps'
+  `model_ms` and tokens).
 - **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
   untested. The snapshot pruning measured ~3x on Epic's home page (9.0k → 2.8k chars) and
   ~1.4k tokens on wikipedia.org against the real image (before the tighter cap above).

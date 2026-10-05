@@ -269,7 +269,9 @@ class OpenAiCompatClient:
         # Put the routed reasoning setting on the wire. The ROUTER gates eligibility
         # (it only sets a level for a reasoning-capable provider+model), so a
         # non-reasoning local model never reaches here with a level set. xAI Grok takes
-        # the effort verbatim; the local families each have their own wire shape — see
+        # the effort verbatim, except "none": its API has no off level, so a per-call "none"
+        # (a forced final answer, the browse extraction) goes as "low", its floor, rather
+        # than as a value it may refuse. The local families each have their own wire shape — see
         # `apply_local_reasoning`, module-level because the gateway's load-time warm-up
         # must render EXACTLY this too (the effort lands in the prompt's leading tokens,
         # so a warm that omits it shares no cache with the turns it claims to warm).
@@ -278,7 +280,7 @@ class OpenAiCompatClient:
         if self.provider == "local":
             apply_local_reasoning(payload, reasoning_effort)
             return
-        payload["reasoning_effort"] = reasoning_effort
+        payload["reasoning_effort"] = "low" if reasoning_effort == "none" else reasoning_effort
 
     def _apply_sampling(self, payload: dict[str, Any], sampling: Sampling | None) -> None:
         # Put the resolved sampling on the wire, honoring each provider's param support.
