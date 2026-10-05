@@ -1,13 +1,16 @@
 """jerv's `browse` tool: hand one goal to the browse sub-agent, get back quoted data.
 
-The handler is the Rule-of-Two seam (docs/plans/BROWSER_AGENT_PLAN.md §2). What crosses
-into the sub-agent is the goal and an optional start URL — nothing from jerv's context, the
-session, or the owner's data. What crosses back is `browse.render_for_caller`'s fenced,
-quarantined text and the URLs of the pages the host itself loaded, as citation chips.
+`browse` runs only where this turn's `web_fetch` found the site needs a browser
+(`browse_gate`, owner decision 2026-10-05). The handler is the Rule-of-Two seam
+(docs/plans/BROWSER_AGENT_PLAN.md §2). What crosses into the sub-agent is the goal and the
+start URL — nothing from jerv's context, the session, or the owner's data. What crosses
+back is `browse.render_for_caller`'s fenced, quarantined text and the URLs of the pages the
+host itself loaded, as citation chips.
 """
 
 from __future__ import annotations
 
+from jbrain.agent import browse_gate
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.browse import BrowseAgent, render_for_caller
 from jbrain.agent.contracts import WebSource
@@ -34,6 +37,11 @@ def build_browse_handlers(
             )
         raw_start = arguments.get("start_url")
         start_url = str(raw_start).strip() if raw_start else None
+        # The fetch-first gate, before anything runs: no browser for a site this turn's
+        # web_fetch did not find needing one (browse_gate's docstring has the why).
+        refused = browse_gate.refusal(start_url, ctx.browser_needed)
+        if refused is not None:
+            return ToolOutput(refused, result_brief="refused · fetch first")
         if emit:
             emit("browse", start_url or goal)
         # The conversation's model pick rides along so the sub-agent runs on the model the

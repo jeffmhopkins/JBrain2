@@ -1722,10 +1722,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # v2: a run that stops before an answer returns its last page's text, UNVERIFIED,
         # and the prose tells jerv to read from it rather than fetch the page again.
         # v3: the answer comes back as a terse list of facts, and jerv writes it up.
+        # v4: "verified" means the answer's names, times and numbers are on the final page.
+        # v5: web_fetch first — browse is refused unless this turn's fetch of the site said it
+        # needs a browser (gated, JS shell, thin or blocked); start_url is required.
         "browse.tool": (
             "browse",
-            3,
-            "6bb6f9f6e96a680a36b0dcb38e84da1348450ab8b5a66a69e6f35b9860d3ba7f",
+            5,
+            "3c07831aa78e47cd159e7a95c5a4e90dd9f0ffed2fe891e3cca8383e682d408e",
         ),
         "ask_owner.tool": (
             "ask_owner",

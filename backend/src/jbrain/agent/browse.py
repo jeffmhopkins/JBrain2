@@ -12,8 +12,13 @@ matter, each of which a test pins:
   playwright-mcp's other tools — evaluate, run code, file upload, form fill, cookies — are
   never reachable, whatever a page says.
 - **Budgets.** Steps, wall clock and distinct pages are capped; repeating the same action or
-  making no progress stops the run. Success is checked on the final page (`finish` must
-  quote text that is really there), never taken from the model's word.
+  making no progress stops the run.
+- **The model navigates; the host reads.** `finish` only says "this page answers it". The
+  host then makes ONE extraction call — a small prompt of its own, the goal and the page's
+  text, no tools, thinking off — and checks the facts it returns against the page's full
+  text (`policy.facts_on_page`), marking them verified or UNVERIFIED. Never a retry: B1's
+  `finish` wrote the answer and quoted evidence at the step's reasoning effort, and one live
+  run spent 148 s thinking out an answer only to have its quote bounced and re-written.
 - **The prompt only ever grows at its end.** Each step's messages are EXACTLY the last
   step's plus a new tail (the action, and the page it left) — nothing already sent is
   shortened or edited, budget notes included. On the hybrid Flash-Next a cache is resumed
@@ -26,7 +31,8 @@ matter, each of which a test pins:
   fresh, compacted prompt — one full prefill — rather than rewrite history.
 - **A stop still hands back the page.** A run that ends on a budget, a loop or a silent
   model returns the final page's text, quarantined and marked unverified, so the caller can
-  read what the browser reached instead of fetching it again.
+  read what the browser reached instead of fetching it again — after trying the same
+  extraction on it when there is time left, and keeping its answer only if it checks out.
 
 All model calls go through the LLM adapter under the `browse.step` task, pinned to a slot
 of its own, so a browse run neither evicts jerv's interactive prefix nor is evicted mid-run
@@ -68,6 +74,7 @@ log = structlog.get_logger()
 
 BROWSE_TASK = "browse.step"
 _PROMPT = load_prompt(Path(__file__).parent / "prompts" / "browse.prompt")
+_EXTRACT_PROMPT = load_prompt(Path(__file__).parent / "prompts" / "browse_extract.prompt")
 _ACTIONS_DIR = Path(__file__).parent / "browse_actions"
 ACTION_FILES = tuple(load_tool(p) for p in sorted(_ACTIONS_DIR.glob("*.tool")))
 ACTION_TOOLS: tuple[LlmTool, ...] = tuple(
@@ -91,8 +98,20 @@ REPEAT_STOP_AT = 4
 NO_PROGRESS_STOP_AT = 6
 # Replies with no action in a row before the run is called off.
 IDLE_STOP_AT = 2
-# `finish` calls whose evidence is not on the page before the answer is accepted unverified.
-UNVERIFIED_FINISH_ACCEPT_AT = 2
+# The extraction call: copying facts off a page needs no thinking — and thinking is what made
+# B1's `finish` slow (148 s, 2,942 tokens, measured live 2026-10-05). "none" is a real off on
+# a hybrid (`enable_thinking=false`); other models get it as the adapter already sends "none".
+EXTRACT_EFFORT = "none"
+EXTRACT_MAX_TOKENS = 700
+# The page text the extraction reads: the whole of what `parse_page` keeps readable.
+EXTRACT_PAGE_CHARS = policy.MAX_SNAPSHOT_CHARS
+# The end of the wall clock kept for the extraction: no step starts inside it, so a `finish`
+# near the deadline is still read (the extraction runs after the drive, outside its timeout).
+EXTRACT_RESERVE_SECONDS = 30.0
+# A stopped run tries the extraction on its last page only with this much of the wall left.
+EXTRACT_MIN_SECONDS = 10.0
+_NOT_FOUND = "NOT FOUND"
+_EXTRACT_STEP = "extract"
 # What the prompt's messages may grow to (~24k tokens) before the run compacts them into one
 # fresh prompt. Far under the browse slot's cap: past it, every step's attention gets dearer.
 MAX_PROMPT_CHARS = 96_000
@@ -108,8 +127,11 @@ PARTIAL_PAGE_CHARS = 6_000
 # Stops where the browser may well be sitting on the answer. Not `gave_up` (the model said
 # the page cannot answer) or `error` (there may be no page at all).
 PARTIAL_OUTCOMES = frozenset(
-    {"timeout", "step_budget", "page_budget", "no_action", "loop", "stuck"}
+    {"timeout", "step_budget", "page_budget", "no_action", "loop", "stuck", "not_found"}
 )
+# The stops a late extraction is tried on: not a finished run whose extraction already found
+# nothing. A timeout is tried when the reserve is what stopped it (the hard cut leaves none).
+_LATE_EXTRACT_OUTCOMES = PARTIAL_OUTCOMES - {"not_found"}
 
 # Which playwright-mcp tool each host action maps onto — the ENTIRE surface of the server
 # this loop can reach. Asserted against the `browse_actions` sidecars in tests.
@@ -146,8 +168,8 @@ async def _look(session: McpSession) -> str:
 
 
 _NUDGE = (
-    "Reply with exactly one action: a browser action, `finish` with the answer and evidence,"
-    " or `give_up` with the reason."
+    "Reply with exactly one action: a browser action, `finish` when this page shows the"
+    " answer, or `give_up` with the reason."
 )
 # The first message never changes during a run: the cache-stable head of every step's prompt.
 _OPENING = (
@@ -211,6 +233,7 @@ OUTCOME_TEXT = {
     "loop": "stopped: it kept repeating the same action",
     "stuck": "stopped: its actions stopped changing the page",
     "no_action": "stopped: the model stopped choosing actions",
+    "not_found": "stopped: no answer could be read off the page it finished on",
     "error": "failed",
 }
 
@@ -250,7 +273,10 @@ class _Run:
         self.signatures: list[str] = []
         self.no_progress = 0
         self.idle = 0
-        self.unverified_finishes = 0
+        self.spec_override: str | None = None
+        # Set by `finish` (its note, "" for none): the run ends in the extraction.
+        self.finish_note: str | None = None
+        self.extract_error = ""
         # The URL a gated `type_text` last succeeded on — the only page `Enter` may submit.
         self.typed_url: str | None = None
         self.max_steps = DEFAULT_MAX_STEPS
@@ -355,6 +381,7 @@ class BrowseAgent:
         started = self._clock()
         steps = _clamp_steps(max_steps, self._max_steps)
         state.max_steps, state.started = steps, started
+        state.spec_override = spec_override
         try:
             await asyncio.wait_for(
                 self._drive(state, start_url, steps, started, spec_override),
@@ -368,6 +395,10 @@ class BrowseAgent:
         except LlmError as exc:
             state.result.outcome = "error"
             state.result.error = f"the model call failed: {exc}"
+        if state.finish_note is not None:
+            await self._finish_extract(state)
+        else:
+            await self._late_extract(state)
         run = state.result
         run.elapsed_ms = int((self._clock() - started) * 1000)
         run.sources = policy.sources_from(state.visited)
@@ -413,7 +444,7 @@ class BrowseAgent:
                 )
             )
             for n in range(1, max_steps + 1):
-                if self._clock() - started > self._wall:
+                if self._clock() - started > self._wall - EXTRACT_RESERVE_SECONDS:
                     state.result.outcome = "timeout"
                     return
                 if await self._step(session, state, n, spec_override):
@@ -663,42 +694,128 @@ class BrowseAgent:
     async def _finish(
         self, session: McpSession, state: _Run, n: int, args: dict[str, Any], model_ms: int
     ) -> tuple[bool, str]:
-        """Accept an answer only when its evidence is on the page as it is NOW."""
+        """End the run on the page as it is NOW; `_finish_extract` reads the answer off it once
+        the browser session is closed. Never sent back for another try — whatever the
+        extraction finds is the answer, marked verified or not by the host's own check."""
         t0 = self._clock()
         state.note_page(policy.parse_page(await _look(session)))
         browser_ms = int((self._clock() - t0) * 1000)
-        answer = policy.quarantine(str(args.get("answer", "")))
-        evidence = str(args.get("evidence", ""))
-        verified = policy.evidence_on_page(evidence, state.page)
-        state.unverified_finishes += 0 if verified else 1
-        accept = verified or state.unverified_finishes >= UNVERIFIED_FINISH_ACCEPT_AT
-        note = "verified on the final page" if verified else "evidence not found on the page"
         state.result.steps.append(
             BrowseStep(
                 n,
                 "finish",
                 _brief_args("finish", args),
-                verified,
-                note,
+                True,
+                "reading the answer off this page",
                 url=state.page.url,
                 snapshot_tokens=state.page.tokens,
                 model_ms=model_ms,
                 browser_ms=browser_ms,
             )
         )
-        if not answer:
-            message = "finish needs the answer itself: the facts, one per line."
-            return False, message + "\n\n" + state.view()
-        if accept:
-            state.result.outcome = "answered"
-            state.result.answer = answer
-            state.result.verified = verified
-            return True, note
-        message = (
-            "Not accepted: the evidence you quoted is not on the current page. Copy a phrase"
-            " exactly as the page shows it, or keep browsing to the page that has the answer."
+        state.finish_note = str(args.get("note") or "")
+        return True, "reading the answer off this page"
+
+    async def _finish_extract(self, state: _Run) -> None:
+        """The extraction a `finish` asked for, outside the drive's timeout and given at least
+        the reserve, so a finish chosen near the deadline is still read."""
+        run = state.result
+        left = self._wall - (self._clock() - state.started)
+        n = run.steps[-1].n if run.steps else 0
+        try:
+            found = await asyncio.wait_for(
+                self._extract(state, n, state.finish_note or ""),
+                timeout=max(left, EXTRACT_RESERVE_SECONDS),
+            )
+        except TimeoutError:
+            state.extract_error = "it ran out of time"
+            found = None
+        if found is None:
+            run.outcome = "not_found"
+            if state.extract_error:
+                run.error = f"reading the answer off the page failed: {state.extract_error}"
+            return
+        run.outcome = "answered"
+        run.answer, run.verified = found[0], found[1].verified
+
+    async def _extract(
+        self, state: _Run, n: int, note: str = ""
+    ) -> tuple[str, policy.FactCheck] | None:
+        """ONE no-thinking call that copies the goal's facts off the current page's text, and
+        the host's check of them against the page. None when the page has no text, the model
+        says it does not show the answer, or the call fails (noted on `state.extract_error`, not
+        raised: the page text still goes back)."""
+        page = state.page
+        text = policy.quarantine(page.readable, cap=EXTRACT_PAGE_CHARS)
+        if not text:
+            return None
+        hint = policy.quarantine(note, cap=200).replace("\n", " ")
+        user = (
+            f"GOAL: {state.result.goal}\n\n"
+            + (f"The browsing agent says to look at: {hint}\n\n" if hint else "")
+            + f"PAGE: {page.title or '(untitled)'}\n"
+            + "The page's text, one string per line, between the markers:\n"
+            + f"<<<PAGE TEXT BEGIN>>>\n{text}\n<<<PAGE TEXT END>>>"
         )
-        return False, message + "\n\n" + state.view()
+        t0 = self._clock()
+        try:
+            turn = await self._router.converse(
+                BROWSE_TASK,
+                system=_EXTRACT_PROMPT.body,
+                messages=[UserMessage(text=user)],
+                tools=(),
+                max_tokens=EXTRACT_MAX_TOKENS,
+                effort_override=EXTRACT_EFFORT,
+                spec_override=state.spec_override,
+                slot_role=SlotRole.BROWSE,
+            )
+        except LlmError as exc:
+            state.extract_error = str(exc)
+            state.result.steps.append(
+                BrowseStep(n, _EXTRACT_STEP, {}, False, "the model call failed", url=page.url)
+            )
+            return None
+        model_ms = int((self._clock() - t0) * 1000)
+        answer = policy.quarantine(turn.text)
+        missing = not answer or answer.strip(" .").upper().startswith(_NOT_FOUND)
+        check = policy.FactCheck() if missing else policy.facts_on_page(answer, page)
+        state.result.steps.append(
+            BrowseStep(
+                n,
+                _EXTRACT_STEP,
+                {"page_chars": len(text)},
+                not missing and check.verified,
+                "the page does not show the answer" if missing else check.describe(),
+                url=page.url,
+                model_ms=model_ms,
+                prompt_tokens=turn.usage.input_tokens,
+                cached_tokens=turn.usage.cached_tokens,
+                output_tokens=turn.usage.output_tokens,
+            )
+        )
+        return None if missing else (answer, check)
+
+    async def _late_extract(self, state: _Run) -> None:
+        """A run that stopped short may be sitting on the answer: with time left, read it off
+        the last page the same way `finish` would. Kept only when it checks out — a stopped
+        run's unverified guess is worth less than the page text it already hands back."""
+        run = state.result
+        left = self._wall - (self._clock() - state.started)
+        if run.outcome not in _LATE_EXTRACT_OUTCOMES or left < EXTRACT_MIN_SECONDS:
+            return
+        n = run.steps[-1].n if run.steps else 0
+        try:
+            found = await asyncio.wait_for(self._extract(state, n), timeout=left)
+        except TimeoutError:
+            state.extract_error = "it ran out of time"
+            found = None
+        if state.extract_error:
+            # Optional work that failed: the stop and its page text stand, and the run's
+            # Error line stays about the run.
+            log.info("browse.late_extract_failed", outcome=run.outcome, why=state.extract_error)
+        if found is not None and found[1].verified:
+            run.answer, run.verified = found[0], True
+            run.outcome = "answered"
 
 
 def _budget_hint(steps_left: int, seconds_left: float) -> str:
@@ -764,10 +881,10 @@ def render_for_caller(run: BrowseRun) -> str:
     lines = [RESULT_FENCE, f"Outcome: {OUTCOME_TEXT.get(run.outcome, run.outcome)}"]
     if run.outcome == "answered":
         lines.append(
-            "Checked: the answer's quoted evidence is on the final page."
+            "Checked: the answer's names, times and numbers are on the final page."
             if run.verified
-            else "UNVERIFIED: the browsing agent's quoted evidence was NOT found on the final"
-            " page — treat this answer as unconfirmed."
+            else "UNVERIFIED: the answer's names, times and numbers were NOT all found on the"
+            " final page — treat this answer as unconfirmed."
         )
     final = policy.safe_url(run.final_url) if run.final_url else None
     if final:

@@ -89,7 +89,9 @@ ensure_uv() {
 # jbrain/g2p.py, which converts a panel's pet name to the phonemes MultiNet7 actually matches
 # — docs/plans/ROOM_ENDPOINT_PLAN.md §10.4df), guarded by tests/unit/test_g2p.py, which pins
 # output strings rather than presence because a missing dictionary degrades SILENTLY: the
-# panel falls back to converting on-chip and nothing anywhere says so. All are pure pip deps
+# panel falls back to converting on-chip and nothing anywhere says so; and `tld` (the bundled
+# Public Suffix List behind the browse tool's fetch-first gate, docs/plans/BROWSER_AGENT_PLAN.md
+# B1), guarded by tests/unit/test_browse_gate.py. All are pure pip deps
 # synced here (yt-dlp reuses the ffmpeg installed above); the smoke tests enforce CLAUDE.md
 # rule #8.
 #

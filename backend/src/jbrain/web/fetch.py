@@ -264,6 +264,9 @@ _CHALLENGE_TINY_WORDS = 60
 # this by orders of magnitude, so the bar is deliberately low (measured on the FULL extracted
 # text, so a big page with a non-matching `find` window is never mistaken for a shell).
 _MIN_RECOVERED_CHARS = 200
+# The same bar, public: a fetch whose WHOLE page is under it reads as thin to the browse
+# tool's fetch-first gate (agent/browse_gate.py).
+THIN_PAGE_CHARS = _MIN_RECOVERED_CHARS
 _CHALLENGE_SHORT_MARKERS = (  # specific, but gated to a short page for false-positive safety
     "update browser required",
     "sorry, you have been blocked",

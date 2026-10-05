@@ -16,6 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import structlog
 
+from jbrain.agent import browse_gate
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
@@ -393,10 +394,17 @@ _BROWSE_HINT = (
 )
 
 
-def _with_browse_hint(out: str, result: FetchResult, url: str, ctx: ToolContext) -> str:
-    """Suggest `browse` on a page web_fetch cannot get past — a location/store gate or an
-    unrendered JavaScript app — when this turn may call it. Keeps the citation chip."""
-    if not (result.gated or result.js_shell) or "browse" not in ctx.agent_tools:
+def _with_browse_hint(
+    out: str, result: FetchResult, url: str, ctx: ToolContext, *, offset: int, find: str
+) -> str:
+    """Suggest `browse` on a page web_fetch cannot get past — a location/store gate, an
+    unrendered JavaScript app, a page too thin to be the content — when this turn may call it.
+    The same test that opens `browse`'s fetch-first gate (`browse_gate.needs_browser`), so the
+    hint never points at a call the gate would refuse. Keeps the citation chip."""
+    if (
+        browse_gate.needs_browser(result, offset=offset, find=find) is None
+        or "browse" not in ctx.agent_tools
+    ):
         return out
     hint = _BROWSE_HINT.format(url=url)
     if isinstance(out, ToolOutput):
@@ -860,6 +868,8 @@ def build_web_handlers(
         if domain_skips is not None:
             host = normalize_host(url)
             if host is not None and host in await domain_skips.active_hosts():
+                # A site skipped for a wall is one a real browser may still get through.
+                browse_gate.record_blocked(ctx.browser_needed, url)
                 return (
                     "that site was recently unreadable (paywall or bot-wall) and is being"
                     " skipped for the next day; web_search for the same information elsewhere"
@@ -1007,12 +1017,17 @@ def build_web_handlers(
         except WebFetchError as exc:
             # Remember the miss so an identical re-fetch this turn short-circuits above.
             ctx.failed_fetches[key] = exc.status or 0
+            # A hard block (bot wall, challenge page, paywall) is where a real browser helps:
+            # it opens `browse` for this site. A 404, a glitch or a search form does not.
+            if _block_reason(exc) is not None:
+                browse_gate.record_blocked(ctx.browser_needed, url)
             # A persistent hard block (paywall / bot-wall) also lands the DOMAIN on the 24h
             # skip list so later fetches/searches across turns skip it (best-effort, no-op for
             # a transient glitch / 404 / search form).
             await _record_block(url, exc)
             return _with_budget_note(str(exc), fetch_note)
         await _remember(ctx, result, url, "web_fetch")
+        browse_gate.record_fetch(ctx.browser_needed, result, url, offset=offset, find=find)
         presented = _present_result(
             result,
             url=url,
@@ -1022,7 +1037,8 @@ def build_web_handlers(
             outline_only=outline_only,
             extract=extract,
         )
-        return _with_budget_note(_with_browse_hint(presented, result, url, ctx), fetch_note)
+        hinted = _with_browse_hint(presented, result, url, ctx, offset=offset, find=find)
+        return _with_budget_note(hinted, fetch_note)
 
     async def read_artifact_tool(arguments: dict, ctx: ToolContext) -> str:
         # read_artifact is only registered when the artifact store is wired, so these are

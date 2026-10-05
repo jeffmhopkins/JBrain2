@@ -18,7 +18,7 @@ tool server and run our own small loop over it.**
 |---|---|---|
 | Browser layer | **Microsoft's `playwright-mcp`**, official image `mcr.microsoft.com/playwright/mcp`, pinned by tag, HTTP transport | Apache-2.0, actively maintained, bundles its own Chromium. Observes pages as a pruned accessibility tree with element refs, so each step is one small tool call (`browser_click ref=12`) — no pixel coordinates, no large JSON schema. That is the shape a ~6B-active model can do. |
 | Who runs the loop | **Our backend**, through the LLM adapter (non-negotiable 1) | browser-use and Stagehand own their model loop, bypass the adapter, and their own docs/maintainers say small Qwen models fail their schemas. playwright-mcp has no model of its own — the loop is ours, logged in the run-log. |
-| Where browsing happens | **A sub-agent with its own context** (owner decision 2026-10-04) | jerv calls `browse(goal, start_url?)` and gets back a short text answer with source URLs. Page snapshots never enter jerv's context. |
+| Where browsing happens | **A sub-agent with its own context** (owner decision 2026-10-04) | jerv calls `browse(goal, start_url)` (start_url required since the 2026-10-05 fetch-first gate) and gets back a short text answer with source URLs. Page snapshots never enter jerv's context. |
 | Runner-up | Vercel `agent-browser` (Apache-2.0) | Richer built-in policies (action allowlists, confirmations, delta snapshots); no confirmed official image. Measured against playwright-mcp in B1's bake-off. |
 | Stealth | Stock Chromium first | A 2026 benchmark across 31 Cloudflare sites from a residential IP: vanilla Playwright cleared 24, the best stealth tool 28. A theater picker needs JavaScript, not evasion. Byparr cannot be driven (FlareSolverr API, not CDP); if stealth matters later, a zendriver-launched Chrome over CDP is the upgrade path. |
 | Egress proxy | **Squid** (Canonical's `ubuntu/squid`, Ubuntu-LTS build, digest-pinned), built on the box with the deny list baked in and a build-time `squid -k parse` | Resolves DNS itself and checks the resolved address, so a public name pointing at a private address is refused. Smokescreen (Stripe) was the prior-art pick but publishes no official image; Squid's `dst` ACLs do the same job from a maintained distro package. Verified locally against the deny list (169.254/16, RFC1918, loopback, CGNAT, `db`, `searxng`, `localtest.me`, IPv4-mapped v6, CONNECT) — every one 403, a public site 200. |
@@ -154,8 +154,8 @@ listed and revocable in Settings, and never extend to the Never tier.
   (`tools/browse.tool`, `agent/browsetools.py`) with jerv prompt guidance (`agent-jerv-v56`).
   Budgets: 20 steps (ceiling 30), 240 s, 12 distinct pages, the same action refused on the
   third try and stopping the run on the fourth, six actions in a row that leave the page
-  unchanged stop it. `finish` must quote evidence the host finds on the page as it is NOW;
-  one miss is sent back, a second is accepted but returned to jerv marked UNVERIFIED.
+  unchanged stop it. `finish` only says "this page answers it"; the host reads the answer off
+  that page in one no-thinking call and checks it against the page (the fast finish, below).
 - **The interim action rule** (until B2's risk gate): typing and selecting only into search,
   filter, location and date fields (or anything inside the page's `search` landmark) — no bare
   "address", "state", "type" or "format" — never a field whose label names an email, password,
@@ -169,8 +169,8 @@ listed and revocable in Settings, and never extend to the Never tier.
 - **The result jerv reads** is host lines plus the answer, last, on ONE line between
   `<<<BROWSE ANSWER BEGIN>>>`/`END>>>` markers (which are stripped from the answer), so a page
   cannot forge "Outcome:" or "Checked:" lines; error text and URLs are sanitized too (a URL that
-  could carry a line break or hidden text is dropped). `finish` evidence must be at least 20
-  characters or three words.
+  could carry a line break or hidden text is dropped). (The original `finish` also had to quote
+  20+ characters or three words of evidence; the fast finish below replaced that check.)
 - **web_fetch hand-off:** the 200-character bar is kept for recovery, but a first page whose
   wording is a location/store picker (`fetch.looks_like_location_gate`, under 1,500 chars) is
   now flagged `gated` whatever its length, says so, and — for a caller holding `browse` —
@@ -276,6 +276,92 @@ listed and revocable in Settings, and never extend to the Never tier.
   at `finish` grows to ~10–14k tokens (all pages kept), still far under the compaction cap.
   Security is unchanged: the gate reads the host's full page, never the delta; quarantine,
   forgery, type/select/Enter, URL, budget and semaphore tests all still pass.
+- **Third live run, and the fast finish (2026-10-05).** After #1571 caching worked: each step's
+  prompt was cached up to about the previous prompt, and the four navigation steps of the Epic
+  Titusville goal (Flash-Next, effort low) took 8–10 s each. Then `finish` spent **148 s writing
+  2,942 tokens** (thinking out the answer) and was REJECTED because its evidence quote, "7:45
+  PM", was under the 20-character/three-word minimum; the re-finish took 29 s (604 tokens). Run
+  total 234 s. (The answer also listed the whole day's times though the goal said "only
+  upcoming this evening" — accepted: jerv filters.) Owner-approved fix:
+  1. **The model navigates; the host reads.** `finish` (v3) carries no answer — only an
+     optional `note` of where on the page the answer is (`agent-browse-v4`). The host then
+     makes ONE extraction call: its own small prompt (`prompts/browse_extract.prompt`,
+     `agent-browse-extract-v1`), one user message with the goal, the note (labelled as where to look — "The browsing
+     agent says to look at: …" — never as the answer) and the final page's
+     readable text (quarantined, its strings one per line, up to the 16k view cap, fenced as
+     data), **no tools, reasoning effort `none`, 700 max tokens**, same `browse.step` task and
+     `browse` slot. Its reply is raw facts, one per line, quarantined and capped at 1,200
+     characters; "NOT FOUND" ends the run as `not_found` with the page text handed back. One
+     extraction only — never a bounce and retry; a failed call is `not_found` with the error,
+     not `error`, so the page still goes back.
+     **Why a fresh prompt, not the history plus a request:** appending to the step history
+     would reuse its cache only if the call kept the action tools (they render at the head of
+     the prompt, so dropping them diverges at token ~0 and re-prefills the whole ~10–14k-token
+     history, ~30 s), and a tools-present call can still answer with a tool call instead of
+     text. A fresh prompt is ~2–4k tokens (system + goal + one page), ~5–10 s of prefill at
+     ~400 tok/s, and at effort none the reply is the facts themselves (~100–300 tokens). It
+     is a FRESH prompt: no cache reuse is assumed for it (its whole prefill is in the
+     estimate). The step history is untouched, so the strict-extension test still pins every
+     STEP call.
+     **Its time is reserved.** No step starts inside the last 30 s of the wall
+     (`EXTRACT_RESERVE_SECONDS`), and the extraction runs after the browser session closes,
+     outside the drive's timeout, given at least that reserve — so a `finish` chosen right at
+     the deadline is still read; one that runs out of time is `not_found` with the page text.
+  2. **Host-side verification replaces the evidence quote** (`browse_policy.facts_on_page`).
+     From each answer line the host takes its salient tokens — clock times (folded so "7:15PM",
+     "7:15 p.m." and "7:15 PM" are one), standalone numbers, prices and dates, and capitalised
+     words of 3+ letters other than a few function words — and looks each up, as a whole token,
+     in the final page's FULL text (NFKC, casefolded, single-spaced). Verified needs EVERY
+     time and price found (one invented showtime fails the answer), ≥80% of the names and
+     other numbers, and every line backed by at least one match. A bare one- or two-digit
+     number is not evidence (a stray "7" is on every page): it is not counted, and a line
+     whose only numbers are such, with no time or price beside them ("Dune: 7, 10"), is
+     unbacked. An answer with nothing checkable is UNVERIFIED. jerv's line reads "Checked: the answer's names, times and numbers
+     are on the final page." or UNVERIFIED (`browse.tool` v4). The `extract` step in the trace
+     carries the tally ("verified: 2 of 2 times and prices, 3 of 3 names and numbers on the page") and its own
+     call's prompt/cached/output tokens.
+  3. **A stopped run reads its last page too.** A run that ends on `step_budget`,
+     `page_budget`, `loop`, `stuck`, `no_action` or the reserve's `timeout` with ≥10 s of the
+     wall left runs the same extraction on its final page (bounded by the time left); a
+     verified result turns the run into `answered`, an unverified or failed one is dropped
+     (logged, not shown as the run's error) and the page text goes back as before. The hard
+     cut (wall + 30 s, a hung browser) leaves no time and is not tried.
+  4. **Effort `none` per call.** The extraction passes `effort_override="none"`: on Flash-Next
+     (a hybrid) that is `chat_template_kwargs.enable_thinking=false`. On a cloud `agent.turn`
+     model it is sent as `none`, exactly as any other per-call none.
+  Security: the extraction sees only the goal and the page (Rule of Two unchanged); its output
+  takes the answer's path — quarantine (markup, links, invisibles), one line between the
+  answer markers, markers stripped — and a forgery test drives a poisoned extraction end to end.
+  **Expected:** navigation unchanged (~35–40 s for the Epic run's four steps), `finish` a few
+  seconds (a ~30-token tool call), the extraction ~10–20 s — **~60–70 s** for the run instead
+  of 234 s. Re-measure on the box (debug `/browse`: the `finish` and `extract` steps'
+  `model_ms` and tokens).
+- **Fetch first, enforced (owner decision 2026-10-05).** `browse` is refused — a fast tool
+  error telling jerv to `web_fetch` the URL first and use its result — unless, earlier in the
+  SAME turn, a `web_fetch` of the same registrable domain (eTLD+1 via the bundled Public
+  Suffix List, the `tld` package; `www.` and other subdomains match their parent, `bbc.co.uk`
+  is not every `.co.uk`; a suffix the list does not know falls back to the host less `www.`;
+  never down to a dotless name; an IP or dotless host never passes) came back needing a
+  browser: `gated` (location/store picker), `js_shell` (unrendered JavaScript app), thin (a
+  plain read from the top whose whole page is under the fetcher's own 200-character recovery
+  bar, `fetch.THIN_PAGE_CHARS`), or `blocked` — a fetch that FAILED on a bot wall, challenge
+  page, paywall or other hard block (`_block_reason`), or was refused because the host is on
+  the 24h skip list, which is exactly where a real browser can get through (a 404, a glitch
+  or a search form does not count). The gate keys on "some page of this domain, this turn, was
+  gated/JS/thin/blocked"; a fetch that redirected to another site records only the site it
+  ENDED on. Only `start_url` is checked: where the run navigates afterwards is governed by the
+  browse policy (`check_url`), not this gate.
+  `start_url` is now required. The tools decide it: web_fetch records the verdict from the
+  result's own flags on the turn's `ToolContext.browser_needed` (domain → reason; one per
+  turn, so an earlier turn's fetch does not count), and `agent/browse_gate.py` reads it before
+  any model call or browser session — never the model's judgment, never the result text. The
+  web_fetch browse hint uses the same test, so it never suggests a call the gate would refuse.
+  There is **no "needs interaction" bypass**: the owner's ruling is that the agent cannot be
+  trusted to judge it. **Accepted trade-off:** a page that fetches fine but needs a click to
+  reveal its data (a tab, a "show more", a date picker over a readable page) is refused —
+  revisit if it bites. The debug `POST /browse` route is NOT gated (it is the measuring
+  instrument); an optional `require_fetch_gate` flag was skipped because the route has no turn
+  whose fetches it could consult. `jerv.prompt` `agent-jerv-v57`, `browse.tool` v5.
 - **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
   untested. The snapshot pruning measured ~3x on Epic's home page (9.0k → 2.8k chars) and
   ~1.4k tokens on wikipedia.org against the real image (before the tighter cap above).
