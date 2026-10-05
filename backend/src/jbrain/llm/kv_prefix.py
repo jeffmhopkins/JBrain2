@@ -200,6 +200,12 @@ def _stable_launch_line(launch_line: str) -> str:
     return " ".join(tokens[:i] + tokens[i + 2 :])
 
 
+def _engine_of_folder(folder: str) -> str:
+    """The engine whose budget a model folder under `.kvslots` counts against — its served
+    name's catalog engine; a folder outside the catalog is the standard engine's."""
+    return str(local_catalog.engine_of(os.path.basename(folder)))
+
+
 def _save_dir_from_line(launch_line: str, models_root: str) -> str | None:
     """Where THIS launch line's llama-server saves slot files, translated to this
     process's mount of the volume. Read from the line rather than re-derived from the
@@ -654,6 +660,10 @@ class KvPrefixStore:
         box is the signature of an identity drift, and the `identity` digests say which
         component moved."""
         usage = await asyncio.to_thread(self._walk_store)
+        by_engine: dict[str, int] = {}
+        for row in usage[2]:
+            engine = str(row["engine"])
+            by_engine[engine] = by_engine.get(engine, 0) + int(row["bytes"])  # type: ignore[call-overload]
         models: list[dict[str, object]] = []
         for served_model, system, tools, effort in probes:
             entry: dict[str, object] = {"model": served_model}
@@ -729,8 +739,10 @@ class KvPrefixStore:
             "store": {
                 "bytes": usage[0],
                 "files": usage[1],
+                # The budget is per engine: `by_engine` is what each one is held to.
                 "budget_bytes": self._max_store_bytes,
-                "over_budget": usage[0] > self._max_store_bytes,
+                "by_engine": by_engine,
+                "over_budget": any(b > self._max_store_bytes for b in by_engine.values()),
                 "by_file": usage[2],
             },
             "models": models,
@@ -830,6 +842,7 @@ class KvPrefixStore:
                     rows.append(
                         {
                             "model": os.path.basename(folder),
+                            "engine": _engine_of_folder(folder),
                             "fingerprint": name[: -len(_SLOT_FILE_SUFFIX)],
                             "kind": (
                                 "conversation"
@@ -1304,9 +1317,11 @@ class KvPrefixStore:
     def _prune_to_budget(self, keep_path: str) -> list[tuple[str, int]]:
         """Runs in a thread (asyncio.to_thread) — plain blocking fs on purpose.
 
-        Hold the whole `.kvslots` tree at or under the store's byte budget by deleting
-        least-recently-used files (oldest mtime first), across every model's folder —
-        every CONVERSATION file before any role prefix, because a prefix is what each
+        Hold each ENGINE's share of the `.kvslots` tree at or under the store's byte budget
+        (owner, 2026-10-05: Flash-Next gets its own allowance, so the standard engine's
+        parked prefixes and its never compete) by deleting least-recently-used files (oldest
+        mtime first), across that engine's model folders — every CONVERSATION file before
+        any role prefix, because a prefix is what each
         restart and engine switch needs back, and a conversation is one chat's convenience.
         The just-saved file is never a candidate, whatever its mtime — deleting the thing the
         save just verified would turn a full store into a store that forgets its newest
@@ -1318,9 +1333,10 @@ class KvPrefixStore:
         a second store pruning concurrently could evict the first's fresh file. If a
         store ever grows into another process, this needs a cross-process story first."""
         root = os.path.join(self._models_root, llama_swap_config.KVSLOT_DIR)
-        entries: list[tuple[bool, float, int, str]] = []
-        total = 0
+        entries: dict[str, list[tuple[bool, float, int, str]]] = {}
+        totals: dict[str, int] = {}
         for folder, _dirs, names in os.walk(root):
+            engine = _engine_of_folder(folder)
             for name in names:
                 for ext in (_SIDECAR_EXT, _META_EXT):
                     if name.endswith(_SLOT_FILE_SUFFIX + ext):
@@ -1344,22 +1360,23 @@ class KvPrefixStore:
                     for ext in (_SIDECAR_EXT, _META_EXT):
                         with contextlib.suppress(OSError):
                             size += os.stat(path + ext).st_size
-                    total += size
+                    totals[engine] = totals.get(engine, 0) + size
                     if os.path.abspath(path) != os.path.abspath(keep_path):
                         pinned = not kv_conversation.is_conversation_file(name)
-                        entries.append((pinned, stat.st_mtime, size, path))
-        entries.sort()
+                        entries.setdefault(engine, []).append((pinned, stat.st_mtime, size, path))
         evicted: list[tuple[str, int]] = []
-        for _pinned, _mtime, size, path in entries:
-            if total <= self._max_store_bytes:
-                break
-            with contextlib.suppress(OSError):
-                os.remove(path)
-                for ext in (_SIDECAR_EXT, _META_EXT):
-                    with contextlib.suppress(OSError):
-                        os.remove(path + ext)
-                total -= size
-                evicted.append((path, size))
+        for engine, candidates in entries.items():
+            total = totals[engine]
+            for _pinned, _mtime, size, path in sorted(candidates):
+                if total <= self._max_store_bytes:
+                    break
+                with contextlib.suppress(OSError):
+                    os.remove(path)
+                    for ext in (_SIDECAR_EXT, _META_EXT):
+                        with contextlib.suppress(OSError):
+                            os.remove(path + ext)
+                    total -= size
+                    evicted.append((path, size))
         return evicted
 
     # ---- restore --------------------------------------------------------------------
