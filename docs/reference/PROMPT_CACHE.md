@@ -65,7 +65,7 @@ disk layer until the next api start (`patch_absent` in the state read). A file w
 sidecar is never restored.
 
 **The restore gate.** On Flash-Next nothing is restored — no role prefix, no conversation —
-until `POST /api/debug/llm/slot-probe` has **passed** (logits within tolerance, restore
+until `POST /api/debug/llm/slot-probe` has **passed** (next-token probabilities within tolerance, restore
 effective, and the save's checkpoint sidecar present) against the server running now. The
 probe writes its verdict as `restore-gate.json` beside the slot files, keyed by a fingerprint
 of the launch line (minus `--port`) and the llama.cpp build from `/props`; a new image or launch
@@ -182,7 +182,9 @@ Everything else is the owner debug API (`runbooks/DEBUG_ACCESS.md` has the full 
 - `PUT /api/debug/llm/kv-prefix/budget?gb=N` — the disk allowance, 2..500 GiB, live.
 - `PUT /api/debug/llm/kv-prefix/conversations?enabled=` — the conversation cache, live.
 - `POST /api/debug/llm/slot-probe` — save a slot, restore it into another, compare next-token
-  logprobs within a tolerance; `passed` and `sidecar` are Flash-Next's F4 gate.
+  next-token probabilities within a tolerance (0.01 by default — in probability, because a
+  same-slot re-read already moves deep-tail logprobs by over a nat); `passed` and `sidecar`
+  are Flash-Next's F4 gate.
 
 A miss also writes a `kv_prefix_missed` box event, so it reaches the PWA's vitals.
 

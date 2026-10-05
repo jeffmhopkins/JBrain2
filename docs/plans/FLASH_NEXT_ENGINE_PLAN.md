@@ -662,8 +662,9 @@ Begins with the check moved out of F2, and gated on it:
   checkpoint struct still carries the fields the blocks serialize. `PATCH_RESTORE_CHECKPOINT`
   defaults to 1 for the flash-next image (Dockerfile and compose). `--slot-save-path` was
   already rendered for the pool (slot erase needs it). The slot probe takes any slot pair and
-  now returns `tolerance` (default 0.05), `within_tolerance` (top token agrees, half the top-n
-  shared, every shared logprob within tolerance — against both the cold and the warm read),
+  now returns `tolerance` (default 0.01 in probability — 0.05 nats until the first on-box run
+  failed on deep-tail noise), `within_tolerance` (top token agrees, half the top-n
+  shared, every shared candidate's probability within tolerance — against both the cold and the warm read),
   `passed` (that plus `restore_effective`) and `sidecar` (the save wrote its `.ckpt` — the
   patched build is the one running).
 - **§4b store.** Flash-Next is eligible through a catalog `kv_restore_needs_patch` gate, and

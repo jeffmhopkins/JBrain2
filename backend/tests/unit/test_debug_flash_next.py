@@ -1239,7 +1239,7 @@ def test_slot_probe_passes_a_restore_within_tolerance_and_fails_a_drifted_one(
     client, key, _ = box
     monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(_Upstream(drift=0.003)))
     body = _probe(client, key, synth_tokens=120, n_probs=3).json()
-    assert body["tolerance"] == 0.05
+    assert body["tolerance"] == 0.01
     assert body["within_tolerance"] is True and body["passed"] is True
 
     monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(_Upstream(drift=0.5)))
@@ -1253,6 +1253,45 @@ def test_slot_probe_passes_a_restore_within_tolerance_and_fails_a_drifted_one(
     monkeypatch.setattr(debug, "_UPSTREAM_TRANSPORT", httpx.MockTransport(upstream))
     body = _probe(client, key, synth_tokens=120, n_probs=3).json()
     assert body["within_tolerance"] is True and body["passed"] is False, "re-prefilled"
+
+
+def test_slot_probe_judges_probability_not_deep_tail_logprob_noise() -> None:
+    """Measured on Flash-Next: a slot re-read with no disk involved moves a p≈0.0001
+    candidate by over a nat. That is noise and must pass; moving the likely token must not."""
+    cold = debug.SlotProbeRead(
+        slot=6,
+        top=[
+            {"id": 1, "token": "Line", "logprob": -0.001},
+            {"id": 2, "token": "", "logprob": -7.3},
+            {"id": 3, "token": " Line", "logprob": -10.5},
+        ],
+        timings={"prompt_n": 3180},
+        tokens_cached=3180,
+    )
+    noisy = cold.model_copy(
+        update={
+            "top": [
+                {"id": 1, "token": "Line", "logprob": -0.001},
+                {"id": 2, "token": "", "logprob": -8.6},
+                {"id": 3, "token": " Line", "logprob": -11.9},
+            ]
+        }
+    )
+    diff = debug._diff(noisy, cold)
+    assert diff.max_abs_diff is not None and diff.max_abs_diff > 1.0
+    assert diff.max_prob_diff is not None and diff.max_prob_diff < 0.001
+    assert debug._within(diff, 0.01, 3) is True
+
+    lost = cold.model_copy(
+        update={
+            "top": [
+                {"id": 1, "token": "Line", "logprob": -0.7},
+                {"id": 2, "token": "", "logprob": -0.9},
+                {"id": 3, "token": " Line", "logprob": -10.5},
+            ]
+        }
+    )
+    assert debug._within(debug._diff(lost, cold), 0.01, 3) is False
 
 
 def test_slot_probe_reports_whether_the_save_wrote_its_checkpoint_sidecar(

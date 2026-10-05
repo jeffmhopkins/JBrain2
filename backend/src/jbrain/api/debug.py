@@ -3842,11 +3842,12 @@ class SlotProbeIn(BaseModel):
     slot_a: int | None = Field(default=None, ge=0, le=63)
     slot_b: int | None = Field(default=None, ge=0, le=63)
     n_probs: int = Field(default=10, ge=1, le=100)
-    # The largest |logprob difference| over shared top-n candidates that still counts as the
-    # same distribution. A restored slot re-evaluates its last token from a checkpoint in a
-    # different ubatch split than the cold prefill, so a small difference is expected; a
-    # restore that lost state moves the distribution by far more.
-    tolerance: float = Field(default=0.05, gt=0, le=5.0)
+    # The largest |probability difference| over shared top-n candidates that still counts as
+    # the same distribution. In probability, not logprob: measured on Flash-Next (2026-10-04),
+    # re-reading the SAME slot with no disk involved moves deep-tail candidates (p < 0.1%) by
+    # up to ~1.3 nats while no probability moves by more than 0.0003, so a nats bound fails
+    # every restore on noise. A restore that lost state moves the likely tokens, by far more.
+    tolerance: float = Field(default=0.01, gt=0, le=1.0)
 
 
 class SlotProbeRead(BaseModel):
@@ -3860,8 +3861,11 @@ class SlotProbeRead(BaseModel):
 
 
 class SlotProbeDiff(BaseModel):
-    # Largest |logprob difference| over the token ids both reads put in their top-n.
+    # Largest |logprob difference| over the token ids both reads put in their top-n —
+    # reported, not judged: it is dominated by deep-tail noise.
     max_abs_diff: float | None
+    # Largest |probability difference| over the same candidates — what `tolerance` bounds.
+    max_prob_diff: float | None = None
     shared: int
     top1_equal: bool
 
@@ -3882,7 +3886,7 @@ class SlotProbeOut(BaseModel):
     # hybrid without its context checkpoints does. None when timings are missing.
     restore_effective: bool | None
     # The verdict F4 gates on: the restore was effective, both comparisons share most of
-    # their top-n, the top token agrees, and every shared logprob is within `tolerance`.
+    # their top-n, the top token agrees, and every shared probability is within `tolerance`.
     tolerance: float
     within_tolerance: bool | None
     passed: bool
@@ -3937,6 +3941,9 @@ def _diff(a: SlotProbeRead, b: SlotProbeRead) -> SlotProbeDiff:
     shared = left.keys() & right.keys()
     return SlotProbeDiff(
         max_abs_diff=max((abs(left[k] - right[k]) for k in shared), default=None),
+        max_prob_diff=max(
+            (abs(math.exp(left[k]) - math.exp(right[k])) for k in shared), default=None
+        ),
         shared=len(shared),
         top1_equal=bool(a.top and b.top and key(a.top[0]) == key(b.top[0])),
     )
@@ -3953,13 +3960,14 @@ def _restore_effective(cold: SlotProbeRead, restored: SlotProbeRead) -> bool | N
 def _within(diff: SlotProbeDiff, tolerance: float, n_probs: int) -> bool | None:
     """Whether one comparison is the same distribution within `tolerance`: the top token
     agrees, at least half the top-n is shared (two reads that share one candidate prove
-    nothing), and no shared logprob moved further. None when nothing was comparable."""
-    if diff.max_abs_diff is None:
+    nothing), and no shared candidate's probability moved further. None when nothing was
+    comparable."""
+    if diff.max_prob_diff is None:
         return None
     return (
         diff.top1_equal
         and diff.shared >= max(1, (n_probs + 1) // 2)
-        and diff.max_abs_diff <= tolerance
+        and diff.max_prob_diff <= tolerance
     )
 
 
@@ -4038,10 +4046,11 @@ async def slot_probe(
 
     Not a byte-equal ubatch comparison: the cold read prefills in whatever ubatch split the
     server chooses for the whole prompt, so expect small differences, not zero. `tolerance`
-    (default 0.05 nats) bounds them: `within_tolerance` holds when, against both the cold and
-    the warm read, the top token agrees, at least half the top-n is shared and no shared
-    logprob differs by more; `passed` adds `restore_effective` — F4's gate. `sidecar` says
-    whether the save wrote the checkpoint sidecar, i.e. whether the patched engine is running.
+    (default 0.01, in probability) bounds them: `within_tolerance` holds when, against both
+    the cold and the warm read, the top token agrees, at least half the top-n is shared and no
+    shared candidate's probability differs by more; `passed` adds `restore_effective` — F4's
+    gate. `sidecar` says whether the save wrote the checkpoint sidecar, i.e. whether the
+    patched engine is running.
     Any slot pair may be named, slot 0 included (Flash-Next's slots are role-pinned: name ones
     whose prefix you can afford to lose — 6 and 7 by default).
 
@@ -4186,6 +4195,7 @@ async def slot_probe(
             "sidecar": sidecar,
             "tolerance": body.tolerance,
             "max_abs_diff_vs_cold": vs_cold.max_abs_diff,
+            "max_prob_diff_vs_cold": vs_cold.max_prob_diff,
             "slots": [slot_a, slot_b],
         },
     )
