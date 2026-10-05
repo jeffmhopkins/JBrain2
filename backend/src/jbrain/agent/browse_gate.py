@@ -95,6 +95,29 @@ def _note(seen: dict[str, str], url: str, reason: str) -> None:
         seen[domain] = reason
 
 
+def record_browse(browsed: dict[str, str], outcome: str, *urls: str) -> None:
+    """Note that a browse run on these sites came back this turn (any outcome)."""
+    for url in urls:
+        domain = registrable_domain(url) if url else None
+        if domain is not None:
+            browsed[domain] = outcome
+
+
+def repeat_refusal(start_url: str | None, browsed: dict[str, str]) -> str | None:
+    """Why a second browse of the same site this turn is refused, or None. A run that came
+    back — answered, stopped with the page's text, or timed out — already spent the site's
+    share of the box; jerv answers from what it returned, or tries another source."""
+    domain = registrable_domain(start_url) if start_url else None
+    if domain is None or domain not in browsed:
+        return None
+    return (
+        f"browse refused: {domain} was already browsed this turn (it came back"
+        f" {browsed[domain].replace('_', ' ')}). Answer from what that run returned — its"
+        " answer or the page text it handed back — or say what it could not find; another"
+        " source (web_search, a different site) may have it."
+    )
+
+
 def refusal(start_url: str | None, seen: dict[str, str]) -> str | None:
     """Why `browse` may not start at `start_url` this turn, or None when it may."""
     if not start_url:

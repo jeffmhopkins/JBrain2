@@ -348,6 +348,10 @@ class ToolContext:
     # by `browse`'s fetch-first gate (agent/browse_gate.py). Per turn for the same reason as
     # `failed_fetches`: a fetch in an earlier turn does not open the browser in this one.
     browser_needed: dict[str, str] = field(default_factory=dict)
+    # Per-turn memo of sites a `browse` run already came back from this turn (registrable
+    # domain → its outcome), read by `browse_gate.repeat_refusal`: one browse per site per
+    # turn — seen live, a timeout followed by a second full browse of the same site.
+    browsed: dict[str, str] = field(default_factory=dict)
     # Per-turn memo of read results (call key → the observation it returned), for a tool
     # whose identical call cannot return anything new within a turn. The handler answers a
     # repeat from here with a note saying so, because a model that got nothing will
