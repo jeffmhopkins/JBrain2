@@ -257,20 +257,6 @@ async def test_glm_keeps_its_genuine_none() -> None:
     assert captured["payload"]["reasoning_effort"] == "none"
 
 
-async def test_xai_floors_none_to_low_and_keeps_other_levels() -> None:
-    # Grok has no off level: a per-call "none" (the browse extraction, a forced final answer)
-    # degrades to "low", its floor, instead of a value the API may refuse.
-    captured, client = _capturing_client(provider="xai")
-    await client.converse(
-        model="grok-4.3", system="s", messages=[UserMessage(text="u")], reasoning_effort="none"
-    )
-    assert captured["payload"]["reasoning_effort"] == "low"
-    assert "chat_template_kwargs" not in captured["payload"]
-    captured, client = _capturing_client(provider="xai")
-    await client.complete(model="grok-4.3", system="s", user_text="u", reasoning_effort="high")
-    assert captured["payload"]["reasoning_effort"] == "high"
-
-
 # --- Preserved thinking within a turn -----------------------------------------------
 
 FLASH = "qwen3.8-flash-next"

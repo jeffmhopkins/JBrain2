@@ -100,7 +100,7 @@ NO_PROGRESS_STOP_AT = 6
 IDLE_STOP_AT = 2
 # The extraction call: copying facts off a page needs no thinking — and thinking is what made
 # B1's `finish` slow (148 s, 2,942 tokens, measured live 2026-10-05). "none" is a real off on
-# a hybrid (`enable_thinking=false`); elsewhere the adapter sends the model's floor.
+# a hybrid (`enable_thinking=false`); other models get it as the adapter already sends "none".
 EXTRACT_EFFORT = "none"
 EXTRACT_MAX_TOKENS = 700
 # The page text the extraction reads: the whole of what `parse_page` keeps readable.

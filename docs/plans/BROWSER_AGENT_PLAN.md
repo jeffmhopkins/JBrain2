@@ -316,9 +316,8 @@ listed and revocable in Settings, and never extend to the Never tier.
      into `answered`, an unverified one is dropped and the page text goes back as before.
      `timeout` has no time left and is not tried.
   4. **Effort `none` per call.** The extraction passes `effort_override="none"`: on Flash-Next
-     (a hybrid) that is `chat_template_kwargs.enable_thinking=false`; xAI, which has no off
-     level, now gets `low` for any per-call `none` (`openai_compat`; this also floors the agent
-     loop's forced-final `none` on Grok); Anthropic ignores effort as before.
+     (a hybrid) that is `chat_template_kwargs.enable_thinking=false`. On a cloud `agent.turn`
+     model it is sent as `none`, exactly as any other per-call none.
   Security: the extraction sees only the goal and the page (Rule of Two unchanged); its output
   takes the answer's path — quarantine (markup, links, invisibles), one line between the
   answer markers, markers stripped — and a forgery test drives a poisoned extraction end to end.
