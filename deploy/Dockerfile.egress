@@ -1,0 +1,14 @@
+# The browser's egress proxy (docs/plans/BROWSER_AGENT_PLAN.md §2): Squid with a deny list
+# that refuses every non-public address and every compose service, resolving DNS itself.
+#
+# Canonical's Ubuntu-LTS Squid image, pinned by digest: the update never re-pulls a floating
+# tag (the SearXNG lesson), so the digest is what moves the box forward. Resolved 2026-10-05
+# from `6.6-24.04_edge`; re-resolve to upgrade.
+FROM docker.io/ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
+
+COPY deploy/egress/squid.conf /etc/squid/squid.conf
+
+# Fail the BUILD on a config Squid cannot read. The image is built on the box during Ops ->
+# Update, where a proxy that crash-loops leaves the browser with no route out and the owner
+# with no terminal to read why (CLAUDE.md #10).
+RUN squid -k parse -f /etc/squid/squid.conf

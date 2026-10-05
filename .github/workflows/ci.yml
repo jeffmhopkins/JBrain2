@@ -95,6 +95,11 @@ jobs:
               # check of a broken Dockerfile is the owner's Ops -> Update, on a box with
               # no terminal.
               - 'deploy/Dockerfile.pysandbox'
+              # The browser's egress proxy (BROWSER_AGENT_PLAN.md B0): its image is built on
+              # the box, and the build runs `squid -k parse` over the deny list — the same
+              # reason as the sandbox's image above. test_browser_compose.py reads squid.conf.
+              - 'deploy/Dockerfile.egress'
+              - 'deploy/egress/**'
               - 'deploy/docker-compose.yml'
               - '.github/workflows/ci.yml'
             supervisor:
@@ -187,6 +192,12 @@ jobs:
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         working-directory: .
         run: docker build -f deploy/Dockerfile.pysandbox .
+      # The browser's egress proxy, built as a PR gate for the same reason: the box builds it
+      # during Ops -> Update, and its `squid -k parse` step is what rejects a deny list Squid
+      # cannot read before it becomes a crash-looping proxy and a browser with no way out.
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
+        working-directory: .
+        run: docker build -f deploy/Dockerfile.egress .
 
   backend-unit:
     needs: changes

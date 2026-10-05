@@ -245,8 +245,11 @@ services:
     # keeps its own egress through `edge`/`internal`. `sandbox` is the same shape for
     # the pysandbox sidecar (EXACT_MATH_TOOLS_PLAN.md): the api is its only caller, and
     # keeping the membership to exactly those two is what makes the sandbox's
-    # egress-free claim true — `test_pysandbox_server.py` asserts it.
-    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel]
+    # egress-free claim true — `test_pysandbox_server.py` asserts it. `browser` is the
+    # fenced network the headless browser sits on (BROWSER_AGENT_PLAN.md §2): the api drives
+    # it over MCP, and `test_browser_compose.py` asserts nothing else but the egress proxy
+    # joins it.
+    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel, browser]
     depends_on:
       db:
         condition: service_healthy
@@ -846,6 +849,75 @@ services:
     shm_size: 2gb  # headless browser crashes on the default 64m /dev/shm
     networks: [internal]
 
+  # The browser jerv's `browse` sub-agent drives (docs/plans/BROWSER_AGENT_PLAN.md): Microsoft's
+  # playwright-mcp, which holds no model of its own — the api runs the loop through the LLM
+  # adapter and calls this over MCP's streamable HTTP transport at http://browser:8931/mcp.
+  #
+  # It reads untrusted pages, so it is FENCED BY THE NETWORK, not by its own flags (Playwright
+  # documents its origin lists as "not a security boundary"):
+  # - It sits ONLY on `browser`, declared `internal: true` below: no gateway, so its one way off
+  #   the box is the `egress` proxy (`--proxy-server`), which refuses every non-public address
+  #   and every compose service (deploy/egress/squid.conf). It never touches `internal`, where
+  #   db, the supervisor and the model servers live.
+  # - `--isolated` keeps the profile in memory: no cookies, logins or history survive a run,
+  #   and nothing here holds a credential or owner data — no volume, no secret, no env.
+  # - `--allowed-hosts browser:8931` is the MCP server's own Host check, so a page that tries to
+  #   drive the server at 127.0.0.1:8931 from inside the browser is refused.
+  # - `--no-webmcp` stops a page from registering tools of its own; `--image-responses omit`
+  #   keeps screenshots out of the text loop.
+  # - No host port: only the api (on `browser`) can reach the MCP endpoint.
+  #
+  # PINNED by tag AND digest (v0.0.82, resolved 2026-10-05 from mcr.microsoft.com): the update
+  # never re-pulls a floating tag, and playwright-mcp has removed and restored flags between
+  # releases, so a moved tag is a behaviour change. Re-resolve to upgrade. Stock stack (no
+  # profile): a plain `up -d` — what a PWA update runs — brings it up with no CLI step.
+  browser:
+    logging: *logbound
+    image: ${BROWSER_IMAGE:-mcr.microsoft.com/playwright/mcp:v0.0.82@sha256:77dccc5ce9e94cb8ae7ebea87ddbb6cd54b05760c4d63c54e16accf2726b8734}
+    restart: unless-stopped
+    init: true
+    # Appended to the image's entrypoint (`node /app/cli.js --headless --browser chromium
+    # --no-sandbox`), so these are extra flags, not a replacement command.
+    command:
+      - --port=8931
+      - --host=0.0.0.0
+      - --allowed-hosts=browser:8931,browser
+      - --isolated
+      - --proxy-server=http://egress:3128
+      - --no-webmcp
+      - --image-responses=omit
+      - --block-service-workers
+      - --output-dir=/tmp/playwright-mcp
+      - --timeout-navigation=30000
+      - --idle-timeout=300000
+    mem_limit: ${BROWSER_MEM_LIMIT:-2g}
+    shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
+    pids_limit: 512
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on: [egress]
+    networks: [browser]
+
+  # The browser's only route off the box: Squid, resolving DNS itself and refusing RFC1918,
+  # loopback, link-local (169.254/16, the metadata endpoint), CGNAT, IPv6 ULA/link-local,
+  # single-label hosts and every compose service name (deploy/egress/squid.conf). It joins
+  # `browser` (to be reached) and `browser_out` (to reach the internet) and nothing else, so it
+  # has no route to `internal` either. Built on the box from a digest-pinned base, with a
+  # build-time `squid -k parse` so a broken config fails the update rather than the proxy.
+  egress:
+    logging: *logbound
+    image: jbrain2-egress:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.egress
+    restart: unless-stopped
+    mem_limit: ${EGRESS_MEM_LIMIT:-256m}
+    # Squid starts as root and drops to the `proxy` user; those two are all it needs.
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt: [no-new-privileges:true]
+    networks: [browser, browser_out]
+
   # Deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md): a RapidOCR (PP-OCR / ONNX) sidecar,
   # the swap-free counterpart to the VLM `vision.ocr` path. The api reaches it at
   # http://rapidocr:8000 (JBRAIN_RAPIDOCR_URL default) to cross-validate the model's text
@@ -1072,6 +1144,15 @@ networks:
   # without a cable, and it has no business reaching the internet to do it.
   panel:
     internal: true
+  # EGRESS-FREE by declaration: the headless browser's network (BROWSER_AGENT_PLAN.md §2).
+  # Only `browser`, `api` and `egress` join it — the api to drive the browser over MCP, the
+  # proxy to be its single way out. With no gateway, the proxy's deny list is the only path to
+  # anything, which is what makes that list the boundary.
+  browser:
+    internal: true
+  # The egress proxy's internet side. Only `egress` joins it, so nothing else gains a route
+  # out through it and the proxy itself has no route to `internal`.
+  browser_out:
 
 volumes:
   blobs:
