@@ -10,13 +10,16 @@ so every action it picks passes these checks before the browser sees it.
   form ever carries personal data); buttons that commit to something are refused.
 - **The page view.** playwright-mcp's accessibility snapshot, pruned to what the model can
   act on and the text it needs to read, and capped, so one busy page cannot flood a small
-  model's context.
+  model's context. When the page is the one the model last saw, only what changed is sent
+  (`page_delta`): the loop never rewrites a page it already sent, so every page stays in the
+  prompt and an unchanged one must not be paid for twice.
 - **The quarantine.** What returns to jerv is plain text: links, images and markup are
   stripped so a poisoned page cannot turn the answer into a beacon or a clickable lure.
 """
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import ipaddress
 import re
@@ -54,9 +57,23 @@ INTERACTIVE_ROLES = frozenset(
 _STRUCTURAL_ROLES = frozenset(
     {"generic", "group", "list", "listitem", "region", "none", "presentation", "separator"}
 )
-# What one page may occupy in the model's context (~6k tokens at 4 chars/token).
-MAX_SNAPSHOT_CHARS = 24_000
+# What one page may occupy in the model's context (~4k tokens at 4 chars/token). Tighter than
+# B1's first 24k: every page a run sees now stays in its prompt (browse.py), so a page's size
+# is paid on every later step's attention, not just once.
+MAX_SNAPSHOT_CHARS = 16_000
 _CHARS_PER_TOKEN = 4
+# One text line's share of the view: a marketing blurb or a terms paragraph should not cost
+# more than a few showtimes. Evidence is checked against the page's FULL text, not this.
+MAX_LINE_CHARS = 400
+# Text within this many lines of something the model can act on (or a heading) is what it
+# reads to choose; text further away is dropped first when a page is over the cap.
+_NEAR_LINES = 2
+# A changed page is sent as its delta only while that is clearly smaller than the page, and
+# only while it stays readable: a few hunks, all under one heading (a film, a day).
+_DELTA_MAX_SHARE = 0.6
+_DELTA_MAX_HUNKS = 6
+_GONE_REFS_NAMED = 12
+_HEADING_LINE = re.compile(r"^\s*- heading\b")
 
 # `- role "name" [attr] [ref=e12]: text` — the shape of one aria-snapshot line, optionally
 # wrapped in YAML single quotes when the name contains a colon.
@@ -116,7 +133,7 @@ class PageView:
             head.append(f"HTTP status: {self.status}")
         body = self.outline or "(the page shows nothing readable)"
         note = (
-            "\n[The page was longer than this view; what is above is its first part.]"
+            "\n[The page was longer than this view; some of its text is not shown.]"
             if self.truncated
             else ""
         )
@@ -155,10 +172,9 @@ def parse_page(tool_text: str, *, cap: int = MAX_SNAPSHOT_CHARS) -> PageView:
     yaml = _snapshot_yaml(tool_text)
     elements: dict[str, Element] = {}
     texts: list[str] = []
-    out: list[str] = []
+    # (line, anchor): an anchor is something the model acts on or a heading it orients by.
+    lines: list[tuple[str, bool]] = []
     search_depth: int | None = None
-    size = 0
-    truncated = False
     for raw in yaml.splitlines():
         if not raw.strip() or _URL_LINE.match(raw):
             continue
@@ -171,7 +187,8 @@ def parse_page(tool_text: str, *, cap: int = MAX_SNAPSHOT_CHARS) -> PageView:
             if not value:
                 continue
             texts.append(value)
-            line = f"{' ' * (indent // 2)}- {value}"
+            line = f"{' ' * (indent // 2)}- {_clip(value)}"
+            anchor = False
         else:
             match = _LINE.match(raw)
             if match is None:
@@ -190,8 +207,9 @@ def parse_page(tool_text: str, *, cap: int = MAX_SNAPSHOT_CHARS) -> PageView:
                 texts.append(trailing)
             if not interactive and not name and not trailing:
                 continue
+            anchor = interactive or role == "heading"
             if role in _STRUCTURAL_ROLES and not interactive and not name:
-                line = f"{' ' * (indent // 2)}- {trailing}"
+                line = f"{' ' * (indent // 2)}- {_clip(trailing)}"
             else:
                 shown_attrs = _NOISE_ATTRS.sub("", attrs).strip()
                 line = f"{' ' * (indent // 2)}- {role}"
@@ -206,12 +224,9 @@ def parse_page(tool_text: str, *, cap: int = MAX_SNAPSHOT_CHARS) -> PageView:
                     )
                     line += f" [ref={ref}]"
                 if trailing:
-                    line += f": {trailing}"
-        if size + len(line) + 1 > cap:
-            truncated = True
-            continue
-        out.append(line)
-        size += len(line) + 1
+                    line += f": {_clip(trailing)}"
+        lines.append((line, anchor))
+    out, truncated = _prune(lines, cap)
     return PageView(
         url=_page_field(tool_text, "Page URL"),
         title=_page_field(tool_text, "Page Title"),
@@ -222,6 +237,116 @@ def parse_page(tool_text: str, *, cap: int = MAX_SNAPSHOT_CHARS) -> PageView:
         truncated=truncated,
         readable=_readable(texts, cap),
     )
+
+
+def _clip(text: str) -> str:
+    return text if len(text) <= MAX_LINE_CHARS else text[: MAX_LINE_CHARS - 1].rstrip() + "…"
+
+
+def _prune(lines: list[tuple[str, bool]], cap: int) -> tuple[list[str], bool]:
+    """The lines that fit `cap`, in page order, and whether any were dropped. Over the cap,
+    what the model can act on and the text beside it go in first; far-off text fills what is
+    left — so a long article above the showtimes no longer pushes the showtimes out."""
+    if sum(len(line) + 1 for line, _ in lines) <= cap:
+        return [line for line, _ in lines], False
+    anchors = [i for i, (_, anchor) in enumerate(lines) if anchor]
+    near = {
+        j
+        for i in anchors
+        for j in range(max(0, i - _NEAR_LINES), min(len(lines), i + _NEAR_LINES + 1))
+    }
+    keep: set[int] = set()
+    size = 0
+    for tier in (sorted(near), [i for i in range(len(lines)) if i not in near]):
+        for i in tier:
+            cost = len(lines[i][0]) + 1
+            if size + cost <= cap:
+                keep.add(i)
+                size += cost
+    return [lines[i][0] for i in sorted(keep)], len(keep) < len(lines)
+
+
+def page_delta(before: PageView | None, after: PageView) -> str | None:
+    """`after` as what changed since the model saw `before`, or None to send it in full.
+
+    Only for the SAME page (same URL): a navigation always sends the new page whole. The
+    model reads the delta against the view it already holds, so unchanged lines — and their
+    refs — still stand; lines that went are counted and their refs named. Each hunk carries
+    the heading it sits under, so "9:40 PM" still says which film it is; changes under more
+    than one heading, or too many hunks, send the page whole instead, since a scatter of
+    context-free lines is what a small model misreads. The gate never reads this: it checks
+    refs against `after.elements`, the page as it is now."""
+    if before is None or not before.url or before.url != after.url:
+        return None
+    old, new = before.outline.splitlines(), after.outline.splitlines()
+    head = [f"URL: {after.url}"]
+    if after.title != before.title:
+        head.append(f"Title: {after.title or '(none)'}")
+    if after.status and after.status != before.status:
+        head.append(f"HTTP status: {after.status}")
+    if old == new:
+        return "\n".join([*head, "[The page is unchanged since the last view above.]"])
+    # The heading each new line sits under (its index), or -1 above the first heading.
+    section: list[int] = []
+    current = -1
+    for j, line in enumerate(new):
+        if _HEADING_LINE.match(line):
+            current = j
+        section.append(current)
+    hunks: list[tuple[int, int]] = []
+    sections: set[int] = set()
+    gone: list[str] = []
+    removed = 0
+    matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag in ("delete", "replace"):
+            removed += i2 - i1
+            gone += [r for line in old[i1:i2] for r in _REF.findall(line)]
+        # A hunk that opens on its own heading needs none from above it.
+        if not (j2 > j1 and _HEADING_LINE.match(new[j1])):
+            sections.add(section[j1 - 1] if j1 > 0 else -1)
+        hunks.append((j1, j2))
+    if len(sections) > 1 or len(hunks) > _DELTA_MAX_HUNKS:
+        return None
+    shown: list[str] = []
+    last = -1
+    for j1, j2 in hunks:
+        if j2 == j1:
+            continue
+        above = section[j1 - 1] if j1 > 0 else -1
+        opens_section = bool(_HEADING_LINE.match(new[j1]))
+        lead = [] if opens_section else [i for i in (above, j1 - 1) if i >= 0 and i > last]
+        for i in sorted(set(lead)):
+            if shown and i > last + 1:
+                shown.append("  …")
+            shown.append(new[i])
+            last = i
+        if shown and j1 > last + 1:
+            shown.append("  …")
+        shown.extend(new[j1:j2])
+        last = j2 - 1
+    note = (
+        "[Same page; only changes are shown, each under its heading and the line before it."
+        " The rest stands."
+    )
+    if removed:
+        note += f" {removed} line(s) are gone"
+        names = [r for r in dict.fromkeys(gone) if r not in after.elements]
+        if names:
+            more = len(names) - _GONE_REFS_NAMED
+            note += ", and with them refs " + ", ".join(names[:_GONE_REFS_NAMED])
+            note += f" (and {more} more)" if more > 0 else ""
+        note += "."
+    note += "]"
+    body = "\n".join(shown) if shown else "(nothing new; only removals)"
+    delta = "\n".join([*head, note, "", "Changed or new:", body])
+    if after.truncated:
+        delta += "\n[The page is longer than this view allows; some of it is not shown.]"
+    if len(delta) > _DELTA_MAX_SHARE * len(after.render()):
+        return None
+    return delta
 
 
 def _readable(texts: list[str], cap: int) -> str:
@@ -466,7 +591,8 @@ def check_key(key: object) -> str | None:
 MAX_EVIDENCE_CHARS = 300
 MIN_EVIDENCE_CHARS = 20
 MIN_EVIDENCE_WORDS = 3
-MAX_ANSWER_CHARS = 2_000
+# The answer is raw facts for jerv to write up, not prose (B1's short-finish fix).
+MAX_ANSWER_CHARS = 1_200
 
 
 def evidence_on_page(evidence: str, page: PageView) -> bool:

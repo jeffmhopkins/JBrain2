@@ -288,7 +288,7 @@ def test_a_live_guard_on_the_pool_layout_pins_the_jcode_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def eight_slots(model: str) -> list[dict[str, object]]:
-        return [{"id": i, "is_processing": False, "n_prompt_tokens": 0} for i in range(8)]
+        return [{"id": i, "is_processing": False, "n_prompt_tokens": 0} for i in range(9)]
 
     async def erase(model: str, slot: int) -> bool:
         raise AssertionError("an empty pool needs no room made")
@@ -339,7 +339,7 @@ def _busy_guard() -> KvPoolGuard:
                 "n_prompt_tokens": 0 if i == 4 else 200_000,
                 "next_token": [{"n_remain": -1, "n_decoded": 1}],
             }
-            for i in range(8)
+            for i in range(9)
         ]
 
     async def erase(model: str, slot: int) -> bool:

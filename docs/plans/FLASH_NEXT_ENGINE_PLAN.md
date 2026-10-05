@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-05 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -24,7 +24,7 @@ upstream source and published measurements). §10 records what they changed.
 | Container | New `flash-next` compose profile, own image, own llama-swap config. Never co-resident with `local-llm`. |
 | Switching | PWA (Ops), no terminal. Drain → swap → smoke test → automatic rollback on failure. |
 | Routing | **Remap all calls**, inside the API — not by model-name aliases at the gateway (§4c). |
-| Slots | **8 role-pinned slots sharing one 524,288-cell (512k) `--kv-unified` pool**, each with a router-enforced per-slot **cap** (jerv 256k, ingest 128k, scheduled 256k, research 256k, jcode 256k, wiki/notes/intake 128k, pet 32k, small prompts 64k — §4a). Caps oversubscribe the pool; a router **pool guard** frees idle slots in a fixed eviction order before the pool could overrun. Slots exist to **keep each hot prompt's prefix warm**, not for concurrency. Decided 2026-10-03 (superseding the 2026-10-01 512k/5-slot layout): the same cells as the 4×262k layout run live, with one slot per frequently-used prefix. |
+| Slots | **9 role-pinned slots sharing one 524,288-cell (512k) `--kv-unified` pool**, each with a router-enforced per-slot **cap** (jerv 256k, ingest 128k, scheduled 256k, research 256k, jcode 256k, wiki/notes/intake 128k, pet 32k, small prompts 64k, browser agent 128k — §4a). The ninth, browse, was added 2026-10-05 (owner: research agents will browse a lot, so browsing gets its own prefix cache rather than sharing theirs). Caps oversubscribe the pool; a router **pool guard** frees idle slots in a fixed eviction order before the pool could overrun. Slots exist to **keep each hot prompt's prefix warm**, not for concurrency. Decided 2026-10-03 (superseding the 2026-10-01 512k/5-slot layout): the same cells as the 4×262k layout run live, with one slot per frequently-used prefix. |
 | Checkpoints | **8 per slot** to start; 16 only once F2 has measured their real cost (§3). |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector (904 MB). |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
@@ -191,7 +191,7 @@ every other range is dropped; §3a).
   this engine; `mmap` until 2026-10-03, see §3a — `none` reads the GPU weights buffered and
   still maps the lazy engram tensor), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
   4 GiB binding limit; GPU placement aborted for Soot/Silicon), `--lazy-mode on`,
-  `-np 8 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
+  `-np 9 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
   `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
   `--ctx-checkpoints 8 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the
   existing `--image-min-tokens` floor.
@@ -199,7 +199,7 @@ every other range is dropped; §3a).
   context; our one-slot rule for speculation is our own (`llama_swap_config.py`), and the
   evidence on multi-slot MTP conflicts (#27836 reported cross-slot contamination and a net
   loss on Vulkan; a fork reported 40→47 tok/s). A later wave can measure it.
-- **Slots:** a catalog `kv_pool` (8 slots, 512k cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
+- **Slots:** a catalog `kv_pool` (9 slots since 2026-10-05, 512k cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
   `residency._slots` and the served shape. The settings cap `PARALLEL_SLOTS_MAX = 2`
   (`api/llm_settings.py`) becomes per-model.
 
@@ -240,14 +240,36 @@ the live slot count and sends unpinned (still capped) on a mismatch.
 | Slot | Workload | Cap | Evicted |
 |---|---|---|---|
 | 0 | jerv — chat and omnibox turns, the warm prime | 256k (262,144) | last |
-| 1 | Ingest + analysis (`entity.disambiguate`, `fact.adjudicate`, OCR, captions, EMR) | 128k (131,072) | 7th |
-| 2 | Scheduled tasks, plan continuations, jmolt night, daily briefing | 256k (262,144) | 6th |
-| 3 | Research and sub-agents | 256k (262,144) | 4th |
-| 4 | jcode (the proxy pins it) | 256k (262,144) | 5th |
-| 5 | Wiki, note conversations, guided intake, video summaries, unknown tasks | 128k (131,072) | 3rd |
-| 6 | jpanel kid pet (`pet.*`); overflows to slot 7 when busy | 32k (32,768) | 2nd |
+| 1 | Ingest + analysis (`entity.disambiguate`, `fact.adjudicate`, OCR, captions, EMR) | 128k (131,072) | 8th |
+| 2 | Scheduled tasks, plan continuations, jmolt night, daily briefing | 256k (262,144) | 7th |
+| 3 | Research and sub-agents | 256k (262,144) | 5th |
+| 4 | jcode (the proxy pins it) | 256k (262,144) | 6th |
+| 5 | Wiki, note conversations, guided intake, video summaries, unknown tasks | 128k (131,072) | 4th |
+| 6 | jpanel kid pet (`pet.*`); overflows to slot 7 when busy | 32k (32,768) | 3rd |
 | 7 | Small prompts: titles, `triage.classify`, one-shot vision reads, probes | 64k (65,536) | first |
+| 8 | The browser agent (`browse.step`, one run at a time) | 128k (131,072) | 2nd |
 | | **Pool** | **512k (524,288)** by default; 1M (1,048,576) selectable | `--kv-unified -c 524288` |
+
+**The ninth slot (browse, 2026-10-05).** Owner decision: research agents will search and
+browse a lot, so the browse sub-agent gets its own slot rather than sharing theirs — shared, a
+research turn between two browse steps evicts the run's cache and the next step re-prefills
+it whole. Appended as slot 8 so slots 0-7 keep their ids and their relative eviction order. Freed second (after small prompts): its prefix is worth something only
+while a run is going. **Memory: nothing up front.** A slot reserves no cells — the pool is
+`-c 524288` whatever `-np` says, and caps are router-side limits, not allocations; F2 measured
+slot count moving GTT by noise. One more slot adds its recurrent state (~0.11 GiB, derived,
+inside that noise) and up to 8 more context checkpoints (8 × 0.11 = ~0.9 GiB, host-only, made
+lazily as the slot fills), which the footprint books: ~82.1 GiB for eviction and the meter, up
+from ~81.2; the load is still admitted on the device figure (~74.2 GiB). Rollout needs no
+terminal: Ops → Update (and every model load) re-stamps the config with `-np 9`; llama-swap's
+config watch stops the running server and the next load serves nine slots. Until then the
+live `/slots` count (8) does not match the pool (9), so the router sends every call unpinned
+(still capped) rather than wrap an `id_slot` onto another role's slot — one cold prefix per
+role, then normal. **The F4 disk cache starts over:** `-np` is part of the launch line that the
+prefix fingerprint and the restore gate's key hash (deliberately — a different slot count is a
+different server), so every saved role prefix and conversation file is orphaned (they age out
+of the byte budget) and the gate is back to `awaiting_probe`. Role prefixes re-save on the next
+prime; nothing is restored until `POST /llm/slot-probe` passes again against the new launch line
+(its default pair is now slots 7 and 8 — overwriting the browse slot is harmless outside a run).
 
 `agent.turn` is shared by the chat and every background agent, so the task name alone cannot
 pick the slot: background callers name their role (`slot_role`), and an unnamed `agent.turn`

@@ -1,4 +1,4 @@
-// A pool model's KV pool (Flash-Next: one shared pool, eight role-pinned slots), read-only.
+// A pool model's KV pool (Flash-Next: one shared pool, nine role-pinned slots), read-only.
 // The server owns the window and the slot split and refuses changes (409), so the On-box row
 // shows one quiet line in place of the window/slot selects and this Sheet lists the slots.
 // GUI gate F3b, variant C — docs/mocks/kv-pool/c-slot-sheet.html, DESIGN.md "KV pool view".
@@ -23,6 +23,7 @@ export const SLOT_SERVES: ReadonlyMap<string, string> = new Map([
   ["workshop", "Wiki writing, note edits and guided intake."],
   ["pet", "The kid pet."],
   ["small", "Short one-off prompts."],
+  ["browse", "The browser agent's steps, one run at a time."],
 ]);
 
 // Not the screen's fmtTokens: that one goes decimal at M, and the pool and its caps are

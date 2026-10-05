@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-10-03
+> **Status:** Living · **Last verified:** 2026-10-05
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -1406,13 +1406,13 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
 4. **Backing out:** switch back to Standard the same way, then **Uninstall** it in On-box
    models. The next Ops → Update removes its container and image.
 
-Its memory shape is one shared pool of 524,288 tokens by default (`-c 524288 -np 8
---kv-unified`) across eight slots, each kept for one kind of work (chat, ingest, scheduled
-tasks, research, jcode, wiki/notes, the pet, small prompts) so their cached prompts stop
+Its memory shape is one shared pool of 524,288 tokens by default (`-c 524288 -np 9
+--kv-unified`) across nine slots, each kept for one kind of work (chat, ingest, scheduled
+tasks, research, jcode, wiki/notes, the pet, small prompts, the browser agent) so their cached prompts stop
 evicting each other. Its slot control does not apply — a change is refused with the reason —
 and each kind of work has its own limit inside the pool. Budgeted at the F2 measurement (plan
-§3a): ~74 GiB on the GPU, plus up to 7 GiB of host-side prompt checkpoints that appear only as
-slots fill (~81 GiB in all). A switch admits the load on the GPU figure, so it needs ~80 GiB
+§3a): ~74 GiB on the GPU, plus up to 8 GiB of host-side prompt checkpoints that appear only as
+slots fill (~82 GiB in all). A switch admits the load on the GPU figure, so it needs ~80 GiB
 free (74 + the 6 GiB floor).
 
 The pool size is selectable without a release: 524,288 (default) or 1,048,576, set through the

@@ -1,6 +1,6 @@
 """Which llama-server slot a call lands in on a pooled model, and how much of the pool it may use.
 
-Flash-Next serves one shared `--kv-unified` pool to eight slots (FLASH_NEXT_ENGINE_PLAN §4a).
+Flash-Next serves one shared `--kv-unified` pool to nine slots (FLASH_NEXT_ENGINE_PLAN §4a).
 Slots are prefix caches, not concurrency: each keeps the last prompt it ran warm, so the slot a
 call is pinned to decides whose prefix it reuses and whose it would evict. Pinning is by ROLE,
 and a role comes from the task name — except `agent.turn`, which the interactive chat and every
@@ -46,6 +46,7 @@ class SlotRole(StrEnum):
     WORKSHOP = "workshop"  # wiki, note conversations, guided intake, video summaries
     PET = "pet"  # the jpanel kid pet
     SMALL = "small"  # titles, triage, one-shot vision reads, probes; the pet's overflow
+    BROWSE = "browse"  # the browse sub-agent's steps (one run at a time)
 
 
 @dataclass(frozen=True)
@@ -126,21 +127,24 @@ class KvPool:
         return dataclasses.replace(self, n_ctx=cells)
 
 
-# Eight slots, one per frequently-used prefix, so the hot prompts stop evicting each other (owner,
-# 2026-10-03). 512k cells by default, not the 1M first shipped: a unified pool allocates all its
-# cells at load, and on the box the 1M load drove host free memory to 5.3 GB, under the load
-# guard's 6 GB floor, so it was aborted every time. 512k is the 2 x 262k size F2 measured loading
-# cleanly (74.2 GiB). 1M stays selectable without a release (FLASH_NEXT_ENGINE_PLAN §3a): that
-# abort was page cache from the mmap load, which `--load-mode none` and the range-aware drop
+# One slot per frequently-used prefix, so the hot prompts stop evicting each other (owner,
+# 2026-10-03; the ninth, browse, 2026-10-05). A slot reserves no cells: the pool's size is
+# `n_ctx` whatever the count, and F2 measured the count moving GTT by noise — what one more
+# costs is its recurrent state (~0.11 GiB) and, lazily, its context checkpoints (host-only).
+# 512k cells by default, not the 1M first shipped: a unified pool allocates all its cells at
+# load, and on the box the 1M load drove host free memory to 5.3 GB, under the load guard's
+# 6 GB floor, so it was aborted every time. 512k is the 2 x 262k size F2 measured loading cleanly
+# (74.2 GiB). 1M stays selectable without a release (FLASH_NEXT_ENGINE_PLAN §3a): that abort
+# was page cache from the mmap load, which `--load-mode none` and the range-aware drop
 # (local_weights) now take away, so it earns another measured attempt from the debug console.
 FLASH_NEXT_POOL_CELLS: Final = (524_288, 1_048_576)
 FLASH_NEXT_POOL: Final = KvPool(
     n_ctx=524_288,
     cell_choices=FLASH_NEXT_POOL_CELLS,
     reservations=(
-        RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 7, "jerv (chat, omnibox)"),
-        RoleReservation(SlotRole.INGEST, 1, 131_072, 6, "Ingest and analysis"),
-        RoleReservation(SlotRole.SCHEDULED, 2, 262_144, 5, "Scheduled tasks"),
+        RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 8, "jerv (chat, omnibox)"),
+        RoleReservation(SlotRole.INGEST, 1, 131_072, 7, "Ingest and analysis"),
+        RoleReservation(SlotRole.SCHEDULED, 2, 262_144, 6, "Scheduled tasks"),
         # A research run and a scheduled news run share this slot; spilling to the workshop
         # slot keeps the second from queueing behind the first inside llama-server, where the
         # wait counts against the HTTP timeout.
@@ -148,14 +152,22 @@ FLASH_NEXT_POOL: Final = KvPool(
             SlotRole.RESEARCH,
             3,
             262_144,
-            3,
+            4,
             "Research and sub-agents",
             overflow=SlotRole.WORKSHOP,
         ),
-        RoleReservation(SlotRole.JCODE, 4, 262_144, 4, "jcode"),
-        RoleReservation(SlotRole.WORKSHOP, 5, 131_072, 2, "Wiki, notes, intake"),
-        RoleReservation(SlotRole.PET, 6, 32_768, 1, "Kid pet", overflow=SlotRole.SMALL),
+        RoleReservation(SlotRole.JCODE, 4, 262_144, 5, "jcode"),
+        RoleReservation(SlotRole.WORKSHOP, 5, 131_072, 3, "Wiki, notes, intake"),
+        RoleReservation(SlotRole.PET, 6, 32_768, 2, "Kid pet", overflow=SlotRole.SMALL),
         RoleReservation(SlotRole.SMALL, 7, 65_536, 0, "Small prompts"),
+        # Added last (2026-10-05) so slots 0-7 keep their ids and the eviction order among the
+        # first eight. (Saved F4 files do NOT survive it: `-np` is in their fingerprint and the
+        # restore gate's key, so they re-save and the probe re-runs.) Its own slot because
+        # research agents will browse a lot (owner): sharing theirs, a research turn between
+        # two browse steps would evict the run's cache and re-prefill it whole. Research-sized
+        # cap, though a browse prompt compacts at ~24k (agent/browse.py). Freed early: its
+        # prefix is worth something only while a run is going, and one run is a few minutes.
+        RoleReservation(SlotRole.BROWSE, 8, 131_072, 1, "Browser agent"),
     ),
 )
 
@@ -180,9 +192,9 @@ TASK_ROLES: Final[Mapping[str, SlotRole]] = {
     # the live conversation between tool rounds.
     "agent.vision": SlotRole.SMALL,
     "research.title": SlotRole.SMALL,
-    # The browse sub-agent is a sub-agent: its page snapshots belong in the research slot,
-    # never in jerv's interactive prefix (docs/plans/BROWSER_AGENT_PLAN.md B1).
-    "browse.step": SlotRole.RESEARCH,
+    # The browse sub-agent's own slot: its pages never enter jerv's interactive prefix, and a
+    # research agent's turn never evicts a run mid-way (docs/plans/BROWSER_AGENT_PLAN.md B1).
+    "browse.step": SlotRole.BROWSE,
     "triage.classify": SlotRole.SMALL,
     "pet.turn": SlotRole.PET,
     "pet.thought": SlotRole.PET,

@@ -408,3 +408,171 @@ def test_a_url_shown_to_jerv_cannot_carry_a_line_break_or_hidden_text() -> None:
         "ftp://cinema.example/",
     ):
         assert policy.safe_url(bad) is None
+
+
+# --- The delta and the pruning ---------------------------------------------------------
+
+
+def _snap(url: str, lines: list[str], title: str = "T", status: str = "") -> str:
+    head = f"### Page\n- Page URL: {url}\n- Page Title: {title}\n"
+    if status:
+        head += f"- HTTP status: {status}\n"
+    return head + "### Snapshot\n```yaml\n" + "".join(f"{x}\n" for x in lines) + "```\n"
+
+
+_ROWS = [f'- link "Film {i}" [ref=e{i}]: {i}:00 PM' for i in range(30)]
+
+
+def test_a_delta_is_only_for_the_page_the_model_last_saw() -> None:
+    page = _page(TITUSVILLE)
+    assert policy.page_delta(None, page) is None
+    assert policy.page_delta(_page(HOME), page) is None
+    assert policy.page_delta(policy.PageView(), page) is None
+
+
+def test_an_unchanged_page_is_one_line() -> None:
+    page = _page(TITUSVILLE)
+    delta = policy.page_delta(page, _page(TITUSVILLE))
+    assert delta is not None and "unchanged" in delta and "Page:" not in delta
+
+
+def test_a_delta_shows_changes_under_their_context_and_counts_what_went() -> None:
+    url = "https://x.example/"
+    before = policy.parse_page(_snap(url, _ROWS))
+    rows = list(_ROWS)
+    rows[3] = '- link "Film 3" [ref=e3]: SOLD OUT'
+    rows[20] = '- link "Film 20" [ref=e99]: 8:30 PM'
+    del rows[25]
+    after = policy.parse_page(_snap(url, rows, title="T2", status="200"))
+    delta = policy.page_delta(before, after)
+    assert delta is not None
+    assert "Title: T2" in delta and "HTTP status: 200" in delta
+    assert "SOLD OUT" in delta and '"Film 2"' in delta  # the change, and the line above it
+    assert "[ref=e99]" in delta and "  …" in delta  # hunks far apart are separated
+    assert '"Film 10"' not in delta  # what did not change is not resent
+    assert "3 line(s) are gone" in delta
+    # The gate's model is the page as it is now: the new ref is there, the removed ones not.
+    assert "e99" in after.elements and "e25" not in after.elements and "e20" not in after.elements
+
+
+def _showtimes(times: dict[int, str]) -> list[str]:
+    """A multi-film showtimes page: each film a heading, a rating line, its times as buttons."""
+    rows = ['- heading "Epic Titusville 15" [level=1] [ref=e1]']
+    for f in range(6):
+        rows += [
+            f'- heading "Film {f}" [level=2] [ref=e{100 + f}]',
+            f"- paragraph: Rated PG-13 · {90 + f} min",
+        ]
+        for t, when in enumerate(times.get(f, "1:00 PM|4:00 PM|9:40 PM").split("|")):
+            rows.append(f'- button "{when}" [ref=e{200 + 10 * f + t}]')
+    return rows
+
+
+def test_a_delta_carries_the_heading_its_times_sit_under() -> None:
+    url = "https://x.example/showtimes"
+    before = policy.parse_page(_snap(url, _showtimes({})))
+    after = policy.parse_page(_snap(url, _showtimes({3: "1:00 PM|5:15 PM|9:40 PM"})))
+    delta = policy.page_delta(before, after)
+    assert delta is not None
+    body = delta.split("Changed or new:\n", 1)[1]
+    # The changed time reads under its film, so it can be attributed.
+    assert body.index('"Film 3"') < body.index('"5:15 PM"')
+    assert '"Film 2"' not in body and '"Film 4"' not in body
+
+
+def test_changes_under_more_than_one_heading_send_the_page_whole() -> None:
+    url = "https://x.example/showtimes"
+    before = policy.parse_page(_snap(url, _showtimes({})))
+    after = policy.parse_page(
+        _snap(url, _showtimes({1: "2:00 PM|4:00 PM|9:40 PM", 4: "1:00 PM|4:00 PM|10:30 PM"}))
+    )
+    assert policy.page_delta(before, after) is None
+
+
+def test_new_sections_appended_under_their_own_headings_stay_a_delta() -> None:
+    url = "https://x.example/showtimes"
+    rows = _showtimes({})
+    before = policy.parse_page(_snap(url, rows))
+    more = ['- heading "Film 9" [level=2] [ref=e900]', '- button "8:00 PM" [ref=e901]']
+    delta = policy.page_delta(before, policy.parse_page(_snap(url, [*rows, *more])))
+    assert delta is not None and '"Film 9"' in delta and '"Film 5"' not in delta
+
+
+def test_a_change_and_an_appended_section_read_as_two_hunks() -> None:
+    url = "https://x.example/showtimes"
+    before = policy.parse_page(_snap(url, _showtimes({})))
+    rows = _showtimes({1: "1:00 PM|4:00 PM|11:00 PM"})
+    more = ['- heading "Film 9" [level=2] [ref=e900]', '- button "8:00 PM" [ref=e901]']
+    delta = policy.page_delta(before, policy.parse_page(_snap(url, [*rows, *more])))
+    assert delta is not None
+    body = delta.split("Changed or new:\n", 1)[1]
+    assert body.index('"Film 1"') < body.index('"11:00 PM"') < body.index('"Film 9"')
+    assert body.count("  …") == 2
+
+
+def test_too_many_hunks_send_the_page_whole() -> None:
+    url = "https://x.example/"
+    before = policy.parse_page(_snap(url, _ROWS))
+    rows = [r.replace("PM", "AM") if i % 4 == 0 else r for i, r in enumerate(_ROWS)]
+    assert policy.page_delta(before, policy.parse_page(_snap(url, rows))) is None
+
+
+def test_many_gone_refs_are_named_up_to_a_bound() -> None:
+    url = "https://x.example/"
+    rows = [*_ROWS, *[f'- link "Extra {i}" [ref=x{i}]' for i in range(20)]]
+    big = [*rows, *[f"- paragraph: padding {i} " + "p" * 80 for i in range(40)]]
+    before = policy.parse_page(_snap(url, big))
+    after = policy.parse_page(_snap(url, [*_ROWS, *big[len(rows) :]]))
+    delta = policy.page_delta(before, after)
+    assert delta is not None and "x0, x1" in delta and "(and 8 more)" in delta
+
+
+def test_a_delta_of_only_removals_says_so() -> None:
+    url = "https://x.example/"
+    before = policy.parse_page(_snap(url, _ROWS))
+    after = policy.parse_page(_snap(url, _ROWS[:-1]))
+    delta = policy.page_delta(before, after)
+    assert delta is not None and "only removals" in delta and "1 line(s) are gone" in delta
+
+
+def test_a_delta_as_big_as_the_page_sends_the_page() -> None:
+    url = "https://x.example/"
+    before = policy.parse_page(_snap(url, _ROWS))
+    after = policy.parse_page(_snap(url, [r.replace("PM", "AM") for r in _ROWS]))
+    assert policy.page_delta(before, after) is None
+
+
+def test_a_capped_page_says_so_in_its_delta() -> None:
+    url = "https://x.example/"
+    filler = [f"- paragraph: filler text number {i} " + "x" * 80 for i in range(40)]
+    rows = [*_ROWS, *filler]
+    before = policy.parse_page(_snap(url, rows), cap=3_000)
+    changed = list(rows)
+    changed[0] = '- link "Film 0" [ref=e0]: CANCELLED'
+    after = policy.parse_page(_snap(url, changed), cap=3_000)
+    delta = policy.page_delta(before, after)
+    assert after.truncated and delta is not None and "not shown" in delta
+
+
+def test_over_the_cap_what_can_be_acted_on_outlasts_far_off_text() -> None:
+    """A long article above the showtimes no longer pushes the showtimes out of the view."""
+    article = [f"- paragraph: long article sentence {i} " + "y" * 60 for i in range(60)]
+    showtimes = ['- heading "Showtimes" [level=2] [ref=e500]', *_ROWS[:5]]
+    page = policy.parse_page(_snap("https://x.example/", [*article, *showtimes]), cap=1_200)
+    assert page.truncated
+    assert '"Showtimes"' in page.outline and "[ref=e4]" in page.outline
+    # Text right above the heading is kept as its context; far-off text only fills what is
+    # left, in page order, so the middle of the article is what goes.
+    assert "sentence 59" in page.outline and "sentence 40 " not in page.outline
+    assert len(page.outline) <= 1_200
+    # Kept lines stay in page order.
+    assert page.outline.index("sentence 59") < page.outline.index('"Showtimes"')
+    # Evidence is checked against the whole page, not the view.
+    assert "long article sentence 0" in page.text
+
+
+def test_a_long_text_line_is_clipped_in_the_view_not_in_the_evidence() -> None:
+    blurb = "z" * (policy.MAX_LINE_CHARS + 50)
+    page = policy.parse_page(_snap("https://x.example/", [f"- paragraph: {blurb}"]))
+    assert "…" in page.outline and blurb not in page.outline
+    assert blurb in page.text

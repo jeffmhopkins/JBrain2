@@ -25,7 +25,7 @@ from jbrain.llm.types import (
 
 def test_flash_next_pool_shape() -> None:
     assert FLASH_NEXT_POOL.n_ctx == 524_288
-    assert FLASH_NEXT_POOL.n_slots == 8
+    assert FLASH_NEXT_POOL.n_slots == 9
     assert {r.role for r in FLASH_NEXT_POOL.reservations} == set(SlotRole)
 
 
@@ -37,6 +37,27 @@ def test_interactive_prefix_is_freed_last_and_small_first() -> None:
     order = FLASH_NEXT_POOL.eviction_order()
     assert order[-1] == FLASH_NEXT_POOL.slot(SlotRole.INTERACTIVE)
     assert order[0] == FLASH_NEXT_POOL.slot(SlotRole.SMALL)
+
+
+def test_browse_has_its_own_slot_added_last_and_freed_early() -> None:
+    """The ninth slot was appended, so the first eight keep their ids (and their saved F4
+    prefixes); browse steps land there, not in the research slot research agents use."""
+    browse = FLASH_NEXT_POOL.reservation(SlotRole.BROWSE)
+    assert browse.slot == FLASH_NEXT_POOL.n_slots - 1 == 8
+    assert browse.cap_tokens == FLASH_NEXT_POOL.cap(SlotRole.INGEST) == 131_072
+    assert browse.overflow is None
+    assert [r.role for r in FLASH_NEXT_POOL.reservations[:8]] == [
+        SlotRole.INTERACTIVE,
+        SlotRole.INGEST,
+        SlotRole.SCHEDULED,
+        SlotRole.RESEARCH,
+        SlotRole.JCODE,
+        SlotRole.WORKSHOP,
+        SlotRole.PET,
+        SlotRole.SMALL,
+    ]
+    assert FLASH_NEXT_POOL.eviction_order()[:2] == [7, 8]
+    assert role_for("browse.step") is SlotRole.BROWSE
 
 
 def test_every_routed_task_has_a_role() -> None:
@@ -132,7 +153,7 @@ def test_catalog_carries_the_pool_and_it_survives_the_manifest() -> None:
     assert entry.kv_pool is FLASH_NEXT_POOL
     assert entry.default_slots == FLASH_NEXT_POOL.n_slots
     assert local_catalog.pool_of(entry.served_model) is FLASH_NEXT_POOL
-    assert pool_shape(asdict(entry)) == (524_288, 8)
+    assert pool_shape(asdict(entry)) == (524_288, 9)
 
 
 def test_standard_entries_have_no_pool() -> None:
@@ -149,7 +170,7 @@ def test_slot_pin_names_a_role_or_nothing_at_all() -> None:
 
 
 def test_layout_matches_only_the_pools_own_slot_count() -> None:
-    assert slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 8)
+    assert slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 9)
     assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 4)
     assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [])
 

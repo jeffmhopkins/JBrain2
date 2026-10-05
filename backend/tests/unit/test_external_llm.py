@@ -334,7 +334,7 @@ def test_a_busy_pool_streams_an_openai_error_then_done(
                 "n_prompt_tokens": 0 if i == 4 else 200_000,
                 "next_token": [{"n_remain": -1, "n_decoded": 1}],
             }
-            for i in range(8)
+            for i in range(9)
         ]
 
     async def erase(model: str, slot: int) -> bool:
