@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-03
+> **Status:** Living · **Last verified:** 2026-10-05
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -616,7 +616,7 @@ gateway and operated entirely from the PWA. F1 shipped (engine-aware container, 
 guards, no-terminal debug tooling) and F3a (the owner's Ops engine switch, drain, remap of every
 local call). F2's on-box spike is measured (memory fit, speed, tools, JSON, prefix reuse,
 perplexity, vision, a clean 30-min soak); only the second half of the soak remains. F3b (one 512k
-`--kv-unified` pool over 8 role-pinned slots, per-slot caps, a router pool guard, the PWA pool view)
+`--kv-unified` pool over role-pinned slots — nine since the browser agent's own slot, 2026-10-05 — per-slot caps, a router pool guard, the PWA pool view)
 is built; its on-box re-measure follows the merge.
 
 **In progress:** Tool catalog (build plan: `docs/plans/TOOL_CATALOG_PLAN.md`) — a scalable tool

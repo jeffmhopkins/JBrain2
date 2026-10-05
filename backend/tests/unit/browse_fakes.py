@@ -67,16 +67,43 @@ PAGES: dict[str, tuple[str, str]] = {
     - generic [ref=e303]: 7:15 PM, 9:40 PM
   - link "Back to all theaters" [ref=e12] [cursor=pointer]:
     - /url: /locations
-""",
+  - combobox "Show date" [ref=e13]:
+    - option "Today"
+    - option "Tomorrow"
+{listings}""",
     ),
 }
+
+# The rest of the Titusville listings, so the page is big enough that a change on it is worth
+# sending as a delta. Choosing "Tomorrow" in the date picker changes ONE film's times.
+FILMS = (
+    "The Long Walk",
+    "Weapons",
+    "Freakier Friday",
+    "The Fantastic Four",
+    "Superman",
+    "Jurassic World Rebirth",
+    "F1 The Movie",
+    "Elio",
+)
+TODAY, TOMORROW = "4:00 PM, 6:30 PM", "5:10 PM"
+
+
+def _listings(day: str) -> str:
+    rows = []
+    for i, film in enumerate(FILMS):
+        times = TOMORROW if day == "Tomorrow" and i == 0 else TODAY
+        rows.append(f'    - text: "{film}"\n    - generic [ref=e{400 + i}]: {times}\n')
+    return "  - generic [ref=e399]:\n" + "".join(rows)
+
 
 # Which ref leads where (a click that is not here leaves the page as it is).
 CLICKS = {"e1": PICKER, "e2": PICKER, "e10": TITUSVILLE, "e12": PICKER}
 
 
-def snapshot_text(url: str) -> str:
+def snapshot_text(url: str, day: str = "Today") -> str:
     title, yaml = PAGES.get(url, ("", "- generic [ref=e1]: blank\n"))
+    yaml = yaml.replace("{listings}", _listings(day))
     return f"### Page\n- Page URL: {url}\n- Page Title: {title}\n### Snapshot\n```yaml\n{yaml}```\n"
 
 
@@ -101,6 +128,8 @@ class FakeBrowser:
     # Modals the page raises, in order: "dialog" or "chooser". Each blocks the snapshot until
     # the host clears it, as the real server does.
     modals: list[str] = field(default_factory=list)
+    # What the Titusville date picker shows; a select on it changes the page in place.
+    day: str = "Today"
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -172,6 +201,8 @@ class FakeBrowser:
             self._go(CLICKS[args["target"]])
         elif name == "browser_navigate_back" and self.history:
             self.url = self.history.pop()
+        elif name == "browser_select_option" and args["target"] == "e13":
+            self.day = args["values"][0]
         elif name == "browser_tabs":
             return "### Open tabs\n- 0: (current) [Home](https://cinema.example/)"
         if name in ("browser_handle_dialog", "browser_file_upload") and self.modals:
@@ -188,7 +219,7 @@ class FakeBrowser:
                     "### Error\nError: Tool does not handle the modal state.\n### Modal state\n"
                     f'- ["confirm" dialog with message "ok?"]: can be handled by {hint}'
                 )
-            return snapshot_text(self.url)
+            return snapshot_text(self.url, self.day)
         return f"### Page\n- Page URL: {self.url}\n### Snapshot\n- [Snapshot](page.yml)\n"
 
     def called(self, name: str) -> list[dict[str, Any]]:

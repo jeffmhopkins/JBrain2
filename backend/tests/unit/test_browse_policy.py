@@ -408,3 +408,99 @@ def test_a_url_shown_to_jerv_cannot_carry_a_line_break_or_hidden_text() -> None:
         "ftp://cinema.example/",
     ):
         assert policy.safe_url(bad) is None
+
+
+# --- The delta and the pruning ---------------------------------------------------------
+
+
+def _snap(url: str, lines: list[str], title: str = "T", status: str = "") -> str:
+    head = f"### Page\n- Page URL: {url}\n- Page Title: {title}\n"
+    if status:
+        head += f"- HTTP status: {status}\n"
+    return head + "### Snapshot\n```yaml\n" + "".join(f"{x}\n" for x in lines) + "```\n"
+
+
+_ROWS = [f'- link "Film {i}" [ref=e{i}]: {i}:00 PM' for i in range(30)]
+
+
+def test_a_delta_is_only_for_the_page_the_model_last_saw() -> None:
+    page = _page(TITUSVILLE)
+    assert policy.page_delta(None, page) is None
+    assert policy.page_delta(_page(HOME), page) is None
+    assert policy.page_delta(policy.PageView(), page) is None
+
+
+def test_an_unchanged_page_is_one_line() -> None:
+    page = _page(TITUSVILLE)
+    delta = policy.page_delta(page, _page(TITUSVILLE))
+    assert delta is not None and "unchanged" in delta and "Page:" not in delta
+
+
+def test_a_delta_shows_changes_under_their_context_and_counts_what_went() -> None:
+    url = "https://x.example/"
+    before = policy.parse_page(_snap(url, _ROWS))
+    rows = list(_ROWS)
+    rows[3] = '- link "Film 3" [ref=e3]: SOLD OUT'
+    rows[20] = '- link "Film 20" [ref=e99]: 8:30 PM'
+    del rows[25]
+    after = policy.parse_page(_snap(url, rows, title="T2", status="200"))
+    delta = policy.page_delta(before, after)
+    assert delta is not None
+    assert "Title: T2" in delta and "HTTP status: 200" in delta
+    assert "SOLD OUT" in delta and '"Film 2"' in delta  # the change, and the line above it
+    assert "[ref=e99]" in delta and "  …" in delta  # hunks far apart are separated
+    assert '"Film 10"' not in delta  # what did not change is not resent
+    assert "3 line(s) are gone" in delta
+    # The gate's model is the page as it is now: the new ref is there, the removed ones not.
+    assert "e99" in after.elements and "e25" not in after.elements and "e20" not in after.elements
+
+
+def test_a_delta_of_only_removals_says_so() -> None:
+    url = "https://x.example/"
+    before = policy.parse_page(_snap(url, _ROWS))
+    after = policy.parse_page(_snap(url, _ROWS[:-1]))
+    delta = policy.page_delta(before, after)
+    assert delta is not None and "only removals" in delta and "1 line(s) are gone" in delta
+
+
+def test_a_delta_as_big_as_the_page_sends_the_page() -> None:
+    url = "https://x.example/"
+    before = policy.parse_page(_snap(url, _ROWS))
+    after = policy.parse_page(_snap(url, [r.replace("PM", "AM") for r in _ROWS]))
+    assert policy.page_delta(before, after) is None
+
+
+def test_a_capped_page_says_so_in_its_delta() -> None:
+    url = "https://x.example/"
+    filler = [f"- paragraph: filler text number {i} " + "x" * 80 for i in range(40)]
+    rows = [*_ROWS, *filler]
+    before = policy.parse_page(_snap(url, rows), cap=3_000)
+    changed = list(rows)
+    changed[0] = '- link "Film 0" [ref=e0]: CANCELLED'
+    after = policy.parse_page(_snap(url, changed), cap=3_000)
+    delta = policy.page_delta(before, after)
+    assert after.truncated and delta is not None and "not shown" in delta
+
+
+def test_over_the_cap_what_can_be_acted_on_outlasts_far_off_text() -> None:
+    """A long article above the showtimes no longer pushes the showtimes out of the view."""
+    article = [f"- paragraph: long article sentence {i} " + "y" * 60 for i in range(60)]
+    showtimes = ['- heading "Showtimes" [level=2] [ref=e500]', *_ROWS[:5]]
+    page = policy.parse_page(_snap("https://x.example/", [*article, *showtimes]), cap=1_200)
+    assert page.truncated
+    assert '"Showtimes"' in page.outline and "[ref=e4]" in page.outline
+    # Text right above the heading is kept as its context; far-off text only fills what is
+    # left, in page order, so the middle of the article is what goes.
+    assert "sentence 59" in page.outline and "sentence 40 " not in page.outline
+    assert len(page.outline) <= 1_200
+    # Kept lines stay in page order.
+    assert page.outline.index("sentence 59") < page.outline.index('"Showtimes"')
+    # Evidence is checked against the whole page, not the view.
+    assert "long article sentence 0" in page.text
+
+
+def test_a_long_text_line_is_clipped_in_the_view_not_in_the_evidence() -> None:
+    blurb = "z" * (policy.MAX_LINE_CHARS + 50)
+    page = policy.parse_page(_snap("https://x.example/", [f"- paragraph: {blurb}"]))
+    assert "…" in page.outline and blurb not in page.outline
+    assert blurb in page.text

@@ -72,7 +72,7 @@ re-prefills. Folding the date into this fingerprint instead would just orphan th
 midnight — so keep it out.
 
 PER ROLE AND PER CONVERSATION (FLASH_NEXT_ENGINE_PLAN F4). On a pooled model — Flash-Next's
-eight role-pinned slots over one shared KV pool — a prefix belongs to a ROLE: it is saved from
+nine role-pinned slots over one shared KV pool — a prefix belongs to a ROLE: it is saved from
 that role's slot, restored into that role's slot only, never over an occupied slot, and never
 when the restore would push the pool past its cells. Memos and drift diagnostics are kept per
 (model, role), so a research or scheduled turn is not mistaken for jerv's identity drifting.

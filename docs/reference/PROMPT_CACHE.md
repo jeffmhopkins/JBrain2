@@ -74,13 +74,16 @@ Saves are not gated. The state read and Ops show `awaiting_probe | passed | fail
 
 ## On Flash-Next: one prefix per role, and conversation files (F4)
 
-Flash-Next serves eight role-pinned slots over one shared KV pool
+Flash-Next serves nine role-pinned slots over one shared KV pool
 (`../plans/FLASH_NEXT_ENGINE_PLAN.md` §4a), so the store works per **role**:
 
 - jerv's prime is saved from slot 0 and restored into slot 0. The keeper also restores the
   same file into the **scheduled-task** slot (2) when it is empty — scheduled turns send jerv's
-  persona, tools and effort, so it is their identity too. Ingest, research and the pet are not
-  primed: their stable prefixes are a few hundred tokens or do not exist. Any role's turn still
+  persona, tools and effort, so it is their identity too. Ingest, research, browse and the pet
+  are not primed: their stable prefixes are a few hundred tokens or do not exist. (The browse
+  slot, 8, is the ninth and newest; it was appended so slots 0-7 kept their ids and their saved
+  files. Its cache matters only within a run, where the sub-agent's strictly append-only prompt
+  lets the end-of-prompt checkpoint cover each step — `../plans/BROWSER_AGENT_PLAN.md` B1.) Any role's turn still
   restores into its own slot on demand if a file of its identity exists.
 - A restore goes into the role's own slot only while that slot is idle and **empty**, never
   over an occupied one, and only when the restored tokens fit the pool — judged by the router's

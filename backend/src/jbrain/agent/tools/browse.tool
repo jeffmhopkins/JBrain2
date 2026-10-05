@@ -1,6 +1,6 @@
 ---
 name: browse
-version: 2
+version: 3
 permission: web
 cost_class: expensive
 params:
@@ -18,7 +18,8 @@ Use a real web browser to get an answer from a page that has to be USED, not jus
 site that shows nothing until you pick a location, store or theater; content behind a tab,
 a "show more" button, a filter or a date picker; or a page that is only a JavaScript shell
 to web_fetch. A separate browsing agent clicks through the site for you (about twenty
-actions at most, a few minutes) and returns a short answer. If it runs out of steps or time
+actions at most, a few minutes) and returns the facts it read as a terse list, one per line
+— write them up for the owner yourself. If it runs out of steps or time
 first, it returns the text of the page it stopped on instead, marked UNVERIFIED — read the
 answer from that rather than fetching the page again.
 

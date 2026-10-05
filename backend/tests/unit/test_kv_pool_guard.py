@@ -34,7 +34,7 @@ def _slot(
 
 
 def _layout(**held: dict[str, object]) -> list[dict[str, object]]:
-    """Eight slots, empty unless named (`s3=_slot(3, ...)`)."""
+    """The pool's slots, empty unless named (`s3=_slot(3, ...)`)."""
     return [held.get(f"s{i}", _slot(i)) for i in range(POOL.n_slots)]
 
 
@@ -480,7 +480,7 @@ async def test_a_slot_that_turns_busy_before_its_erase_is_skipped() -> None:
     # The read that chose SMALL showed it idle; the read right before its erase shows it
     # running, so the next candidate (PET) is erased instead.
     now_busy = {**_crowded()[7], "is_processing": True, "next_token": [{"n_decoded": 5}]}
-    gw = _Gateway(_crowded(), [*_crowded()[:7], now_busy])
+    gw = _Gateway(_crowded(), [*_crowded()[:7], now_busy, *_crowded()[8:]])
     async with _guard(gw).placed(
         MODEL, POOL, SlotRole.INTERACTIVE, prompt_tokens=190_000, max_tokens=10_000
     ) as placed:

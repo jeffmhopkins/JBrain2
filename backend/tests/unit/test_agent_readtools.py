@@ -1721,10 +1721,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # shell, never instead of a search) and for treating the result as quoted data.
         # v2: a run that stops before an answer returns its last page's text, UNVERIFIED,
         # and the prose tells jerv to read from it rather than fetch the page again.
+        # v3: the answer comes back as a terse list of facts, and jerv writes it up.
         "browse.tool": (
             "browse",
-            2,
-            "ce4dc08a417178658a3bbc24556aa9f331179aad70f5b0f404ca7699a7b030a2",
+            3,
+            "6bb6f9f6e96a680a36b0dcb38e84da1348450ab8b5a66a69e6f35b9860d3ba7f",
         ),
         "ask_owner.tool": (
             "ask_owner",

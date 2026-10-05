@@ -138,10 +138,25 @@ async def test_the_sub_agent_sees_the_goal_and_the_page_and_nothing_else() -> No
     assert {t.name for t in first["tools"]} == ACTION_NAMES
 
 
+def _bodies(messages: Sequence[Any]) -> list[str]:
+    return [
+        m.text if isinstance(m, UserMessage) else m.results[0].content
+        for m in messages
+        if isinstance(m, (UserMessage, ToolResultMessage))
+    ]
+
+
+def _assert_strict_extension(sent: list[list[Any]]) -> None:
+    """Each step's messages are EXACTLY the last step's plus a tail: the whole of what was
+    sent is a prefix of the next prompt, so the server's end-of-prompt checkpoint covers it."""
+    for before, after in zip(sent, sent[1:], strict=False):
+        assert after[: len(before)] == before
+        assert len(after) == len(before) + 2  # this step's action, and what it left
+
+
 async def test_each_steps_prompt_extends_the_last_ones() -> None:
-    """The cache contract: nothing already sent is rewritten. Step N's messages, but for the
-    last (the page in full, which becomes its one-line note), are a prefix of step N+1's —
-    across actions, a refusal, a no-action nudge and a bounced finish."""
+    """The cache contract: nothing already sent is rewritten or shortened — across actions,
+    a refusal, a no-action nudge and a bounced finish."""
     turns = [
         _call("click", 1, ref="e1"),
         _call("click", 2, ref="e3"),  # refused: an email field
@@ -156,19 +171,68 @@ async def test_each_steps_prompt_extends_the_last_ones() -> None:
 
     sent = [call["messages"] for call in fake.converse_calls]
     assert len(sent) == 6
-    for before, after in zip(sent, sent[1:], strict=False):
-        assert after[: len(before) - 1] == before[:-1]
-        assert len(after) == len(before) + 2  # this step's action, and the page it left
-    # The opening is the same object's worth of text on every step.
-    assert len({m[0] for m in sent}) == 1
-    # Only the last message carries a page in full.
-    for messages in sent:
-        bodies = [
-            m.text if isinstance(m, UserMessage) else m.results[0].content
-            for m in messages
-            if isinstance(m, (UserMessage, ToolResultMessage))
-        ]
-        assert [("\nPage:\n" in b) for b in bodies] == [False] * (len(bodies) - 1) + [True]
+    _assert_strict_extension(sent)
+    # A refusal and a bounced finish re-send no page: the one already sent still stands.
+    bodies = _bodies(sent[-1])
+    refused = [b for b in bodies if b.startswith("Refused:")]
+    assert len(refused) == 1 and "Page:" not in refused[0]
+    assert bodies[-1].startswith("Not accepted") and "Page:" not in bodies[-1]
+
+
+async def test_a_same_page_change_is_sent_as_a_delta_and_a_new_page_in_full() -> None:
+    """The prompt extends strictly across a navigation (a new page, sent whole), an action
+    that changes the page in place (sent as what changed), and back to an earlier page (sent
+    whole again: a delta is only ever against the page the model last saw)."""
+    turns = [
+        _call("click", 1, ref="e1"),  # HOME -> PICKER: navigation
+        _call("click", 2, ref="e10"),  # PICKER -> TITUSVILLE: navigation
+        _call("select_option", 3, ref="e13", values=["Tomorrow"]),  # same page, one change
+        _call("click", 4, ref="e12"),  # back to PICKER: navigation
+        _call("click", 5, ref="e10"),
+        _call("finish", 6, answer="The Long Walk: 5:10 PM", evidence="the long walk 5:10 pm"),
+    ]
+    agent, fake, browser = _agent(turns)
+    run = await agent.run(GOAL, HOME)
+    assert run.outcome == "answered" and run.verified
+
+    sent = [call["messages"] for call in fake.converse_calls]
+    _assert_strict_extension(sent)
+    bodies = _bodies(sent[-1])
+    # [opening, home, picker, titusville, delta, picker, titusville]
+    home, picker, titus, delta, picker2, titus2 = bodies[1:]
+    for full in (home, picker, titus, picker2, titus2):
+        assert "\nPage:\n" in full
+    assert "Page:" not in delta and "only changes are shown" in delta
+    # The delta carries the changed line under its context, and nothing the page kept.
+    assert "5:10 PM" in delta and "The Long Walk" in delta
+    assert "Epic Titusville 15" not in delta and "Weapons" not in delta
+    assert len(delta) < len(titus) / 2
+    assert "1 line(s) are gone" in delta
+    # Reopened after another page, it is shown whole again, change included.
+    assert "5:10 PM" in titus2 and "Epic Titusville 15" in titus2
+    # The browser was asked for the select with host-built arguments.
+    assert browser.called("browser_select_option") == [
+        {"target": "e13", "element": "Show date", "values": ["Tomorrow"]}
+    ]
+
+
+async def test_the_gate_judges_the_page_as_it_is_now_not_the_delta() -> None:
+    """A delta shows only changed lines, but every ref the page still has stays usable — and
+    a ref the change took away is refused, whatever an earlier view showed."""
+    turns = [
+        _call("select_option", 1, ref="e13", values=["Tomorrow"]),
+        # e12 is not in the delta (unchanged), but is on the page: allowed.
+        _call("click", 2, ref="e12"),
+        # e13 was on Titusville, not on the picker page now open: refused.
+        _call("select_option", 3, ref="e13", values=["Today"]),
+        _call("give_up", 4, reason="done"),
+    ]
+    agent, _, browser = _agent(turns)
+    run = await agent.run(GOAL, TITUSVILLE)
+    assert run.outcome == "gave_up"
+    assert len(browser.called("browser_select_option")) == 1
+    assert browser.called("browser_click") == [{"target": "e12", "element": "Back to all theaters"}]
+    assert "no actionable element with ref e13" in run.steps[-2].note
 
 
 async def test_the_last_steps_page_says_to_finish() -> None:
@@ -176,11 +240,11 @@ async def test_the_last_steps_page_says_to_finish() -> None:
     await agent.run(GOAL, TITUSVILLE)
     hints = ["call finish now" in str(c["messages"][-1]) for c in fake.converse_calls]
     assert hints == [False, False, True, True]
-    # The note rides only on the page in full; the history the next step extends has none.
-    assert "call finish now" not in str(fake.converse_calls[3]["messages"][:-1])
+    # The note is part of what was sent, so the next step extends it unedited.
+    _assert_strict_extension([c["messages"] for c in fake.converse_calls])
 
 
-async def test_only_the_latest_page_is_shown_in_full() -> None:
+async def test_every_page_is_sent_once_and_stays() -> None:
     agent, fake, _ = _agent(HAPPY)
     await agent.run(GOAL, HOME)
 
@@ -188,11 +252,38 @@ async def test_only_the_latest_page_is_shown_in_full() -> None:
     results = [m for m in third if isinstance(m, ToolResultMessage)]
     assert len(results) == 2
     older, latest = results[0].results[0].content, results[1].results[0].content
-    assert "Page:" not in older and older.startswith("click: done.")
-    assert "Epic Titusville 15" in latest
+    assert "Choose your theater" in older and "Epic Titusville 15" in latest
 
 
-async def test_each_step_runs_in_the_research_slot_under_its_own_task() -> None:
+async def test_a_prompt_over_its_cap_is_compacted_once_into_a_fresh_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Past the cap the run does not edit history: it starts ONE new prompt (the opening, a
+    line per step, the page in full), then extends that one strictly again."""
+    monkeypatch.setattr(browse, "MAX_PROMPT_CHARS", 1_500)
+    turns = [
+        _call("click", 1, ref="e1"),
+        _call("click", 2, ref="e10"),
+        _call("snapshot", 3),
+        _call("finish", 4, answer="Dune: 7:15 PM, 9:40 PM", evidence="7:15 PM, 9:40 PM"),
+    ]
+    agent, fake, _ = _agent(turns)
+    run = await agent.run(GOAL, HOME)
+    assert run.outcome == "answered"
+
+    sent = [call["messages"] for call in fake.converse_calls]
+    starts = [i for i, m in enumerate(sent) if len(m) == 1]
+    assert len(starts) == 1, "one compaction"
+    fresh = sent[starts[0]][0]
+    assert isinstance(fresh, UserMessage)
+    assert fresh.text.startswith(f"GOAL: {GOAL}")
+    assert "Your steps so far" in fresh.text and "2. click" in fresh.text
+    assert "\nPage:\n" in fresh.text and "Epic Titusville 15" in fresh.text
+    _assert_strict_extension(sent[: starts[0]])
+    _assert_strict_extension(sent[starts[0] :])
+
+
+async def test_each_step_runs_in_the_browse_slot_under_its_own_task() -> None:
     seen: list[dict[str, Any]] = []
     agent, _, _ = _agent(HAPPY)
 
@@ -203,9 +294,9 @@ async def test_each_step_runs_in_the_research_slot_under_its_own_task() -> None:
     agent._router.converse = spy  # type: ignore[method-assign]
     await agent.run(GOAL, HOME, spec_override="local:some-model")
     assert {s["task"] for s in seen} == {"browse.step"}
-    assert {s["slot_role"] for s in seen} == {SlotRole.RESEARCH}
+    assert {s["slot_role"] for s in seen} == {SlotRole.BROWSE}
     assert {s["spec_override"] for s in seen} == {"local:some-model"}
-    assert TASK_ROLES["browse.step"] is SlotRole.RESEARCH
+    assert TASK_ROLES["browse.step"] is SlotRole.BROWSE
 
 
 # --- The gate: what the browser is never asked to do -----------------------------------
@@ -246,9 +337,9 @@ async def test_typing_personal_data_never_reaches_the_browser() -> None:
         {"target": "e4", "element": "Search movies", "text": "Dune", "submit": True}
     ]
     assert "refused" in run.steps[1].note and "long number" in run.steps[2].note
-    # The refusal is what the model reads next, with the page so it can choose again.
+    # The refusal is what the model reads next; the page it refers to is already above.
     refusal = fake.converse_calls[1]["messages"][-1].results[0].content
-    assert refusal.startswith("Refused:") and "Page:" in refusal
+    assert refusal.startswith("Refused:") and refusal.endswith("The page is as shown above.")
 
 
 async def test_select_tabs_keys_and_waits_pass_the_gate_with_host_built_arguments() -> None:
@@ -316,7 +407,7 @@ def test_the_action_sidecars_are_pinned() -> None:
     change is a deliberate version bump."""
     pins = {
         "click": (1, "b0dffdd233a2b070be8139a6187864a03853d5522b073200d5e98d694d8c0145"),
-        "finish": (1, "1f8069caa13e3a5abb46fbbeb67185fe0f21fcdacd5d311681793301918c0972"),
+        "finish": (2, "179ced98b4be7ff609ab328b8375d14d1cda54c4245a1e05c4e2b09e5161e0a4"),
         "give_up": (1, "975f7830cd71d5496c668c45bc8b8010ff0d1cc8ce7805e3b319134f2a3704f2"),
         "go_back": (1, "ab8adbc61e0727d0a42b74b9b02c4c8c721737297f32bb3d4276ee7a5b998366"),
         "navigate": (1, "62ec34021e5f589249277837d01837c6d85d1330bef460937d74b597d159a9d8"),
@@ -337,10 +428,10 @@ def test_the_action_sidecars_are_pinned() -> None:
 def test_the_browse_prompt_is_pinned() -> None:
     import hashlib
 
-    assert browse._PROMPT.version == "agent-browse-v2"
+    assert browse._PROMPT.version == "agent-browse-v3"
     assert (
         hashlib.sha256(browse._PROMPT.body.encode()).hexdigest()
-        == "a9e3b5a7238d7bc22e55526fc147dc00e383e66ef615952c854e902bed18bb5b"
+        == "92646fc4cae1a4153acc1203caede6d7995cd8922243f5bb46f984ba256c0b61"
     )
 
 

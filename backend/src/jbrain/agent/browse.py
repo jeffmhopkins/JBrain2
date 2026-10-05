@@ -14,24 +14,28 @@ matter, each of which a test pins:
 - **Budgets.** Steps, wall clock and distinct pages are capped; repeating the same action or
   making no progress stops the run. Success is checked on the final page (`finish` must
   quote text that is really there), never taken from the model's word.
-- **Context stays small, and its prefix stays put.** Only the latest page is shown in
-  full, and only as the LAST message; earlier steps shrink to a one-line note, so a
-  twenty-step run does not carry twenty snapshots. Messages are append-only — the opening is
-  the goal alone, and the only message that differs from the last step's is the one at the
-  end — so a local server reuses its cache for everything but the newest step instead of
-  prefilling the whole run again each time.
+- **The prompt only ever grows at its end.** Each step's messages are EXACTLY the last
+  step's plus a new tail (the action, and the page it left) — nothing already sent is
+  shortened or edited, budget notes included. On the hybrid Flash-Next a cache is resumed
+  only from a context checkpoint at or before where two prompts diverge, and the one that
+  always survives is the checkpoint at the end of the last prompt; so a step prefills just
+  its tail. (Shrinking the last page to a note, as B1 first did, moved the divergence back
+  to that page's start and re-prefilled it every step.) What keeps the growth small: a page
+  the model already saw is sent as what changed (`policy.page_delta`), a refusal re-sends
+  nothing, and the view is pruned and capped. Past `MAX_PROMPT_CHARS` the run starts ONE
+  fresh, compacted prompt — one full prefill — rather than rewrite history.
 - **A stop still hands back the page.** A run that ends on a budget, a loop or a silent
   model returns the final page's text, quarantined and marked unverified, so the caller can
   read what the browser reached instead of fetching it again.
 
-All model calls go through the LLM adapter under the `browse.step` task, pinned to the
-research slot so a browse run never evicts jerv's interactive prefix.
+All model calls go through the LLM adapter under the `browse.step` task, pinned to a slot
+of its own, so a browse run neither evicts jerv's interactive prefix nor is evicted mid-run
+by a research agent (which will often be what asked for the browse).
 """
 
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import re
 import time
@@ -44,7 +48,7 @@ import structlog
 
 from jbrain.agent import browse_policy as policy
 from jbrain.agent.toolfile import load_tool
-from jbrain.llm import LlmRouter
+from jbrain.llm import LlmRouter, slot_roles
 from jbrain.llm.errors import LlmError
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.slot_roles import SlotRole
@@ -89,6 +93,12 @@ NO_PROGRESS_STOP_AT = 6
 IDLE_STOP_AT = 2
 # `finish` calls whose evidence is not on the page before the answer is accepted unverified.
 UNVERIFIED_FINISH_ACCEPT_AT = 2
+# What the prompt's messages may grow to (~24k tokens) before the run compacts them into one
+# fresh prompt. Far under the browse slot's cap: past it, every step's attention gets dearer.
+MAX_PROMPT_CHARS = 96_000
+# The steps a compacted prompt still lists, one bounded line each.
+COMPACT_STEPS = 15
+_COMPACT_LINE_CHARS = 200
 # When this little is left, the latest page carries a note telling the model to finish.
 LOW_STEPS_LEFT = 2
 LOW_SECONDS_LEFT = 60.0
@@ -142,9 +152,10 @@ _NUDGE = (
 # The first message never changes during a run: the cache-stable head of every step's prompt.
 _OPENING = (
     "GOAL: {goal}\n\n"
-    "After each action you are shown the page as it is NOW, as the last message; earlier"
-    " pages are cut to one line. Choose ONE action each turn."
+    "After each action you are shown the page it left, as the last message. A new page is"
+    " shown in full; the same page again shows only what changed. Choose ONE action each turn."
 )
+_UNCHANGED = "The page is as shown above."
 # Actions that only look; they never change the page, so they are not loop candidates.
 _LOOKING = frozenset({"snapshot", "wait_for"})
 
@@ -242,15 +253,46 @@ class _Run:
         self.unverified_finishes = 0
         # The URL a gated `type_text` last succeeded on — the only page `Enter` may submit.
         self.typed_url: str | None = None
-        # Every message sent so far, in its SHORT form, append-only: nothing already sent is
-        # rewritten, so each step's prompt extends the last one's. `tail` is the full form of
-        # the last entry (the current page), sent in its place.
-        self.history: list[LlmMessage] = [UserMessage(text=_OPENING.format(goal=goal))]
-        self.tail: UserMessage | ToolResultMessage | None = None
+        self.max_steps = DEFAULT_MAX_STEPS
+        self.started = 0.0
+        self.opening = _OPENING.format(goal=goal)
+        # Every message sent so far, exactly as sent. Only ever appended to (or, once over
+        # `MAX_PROMPT_CHARS`, replaced whole by `compact`), so each step's prompt is the last
+        # one's plus a tail.
+        self.history: list[LlmMessage] = [UserMessage(text=self.opening)]
+        # The page as the model last saw it — the baseline the next view is a delta against.
+        self.shown: policy.PageView | None = None
+        self.compactions = 0
 
-    def observe(self, short: LlmMessage, full: UserMessage | ToolResultMessage) -> None:
-        self.history.append(short)
-        self.tail = full
+    def view(self) -> str:
+        """The current page as the next message shows it: what changed since the model last saw
+        this page, or the whole page."""
+        delta = policy.page_delta(self.shown, self.page)
+        self.shown = self.page
+        return delta if delta is not None else self.page.render()
+
+    def prompt_chars(self) -> int:
+        return slot_roles.prompt_chars("", self.history, ())
+
+    def compact(self, hint: str) -> None:
+        """Start one fresh prompt: the opening, a line per recent step, the page in full. The
+        one full prefill the run pays instead of editing what it already sent."""
+        lines = [
+            _step_line(step)
+            for step in self.result.steps[-COMPACT_STEPS:]
+            if step.action != "(none)"
+        ]
+        text = (
+            self.opening
+            + "\n\nYour steps so far (older ones dropped to save room):\n"
+            + "\n".join(lines)
+            + "\n\nThis is the current page.\n\n"
+            + self.page.render()
+            + hint
+        )
+        self.history = [UserMessage(text=text)]
+        self.shown = self.page
+        self.compactions += 1
 
     def note_page(self, page: policy.PageView) -> None:
         self.page = page
@@ -312,6 +354,7 @@ class BrowseAgent:
         state = _Run(goal.strip())
         started = self._clock()
         steps = _clamp_steps(max_steps, self._max_steps)
+        state.max_steps, state.started = steps, started
         try:
             await asyncio.wait_for(
                 self._drive(state, start_url, steps, started, spec_override),
@@ -341,6 +384,8 @@ class BrowseAgent:
             page_text_chars=len(run.page_text),
             steps=len(run.steps),
             pages=len(state.visited),
+            # Each one is a full re-prefill: how often the cap bites is what sizes it.
+            compactions=state.compactions,
             elapsed_ms=run.elapsed_ms,
         )
         return run
@@ -362,28 +407,25 @@ class BrowseAgent:
                     state.result.steps.append(
                         BrowseStep(0, "navigate", {"url": start_url}, False, problem)
                     )
-            url = state.page.url
-            state.observe(
-                UserMessage(text=f"The browser opened on {url}." if url else "No page is open."),
-                UserMessage(text="This is the current page.\n\n" + state.page.render()),
+            state.history.append(
+                UserMessage(
+                    text="This is the current page.\n\n" + state.view() + self._hint(state, 1)
+                )
             )
             for n in range(1, max_steps + 1):
-                spent = self._clock() - started
-                if spent > self._wall:
+                if self._clock() - started > self._wall:
                     state.result.outcome = "timeout"
                     return
-                hint = _budget_hint(max_steps - n + 1, self._wall - spent)
-                if await self._step(session, state, n, spec_override, hint):
+                if await self._step(session, state, n, spec_override):
                     return
             state.result.outcome = "step_budget"
 
-    @staticmethod
-    def _messages(state: _Run, hint: str = "") -> list[LlmMessage]:
-        """What the model reads this step: the history as sent, its last entry in full."""
-        messages = list(state.history)
-        if state.tail is not None:
-            messages[-1] = _with_hint(state.tail, hint)
-        return messages
+    def _hint(self, state: _Run, step: int) -> str:
+        """The budget note for the message step `step` will read, fixed when that message is
+        written: it stays in the prompt, unedited, like everything else sent."""
+        return _budget_hint(
+            state.max_steps - step + 1, self._wall - (self._clock() - state.started)
+        )
 
     async def _step(
         self,
@@ -391,18 +433,20 @@ class BrowseAgent:
         state: _Run,
         n: int,
         spec_override: str | None,
-        hint: str = "",
     ) -> bool:
         """One model turn and the action it picked. True when the run is over."""
+        if state.prompt_chars() > MAX_PROMPT_CHARS:
+            state.compact(self._hint(state, n))
         t0 = self._clock()
         turn = await self._router.converse(
             BROWSE_TASK,
             system=_PROMPT.body,
-            messages=self._messages(state, hint),
+            # A copy: the history grows after this call, and the call must keep what it sent.
+            messages=list(state.history),
             tools=ACTION_TOOLS,
             max_tokens=STEP_MAX_TOKENS,
             spec_override=spec_override,
-            slot_role=SlotRole.RESEARCH,
+            slot_role=SlotRole.BROWSE,
         )
         model_ms = int((self._clock() - t0) * 1000)
         mark = len(state.result.steps)
@@ -429,30 +473,25 @@ class BrowseAgent:
                 return True
             # A reply that chose no action gets a user turn back, not a tool result.
             state.history.append(AssistantMessage(text=turn.text))
-            state.observe(
-                UserMessage(text=_NUDGE),
-                UserMessage(text=_NUDGE + "\n\n" + state.page.render()),
+            state.history.append(
+                UserMessage(text=_NUDGE + "\n\n" + state.view() + self._hint(state, n + 1))
             )
             return False
         state.idle = 0
         call, extra = calls[0], calls[1:]
-        results: list[tuple[str, str, str]] = []
-        done, short, full = await self._dispatch(session, state, n, call, model_ms)
-        results.append((call.id, short, full))
+        done, content = await self._dispatch(session, state, n, call, model_ms)
+        results = [ToolResult(call.id, content + self._hint(state, n + 1))]
         for skipped in extra:
             note = "Not run: one action per step. Look at the page above and choose again."
-            results.append((skipped.id, note, note))
+            results.append(ToolResult(skipped.id, note))
         state.history.append(AssistantMessage(text=turn.text, tool_calls=list(calls)))
-        state.observe(
-            ToolResultMessage(results=[ToolResult(cid, short) for cid, short, _ in results]),
-            ToolResultMessage(results=[ToolResult(cid, full) for cid, _, full in results]),
-        )
+        state.history.append(ToolResultMessage(results=results))
         return done
 
     async def _dispatch(
         self, session: McpSession, state: _Run, n: int, call: ToolCall, model_ms: int
-    ) -> tuple[bool, str, str]:
-        """Run one model-chosen action. Returns (run over, short note, full observation)."""
+    ) -> tuple[bool, str]:
+        """Run one model-chosen action. Returns (run over, what the model reads back)."""
         name, args = call.name, dict(call.arguments or {})
         if name not in ACTION_NAMES:
             known = ", ".join(sorted(ACTION_NAMES))
@@ -460,7 +499,7 @@ class BrowseAgent:
             state.result.steps.append(
                 BrowseStep(n, name, _brief_args(name, args), False, note, model_ms=model_ms)
             )
-            return False, note, note
+            return False, note
         if name == "finish":
             return await self._finish(session, state, n, args, model_ms)
         if name == "give_up":
@@ -470,7 +509,7 @@ class BrowseAgent:
             state.result.steps.append(
                 BrowseStep(n, name, _brief_args(name, args), True, "gave up", model_ms=model_ms)
             )
-            return True, "gave up", "gave up"
+            return True, "gave up"
         signature = _signature(name, args)
         if name not in _LOOKING:
             repeats = state.signatures.count(signature) + 1
@@ -480,7 +519,7 @@ class BrowseAgent:
                 state.result.steps.append(
                     BrowseStep(n, name, _brief_args(name, args), False, "loop", model_ms=model_ms)
                 )
-                return True, "loop", "loop"
+                return True, "loop"
             if repeats >= REPEAT_REFUSE_AT:
                 note = (
                     f"Refused: you have tried this exact {name} {repeats - 1} times already and"
@@ -489,7 +528,7 @@ class BrowseAgent:
                 state.result.steps.append(
                     BrowseStep(n, name, _brief_args(name, args), False, note, model_ms=model_ms)
                 )
-                return False, note, note + "\n\n" + state.page.render()
+                return False, f"{note}\n\n{_UNCHANGED}"
         problem = self._gate(state.page, name, args)
         # Enter submits whatever form has focus, so it rides the type gate: only after a
         # search/filter field on THIS page took the text.
@@ -503,7 +542,8 @@ class BrowseAgent:
             state.result.steps.append(
                 BrowseStep(n, name, _brief_args(name, args), False, problem, model_ms=model_ms)
             )
-            return False, f"Refused: {problem}", f"Refused: {problem}\n\n" + state.page.render()
+            # Nothing ran, so the page is the one the model just read: it is not sent again.
+            return False, f"Refused: {problem}\n\n{_UNCHANGED}"
         before = state.page.fingerprint
         typed_on = state.page.url
         ok, note, browser_ms = await self._act(session, state, name, args, n, model_ms)
@@ -513,13 +553,11 @@ class BrowseAgent:
             state.no_progress = state.no_progress + 1 if state.page.fingerprint == before else 0
             if state.no_progress >= NO_PROGRESS_STOP_AT:
                 state.result.outcome = "stuck"
-                return True, note, note
+                return True, note
         if len(state.visited) > self._max_pages:
             state.result.outcome = "page_budget"
-            return True, note, note
-        short = f"{name}: {note}. Then the page was {state.page.url or '(unknown)'}."
-        full = (f"{note}\n\n" if not ok else "") + state.page.render()
-        return False, short, full
+            return True, note
+        return False, (f"{note}\n\n" if not ok else "") + state.view()
 
     @staticmethod
     def _gate(page: policy.PageView, name: str, args: dict[str, Any]) -> str | None:
@@ -624,7 +662,7 @@ class BrowseAgent:
 
     async def _finish(
         self, session: McpSession, state: _Run, n: int, args: dict[str, Any], model_ms: int
-    ) -> tuple[bool, str, str]:
+    ) -> tuple[bool, str]:
         """Accept an answer only when its evidence is on the page as it is NOW."""
         t0 = self._clock()
         state.note_page(policy.parse_page(await _look(session)))
@@ -649,19 +687,18 @@ class BrowseAgent:
             )
         )
         if not answer:
-            message = "finish needs the answer itself, in plain sentences."
-            return False, message, message + "\n\n" + state.page.render()
+            message = "finish needs the answer itself: the facts, one per line."
+            return False, message + "\n\n" + state.view()
         if accept:
             state.result.outcome = "answered"
             state.result.answer = answer
             state.result.verified = verified
-            return True, note, note
+            return True, note
         message = (
             "Not accepted: the evidence you quoted is not on the current page. Copy a phrase"
-            " exactly as the page shows it (below), or keep browsing to the page that has the"
-            " answer."
+            " exactly as the page shows it, or keep browsing to the page that has the answer."
         )
-        return False, message, message + "\n\n" + state.page.render()
+        return False, message + "\n\n" + state.view()
 
 
 def _budget_hint(steps_left: int, seconds_left: float) -> str:
@@ -675,16 +712,11 @@ def _budget_hint(steps_left: int, seconds_left: float) -> str:
     )
 
 
-def _with_hint(message: UserMessage | ToolResultMessage, hint: str) -> LlmMessage:
-    if not hint:
-        return message
-    if isinstance(message, UserMessage):
-        return dataclasses.replace(message, text=message.text + hint)
-    # A tool result always has one entry per call, and a step has at least one call.
-    first, *rest = message.results
-    return ToolResultMessage(
-        results=[dataclasses.replace(first, content=first.content + hint), *rest]
-    )
+def _step_line(step: BrowseStep) -> str:
+    args = json.dumps(step.args, ensure_ascii=False, default=str)
+    line = f"{step.n}. {step.action} {args}: {step.note}" + (f" ({step.url})" if step.url else "")
+    line = " ".join(line.split())
+    return line if len(line) <= _COMPACT_LINE_CHARS else line[: _COMPACT_LINE_CHARS - 1] + "…"
 
 
 def _page_text(page: policy.PageView) -> str:

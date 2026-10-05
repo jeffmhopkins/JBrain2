@@ -23,7 +23,7 @@ tool server and run our own small loop over it.**
 | Stealth | Stock Chromium first | A 2026 benchmark across 31 Cloudflare sites from a residential IP: vanilla Playwright cleared 24, the best stealth tool 28. A theater picker needs JavaScript, not evasion. Byparr cannot be driven (FlareSolverr API, not CDP); if stealth matters later, a zendriver-launched Chrome over CDP is the upgrade path. |
 | Egress proxy | **Squid** (Canonical's `ubuntu/squid`, Ubuntu-LTS build, digest-pinned), built on the box with the deny list baked in and a build-time `squid -k parse` | Resolves DNS itself and checks the resolved address, so a public name pointing at a private address is refused. Smokescreen (Stripe) was the prior-art pick but publishes no official image; Squid's `dst` ACLs do the same job from a maintained distro package. Verified locally against the deny list (169.254/16, RFC1918, loopback, CGNAT, `db`, `searxng`, `localtest.me`, IPv4-mapped v6, CONNECT) — every one 403, a public site 200. |
 | MCP client | **Hand-written over httpx** (`web/mcp_client.py`), not the `mcp` SDK | Four operations (open, list, call, close) against one server we run; the SDK would bring anyio/starlette/sse into the api for one caller. Handles JSON and SSE replies; verified against the real v0.0.82 image. |
-| Model route | **`browse.step`**, its own task, following `agent.turn`'s model, pinned to the **research slot** | A new slot role would mean a ninth slot in the Flash-Next pool; the research slot is already the sub-agents' and keeps browse snapshots out of jerv's interactive prefix. Following agent.turn means a local box never sends page text to a cloud default. |
+| Model route | **`browse.step`**, its own task, following `agent.turn`'s model, pinned to **its own `browse` slot** (Flash-Next slot 8) | First shipped on the research slot to avoid a ninth slot; moved 2026-10-05 (owner): research agents will search and browse a lot, so sharing their slot would let a research turn evict a browse run's cache mid-run. The ninth slot reserves no pool cells (FLASH_NEXT_ENGINE_PLAN §4a). Following agent.turn means a local box never sends page text to a cloud default. |
 | Search | **SearXNG primary**, metered APIs as backstop, Tavily optional | The box ran a pre-2026-09-04 SearXNG; the pinned build's curl_cffi client fixed this exact block pattern elsewhere. See B3. |
 
 ## 2. The fence — security is the network, not the tool flags
@@ -182,7 +182,8 @@ listed and revocable in Settings, and never extend to the Never tier.
   14.5k → 13.5k tokens, at 4, 15, 18, 17, 49, 40 and 58 s, writing 50–631 tokens each; a
   debug run of the same goal took 165 s over 6 steps, its `finish` alone 92 s for 1,443
   tokens. Three causes, three fixes:
-  1. **The whole prompt was re-prefilled every step.** The current page sat in the FIRST
+  1. **The whole prompt was re-prefilled every step.** (Superseded the same day by the
+     append-only fix below — the one-line-note design here still missed the cache.) The current page sat in the FIRST
      message, so each step's prompt diverged at its start and llama-server (Flash-Next is a
      hybrid; it reuses only a stable prefix) prefilled everything again. Now the messages are
      append-only: the opening is the goal and static instructions, every older page is its
@@ -220,9 +221,55 @@ listed and revocable in Settings, and never extend to the Never tier.
      pose as an END line (regression tests for each).
   The wall stays at 240 s: with cache reuse and low effort a step should cost seconds, not a
   minute, and a run that still runs out now hands back the page. Re-measure on the box.
+- **Second live run, and the append-only fix (2026-10-05).** After #1570 the Epic Titusville
+  goal on Flash-Next answered and verified, but took 233–249 s. Per step the prompt was 4.6k–
+  8.7k tokens and only ~2,200 were ever cached (the system prompt and the opening), so each
+  step re-prefilled 2.4k–6.5k tokens at ~400 tok/s — 8–17 s for a ~30-token reply — and the
+  `finish` step wrote 359–1,750 tokens (32–93 s). Effort `none` cut the thinking but the run
+  wandered (13 steps, repeated clicks), so effort stays `low`. The cause: step N's full page
+  became a one-line note in step N+1, so the prompt diverged at the start of the previous
+  page, and on the hybrid a resume needs a context checkpoint at or before that point — none
+  survived there. Four owner-approved fixes:
+  1. **Strictly append-only.** Each step's messages are EXACTLY the previous step's plus a
+     tail (the assistant's action and what it left); nothing sent is ever shortened or edited.
+     The budget note is written into the new tail and stays, unedited. The divergence is then
+     always the end of the last prompt, which is where llama-server keeps a checkpoint, so a
+     step prefills only its tail. Pinned by a test that step N's whole message list is a prefix
+     of step N+1's, across a navigation, a same-page change, a refusal, a nudge and a bounced
+     `finish`. Growth is bounded by smaller views (2) and a total cap of 96k characters
+     (~24k tokens): past it the run starts ONE fresh compacted prompt (the opening, a line per
+     recent step, the page in full) — one full prefill — and extends that strictly again.
+  2. **Smaller views.** playwright-mcp v0.0.82 has no incremental snapshot (`--snapshot-mode` is
+     `full` or `none` and governs action replies, not `browser_snapshot`), so the delta is
+     host-side: the host still takes a FULL snapshot each step and gates every ref against
+     it, but when the URL is the one the model last saw it is sent only what changed
+     (`browse_policy.page_delta`: changed and new lines, each under the line above it, a count
+     of lines gone; the whole page when the delta would be over 60% of it). A navigation sends
+     the new page whole; a refusal re-sends nothing ("The page is as shown above."). The view
+     cap dropped from 24k to 16k characters, a text line is clipped at 400, and over the cap the
+     pruning keeps controls, headings and the two lines either side first, filling with
+     far-off text only as room allows (it used to keep the first 24k, in order).
+  3. **Short finish.** `answer` is the raw facts, one per line, no prose (`agent-browse-v3`,
+     `finish` v2, ~80 words); jerv writes them up (`browse.tool` v3). The answer cap is 1,200
+     characters (from 2,000); evidence verification is unchanged.
+  4. **Its own slot.** `browse.step` moved from the research slot to a new ninth Flash-Next
+     slot, `browse` (slot 8, 131,072 cap, freed second). The owner first kept the shared
+     research slot (accepting that a concurrent research task could evict a run mid-way),
+     then reversed it: research agents will be searching and browsing a lot, so browsing
+     should not share their slot. Memory: none up front (FLASH_NEXT_ENGINE_PLAN §4a).
+  **Expected effect, to re-measure on the box** (debug `/browse` per-step `prompt_tokens` /
+  `cached_tokens`; llama-server's "restored context checkpoint"): every step after the first
+  caches all of the previous prompt, so it prefills only its tail — ~30 tokens of action plus
+  a new page (~1–3k tokens for a pruned Epic page, ~2–5 s) or a delta/refusal (~50–300
+  tokens, under a second). The Epic run's four page-bearing steps should cost ~10–15 s of
+  prefill in all instead of ~60–100 s, and a short `finish` (~100–300 tokens) ~10–25 s instead
+  of 32–93 s — so ~60–90 s for the run, if the model wanders no more than it did. The prompt
+  at `finish` grows to ~10–14k tokens (all pages kept), still far under the compaction cap.
+  Security is unchanged: the gate reads the host's full page, never the delta; quarantine,
+  forgery, type/select/Enter, URL, budget and semaphore tests all still pass.
 - **Pending:** the bake-off is an on-box measurement and has not been run; agent-browser is
   untested. The snapshot pruning measured ~3x on Epic's home page (9.0k → 2.8k chars) and
-  ~1.4k tokens on wikipedia.org against the real image.
+  ~1.4k tokens on wikipedia.org against the real image (before the tighter cap above).
 
 ### B2 — Seeing it in chat, and approving ◻️ (GUI gate: three mocks, owner picks)
 - A **tool card** in the chat that pops up while `browse` runs (owner decision 2026-10-04:
