@@ -335,6 +335,8 @@ class _Run:
         self.book = bindex.IndexBook()
         # Set by the fast loop's `done` (its answer, "" for none): the run ends in the check.
         self.done_answer: str | None = None
+        # What the browser said about the last action — read for a tab a click opened.
+        self.last_result = ""
         self.page = policy.PageView()
         self.visited: list[str] = []
         self.signatures: list[str] = []
@@ -782,8 +784,10 @@ class BrowseAgent:
         t0 = self._clock()
         ok, note = True, "done"
         mcp_tool = MCP_TOOL_FOR.get(name)
+        state.last_result = ""
         if mcp_tool is not None:
             result = await session.call_tool(mcp_tool, self._mcp_args(state.page, name, args))
+            state.last_result = result.text
             if result.is_error:
                 ok = False
                 note = "the browser reported an error: " + policy.quarantine(
@@ -939,10 +943,14 @@ class BrowseAgent:
     async def _extract_first(self, state: _Run) -> bool:
         """Before any action, try the no-thinking extraction on the page browse started on:
         many pages a fetch could not read answer the goal once rendered. Kept only when the
-        host's check verifies it. Skipped on a page with no text, or one that reads as a
-        location/store picker — the answer is not on it, and the call would be wasted."""
+        host's check verifies it. Skipped on a page with no text, one that reads as a
+        location/store picker, or one that does not name every place or item the goal names
+        (`policy.goal_names_on_page`): a chain's home page listing ANOTHER location's
+        showtimes would otherwise verify against itself."""
         page = state.page
         if not page.readable or looks_like_location_gate(page.title, page.readable):
+            return False
+        if not policy.goal_names_on_page(state.result.goal, page):
             return False
         found = await self._extract(state, 0, label=_EXTRACT_FIRST_STEP)
         if found is None or not found[1].verified:
@@ -1101,10 +1109,30 @@ class BrowseAgent:
         step.args = {**command.brief(), **({"ref": args["ref"]} if "ref" in args else {})}
         if command.do == "type" and ok:
             state.typed_url = url_before
+        if ok and command.do == "click":
+            note += await self._follow_new_tab(session, state)
         moved = _address(state.page.url) != _address(url_before)
         if ok and moved:
             note += "; the page moved to a new address"
         return ok, note, moved, ""
+
+    async def _follow_new_tab(self, session: McpSession, state: _Run) -> str:
+        """A click that opened a new tab: switch to the newest tab when its address passes
+        `check_url`, or close it when it does not, so the run never reads or acts on a page
+        the gate would have refused. Host-side, from the tab list playwright-mcp reports."""
+        tabs = _open_tabs(state.last_result)
+        if len(tabs) < 2:
+            return ""
+        index, current, url = max(tabs)
+        if current:
+            return ""
+        problem = policy.check_url(url)
+        if problem is not None:
+            await session.call_tool("browser_tabs", {"action": "close", "index": index})
+            return f"; it opened a new tab at a refused address ({problem}), which was closed"
+        await session.call_tool("browser_tabs", {"action": "select", "index": index})
+        state.note_page(policy.parse_page(await _look(session)))
+        return "; it opened a new tab, which is now the page shown"
 
     async def _done(
         self, session: McpSession, state: _Run, n: int, command: bindex.Command, model_ms: int
@@ -1165,6 +1193,16 @@ class BrowseAgent:
             run.outcome = "not_found"
             if state.extract_error:
                 run.error = f"reading the answer off the page failed: {state.extract_error}"
+
+
+_TAB_LINE = re.compile(r"^- (\d+): (\(current\) )?\[[^\]\n]*\]\(([^)\s]*)\)", re.MULTILINE)
+
+
+def _open_tabs(text: str) -> list[tuple[int, bool, str]]:
+    """The (index, current, url) of each tab in a playwright-mcp "### Open tabs" list."""
+    if "### Open tabs" not in text:
+        return []
+    return [(int(i), bool(cur), url) for i, cur, url in _TAB_LINE.findall(text)]
 
 
 def _address(url: str) -> str:

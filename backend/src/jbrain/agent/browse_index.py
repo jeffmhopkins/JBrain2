@@ -139,9 +139,8 @@ def _clip(text: str) -> str:
 
 
 def _collapse(lines: list[str]) -> list[str]:
-    """Runs of the same control (numbers aside) beyond `REPEAT_SHOWN` become one count line.
-    The hidden ones stay actionable by number once a later view shows them; most often the
-    first few are all the model needs."""
+    """Runs of the same control (numbers aside) beyond `REPEAT_SHOWN` become one count line
+    that lists the hidden ones' numbers, so each stays actionable."""
     out: list[str] = []
     i = 0
     while i < len(lines):
@@ -154,8 +153,14 @@ def _collapse(lines: list[str]) -> list[str]:
         run = j - i
         out.extend(lines[i : i + min(run, REPEAT_SHOWN)])
         if run > REPEAT_SHOWN:
+            # The hidden ones keep their numbers on the count line: still reachable.
             indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
-            out.append(f"{indent}- (… {run - REPEAT_SHOWN} more like the line above)")
+            hidden = " ".join(
+                m.group(0).strip()
+                for line in lines[i + REPEAT_SHOWN : j]
+                if (m := _INDEX.search(line)) is not None
+            )
+            out.append(f"{indent}- (… {run - REPEAT_SHOWN} more like the line above: {hidden})")
         i = j
     return out
 

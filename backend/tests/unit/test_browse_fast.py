@@ -577,14 +577,18 @@ def test_the_indexed_view_clips_and_collapses() -> None:
         '  - textbox "Search products" [ref=e40]: lamps\n```\n'
     )
     page = policy.parse_page(tool)
-    view = bindex.indexed(page, bindex.IndexBook())
+    book = bindex.IndexBook()
+    view = bindex.indexed(page, book)
     lines = view.outline.splitlines()
     assert sum(1 for line in lines if 'link "Details"' in line) == bindex.REPEAT_SHOWN
-    assert "- (… 3 more like the line above)" in view.outline
+    assert "- (… 3 more like the line above: [4] [5] [6])" in view.outline
     assert all(len(line) <= bindex.VIEW_LINE_CHARS + 20 for line in lines)
     assert '- [7] textbox "Search products": lamps' in view.outline
     # What the gate and the fact check read is the page's own, untouched.
     assert view.elements == page.elements and view.text == page.text
+    # A hidden control is still reachable by the number on the count line.
+    element, problem = book.resolve(page, 5)
+    assert problem is None and element is not None and element.ref == "e24"
 
 
 def test_read_returns_the_full_text_from_a_phrase() -> None:
@@ -624,3 +628,95 @@ async def test_back_returns_to_the_last_page_with_new_numbers() -> None:
     assert back.startswith("1. back: done; the page moved to a new address")
     # HOME again is a new document: its picker button is numbered afresh.
     assert '- [11] button "Your theater: Please select a location"' in back
+
+
+# --- L1 review follow-ups ------------------------------------------------------------------
+
+MELBOURNE = "https://cinema.example/melbourne"
+
+
+class _Chain(FakeBrowser):
+    """A chain whose start page lists ANOTHER location's showtimes, with real text on it (so
+    it is no picker), and a link that opens the asked-for location in a new tab."""
+
+    new_tab_url: str = TITUSVILLE
+    newest_current: bool = False
+
+    def _run(self, name: str, args: dict[str, Any]) -> str:
+        if name == "browser_snapshot" and self.url == MELBOURNE:
+            return (
+                f"### Page\n- Page URL: {MELBOURNE}\n- Page Title: Melbourne — Cinema\n"
+                "### Snapshot\n```yaml\n- generic [ref=e1]:\n"
+                '  - heading "Epic Melbourne 12" [level=1] [ref=e2]\n'
+                '  - text: "Dune: Part Three"\n  - generic [ref=e3]: 7:15 PM, 9:40 PM\n'
+                '  - link "Other theaters" [ref=e4] [cursor=pointer]:\n    - /url: /x\n```\n'
+            )
+        if name == "browser_click" and self.url == MELBOURNE and args["target"] == "e4":
+            self.calls.append(("(opened)", {}))
+            return (
+                f"### Page\n- Page URL: {MELBOURNE}\n### Open tabs\n"
+                f"- 0: {'' if self.newest_current else '(current) '}[Melbourne]({MELBOURNE})\n"
+                f"- 1: {'(current) ' if self.newest_current else ''}[New]({self.new_tab_url})\n"
+            )
+        if name == "browser_tabs" and args.get("action") == "select":
+            self._go(self.new_tab_url)
+            return "### Open tabs"
+        return super()._run(name, args)
+
+
+def test_goal_names_are_its_places_and_items() -> None:
+    assert policy.goal_names(GOAL) == ["titusville", "dune"]
+    assert policy.goal_names(
+        "On stores.barnesandnoble.com find the Barnes & Noble store in Melbourne, FL"
+    ) == ["barnes", "noble", "melbourne"]
+    assert policy.goal_names("On news.ycombinator.com go to page 2") == []
+    page = _parsed(TITUSVILLE)
+    assert policy.goal_names_on_page("Titusville Dune showtimes", page)
+    assert not policy.goal_names_on_page("Melbourne Dune showtimes", page)
+    assert policy.goal_names_on_page("list the showtimes", page)
+
+
+async def test_a_start_page_for_another_location_is_not_read_first() -> None:
+    """The start page shows Dune times — for Melbourne. The goal names Titusville, which the
+    page does not: no extraction is tried there, and the run goes on to act."""
+    turns = [_act(_cmd("done", value="NOT FOUND: wrong theater"))]
+    agent, fake, _ = _agent(turns, _Chain())
+    run = await agent.run(GOAL, MELBOURNE)
+    assert not _extractions(fake)
+    assert run.outcome == "gave_up" and [s.action for s in run.steps] == ["navigate", "done"]
+
+
+async def test_a_click_that_opens_a_new_tab_follows_it_through_the_gate() -> None:
+    turns = [_act(_cmd("click", 1)), _act(_cmd("done", value=DUNE), n=2)]
+    agent, fake, browser = _agent(turns, _Chain())
+    run = await agent.run("Dune showtimes at Titusville", MELBOURNE)
+    assert {"action": "select", "index": 1} in browser.called("browser_tabs")
+    assert "it opened a new tab, which is now the page shown" in _result(fake, 1)
+    assert run.outcome == "answered" and run.verified and run.final_url == TITUSVILLE
+
+
+async def test_a_new_tab_at_a_refused_address_is_closed() -> None:
+    browser = _Chain()
+    browser.new_tab_url = "http://169.254.169.254/latest"
+    turns = [_act(_cmd("click", 1)), _act(_cmd("done", value="NOT FOUND: x"), n=2)]
+    agent, fake, _ = _agent(turns, browser)
+    await agent.run("Dune showtimes at Titusville", MELBOURNE)
+    assert browser.called("browser_tabs") == [{"action": "close", "index": 1}]
+    assert "a new tab at a refused address" in _result(fake, 1)
+    assert browser.url == MELBOURNE
+
+
+def test_open_tabs_parse_only_a_tab_list() -> None:
+    assert browse._open_tabs("- 0: [a](https://a.example/)") == []
+    listed = "### Open tabs\n- 0: (current) [a](https://a.example/)\n- 1: [b](about:blank)"
+    assert browse._open_tabs(listed) == [(0, True, "https://a.example/"), (1, False, "about:blank")]
+
+
+async def test_a_new_tab_the_browser_already_switched_to_needs_no_switch() -> None:
+    browser = _Chain()
+    browser.newest_current = True
+    turns = [_act(_cmd("click", 1)), _act(_cmd("done", value="NOT FOUND: x"), n=2)]
+    agent, fake, _ = _agent(turns, browser)
+    await agent.run("Dune showtimes at Titusville", MELBOURNE)
+    assert browser.called("browser_tabs") == []
+    assert "new tab" not in _result(fake, 1)

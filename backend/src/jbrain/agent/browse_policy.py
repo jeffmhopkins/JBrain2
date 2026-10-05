@@ -727,6 +727,38 @@ def facts_on_page(answer: str, page: PageView) -> FactCheck:
     )
 
 
+# Capitalised words that start a goal's sentences or name the task, not a place or item.
+_GOAL_STOPWORDS = frozenset(
+    {
+        "on", "in", "at", "the", "from", "find", "list", "report", "what", "when", "where",
+        "which", "who", "how", "go", "open", "pick", "choose", "select", "show", "get", "tell",
+        "give", "read", "look", "search", "check", "and", "for", "with", "today", "tonight",
+        "tomorrow", "please", "this", "that", "page", "site", "first", "latest", "all", "any",
+        "use", "visit", "then", "its", "their", "near",
+    }
+)  # fmt: skip
+
+
+def goal_names(goal: str) -> list[str]:
+    """The places and items a goal names: its capitalised words, less the words that only
+    start a sentence or name the task. Folded like the page text."""
+    out: list[str] = []
+    for word in _WORD.findall(unicodedata.normalize("NFKC", goal)):
+        word = word.strip("'’-")
+        folded = word.casefold()
+        if len(word) >= _MIN_NAME_CHARS and word[0].isupper() and folded not in _GOAL_STOPWORDS:
+            out.append(folded)
+    return list(dict.fromkeys(out))
+
+
+def goal_names_on_page(goal: str, page: PageView) -> bool:
+    """Whether every place and item the goal names is on the page — before an answer read
+    off it may stand for the goal (a chain's home page showing another location's times
+    would otherwise verify). A goal that names none passes."""
+    text = _fold(page.text)
+    return all(_on_page(name, text) for name in goal_names(goal))
+
+
 def _on_page(token: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text) is not None
 

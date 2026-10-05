@@ -95,12 +95,13 @@ def _note(seen: dict[str, str], url: str, reason: str) -> None:
         seen[domain] = reason
 
 
-def record_browse(browsed: dict[str, str], outcome: str, *urls: str) -> None:
-    """Note that a browse run on these sites came back this turn (any outcome)."""
-    for url in urls:
-        domain = registrable_domain(url) if url else None
-        if domain is not None:
-            browsed[domain] = outcome
+def record_browse(browsed: dict[str, str], outcome: str, start_url: str | None) -> None:
+    """Note that a browse run on `start_url`'s site came back this turn. Not an `error`: a
+    browser or model that failed did not spend the site's share — it never got to use it.
+    Only the start site: a run that wandered elsewhere does not close that site to jerv."""
+    domain = registrable_domain(start_url) if start_url else None
+    if domain is not None and outcome != "error":
+        browsed[domain] = outcome
 
 
 def repeat_refusal(start_url: str | None, browsed: dict[str, str]) -> str | None:

@@ -50,7 +50,7 @@ def build_browse_handlers(
         # The conversation's model pick rides along so the sub-agent runs on the model the
         # owner chose — the SAME reason `browse.step` follows agent.turn.
         run = await agent.run(goal, start_url, spec_override=ctx.model_override)
-        browse_gate.record_browse(ctx.browsed, run.outcome, start_url or "", run.final_url)
+        browse_gate.record_browse(ctx.browsed, run.outcome, start_url)
         sources = tuple(
             WebSource(url=url, title=url, read=url == run.final_url) for url in run.sources
         )

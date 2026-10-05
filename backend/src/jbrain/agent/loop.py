@@ -349,8 +349,9 @@ class ToolContext:
     # `failed_fetches`: a fetch in an earlier turn does not open the browser in this one.
     browser_needed: dict[str, str] = field(default_factory=dict)
     # Per-turn memo of sites a `browse` run already came back from this turn (registrable
-    # domain → its outcome), read by `browse_gate.repeat_refusal`: one browse per site per
-    # turn — seen live, a timeout followed by a second full browse of the same site.
+    # domain → its outcome; start site only, never an `error`), read by
+    # `browse_gate.repeat_refusal`: one browse per site per turn — seen live, a timeout
+    # followed by a second full browse of the same site.
     browsed: dict[str, str] = field(default_factory=dict)
     # Per-turn memo of read results (call key → the observation it returned), for a tool
     # whose identical call cannot return anything new within a turn. The handler answers a
