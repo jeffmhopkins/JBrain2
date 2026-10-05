@@ -35,7 +35,7 @@ def build_browse_handlers(
         raw_start = arguments.get("start_url")
         start_url = str(raw_start).strip() if raw_start else None
         if emit:
-            emit("web_fetch", start_url or goal)
+            emit("browse", start_url or goal)
         # The conversation's model pick rides along so the sub-agent runs on the model the
         # owner chose — the SAME reason `browse.step` follows agent.turn.
         run = await agent.run(goal, start_url, spec_override=ctx.model_override)

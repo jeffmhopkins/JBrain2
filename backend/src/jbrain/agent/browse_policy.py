@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import re
+import socket
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
@@ -246,10 +247,13 @@ TAB_ACTIONS = frozenset({"list", "select", "close", "new"})
 # Fields typing is allowed into: search and filter boxes, location pickers (a zip, a city, a
 # store), and dates. B1's interim rule until B2's risk gate: anything else is refused.
 _ALLOWED_FIELD = re.compile(
+    # Deliberately no bare "address", "state", "type" or "format": on a checkout or sign-up
+    # form those label personal fields. Paired with a search word ("Search by address") the
+    # search term admits them anyway.
     r"search|find|filter|query|keyword|look ?up|\bzip\b|zip ?code|postal|post ?code|"
-    r"\bcity\b|\btown\b|location|\bnear\b|\bwhere\b|\baddress\b|\bstate\b|region|"
+    r"\bcity\b|\btown\b|location|\bnear\b|\bwhere\b|"
     r"\bdate\b|\bwhen\b|\bday\b|\bmonth\b|\byear\b|\bstore\b|theat(?:er|re)|cinema|"
-    r"\bsort\b|order by|\bshow\b|\bview\b|categor|genre|\btype\b|format|language|per page",
+    r"\bsort\b|order by|categor|genre|per page",
     re.IGNORECASE,
 )
 # Fields refused even when the allow list also matches ("Search your account email").
@@ -271,23 +275,33 @@ _COMMIT_BUTTON = re.compile(
     r"\bcomplete (?:order|purchase|booking)\b|\bconfirm\b|\bsubmit\b|\bsign ?up\b|"
     r"\bregister\b|\bsubscribe\b|\bsend\b|\bpost\b|\bpublish\b|\bdelete\b|\blog ?in\b|"
     r"\bsign ?in\b|\bdonate\b|\bbook now\b|\breserve\b|\bcreate account\b|\bapply\b|"
-    r"\badd to (?:cart|bag|basket)\b",
+    r"\badd to (?:cart|bag|basket)\b|\bcontinue\b|\bnext\b|\bproceed\b",
     re.IGNORECASE,
 )
 
 
 def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """`is_global` rather than `not is_private`: it also excludes CGNAT 100.64/10, which
+    Python counts as neither private nor global."""
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+    return ip.is_global and not ip.is_multicast
+
+
+_NUMERIC_LABEL = re.compile(r"^(?:0x[0-9a-f]*|[0-9]+)$", re.IGNORECASE)
+
+
+def _legacy_ipv4(host: str) -> ipaddress.IPv4Address | None:
+    """The address a browser reads a numeric host as — `127.1`, `0177.0.0.1`, `0x7f.1` are
+    all 127.0.0.1 to Chromium, and none of them parses as an IP for `ipaddress`."""
+    labels = host.split(".")
+    if not all(_NUMERIC_LABEL.match(label) for label in labels):
+        return None
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except OSError:
+        return None
 
 
 def check_url(url: str) -> str | None:
@@ -314,6 +328,10 @@ def check_url(url: str) -> str | None:
         ip = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         ip = None
+    if ip is None:
+        ip = _legacy_ipv4(host)
+        if ip is None and all(_NUMERIC_LABEL.match(label) for label in host.split(".")):
+            return "That is not a valid web address."
     if ip is not None:
         return None if _is_public_ip(ip) else "That address is on a private network; refused."
     if "." not in host or host == "localhost" or host.endswith(_LAN_SUFFIXES):
@@ -425,6 +443,8 @@ def check_key(key: object) -> str | None:
 # --- Verification and quarantine ------------------------------------------------
 
 MAX_EVIDENCE_CHARS = 300
+MIN_EVIDENCE_CHARS = 20
+MIN_EVIDENCE_WORDS = 3
 MAX_ANSWER_CHARS = 2_000
 
 
@@ -432,7 +452,10 @@ def evidence_on_page(evidence: str, page: PageView) -> bool:
     """Whether the model's quoted evidence is really on the page it is looking at — the
     check that success is taken from the page, never from the model's word."""
     quote = _normalize(evidence)
-    if len(quote) < 3 or len(quote) > MAX_EVIDENCE_CHARS:
+    # Long enough to be specific: "the" is on every page and proves nothing.
+    if len(quote) > MAX_EVIDENCE_CHARS:
+        return False
+    if len(quote) < MIN_EVIDENCE_CHARS and len(quote.split()) < MIN_EVIDENCE_WORDS:
         return False
     return quote in page.text
 
@@ -475,10 +498,24 @@ def clean_source(url: str) -> str | None:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, ""))
 
 
+MAX_SOURCE_CHARS = 500
+
+
+def safe_url(url: str) -> str | None:
+    """A host-observed URL fit to show jerv: `clean_source`, and nothing in it that could
+    break a line or hide text — a page controls its own URL, path and query included."""
+    cleaned = clean_source(url)
+    if cleaned is None or len(cleaned) > MAX_SOURCE_CHARS:
+        return None
+    if any(c.isspace() or not c.isprintable() or _CONTROL.match(c) for c in cleaned):
+        return None
+    return cleaned
+
+
 def sources_from(urls: Sequence[str], *, limit: int = 8) -> tuple[str, ...]:
     seen: list[str] = []
     for url in urls:
-        cleaned = clean_source(url)
+        cleaned = safe_url(url)
         if cleaned and cleaned not in seen and check_url(cleaned) is None:
             seen.append(cleaned)
     return tuple(seen[-limit:])

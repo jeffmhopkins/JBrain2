@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -66,6 +67,7 @@ DEFAULT_MAX_STEPS = 20
 MAX_STEPS_CEILING = 30
 DEFAULT_WALL_SECONDS = 240.0
 DEFAULT_MAX_PAGES = 12
+DEFAULT_CONCURRENCY = 1
 # A step's model reply is a single tool call; a long thinking trace still has to fit.
 STEP_MAX_TOKENS = 4_096
 # The same action this many times is a loop. The third try is refused with a note; the
@@ -92,6 +94,27 @@ MCP_TOOL_FOR = {
     "tabs": "browser_tabs",
 }
 _SNAPSHOT_TOOL = "browser_snapshot"
+# A page can raise a modal (alert/confirm/prompt, a file chooser) that blocks every other tool.
+# The HOST clears it — dismissed, never accepted, never answered — so the model is never offered
+# a dialog to accept or a file picker to fill.
+_MODAL_MARKER = "### Modal state"
+_MAX_MODALS = 3
+
+
+async def _look(session: McpSession) -> str:
+    """The current page's snapshot, after dismissing any modal standing in front of it."""
+    snap = await session.call_tool(_SNAPSHOT_TOOL, {})
+    for _ in range(_MAX_MODALS):
+        if _MODAL_MARKER not in snap.text:
+            break
+        if "browser_file_upload" in snap.text:
+            await session.call_tool("browser_file_upload", {})  # no paths: cancel the chooser
+        else:
+            await session.call_tool("browser_handle_dialog", {"accept": False})
+        snap = await session.call_tool(_SNAPSHOT_TOOL, {})
+    return snap.text
+
+
 _NUDGE = (
     "Reply with exactly one action: a browser action, `finish` with the answer and evidence,"
     " or `give_up` with the reason."
@@ -184,6 +207,8 @@ class _Run:
         self.no_progress = 0
         self.idle = 0
         self.unverified_finishes = 0
+        # The URL a gated `type_text` last succeeded on — the only page `Enter` may submit.
+        self.typed_url: str | None = None
         # (assistant message, [(call id, short text, full text)]) per model turn.
         self.turns: list[tuple[AssistantMessage, list[tuple[str, str, str]]]] = []
 
@@ -207,8 +232,13 @@ class BrowseAgent:
         wall_seconds: float = DEFAULT_WALL_SECONDS,
         max_pages: int = DEFAULT_MAX_PAGES,
         clock: Callable[[], float] = time.monotonic,
+        concurrency: int = DEFAULT_CONCURRENCY,
     ) -> None:
         self._router = router
+        # One browser, one model slot: runs queue rather than pile up Chromium contexts on a
+        # box whose memory is the models'. Shared by jerv's tool and the debug route, which
+        # use the same agent.
+        self._slots = asyncio.Semaphore(max(1, concurrency))
         self._mcp = mcp
         self._max_steps = max_steps
         self._wall = wall_seconds
@@ -229,6 +259,16 @@ class BrowseAgent:
     ) -> BrowseRun:
         """Run `goal` to an answer or a stop. Never raises for a browse failure: an
         unreachable browser, a model error or a timeout all come back as an outcome."""
+        async with self._slots:
+            return await self._run(goal, start_url, max_steps, spec_override)
+
+    async def _run(
+        self,
+        goal: str,
+        start_url: str | None,
+        max_steps: int | None,
+        spec_override: str | None,
+    ) -> BrowseRun:
         state = _Run(goal.strip())
         started = self._clock()
         steps = _clamp_steps(max_steps, self._max_steps)
@@ -385,13 +425,24 @@ class BrowseAgent:
                 )
                 return False, note, note + "\n\n" + state.page.render()
         problem = self._gate(state.page, name, args)
+        # Enter submits whatever form has focus, so it rides the type gate: only after a
+        # search/filter field on THIS page took the text.
+        enter = problem is None and name == "press_key" and args.get("key") == "Enter"
+        if enter and state.typed_url != state.page.url:
+            problem = (
+                "Enter is only pressed after typing into a search or filter field on this"
+                " page; use type_text with submit=true to run a search."
+            )
         if problem is not None:
             state.result.steps.append(
                 BrowseStep(n, name, _brief_args(name, args), False, problem, model_ms=model_ms)
             )
             return False, f"Refused: {problem}", f"Refused: {problem}\n\n" + state.page.render()
         before = state.page.fingerprint
+        typed_on = state.page.url
         ok, note, browser_ms = await self._act(session, state, name, args, n, model_ms)
+        if name == "type_text" and ok:
+            state.typed_url = typed_on
         if name not in _LOOKING:
             state.no_progress = state.no_progress + 1 if state.page.fingerprint == before else 0
             if state.no_progress >= NO_PROGRESS_STOP_AT:
@@ -488,8 +539,7 @@ class BrowseAgent:
                 ).replace("\n", " ")
             elif name == "tabs":
                 note = policy.quarantine(result.text, cap=600)
-        snap = await session.call_tool(_SNAPSHOT_TOOL, {})
-        state.note_page(policy.parse_page(snap.text))
+        state.note_page(policy.parse_page(await _look(session)))
         browser_ms = int((self._clock() - t0) * 1000)
         state.result.steps.append(
             BrowseStep(
@@ -511,8 +561,7 @@ class BrowseAgent:
     ) -> tuple[bool, str, str]:
         """Accept an answer only when its evidence is on the page as it is NOW."""
         t0 = self._clock()
-        snap = await session.call_tool(_SNAPSHOT_TOOL, {})
-        state.note_page(policy.parse_page(snap.text))
+        state.note_page(policy.parse_page(await _look(session)))
         browser_ms = int((self._clock() - t0) * 1000)
         answer = policy.quarantine(str(args.get("answer", "")))
         evidence = str(args.get("evidence", ""))
@@ -558,8 +607,21 @@ RESULT_FENCE = (
 )
 
 
+ANSWER_BEGIN = "<<<BROWSE ANSWER BEGIN>>>"
+ANSWER_END = "<<<BROWSE ANSWER END>>>"
+_MARKER = re.compile(r"<<<\s*browse\s+answer\s+(?:begin|end)\s*>>>", re.IGNORECASE)
+
+
+def _one_line(text: str) -> str:
+    """Page-controlled text on ONE line, with the answer markers taken out, so nothing in it
+    can start a line that reads like one the host wrote ("Outcome: answered")."""
+    return " ".join(_MARKER.sub("", text).split())
+
+
 def render_for_caller(run: BrowseRun) -> str:
-    """The text jerv reads. Its URLs come from the pages the host loaded, not the model."""
+    """The text jerv reads. Every line but the quoted answer is the host's own; the answer is
+    one line between markers, last. URLs come from the pages the host loaded, never the
+    model, and only in a shape that cannot carry a line break."""
     lines = [RESULT_FENCE, f"Outcome: {OUTCOME_TEXT.get(run.outcome, run.outcome)}"]
     if run.outcome == "answered":
         lines.append(
@@ -568,20 +630,24 @@ def render_for_caller(run: BrowseRun) -> str:
             else "UNVERIFIED: the browsing agent's quoted evidence was NOT found on the final"
             " page — treat this answer as unconfirmed."
         )
-    if run.answer:
-        lines.append(f"Answer: {run.answer}")
-    if run.error:
-        lines.append(f"Error: {run.error}")
-    if run.final_url:
-        final = policy.clean_source(run.final_url)
-        if final:
-            lines.append(f"Final page: {final}")
-    if run.sources:
-        lines.append("Pages visited: " + ", ".join(run.sources))
+    final = policy.safe_url(run.final_url) if run.final_url else None
+    if final:
+        lines.append(f"Final page: {final}")
+    sources = [url for url in (policy.safe_url(u) for u in run.sources) if url]
+    if sources:
+        lines.append("Pages visited: " + ", ".join(sources))
     lines.append(f"Steps: {len(run.steps)}")
+    if run.error:
+        lines.append(f"Error: {_one_line(policy.quarantine(run.error, cap=300))}")
     if run.outcome != "answered":
         lines.append(
             "No answer was read off a page. Say so plainly rather than guessing; another"
             " source (web_search, a different site) may have it."
         )
+    if run.answer:
+        label = "Answer" if run.outcome == "answered" else "Reason given"
+        lines.append(f"{label} (quoted from the browsing agent, between the markers):")
+        lines.append(ANSWER_BEGIN)
+        lines.append(_one_line(policy.quarantine(run.answer)))
+        lines.append(ANSWER_END)
     return "\n".join(lines)

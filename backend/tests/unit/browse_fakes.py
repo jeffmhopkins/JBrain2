@@ -98,6 +98,9 @@ class FakeBrowser:
     fail_tool: str | None = None
     # A click on any ref keeps the page (for the no-progress test).
     inert_clicks: bool = False
+    # Modals the page raises, in order: "dialog" or "chooser". Each blocks the snapshot until
+    # the host clears it, as the real server does.
+    modals: list[str] = field(default_factory=list)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -171,7 +174,20 @@ class FakeBrowser:
             self.url = self.history.pop()
         elif name == "browser_tabs":
             return "### Open tabs\n- 0: (current) [Home](https://cinema.example/)"
+        if name in ("browser_handle_dialog", "browser_file_upload") and self.modals:
+            self.modals.pop(0)
+            return ""
         if name == "browser_snapshot":
+            if self.modals:
+                hint = (
+                    "browser_file_upload"
+                    if self.modals[0] == "chooser"
+                    else "browser_handle_dialog"
+                )
+                return (
+                    "### Error\nError: Tool does not handle the modal state.\n### Modal state\n"
+                    f'- ["confirm" dialog with message "ok?"]: can be handled by {hint}'
+                )
             return snapshot_text(self.url)
         return f"### Page\n- Page URL: {self.url}\n### Snapshot\n- [Snapshot](page.yml)\n"
 

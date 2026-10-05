@@ -346,7 +346,7 @@ def drain_events() -> list:
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                if ev.get("kind") in ("web_search", "web_fetch"):
+                if ev.get("kind") in ("web_search", "web_fetch", "browse"):
                     out.append({"kind": ev["kind"], "ts": ev.get("ts")})
             _events_pos[0] = f.tell()
     except OSError:
@@ -598,6 +598,7 @@ class Handler(BaseHTTPRequestHandler):
         if kind in (
             "web_search",
             "web_fetch",
+            "browse",
             "llm_input",
             "llm_thinking",
             "llm_output",

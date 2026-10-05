@@ -3,7 +3,7 @@
 Two kinds of marker are POSTed to the unauthenticated on-box wall display
 (deploy/wall) so it can draw a reach-out tendril:
 
-* content-free web-tool markers — `{"kind": "web_search"|"web_fetch"}` — fired when
+* content-free web-tool markers — `{"kind": "web_search"|"web_fetch"|"browse"}` — fired when
   jerv runs a web tool; these carry NO owner data, only the fact that a tool ran;
 * opt-in LLM text markers — `{"kind": "llm_input"|"llm_output", "text": ...}` — the
   real prompt / answer text, streamed along the tendril with a fade-out popup of the

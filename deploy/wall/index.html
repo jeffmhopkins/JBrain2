@@ -2077,7 +2077,7 @@ async function pollStats() {
     answerFx.robot = !!s.answer_robot;
     if (s.events) for (const ev of s.events) {
       if (ev.kind === 'web_search') ServerBrain.webSearch(ev.text);
-      else if (ev.kind === 'web_fetch') ServerBrain.webFetch(ev.text);
+      else if (ev.kind === 'web_fetch' || ev.kind === 'browse') ServerBrain.webFetch(ev.text);
       else if (ev.kind === 'llm_input') ServerBrain.llmInput(ev.text);
       else if (ev.kind === 'llm_thinking') ServerBrain.llmThinking(ev.text);
       else if (ev.kind === 'llm_output') ServerBrain.llmOutput(ev.text);
