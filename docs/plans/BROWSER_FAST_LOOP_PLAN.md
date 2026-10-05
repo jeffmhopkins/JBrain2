@@ -1,6 +1,6 @@
 # Browser fast loop — a generic browse that a local model finishes in seconds
 
-> **Status:** Scheduled · **Last verified:** 2026-10-05 · **Waves:** L0◻️ L1◻️ L2◻️ L3◻️
+> **Status:** Scheduled · **Last verified:** 2026-10-05 · **Waves:** L0✅ L1◻️ L2◻️ L3◻️
 
 The B1 `browse` sub-agent (`BROWSER_AGENT_PLAN.md`) works and is fenced, but on Flash-Next a
 simple fact behind a location picker still takes about two minutes, and jerv has called it
@@ -51,7 +51,7 @@ the benchmark set (L0), not this one site.
 
 ## 3. Waves
 
-### L0 — Measure with the knobs we have ◻️
+### L0 — Measure with the knobs we have ✅
 - **Benchmark set** (generic, fixed, run through debug `/browse`): a cinema with a location
   picker, a store/stock lookup by location, a search box → result page, a paginated list, a
   tabbed detail page, a page needing one filter.
@@ -61,6 +61,38 @@ the benchmark set (L0), not this one site.
 - Recorded per run: success (fact check), steps, model calls, and time per phase (navigation,
   finish decision, extraction). The result restates §1 and sets L1's numeric targets.
 - **Done when:** a table of arms × benchmark sites is in this plan and the step budget is chosen.
+
+**Result (measured on the box 2026-10-05 21:45 UTC, warm, B1 loop via debug `/browse`).**
+Seconds per run by step `reasoning_budget`; ✓ = correct answer. The set is now a repo script,
+`scripts/browse-bench.sh <label> [--budget N] [--loop fast|b1]` (`DEBUG_ACCESS.md`).
+
+| Task | 0 | 64 | 128 | 320 |
+|---|---|---|---|---|
+| cinema with a location picker | ✓ 86 | ✓ 90 | ✓ 91 | ✓ 93 |
+| site search box | ✓ 54 | ✓ 62 | ✓ 92 (5 steps) | ✓ 59 |
+| paginated list | ✓ 54 | ✓ 58 | ✓ 54 | ✓ 54 |
+| tab (releases) | ✓ 54 | ✓ 54 | ✓ 54 | ✓ 55 |
+| one filter | ✓ 29 | ✓ 29 | ✓ 29 | ✓ 30 |
+| store locator (search box) | ✓ 123 (only success) | ✗ 132 | ✗ 81 | ✗ 122 (page budget, guessed URLs) |
+
+Per phase on a 3-step task: navigation ~15–23 s, `finish` decision ~9–20 s, extraction
+~3–18 s; on the cinema: navigation ~30 s, `finish` ~18–22 s, extraction ~18–21 s.
+
+- **The thinking cap barely changes time**, and budget 0 is never worse — it was the only arm
+  that solved the store locator. **Decision: L1 runs action steps with thinking off (budget
+  0).** Planner-executor stays the documented fallback, unbuilt.
+- **Each model call costs 5–20 s even without thinking**, so the lever is fewer calls, not
+  cheaper ones: merge `finish` with the extraction, try the start page before any action,
+  batch commands.
+- **Fact-check bug found:** correct answers ("July 1, 1962", "11 results." beside the first
+  title, HN titles) came back UNVERIFIED because a line whose numbers were bare one- or
+  two-digit ints counted as unbacked even when its names and year matched. Fixed with L0:
+  small ints are neither evidence nor disqualifying; a line backed by its names, years or
+  other tokens verifies, and a line with nothing checkable is skipped.
+- Not run: the grammar arm (moot: a native tool call is already ~1 s) and the
+  appended-extraction arm (L1 builds it as `done` carrying the facts — see L1).
+- **L1 targets (the box, this set):** success ≥ 6/6; median run ≤ 27 s (half of 54 s); the
+  cinema ≤ 45 s warm.
 
 ### L1 — Fewer, cheaper decisions ◻️
 - `web_fetch` reads embedded structured data; browse tries extraction on the rendered start page

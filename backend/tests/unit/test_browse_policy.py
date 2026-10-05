@@ -355,15 +355,24 @@ def test_one_invented_showtime_fails_the_answer() -> None:
     assert not policy.facts_on_page("Large popcorn: $9.50", priced).verified
 
 
-def test_bare_small_numbers_are_not_evidence() -> None:
-    """A page with a stray 7 and 10 on it does not back "Dune: 7, 10"."""
+def test_bare_small_numbers_are_neither_evidence_nor_disqualifying() -> None:
+    """A stray 7 or 10 proves nothing either way (L0, 2026-10-05: correct answers were marked
+    UNVERIFIED because a small number sank a line its names and year backed)."""
     page = _text_page("Dune: Part Three. Screen 7. Row 10. Tickets on sale now.")
-    check = policy.facts_on_page("Dune: 7, 10", page)
-    assert not check.verified and check.lines_missed == 1
-    assert check.describe().endswith("1 line(s) unbacked")
-    # A line of nothing but small numbers is unbacked too, not skipped.
-    assert not policy.facts_on_page("Dune: Part Three\n7, 10", page).verified
-    # Beside a real time, a small number is just noise.
+    # The name backs the line; the small numbers are ignored, not held against it.
+    assert policy.facts_on_page("Dune: 7, 10", page).verified
+    # A line of nothing but small numbers is skipped: alone it cannot verify an answer...
+    alone = policy.facts_on_page("7, 10", page)
+    assert not alone.verified and alone.total + alone.strict_total == 0
+    # ...and beside a backed line it does not sink it.
+    assert policy.facts_on_page("Dune: Part Three\n7, 10", page).verified
+    # The L0 misses, now verified: a count line beside a title, a date with a year.
+    books = _text_page("Travel 11 results. It's Only the Himalayas £45.17")
+    assert policy.facts_on_page("11 results.\nIt's Only the Himalayas", books).verified
+    nasa = _text_page("Kennedy Space Center established July 1, 1962 Merritt Island")
+    assert policy.facts_on_page("July 1, 1962", nasa).verified
+    # A small number never stands in for a time: an invented showtime still fails.
+    assert not policy.facts_on_page("Dune: 7:15 PM (screen 7)", page).verified
     assert policy.facts_on_page("Dune: 7:15 PM (screen 7)", _page(TITUSVILLE)).verified
 
 

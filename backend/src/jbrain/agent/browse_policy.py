@@ -605,7 +605,9 @@ _CLOCK_TOKEN = re.compile(r"\b\d{1,2}(?::\d{2})? [ap]m\b")
 # "10/05", "2,000"). Not a digit inside a word ("F1", "7th"): it would never match whole.
 _NUMBER = re.compile(r"(?<!\w)[$€£]?\d+(?:[.,/:-]\d+)*(?!\w)")
 # A bare one- or two-digit number is on almost every page (a screen, a rating, a date), so
-# finding it proves nothing; a line that leans on such numbers is not checkable.
+# finding it proves nothing — and missing it proves nothing either: it is neither evidence nor
+# a reason to doubt a line. L0 (2026-10-05) saw correct answers ("11 results." beside the first
+# title, "July 1, 1962") marked UNVERIFIED because their small numbers disqualified the line.
 _SMALL_INT = re.compile(r"\d{1,2}")
 _CURRENCY = "$€£"
 _WORD = re.compile(r"[^\W\d_][\w'’-]*")
@@ -626,18 +628,14 @@ def _is_strict(token: str) -> bool:
     return bool(_CLOCK_TOKEN.fullmatch(token)) or token[0] in _CURRENCY
 
 
-def _line_tokens(line: str) -> tuple[list[str], bool]:
-    """The line's salient tokens, and whether it states a bare small number (which is not
-    one of them)."""
+def _line_tokens(line: str) -> list[str]:
+    """The line's salient tokens; a bare small number is not one (see `_SMALL_INT`)."""
     folded = _fold(line)
     tokens = _CLOCK_TOKEN.findall(folded)
     rest = _CLOCK_TOKEN.sub(" ", folded)
-    small = False
     for number in _NUMBER.findall(rest):
         number = number.rstrip(".,/:-")
-        if _SMALL_INT.fullmatch(number):
-            small = True
-        else:
+        if not _SMALL_INT.fullmatch(number):
             tokens.append(number)
     for word in _WORD.findall(_CLOCK.sub(" ", unicodedata.normalize("NFKC", line))):
         word = word.strip("'’-")
@@ -647,7 +645,7 @@ def _line_tokens(line: str) -> tuple[list[str], bool]:
             and word.casefold() not in _COMMON_WORDS
         ):
             tokens.append(word.casefold())
-    return tokens, small
+    return tokens
 
 
 def salient_tokens(line: str) -> list[str]:
@@ -655,7 +653,7 @@ def salient_tokens(line: str) -> list[str]:
     other numbers (not a bare one- or two-digit one) and its capitalised words (a film, a
     place, a month) — the parts a model gets wrong when it invents or misreads an answer.
     Folded like the page text."""
-    return _line_tokens(line)[0]
+    return _line_tokens(line)
 
 
 @dataclass(frozen=True)
@@ -668,8 +666,7 @@ class FactCheck:
     # Times and prices: every one must be found.
     strict_found: int = 0
     strict_total: int = 0
-    # Lines nothing found backs: an invented line, or one whose only numbers are bare small
-    # ones with no time or price beside them ("Dune: 7, 10").
+    # Lines with checkable tokens of which none was found: an invented line.
     lines_missed: int = 0
 
     @property
@@ -696,27 +693,26 @@ def facts_on_page(answer: str, page: PageView) -> FactCheck:
     """Whether an answer was read off the page it claims to come from — success is taken
     from the page, never from the model's word. Each line's salient tokens are looked up, as
     whole tokens, in the page's FULL text (not the capped view): every time and price must be
-    there, most of the rest, and every line must be backed by at least one, so one invented
-    line or showtime fails the answer."""
+    there, most of the rest, and every line with something checkable must be backed by at
+    least one, so one invented line or showtime fails the answer. A line with nothing
+    checkable ("11 results.") neither backs nor sinks it."""
     text = _fold(page.text)
     found = total = strict_found = strict_total = missed = 0
     for line in answer.splitlines():
-        tokens, small = _line_tokens(line)
-        if not tokens and not small:
+        tokens = _line_tokens(line)
+        if not tokens:
             continue
         hits = 0
-        strict_in_line = False
         for token in tokens:
             hit = _on_page(token, text)
             hits += hit
             if _is_strict(token):
-                strict_in_line = True
                 strict_found += hit
                 strict_total += 1
             else:
                 found += hit
                 total += 1
-        missed += hits == 0 or (small and not strict_in_line)
+        missed += hits == 0
     return FactCheck(
         found=found,
         total=total,
