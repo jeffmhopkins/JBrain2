@@ -59,6 +59,7 @@ import structlog
 from cachetools import TTLCache
 
 from jbrain.htmltext import extract_page
+from jbrain.web.structured import embedded_data, gatsby_lines, gatsby_page_data_url, is_gatsby
 from jbrain.web.tavily_health import TavilyHealth
 
 log = structlog.get_logger()
@@ -640,6 +641,10 @@ class FetchResult:
     # True when the first page is a location/store picker standing in for the content
     # (`looks_like_location_gate`) — a "successful" fetch of a page with nothing on it.
     gated: bool = False
+    # The page's embedded structured data (JSON-LD, microdata, hydration state, Gatsby
+    # page-data) flattened to capped `path: value` lines (`web.structured`), "" for none. Read
+    # from the served HTML, so a JS shell's data still reaches the reader without a browser.
+    structured: str = ""
 
 
 def _find_offsets(
@@ -1132,6 +1137,10 @@ class WebFetcher:
                 # A recovery that is ITSELF still thin has not painted the app either (the
                 # reader rendering a shell as its bare title). Carry the flag so the tool
                 # reports an unrendered page instead of passing a few words off as content.
+                # The rendered text wins, but the shell's embedded data is kept: it is often
+                # the very fact the rendered page shows after a click.
+                if result.structured and not recovered.structured:
+                    recovered = replace(recovered, structured=result.structured)
                 if js_shell and recovered.total_chars < _MIN_RECOVERED_CHARS:
                     log.info("web.js_shell_unrecovered", url=url, chars=recovered.total_chars)
                     return replace(recovered, js_shell=True)
@@ -1329,9 +1338,29 @@ class WebFetcher:
         # browser. `fetch` escalates on the flag (the raw HTML the detector needs is local to
         # this method, so the verdict has to be taken here) and, when nothing renders it,
         # hands the flag to the tool to explain the miss.
+        structured = await self._structured(raw_html, final_url)
+        if structured:
+            windowed = replace(windowed, structured=structured)
         if _looks_like_js_app(raw_html, text):
             return replace(windowed, js_shell=True)
         return windowed
+
+    async def _structured(self, raw_html: str, url: str) -> str:
+        """`raw_html`'s embedded data; for a Gatsby page also its same-origin page-data.json,
+        fetched through the same per-hop SSRF guard. Never fails the fetch."""
+        extra: list[str] = []
+        page_data = gatsby_page_data_url(url) if is_gatsby(raw_html) else None
+        if page_data is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                ) as client:
+                    resp = await self._get_following_safe_redirects(client, page_data)
+                    body, _ = await _read_capped(resp)
+                extra = gatsby_lines(body.decode("utf-8", errors="replace"))
+            except (httpx.HTTPError, WebFetchError) as exc:
+                log.info("web.gatsby_page_data_missed", url=page_data, error=repr(exc))
+        return embedded_data(raw_html, extra=extra)
 
     async def _fetch_post(
         self,
