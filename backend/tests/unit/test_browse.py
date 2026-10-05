@@ -222,6 +222,40 @@ async def test_the_extraction_step_records_its_own_calls_counts() -> None:
     assert counts[1:] == [("finish", 5000, 4900, 8), ("extract", 900, 0, 40)]
 
 
+async def test_a_run_can_override_the_step_thinking_cap() -> None:
+    """The debug instrument's sweep lever (BROWSER_FAST_LOOP_PLAN L0): a run's
+    `reasoning_budget` replaces the prompt's 320 on every step, 0 included."""
+    import json
+
+    from jbrain.llm import OpenAiCompatClient
+
+    sent: list[dict[str, Any]] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append(body)
+        if body.get("tools"):
+            fn = {"name": "finish", "arguments": "{}"}
+            call = {"id": "c1", "type": "function", "function": fn}
+            message: dict[str, Any] = {"content": "", "tool_calls": [call]}
+        else:
+            message = {"content": "Dune: Part Three: 7:15 PM, 9:40 PM"}
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": message, "finish_reason": "stop"}], "usage": {}},
+        )
+
+    local = OpenAiCompatClient(
+        "http://gateway:8080/v1", "", provider="local", transport=httpx.MockTransport(reply)
+    )
+    router = LlmRouter({"local": local}, {"browse.step": ("local", "qwen3.8-flash-next")})
+    mcp = McpHttpClient("http://browser:8931/mcp", transport=FakeBrowser().transport())
+    await BrowseAgent(router, mcp).run(GOAL, TITUSVILLE, reasoning_budget=0)
+    step = sent[0]
+    assert step["reasoning_budget_tokens"] == 0
+    assert "reasoning_budget_tokens" not in sent[-1]
+
+
 async def test_the_extraction_runs_in_the_browse_slot_with_thinking_off_on_flash_next() -> None:
     """On the hybrid Flash-Next, "none" is a real off: the extraction request carries
     `enable_thinking=false` and no tools, while a step's carries thinking on, at low, capped."""

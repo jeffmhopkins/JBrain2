@@ -68,6 +68,7 @@ from jbrain.llm.types import (
     LlmMessage,
     LlmTool,
     LlmTurn,
+    Sampling,
     ToolCall,
     ToolResult,
     ToolResultMessage,
@@ -78,6 +79,15 @@ from jbrain.web.mcp_client import McpError, McpHttpClient, McpSession
 log = structlog.get_logger()
 
 BROWSE_TASK = "browse.step"
+
+
+def _step_sampling(reasoning_budget: int | None) -> Sampling | None:
+    """The prompt's step sampling, with a run's thinking-cap override laid over it."""
+    if reasoning_budget is None:
+        return _PROMPT.sampling
+    return (_PROMPT.sampling or Sampling()).merge(Sampling(reasoning_budget=reasoning_budget))
+
+
 _PROMPT = load_prompt(Path(__file__).parent / "prompts" / "browse.prompt")
 _EXTRACT_PROMPT = load_prompt(Path(__file__).parent / "prompts" / "browse_extract.prompt")
 _ACTIONS_DIR = Path(__file__).parent / "browse_actions"
@@ -279,6 +289,8 @@ class _Run:
         self.no_progress = 0
         self.idle = 0
         self.spec_override: str | None = None
+        # The debug instrument's per-run thinking cap (plan L0's sweep); None = the prompt's.
+        self.reasoning_budget: int | None = None
         # Set by `finish` (its note, "" for none): the run ends in the extraction.
         self.finish_note: str | None = None
         self.extract_error = ""
@@ -369,11 +381,14 @@ class BrowseAgent:
         *,
         max_steps: int | None = None,
         spec_override: str | None = None,
+        reasoning_budget: int | None = None,
     ) -> BrowseRun:
         """Run `goal` to an answer or a stop. Never raises for a browse failure: an
-        unreachable browser, a model error or a timeout all come back as an outcome."""
+        unreachable browser, a model error or a timeout all come back as an outcome.
+        `reasoning_budget` overrides the prompt's per-step thinking cap for this run only —
+        the debug instrument's lever (BROWSER_FAST_LOOP_PLAN L0); jerv never sets it."""
         async with self._slots:
-            return await self._run(goal, start_url, max_steps, spec_override)
+            return await self._run(goal, start_url, max_steps, spec_override, reasoning_budget)
 
     async def _run(
         self,
@@ -381,8 +396,10 @@ class BrowseAgent:
         start_url: str | None,
         max_steps: int | None,
         spec_override: str | None,
+        reasoning_budget: int | None = None,
     ) -> BrowseRun:
         state = _Run(goal.strip())
+        state.reasoning_budget = reasoning_budget
         started = self._clock()
         steps = _clamp_steps(max_steps, self._max_steps)
         state.max_steps, state.started = steps, started
@@ -485,7 +502,7 @@ class BrowseAgent:
             # The prompt's thinking cap (`config: sampling: reasoning_budget`): a step is one
             # quick decision, and the one that kept running long was `finish` — 83-86 s and
             # ~1,550 thinking tokens deciding the page answers it, measured live 2026-10-05.
-            sampling=_PROMPT.sampling,
+            sampling=_step_sampling(state.reasoning_budget),
             slot_role=SlotRole.BROWSE,
         )
         model_ms = int((self._clock() - t0) * 1000)
