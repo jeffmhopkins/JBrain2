@@ -9564,10 +9564,20 @@ button.small {
   margin: 0;
   line-height: 1.45;
 }
+/* Headings scale with the prose they sit in (em, not a fixed token): a fixed --fs-note made
+   every heading SMALLER than the 20px chat body, which read as fine while the models wrote
+   bold lines and broke once Flash-Next wrote real `###` headings. `#` → h3, `##` → h4. */
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-h {
-  margin: calc(2px * var(--font-scale)) 0 0;
-  font-size: var(--fs-note);
+  margin: calc(6px * var(--font-scale)) 0 0;
+  font-size: 1.05em;
   font-weight: 600;
+  line-height: 1.3;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) h3.md-h {
+  font-size: 1.25em;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) h4.md-h {
+  font-size: 1.15em;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-ul,
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-ol {

@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-10-05
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -144,8 +144,11 @@ in a row loses its file and is not saved again until the api restarts. A request
 interactive request superseded never claims the slot. File names are hashes, and the `.meta`
 claim holds only the key's hash, the base identity, counts and the miss streak.
 
-Both kinds share the **disk budget** (default 40 GiB, Ops → *Prompt cache disk*): every
-conversation file is evicted before any role prefix, oldest first. A Flash-Next 29k-token prefix
+Both kinds share the **disk budget** (default 40 GiB, Ops → *Prompt cache disk*), which is
+**per engine**: Flash-Next's files and the standard engine's are each held to it separately,
+so one engine's parked prefixes never evict the other's (owner, 2026-10-05; `store.by_engine`
+in the state read). Within an engine every conversation file is evicted before any role
+prefix, oldest first. A Flash-Next 29k-token prefix
 is ~0.55 GiB; a conversation file grows with its length from there.
 
 One consequence worth knowing before you touch Settings: raising a hybrid's slot count to 2

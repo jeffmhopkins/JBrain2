@@ -379,7 +379,7 @@ function PromptCacheControls() {
         <span className="settings-meta" style={{ margin: 0 }}>
           Prompt cache disk{" "}
           <span className="muted">
-            — saved prompts and chats; the oldest chats go first.
+            — saved prompts and chats, per engine; the oldest chats go first.
             {gate !== null && GATE_HINT[gate]}
           </span>
         </span>

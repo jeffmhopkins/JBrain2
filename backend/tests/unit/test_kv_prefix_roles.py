@@ -338,6 +338,30 @@ async def test_past_the_conversations_role_prefixes_go_by_lru(root: Path) -> Non
     assert not oldest.exists() and newer.exists()
 
 
+async def test_each_engine_has_its_own_budget(root: Path) -> None:
+    """Owner, 2026-10-05: Flash-Next's files and the standard engine's never compete — a
+    standard prefix past the budget neither evicts Flash-Next's nor is evicted by its save."""
+    folder = _folder(root)
+    flash_old = _plant(folder, "e" * 32 + ".kvslot", 600, 9e5)
+    standard = _plant(
+        root / llama_swap_config.KVSLOT_DIR / "gpt-oss-120b", "f" * 32 + ".kvslot", 900, 9e6
+    )
+    store, gw = _store(root, budget=1000)
+    await _prime_and_save(store, gw, SlotRole.INTERACTIVE)
+    assert standard.exists(), "the standard engine's share is under its own budget"
+    assert flash_old.exists(), "600 B + the new save fits Flash-Next's own 1000 B"
+    state = await store.snapshot()
+    by_engine = state["store"]["by_engine"]  # type: ignore[index]
+    assert by_engine["standard"] == 900  # type: ignore[index]
+    assert 600 < by_engine["flash-next"] <= 1000  # type: ignore[index,operator]
+    assert state["store"]["over_budget"] is False  # type: ignore[index]
+
+    big = _plant(folder, "g" * 32 + ".kvslot", 900, 50)  # Flash-Next's share now over
+    store._prune_to_budget(keep_path=str(big))
+    assert standard.exists(), "Flash-Next's prune never reaches another engine's folder"
+    assert not flash_old.exists() and big.exists(), "LRU within Flash-Next's own share"
+
+
 def test_the_store_budget_and_toggle_apply_live(root: Path) -> None:
     store, _gw = _store(root)
     store.configure(max_store_bytes=7 * 1024**3, conversations=False)
