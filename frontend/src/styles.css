@@ -29987,10 +29987,11 @@ button.wf-sigpill {
 }
 
 /* A tool mark on its own line (`placeMarks`, owner 2026-10-06): a quiet row between the prose
-   it interrupts, tight enough that it reads as a pause rather than a paragraph. */
+   it interrupts. No margin of its own — the bubble's block gap already spaces it, and an
+   extra bottom margin read as a stray blank line under the mark (owner, 2026-10-06). */
 .fb-shell .md-tmark-line {
-  margin: 0.15em 0 0.55em;
-  line-height: 1.6;
+  margin: 0;
+  line-height: 1.45;
 }
 .fb-shell .md-tmark-line .tmark {
   margin-left: 0;
