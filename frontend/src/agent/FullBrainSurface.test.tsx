@@ -2413,7 +2413,7 @@ describe("FullBrainSurface", () => {
     expect(await screen.findByRole("button", { name: "Celine" })).toHaveClass("entity-chip");
   });
 
-  it("flags an ungrounded claim inline and shows its reason on tap", async () => {
+  it("never marks the prose when a verdict fails — the owner's ruling, 2026-10-06", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
       yield {
@@ -2438,18 +2438,15 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what's up?" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    const flag = await screen.findByRole("button", { name: "unverified claim" });
-    expect(flag).toHaveClass("md-flag");
-    // The reason is hidden until the flag is tapped.
-    expect(screen.queryByRole("note")).toBeNull();
-    fireEvent.click(flag);
-    expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
-    // No mis-anchored fallback — it landed inline.
+    await waitFor(() =>
+      expect(screen.getByText("The roof needs replacing soon.")).toBeInTheDocument(),
+    );
+    // No amber underline, no ⚠ beside the claim, no stray ⚠ at the bubble's end.
+    expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
+    expect(document.querySelector(".md-claim")).toBeNull();
     expect(document.querySelector(".md-flag-fallback")).toBeNull();
-    // The flagged claim TEXT is highlighted, not just marked with the trailing ⚠.
-    const claim = document.querySelector(".md-claim");
-    expect(claim).not.toBeNull();
-    expect(claim?.textContent).toBe("The roof needs replacing soon.");
+    // And a retrieved answer still never wears the general-knowledge chip.
+    expect(document.querySelector(".fb-genknow")).toBeNull();
   });
 
   it("renders no flag on a grounded turn (verdict passes / is absent)", async () => {
@@ -2476,43 +2473,6 @@ describe("FullBrainSurface", () => {
     expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
     // A grounded turn highlights no claim text either.
     expect(document.querySelector(".md-claim")).toBeNull();
-  });
-
-  it("degrades to an end-of-bubble flag when the claim can't be located in the prose", async () => {
-    async function* answer(): AsyncGenerator<ChatEvent> {
-      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
-      yield {
-        type: "tool_result",
-        tool_call_id: "c1",
-        ok: true,
-        summary: "1",
-        sources: [{ note_id: "n1", domain: "general", snippet: "cholesterol labs" }],
-      };
-      yield { type: "text_delta", text: "Here is a different paraphrase of the answer." };
-      yield { type: "done", stop_reason: "end_turn" };
-      yield {
-        type: "verdict",
-        passed: false,
-        score: 0,
-        issues: ["claim not grounded in retrieved sources: A sentence not present verbatim."],
-        ungrounded_claims: ["A sentence not present verbatim."],
-      };
-    }
-    render(<Harness d={deps({ chat: answer })} />);
-    await waitFor(() => screen.getByLabelText("Conversation"));
-    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what's up?" } });
-    fireEvent.click(screen.getByRole("button", { name: "send" }));
-
-    // The claim isn't in the prose verbatim, so a single end-of-bubble flag stands
-    // in (graceful fallback) and still opens the reason.
-    const fallback = await waitFor(() => {
-      const el = document.querySelector(".md-flag-fallback");
-      expect(el).not.toBeNull();
-      return el as HTMLElement;
-    });
-    const flag = fallback.querySelector(".md-flag") as HTMLElement;
-    fireEvent.click(flag);
-    expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
   });
 
   it("shows a neutral 'general knowledge' chip on a no-retrieval answer, not an amber flag", async () => {
@@ -2562,36 +2522,6 @@ describe("FullBrainSurface", () => {
     expect(screen.queryByText(/From general knowledge/)).toBeNull();
     expect(document.querySelector(".fb-genknow")).toBeNull();
     expect(screen.queryByRole("button", { name: "unverified claim" })).toBeNull();
-  });
-
-  it("an ungrounded retrieved claim shows the amber flag, never the neutral chip", async () => {
-    async function* answer(): AsyncGenerator<ChatEvent> {
-      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
-      yield {
-        type: "tool_result",
-        tool_call_id: "c1",
-        ok: true,
-        summary: "1",
-        sources: [{ note_id: "n1", domain: "general", snippet: "cholesterol labs" }],
-      };
-      yield { type: "text_delta", text: "The roof needs replacing soon." };
-      yield { type: "done", stop_reason: "end_turn" };
-      yield {
-        type: "verdict",
-        passed: false,
-        score: 0,
-        issues: ["claim not grounded in retrieved sources: The roof needs replacing soon."],
-        ungrounded_claims: ["The roof needs replacing soon."],
-      };
-    }
-    render(<Harness d={deps({ chat: answer })} />);
-    await waitFor(() => screen.getByLabelText("Conversation"));
-    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what's up?" } });
-    fireEvent.click(screen.getByRole("button", { name: "send" }));
-
-    // The amber flag stands; the neutral provenance chip must not appear.
-    expect(await screen.findByRole("button", { name: "unverified claim" })).toBeInTheDocument();
-    expect(document.querySelector(".fb-genknow")).toBeNull();
   });
 
   // --- the notes-grounding flag belongs to a notes persona ------------------------------
@@ -2649,25 +2579,6 @@ describe("FullBrainSurface", () => {
     );
     expect(document.querySelector(".md-flag")).toBeNull();
     expect(document.querySelector(".md-claim")).toBeNull();
-  });
-
-  it("words an untraced number as arithmetic and pins its flag to the number", async () => {
-    const text = "Your biweekly check is $5,030.40 before tax.";
-    await sendOn(deps({ chat: verdictTurn("arithmetic", text, "5,030.40") }), "fullbrain", text);
-    const flag = await screen.findByRole("button", { name: "unverified claim" });
-    expect(document.querySelector(".md-claim")?.textContent).toBe("5,030.40");
-    expect(document.querySelector(".md-flag-fallback")).toBeNull();
-    fireEvent.click(flag);
-    expect(screen.getByRole("note")).toHaveTextContent(/Not traced to a calculation/);
-    expect(screen.getByRole("note")).not.toHaveTextContent(/notes/);
-  });
-
-  it("keeps the notes-grounding flag on curator", async () => {
-    const text = "The roof needs replacing soon.";
-    await sendOn(deps({ chat: verdictTurn("grounding", text, text) }), "fullbrain", text);
-    const flag = await screen.findByRole("button", { name: "unverified claim" });
-    fireEvent.click(flag);
-    expect(screen.getByRole("note")).toHaveTextContent(/Not in your notes/);
   });
 
   const codeRun = (code: string, ok: boolean, index?: number) => ({
