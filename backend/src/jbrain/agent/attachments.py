@@ -211,6 +211,27 @@ class TurnAttachmentRepo:
                 .values(analysis=analysis, has_extracts=True)
             )
 
+    async def native_clip(self, ctx: SessionContext, attachment_id: str) -> dict[str, Any] | None:
+        """The cached inline-clip record for this video, or None on a miss (not yet probed, or
+        out of scope — RLS hides it as a clean miss)."""
+        async with scoped_session(self._maker, ctx) as session:
+            return (
+                await session.execute(
+                    select(TurnAttachment.native_clip).where(TurnAttachment.id == attachment_id)
+                )
+            ).scalar_one_or_none()
+
+    async def set_native_clip(
+        self, ctx: SessionContext, attachment_id: str, record: dict[str, Any]
+    ) -> None:
+        """Cache the inline-clip record. RLS-scoped like `set_analysis`."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(TurnAttachment)
+                .where(TurnAttachment.id == attachment_id)
+                .values(native_clip=record)
+            )
+
     async def frame_thumb(
         self, ctx: SessionContext, attachment_id: str, thumb_id: str
     ) -> str | None:

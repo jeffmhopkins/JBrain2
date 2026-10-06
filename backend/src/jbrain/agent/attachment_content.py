@@ -21,7 +21,7 @@ import base64
 import logging
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pymupdf
 
@@ -84,6 +84,19 @@ def _text_block(info: AttachmentInfo, data: bytes) -> _Converted:
     if not body:
         return _Converted(images=[], text_blocks=[])
     return _Converted(images=[], text_blocks=[f"[{info.filename}]:\n{body}"])
+
+
+def _video_block(info: AttachmentInfo, *, transcribe_enabled: bool) -> _Converted:
+    # A clip short enough for jerv to watch inline never reaches here (its anchor note says
+    # so); this one is longer, or the chat model takes no video, so a separate call reads it.
+    note = (
+        f'[attached video "{info.filename}" — its id is {info.id}: pass it as '
+        "source_attachment_id to analyze_video, with the owner's question, to see what it "
+        "shows"
+    )
+    if transcribe_enabled:
+        note += ", or to the transcribe tool to read only what it says"
+    return _Converted(images=[], text_blocks=[note + "]"])
 
 
 def _media_block(info: AttachmentInfo, *, kind: str, transcribe_enabled: bool) -> _Converted:
@@ -150,6 +163,7 @@ def _convert_one(
     *,
     transcribe_enabled: bool,
     can_see_images: bool,
+    video_enabled: bool = False,
 ) -> _Converted:
     """Route one attachment to its conversion by media type. CPU-bound for PDFs, so
     the caller invokes this off the event loop (asyncio.to_thread)."""
@@ -166,6 +180,8 @@ def _convert_one(
         # surface its id (and whether it's actionable) instead.
         return _media_block(info, kind="audio", transcribe_enabled=transcribe_enabled)
     if info.media_type.startswith("video/"):
+        if video_enabled:
+            return _video_block(info, transcribe_enabled=transcribe_enabled)
         # Same as audio: unreadable inline, but transcribable (the gateway extracts
         # the audio track) — surface its id pointing at the transcribe tool.
         return _media_block(info, kind="video", transcribe_enabled=transcribe_enabled)
@@ -243,6 +259,9 @@ async def carry_forward_content(
 # byte-identical to the entry the client sends back next turn — a CACHE CONTRACT: any
 # drift between the two formats costs a full vision re-encode on the follow-up turn,
 # silently. Change both together.
+# The client decorates a VIDEO attachment the same way (and under the same marker, so a turn
+# that attached both reads as one suffix): a video jerv watched inline is anchored at its turn
+# exactly as an image is.
 HISTORY_IMAGE_MARKER = "\n\n[Images the owner attached this turn"
 
 
@@ -264,6 +283,10 @@ class AttachmentContent:
     other_images: list[LlmImage]  # PDF page renders
     extra_text: str
     image_infos: list[AttachmentInfo]  # direct image attachments actually included
+    # Every readable video, and the images + videos in request order — the set the client's
+    # history entry decorates (`decorated_history_text`).
+    video_infos: list[AttachmentInfo] = field(default_factory=list)
+    media_infos: list[AttachmentInfo] = field(default_factory=list)
 
     @property
     def images(self) -> list[LlmImage]:
@@ -278,6 +301,8 @@ async def build_attachment_content(
     *,
     transcribe_enabled: bool = True,
     can_see_images: bool = False,
+    video_enabled: bool = False,
+    inline_video_ids: frozenset[str] = frozenset(),
 ) -> AttachmentContent:
     """The turn's attachments converted for the model, in request order.
 
@@ -296,15 +321,37 @@ async def build_attachment_content(
     the bytes it's told to look directly; when it can't (bytes dropped) the note points at
     analyze_image by id. Defaults False — the safe, text-only wording for any caller that
     can't vouch for vision.
+
+    `video_enabled` (analyze_video is in the registry) points a video's note at it;
+    `inline_video_ids` are videos the caller sends inline, whose note rides their anchor
+    instead, so they get none here.
     """
     direct_images: list[LlmImage] = []
     other_images: list[LlmImage] = []
     image_infos: list[AttachmentInfo] = []
     text_blocks: list[str] = []
+    video_infos: list[AttachmentInfo] = []
+    media_infos: list[AttachmentInfo] = []
     for attachment_id in attachment_ids[:MAX_ATTACHMENTS_PER_TURN]:
         info = await repo.get(ctx, attachment_id)
         if info is None:
             continue  # out-of-scope or unknown — invisible to the turn, not an error
+        if info.media_type.startswith("video/"):
+            # Never decoded here, so its bytes are not fetched either.
+            video_infos.append(info)
+            media_infos.append(info)
+            if info.id not in inline_video_ids:
+                text_blocks.extend(
+                    _convert_one(
+                        info,
+                        b"",
+                        0,
+                        transcribe_enabled=transcribe_enabled,
+                        can_see_images=can_see_images,
+                        video_enabled=video_enabled,
+                    ).text_blocks
+                )
+            continue
         try:
             data = await blobs.get(info.sha256)
         except FileNotFoundError:
@@ -334,8 +381,11 @@ async def build_attachment_content(
             direct_images.extend(kept)
             if kept:
                 image_infos.append(info)
+                media_infos.append(info)
         else:
             other_images.extend(kept)
         text_blocks.extend(converted.text_blocks)
     extra_text = ("\n\n".join(text_blocks)).strip()
-    return AttachmentContent(direct_images, other_images, extra_text, image_infos)
+    return AttachmentContent(
+        direct_images, other_images, extra_text, image_infos, video_infos, media_infos
+    )

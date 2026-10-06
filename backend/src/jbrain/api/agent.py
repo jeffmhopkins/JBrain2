@@ -45,11 +45,22 @@ from jbrain.agent.attachment_content import (
     carry_forward_content,
     decorated_history_text,
 )
-from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo, attachment_scopes
+from jbrain.agent.attachments import (
+    AttachmentInfo,
+    TurnAttachmentRepo,
+    attachment_scopes,
+    is_video_media_type,
+)
 from jbrain.agent.brainevents import brain_text_enabled
 from jbrain.agent.clock import now_block
 from jbrain.agent.continuation import maybe_schedule_continuation
 from jbrain.agent.identity import me_block
+from jbrain.agent.inline_video import (
+    INLINE_VIDEO_BUDGET_TOKENS,
+    InlineClip,
+    InlineVideos,
+    clip_note,
+)
 from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
@@ -96,6 +107,7 @@ from jbrain.llm import (
     LlmImage,
     LlmMessage,
     LlmRouter,
+    LlmVideo,
     UserMessage,
     kv_conversation,
     local_catalog,
@@ -345,6 +357,11 @@ def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
 
 def get_blob_store(request: Request) -> BlobStore:
     return cast(BlobStore, request.app.state.blob_store)
+
+
+def get_inline_videos(request: Request) -> InlineVideos | None:
+    """The inline-clip service, or None on a box that cannot transcode (no ffmpeg)."""
+    return getattr(request.app.state, "inline_videos", None)
 
 
 def get_location_repo(request: Request) -> SqlLocationRepo:
@@ -786,8 +803,9 @@ def _conversation(
     images: Sequence[LlmImage] = (),
     extra_text: str = "",
     *,
-    anchored: Mapping[int, tuple[str, tuple[LlmImage, ...]]] | None = None,
-    live_anchor: tuple[str, str, tuple[LlmImage, ...]] | None = None,
+    anchored: Mapping[int, tuple[str, tuple[LlmImage, ...], tuple[LlmVideo, ...]]] | None = None,
+    live_anchor: tuple[str, str, tuple[LlmImage, ...], tuple[LlmVideo, ...]] | None = None,
+    videos: Sequence[LlmVideo] = (),
 ) -> list[LlmMessage]:
     """The conversation to feed the loop. The turn's own attachments ride the FINAL
     user message: its `images` carry the vision content and `extra_text` (PDF text +
@@ -796,7 +814,8 @@ def _conversation(
     turn's images as their own user message directly after that turn, byte-identical
     every render, so the KV prefix cache holds through them instead of re-encoding
     (see the chat() carry block). An image outside the carry window lives on only as
-    text (its id note), reachable by reference via analyze_image."""
+    text (its id note), reachable by reference via analyze_image. An anchor may also carry
+    short clips jerv watches inline; `videos` are a framed turn's own clips."""
     anchors = anchored or {}
     messages: list[LlmMessage] = []
     for i, m in enumerate(body.history):
@@ -805,8 +824,8 @@ def _conversation(
         )
         anchor = anchors.get(i)
         if anchor is not None:
-            note, anchor_images = anchor
-            messages.append(UserMessage(text=note, images=anchor_images))
+            note, anchor_images, anchor_videos = anchor
+            messages.append(UserMessage(text=note, images=anchor_images, videos=anchor_videos))
     if live_anchor is not None:
         # This turn's own image goes straight to its cache-stable home: the question
         # text spelled exactly as the client's next-turn history entry will spell it,
@@ -815,10 +834,10 @@ def _conversation(
         # entirely instead of re-encoding it once more (sloth conversation,
         # 2026-08-23: 39 s on the first follow-up). The final message keeps the
         # volatile remainder: PDF/text blocks, hints, and a pointer at the question.
-        pre_text, note, anchor_images = live_anchor
+        pre_text, note, anchor_images, anchor_videos = live_anchor
         messages.append(UserMessage(text=pre_text))
-        messages.append(UserMessage(text=note, images=anchor_images))
-        pointer = "(Answer the owner's message above — the attached image is shown above.)"
+        messages.append(UserMessage(text=note, images=anchor_images, videos=anchor_videos))
+        pointer = "(Answer the owner's message above — what they attached is shown above.)"
         hint = _model_hint(body)
         parts = [p for p in (hint, extra_text) if p]
         text = "\n\n".join([*parts, pointer]) if parts else pointer
@@ -827,7 +846,7 @@ def _conversation(
     text = _model_message(body)
     if extra_text:
         text = f"{text}\n\n{extra_text}"
-    messages.append(UserMessage(text=text, images=tuple(images)))
+    messages.append(UserMessage(text=text, images=tuple(images), videos=tuple(videos)))
     return messages
 
 
@@ -1177,6 +1196,26 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         )
     except Exception:  # noqa: BLE001
         log.warning("agent.call_stamp_failed", run_id=run_id)
+    # A short clip jerv's own model can watch rides the conversation like an image
+    # (NATIVE_VIDEO_PLAN §5); every clip in view at once shares one token budget, this turn's
+    # first. Anything over it stays a reference analyze_video reads in its own call.
+    inline_videos = get_inline_videos(request)
+    can_see_video = (
+        inline_videos is not None
+        and can_see_images
+        and await router.supports_video("agent.turn", spec_override=model_override)
+    )
+    video_budget = INLINE_VIDEO_BUDGET_TOKENS
+    live_clips: list[InlineClip] = []
+    if inline_videos is not None and can_see_video:
+        for attachment_id in body.attachment_ids[:MAX_ATTACHMENTS_PER_TURN]:
+            info = await get_turn_attachments(request).get(attachment_ctx, attachment_id)
+            if info is None or not is_video_media_type(info.media_type):
+                continue
+            clip = await inline_videos.clip(attachment_ctx, info, budget=video_budget)
+            if clip is not None:
+                live_clips.append(clip)
+                video_budget -= clip.tokens
     content = await build_attachment_content(
         get_turn_attachments(request),
         get_blob_store(request),
@@ -1186,6 +1225,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # configured, so its presence is the audio hint's actionable/not signal.
         transcribe_enabled="transcribe" in get_agent_registry(request),
         can_see_images=can_see_images,
+        video_enabled="analyze_video" in get_agent_registry(request),
+        inline_video_ids=frozenset(c.info.id for c in live_clips),
     )
     attach_text = content.extra_text
     # What the owner left open on a PARTIAL send — and what he ANSWERED when the block
@@ -1210,26 +1251,35 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # blocks → final message], so the follow-up's rendered prefix is byte-identical
     # through the image and nothing re-encodes. PDF-page renders are NOT anchored
     # (the carry window is images-only) — they stay on the volatile final message.
-    live_anchor: tuple[str, str, tuple[LlmImage, ...]] | None = None
+    live_anchor: tuple[str, str, tuple[LlmImage, ...], tuple[LlmVideo, ...]] | None = None
     # A framed turn (proposal/deferred outcome) rewrites the model-facing message with a
     # data-framing preamble the client never echoes back — no stable pre-text exists, so
     # such a turn keeps the classic shape (bytes on the final message).
+    # A framed turn's clips ride the final message instead, like its images.
+    final_videos: tuple[LlmVideo, ...] = tuple(c.video for c in live_clips)
     if (
         can_see_images
-        and content.image_infos
+        and (content.image_infos or live_clips)
         and not body.proposal_outcome
         and not body.deferred_outcome
     ):
-        live_note_images, live_note = await anchored_image_content(
-            get_blob_store(request), content.image_infos, image_budget=MAX_IMAGES_PER_TURN
-        )
-        if live_note_images:
-            live_anchor = (
-                decorated_history_text(body.message, content.image_infos),
-                live_note,
-                tuple(live_note_images),
+        live_note_images: list[LlmImage] = []
+        live_note = ""
+        if content.image_infos:
+            live_note_images, live_note = await anchored_image_content(
+                get_blob_store(request), content.image_infos, image_budget=MAX_IMAGES_PER_TURN
             )
-            images = content.other_images  # the direct images now ride the anchor
+        if live_note_images or live_clips:
+            live_anchor = (
+                # The client decorates images AND videos, in attachment order.
+                decorated_history_text(body.message, content.media_infos),
+                "\n\n".join(p for p in (live_note, clip_note(live_clips)) if p),
+                tuple(live_note_images),
+                final_videos,
+            )
+            final_videos = ()
+            if live_note_images:
+                images = content.other_images  # the direct images now ride the anchor
     # Keep a RECENT earlier image in view (docs/reference/ASSISTANT.md): history is
     # text-only, so a follow-up like "re-evaluate the picture" otherwise can't see an image
     # from a prior turn and must delegate to analyze_image. When the turn model can see,
@@ -1242,7 +1292,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # the client-supplied history falls back to that tail injection so the image is never
     # silently dropped. Excludes ids already attached THIS turn, shares the image budget,
     # and only runs for a vision-capable turn (a text-only model would just drop the bytes).
-    anchored: dict[int, tuple[str, tuple[LlmImage, ...]]] = {}
+    anchored: dict[int, tuple[str, tuple[LlmImage, ...], tuple[LlmVideo, ...]]] = {}
     if can_see_images:
         already = set(body.attachment_ids)
         recent = await get_agent_transcript(request).recent_image_turns(
@@ -1317,7 +1367,39 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             if not anchor_images:
                 continue
             image_budget -= len(anchor_images)
-            anchored[claimed] = (anchor_note, tuple(anchor_images))
+            anchored[claimed] = (anchor_note, tuple(anchor_images), ())
+        if inline_videos is not None and can_see_video:
+            # A recent turn's clip stays in view at its own turn, as its images do. Turns are
+            # matched oldest-first (an anchor keeps its place as the chat grows) but the budget
+            # goes NEWEST-first, the same order this turn's own clips took it in: a clip shown
+            # once is then never displaced by an older one, so the anchors only ever fall away
+            # from the old end instead of flip-flopping. A clip whose turn cannot be matched is
+            # not carried — on the volatile tail it would be re-read every turn; its id is still
+            # in the history text.
+            video_floor = 0
+            matched: list[tuple[int, list[AttachmentInfo]]] = []
+            for content_text, video_infos in await get_agent_transcript(request).recent_video_turns(
+                attachment_ctx, body.session_id, now=datetime.now(UTC)
+            ):
+                claimed = _claim(content_text, video_floor)
+                if claimed is None:
+                    continue
+                video_floor = claimed + 1
+                matched.append((claimed, [i for i in video_infos if i.id not in already]))
+            placed: dict[int, list[InlineClip]] = {}
+            for claimed, video_infos in reversed(matched):
+                for info in video_infos:
+                    clip = await inline_videos.clip(attachment_ctx, info, budget=video_budget)
+                    if clip is not None:
+                        placed.setdefault(claimed, []).append(clip)
+                        video_budget -= clip.tokens
+            for claimed, clips in placed.items():
+                note, anchor_images, anchor_videos = anchored.get(claimed, ("", (), ()))
+                anchored[claimed] = (
+                    "\n\n".join(p for p in (note, clip_note(clips)) if p),
+                    anchor_images,
+                    (*anchor_videos, *(c.video for c in clips)),
+                )
         if unanchored:
             carried, carried_notes = await carry_forward_content(
                 get_blob_store(request), unanchored, image_budget=image_budget
@@ -1327,7 +1409,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 note_block = "\n\n".join(carried_notes)
                 attach_text = f"{attach_text}\n\n{note_block}" if attach_text else note_block
     conversation = _conversation(
-        body, images, attach_text, anchored=anchored, live_anchor=live_anchor
+        body,
+        images,
+        attach_text,
+        anchored=anchored,
+        live_anchor=live_anchor,
+        videos=final_videos,
     )
     # Cache-stable prompt layout (docs/reference/PROMPT_CACHE.md): keep the STATIC
     # content leading so [system + owner-self + history] is a byte-stable prefix the local

@@ -70,6 +70,8 @@ def _image_block(img: LlmImage) -> dict[str, Any]:
 def _anthropic_message(msg: LlmMessage) -> dict[str, Any]:
     """Map one provider-agnostic message onto an Anthropic message dict."""
     if isinstance(msg, UserMessage):
+        if msg.videos:
+            raise LlmVideoUnsupportedError("anthropic: video input is not supported")
         content: list[dict[str, Any]] = [_image_block(i) for i in msg.images]
         content.append({"type": "text", "text": msg.text})
         return {"role": "user", "content": content}

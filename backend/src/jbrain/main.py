@@ -32,6 +32,7 @@ from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.htmltools import build_html_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
+from jbrain.agent.inline_video import InlineVideos
 from jbrain.agent.jmolt_digest import JmoltDigest
 from jbrain.agent.jmolt_integrity import JmoltIntegrity, run_jmolt_integrity_loop
 from jbrain.agent.jmolt_night import (
@@ -1109,6 +1110,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 transcribe_model=settings.whisper_model,
                 gateway=LocalGatewayClient(settings.whisper_url) if settings.whisper_url else None,
             )
+        # A short chat video jerv's own model watches inline (NATIVE_VIDEO_PLAN §5); the same
+        # ffmpeg gate, since the clip is transcoded once and cached on its attachment row.
+        app.state.inline_videos = (
+            InlineVideos(
+                app.state.turn_attachments,
+                app.state.blob_store,
+                transcribe=(
+                    WhisperCppClient(
+                        settings.whisper_url,
+                        settings.whisper_model,
+                        timeout=settings.whisper_timeout,
+                    )
+                    if settings.whisper_url
+                    else None
+                ),
+                transcribe_model=settings.whisper_model,
+                gateway=LocalGatewayClient(settings.whisper_url) if settings.whisper_url else None,
+            )
+            if ffmpeg_available()
+            else None
+        )
         # jerv's URL-sourced stream/video analysis (docs/archive/STREAM_ANALYSIS_PLAN.md):
         # resolve a video URL with yt-dlp and sample it with ffmpeg, then reuse the
         # analyze_video caption→fuse→reduce core. Wired only when BOTH ffmpeg and yt-dlp
