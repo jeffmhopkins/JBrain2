@@ -15083,6 +15083,13 @@ button.small {
   font-size: var(--fs-head);
   color: var(--text);
 }
+/* A merge leaf is one row of chips: centre it on the 44px controls beside it. Other
+   leaves stay top-aligned, so a long value wraps under its label, not around a midline. */
+.fb-shell .ip-leaf-label:has(> .merge-chips) {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
 .fb-shell .ip-leaf.out .ip-leaf-main {
   opacity: 0.5;
 }
@@ -15144,19 +15151,30 @@ button.small {
 .fb-shell .ip-ctl {
   grid-column: 2;
   display: flex;
-  gap: calc(5px * var(--font-scale));
+  align-items: center;
+  gap: calc(6px * var(--font-scale));
 }
+/* A square 44px hit area (DESIGN.md's floor, never scaled) with the icon dead centre.
+   The global `button` padding is zeroed here: left in, it widened the 30px box and
+   pushed the glyph off-centre toward the bottom-right. */
 .fb-shell .ip-ctl button {
-  width: calc(30px * var(--font-scale));
-  height: calc(30px * var(--font-scale));
-  border-radius: 8px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-3);
-  font-size: var(--fs-secondary);
-  line-height: 1;
+  line-height: 0;
   cursor: pointer;
   transition: background 0.13s, color 0.13s, border-color 0.13s;
+}
+.fb-shell .ip-ctl button svg {
+  display: block;
 }
 .fb-shell .ip-ok.on {
   background: var(--ok);

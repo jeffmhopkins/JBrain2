@@ -7,6 +7,7 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import { CheckIcon, XIcon } from "../components/icons";
 import { MergeHead } from "./ProposalTree";
 import type { Decision, EnactResult, ProposalDetail, ProposalNode } from "./types";
 
@@ -397,7 +398,7 @@ function Leaf({
           disabled={busy}
           onClick={() => onToggle(node.id, "in")}
         >
-          ✓
+          <CheckIcon size={18} />
         </button>
         <button
           type="button"
@@ -407,7 +408,7 @@ function Leaf({
           disabled={busy}
           onClick={() => onToggle(node.id, out ? "in" : "out")}
         >
-          ✕
+          <XIcon size={18} />
         </button>
       </div>
       {out && (

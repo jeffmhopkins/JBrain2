@@ -1393,6 +1393,65 @@ async def test_a_keep_name_that_is_neither_name_is_refused(  # noqa: F811
 
 
 @pytest.mark.asyncio
+async def test_a_record_in_another_domain_is_folded_by_the_name_jeff_gave(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """The box, 2026-10-06: a general note's thread could not see "Dr. Amit Barochia"
+    (a health record), so "Dr. Brochia is Dr. Amit Barochia — merge them" staged nothing.
+    The fold looks the name up across the owner's records and files its card in the
+    FIREWALLED side's domain, so the health name is stored as health data."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    misspelled = await _entity(maker, "Dr. Brochia")
+    health = await _entity(maker, "Dr. Amit Barochia", domain="health")
+
+    out = await _handlers(maker)[MERGE_ENTITIES](
+        {
+            "entity_a": misspelled,
+            "entity_b": "Dr. Amit Barochia",
+            "reason": "",
+            "keep_name": "Dr. Amit Barochia",
+        },
+        _ctx(owner_ctx, session_id),
+    )
+    assert isinstance(out, ToolOutput) and out.proposal is not None, str(out)
+    assert "health records" in str(out)
+    row, nodes = await ProposalRepo(maker).load(owner_ctx, out.proposal.proposal_id)
+    assert row.domain == "health"
+    assert {nodes[0].preview["entity_a"], nodes[0].preview["entity_b"]} == {misspelled, health}
+    assert nodes[0].preview["keep_name"] == "Dr. Amit Barochia"
+
+
+@pytest.mark.asyncio
+async def test_a_wider_lookup_never_lists_what_it_found(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """Past the note's scopes the tool takes only an exact, unique name. Two health
+    records answering to it are refused without naming either or giving their ids — the
+    turn must not learn more than the owner typed."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    misspelled = await _entity(maker, "Dr. Brochia")
+    first = await _entity(maker, "Dr. Barochia", domain="health")
+    second = await _entity(maker, "Dr. Barochia", domain="health")
+
+    out = str(
+        await _handlers(maker)[MERGE_ENTITIES](
+            {"entity_a": misspelled, "entity_b": "Dr. Barochia", "reason": "", "keep_name": ""},
+            _ctx(owner_ctx, session_id),
+        )
+    )
+    assert "more than one record" in out
+    assert first not in out and second not in out
+
+
+@pytest.mark.asyncio
 async def test_the_narrowed_conversation_could_not_have_folded_even_if_it_tried(  # noqa: F811
     maker,  # noqa: F811
     tmp_path,

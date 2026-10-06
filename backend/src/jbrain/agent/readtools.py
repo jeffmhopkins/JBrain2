@@ -682,6 +682,12 @@ def _edge_line(f: dict[str, Any]) -> str:
     surface its id so the model can read_entity it and follow the relationship
     one hop further (the chain behind "my wife's name")."""
     base = f"- {f['predicate']}: {f['statement']}"
+    # The stored VALUE first when the fact has a plain one, the sentence it came from
+    # after it. Shown the sentence alone, the agent read it AS the value and twice offered
+    # to "tidy" a specialty that was stored as exactly "neurology".
+    value = f.get("value_json")
+    if isinstance(value, dict) and isinstance(value.get("value"), str | int | float):
+        base = f"- {f['predicate']}: {value['value']} (stated: “{f['statement']}”)"
     if obj := f.get("object_entity_id"):
         name = f.get("object_entity_name") or ""
         return f"{base} → {name} (id={obj})"
@@ -724,6 +730,10 @@ def format_entity(view: dict[str, Any]) -> str:
     into read_note. Text-only now; an entity_card view comes with the component
     registry (the text-first tool path, docs/archive/ASSISTANT_PLAN.md)."""
     lines = [f"{view['canonical_name']} [{view['kind']}] ({view['domain']})"]
+    if merged_from := view.get("merged_from"):
+        lines.append(
+            f"(id {merged_from} was merged into this record — it is not a separate entity)"
+        )
     if aliases := view.get("aliases"):
         lines.append("also known as: " + ", ".join(aliases))
     if current := _current_facts(view):

@@ -71,6 +71,7 @@ from jbrain.agent.tree import TreeState
 from jbrain.analysis.clarify import (
     NOTE_CONVERSE_AGENT,
     OwnerReply,
+    chat_answers_text,
     close_owner_reply,
     owner_reply_notice,
     owner_turn_text,
@@ -1065,6 +1066,19 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # AND free text — now reaches the note in full and keeps the verb.
         if not owner_words_reached_note(owner_reply):
             profile = narrow_for_unlanded_reply(profile)
+    elif body.answers and body.owner_authored:
+        # A chat with no note behind it answers `ask_owner` the same way, and nothing
+        # else turns those answers into words: without this the model's user turn, and
+        # the transcript, were blank (`clarify.chat_answers_text`).
+        turn_text = await chat_answers_text(
+            request.app.state.session_maker,
+            owner_ctx,
+            session_id=str(session.id),
+            message=body.message,
+            answers=[(a.question_id, a.answer) for a in body.answers],
+        )
+        if turn_text != body.message:
+            body = body.model_copy(update={"message": turn_text})
 
     runlog = get_agent_runlog(request)
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
