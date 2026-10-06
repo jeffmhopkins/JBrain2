@@ -33,6 +33,7 @@ import { reportToSpeech } from "../speakable.js";
 import type { ToolActivity } from "../transcript";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
+import { BrowseTrace } from "./browseTrace";
 import { CodeRun } from "./codeRun";
 import {
   type HuGeoPoint,
@@ -3971,6 +3972,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   plan_card: PlanCard,
   image_set: ImageSet,
   code_run: CodeRun,
+  browse_trace: BrowseTrace,
 };
 
 /** Views that render inside their tool's STEP rather than in the bubble.
@@ -3979,8 +3981,10 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
  * number (the Worked panel, and G's popover), not stacked under every reply that did some
  * arithmetic. Keeping the membership HERE rather than in the surface means the step and the
  * bubble read the same list, so a view can never render in both or in neither
- * (docs/archive/SHOW_THE_WORKING_PLAN.md D2). */
-export const STEP_VIEWS: ReadonlySet<string> = new Set(["code_run"]);
+ * (docs/archive/SHOW_THE_WORKING_PLAN.md D2). `browse_trace` is the same kind of thing: what
+ * the browser did on the site, opened from the "Browsed a site" step (binding mock
+ * docs/mocks/browse-trace/a-timeline.html). */
+export const STEP_VIEWS: ReadonlySet<string> = new Set(["code_run", "browse_trace"]);
 
 export function isKnownView(name: string): boolean {
   return name in REGISTRY;

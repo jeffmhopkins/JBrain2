@@ -204,7 +204,7 @@ const STEP_LABELS: Record<string, string> = {
   jmolt_observe: "Observed jmolt",
 };
 
-function stepLabel(name: string): string {
+export function stepLabel(name: string): string {
   if (STEP_LABELS[name]) return STEP_LABELS[name];
   if (name.startsWith("lookup_")) return `Checked ${name.slice(7).replace(/_/g, " ")}`;
   return name;

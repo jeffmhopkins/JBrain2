@@ -11109,6 +11109,551 @@ button.small {
   color: var(--rose);
 }
 
+/* ── browse_trace — what the browser did on the site (views/browseTrace.tsx; binding mock
+   docs/mocks/browse-trace/a-timeline.html, owner pick 2026-10-06). Rendered inside the
+   "Browsed a site" step above its sources rung, on the 23px inset every rung uses. Every
+   string in it is page- or model-shaped and is rendered as plain text. ── */
+
+/* A step whose trace is open lifts the Worked pane's cap: a six-rung trace cannot be read
+   through a 320px slot inside a 320px slot, and a scroll pane inside a scroll pane is the
+   thing the cap was meant to prevent. */
+.fb-shell .fb-steps:has(.fb-step.open .bt) {
+  max-height: none;
+}
+.fb-shell .bt {
+  padding-left: calc(23px * var(--font-scale));
+  margin: calc(2px * var(--font-scale)) 0 calc(10px * var(--font-scale));
+}
+.fb-shell .bt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(5px * var(--font-scale)) calc(8px * var(--font-scale));
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-3);
+  margin-bottom: calc(6px * var(--font-scale));
+}
+.fb-shell .bt-head b {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.fb-shell .bt-pill {
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+}
+.fb-shell .bt-pill.violet {
+  background: var(--violet-tint);
+  border-color: transparent;
+  color: var(--violet);
+}
+
+/* level 1 — the rail: one rung per model turn, plus the host's opening and its check */
+.fb-shell .bt-rail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+.fb-shell .bt-rail::before {
+  content: "";
+  position: absolute;
+  left: calc(4px * var(--font-scale));
+  top: calc(12px * var(--font-scale));
+  bottom: calc(12px * var(--font-scale));
+  width: 1px;
+  background: var(--border);
+}
+.fb-shell .bt-rung {
+  position: relative;
+}
+.fb-shell .bt-row {
+  display: grid;
+  grid-template-columns:
+    calc(9px * var(--font-scale)) 1fr auto
+    calc(14px * var(--font-scale));
+  column-gap: calc(9px * var(--font-scale));
+  align-items: start;
+  width: 100%;
+  padding: calc(6px * var(--font-scale)) calc(4px * var(--font-scale)) calc(6px * var(--font-scale))
+    0;
+  min-height: calc(38px * var(--font-scale));
+  border: none;
+  border-radius: calc(8px * var(--font-scale));
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fb-shell .bt-row:hover .bt-lab {
+  color: var(--text);
+}
+.fb-shell .bt-row:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: -2px;
+}
+.fb-shell .bt-dot {
+  width: calc(9px * var(--font-scale));
+  height: calc(9px * var(--font-scale));
+  border-radius: 999px;
+  margin-top: calc(4px * var(--font-scale));
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--bg);
+  position: relative;
+  z-index: 1;
+}
+.fb-shell .bt-dot.part {
+  background: var(--amber);
+}
+.fb-shell .bt-dot.bad {
+  background: var(--rose);
+}
+/* the host's own work is drawn hollow / ringed, so it never reads as the model's */
+.fb-shell .bt-dot.host {
+  background: var(--bg);
+  border: 1.5px solid var(--steel);
+}
+.fb-shell .bt-dot.check {
+  background: var(--green);
+  outline: 1.5px solid var(--green);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px var(--bg);
+}
+.fb-shell .bt-dot.check.bad {
+  background: var(--rose);
+  outline-color: var(--rose);
+}
+.fb-shell .bt-main {
+  min-width: 0;
+}
+.fb-shell .bt-lab {
+  display: block;
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--text-2);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-lab-strong {
+  color: var(--text);
+}
+.fb-shell .bt-lab q {
+  quotes: "\201C" "\201D";
+  color: var(--text);
+}
+.fb-shell .bt-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(3px * var(--font-scale)) calc(6px * var(--font-scale));
+  margin-top: calc(2px * var(--font-scale));
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-3);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-sub .url {
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-badge {
+  font-size: calc(9.5px * var(--font-scale));
+  padding: calc(1px * var(--font-scale)) calc(6px * var(--font-scale));
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.fb-shell .bt-badge.ref {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+.fb-shell .bt-badge.re {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.fb-shell .bt-badge.ok {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.fb-shell .bt-badge.warn {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.fb-shell .bt-t {
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-3);
+  padding-top: calc(2px * var(--font-scale));
+  font-variant-numeric: tabular-nums;
+}
+.fb-shell .bt-car {
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
+  margin-top: 1px;
+  color: var(--text-3);
+  transition: transform 0.16s ease-out;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-shell .bt-rung.open > .bt-row .bt-car {
+  transform: rotate(90deg);
+}
+.fb-shell .bt-det {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.16s ease-out;
+}
+.fb-shell .bt-rung.open > .bt-det {
+  grid-template-rows: 1fr;
+}
+.fb-shell .bt-di {
+  min-height: 0;
+  overflow: hidden;
+  padding-left: calc(18px * var(--font-scale));
+}
+.fb-shell .bt-rung.open > .bt-det .bt-di {
+  padding-bottom: calc(8px * var(--font-scale));
+}
+
+/* what each command did, in words, with the element line it acted on */
+.fb-shell .bt-cmds {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(6px * var(--font-scale));
+  margin: calc(2px * var(--font-scale)) 0 calc(8px * var(--font-scale));
+  padding: 0;
+}
+.fb-shell .bt-cmd {
+  display: grid;
+  grid-template-columns: calc(14px * var(--font-scale)) 1fr auto;
+  column-gap: calc(6px * var(--font-scale));
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-2);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-cmd q {
+  quotes: "\201C" "\201D";
+}
+.fb-shell .bt-cmd .m {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--green);
+  text-align: center;
+}
+.fb-shell .bt-cmd.bad .m {
+  color: var(--rose);
+}
+.fb-shell .bt-cmd.skip,
+.fb-shell .bt-cmd.skip .m {
+  color: var(--text-3);
+}
+.fb-shell .bt-cmd .el {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-cmd .el i {
+  font-style: normal;
+  color: var(--steel);
+}
+.fb-shell .bt-cmd .why {
+  display: block;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--rose);
+}
+.fb-shell .bt-cmd .re {
+  display: block;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--steel);
+}
+.fb-shell .bt-cmd .tt {
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.fb-shell .bt-nums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px * var(--font-scale));
+  margin-bottom: calc(8px * var(--font-scale));
+}
+.fb-shell .bt-nums span {
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-nums b {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.fb-shell .bt-nums b.url {
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+
+/* level 2 — the step's own Thinking / Actions / Page strip. It IS the answer foot's
+   segmented chip control (.fb-act-chip, violet think, steel work), one shared panel, tap
+   the open chip to close — the reader already knows how it works. */
+.fb-shell .bt-l2 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px * var(--font-scale));
+  border-top: 1px solid var(--border);
+  padding-top: calc(5px * var(--font-scale));
+}
+.fb-shell .bt-l2 .fb-act-chip {
+  min-height: calc(28px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
+}
+.fb-shell .fb-act-page .tw-ic {
+  color: var(--text-2);
+}
+.fb-shell .fb-act-page.on {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.fb-shell .bt-l2 .fb-act-count {
+  font-size: calc(10px * var(--font-scale));
+}
+.fb-shell .bt-pan {
+  margin-top: calc(6px * var(--font-scale));
+}
+.fb-shell .bt-think {
+  max-height: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-none {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-3);
+  font-style: italic;
+  padding: calc(2px * var(--font-scale)) 0 calc(4px * var(--font-scale));
+}
+.fb-shell .bt-sec {
+  font-size: calc(9.5px * var(--font-scale));
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: calc(8px * var(--font-scale)) 0 calc(4px * var(--font-scale));
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-sec:first-child {
+  margin-top: 0;
+}
+.fb-shell .bt-pre {
+  margin: 0;
+  padding: calc(8px * var(--font-scale)) calc(10px * var(--font-scale));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: calc(10px * var(--font-scale));
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* the call's closed token set, applied by the component — never authored by the page */
+.fb-shell .bt-pre .k {
+  color: var(--steel);
+}
+.fb-shell .bt-pre .s {
+  color: var(--green);
+}
+.fb-shell .bt-pre .n {
+  color: var(--amber);
+}
+.fb-shell .bt-host {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(5px * var(--font-scale));
+  margin: 0;
+  padding: calc(8px * var(--font-scale)) calc(10px * var(--font-scale));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: calc(10px * var(--font-scale));
+}
+.fb-shell .bt-host li {
+  display: grid;
+  grid-template-columns: calc(14px * var(--font-scale)) 1fr;
+  column-gap: calc(6px * var(--font-scale));
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.5;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.fb-shell .bt-host li > span:first-child {
+  color: var(--text-3);
+}
+.fb-shell .bt-host .ok {
+  color: var(--green);
+}
+.fb-shell .bt-host .bad {
+  color: var(--rose);
+}
+.fb-shell .bt-host .re {
+  color: var(--steel);
+}
+.fb-shell .bt-host .dim {
+  color: var(--text-3);
+}
+.fb-shell .bt-cap {
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-3);
+  margin-top: calc(4px * var(--font-scale));
+}
+.fb-shell .bt-cap.bad {
+  color: var(--rose);
+}
+
+/* the closing rung: the answer and the host's own check */
+.fb-shell .bt-ans {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-2);
+  line-height: 1.5;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: calc(10px * var(--font-scale));
+  padding: calc(8px * var(--font-scale)) calc(10px * var(--font-scale));
+  margin-bottom: calc(8px * var(--font-scale));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-check {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: calc(3px * var(--font-scale)) calc(10px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
+  margin: 0 0 calc(8px * var(--font-scale));
+}
+.fb-shell .bt-check-row {
+  display: contents;
+}
+.fb-shell .bt-check dt {
+  color: var(--text-3);
+  font-size: calc(10px * var(--font-scale));
+  padding-top: 1px;
+}
+.fb-shell .bt-check dd {
+  margin: 0;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.fb-shell .bt-check dd.ok {
+  color: var(--green);
+}
+.fb-shell .bt-check dd.bad {
+  color: var(--rose);
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .bt-det,
+  .fb-shell .bt-car {
+    transition: none;
+  }
+}
+
+/* ── Inline tool marks — where the model stopped to use a tool, the answer says so, quietly
+   (markdown.tsx `ToolMark`; binding mock docs/mocks/browse-trace/inline-tool-marks.html,
+   owner request 2026-10-06). Text-3 on no fill and smaller than the prose (em, so it follows
+   the chat size), so it reads as punctuation rather than a link competing with the prose. ── */
+.fb-shell .tmark {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.27em;
+  vertical-align: 0.07em;
+  margin: 0 0.07em 0 0.2em;
+  padding: 0 0.47em 0 0.33em;
+  min-height: 1.2em;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  font-size: 0.7em;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text-3);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s, border-color 0.14s;
+}
+/* a thumb-sized hit area that paints nothing (DESIGN.md: the 44px floor is on the hit area) */
+.fb-shell .tmark::after {
+  content: "";
+  position: absolute;
+  inset: -9px -3px;
+}
+.fb-shell .tmark:hover {
+  color: var(--text-2);
+  border-color: var(--text-3);
+}
+.fb-shell .tmark:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: 1px;
+}
+.fb-shell .tmark .tw-ic {
+  width: 1.05em;
+  height: 1.05em;
+  flex: none;
+  color: currentColor;
+}
+.fb-shell .tmark .v {
+  color: var(--green);
+}
+.fb-shell .tmark .v.bad {
+  color: var(--rose);
+}
+/* the tapped mark takes the open Worked chip's steel tint */
+.fb-shell .tmark.on {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: rgba(127, 167, 201, 0.3);
+}
+/* the step a mark points at, briefly lit when the ledger opens to it */
+.fb-shell .fb-step.flash {
+  animation: fb-flash 1.4s ease-out;
+}
+@keyframes fb-flash {
+  0%,
+  35% {
+    background: var(--steel-tint);
+    box-shadow: inset 2px 0 0 var(--steel);
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-step.flash {
+    animation: none;
+    background: var(--steel-tint);
+  }
+  .fb-shell .tmark {
+    transition: none;
+  }
+}
+
 /* a COMPUTED answer, the one result the row exists to make checkable. Green because it is
    a value the box worked out rather than a count of what it found. */
 .fb-shell .fb-step-cnt.fbl-res {
