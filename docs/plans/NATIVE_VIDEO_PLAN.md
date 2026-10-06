@@ -1,6 +1,6 @@
 # Native video on Flash-Next — the one-minute hybrid
 
-> **Status:** Proposed · **Last verified:** 2026-10-04 · **Waves:** V0◻️ V1◻️ V2◻️
+> **Status:** In progress · **Last verified:** 2026-10-06 · **Waves:** V0🟡 V1✅ V2✅
 
 Flash-Next's engine accepts video directly (`/props` on the box, llama.cpp b11332-869034b:
 `modalities {vision: true, video: true, audio: false}`), but the app never sends it any.
@@ -67,7 +67,7 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
 
 ## 3. Waves
 
-### V0 — Make the engine able to take video, and measure it ◻️
+### V0 — Make the engine able to take video, and measure it 🟡
 - `deploy/Dockerfile.flash-next`: ensure `ffmpeg` and `ffprobe` are on PATH in the runtime
   stage (install through the base's package manager, as the build stage does) and fail the
   image build unless ffmpeg lists the `mjpeg` decoder and `ffprobe -version` runs.
@@ -88,7 +88,7 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
   second, per-pair tokens, prefill time and a side-by-side of native vs frames answers.
   These fix the fps, the pool charge and whether 60 s fits the 128k roles.
 
-### V1 — The hybrid in the video tools ◻️
+### V1 — The hybrid in the video tools ✅
 - `supports_video` flag, `supports_video_for_spec`, the pool charge.
 - **The native gate keys on the engine and model (`supports_video`), never on
   `provider == "local"`.** The Standard engine is "local" too, and its models have no video
@@ -99,7 +99,7 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
 - Tests: the split at 60 s, unknown duration, gate off on the Standard engine and cloud
   routes, every fallback trigger, the serialised part, the charge.
 
-### V2 — Chat and links, through a separate call ◻️
+### V2 — Chat and links, through a separate call ✅
 - **The clip never enters jerv's own context** (owner decision 2026-10-04). A minute of video
   is 60–120k tokens; inline, it would crowd the conversation out of the interactive slot and
   be carried, or re-read, on every later turn. Instead a chat-attached video of ≤ 60 s goes
@@ -110,6 +110,45 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
 - `analyze_stream`: a downloaded clip of ≤ 60 s takes the same native path.
 - `jerv.prompt`: ask `analyze_video` about a video, with the question; a follow-up is
   another call with the new question.
+
+## 3a. As built (V1 + V2, 2026-10-06)
+
+- **V0** shipped its code in #1557 (engine ffmpeg, `LlmVideo`, the provisional charge, the
+  `/video` probe). Its measurement is partly done — one clip, below — so it stays 🟡 until
+  two or three clips of 10–60 s settle open question 1.
+- **Gate.** `LocalModel.supports_video` (true only for Flash-Next) and
+  `LlmRouter.supports_video(task)`, which reads the route after live overrides and the engine
+  remap, so a Standard pick served by Flash-Next qualifies and a Standard-engine model never
+  does. No `providers.supports_video_for_spec`: every native caller holds a router.
+- **Route and slot.** The native call routes by `video.summarize` (one Settings pick decides
+  both paths) and is pinned to `slot_roles.NATIVE_VIDEO_ROLE` = the 256k scheduled slot —
+  a minute's charge (~127k) does not fit the 128k workshop slot with a transcript and an
+  answer (open question 2, resolved).
+- **The split** (`ingest/video.py` `run_video_analysis`): frames are always sampled (they are
+  the card's thumbnails), the audio always whispered; the model gate is checked before any
+  probe; then `media.native_clip` probes and transcodes only a clip of known length ≤ 60 s.
+  Any `TranscodeError` or `LlmError` (an empty answer included) falls back to captioning the
+  same frames in the same call. `analysis.path` (`native`/`frames`) and `analysis.fallback`
+  record what ran and why; the native path also stores the transcoded clip as a blob
+  (`native_clip_id`).
+- **Chat (V2).** `analyze_video` takes `question`. The first call writes the cached summary,
+  then asks the question on the same clip prefix (fixed system prompt, clip, transcript —
+  the request goes last), so only the question is new prefill. A follow-up re-sends the stored
+  clip bytes with the new question instead of re-running anything. A frames-read clip answers
+  from its summary, as before. The clip never enters jerv's context.
+- **Links (V2).** `analyze_stream` in `full` mode on a finite video ≤ 60 s transcodes the
+  first minute straight from the resolved URL (`stream.native_stream_clip`, same protocol
+  guard, headers and stall timeout as every other read) and watches it; `window`/`single` and
+  live streams keep reading stills.
+- **Order change.** Whisper now runs before frame captioning, since the native call needs the
+  transcript first; the live status reads "Extracting frames… → Transcribing audio… →
+  Watching the video…" on the native path.
+
+### Measurements
+
+| Clip | Length | Payload | Prompt tokens | Transcode | Call | Notes |
+|---|---|---|---|---|---|---|
+| Hand-held numbers (phone, 2026-10-06) | 7.4 s | 547 KB | 10,460 | 0.6 s | 77 s (655 output tokens, thinking on) | ≈ 2.5k tokens per frame pair; the charge booked 20.5k. Answered the question with an ordered, timestamped sequence (1, 2, 0, 3, 1). The frame pipeline on the same clip took 238 s and named the gestures (fist, one, two, three fingers) but in no order — per-frame captions lose the sequence. |
 
 ## 4. Open questions
 1. **fps 1 or 2.** One is cheaper and fits every role at 60 s; two sees faster motion.

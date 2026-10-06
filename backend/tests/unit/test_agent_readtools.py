@@ -1512,8 +1512,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "analyze_video.tool": (
             "analyze_video",
-            3,
-            "a7859e3c7d28153f14fa10dd22fc0f4b53006aad4af7f69efc7b671916279953",
+            4,
+            "0ff237fbbc6864e6a4975ed2b6077e315438928437bc1d76ffd0516d9e5a58ef",
         ),
         "analyze_stream.tool": (
             "analyze_stream",

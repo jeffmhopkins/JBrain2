@@ -21,7 +21,7 @@ import asyncio
 import io
 import shutil
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,11 +79,18 @@ def _native_video_scale(max_edge: int) -> str:
 
 
 async def transcode_for_native_video(
-    src: Path, *, max_seconds: float = 60.0, fps: float, max_edge: int = 1280
+    src: Path | str,
+    *,
+    max_seconds: float = 60.0,
+    fps: float,
+    max_edge: int = 1280,
+    input_args: Sequence[str] = INPUT_PROTOCOLS,
 ) -> bytes:
     """The first `max_seconds` of `src` as silent Motion-JPEG in Matroska at `fps`, ready for
     an `input_video` part. Sampling here at the engine's own rate keeps the upload to the
-    frames it would keep anyway. Raises `TranscodeError` on any failure or timeout."""
+    frames it would keep anyway. `src` is a local file, or a remote media URL whose caller
+    passes that URL's own guard and header args as `input_args` (the stream path). Raises
+    `TranscodeError` on any failure or timeout."""
     with tempfile.TemporaryDirectory(prefix="jbrain-nvid-") as tmp:
         out = Path(tmp) / "clip.mkv"
         cmd = [
@@ -92,7 +99,7 @@ async def transcode_for_native_video(
             "-v",
             "error",
             "-y",
-            *INPUT_PROTOCOLS,
+            *input_args,
             "-i",
             str(src),
             "-t",
@@ -121,6 +128,29 @@ async def transcode_for_native_video(
         if not data:
             raise TranscodeError("ffmpeg produced no output")
         return data
+
+
+@dataclass(frozen=True)
+class NativeClip:
+    """A probed clip and, when it is short enough to send whole, its transcoded body.
+    `data` is None for a clip over the limit or of unknown length (the caller reads stills)."""
+
+    seconds: float | None
+    data: bytes | None
+
+
+async def native_clip(video: bytes, *, max_seconds: float, fps: float) -> NativeClip:
+    """Probe `video` and transcode it for an `input_video` part only when its length is known
+    and at most `max_seconds`. Raises `TranscodeError` when a clip that qualifies fails to
+    transcode; never transcodes one that does not."""
+    with tempfile.TemporaryDirectory(prefix="jbrain-nclip-") as tmp:
+        src = Path(tmp) / "in"
+        src.write_bytes(video)
+        seconds = await probe_duration_s(src)
+        if seconds is None or seconds <= 0 or seconds > max_seconds:
+            return NativeClip(seconds=seconds, data=None)
+        data = await transcode_for_native_video(src, max_seconds=max_seconds, fps=fps)
+    return NativeClip(seconds=seconds, data=data)
 
 
 def _read_if_present(path: Path) -> bytes:

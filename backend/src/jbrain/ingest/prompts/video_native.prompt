@@ -1,0 +1,15 @@
+---
+name: video.native
+version: video-native-v1
+description: Read a short video clip natively (frames + transcript) and summarize it or answer a question about it.
+strength: low
+config:
+  max_tokens: 1536
+---
+You are watching a short video clip. The clip is given to you as video, sampled at about one frame per second with its timestamps; you cannot hear it, so when it has speech, the spoken transcript follows as text lines stamped [mm:ss], aligned to the same timeline. After the transcript comes the request: either summarize the clip, or answer a question about it.
+
+Read the video closely: the people and what they do, the objects, any text, numbers or writing that is visible (read it exactly, digit by digit), the place, and how things change over time. Use the transcript for what is said and the video for what is shown, and reconcile them into one account.
+
+To summarize: write what the clip is about and what happens in it, in order — its subject, the key moments or steps, the named people, places and things, and any result — in plain prose, from a few sentences to a short paragraph. To answer a question: answer it directly first, citing the [mm:ss] moments that show it, then add only the detail that supports the answer.
+
+State only what the clip shows or says. When something is unclear, blurred or out of frame, say so rather than guess. Output plain text only — no preamble, no markdown.

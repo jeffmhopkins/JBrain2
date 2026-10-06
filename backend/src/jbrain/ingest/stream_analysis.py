@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections.abc import Awaitable
+from typing import Protocol
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -31,16 +33,21 @@ from jbrain.agent import media_results
 from jbrain.captions import fetch_caption_transcript
 from jbrain.external.corpus import persist_analysis
 from jbrain.ingest.video import (
+    NATIVE_MAX_SECONDS,
+    NATIVE_TASK,
+    PATH_FRAMES,
     ProgressFn,
     VideoAnalysis,
+    ask_native,
     caption_frames,
     fuse_and_reduce,
+    native_analysis,
     transcribe_audio_chunked,
     transcript_payload,
 )
-from jbrain.llm import LlmRouter
+from jbrain.llm import LlmError, LlmRouter, slot_roles
 from jbrain.llm.local_gateway import LocalGateway
-from jbrain.media import SampledFrame, jpeg_thumbnail
+from jbrain.media import SampledFrame, TranscodeError, jpeg_thumbnail
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import BlobStore
 from jbrain.stream import (
@@ -54,6 +61,7 @@ from jbrain.stream import (
     Resolver,
     StreamError,
     StreamSample,
+    native_stream_clip,
     resolve_stream,
     sample_stream,
     sample_stream_full,
@@ -211,6 +219,7 @@ async def run_stream_pipeline(
     window_sampler=sample_stream,
     full_sampler=sample_stream_full,
     on_progress: ProgressFn | None = None,
+    stream_clipper: StreamClipper | None = None,
 ) -> tuple[VideoAnalysis, list[SampledFrame], str] | None:
     """Sample→caption→transcribe→reduce one already-resolved stream, captions-first. Returns
     the analysis, the sampled frames (for the card's inline thumbnails), and which transcript
@@ -220,7 +229,11 @@ async def run_stream_pipeline(
     In full mode a preference (`captions`: auto/off/only) chooses the transcript source:
     provider captions (whole-video, instant, drift-free) when available, else whisper. When
     captions win we skip the audio ffmpeg leg AND the whisper pass entirely. Window/single
-    always whisper their localized audio (whole-video captions wouldn't align to a slice)."""
+    always whisper their localized audio (whole-video captions wouldn't align to a slice).
+
+    A full-mode video of a minute or less on a video-capable model is watched whole
+    (NATIVE_VIDEO_PLAN V2) — its frames are then the card's thumbnails only — and any native
+    failure falls back to captioning them, as the attachment path does."""
     pref = _caption_pref(arguments)
     transcript: dict | None = None
     source = ""
@@ -241,9 +254,6 @@ async def run_stream_pipeline(
     )
     if not sample.frames and not sample.audio_wav and transcript is None:
         return None
-    captioned = await caption_frames(
-        sample.frames, filename=resolved.title, router=router, blobs=blobs, on_progress=on_progress
-    )
     if use_whisper and sample.audio_wav:
         if on_progress is not None:
             on_progress(0, 0, "Transcribing audio…")
@@ -252,10 +262,72 @@ async def run_stream_pipeline(
         )
         if whispered is not None:
             transcript, source = whispered, SOURCE_WHISPER
+    reason = "not a whole video"
+    if mode == "full":
+        native, reason = await _watch_natively(
+            resolved,
+            sample.frames,
+            transcript,
+            router=router,
+            blobs=blobs,
+            clipper=stream_clipper or _default_stream_clipper,
+            on_progress=on_progress,
+        )
+        if native is not None:
+            return native, sample.frames, source
+    captioned = await caption_frames(
+        sample.frames, filename=resolved.title, router=router, blobs=blobs, on_progress=on_progress
+    )
     result = await fuse_and_reduce(captioned, transcript, router=router, on_progress=on_progress)
     if result is None:
         return None
+    result.analysis.update(path=PATH_FRAMES, fallback=reason)
     return result, sample.frames, source
+
+
+class StreamClipper(Protocol):
+    """Transcode a resolved video's first minute for the native path (faked in tests)."""
+
+    def __call__(self, resolved: ResolvedStream) -> Awaitable[bytes]: ...
+
+
+async def _default_stream_clipper(resolved: ResolvedStream) -> bytes:
+    return await native_stream_clip(
+        resolved, max_seconds=NATIVE_MAX_SECONDS, fps=slot_roles.VIDEO_FPS
+    )
+
+
+async def _watch_natively(
+    resolved: ResolvedStream,
+    frames: list[SampledFrame],
+    transcript: dict | None,
+    *,
+    router: LlmRouter,
+    blobs: BlobStore,
+    clipper: StreamClipper,
+    on_progress: ProgressFn | None,
+) -> tuple[VideoAnalysis | None, str]:
+    """The native reading of a short finite video, or None with why the frames run instead."""
+    seconds = resolved.duration_s
+    if resolved.is_live or not seconds or seconds > NATIVE_MAX_SECONDS:
+        return None, f"not a finite video of {NATIVE_MAX_SECONDS:g} s or less"
+    if not await router.supports_video(NATIVE_TASK):
+        return None, "model has no video input"
+    if on_progress is not None:
+        on_progress(0, 0, "Watching the video…")
+    try:
+        clip = await clipper(resolved)
+        summary = await ask_native(router, clip, seconds=seconds, transcript=transcript)
+    except TranscodeError as exc:
+        log.warning("stream.native_transcode_failed", error=str(exc))
+        return None, "transcode failed"
+    except LlmError as exc:
+        log.warning("stream.native_failed", error=repr(exc))
+        return None, f"native call failed: {type(exc).__name__}"
+    analysis = await native_analysis(
+        summary, clip, seconds, frames, transcript, router=router, blobs=blobs
+    )
+    return analysis, ""
 
 
 def _caption_pref(arguments: dict) -> str:

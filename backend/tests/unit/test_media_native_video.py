@@ -125,3 +125,40 @@ def test_a_real_clip_comes_out_mjpeg_at_the_asked_rate(tmp_path: Path) -> None:
     # Longest edge capped at 1280, aspect kept, both sides even; one frame a second.
     assert "width=1280" in probe and "height=720" in probe
     assert "nb_read_frames=3" in probe
+
+
+async def test_native_clip_transcodes_only_a_short_known_clip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _fake_proc(monkeypatch)
+    lengths = iter([30.0, 61.0, None])
+
+    async def probe(path: Path) -> float | None:
+        return next(lengths)
+
+    monkeypatch.setattr(media, "probe_duration_s", probe)
+    short = await media.native_clip(b"v", max_seconds=60.0, fps=1.0)
+    assert short == media.NativeClip(seconds=30.0, data=b"MKV")
+    assert await media.native_clip(b"v", max_seconds=60.0, fps=1.0) == media.NativeClip(61.0, None)
+    assert await media.native_clip(b"v", max_seconds=60.0, fps=1.0) == media.NativeClip(None, None)
+    assert len(seen) == 1  # only the qualifying clip reached ffmpeg
+
+
+async def test_stream_clip_reads_the_url_under_its_guards(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jbrain import stream
+
+    seen = _fake_proc(monkeypatch)
+    resolved = stream.ResolvedStream(
+        media_url="https://cdn.example.com/v.mp4",
+        title="t",
+        is_live=False,
+        duration_s=30.0,
+        webpage_url="https://example.com/watch",
+        http_headers={"User-Agent": "UA/1", "Referer": "https://example.com"},
+    )
+    assert await stream.native_stream_clip(resolved, max_seconds=60.0, fps=1.0) == b"MKV"
+    (cmd,) = seen
+    assert _arg(cmd, "-i") == "https://cdn.example.com/v.mp4"
+    assert "file" not in _arg(cmd, "-protocol_whitelist").split(",")
+    assert _arg(cmd, "-user_agent") == "UA/1" and "Referer" in _arg(cmd, "-headers")
+    assert cmd.index("-rw_timeout") < cmd.index("-i") and _arg(cmd, "-t") == "60"

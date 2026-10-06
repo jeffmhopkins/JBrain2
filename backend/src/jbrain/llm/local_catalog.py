@@ -367,6 +367,10 @@ class LocalModel:
     # spent on every image turn. Costs prefill and KV, never weights, so no floor can change
     # whether a model fits.
     image_min_tokens: int | None = None
+    # Its engine decodes an `input_video` part (llama.cpp with ffmpeg in its image and a video
+    # path in the projector). Gates the native video path (NATIVE_VIDEO_PLAN); every other
+    # model reads a video as sampled stills.
+    supports_video: bool = False
     # The context window the gateway serves this model with (llama-server's `-c`)
     # ABSENT an operator override. The single source of truth: scripts/local-llm-setup.sh
     # stamps this into the llama-swap config, and the router reports it to the PWA's
@@ -1229,6 +1233,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # Exact name, as on the 27B entries, so the BF16 projector beside it is not pulled.
         mmproj_include="mmproj-F16.gguf",
         image_min_tokens=2048,
+        supports_video=True,
         quant="UD-IQ4_XS",
         # GiB on disk (the catalog's unit): HF's 93.7 decimal GB of UD-IQ4_XS shards is 87.3
         # GiB — the 60.4 GiB of weights plus the 26.8 GiB engram table in the plan's §3 — plus
@@ -1364,6 +1369,13 @@ def supports_vision(served_model: str) -> bool:
     sending them to a model with no vision projector (which errors at the gateway)."""
     model = _BY_SERVED.get(served_model)
     return model.supports_vision if model else False
+
+
+def supports_video(served_model: str) -> bool:
+    """Whether a `local:<served_model>` takes a native `input_video` part. False off the
+    catalog, like `supports_vision`: an unconfirmed engine gets stills, never a clip."""
+    model = _BY_SERVED.get(served_model)
+    return model.supports_video if model else False
 
 
 def tool_round_text_is_analysis(served_model: str) -> bool:
