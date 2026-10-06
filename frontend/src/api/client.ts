@@ -4875,11 +4875,13 @@ export const api = {
         run_id: string;
         snapshot: TranscriptTurn | null;
         frame_index: number;
+        elapsed_ms?: number;
       };
       return {
         runId: body.run_id,
         snapshot: body.snapshot ?? null,
         frameIndex: body.frame_index ?? 0,
+        elapsedMs: body.elapsed_ms ?? 0,
       };
     } catch {
       return null;

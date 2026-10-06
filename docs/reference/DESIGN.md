@@ -1862,6 +1862,20 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   during the turn is his until it settles — one he opened stays open (also past settle),
   one he closed is never auto-opened again. The panel's open/close is the shared 180ms
   height transition, off under `prefers-reduced-motion`.
+- **"Thought for …" is the whole turn's wall time once it settles** (owner request
+  2026-10-06: *"total turn time should be listed at the bottom of an agent reply"*). Live,
+  the chip keeps its reasoning-phase behaviour ("Thinking…", then the reasoning time so
+  far) and the status line carries the running turn total. Settled, the label reads send →
+  settle — measured on the client from the send (a reattach back-dates the start by the
+  server's `elapsed_ms`), or the transcript's `elapsed_ms` on reopen — so a turn that waited
+  (a queued browse) counts the wait. A turn with no reasoning still shows it, in the chip's
+  slot, as plain `--text-3` text at the chip's size (`.fb-act-turn`): no pointer, no hover,
+  nothing to open. A reopened turn with no run span keeps the bare "Thought" rather than
+  inventing a figure. The strip never wraps: the think slot is `flex: none` and Worked's
+  counts shrink and ellipsize first; when the row is still crowded (a 392px phone at 125%
+  text, or read-aloud's extra control) it goes `tight` (`useTightStrip`, measured) and the
+  words "Thought for" drop from view, leaving the glyph and the time — still in the
+  accessible name — rather than overlapping Worked.
 - **The ledger is not a disclosure.** What a turn CHANGED renders on the face of that
   turn, above the activity strip: one line per change — the statement in the owner's own
   words, its domain, and what became of it (`recorded · updated · not recorded · added`).

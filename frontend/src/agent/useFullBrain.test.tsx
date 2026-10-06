@@ -186,7 +186,12 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     // running server-side would show nothing (the stored transcript has no in-flight turn)
     // and the sub-agent rail would read "done". On open, a session whose last_run_status is
     // "running" is looked up and reattached — the live tail streams back onto a fresh bubble.
-    const sessionLiveRun = vi.fn(async () => ({ runId: "r9", snapshot: null, frameIndex: 0 }));
+    const sessionLiveRun = vi.fn(async () => ({
+      runId: "r9",
+      snapshot: null,
+      frameIndex: 0,
+      elapsedMs: 0,
+    }));
     const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "back live" };
       yield { type: "done", stop_reason: "end_turn" };
@@ -214,7 +219,12 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
       tools: [{ id: "t1", name: "deep_research", ok: null, sources: [] }],
       reasoning: "planning the fan",
     };
-    const sessionLiveRun = vi.fn(async () => ({ runId: "r9", snapshot, frameIndex: 48352 }));
+    const sessionLiveRun = vi.fn(async () => ({
+      runId: "r9",
+      snapshot,
+      frameIndex: 48352,
+      elapsedMs: 0,
+    }));
     const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: " microthrombi." };
       yield { type: "done", stop_reason: "end_turn" };
@@ -232,6 +242,33 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     // The stream resumes at the snapshot's absolute offset, not 0 — no replay, no gap.
     expect(chatResume).toHaveBeenCalledWith("r9", 48352, expect.anything());
     expect(result.current.messages.at(-1)?.streaming).toBe(false);
+  });
+
+  it("counts a reattached turn's total from the owner's send, not the reload", async () => {
+    // The server says the turn has run 90s; it settles 5s after the reload, so the bubble's
+    // total is 95s — the whole turn, not the 5s this client happened to watch.
+    let clock = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      const sessionLiveRun = vi.fn(async () => ({
+        runId: "r9",
+        snapshot: null,
+        frameIndex: 0,
+        elapsedMs: 90_000,
+      }));
+      const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
+        yield { type: "text_delta", text: "back live" };
+        clock += 5_000;
+        yield { type: "done", stop_reason: "end_turn" };
+      });
+      const listSessions = vi.fn(async () => [session({ id: "A", last_run_status: "running" })]);
+      const d = deps({ sessionLiveRun, chatResume, listSessions });
+      const { result } = renderHook(() => useFullBrain("fullbrain", d));
+      await waitFor(() => expect(result.current.messages.at(-1)?.streaming).toBe(false));
+      expect(result.current.messages.at(-1)?.elapsedMs).toBe(95_000);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("does not reattach when the session has no live run (stale status)", async () => {

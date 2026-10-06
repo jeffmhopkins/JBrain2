@@ -10112,6 +10112,30 @@ button.small {
 .fb-shell .fb-act-think {
   flex: none;
 }
+/* A reasoning-less turn's "Thought for …" (its total wall time): the think chip's
+   position and padding so it lines up with one, but plain muted text — no hover, no
+   pointer, nothing behind it to open. */
+/* `tight` (a crowded strip, measured in ActivityLine): the time stands alone. The words stay
+   in the accessible name, so they're clipped from view rather than removed. */
+.fb-shell .fb-activity.tight .fb-act-for {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.fb-shell .fb-act-turn {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--font-scale));
+  flex: none;
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-3);
+  white-space: nowrap;
+}
 /* worked carries the longest text (steps · sources · failed); only its count shrinks
    and ellipsizes, so the chips stay on one line and never collide into "ThougWorked" */
 .fb-shell .fb-act-work {

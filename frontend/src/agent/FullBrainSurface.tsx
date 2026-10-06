@@ -1301,6 +1301,7 @@ function Bubble({
         streaming={message.streaming}
         answerLength={message.text.length}
         tools={message.tools}
+        turnMs={message.streaming ? undefined : message.elapsedMs}
         copyText={settledAnswer ? stripModelCitations(message.text) : ""}
         audio={settledAnswer || streamingAudio ? audio : undefined}
         onOpenNote={onOpenNote}
@@ -1556,8 +1557,10 @@ function ThinkTool({ step }: { step: ToolStep }): ReactNode {
 // each expanding its own body in place (the violet/steel registers from DESIGN.md).
 // While the model is still thinking the trace auto-opens, a pulse marks it live, and
 // the trace auto-follows the newest text; the moment answer text lands it collapses to
-// "Thought for Ns" (the duration measured here, so the reducer stays pure) and stays a tap
-// away. If the model goes back to thinking it re-opens, the answer so far staying above.
+// "Thought for Ns" (the reasoning time measured here) and stays a tap away. If the model goes
+// back to thinking it re-opens, the answer so far staying above. Once the turn SETTLES the
+// label reads the turn's whole wall time, send → settle (owner request 2026-10-06), and a
+// turn with no reasoning still shows it, as plain text in the same spot.
 // The "Worked" segment appears as soon as a tool runs — on the same line — so a turn that
 // thinks AND uses tools reads as one foot strip; a tool called after the answer began, with
 // no thinking first, opens it until the answer resumes (`nextAutoSection`).
@@ -1567,6 +1570,7 @@ function ActivityLine({
   streaming,
   answerLength,
   tools,
+  turnMs,
   copyText,
   audio,
   onOpenNote,
@@ -1579,6 +1583,9 @@ function ActivityLine({
   streaming: boolean;
   answerLength: number;
   tools: ToolActivity[];
+  /** The settled turn's total wall time (send → settle, or the transcript's `elapsed_ms`);
+   * undefined while it streams, or when no figure is known (a pre-feature turn). */
+  turnMs?: number | undefined;
   /** The settled answer text to copy; "" while streaming or empty (no copy button). */
   copyText: string;
   /** Read-aloud control for this turn — present only when read-aloud (piper) is on.
@@ -1604,6 +1611,7 @@ function ActivityLine({
   const [ms, setMs] = useState<number | null>(null);
   const traceRef = useRef<HTMLDivElement | null>(null);
   const stepsRef = useRef<HTMLDivElement | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
 
   const signal = (s: FootSignal) => {
     const target = nextAutoSection(autoRef.current, s);
@@ -1696,14 +1704,30 @@ function ActivityLine({
   const failCount = steps.filter((s) => s.ok === false).length;
   const writeSummary = turnWriteSummary(steps);
   const ledger = ledgerRows(steps);
-  const label = thinking
-    ? "Thinking…"
-    : ms !== null
-      ? // Long reasoning runs past a minute, so carry minutes (and hours) the same way the
-        // turn timer does — `formatElapsed` gives "45s" / "2m 5s" / "1h 3m" — rather than an
-        // ever-growing seconds count ("Thought for 137s").
-        `Thought for ${formatElapsed(Math.max(1000, ms))}`
-      : "Thought";
+  // Settled: the whole turn's time. Live: the reasoning time so far (the status line carries
+  // the running turn total meanwhile).
+  const shownMs = thinking ? null : !streaming && turnMs !== undefined ? turnMs : ms;
+  // Long turns run past a minute, so carry minutes (and hours) the same way the turn timer
+  // does — `formatElapsed` gives "45s" / "2m 5s" / "1h 3m" — rather than an ever-growing
+  // seconds count ("Thought for 137s"). "Thought for" is its own span so a crowded strip
+  // can drop it to the time alone (`useTightStrip`) instead of overlapping Worked.
+  const timed =
+    shownMs !== null ? (
+      <span>
+        <span className="fb-act-for">Thought for </span>
+        {formatElapsed(Math.max(1000, shownMs))}
+      </span>
+    ) : null;
+  const label = thinking ? "Thinking…" : (timed ?? "Thought");
+  // No reasoning to disclose, but a settled turn still says how long it took — as text, not
+  // a chip, since there is nothing behind it to open.
+  const plainTime = !hasReasoning && !streaming && turnMs !== undefined;
+  const tight = useTightStrip(rowRef, timed !== null && !thinking, [
+    shownMs,
+    tools.length,
+    audio !== undefined,
+    copyText !== "",
+  ]);
   // No top border (and flush to the top) while the line leads a still-thinking
   // bubble with no answer above it yet.
   const bare = thinking && answerLength === 0;
@@ -1720,7 +1744,7 @@ function ActivityLine({
     // under the card.
     <div className={`fb-act-foot${bare ? " bare" : ""}${ledger.length > 0 ? " has-ledger" : ""}`}>
       <TurnLedger rows={ledger} onOpenSteps={() => openByHand("work", false)} />
-      <div className="fb-activity">
+      <div className={`fb-activity${tight ? " tight" : ""}`} ref={rowRef}>
         {hasReasoning && (
           <button
             type="button"
@@ -1734,6 +1758,12 @@ function ActivityLine({
               {label}
             </span>
           </button>
+        )}
+        {plainTime && (
+          <span className="fb-act-turn">
+            <BrainGlyph className="fb-act-ic" />
+            <span className="fb-act-lab">{label}</span>
+          </span>
         )}
         {tools.length > 0 && (
           <button
@@ -1805,6 +1835,69 @@ function ActivityLine({
       )}
     </div>
   );
+}
+
+// Whether the foot strip's items run into each other: a chip whose own content overflows it
+// (Worked shrunk below its label), or two items overlapping / spilling past the row. Box
+// edges, not the row's scrollWidth — the copy and play buttons' 44px tap overlays hang past
+// the row by design and would always read as overflow.
+function stripCrowded(row: HTMLElement): boolean {
+  const edge = row.getBoundingClientRect();
+  let prevRight = edge.left;
+  for (const kid of Array.from(row.children) as HTMLElement[]) {
+    if (kid.classList.contains("fb-act-chip") && kid.scrollWidth > kid.clientWidth + 1) return true;
+    const box = kid.getBoundingClientRect();
+    if (box.left < prevRight - 1 || box.right > edge.right + 1) return true;
+    prevRight = box.right;
+  }
+  return false;
+}
+
+// A narrow phone at a large text size can't fit "Thought for 1m 52s", Worked and Copy on one
+// line. Rather than wrap or overlap, the strip goes `tight` and drops the words "Thought for"
+// to the time alone (still in the accessible name). Measured, because the strip's width
+// is the bubble's (shrink-to-fit) and its contents' widths scale with the font setting. It
+// relaxes only once the COLUMN has grown by the dropped words' width, judged on the column
+// rather than the row: a short answer's bubble narrows with its strip, so the row alone
+// would never show the room coming back.
+function useTightStrip(
+  rowRef: { current: HTMLDivElement | null },
+  timed: boolean,
+  deps: readonly unknown[],
+): boolean {
+  const [tight, setTight] = useState(false);
+  const tightRef = useRef(false);
+  const relaxAt = useRef(0);
+  const check = useRef<() => void>(() => {});
+  check.current = () => {
+    const row = rowRef.current;
+    if (!row || !timed) return;
+    const column = row.closest(".bubble")?.parentElement ?? row;
+    const avail = column.clientWidth;
+    if (!tightRef.current) {
+      if (!stripCrowded(row)) return;
+      const words = row.querySelector<HTMLElement>(".fb-act-for");
+      relaxAt.current = avail + (words?.offsetWidth ?? 0);
+      tightRef.current = true;
+      setTight(true);
+    } else if (avail >= relaxAt.current) {
+      tightRef.current = false;
+      setTight(false);
+    }
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the strip's content is the trigger
+  useLayoutEffect(() => check.current(), [timed, ...deps]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: observe once; `check` reads refs
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => check.current());
+    ro.observe(row);
+    const column = row.closest(".bubble")?.parentElement;
+    if (column) ro.observe(column);
+    return () => ro.disconnect();
+  }, []);
+  return tight;
 }
 
 // Copy the answer to the clipboard, pinned to the right of the activity line: a glyph
