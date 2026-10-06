@@ -690,3 +690,41 @@ async def test_an_eviction_spares_the_latest_chat_until_the_warm_slot_is_gone() 
     ):
         pass
     assert gw2.erased == [0]
+
+
+async def test_with_no_store_the_larger_chat_cache_is_kept_last() -> None:
+    """The worker's guard has no store to say which chat slot holds the latest conversation.
+    The conversation is the one grown past the prefix, so the smaller chat slot goes first —
+    whichever id it has; by static rank alone slot 0 would go first even holding the chat."""
+    conversation_in_a = _Gateway(_layout(s0=_slot(0, 700_000), s9=_slot(9, 100_000)))
+    guard = _guard(conversation_in_a)
+    assert guard._eviction_order(MODEL, POOL, conversation_in_a._reads[0])[-2:] == [9, 0]
+    async with guard.placed(
+        MODEL, POOL, SlotRole.RESEARCH, prompt_tokens=250_000, max_tokens=4_000
+    ):
+        pass
+    assert conversation_in_a.erased[-1] == 9, "the warm prefix goes; the conversation stays"
+    assert 0 not in conversation_in_a.erased
+
+    conversation_in_b = _Gateway(_layout(s0=_slot(0, 100_000), s9=_slot(9, 700_000)))
+    guard_b = _guard(conversation_in_b)
+    assert guard_b._eviction_order(MODEL, POOL, conversation_in_b._reads[0])[-2:] == [0, 9]
+    async with guard_b.placed(
+        MODEL, POOL, SlotRole.RESEARCH, prompt_tokens=250_000, max_tokens=4_000
+    ):
+        pass
+    assert conversation_in_b.erased[-1] == 0
+    assert 9 not in conversation_in_b.erased
+
+
+async def test_equal_or_empty_chat_slots_keep_the_static_order() -> None:
+    guard = _guard(_Gateway(_layout()))
+    assert guard._eviction_order(MODEL, POOL, _layout()) == POOL.eviction_order()
+    assert guard._eviction_order(MODEL, POOL) == POOL.eviction_order()
+
+
+async def test_a_store_that_knows_beats_the_size_guess() -> None:
+    layout = _layout(s0=_slot(0, 700_000), s9=_slot(9, 100_000))
+    guard = _guard(_Gateway(layout))
+    guard.set_keep_last(lambda _m: 9)
+    assert guard._eviction_order(MODEL, POOL, layout)[-1] == 9

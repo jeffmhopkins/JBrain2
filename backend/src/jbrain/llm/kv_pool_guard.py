@@ -356,11 +356,23 @@ class KvPoolGuard:
     def set_keep_last(self, source: Callable[[str], int | None]) -> None:
         self._keep_last = source
 
-    def _eviction_order(self, model: str, pool: KvPool) -> list[int]:
+    def _eviction_order(
+        self, model: str, pool: KvPool, slots: Sequence[Mapping[str, object]] = ()
+    ) -> list[int]:
         keep: int | None = None
         if self._keep_last is not None:
             with contextlib.suppress(Exception):  # a ranking hint, never a failed call
                 keep = self._keep_last(model)
+        if keep is None and pool.chat_pair is not None:
+            # No store says which chat slot holds the latest conversation (the worker's guard
+            # has none, and an api restart forgets). The larger cache is the better guess: the
+            # warm one holds only the jerv prefix, a conversation grows past it — so the
+            # smaller goes first. Static rank alone would free slot 0 even while it held the
+            # latest chat.
+            live = _by_id(slots)
+            sizes = {pool.slot(r): _held(live.get(pool.slot(r), {})) for r in pool.chat_pair}
+            if len(set(sizes.values())) > 1:
+                keep = max(sizes, key=lambda s: sizes[s])
         return pool.eviction_order(keep_last=keep)
 
     async def reserve_restore(self, model: str, pool: KvPool, slot: int, need: int) -> int | None:
@@ -568,7 +580,11 @@ class KvPoolGuard:
                 # slots itself in its own order, which is worse but not a reason to refuse.
                 return True
             slot = next(
-                (s for s in self._eviction_order(model, pool) if s in freeable and s not in tried),
+                (
+                    s
+                    for s in self._eviction_order(model, pool, slots)
+                    if s in freeable and s not in tried
+                ),
                 None,
             )
             if slot is None or self._clock() >= deadline:

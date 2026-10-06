@@ -180,7 +180,7 @@ _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
 #
 #   88.1 on disk - 28.4 = 59.7 weights + 0.47 vision = 60.2 fixed (the fit's)
 #   + 14.0 KV for the 512k pool (3.5 x 4)             = 74.2 device (the fit's 74.2)
-#   + 7.9 host-only checkpoints (8 per slot x 9 x 0.11) = 82.1 footprint (eviction and meter)
+#   + 8.8 host-only checkpoints (8 per slot x 10 x 0.11) = 83.0 footprint (eviction and meter)
 #
 # A load is admitted on the device figure alone — see `_lazy_checkpoints` — so with the 6 GiB
 # floor it needs ~80 GiB free.
