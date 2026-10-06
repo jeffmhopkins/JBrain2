@@ -1126,6 +1126,59 @@ async def test_the_reply_turns_four_verbs_share_one_handle_table(  # noqa: F811
     assert "no such handle" not in str(out)
 
 
+@pytest.mark.asyncio
+async def test_a_handle_whose_entity_was_merged_away_writes_onto_the_survivor(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """The box, 2026-10-06: the writer kept the corrected entity's handle across turns,
+    the owner approved a fold that tombstoned it, and the re-read wrote "hematology"
+    onto the TOMBSTONE — invisible everywhere — while the survivor showed 0 facts. A
+    handle is followed through the fold at commit, as a coreference id already is."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    handlers = _handlers(maker)
+    ctx = _ctx(owner_ctx, session_id)
+
+    await handlers["resolve_entity"](
+        {"entities": [{"surface": "Dr. Patel", "kind": "person"}]}, ctx
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        gone = str(
+            (
+                await s.execute(
+                    select(Entity.id).where(
+                        Entity.canonical_name == "Dr. Patel", Entity.status != "merged"
+                    )
+                )
+            ).scalar_one()
+        )
+    survivor = await _entity(maker, "Dr. Raj Patel")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await merge_entity_pair(s, keep=uuid.UUID(survivor), gone=uuid.UUID(gone))
+
+    out = await handlers["assert_fact"](
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "jobTitle",
+                    "object": "doctor",
+                    "statement": "Dr. Patel is a doctor.",
+                    "when": "",
+                    "quote": "Kaiya is seen by Dr. Patel",
+                }
+            ]
+        },
+        ctx,
+    )
+    assert isinstance(out, ToolOutput) and len(out.facts) == 1
+    assert [r.status for r in await _rows(maker, survivor, "jobTitle")] == ["active"]
+    assert await _rows(maker, gone, "jobTitle") == []
+
+
 # --- the unprompted loop, end to end ------------------------------------------
 
 
