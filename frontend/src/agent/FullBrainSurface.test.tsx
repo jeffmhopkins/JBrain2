@@ -1078,6 +1078,87 @@ describe("FullBrainSurface", () => {
     );
   });
 
+  it("settles the Thought label to the whole turn's time, not just the reasoning", async () => {
+    // Owner request 2026-10-06: the turn's total wall time on every settled reply. The clock
+    // runs 112s between the send and the settle; the reasoning took a sliver of that.
+    let clock = 5_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "reasoning_delta", text: "hmm" };
+      yield { type: "text_delta", text: "the answer" };
+      await gate;
+      clock += 112_000;
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    try {
+      render(<Harness d={deps({ chat: answer })} />);
+      await waitFor(() => screen.getByLabelText("Conversation"));
+      fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "why?" } });
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+      // Live: no total yet — the label is the reasoning phase's own ("Thought for 1s" floor).
+      await waitFor(() => expect(screen.getByText("the answer")).toBeInTheDocument());
+      expect(screen.queryByText(/Thought for 1m 52s/)).toBeNull();
+      await act(async () => release());
+      expect(await screen.findByRole("button", { name: /Thought for 1m 52s/ })).toBeVisible();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("shows a plain-text total on a settled turn that did no reasoning", async () => {
+    let clock = 7_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "plain answer" };
+      await gate;
+      clock += 4_000;
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    try {
+      const { container } = render(<Harness d={deps({ chat: answer })} />);
+      await waitFor(() => screen.getByLabelText("Conversation"));
+      fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "hi" } });
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+      await waitFor(() => expect(screen.getByText("plain answer")).toBeInTheDocument());
+      // Hidden while it streams.
+      expect(container.querySelector(".fb-act-turn")).toBeNull();
+      await act(async () => release());
+      await waitFor(() =>
+        expect(container.querySelector(".fb-act-turn")?.textContent).toBe("Thought for 4s"),
+      );
+      // Text, not a control: nothing behind it to open.
+      expect(screen.queryByRole("button", { name: /Thought/ })).toBeNull();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("replays a reopened turn's total from the transcript's elapsed_ms", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "q1", tools: [] },
+        { role: "assistant", content: "a1", tools: [], reasoning: "r", elapsed_ms: 112_000 },
+        { role: "user", content: "q2", tools: [] },
+        { role: "assistant", content: "a2", tools: [], elapsed_ms: 3_600_000 + 180_000 },
+        { role: "user", content: "q3", tools: [] },
+        { role: "assistant", content: "a3", tools: [], reasoning: "r", elapsed_ms: null },
+      ],
+    );
+    const { container } = render(<Harness d={deps({ getTranscript })} />);
+    expect(await screen.findByRole("button", { name: /Thought for 1m 52s/ })).toBeVisible();
+    expect(container.querySelector(".fb-act-turn")?.textContent).toBe("Thought for 1h 3m");
+    // A pre-feature turn (no run span) keeps the bare label rather than inventing a figure.
+    expect(screen.getByRole("button", { name: /^Thought$/ })).toBeVisible();
+  });
+
   it("copies the settled answer (citations stripped) and confirms, even with no tools", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.assign(navigator, { clipboard: { writeText } });

@@ -390,6 +390,10 @@ export interface TranscriptTurn {
   /** Files the owner attached to a user turn, replayed as chips inside the
    * bubble. Present (and possibly empty) on user turns; absent on assistant ones. */
   attachments?: ChatAttachment[];
+  /** An assistant turn's total wall time in ms (run start → recorded at settle), for the
+   * bubble's "Thought for …" label on reopen. Null/absent for user turns, turns with no run,
+   * and a live snapshot. */
+  elapsed_ms?: number | null;
 }
 
 /** A session's still-running detached turn, looked up after a full PWA reload
@@ -405,6 +409,9 @@ export interface LiveRun {
   /** The absolute frame offset the snapshot reaches — the reattach resumes the live stream
    * at this index, so it neither replays a frame already in the snapshot nor misses one. */
   frameIndex: number;
+  /** How long the turn has run so far (ms, server-measured), so a reattached bubble's
+   * total-time label counts from the owner's send rather than from the reload. */
+  elapsedMs: number;
 }
 
 // --- Agent sessions (the capability record; /api/sessions) ---

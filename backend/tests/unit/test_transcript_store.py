@@ -4,7 +4,7 @@ covered against real Postgres in tests/integration/test_turn_attachments_rls.py.
 
 from datetime import UTC, datetime, timedelta
 
-from jbrain.agent.transcript_store import _carry_forward_turn_ids
+from jbrain.agent.transcript_store import _carry_forward_turn_ids, turn_elapsed_ms
 
 _NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
@@ -47,3 +47,17 @@ def test_boundary_is_inclusive_at_exactly_the_window() -> None:
 
 def test_empty_history_carries_nothing() -> None:
     assert _carry_forward_turn_ids([], now=_NOW) == []
+
+
+def test_turn_elapsed_ms_is_run_start_to_recorded_at() -> None:
+    assert turn_elapsed_ms(_NOW + timedelta(minutes=1, seconds=52), _NOW) == 112_000
+    assert turn_elapsed_ms(_NOW + timedelta(milliseconds=1500), _NOW) == 1500
+
+
+def test_turn_elapsed_ms_is_none_without_a_run_or_for_a_nonsense_span() -> None:
+    assert turn_elapsed_ms(_NOW, None) is None
+    assert turn_elapsed_ms(None, _NOW) is None
+    # Negative (skew) and absurd (> 6h, a mismatched run row) read as no figure at all.
+    assert turn_elapsed_ms(_NOW - timedelta(seconds=1), _NOW) is None
+    assert turn_elapsed_ms(_NOW + timedelta(hours=6, seconds=1), _NOW) is None
+    assert turn_elapsed_ms(_NOW + timedelta(hours=6), _NOW) == 6 * 3600 * 1000

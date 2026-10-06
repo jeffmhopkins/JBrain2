@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.agent import AgentTurn
+from jbrain.models.agent import AgentTurn, Run
 
 # How far back an earlier image is carried forward inline so a vision-capable turn can
 # re-see it without an analyze_image round-trip (docs/reference/ASSISTANT.md). A UNION, not
@@ -31,6 +31,22 @@ CARRY_TIME_WINDOW = timedelta(minutes=15)
 # A ceiling on the user turns scanned for the time-window arm, so a pathological session
 # can't unbounded-scan. Far above any real rate (200 user turns inside 15 minutes).
 _CARRY_SCAN_LIMIT = 200
+
+# Past this, `created_at - started_at` is not a turn's wall time but a mismatch (a reused or
+# reaped run row, clock skew) — the hard per-turn ceiling is ~2h, so 6h is unambiguous.
+_MAX_TURN_ELAPSED = timedelta(hours=6)
+
+
+def turn_elapsed_ms(created_at: datetime | None, started_at: datetime | None) -> int | None:
+    """An assistant turn's wall time — run start (the owner's POST) to the exchange being
+    recorded at settle, so any wait inside the turn (a queued browse) counts. None when the
+    turn has no run, or the span is negative or absurd, rather than a misleading figure."""
+    if created_at is None or started_at is None:
+        return None
+    span = created_at - started_at
+    if span < timedelta(0) or span > _MAX_TURN_ELAPSED:
+        return None
+    return int(span.total_seconds() * 1000)
 
 
 def _carry_forward_turn_ids(
@@ -62,6 +78,9 @@ class TurnRecord:
     # The chat files bound to a USER turn (Stage-2 Wave 2), replayed as attachment
     # chips; always empty for an assistant turn.
     attachments: list[AttachmentInfo] = field(default_factory=list)
+    # The assistant turn's total wall time (ms) for the bubble's "Thought for …" label on
+    # reopen; None for user turns and turns with no (sane) run span.
+    elapsed_ms: int | None = None
 
 
 class AgentTranscript:
@@ -199,22 +218,21 @@ class AgentTranscript:
 
     async def load(self, ctx: SessionContext, session_id: str) -> list[TurnRecord]:
         async with scoped_session(self._maker, ctx) as session:
+            # One outer join to the turn's run for its start — no per-turn round-trip; a
+            # turn whose run aged out (SET NULL) or never had one just reads no span.
             rows = (
-                (
-                    await session.execute(
-                        select(AgentTurn)
-                        .where(AgentTurn.session_id == uuid.UUID(session_id))
-                        .order_by(AgentTurn.seq)
-                    )
+                await session.execute(
+                    select(AgentTurn, Run.started_at)
+                    .outerjoin(Run, Run.id == AgentTurn.run_id)
+                    .where(AgentTurn.session_id == uuid.UUID(session_id))
+                    .order_by(AgentTurn.seq)
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
         # One RLS-scoped round-trip for every user turn's attachments, so a reopened
         # session replays the files on the turn that carried them.
         by_turn: dict[str, list[AttachmentInfo]] = {}
         if self._attachments is not None:
-            user_turn_ids = [str(r.id) for r in rows if r.role == "user"]
+            user_turn_ids = [str(r.id) for r, _ in rows if r.role == "user"]
             by_turn = await self._attachments.list_for_turns(ctx, user_turn_ids)
         return [
             TurnRecord(
@@ -223,6 +241,9 @@ class AgentTranscript:
                 tools=list(r.tools),
                 reasoning=r.reasoning,
                 attachments=by_turn.get(str(r.id), []),
+                elapsed_ms=(
+                    turn_elapsed_ms(r.created_at, started_at) if r.role == "assistant" else None
+                ),
             )
-            for r in rows
+            for r, started_at in rows
         ]

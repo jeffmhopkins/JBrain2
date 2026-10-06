@@ -99,15 +99,19 @@ describe("api.chat run id", () => {
     };
     const hit = vi.fn(
       async () =>
-        new Response(JSON.stringify({ run_id: "run-7", snapshot, frame_index: 42 }), {
-          status: 200,
-        }),
+        new Response(
+          JSON.stringify({ run_id: "run-7", snapshot, frame_index: 42, elapsed_ms: 90_000 }),
+          {
+            status: 200,
+          },
+        ),
     );
     vi.stubGlobal("fetch", hit);
     expect(await api.sessionLiveRun("s1")).toEqual({
       runId: "run-7",
       snapshot,
       frameIndex: 42,
+      elapsedMs: 90_000,
     });
     expect(hit).toHaveBeenCalledWith("/api/chat/sessions/s1/live-run", expect.anything());
 
@@ -125,6 +129,8 @@ describe("api.chat run id", () => {
       runId: "run-8",
       snapshot: null,
       frameIndex: 0,
+      // An older server that sends no elapsed figure reads as "just started".
+      elapsedMs: 0,
     });
 
     vi.stubGlobal(

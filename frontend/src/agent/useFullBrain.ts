@@ -285,6 +285,7 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
     thinking: false,
     // The owner's attached files (user turns only) replay as bubble chips.
     ...(t.attachments?.length ? { attachments: t.attachments } : {}),
+    ...(typeof t.elapsed_ms === "number" ? { elapsedMs: t.elapsed_ms } : {}),
   };
 }
 
@@ -882,10 +883,12 @@ export function useFullBrain(
     // input — so it appends NO user bubble (the answer stands on its own after the analysis
     // card). Rendering the notice as an owner bubble is the "guest blurb"; the server
     // likewise persists this turn answer-only. Every other send shows the owner's message.
+    // The send instant anchors the turn's total ("Thought for …" once it settles).
+    const sentAt = Date.now();
     setSessionMessages(turnSessionId, (ms) =>
       opts?.deferredOutcome
-        ? [...ms, streamingAssistant()]
-        : [...ms, userMessage(shownText, attachments), streamingAssistant()],
+        ? [...ms, streamingAssistant(sentAt)]
+        : [...ms, userMessage(shownText, attachments), streamingAssistant(sentAt)],
     );
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
@@ -1203,7 +1206,7 @@ export function useFullBrain(
     if (!live) return;
     // A real send started while we were fetching the id — don't stomp its live turn.
     if (turnSessionRef.current !== null) return;
-    const { runId, snapshot, frameIndex } = live;
+    const { runId, snapshot, frameIndex, elapsedMs } = live;
     turnSessionRef.current = turnSessionId;
     setActiveTurnSessionId(turnSessionId);
     setBusy(true);
@@ -1214,10 +1217,18 @@ export function useFullBrain(
     // render accumulated so far) so the card/answer show at once, not a blank bubble waiting
     // on frames the buffer may have evicted. `streaming` stays true so the resumed stream
     // keeps appending; `thinking` shows the disclosure only while reasoning leads the answer.
+    // Back-date the start by how long the server says the turn has run, so the settled
+    // "Thought for …" is the whole turn, not just the stretch since this reload.
+    const startedAt = Date.now() - elapsedMs;
     const seed = (): TranscriptMessage => {
-      if (!snapshot) return streamingAssistant();
+      if (!snapshot) return streamingAssistant(startedAt);
       const m = fromTurn(snapshot);
-      return { ...m, streaming: true, thinking: m.text === "" && m.reasoning.length > 0 };
+      return {
+        ...m,
+        streaming: true,
+        thinking: m.text === "" && m.reasoning.length > 0,
+        startedAt,
+      };
     };
     // Load the settled transcript first (the in-flight turn isn't in it yet). `baseline` is
     // the settled turn count so the recovery loop's transcript fallback knows when the live

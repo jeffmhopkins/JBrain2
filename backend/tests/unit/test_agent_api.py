@@ -1102,6 +1102,7 @@ def test_session_transcript_endpoint_replays_stored_turns(
                 }
             ],
             reasoning="checked the birthday note",
+            elapsed_ms=112_000,
         ),
     ]
     resp = client.get("/api/sessions/sess-1/transcript")
@@ -1113,6 +1114,9 @@ def test_session_transcript_endpoint_replays_stored_turns(
     # The stored reasoning replays so the "thinking" disclosure reopens (collapsed).
     assert data[1]["reasoning"] == "checked the birthday note"
     assert data[0]["reasoning"] == ""
+    # The turn's total wall time rides on the assistant turn for its "Thought for …" label.
+    assert data[1]["elapsed_ms"] == 112_000
+    assert data[0]["elapsed_ms"] is None
 
 
 def test_transcript_endpoint_requires_owner(client: TestClient) -> None:
@@ -3726,7 +3730,11 @@ def test_session_live_run_returns_the_run_id(client: TestClient, repo: FakeAuthR
     client.app.state.live_turns["run-xyz"] = _LiveTurn("sess-1")  # type: ignore[attr-defined]
     resp = client.get("/api/chat/sessions/sess-1/live-run")
     assert resp.status_code == 200
-    assert resp.json() == {"run_id": "run-xyz", "snapshot": None, "frame_index": 0}
+    body = resp.json()
+    assert body["run_id"] == "run-xyz"
+    assert body["snapshot"] is None
+    assert body["frame_index"] == 0
+    assert body["elapsed_ms"] >= 0
     # The poll doubles as the plan-continuation SUPERVISED signal: it stamps the session's
     # foreground presence, so a step firing next runs on the lifted per-turn budget.
     assert "sess-1" in client.app.state.plan_presence  # type: ignore[attr-defined]
@@ -3762,6 +3770,20 @@ def test_session_live_run_returns_render_snapshot_and_frame_offset(
     # live spinner, not a failed step, because the turn is still running.
     assert snap["tools"][0]["name"] == "deep_research"
     assert snap["tools"][0]["ok"] is None
+
+
+def test_session_live_run_reports_elapsed_since_the_turn_began(
+    client: TestClient, repo: FakeAuthRepo
+) -> None:
+    """A reattached bubble's total-time label counts from the owner's send, not the reload:
+    the endpoint reports how long the turn has run on the server's monotonic clock."""
+    import time
+
+    login(client, repo)
+    live = _LiveTurn("sess-1", started=time.monotonic() - 90)
+    client.app.state.live_turns["run-xyz"] = live  # type: ignore[attr-defined]
+    elapsed = client.get("/api/chat/sessions/sess-1/live-run").json()["elapsed_ms"]
+    assert 90_000 <= elapsed < 100_000
 
 
 def test_session_live_run_404_when_no_live_turn(client: TestClient, repo: FakeAuthRepo) -> None:

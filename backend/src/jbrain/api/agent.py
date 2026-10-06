@@ -900,7 +900,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # same plan step. Set with NO await after the guards above, so the check-and-mark is
     # atomic against the sweep (JERV_PLANNING_TOOL_PLAN.md). Popped once live_turns takes
     # over (below); a marker a failed setup leaks ages out via continuation.TURN_STARTING_TTL_S.
-    request.app.state.turn_starting[str(session.id)] = time.monotonic()
+    turn_started = time.monotonic()
+    request.app.state.turn_starting[str(session.id)] = turn_started
 
     # An owner message supersedes any pending plan auto-continuation for this jerv chat:
     # cancel the timer, clear await-owner, and reset the continuation cap — so the owner
@@ -1805,7 +1806,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # once it's finished it recovers the exchange from the transcript instead. The
     # composer's explicit Stop cancels the turn through the cancel endpoint, keyed by the
     # run id we expose on the response header.
-    live = _LiveTurn(session.id)
+    live = _LiveTurn(session.id, started=turn_started)
     live.task = asyncio.create_task(drive_turn(live))
     request.app.state.live_turns[run_id] = live
     live.task.add_done_callback(lambda _t: request.app.state.live_turns.pop(run_id, None))
@@ -1915,6 +1916,9 @@ class LiveRunOut(BaseModel):
     # The absolute frame index the snapshot is current through — the reattach resumes
     # GET /chat/runs/{id}/stream?after=frame_index, so no early (evicted) frame is needed.
     frame_index: int = 0
+    # How long the turn has run so far (ms, server monotonic — no client/server clock skew),
+    # so a reattached bubble's total-time label counts from the owner's send, not the reload.
+    elapsed_ms: int = 0
 
 
 @router.get("/chat/sessions/{session_id}/live-run", response_model=LiveRunOut)
@@ -1945,7 +1949,14 @@ async def session_live_run(request: Request, session_id: str) -> LiveRunOut:
         if getattr(live, "session_id", None) == session_id and not live.done:
             acc = getattr(live, "acc", None)
             snapshot = acc.render_snapshot() if acc is not None else None
-            return LiveRunOut(run_id=run_id, snapshot=snapshot, frame_index=live.frame_index)
+            started = getattr(live, "started", None)
+            elapsed_ms = 0 if started is None else int(max(0.0, time.monotonic() - started) * 1000)
+            return LiveRunOut(
+                run_id=run_id,
+                snapshot=snapshot,
+                frame_index=live.frame_index,
+                elapsed_ms=elapsed_ms,
+            )
     raise HTTPException(status_code=404, detail="no live run for session")
 
 

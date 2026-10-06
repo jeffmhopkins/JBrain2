@@ -14,6 +14,7 @@ register a real streamable turn too — importing it here avoids the
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
@@ -41,12 +42,15 @@ class _LiveTurn:
     lines only — keepalives are per-connection (emitted on idle by `stream`), never
     buffered, so a reconnect's `after` offset counts only real events."""
 
-    def __init__(self, session_id: str = "") -> None:
+    def __init__(self, session_id: str = "", *, started: float | None = None) -> None:
         # The chat session this turn streams into. Lets the concurrency guard reject a
         # second live turn for the same session, and the rejoin lookup map a session back
         # to its live run_id — both without a DB hop. Defaults to "" (never a real session
         # id, so it matches nothing) for the buffer-only unit tests that don't set it.
         self.session_id = session_id
+        # When the turn began (`time.monotonic()`): /chat passes its POST instant so the
+        # setup before this broker exists counts toward the reattach's elapsed figure.
+        self.started = time.monotonic() if started is None else started
         self.frames: list[bytes] = []
         # Absolute index of frames[0]: count evicted off the front once the buffer hits
         # its cap, so a reconnect's `after` stays an ABSOLUTE event index (frames[0] is

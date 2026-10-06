@@ -239,6 +239,9 @@ class TurnOut(BaseModel):
     # The chat files a USER turn carried (Stage-2 attachments), replayed as chips;
     # always empty for an assistant turn.
     attachments: list[TurnAttachmentOut] = Field(default_factory=list)
+    # An assistant turn's total wall time in ms (run start → recorded at settle), the
+    # bubble's "Thought for …" on reopen; null for user turns and run-less turns.
+    elapsed_ms: int | None = None
 
 
 @router.get("/{session_id}/transcript")
@@ -253,6 +256,7 @@ async def session_transcript(
             content=t.content,
             tools=t.tools,
             reasoning=t.reasoning,
+            elapsed_ms=t.elapsed_ms,
             attachments=[
                 TurnAttachmentOut(
                     id=a.id,

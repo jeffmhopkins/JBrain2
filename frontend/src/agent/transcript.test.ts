@@ -3,8 +3,10 @@ import {
   type FootSection,
   type TranscriptMessage,
   applyEvent,
+  endStream,
   nextAutoSection,
   reconcileFoot,
+  streamingAssistant,
 } from "./transcript";
 import type { ChatEvent } from "./types";
 
@@ -21,6 +23,24 @@ function streaming(): TranscriptMessage {
 }
 
 describe("applyEvent reducer", () => {
+  it("stamps the turn's total wall time, send → settle, once", () => {
+    let ms: TranscriptMessage[] = [streamingAssistant(1_000)];
+    ms = applyEvent(ms, { type: "text_delta", text: "hi" }, 50_000);
+    expect(ms[0]?.elapsedMs).toBeUndefined(); // nothing while it streams
+    ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" }, 113_000);
+    expect(ms[0]?.elapsedMs).toBe(112_000);
+    // A late duplicate settle can't stretch it.
+    ms = endStream(ms, "stopped", 900_000);
+    expect(ms[0]?.elapsedMs).toBe(112_000);
+  });
+
+  it("stamps no total for a bubble with no known start, and never a negative one", () => {
+    const none = applyEvent([streaming()], { type: "done", stop_reason: "end_turn" }, 5_000);
+    expect(none[0]?.elapsedMs).toBeUndefined();
+    const skew = endStream([streamingAssistant(10_000)], "error", 9_000);
+    expect(skew[0]?.elapsedMs).toBe(0);
+  });
+
   it("accumulates text, pairs a tool result to its call, and closes on done", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "text_delta", text: "let me " });

@@ -181,6 +181,12 @@ export interface TranscriptMessage {
   /** Files the owner attached to this (user) turn — rendered as compact chips
    * inside the bubble, above the text. Empty/absent on assistant turns. */
   attachments?: ChatAttachment[];
+  /** When this assistant turn began, as `Date.now()` on this device — the owner's send (or,
+   * on a reattach, the send back-dated by the server's elapsed figure). Client-only. */
+  startedAt?: number;
+  /** The turn's total wall time in ms (send → settle): stamped at `done` from `startedAt`,
+   * or replayed from the transcript's `elapsed_ms`. Drives the settled "Thought for …". */
+  elapsedMs?: number;
 }
 
 export function userMessage(text: string, attachments?: ChatAttachment[]): TranscriptMessage {
@@ -196,7 +202,7 @@ export function userMessage(text: string, attachments?: ChatAttachment[]): Trans
   };
 }
 
-export function streamingAssistant(): TranscriptMessage {
+export function streamingAssistant(startedAt?: number): TranscriptMessage {
   return {
     role: "assistant",
     text: "",
@@ -205,6 +211,7 @@ export function streamingAssistant(): TranscriptMessage {
     streaming: true,
     reasoning: "",
     thinking: false,
+    ...(startedAt !== undefined ? { startedAt } : {}),
   };
 }
 
@@ -262,7 +269,13 @@ function withFanChild(
 
 /** Fold one ChatEvent into the transcript, updating the live assistant turn (the
  * last message). */
-export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): TranscriptMessage[] {
+/** `now` is the settle instant a `done` stamps the turn's total against (`startedAt`);
+ * callers pass the wall clock, tests a fixed figure. */
+export function applyEvent(
+  messages: TranscriptMessage[],
+  event: ChatEvent,
+  now: number = Date.now(),
+): TranscriptMessage[] {
   const last = messages[messages.length - 1];
   if (!last || last.role !== "assistant") return messages;
   const next: TranscriptMessage = { ...last };
@@ -393,6 +406,11 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
     case "done":
       next.streaming = false;
       next.stopReason = event.stop_reason;
+      // Wall time, send → settle — a turn that waited (a queued browse) counts the wait. Only
+      // the first settle stamps it, so a late duplicate `done` can't stretch the figure.
+      if (next.startedAt !== undefined && next.elapsedMs === undefined) {
+        next.elapsedMs = Math.max(0, now - next.startedAt);
+      }
       // The turn settled — a reasoning-only turn (no answer text) stops thinking now.
       next.thinking = false;
       // Settle any sub-agent still shown as running. A turn that ended — especially a
@@ -513,8 +531,12 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
   return [...messages.slice(0, -1), next];
 }
 
-export function endStream(messages: TranscriptMessage[], reason: string): TranscriptMessage[] {
-  return applyEvent(messages, { type: "done", stop_reason: reason });
+export function endStream(
+  messages: TranscriptMessage[],
+  reason: string,
+  now: number = Date.now(),
+): TranscriptMessage[] {
+  return applyEvent(messages, { type: "done", stop_reason: reason }, now);
 }
 
 /** Did this exchange reach the server AT ALL? True when the buffer ends in the optimistic

@@ -65,4 +65,16 @@ describe("fromTurn", () => {
       { noteId: "n1", domain: "general", text: "hit" },
     ]);
   });
+
+  it("carries the stored turn's total wall time onto the message", () => {
+    const turn: TranscriptTurn = {
+      role: "assistant",
+      content: "a",
+      tools: [],
+      elapsed_ms: 112_000,
+    };
+    expect(fromTurn(turn).elapsedMs).toBe(112_000);
+    expect(fromTurn({ ...turn, elapsed_ms: null }).elapsedMs).toBeUndefined();
+    expect(fromTurn({ role: "user", content: "q", tools: [] }).elapsedMs).toBeUndefined();
+  });
 });
