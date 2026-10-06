@@ -2482,7 +2482,10 @@ def test_browse_route_runs_a_goal_and_returns_the_trace(
         router, McpHttpClient("http://browser:8931/mcp", transport=browser.transport())
     )
     status = _browse_job(
-        client, key, {"goal": "Titusville showtimes", "start_url": HOME, "max_steps": 5}
+        client,
+        key,
+        # The B1 fallback, chosen per run (the fast loop is the default).
+        {"goal": "Titusville showtimes", "start_url": HOME, "max_steps": 5, "loop": "b1"},
     )
 
     assert status["status"] == "done", status
@@ -2503,6 +2506,43 @@ def test_browse_route_runs_a_goal_and_returns_the_trace(
     counts = [(s["prompt_tokens"], s["cached_tokens"], s["output_tokens"]) for s in result["steps"]]
     assert counts == [(0, 0, 0), (1, 0, 1), (900, 850, 20), (1, 0, 1), (300, 0, 12)]
     assert result["tool_result"].startswith("[BROWSE RESULT")
+
+
+def test_browse_route_runs_the_fast_loop_by_default(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """No `loop` in the body: the agent's own setting, the fast loop — one `act` per step and
+    a `done` that carries the answer the host verifies."""
+    from jbrain.agent.browse import BrowseAgent
+    from jbrain.llm import FakeLlmClient, LlmRouter
+    from jbrain.web.mcp_client import McpHttpClient
+    from tests.unit.browse_fakes import HOME, TITUSVILLE, FakeBrowser
+
+    client, key = debug_client
+
+    def act(n: int, *commands: dict[str, Any]) -> LlmTurn:
+        call = ToolCall(f"c{n}", "act", {"commands": list(commands)})
+        return LlmTurn("", [call], "tool_use", LlmUsage(1, 1))
+
+    turns = [
+        act(1, {"do": "click", "index": 1}),
+        act(2, {"do": "click", "index": 9}),
+        act(3, {"do": "done", "value": "Dune: Part Three: 7:15 PM, 9:40 PM"}),
+    ]
+    router = LlmRouter({"xai": FakeLlmClient(turns=turns)}, {"browse.step": ("xai", "grok-4.3")})
+    browser = FakeBrowser()
+    _state(client).browse_agent = BrowseAgent(
+        router,
+        McpHttpClient("http://browser:8931/mcp", transport=browser.transport()),
+        settle_seconds=0,
+    )
+    status = _browse_job(client, key, {"goal": "Titusville showtimes", "start_url": HOME})
+
+    result = status["result"]
+    assert result["outcome"] == "answered" and result["verified"] is True
+    assert result["final_url"] == TITUSVILLE
+    assert [s["action"] for s in result["steps"]] == ["navigate", "click", "click", "done"]
+    assert result["steps"][1]["args"] == {"do": "click", "index": 1, "ref": "e1"}
 
 
 def test_browse_route_400s_when_no_browser_is_configured(
@@ -2528,6 +2568,8 @@ def test_browse_route_validates_and_requires_a_bearer(
     assert client.post("/api/debug/browse", headers=_auth(key), json=too_many).status_code == 422
     empty = {"goal": ""}
     assert client.post("/api/debug/browse", headers=_auth(key), json=empty).status_code == 422
+    turbo = {"goal": "x", "loop": "turbo"}
+    assert client.post("/api/debug/browse", headers=_auth(key), json=turbo).status_code == 422
 
 
 def test_whoami_lists_the_browse_scope(debug_client: tuple[TestClient, str]) -> None:

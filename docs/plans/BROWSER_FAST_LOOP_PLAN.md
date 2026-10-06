@@ -1,6 +1,6 @@
 # Browser fast loop — a generic browse that a local model finishes in seconds
 
-> **Status:** Scheduled · **Last verified:** 2026-10-05 · **Waves:** L0◻️ L1◻️ L2◻️ L3◻️
+> **Status:** In progress · **Last verified:** 2026-10-05 · **Waves:** L0✅ L1🟡(built; on-box benchmark pending) L2◻️ L3◻️
 
 The B1 `browse` sub-agent (`BROWSER_AGENT_PLAN.md`) works and is fenced, but on Flash-Next a
 simple fact behind a location picker still takes about two minutes, and jerv has called it
@@ -51,7 +51,7 @@ the benchmark set (L0), not this one site.
 
 ## 3. Waves
 
-### L0 — Measure with the knobs we have ◻️
+### L0 — Measure with the knobs we have ✅
 - **Benchmark set** (generic, fixed, run through debug `/browse`): a cinema with a location
   picker, a store/stock lookup by location, a search box → result page, a paginated list, a
   tabbed detail page, a page needing one filter.
@@ -62,7 +62,40 @@ the benchmark set (L0), not this one site.
   finish decision, extraction). The result restates §1 and sets L1's numeric targets.
 - **Done when:** a table of arms × benchmark sites is in this plan and the step budget is chosen.
 
-### L1 — Fewer, cheaper decisions ◻️
+**Result (measured on the box 2026-10-05 21:45 UTC, warm, B1 loop via debug `/browse`).**
+Seconds per run by step `reasoning_budget`; ✓ = correct answer. The set is now a repo script,
+`scripts/browse-bench.sh <label> [--budget N] [--loop fast|b1]` (`DEBUG_ACCESS.md`).
+
+| Task | 0 | 64 | 128 | 320 |
+|---|---|---|---|---|
+| cinema with a location picker | ✓ 86 | ✓ 90 | ✓ 91 | ✓ 93 |
+| site search box | ✓ 54 | ✓ 62 | ✓ 92 (5 steps) | ✓ 59 |
+| paginated list | ✓ 54 | ✓ 58 | ✓ 54 | ✓ 54 |
+| tab (releases) | ✓ 54 | ✓ 54 | ✓ 54 | ✓ 55 |
+| one filter | ✓ 29 | ✓ 29 | ✓ 29 | ✓ 30 |
+| store locator (search box) | ✓ 123 (only success) | ✗ 132 | ✗ 81 | ✗ 122 (page budget, guessed URLs) |
+
+Per phase on a 3-step task: navigation ~15–23 s, `finish` decision ~9–20 s, extraction
+~3–18 s; on the cinema: navigation ~30 s, `finish` ~18–22 s, extraction ~18–21 s.
+
+- **The thinking cap barely changes time**, and budget 0 is never worse — it was the only arm
+  that solved the store locator. **Decision: L1 runs action steps with thinking off (budget
+  0).** Planner-executor stays the documented fallback, unbuilt.
+- **Each model call costs 5–20 s even without thinking**, so the lever is fewer calls, not
+  cheaper ones: merge `finish` with the extraction, try the start page before any action,
+  batch commands.
+- **Fact-check bug found:** correct answers ("July 1, 1962", "11 results." beside the first
+  title, HN titles) came back UNVERIFIED because a line whose numbers were bare one- or
+  two-digit ints counted as unbacked even when its names and year matched. Fixed with L0:
+  small ints are never evidence, but each must still be on the page as a whole token (a
+  missing one sinks its line, so an invented "12 screens" fails); a line backed by its names,
+  years or other tokens verifies, and a line of small ints that are all there is skipped.
+- Not run: the grammar arm (moot: a native tool call is already ~1 s) and the
+  appended-extraction arm (L1 builds it as `done` carrying the facts — see L1).
+- **L1 targets (the box, this set):** success ≥ 6/6; median run ≤ 27 s (half of 54 s); the
+  cinema ≤ 45 s warm.
+
+### L1 — Fewer, cheaper decisions 🟡 (built 2026-10-05; on-box benchmark pending)
 - `web_fetch` reads embedded structured data; browse tries extraction on the rendered start page
   before any action (JS-shell starts).
 - The `act` tool with batched commands, per-command re-resolution, monotonic indexes, the
@@ -71,6 +104,47 @@ the benchmark set (L0), not this one site.
 - Fallback switch to the B1 loop (Settings + debug).
 - **Done when (on the box, benchmark):** success ≥ L0's best arm and median run time ≤ half of
   L0's best arm; the worked example ≤ 45 s warm.
+
+**Built (2026-10-05).** What landed, and the choices L0 forced:
+- **Thinking off** on every fast step: `browse_fast.prompt` declares `reasoning_budget: 0` (the
+  arm L0 validated; not effort "none", which made B1 wander). The debug `--budget` still
+  overrides it per run. Planner-executor is not built.
+- **`finish` and the extraction merged — as `done` carrying the answer.** The adapter has no
+  `tool_choice`, so an extraction turn appended to the history with the tools still offered
+  could not be forced to answer in text; and dropping tools breaks the cached prefix. So the
+  model's own last turn writes the facts: `done`'s value is the answer, written at thinking
+  off in the same append-only history (cache reuse, ONE call). The host fact check keeps its
+  role: a verified `done` ends the run; an unverified or empty one falls back to the fresh
+  extraction over the page's full text (the view the model answered from is clipped), whose
+  answer is kept. Common case: one call instead of two; worst case: B1's two.
+- **Extraction first:** a run with a start page that is not a location picker
+  (`web.fetch.looks_like_location_gate`) and names every place or item the goal names
+  (`browse_policy.goal_names_on_page`: the goal's capitalised words less sentence/task words)
+  tries the no-thinking extraction on it before any step, and ends there when verified — so a
+  chain's home page showing another location's times is not read as the answer.
+- **`web_fetch` embedded data:** `web/structured.py` (JSON-LD, microdata, `__NEXT_DATA__` page
+  props, the Nuxt payload, `__APOLLO_STATE__`/assigned state, Gatsby `page-data.json` through
+  the SSRF guard), capped at 6,000 characters, fenced as page data. A hostile page cannot
+  fail the fetch (deep nesting and any parse error are skipped) or forge a line (keys, types
+  and names become one visible token).
+- **`act`** (`browse_act/act.tool`, max 5 commands, enum `click select type enter goto read
+  back done`) over the **indexed view** (`browse_index.py`): per-run monotonic numbers bound to
+  (document, ref, role, name); text clipped at 200 characters; runs of identical controls
+  collapsed after three, the count line listing the hidden ones' numbers so each stays
+  reachable. **Not built: viewport-first ordering** — the aria snapshot carries no
+  geometry, so the view keeps page order with B1's anchor-first pruning. Per command: a 0.3 s
+  settle and a fresh look, re-resolution by role + name on the same document only, stop on
+  refusal, missing/changed target, browser error or a new address. Every browser command
+  runs as a B1 action through the B1 gate, unchanged. A click that opens a new tab (from
+  playwright-mcp's tab list) switches to it only when its address passes `check_url`, and
+  closes it otherwise.
+- **jerv:** a second browse of the same registrable domain in a turn is refused once one came
+  back (`ToolContext.browsed`; the start site only, and never after an `error`); the prompt (`agent-jerv-v58`) says search for the place's or
+  item's own page first, then `web_fetch` it.
+- **Fallback:** Settings → Browser agent → Fast / Classic (`browse_loop`, read per run), and the
+  debug route's `loop`.
+- **Next:** run `scripts/browse-bench.sh L1` on the box against the targets above; flip to ✅ or
+  tune (settle time, view cap) from the per-phase numbers.
 
 ### L2 — Read the data, not the screen ◻️
 - Host-only response capture via `browser_run_code_unsafe` (constant scripts, Node memory, caps,

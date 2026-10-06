@@ -31,6 +31,8 @@ from jbrain.settings_store import (
     BRAIN_LLM_STREAM_KEY,
     BRAIN_READ_ALOUD_ENGINE_KEY,
     BRAIN_READ_ALOUD_KEY,
+    BROWSE_LOOP_DEFAULT,
+    BROWSE_LOOP_KEY,
     IMAGE_ANALYSIS_KEY,
     LLM_KV_CONVERSATION_CACHE_DEFAULT,
     LLM_KV_PREFIX_BUDGET_GB_DEFAULT,
@@ -104,6 +106,9 @@ class SettingsOut(BaseModel):
     # The owner's read-aloud respelling map {word: "say it like"} — applied as a whole-word text
     # substitution before a clip is rendered (jbrain.api.brain). Empty by default.
     pronunciation_lexicon: dict[str, str] = {}
+    # Which loop the browse sub-agent runs: the fast loop, or the B1 loop kept as its fallback
+    # (BROWSER_FAST_LOOP_PLAN L1). Read per run — a flip applies to the next browse.
+    browse_loop: Literal["fast", "b1"] = BROWSE_LOOP_DEFAULT
 
 
 # A callsign is letters, digits and an optional -SSID, upper-cased because that is how it
@@ -157,6 +162,7 @@ class SettingsPatch(BaseModel):
     # The full respelling map to store (replace semantics). The store sanitizes/bounds it; the
     # Field caps the raw payload so a client can't post an unbounded body.
     pronunciation_lexicon: Annotated[dict[str, str], Field(max_length=200)] | None = None
+    browse_loop: Literal["fast", "b1"] | None = None
 
 
 async def _restore_gate(kv_prefix: object) -> Literal["awaiting_probe", "passed", "failed"] | None:
@@ -198,6 +204,7 @@ async def _read(ctx, store: SqlSettingsStore, kv_prefix: object = None) -> Setti
         llm_kv_conversation_cache=await store.llm_kv_conversation_cache(ctx),
         llm_kv_restore_gate=await _restore_gate(kv_prefix),
         pronunciation_lexicon=await store.pronunciation_lexicon(ctx),
+        browse_loop=cast(Literal["fast", "b1"], await store.browse_loop(ctx)),
     )
 
 
@@ -228,6 +235,8 @@ async def update_settings(
         await store.upsert(ctx, OWNER_CALLSIGN_KEY, _clean_callsign(body.owner_callsign) or "")
     if body.brain_llm_stream is not None:
         await store.upsert(ctx, BRAIN_LLM_STREAM_KEY, body.brain_llm_stream)
+    if body.browse_loop is not None:
+        await store.upsert(ctx, BROWSE_LOOP_KEY, body.browse_loop)
     if body.brain_read_aloud is not None:
         await store.upsert(ctx, BRAIN_READ_ALOUD_KEY, body.brain_read_aloud)
         # Push the read-aloud flag to the wall now so the voice panel shows/hides on the

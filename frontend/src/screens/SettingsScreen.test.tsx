@@ -22,6 +22,7 @@ function stubSettingsFetch(
   const state = {
     mode: initial,
     brainStream: false,
+    browseLoop: "fast" as "fast" | "b1",
     brainReadAloud: false,
     brainAnswerVoice: opts.answerVoice ?? "kokoro-af_heart",
     engine: "piper" as "piper" | "native",
@@ -205,6 +206,7 @@ function stubSettingsFetch(
       const body = JSON.parse(String(init?.body)) as {
         image_analysis_mode?: "full" | "ocr";
         brain_llm_stream?: boolean;
+        browse_loop?: "fast" | "b1";
         brain_read_aloud?: boolean;
         brain_answer_voice?: string;
         brain_read_aloud_engine?: "piper" | "native";
@@ -217,6 +219,7 @@ function stubSettingsFetch(
       puts.push(body);
       if (body.image_analysis_mode) state.mode = body.image_analysis_mode;
       if (typeof body.brain_llm_stream === "boolean") state.brainStream = body.brain_llm_stream;
+      if (body.browse_loop) state.browseLoop = body.browse_loop;
       if (typeof body.brain_read_aloud === "boolean") state.brainReadAloud = body.brain_read_aloud;
       if (typeof body.brain_answer_voice === "string")
         state.brainAnswerVoice = body.brain_answer_voice;
@@ -233,6 +236,7 @@ function stubSettingsFetch(
         image_analysis_mode: state.mode,
         owner_callsign: state.callsign,
         brain_llm_stream: state.brainStream,
+        browse_loop: state.browseLoop,
         brain_read_aloud: state.brainReadAloud,
         brain_answer_voice: state.brainAnswerVoice,
         brain_read_aloud_engine: state.engine,
@@ -281,6 +285,20 @@ describe("SettingsScreen capture location", () => {
     fireEvent.click(group.getByRole("button", { name: "On" }));
     expect(localStorage.getItem("jbrain.captureLocation")).toBe("on");
     expect(isLocationCaptureEnabled()).toBe(true);
+  });
+});
+
+describe("SettingsScreen browser-agent loop switch", () => {
+  it("shows Fast and falls back to Classic on tap (PUTs browse_loop: b1)", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+    const group = within(screen.getByLabelText("Browser agent"));
+    await waitFor(() =>
+      expect(group.getByRole("button", { name: "Fast" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    fireEvent.click(group.getByRole("button", { name: "Classic" }));
+    await waitFor(() => expect(puts).toContainEqual({ browse_loop: "b1" }));
+    expect(group.getByRole("button", { name: "Classic" })).toHaveAttribute("aria-pressed", "true");
   });
 });
 

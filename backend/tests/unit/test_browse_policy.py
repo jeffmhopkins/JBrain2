@@ -355,16 +355,53 @@ def test_one_invented_showtime_fails_the_answer() -> None:
     assert not policy.facts_on_page("Large popcorn: $9.50", priced).verified
 
 
-def test_bare_small_numbers_are_not_evidence() -> None:
-    """A page with a stray 7 and 10 on it does not back "Dune: 7, 10"."""
+def test_bare_small_numbers_are_not_evidence_but_must_be_on_the_page() -> None:
+    """A stray 7 or 10 proves nothing, so it never backs a line — but a small number the
+    page does NOT have is invented, and sinks its line. L0 (2026-10-05) saw correct answers
+    marked UNVERIFIED because small numbers counted against lines whose names matched."""
     page = _text_page("Dune: Part Three. Screen 7. Row 10. Tickets on sale now.")
-    check = policy.facts_on_page("Dune: 7, 10", page)
+    # The name backs the line; the small numbers are there, so they do not sink it.
+    assert policy.facts_on_page("Dune: 7, 10", page).verified
+    # A line of nothing but small numbers, all on the page, is skipped: alone it cannot
+    # verify an answer, and beside a backed line it does not sink it.
+    alone = policy.facts_on_page("7, 10", page)
+    assert not alone.verified and alone.total + alone.strict_total == 0
+    assert policy.facts_on_page("Dune: Part Three\n7, 10", page).verified
+    # ...but one that is not on the page is an invented line, alone or beside a name.
+    assert not policy.facts_on_page("Dune: Part Three\n7, 12", page).verified
+    assert policy.facts_on_page("Dune: Part Three\n7, 12", page).lines_missed == 1
+    # Invented small numbers beside real names (the review's cases).
+    theater = _text_page("Regal Cinema Melbourne has 3 screens")
+    assert not policy.facts_on_page("Regal Cinema: 12 screens", theater).verified
+    assert policy.facts_on_page("Regal Cinema: 3 screens", theater).verified
+    hours = _text_page("Store hours Monday 10 to 6")
+    assert not policy.facts_on_page("Monday: 9 to 5", hours).verified
+    assert policy.facts_on_page("Monday: 10 to 6", hours).verified
+    bare = _text_page("Dune showtimes")
+    check = policy.facts_on_page("Dune: 7, 10", bare)
     assert not check.verified and check.lines_missed == 1
     assert check.describe().endswith("1 line(s) unbacked")
-    # A line of nothing but small numbers is unbacked too, not skipped.
-    assert not policy.facts_on_page("Dune: Part Three\n7, 10", page).verified
-    # Beside a real time, a small number is just noise.
-    assert policy.facts_on_page("Dune: 7:15 PM (screen 7)", _page(TITUSVILLE)).verified
+    # A small number inside a longer one is not on the page: "1" is not in "1962".
+    assert not policy.facts_on_page("Kennedy: 1", _text_page("Kennedy 1962")).verified
+    # The L0 misses, verified: a count line beside a title, a date with a year, HN titles.
+    books = _text_page("Travel 11 results. It's Only the Himalayas £45.17")
+    assert policy.facts_on_page("11 results.\nIt's Only the Himalayas", books).verified
+    nasa = _text_page("Kennedy Space Center established July 1, 1962 Merritt Island")
+    assert policy.facts_on_page("July 1, 1962", nasa).verified
+    hn = _text_page(
+        "31. Show HN: A tiny Lisp in 12 lines (lisp.example) 32. Why Rust compiles slowly"
+        " 33. The 2 kinds of caches"
+    )
+    titles = "Show HN: A tiny Lisp in 12 lines\nWhy Rust compiles slowly\nThe 2 kinds of caches"
+    assert policy.facts_on_page(titles, hn).verified
+    # A small number never stands in for a time: an invented showtime still fails.
+    assert not policy.facts_on_page("Dune: 7:15 PM (screen 7)", page).verified
+    # A small number is not backed by a piece of a bigger one: no "screen 7" on a page whose
+    # only 7 is in "7:15" or "7/10".
+    assert not policy.facts_on_page("Dune: 7:15 PM (screen 7)", _page(TITUSVILLE)).verified
+    assert not policy.facts_on_page("Dune: screen 7", _text_page("Dune rated 7/10")).verified
+    assert policy.facts_on_page("Dune: screen 7", _text_page("Dune, screen 7.")).verified
+    assert policy.facts_on_page("Dune: Part Three: 7:15 PM", _page(TITUSVILLE)).verified
 
 
 def test_an_answer_not_on_the_page_is_not_verified() -> None:

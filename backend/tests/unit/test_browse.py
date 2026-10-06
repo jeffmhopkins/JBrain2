@@ -69,6 +69,8 @@ def _agent(
     browser = browser or FakeBrowser()
     mcp = McpHttpClient("http://browser:8931/mcp", transport=browser.transport())
     extra = {"clock": clock} if clock is not None else {}
+    # These tests pin the B1 loop, kept as the fallback; the fast loop has its own file.
+    kwargs.setdefault("loop", "b1")
     return BrowseAgent(router, mcp, **kwargs, **extra), fake, browser
 
 
@@ -250,7 +252,7 @@ async def test_a_run_can_override_the_step_thinking_cap() -> None:
     )
     router = LlmRouter({"local": local}, {"browse.step": ("local", "qwen3.8-flash-next")})
     mcp = McpHttpClient("http://browser:8931/mcp", transport=FakeBrowser().transport())
-    await BrowseAgent(router, mcp).run(GOAL, TITUSVILLE, reasoning_budget=0)
+    await BrowseAgent(router, mcp, loop="b1").run(GOAL, TITUSVILLE, reasoning_budget=0)
     step = sent[0]
     assert step["reasoning_budget_tokens"] == 0
     assert "reasoning_budget_tokens" not in sent[-1]
@@ -285,7 +287,7 @@ async def test_the_extraction_runs_in_the_browse_slot_with_thinking_off_on_flash
     router = LlmRouter({"local": local}, {"browse.step": ("local", "qwen3.8-flash-next")})
     browser = FakeBrowser()
     mcp = McpHttpClient("http://browser:8931/mcp", transport=browser.transport())
-    run = await BrowseAgent(router, mcp).run(GOAL, TITUSVILLE)
+    run = await BrowseAgent(router, mcp, loop="b1").run(GOAL, TITUSVILLE)
 
     assert run.outcome == "answered" and run.verified
     step, extract = sent
@@ -832,7 +834,9 @@ async def test_a_hung_browser_is_cut_off_by_the_hard_timeout() -> None:
             return httpx.Response(200)
 
     router = LlmRouter({"xai": FakeLlmClient()}, {"browse.step": ("xai", "grok-4.3")})
-    agent = BrowseAgent(router, McpHttpClient("http://browser:8931/mcp", transport=Hung()))
+    agent = BrowseAgent(
+        router, McpHttpClient("http://browser:8931/mcp", transport=Hung()), loop="b1"
+    )
     agent._wall = -29.9  # the hard cap is wall + 30 s; this makes it 0.1 s
     run = await agent.run(GOAL)
     assert run.outcome == "timeout"

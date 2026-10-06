@@ -39,6 +39,16 @@ matter, each of which a test pins:
   forces the end of thinking at the cap). Effort "none" for every step made the model wander;
   the cap only cuts the long deliberation, which was always the `finish` decision.
 
+**Two loops** (docs/plans/BROWSER_FAST_LOOP_PLAN.md L1). The **fast** loop (the default)
+takes fewer, cheaper decisions: thinking off on every step (L0: the cap barely changed time,
+and budget 0 was never worse); one `act` tool whose call carries up to five commands on
+numbered elements (`browse_index`), each re-checked by the same gate against a fresh look at
+the page before it runs; an extraction attempt on the start page before any action; and
+`done` carrying the answer itself, so the end of a run is ONE call in the cached history
+instead of a `finish` decision plus a fresh extraction prefill — the host's fact check
+still decides, and only an answer it cannot verify pays for the separate extraction. The
+**B1** loop above stays selectable (Settings, or the debug route) as the fallback.
+
 All model calls go through the LLM adapter under the `browse.step` task, pinned to a slot
 of its own, so a browse run neither evicts jerv's interactive prefix nor is evicted mid-run
 by a research agent (which will often be what asked for the browse).
@@ -50,13 +60,14 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import structlog
 
+from jbrain.agent import browse_index as bindex
 from jbrain.agent import browse_policy as policy
 from jbrain.agent.toolfile import load_tool
 from jbrain.llm import LlmRouter, slot_roles
@@ -74,6 +85,7 @@ from jbrain.llm.types import (
     ToolResultMessage,
     UserMessage,
 )
+from jbrain.web.fetch import looks_like_location_gate
 from jbrain.web.mcp_client import McpError, McpHttpClient, McpSession
 
 log = structlog.get_logger()
@@ -81,11 +93,12 @@ log = structlog.get_logger()
 BROWSE_TASK = "browse.step"
 
 
-def _step_sampling(reasoning_budget: int | None) -> Sampling | None:
-    """The prompt's step sampling, with a run's thinking-cap override laid over it."""
+def _step_sampling(reasoning_budget: int | None, *, fast: bool = False) -> Sampling | None:
+    """The loop's prompt sampling, with a run's thinking-cap override laid over it."""
+    base = (_FAST_PROMPT if fast else _PROMPT).sampling
     if reasoning_budget is None:
-        return _PROMPT.sampling
-    return (_PROMPT.sampling or Sampling()).merge(Sampling(reasoning_budget=reasoning_budget))
+        return base
+    return (base or Sampling()).merge(Sampling(reasoning_budget=reasoning_budget))
 
 
 _PROMPT = load_prompt(Path(__file__).parent / "prompts" / "browse.prompt")
@@ -97,6 +110,29 @@ ACTION_TOOLS: tuple[LlmTool, ...] = tuple(
     for t in ACTION_FILES
 )
 ACTION_NAMES = frozenset(t.name for t in ACTION_TOOLS)
+# The fast loop's whole surface: one tool, `act`, whose commands map onto the B1 actions above
+# (and so onto `MCP_TOOL_FOR`) — it reaches nothing B1 could not.
+_FAST_PROMPT = load_prompt(Path(__file__).parent / "prompts" / "browse_fast.prompt")
+ACT_FILE = load_tool(Path(__file__).parent / "browse_act" / "act.tool")
+ACT_TOOL = LlmTool(
+    name=ACT_FILE.spec.name, description=ACT_FILE.description, input_schema=ACT_FILE.spec.params
+)
+FAST_TOOLS: tuple[LlmTool, ...] = (ACT_TOOL,)
+# The B1 action each browser command runs as.
+COMMAND_ACTION = {
+    "click": "click",
+    "select": "select_option",
+    "type": "type_text",
+    "enter": "press_key",
+    "goto": "navigate",
+    "back": "go_back",
+}
+FAST_LOOP = "fast"
+B1_LOOP = "b1"
+LOOPS = (FAST_LOOP, B1_LOOP)
+# Between two commands of one batch: let the page settle, then look again before the next
+# command's target is re-found. Short: playwright-mcp already waits on each action.
+SETTLE_SECONDS = 0.3
 
 DEFAULT_MAX_STEPS = 20
 MAX_STEPS_CEILING = 30
@@ -127,6 +163,8 @@ EXTRACT_RESERVE_SECONDS = 30.0
 EXTRACT_MIN_SECONDS = 10.0
 _NOT_FOUND = "NOT FOUND"
 _EXTRACT_STEP = "extract"
+# The fast loop's extraction on the page browse started on, before any action.
+_EXTRACT_FIRST_STEP = "extract_first"
 # What the prompt's messages may grow to (~24k tokens) before the run compacts them into one
 # fresh prompt. Far under the browse slot's cap: past it, every step's attention gets dearer.
 MAX_PROMPT_CHARS = 96_000
@@ -193,6 +231,15 @@ _OPENING = (
     " shown in full; the same page again shows only what changed. Choose ONE action each turn."
 )
 _UNCHANGED = "The page is as shown above."
+_FAST_NUDGE = (
+    "Reply with one `act` call: commands for this page, or done with the answer when the page"
+    " shows it."
+)
+_FAST_OPENING = (
+    "GOAL: {goal}\n\n"
+    "After each act you are shown the page it left, as the last message. A new page is shown"
+    " in full; the same page again shows only what changed. Call act once per turn."
+)
 # Actions that only look; they never change the page, so they are not loop candidates.
 _LOOKING = frozenset({"snapshot", "wait_for"})
 
@@ -281,8 +328,15 @@ class _Run:
     """The mutable state of one run, kept outside the coroutine so a wall-clock cancel still
     leaves the trace so far to report."""
 
-    def __init__(self, goal: str) -> None:
+    def __init__(self, goal: str, *, fast: bool = False) -> None:
         self.result = BrowseRun(goal=goal)
+        # The fast loop (L1): numbered elements, `act`, and `done` carrying the answer.
+        self.fast = fast
+        self.book = bindex.IndexBook()
+        # Set by the fast loop's `done` (its answer, "" for none): the run ends in the check.
+        self.done_answer: str | None = None
+        # What the browser said about the last action — read for a tab a click opened.
+        self.last_result = ""
         self.page = policy.PageView()
         self.visited: list[str] = []
         self.signatures: list[str] = []
@@ -298,7 +352,7 @@ class _Run:
         self.typed_url: str | None = None
         self.max_steps = DEFAULT_MAX_STEPS
         self.started = 0.0
-        self.opening = _OPENING.format(goal=goal)
+        self.opening = (_FAST_OPENING if fast else _OPENING).format(goal=goal)
         # Every message sent so far, exactly as sent. Only ever appended to (or, once over
         # `MAX_PROMPT_CHARS`, replaced whole by `compact`), so each step's prompt is the last
         # one's plus a tail.
@@ -307,12 +361,17 @@ class _Run:
         self.shown: policy.PageView | None = None
         self.compactions = 0
 
+    def display(self) -> policy.PageView:
+        """The current page as the model reads it: the indexed view in the fast loop."""
+        return bindex.indexed(self.page, self.book) if self.fast else self.page
+
     def view(self) -> str:
         """The current page as the next message shows it: what changed since the model last saw
         this page, or the whole page."""
-        delta = policy.page_delta(self.shown, self.page)
-        self.shown = self.page
-        return delta if delta is not None else self.page.render()
+        shown = self.display()
+        delta = policy.page_delta(self.shown, shown)
+        self.shown = shown
+        return delta if delta is not None else shown.render()
 
     def prompt_chars(self) -> int:
         return slot_roles.prompt_chars("", self.history, ())
@@ -330,11 +389,11 @@ class _Run:
             + "\n\nYour steps so far (older ones dropped to save room):\n"
             + "\n".join(lines)
             + "\n\nThis is the current page.\n\n"
-            + self.page.render()
+            + self.display().render()
             + hint
         )
         self.history = [UserMessage(text=text)]
-        self.shown = self.page
+        self.shown = self.display()
         self.compactions += 1
 
     def note_page(self, page: policy.PageView) -> None:
@@ -358,8 +417,14 @@ class BrowseAgent:
         max_pages: int = DEFAULT_MAX_PAGES,
         clock: Callable[[], float] = time.monotonic,
         concurrency: int = DEFAULT_CONCURRENCY,
+        loop: str | Callable[[], Awaitable[str]] = FAST_LOOP,
+        settle_seconds: float = SETTLE_SECONDS,
     ) -> None:
         self._router = router
+        # Which loop a run uses when the caller does not say: a fixed name, or the owner's
+        # live Settings switch (read per run, so the fallback needs no restart or terminal).
+        self._loop = loop
+        self._settle = settle_seconds
         # One browser, one model slot: runs queue rather than pile up Chromium contexts on a
         # box whose memory is the models'. Shared by jerv's tool and the debug route, which
         # use the same agent.
@@ -382,13 +447,30 @@ class BrowseAgent:
         max_steps: int | None = None,
         spec_override: str | None = None,
         reasoning_budget: int | None = None,
+        loop: str | None = None,
     ) -> BrowseRun:
         """Run `goal` to an answer or a stop. Never raises for a browse failure: an
         unreachable browser, a model error or a timeout all come back as an outcome.
         `reasoning_budget` overrides the prompt's per-step thinking cap for this run only —
-        the debug instrument's lever (BROWSER_FAST_LOOP_PLAN L0); jerv never sets it."""
+        the debug instrument's lever (BROWSER_FAST_LOOP_PLAN L0); jerv never sets it.
+        `loop` picks the fast or the B1 loop for this run; None follows the agent's setting."""
+        fast = (loop if loop in LOOPS else await self.loop_mode()) == FAST_LOOP
         async with self._slots:
-            return await self._run(goal, start_url, max_steps, spec_override, reasoning_budget)
+            return await self._run(
+                goal, start_url, max_steps, spec_override, reasoning_budget, fast=fast
+            )
+
+    async def loop_mode(self) -> str:
+        """The loop a run uses by default. A setting that cannot be read, or reads as junk,
+        is the fast loop: the switch is a fallback, not a dependency."""
+        mode = self._loop
+        if callable(mode):
+            try:
+                mode = await mode()
+            except Exception as exc:  # noqa: BLE001 - a broken settings read must not stop browse
+                log.warning("browse.loop_setting_unreadable", error=repr(exc))
+                return FAST_LOOP
+        return mode if mode in LOOPS else FAST_LOOP
 
     async def _run(
         self,
@@ -397,8 +479,10 @@ class BrowseAgent:
         max_steps: int | None,
         spec_override: str | None,
         reasoning_budget: int | None = None,
+        *,
+        fast: bool = False,
     ) -> BrowseRun:
-        state = _Run(goal.strip())
+        state = _Run(goal.strip(), fast=fast)
         state.reasoning_budget = reasoning_budget
         started = self._clock()
         steps = _clamp_steps(max_steps, self._max_steps)
@@ -417,7 +501,9 @@ class BrowseAgent:
         except LlmError as exc:
             state.result.outcome = "error"
             state.result.error = f"the model call failed: {exc}"
-        if state.finish_note is not None:
+        if state.done_answer is not None:
+            await self._done_check(state)
+        elif state.finish_note is not None:
             await self._finish_extract(state)
         else:
             await self._late_extract(state)
@@ -437,6 +523,7 @@ class BrowseAgent:
             page_text_chars=len(run.page_text),
             steps=len(run.steps),
             pages=len(state.visited),
+            loop=FAST_LOOP if state.fast else B1_LOOP,
             # Each one is a full re-prefill: how often the cap bites is what sizes it.
             compactions=state.compactions,
             elapsed_ms=run.elapsed_ms,
@@ -460,6 +547,8 @@ class BrowseAgent:
                     state.result.steps.append(
                         BrowseStep(0, "navigate", {"url": start_url}, False, problem)
                     )
+            if state.fast and await self._extract_first(state):
+                return
             state.history.append(
                 UserMessage(
                     text="This is the current page.\n\n" + state.view() + self._hint(state, 1)
@@ -493,16 +582,16 @@ class BrowseAgent:
         t0 = self._clock()
         turn = await self._router.converse(
             BROWSE_TASK,
-            system=_PROMPT.body,
+            system=_FAST_PROMPT.body if state.fast else _PROMPT.body,
             # A copy: the history grows after this call, and the call must keep what it sent.
             messages=list(state.history),
-            tools=ACTION_TOOLS,
+            tools=FAST_TOOLS if state.fast else ACTION_TOOLS,
             max_tokens=STEP_MAX_TOKENS,
             spec_override=spec_override,
             # The prompt's thinking cap (`config: sampling: reasoning_budget`): a step is one
             # quick decision, and the one that kept running long was `finish` — 83-86 s and
             # ~1,550 thinking tokens deciding the page answers it, measured live 2026-10-05.
-            sampling=_step_sampling(state.reasoning_budget),
+            sampling=_step_sampling(state.reasoning_budget, fast=state.fast),
             slot_role=SlotRole.BROWSE,
         )
         model_ms = int((self._clock() - t0) * 1000)
@@ -530,13 +619,17 @@ class BrowseAgent:
                 return True
             # A reply that chose no action gets a user turn back, not a tool result.
             state.history.append(AssistantMessage(text=turn.text))
+            nudge = _FAST_NUDGE if state.fast else _NUDGE
             state.history.append(
-                UserMessage(text=_NUDGE + "\n\n" + state.view() + self._hint(state, n + 1))
+                UserMessage(text=nudge + "\n\n" + state.view() + self._hint(state, n + 1))
             )
             return False
         state.idle = 0
         call, extra = calls[0], calls[1:]
-        done, content = await self._dispatch(session, state, n, call, model_ms)
+        if state.fast:
+            done, content = await self._dispatch_fast(session, state, n, call, model_ms)
+        else:
+            done, content = await self._dispatch(session, state, n, call, model_ms)
         results = [ToolResult(call.id, content + self._hint(state, n + 1))]
         for skipped in extra:
             note = "Not run: one action per step. Look at the page above and choose again."
@@ -691,8 +784,10 @@ class BrowseAgent:
         t0 = self._clock()
         ok, note = True, "done"
         mcp_tool = MCP_TOOL_FOR.get(name)
+        state.last_result = ""
         if mcp_tool is not None:
             result = await session.call_tool(mcp_tool, self._mcp_args(state.page, name, args))
+            state.last_result = result.text
             if result.is_error:
                 ok = False
                 note = "the browser reported an error: " + policy.quarantine(
@@ -765,7 +860,7 @@ class BrowseAgent:
         run.answer, run.verified = found[0], found[1].verified
 
     async def _extract(
-        self, state: _Run, n: int, note: str = ""
+        self, state: _Run, n: int, note: str = "", *, label: str = _EXTRACT_STEP
     ) -> tuple[str, policy.FactCheck] | None:
         """ONE no-thinking call that copies the goal's facts off the current page's text, and
         the host's check of them against the page. None when the page has no text, the model
@@ -798,7 +893,7 @@ class BrowseAgent:
         except LlmError as exc:
             state.extract_error = str(exc)
             state.result.steps.append(
-                BrowseStep(n, _EXTRACT_STEP, {}, False, "the model call failed", url=page.url)
+                BrowseStep(n, label, {}, False, "the model call failed", url=page.url)
             )
             return None
         model_ms = int((self._clock() - t0) * 1000)
@@ -808,7 +903,7 @@ class BrowseAgent:
         state.result.steps.append(
             BrowseStep(
                 n,
-                _EXTRACT_STEP,
+                label,
                 {"page_chars": len(text)},
                 not missing and check.verified,
                 "the page does not show the answer" if missing else check.describe(),
@@ -842,6 +937,281 @@ class BrowseAgent:
         if found is not None and found[1].verified:
             run.answer, run.verified = found[0], True
             run.outcome = "answered"
+
+    # --- The fast loop (BROWSER_FAST_LOOP_PLAN L1) ---------------------------------------
+
+    async def _extract_first(self, state: _Run) -> bool:
+        """Before any action, try the no-thinking extraction on the page browse started on:
+        many pages a fetch could not read answer the goal once rendered. Kept only when the
+        host's check verifies it. Skipped on a page with no text, one that reads as a
+        location/store picker, or one that does not name every place or item the goal names
+        (`policy.goal_names_on_page`): a chain's home page listing ANOTHER location's
+        showtimes would otherwise verify against itself."""
+        page = state.page
+        if not page.readable or looks_like_location_gate(page.title, page.readable):
+            return False
+        if not policy.goal_names_on_page(state.result.goal, page):
+            return False
+        found = await self._extract(state, 0, label=_EXTRACT_FIRST_STEP)
+        if found is None or not found[1].verified:
+            state.extract_error = ""  # a miss here is not the run's error
+            return False
+        run = state.result
+        run.outcome, run.answer, run.verified = "answered", found[0], True
+        return True
+
+    async def _dispatch_fast(
+        self, session: McpSession, state: _Run, n: int, call: ToolCall, model_ms: int
+    ) -> tuple[bool, str]:
+        """Run one `act` call's commands in order. Returns (run over, what the model reads
+        back): a line per command run, the first one that failed or was refused, the commands
+        not run after it, any `read` text, and the page as it is now."""
+        args = dict(call.arguments or {})
+        if call.name != ACT_TOOL.name:
+            note = f"There is no tool called {call.name!r}. Use act."
+            state.result.steps.append(
+                BrowseStep(
+                    n, call.name, _brief_args(call.name, args), False, note, model_ms=model_ms
+                )
+            )
+            return False, f"{note}\n\n{_UNCHANGED}"
+        commands, problem = bindex.parse(args)
+        if problem is not None:
+            state.result.steps.append(
+                BrowseStep(n, "act", _brief_args("act", args), False, problem, model_ms=model_ms)
+            )
+            return False, f"Refused: {problem}\n\n{_UNCHANGED}"
+        if commands[0].do == "done":
+            return await self._done(session, state, n, commands[0], model_ms)
+        if any(c.do != "read" for c in commands):
+            signature = _signature("act", {"c": [c.brief() for c in commands]})
+            repeats = state.signatures.count(signature) + 1
+            state.signatures.append(signature)
+            if repeats >= REPEAT_STOP_AT:
+                state.result.outcome = "loop"
+                state.result.steps.append(
+                    BrowseStep(
+                        n, "act", {"commands": len(commands)}, False, "loop", model_ms=model_ms
+                    )
+                )
+                return True, "loop"
+            if repeats >= REPEAT_REFUSE_AT:
+                note = (
+                    f"Refused: you have sent these exact commands {repeats - 1} times already"
+                    " and they are not working. Do something different."
+                )
+                state.result.steps.append(
+                    BrowseStep(
+                        n, "act", {"commands": len(commands)}, False, note, model_ms=model_ms
+                    )
+                )
+                return False, f"{note}\n\n{_UNCHANGED}"
+        before = state.page.fingerprint
+        lines: list[str] = []
+        reads: list[str] = []
+        for i, command in enumerate(commands):
+            if command.do == "done":
+                lines.append(
+                    f"{i + 1}. done: not run — done goes alone, once you have seen the page that"
+                    " shows the answer. That page is below."
+                )
+                break
+            if i:
+                # The page as it is NOW, before this command's target is found on it.
+                await asyncio.sleep(self._settle)
+                state.note_page(policy.parse_page(await _look(session)))
+            ok, note, stop, text = await self._command(
+                session, state, n, command, refind=i > 0, model_ms=model_ms if i == 0 else 0
+            )
+            lines.append(f"{i + 1}. {_command_label(command)}: {note}")
+            if text:
+                reads.append(text)
+            if len(state.visited) > self._max_pages:
+                state.result.outcome = "page_budget"
+                return True, "\n".join(lines)
+            if stop or not ok:
+                rest = len(commands) - i - 1
+                if rest:
+                    lines.append(f"Not run: the {rest} command(s) after it.")
+                break
+        state.no_progress = state.no_progress + 1 if state.page.fingerprint == before else 0
+        if state.no_progress >= NO_PROGRESS_STOP_AT:
+            state.result.outcome = "stuck"
+            return True, "\n".join(lines)
+        body = "\n".join(lines)
+        for text in reads:
+            body += f"\n\n{text}"
+        return False, f"{body}\n\n{state.view()}"
+
+    def _command_args(
+        self, state: _Run, command: bindex.Command, *, refind: bool
+    ) -> tuple[str, dict[str, Any], str | None]:
+        """The B1 action and arguments a browser command runs as, or why it cannot: its
+        target must be on the latest page (re-found by role + name within a batch)."""
+        name = COMMAND_ACTION[command.do]
+        if command.do in bindex.TARGETED:
+            element, problem = state.book.resolve(state.page, command.index or 0, refind=refind)
+            if element is None:
+                return name, {}, problem
+            if command.do == "click":
+                return name, {"ref": element.ref}, None
+            if command.do == "select":
+                return name, {"ref": element.ref, "values": [command.value]}, None
+            return name, {"ref": element.ref, "text": command.value, "submit": False}, None
+        if command.do == "enter":
+            return name, {"key": "Enter"}, None
+        if command.do == "goto":
+            return name, {"url": command.value}, None
+        return name, {}, None  # back
+
+    async def _command(
+        self,
+        session: McpSession,
+        state: _Run,
+        n: int,
+        command: bindex.Command,
+        *,
+        refind: bool,
+        model_ms: int,
+    ) -> tuple[bool, str, bool, str]:
+        """One command through the gate and the browser: (ok, note, stop the batch, read
+        text). Every browser command passes `_gate` — the B1 gate, unchanged — first."""
+        if command.do == "read":
+            text = bindex.read_text(state.page, command.value)
+            state.result.steps.append(
+                BrowseStep(
+                    n,
+                    "read",
+                    command.brief(),
+                    True,
+                    f"{len(text)} chars of page text",
+                    url=state.page.url,
+                    model_ms=model_ms,
+                )
+            )
+            lead = f' from "{command.value}"' if command.value else ""
+            return True, "shown below", False, f"Page text{lead}, one string per line:\n{text}"
+        name, args, problem = self._command_args(state, command, refind=refind)
+        if problem is None:
+            problem = self._gate(state.page, name, args)
+        if problem is None and command.do == "enter" and state.typed_url != state.page.url:
+            problem = "enter only submits after a type into a search or filter field on this page."
+        if problem is not None:
+            brief = {**command.brief(), **({"ref": args["ref"]} if "ref" in args else {})}
+            state.result.steps.append(
+                BrowseStep(n, command.do, brief, False, problem, model_ms=model_ms)
+            )
+            return False, f"Refused: {problem}", True, ""
+        url_before = state.page.url
+        ok, note, _ = await self._act(session, state, name, args, n, model_ms)
+        step = state.result.steps[-1]
+        step.action = command.do
+        step.args = {**command.brief(), **({"ref": args["ref"]} if "ref" in args else {})}
+        if command.do == "type" and ok:
+            state.typed_url = url_before
+        if ok and command.do == "click":
+            note += await self._follow_new_tab(session, state)
+        moved = _address(state.page.url) != _address(url_before)
+        if ok and moved:
+            note += "; the page moved to a new address"
+        return ok, note, moved, ""
+
+    async def _follow_new_tab(self, session: McpSession, state: _Run) -> str:
+        """A click that opened a new tab: switch to the newest tab when its address passes
+        `check_url`, or close it when it does not, so the run never reads or acts on a page
+        the gate would have refused. Host-side, from the tab list playwright-mcp reports."""
+        tabs = _open_tabs(state.last_result)
+        if len(tabs) < 2:
+            return ""
+        index, current, url = max(tabs)
+        if current:
+            return ""
+        problem = policy.check_url(url)
+        if problem is not None:
+            await session.call_tool("browser_tabs", {"action": "close", "index": index})
+            return f"; it opened a new tab at a refused address ({problem}), which was closed"
+        await session.call_tool("browser_tabs", {"action": "select", "index": index})
+        state.note_page(policy.parse_page(await _look(session)))
+        return "; it opened a new tab, which is now the page shown"
+
+    async def _done(
+        self, session: McpSession, state: _Run, n: int, command: bindex.Command, model_ms: int
+    ) -> tuple[bool, str]:
+        """End the run with the model's answer; `_done_check` checks it against the page as
+        it is NOW, after the browser session closes."""
+        t0 = self._clock()
+        state.note_page(policy.parse_page(await _look(session)))
+        state.done_answer = command.value
+        state.result.steps.append(
+            BrowseStep(
+                n,
+                "done",
+                {"answer_chars": len(command.value)},
+                True,
+                "checking the answer against this page",
+                url=state.page.url,
+                snapshot_tokens=state.page.tokens,
+                model_ms=model_ms,
+                browser_ms=int((self._clock() - t0) * 1000),
+            )
+        )
+        return True, "done"
+
+    async def _done_check(self, state: _Run) -> None:
+        """The host's fact check on `done`'s answer. Verified: that one call was the whole
+        end of the run. Otherwise the separate no-thinking extraction reads the page's full
+        text (the view the model answered from was clipped), and its answer is kept."""
+        run = state.result
+        step = run.steps[-1]
+        answer = policy.quarantine(state.done_answer or "")
+        if answer.strip(" .").upper().startswith(_NOT_FOUND):
+            reason = answer.split(":", 1)[1].strip() if ":" in answer else ""
+            run.outcome = "gave_up"
+            run.answer = reason or "The browser could not complete the goal."
+            step.note = "the model says the site does not answer it"
+            return
+        check = policy.facts_on_page(answer, state.page) if answer else policy.FactCheck()
+        step.ok = bool(answer) and check.verified
+        step.note = check.describe() if answer else "no answer was written"
+        if step.ok:
+            run.outcome, run.answer, run.verified = "answered", answer, True
+            return
+        left = self._wall - (self._clock() - state.started)
+        try:
+            found = await asyncio.wait_for(
+                self._extract(state, step.n), timeout=max(left, EXTRACT_RESERVE_SECONDS)
+            )
+        except TimeoutError:
+            state.extract_error = "it ran out of time"
+            found = None
+        if found is not None:
+            run.outcome = "answered"
+            run.answer, run.verified = found[0], found[1].verified
+        elif answer:
+            run.outcome, run.answer, run.verified = "answered", answer, False
+        else:
+            run.outcome = "not_found"
+            if state.extract_error:
+                run.error = f"reading the answer off the page failed: {state.extract_error}"
+
+
+_TAB_LINE = re.compile(r"^- (\d+): (\(current\) )?\[[^\]\n]*\]\(([^)\s]*)\)", re.MULTILINE)
+
+
+def _open_tabs(text: str) -> list[tuple[int, bool, str]]:
+    """The (index, current, url) of each tab in a playwright-mcp "### Open tabs" list."""
+    if "### Open tabs" not in text:
+        return []
+    return [(int(i), bool(cur), url) for i, cur, url in _TAB_LINE.findall(text)]
+
+
+def _address(url: str) -> str:
+    return url.split("#", 1)[0]
+
+
+def _command_label(command: bindex.Command) -> str:
+    target = f" [{command.index}]" if command.index is not None else ""
+    return f"{command.do}{target}"
 
 
 def _budget_hint(steps_left: int, seconds_left: float) -> str:

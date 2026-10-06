@@ -30,13 +30,16 @@
 #   scripts/debug-connect.sh solve https://www.reuters.com/... # force ONLY the byparr solver tier
 #   scripts/debug-connect.sh tavily https://example.com/walled # force ONLY the hosted Tavily tier
 #   scripts/debug-connect.sh browse "On epictheatres.com pick Titusville; list today's showtimes" \
-#       [--start-url https://www.epictheatres.com/] [--max-steps 20] [--spec local:MODEL] [--no-wait]
+#       [--start-url https://www.epictheatres.com/] [--max-steps 20] [--spec local:MODEL]
+#       [--budget N] [--loop fast|b1] [--no-wait]
 #     (One goal through jerv's browse sub-agent — the fenced browser, the action gate, the same
 #      loop jerv runs. Prints the step trace (action, snapshot tokens, model/browser ms), the
 #      answer, whether its evidence was found on the final page, and the final URL. A job it
 #      polls, since a run outlasts the tunnel's ~100 s. --spec runs it on one model for the
 #      bake-off without re-routing the box. Also the on-box fence test: a goal that names
-#      http://169.254.169.254/ or http://db:5432/ must come back refused or "access denied".)
+#      http://169.254.169.254/ or http://db:5432/ must come back refused or "access denied".
+#      --budget caps each step's thinking; --loop runs the fast loop or the B1 fallback for
+#      this goal only. scripts/browse-bench.sh runs the six-task benchmark through this.)
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh disk [--refresh]          # where the disk went: fs, docker df, project dirs
@@ -513,27 +516,29 @@ except Exception: print("")')
     _call POST /api/debug/fetch "$body" | _pp
     ;;
 
-  browse) # "<goal>" [--start-url URL] [--max-steps N] [--spec P:M] [--budget N] [--no-wait] — one goal through the browse sub-agent
-    GOAL="${1:-}"; [ -n "$GOAL" ] || { echo "usage: debug-connect.sh browse \"<goal>\" [--start-url URL] [--max-steps N] [--spec P:M] [--budget N] [--no-wait]" >&2; exit 2; }
+  browse) # "<goal>" [--start-url URL] [--max-steps N] [--spec P:M] [--budget N] [--loop fast|b1] [--no-wait] — one goal through the browse sub-agent
+    GOAL="${1:-}"; [ -n "$GOAL" ] || { echo "usage: debug-connect.sh browse \"<goal>\" [--start-url URL] [--max-steps N] [--spec P:M] [--budget N] [--loop fast|b1] [--no-wait]" >&2; exit 2; }
     shift
-    START="" STEPS="" SPEC="" BUDGET="" NOWAIT=""
+    START="" STEPS="" SPEC="" BUDGET="" LOOP="" NOWAIT=""
     while [ "${1:-}" != "" ]; do
       case "$1" in
         --start-url) START="$2"; shift 2 ;;
         --max-steps) STEPS="$2"; shift 2 ;;
         --spec) SPEC="$2"; shift 2 ;;
         --budget) BUDGET="$2"; shift 2 ;;
+        --loop) LOOP="$2"; shift 2 ;;
         --no-wait) NOWAIT=1; shift ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
       esac
     done
-    body="$(GOAL="$GOAL" START="$START" STEPS="$STEPS" SPEC="$SPEC" BUDGET="$BUDGET" python3 - <<'PY'
+    body="$(GOAL="$GOAL" START="$START" STEPS="$STEPS" SPEC="$SPEC" BUDGET="$BUDGET" LOOP="$LOOP" python3 - <<'PY'
 import json, os
 b = {"goal": os.environ["GOAL"]}
 if os.environ.get("START"): b["start_url"] = os.environ["START"]
 if os.environ.get("STEPS"): b["max_steps"] = int(os.environ["STEPS"])
 if os.environ.get("SPEC"): b["spec"] = os.environ["SPEC"]
 if os.environ.get("BUDGET"): b["reasoning_budget"] = int(os.environ["BUDGET"])
+if os.environ.get("LOOP"): b["loop"] = os.environ["LOOP"]
 print(json.dumps(b))
 PY
 )"

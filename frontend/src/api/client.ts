@@ -594,6 +594,9 @@ export interface AppSettings {
   // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
   // a whole-word substitution before a clip renders. Empty by default.
   pronunciation_lexicon: Record<string, string>;
+  /** Which loop jerv's browser agent runs: "fast" (batched commands, no thinking, the answer
+   *  read in the same call) or "b1", the earlier loop kept as its fallback. Read per run. */
+  browse_loop?: "fast" | "b1";
 }
 
 /** The on-box read-aloud engine's health (GET /api/brain/tts/health), driving the

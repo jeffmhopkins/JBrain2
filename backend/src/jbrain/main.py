@@ -1204,6 +1204,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_steps=settings.browse_max_steps,
             wall_seconds=settings.browse_wall_seconds,
             max_pages=settings.browse_max_pages,
+            # The owner's Settings switch between the fast loop and the B1 fallback, read per
+            # run (BROWSER_FAST_LOOP_PLAN L1) — a rollback with no deploy and no terminal.
+            loop=lambda: settings_store.browse_loop(SYSTEM_CTX),
         )
         browse_handlers = (
             build_browse_handlers(app.state.browse_agent, emit=brain_emit)

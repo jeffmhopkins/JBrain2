@@ -42,11 +42,15 @@ def build_browse_handlers(
         refused = browse_gate.refusal(start_url, ctx.browser_needed)
         if refused is not None:
             return ToolOutput(refused, result_brief="refused · fetch first")
+        again = browse_gate.repeat_refusal(start_url, ctx.browsed)
+        if again is not None:
+            return ToolOutput(again, result_brief="refused · already browsed")
         if emit:
             emit("browse", start_url or goal)
         # The conversation's model pick rides along so the sub-agent runs on the model the
         # owner chose — the SAME reason `browse.step` follows agent.turn.
         run = await agent.run(goal, start_url, spec_override=ctx.model_override)
+        browse_gate.record_browse(ctx.browsed, run.outcome, start_url)
         sources = tuple(
             WebSource(url=url, title=url, read=url == run.final_url) for url in run.sources
         )

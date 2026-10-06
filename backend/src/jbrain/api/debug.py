@@ -1332,6 +1332,9 @@ class BrowseRequest(BaseModel):
     # Overrides the browse prompt's per-step thinking cap for this run (0 = no thinking) —
     # BROWSER_FAST_LOOP_PLAN L0's sweep. Empty = the prompt's own cap.
     reasoning_budget: int | None = Field(default=None, ge=0, le=4096)
+    # Which loop runs this goal — BROWSER_FAST_LOOP_PLAN L1's `fast` or the B1 fallback.
+    # Empty = the owner's Settings switch (`browse_loop`).
+    loop: Literal["fast", "b1"] | None = None
 
 
 class BrowseStepOut(BaseModel):
@@ -1445,6 +1448,7 @@ async def _run_browse(agent: BrowseAgent, body: BrowseRequest) -> BrowseOut:
         max_steps=body.max_steps,
         spec_override=body.spec or None,
         reasoning_budget=body.reasoning_budget,
+        loop=body.loop,
     )
     return BrowseOut(
         outcome=run.outcome,

@@ -605,7 +605,10 @@ _CLOCK_TOKEN = re.compile(r"\b\d{1,2}(?::\d{2})? [ap]m\b")
 # "10/05", "2,000"). Not a digit inside a word ("F1", "7th"): it would never match whole.
 _NUMBER = re.compile(r"(?<!\w)[$€£]?\d+(?:[.,/:-]\d+)*(?!\w)")
 # A bare one- or two-digit number is on almost every page (a screen, a rating, a date), so
-# finding it proves nothing; a line that leans on such numbers is not checkable.
+# finding it proves nothing: it is never evidence for a line. But it must still BE on the page
+# — a missing one is an invented number ("12 screens" off a page saying "3 screens"), and sinks
+# its line. L0 (2026-10-05) saw correct answers ("11 results." beside the first title, "July 1,
+# 1962") marked UNVERIFIED when a line made of small numbers counted as unbacked outright.
 _SMALL_INT = re.compile(r"\d{1,2}")
 _CURRENCY = "$€£"
 _WORD = re.compile(r"[^\W\d_][\w'’-]*")
@@ -626,19 +629,15 @@ def _is_strict(token: str) -> bool:
     return bool(_CLOCK_TOKEN.fullmatch(token)) or token[0] in _CURRENCY
 
 
-def _line_tokens(line: str) -> tuple[list[str], bool]:
-    """The line's salient tokens, and whether it states a bare small number (which is not
-    one of them)."""
+def _line_tokens(line: str) -> tuple[list[str], list[str]]:
+    """The line's salient tokens, and its bare small numbers apart (see `_SMALL_INT`)."""
     folded = _fold(line)
     tokens = _CLOCK_TOKEN.findall(folded)
     rest = _CLOCK_TOKEN.sub(" ", folded)
-    small = False
+    smalls: list[str] = []
     for number in _NUMBER.findall(rest):
         number = number.rstrip(".,/:-")
-        if _SMALL_INT.fullmatch(number):
-            small = True
-        else:
-            tokens.append(number)
+        (smalls if _SMALL_INT.fullmatch(number) else tokens).append(number)
     for word in _WORD.findall(_CLOCK.sub(" ", unicodedata.normalize("NFKC", line))):
         word = word.strip("'’-")
         if (
@@ -647,7 +646,7 @@ def _line_tokens(line: str) -> tuple[list[str], bool]:
             and word.casefold() not in _COMMON_WORDS
         ):
             tokens.append(word.casefold())
-    return tokens, small
+    return tokens, smalls
 
 
 def salient_tokens(line: str) -> list[str]:
@@ -668,8 +667,8 @@ class FactCheck:
     # Times and prices: every one must be found.
     strict_found: int = 0
     strict_total: int = 0
-    # Lines nothing found backs: an invented line, or one whose only numbers are bare small
-    # ones with no time or price beside them ("Dune: 7, 10").
+    # Lines nothing found backs (an invented line), or that state a small number the page
+    # does not have.
     lines_missed: int = 0
 
     @property
@@ -696,27 +695,29 @@ def facts_on_page(answer: str, page: PageView) -> FactCheck:
     """Whether an answer was read off the page it claims to come from — success is taken
     from the page, never from the model's word. Each line's salient tokens are looked up, as
     whole tokens, in the page's FULL text (not the capped view): every time and price must be
-    there, most of the rest, and every line must be backed by at least one, so one invented
-    line or showtime fails the answer."""
+    there, most of the rest, and every line with something checkable must be backed by at
+    least one, so one invented line or showtime fails the answer. A bare small number is
+    never evidence, but must be on the page too: one that is not sinks its line. A line of
+    nothing but small numbers that are all there ("11 results.") neither backs nor sinks it."""
     text = _fold(page.text)
     found = total = strict_found = strict_total = missed = 0
     for line in answer.splitlines():
-        tokens, small = _line_tokens(line)
-        if not tokens and not small:
+        tokens, smalls = _line_tokens(line)
+        invented = any(not _small_on_page(n, text) for n in smalls)
+        if not tokens:
+            missed += invented
             continue
         hits = 0
-        strict_in_line = False
         for token in tokens:
             hit = _on_page(token, text)
             hits += hit
             if _is_strict(token):
-                strict_in_line = True
                 strict_found += hit
                 strict_total += 1
             else:
                 found += hit
                 total += 1
-        missed += hits == 0 or (small and not strict_in_line)
+        missed += hits == 0 or invented
     return FactCheck(
         found=found,
         total=total,
@@ -726,8 +727,47 @@ def facts_on_page(answer: str, page: PageView) -> FactCheck:
     )
 
 
+# Capitalised words that start a goal's sentences or name the task, not a place or item.
+_GOAL_STOPWORDS = frozenset(
+    {
+        "on", "in", "at", "the", "from", "find", "list", "report", "what", "when", "where",
+        "which", "who", "how", "go", "open", "pick", "choose", "select", "show", "get", "tell",
+        "give", "read", "look", "search", "check", "and", "for", "with", "today", "tonight",
+        "tomorrow", "please", "this", "that", "page", "site", "first", "latest", "all", "any",
+        "use", "visit", "then", "its", "their", "near",
+    }
+)  # fmt: skip
+
+
+def goal_names(goal: str) -> list[str]:
+    """The places and items a goal names: its capitalised words, less the words that only
+    start a sentence or name the task. Folded like the page text."""
+    out: list[str] = []
+    for word in _WORD.findall(unicodedata.normalize("NFKC", goal)):
+        word = word.strip("'’-")
+        folded = word.casefold()
+        if len(word) >= _MIN_NAME_CHARS and word[0].isupper() and folded not in _GOAL_STOPWORDS:
+            out.append(folded)
+    return list(dict.fromkeys(out))
+
+
+def goal_names_on_page(goal: str, page: PageView) -> bool:
+    """Whether every place and item the goal names is on the page — before an answer read
+    off it may stand for the goal (a chain's home page showing another location's times
+    would otherwise verify). A goal that names none passes."""
+    text = _fold(page.text)
+    return all(_on_page(name, text) for name in goal_names(goal))
+
+
 def _on_page(token: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text) is not None
+
+
+def _small_on_page(number: str, text: str) -> bool:
+    """A small number standing alone on the page, not a piece of a bigger one: the "7" of
+    "screen 7" is not backed by "7:15" or "7/10"."""
+    pattern = rf"(?<!\w)(?<!\d[.,/:-]){re.escape(number)}(?!\w)(?![.,/:-]\d)"
+    return re.search(pattern, text) is not None
 
 
 _MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")

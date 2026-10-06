@@ -48,7 +48,7 @@ def _browse(fake: FakeLlmClient) -> tuple[ToolHandler, FakeBrowser]:
     router = LlmRouter({"xai": fake}, {"browse.step": ("xai", "grok-4.3")})
     browser = FakeBrowser()
     mcp = McpHttpClient("http://browser:8931/mcp", transport=browser.transport())
-    return build_browse_handlers(BrowseAgent(router, mcp))["browse"], browser
+    return build_browse_handlers(BrowseAgent(router, mcp, loop="b1"))["browse"], browser
 
 
 def _turn() -> ToolContext:
@@ -130,14 +130,93 @@ async def test_browse_runs_after_a_fetch_said_the_site_needs_a_browser(
     fetch = _fetch_handler({host: body})
     fake = _give_up()
     browse, browser = _browse(fake)
-    ctx = _turn()
-    fetched = await fetch({"url": f"https://{host}/"}, ctx)
-    assert ctx.browser_needed == {"epictheatres.com": reason}
-    assert "Call `browse`" in fetched  # the hint and the gate agree
     for start in ("https://epictheatres.com/titusville", "https://WWW.EpicTheatres.com/"):
+        ctx = _turn()  # one browse per site per turn: each start gets a turn of its own
+        fetched = await fetch({"url": f"https://{host}/"}, ctx)
+        assert ctx.browser_needed == {"epictheatres.com": reason}
+        assert "Call `browse`" in fetched  # the hint and the gate agree
         out = await browse({"goal": "g", "start_url": start}, ctx)
         assert isinstance(out, ToolOutput) and out.startswith("[BROWSE RESULT")
     assert len(fake.converse_calls) == 2 and browser.calls
+
+
+async def test_a_second_browse_of_the_same_site_in_a_turn_is_refused() -> None:
+    """Seen live: a timeout, then a second full browse of the same site. Once a run on a
+    site came back this turn — whatever its outcome — another is refused before anything
+    runs; another site, or the next turn, is not affected."""
+    fetch = _fetch_handler({"www.epictheatres.com": _GATE, "www.amctheatres.com": _GATE})
+    fake = _give_up()
+    browse, browser = _browse(fake)
+    ctx = _turn()
+    await fetch({"url": "https://www.epictheatres.com/"}, ctx)
+    await fetch({"url": "https://www.amctheatres.com/"}, ctx)
+    first = await browse({"goal": "g", "start_url": "https://www.epictheatres.com/"}, ctx)
+    assert isinstance(first, ToolOutput) and first.startswith("[BROWSE RESULT")
+    assert ctx.browsed == {"epictheatres.com": "gave_up"}
+    calls, sessions = len(fake.converse_calls), browser.methods.count("initialize")
+    again = await browse({"goal": "other", "start_url": "https://epictheatres.com/titusville"}, ctx)
+    assert isinstance(again, ToolOutput) and again.result_brief == "refused · already browsed"
+    assert "epictheatres.com was already browsed this turn (it came back gave up)" in again
+    assert len(fake.converse_calls) == calls and browser.methods.count("initialize") == sessions
+    other = await browse({"goal": "g", "start_url": "https://www.amctheatres.com/"}, ctx)
+    assert isinstance(other, ToolOutput) and other.startswith("[BROWSE RESULT")
+    nxt = _turn()
+    await fetch({"url": "https://www.epictheatres.com/"}, nxt)
+    out = await browse({"goal": "g", "start_url": "https://www.epictheatres.com/"}, nxt)
+    assert isinstance(out, ToolOutput) and out.startswith("[BROWSE RESULT")
+
+
+def test_a_browse_is_recorded_under_its_start_site_unless_it_errored() -> None:
+    """Only the site the run started on: a run that wandered elsewhere does not close that
+    site. And never an `error`: a browser or model that failed never used the site."""
+    browsed: dict[str, str] = {}
+    browse_gate.record_browse(browsed, "timeout", "https://www.epictheatres.com/")
+    browse_gate.record_browse(browsed, "answered", "https://a.example/")
+    browse_gate.record_browse(browsed, "error", "https://c.example/")
+    browse_gate.record_browse(browsed, "answered", None)
+    browse_gate.record_browse(browsed, "answered", "http://10.0.0.1/")
+    assert browsed == {"epictheatres.com": "timeout", "a.example": "answered"}
+    assert browse_gate.repeat_refusal(None, browsed) is None
+    assert browse_gate.repeat_refusal("https://c.example/", browsed) is None
+    assert browse_gate.repeat_refusal("https://www.a.example/x", browsed) is not None
+
+
+async def test_a_browse_that_failed_or_ended_elsewhere_closes_nothing_else() -> None:
+    """Through the handlers: a run that errored can be retried; a run that ended on another
+    site leaves that other site open."""
+    from jbrain.llm.errors import LlmTransientError
+
+    class Down(FakeLlmClient):
+        async def converse(self, **kwargs: object) -> LlmTurn:
+            raise LlmTransientError("the model is down")
+
+    fetch = _fetch_handler({"www.epictheatres.com": _GATE, "www.amctheatres.com": _GATE})
+    ctx = _turn()
+    await fetch({"url": "https://www.epictheatres.com/"}, ctx)
+    await fetch({"url": "https://www.amctheatres.com/"}, ctx)
+    broken, _ = _browse(Down())
+    out = await broken({"goal": "g", "start_url": "https://www.epictheatres.com/"}, ctx)
+    assert isinstance(out, ToolOutput) and out.result_brief == "error · 1 steps"
+    assert ctx.browsed == {}
+    # A run that starts on Epic and navigates to AMC records Epic only.
+    nav = LlmTurn(
+        "",
+        [ToolCall("c1", "navigate", {"url": "https://www.amctheatres.com/"})],
+        "tool_use",
+        LlmUsage(1, 1),
+    )
+    fake = FakeLlmClient(
+        turns=[
+            nav,
+            LlmTurn("", [ToolCall("c2", "give_up", {"reason": "x"})], "tool_use", LlmUsage(1, 1)),
+        ]
+    )
+    browse, _ = _browse(fake)
+    first = await browse({"goal": "g", "start_url": "https://www.epictheatres.com/"}, ctx)
+    assert isinstance(first, ToolOutput) and "amctheatres.com" in first
+    assert ctx.browsed == {"epictheatres.com": "gave_up"}
+    other = await browse({"goal": "g", "start_url": "https://www.amctheatres.com/"}, ctx)
+    assert isinstance(other, ToolOutput) and other.result_brief != "refused · already browsed"
 
 
 async def test_a_gated_fetch_in_an_earlier_turn_does_not_count() -> None:

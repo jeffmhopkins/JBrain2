@@ -68,6 +68,7 @@ def test_get_settings_defaults_to_full_analysis(
         "llm_kv_conversation_cache": True,
         "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
+        "browse_loop": "fast",
     }
 
 
@@ -93,6 +94,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "llm_kv_conversation_cache": True,
         "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
+        "browse_loop": "fast",
     }
     assert store.values["image_analysis_mode"] == "ocr"
     assert c.get("/api/settings").json() == {
@@ -113,6 +115,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "llm_kv_conversation_cache": True,
         "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
+        "browse_loop": "fast",
     }
 
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
@@ -133,6 +136,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "llm_kv_conversation_cache": True,
         "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
+        "browse_loop": "fast",
     }
 
 
@@ -160,6 +164,7 @@ def test_put_settings_round_trips_the_timezone(
         "llm_kv_conversation_cache": True,
         "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
+        "browse_loop": "fast",
     }
     assert store.values["owner_timezone"] == "America/New_York"
 
@@ -379,6 +384,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "llm_kv_conversation_cache": True,
         "llm_kv_restore_gate": "awaiting_probe",
         "pronunciation_lexicon": {},
+        "browse_loop": "fast",
     }
 
 
@@ -485,3 +491,16 @@ def test_the_prompt_cache_budget_and_conversation_toggle_round_trip_and_apply_li
     ]
     assert c.put("/api/settings", json={"llm_kv_prefix_budget_gb": 1}).status_code == 422
     assert c.put("/api/settings", json={"llm_kv_prefix_budget_gb": 501}).status_code == 422
+
+
+def test_put_settings_round_trips_the_browse_loop(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    """The owner's no-terminal fallback from the fast browse loop to B1 (BROWSER_FAST_LOOP_PLAN
+    L1): a Settings flip, read by the next browse run."""
+    c, store = client
+    assert c.get("/api/settings").json()["browse_loop"] == "fast"
+    assert c.put("/api/settings", json={"browse_loop": "b1"}).json()["browse_loop"] == "b1"
+    assert store.values["browse_loop"] == "b1"
+    assert c.put("/api/settings", json={"browse_loop": "turbo"}).status_code == 422
+    assert c.put("/api/settings", json={"browse_loop": "fast"}).json()["browse_loop"] == "fast"

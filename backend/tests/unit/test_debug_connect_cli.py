@@ -24,12 +24,28 @@ from threading import Thread
 import pytest
 
 _SCRIPT = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "debug-connect.sh"
+_BENCH = _SCRIPT.with_name("browse-bench.sh")
 
 # The smallest valid PNG: a 1x1 image, so the stub returns something a decoder accepts.
 _PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA"
     "DUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
+
+
+# A finished browse job as /api/debug/jobs returns it: a navigation step, the `done`
+# decision, and an extraction — one of each phase the benchmark adds up.
+_BROWSE_RESULT = {
+    "outcome": "answered",
+    "verified": True,
+    "elapsed_ms": 21_400,
+    "steps": [
+        {"action": "navigate", "model_ms": 0, "browser_ms": 900},
+        {"action": "click", "model_ms": 6_000, "browser_ms": 1_100},
+        {"action": "done", "model_ms": 7_000, "browser_ms": 300},
+        {"action": "extract", "model_ms": 4_000, "browser_ms": 0},
+    ],
+}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -50,6 +66,8 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
             _Handler.browse_bodies.append(json.loads(self.rfile.read(length)))
             payload = {"job_id": "browse-1"}
+        elif "/jobs/browse-1" in self.path:
+            payload = {"job_id": "browse-1", "status": "done", "result": _BROWSE_RESULT}
         elif "/jobs/" in self.path:
             # Done on the first poll, so the test does not sit through a sleep.
             payload = {
@@ -254,3 +272,65 @@ def test_browse_without_a_goal_is_a_usage_error() -> None:
     )
     assert result.returncode == 2
     assert "usage" in result.stderr
+
+
+@pytest.mark.skipif(not _BENCH.exists(), reason="the benchmark script is not in this checkout")
+def test_the_browse_benchmark_runs_each_task_and_sums_its_phases(box: str) -> None:
+    """The L0 benchmark as a repo script: every task goes through `debug-connect.sh browse`
+    with the run's flags, and each prints one line with the phases added up."""
+    import os
+
+    _Handler.browse_bodies.clear()
+    result = subprocess.run(
+        ["bash", str(_BENCH), "L1", "--budget", "0", "--loop", "fast"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env={**os.environ, "JBRAIN_DEBUG_TOKEN": _token(box)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    header, *rows = result.stdout.strip().splitlines()
+    assert header.split("\t")[:4] == ["label", "task", "outcome", "verified"]
+    names = [row.split("\t")[1] for row in rows]
+    assert names == ["cinema", "search", "paginated", "tab", "filter", "locator"]
+    # navigation = the non-final steps' model + browser time; finish and extraction = model.
+    assert rows[0].split("\t") == [
+        "L1",
+        "cinema",
+        "answered",
+        "yes",
+        "21",
+        "4",
+        "8000",
+        "7000",
+        "4000",
+    ]
+    assert len(_Handler.browse_bodies) == 6
+    first = _Handler.browse_bodies[0]
+    assert first["start_url"] == "https://www.epictheatres.com/"
+    assert (first["reasoning_budget"], first["loop"]) == (0, "fast")
+
+
+@pytest.mark.skipif(not _BENCH.exists(), reason="the benchmark script is not in this checkout")
+def test_the_browse_benchmark_runs_one_task_and_needs_a_label(box: str) -> None:
+    import os
+
+    env = {**os.environ, "JBRAIN_DEBUG_TOKEN": _token(box)}
+    _Handler.browse_bodies.clear()
+    one = subprocess.run(
+        ["bash", str(_BENCH), "x", "--only", "tab"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env=env,
+    )
+    assert one.returncode == 0, one.stderr
+    assert len(one.stdout.strip().splitlines()) == 2
+    assert "reasoning_budget" not in _Handler.browse_bodies[0]
+    bare = subprocess.run(
+        ["bash", str(_BENCH)], capture_output=True, text=True, timeout=30, check=False, env=env
+    )
+    assert bare.returncode == 2 and "usage" in bare.stderr

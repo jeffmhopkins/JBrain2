@@ -305,6 +305,13 @@ MOLTBOOK_NIGHT_HOUR_DEFAULT = 3
 BRAIN_LLM_STREAM_KEY = "brain_llm_stream"
 BRAIN_LLM_STREAM_DEFAULT = False
 
+# Which loop jerv's `browse` sub-agent runs (docs/plans/BROWSER_FAST_LOOP_PLAN.md L1): "fast"
+# (batched commands, thinking off, `done` carrying the answer) or "b1", the earlier loop kept as
+# the fallback until the fast one meets its targets on the box. Read per run, so flipping it in
+# Settings needs no restart and no terminal. Anything else reads as the default.
+BROWSE_LOOP_KEY = "browse_loop"
+BROWSE_LOOPS = ("fast", "b1")
+BROWSE_LOOP_DEFAULT = "fast"
 
 # Read the wall display's streamed turns ALOUD, rendered on the box by Kokoro TTS
 # (deploy/tts-stt, GET /tts). The runtime companion to brain_llm_stream: it is
@@ -1089,6 +1096,11 @@ class SqlSettingsStore:
         entries.pop(serial, None)
         await self.upsert(ctx, SDR_RADIOS_KEY, entries)
         return await self.sdr_radios(ctx)
+
+    async def browse_loop(self, ctx: SessionContext) -> str:
+        """The browse sub-agent's loop, "fast" or "b1"; a missing or junk value is "fast"."""
+        raw = await self.get(ctx, BROWSE_LOOP_KEY, BROWSE_LOOP_DEFAULT)
+        return raw if raw in BROWSE_LOOPS else BROWSE_LOOP_DEFAULT
 
     async def brain_llm_stream(self, ctx: SessionContext) -> bool:
         """Whether real LLM prompt/answer text is streamed to the on-box wall display.
