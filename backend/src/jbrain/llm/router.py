@@ -15,7 +15,7 @@ refactor — docs/reference/ANALYSIS.md "Privacy routing".
 import contextlib
 import dataclasses
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 import httpx
@@ -510,6 +510,7 @@ class LlmRouter:
         *,
         slot_role: SlotRole | None = None,
         conversation_key: str | None = None,
+        chat_key: str | None = None,
     ) -> int | None:
         """Between admission and dispatch, put the agent-turn prefix back from disk if no
         slot holds it — ~2 s against the ~60 s prefill the turn would otherwise pay. Only
@@ -528,10 +529,10 @@ class LlmRouter:
             return None
         role = slot_roles.role_for(task, slot_role)
         seq: int | None = None
-        if role is SlotRole.INTERACTIVE and local_catalog.pool_of(model) is not None:
+        if kv_prefix_mod.chat_role(model, role) is not None:
             try:
                 restored, seq = await self._kv_prefix.prepare_conversation(
-                    model, conversation_key, system, tools, reasoning_effort
+                    model, conversation_key, system, tools, reasoning_effort, role=role
                 )
                 if restored:
                     return seq
@@ -539,7 +540,12 @@ class LlmRouter:
                 log.warning("llm.kv_conversation_failed", model=model, exc_info=True)
         try:
             await self._kv_prefix.restore_if_lost(
-                model, system, tools, reasoning_effort=reasoning_effort, role=role
+                model,
+                system,
+                tools,
+                reasoning_effort=reasoning_effort,
+                role=role,
+                chat_key=chat_key,
             )
         except Exception:  # noqa: BLE001 — the disk layer must never fail a turn
             log.warning("llm.kv_restore_failed", model=model, exc_info=True)
@@ -557,6 +563,7 @@ class LlmRouter:
         reasoning_effort: str | None = None,
         slot_role: SlotRole | None = None,
         conversation_key: str | None = None,
+        chat_key: str | None = None,
         output_tokens: int = 0,
         cached_tokens: int = 0,
         prepare_seq: int | None = None,
@@ -580,8 +587,10 @@ class LlmRouter:
         with contextlib.suppress(Exception):  # identity is best-effort; never fail a turn
             fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
         role = slot_roles.role_for(task, slot_role)
-        self._kv_prefix.note_agent_turn(model, input_tokens, fingerprint=fingerprint, role=role)
-        if role is SlotRole.INTERACTIVE:
+        self._kv_prefix.note_agent_turn(
+            model, input_tokens, fingerprint=fingerprint, role=role, chat_key=chat_key
+        )
+        if kv_prefix_mod.chat_role(model, role) is not None:
             with contextlib.suppress(Exception):
                 self._kv_prefix.note_conversation_turn(
                     model,
@@ -592,6 +601,7 @@ class LlmRouter:
                     cached_tokens=cached_tokens,
                     seq=prepare_seq,
                     tool_names=tool_names,
+                    role=role,
                 )
 
     def _note_prefix_used(
@@ -604,10 +614,11 @@ class LlmRouter:
         reasoning_effort: str | None,
         *,
         slot_role: SlotRole | None = None,
+        chat_key: str | None = None,
     ) -> None:
         """Retire the store's restored-but-unused memo for a request that reached the model
         without completing — an abandoned stream — and drop any claim on the conversation
-        the interactive slot held, since what it holds now is unknown. Best-effort in every
+        its chat slot held, since what it holds now is unknown. Best-effort in every
         direction."""
         if (
             self._kv_prefix is None
@@ -617,10 +628,66 @@ class LlmRouter:
             return
         role = slot_roles.role_for(task, slot_role)
         with contextlib.suppress(Exception):
-            if role is SlotRole.INTERACTIVE:
-                self._kv_prefix.note_conversation_abandoned(model)
+            if kv_prefix_mod.chat_role(model, role) is not None:
+                self._kv_prefix.note_conversation_abandoned(model, chat_key, role=role)
             fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
             self._kv_prefix.note_prefix_used(model, fingerprint, role=role)
+
+    def _chat_slot(
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        slot_role: SlotRole | None,
+        chat_key: str | None,
+        exact_slot: bool,
+    ) -> tuple[SlotRole | None, bool]:
+        """(the role this call runs in, whether it was routed). On a pool with a chat pair an
+        `agent.turn` call naming a pair role goes to the member the disk store picks
+        (`KvPrefixStore.pick_chat_role`): the slot holding `chat_key`'s live conversation, else
+        the warm one — never the most recent conversation of another chat. The pick claims the
+        slot; a routed call releases it when it ends (`_release_chat_slot`). `exact_slot` (the
+        keeper priming a member it claimed itself) skips the pick and takes no chat claim.
+        Anything else keeps the role it named."""
+        if (
+            exact_slot
+            or self._kv_prefix is None
+            or task != kv_prefix_mod.AGENT_TURN_TASK
+            or provider != local_catalog.LOCAL_PROVIDER
+        ):
+            return slot_role, False
+        pool = local_catalog.pool_of(model)
+        if pool is None or not pool.in_pair(slot_roles.role_for(task, slot_role)):
+            return slot_role, False
+        try:
+            picked = self._kv_prefix.pick_chat_role(model, chat_key)
+        except Exception:  # noqa: BLE001 — routing is a cache choice, never a failed turn
+            log.warning("llm.chat_slot_pick_failed", model=model, exc_info=True)
+            return slot_role, False
+        return (picked, True) if picked is not None else (slot_role, False)
+
+    def _release_chat_slot(self, model: str, role: SlotRole | None) -> None:
+        """A routed call ended, however it ended: its claim on the pair slot goes."""
+        if self._kv_prefix is None or role is None:
+            return
+        with contextlib.suppress(Exception):
+            self._kv_prefix.release_chat_role(model, role)
+
+    def _check_exact_slot(
+        self, provider: str, model: str, role: SlotRole | None, exact_slot: bool
+    ) -> None:
+        """Right before an exact-slot prime is sent: refuse it if a chat took the slot while
+        it waited (`ChatSlotTakenError`) — the prime would overwrite the latest conversation."""
+        if (
+            not exact_slot
+            or self._kv_prefix is None
+            or provider != local_catalog.LOCAL_PROVIDER
+            or self._kv_prefix.prime_target_free(model, role)
+        ):
+            return
+        raise kv_prefix_mod.ChatSlotTakenError(
+            f"{model}'s {role} chat slot was taken by a chat; the prime is not sent"
+        )
 
     async def _admit_local(self, provider: str, model: str) -> str:
         """Admit a local model; the served name residency actually admitted (it differs only
@@ -1013,7 +1080,8 @@ class LlmRouter:
             return
         # The owner is watching the interactive turn; it gives up on a full pool far sooner
         # than a background job, which the worker defers and retries anyway.
-        wait_s = kv_pool_guard_mod.INTERACTIVE_WAIT_S if role is SlotRole.INTERACTIVE else None
+        chat = role is SlotRole.INTERACTIVE or pool.in_pair(role)
+        wait_s = kv_pool_guard_mod.INTERACTIVE_WAIT_S if chat else None
         async with self._pool_guard.placed(
             model, pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens, wait_s=wait_s
         ) as placement:
@@ -1177,6 +1245,8 @@ class LlmRouter:
         sampling: Sampling | None = None,
         slot_role: SlotRole | None = None,
         conversation_key: str | None = None,
+        chat_key: str | None = None,
+        exact_slot: bool = False,
     ) -> LlmTurn:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
@@ -1189,7 +1259,9 @@ class LlmRouter:
         `spec_override` steers the MODEL for this turn (the omnibox's per-conversation
         pick), outranking the resolved route; a malformed/can't-serve override is
         ignored. `conversation_key` names the chat conversation an interactive turn belongs
-        to, so the disk store can save and restore it (FLASH_NEXT F4c)."""
+        to, so the disk store can save and restore it (FLASH_NEXT F4c); `chat_key` names the
+        chat for routing to its chat pair slot (`_chat_slot`), and `exact_slot` pins the
+        named pair member instead."""
         provider, model, reasoning_effort = await self._admitted(
             task, strength, spec_override, await self._route(task, strength, spec_override)
         )
@@ -1197,6 +1269,47 @@ class LlmRouter:
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
+        slot_role, routed = self._chat_slot(task, provider, model, slot_role, chat_key, exact_slot)
+        try:
+            return await self._converse_in_slot(
+                task,
+                provider,
+                model,
+                reasoning_effort,
+                resolved_sampling,
+                client,
+                system=system,
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                slot_role=slot_role,
+                conversation_key=conversation_key,
+                chat_key=chat_key,
+                exact_slot=exact_slot,
+            )
+        finally:
+            if routed:
+                self._release_chat_slot(model, slot_role)
+
+    async def _converse_in_slot(
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        reasoning_effort: str | None,
+        resolved_sampling: Sampling | None,
+        client: LlmClient,
+        *,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool],
+        max_tokens: int,
+        slot_role: SlotRole | None,
+        conversation_key: str | None,
+        chat_key: str | None,
+        exact_slot: bool = False,
+    ) -> LlmTurn:
+        """`converse` once its route and slot are chosen."""
         prepare_seq = await self._ensure_agent_prefix(
             task,
             provider,
@@ -1206,7 +1319,9 @@ class LlmRouter:
             reasoning_effort,
             slot_role=slot_role,
             conversation_key=conversation_key,
+            chat_key=chat_key,
         )
+        self._check_exact_slot(provider, model, slot_role, exact_slot)
         n_images = slot_roles.image_count(messages)
         replay, chars, replayed_tokens = self._fit_replay(
             task,
@@ -1253,6 +1368,7 @@ class LlmRouter:
             reasoning_effort=reasoning_effort,
             slot_role=slot_role,
             conversation_key=conversation_key,
+            chat_key=chat_key,
             output_tokens=turn.usage.output_tokens,
             cached_tokens=turn.usage.cached_tokens,
             prepare_seq=prepare_seq,
@@ -1287,13 +1403,16 @@ class LlmRouter:
         sampling: Sampling | None = None,
         slot_role: SlotRole | None = None,
         conversation_key: str | None = None,
+        chat_key: str | None = None,
+        exact_slot: bool = False,
     ) -> AsyncIterator[StreamPart]:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks
         carry no usage, only the final turn does. `effort_override` steers the
         model's reasoning for this turn (gated to reasoning-capable models, like
         `converse`); `spec_override` steers the MODEL (the per-conversation pick),
-        outranking the resolved route."""
+        outranking the resolved route. `chat_key` and `exact_slot` choose the chat pair
+        slot as in `converse`."""
         provider, model, reasoning_effort = await self._admitted(
             task, strength, spec_override, await self._route(task, strength, spec_override)
         )
@@ -1301,6 +1420,53 @@ class LlmRouter:
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
+        slot_role, routed = self._chat_slot(task, provider, model, slot_role, chat_key, exact_slot)
+        # Closed explicitly: an owner's Stop closes THIS generator, and the inner one's own
+        # cleanup (the abandoned-stream note, the slot pin's release) must run then, not
+        # whenever the garbage collector gets to it.
+        inner = self._stream_in_slot(
+            task,
+            provider,
+            model,
+            reasoning_effort,
+            resolved_sampling,
+            client,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            slot_role=slot_role,
+            conversation_key=conversation_key,
+            chat_key=chat_key,
+            exact_slot=exact_slot,
+        )
+        try:
+            async with contextlib.aclosing(inner):
+                async for part in inner:
+                    yield part
+        finally:
+            if routed:
+                self._release_chat_slot(model, slot_role)
+
+    async def _stream_in_slot(
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        reasoning_effort: str | None,
+        resolved_sampling: Sampling | None,
+        client: LlmClient,
+        *,
+        system: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[LlmTool],
+        max_tokens: int,
+        slot_role: SlotRole | None,
+        conversation_key: str | None,
+        chat_key: str | None,
+        exact_slot: bool = False,
+    ) -> AsyncGenerator[StreamPart]:
+        """`converse_stream` once its route and slot are chosen."""
         final: LlmTurn | None = None
         first_part = True
         start = time.perf_counter()
@@ -1319,7 +1485,9 @@ class LlmRouter:
             reasoning_effort,
             slot_role=slot_role,
             conversation_key=conversation_key,
+            chat_key=chat_key,
         )
+        self._check_exact_slot(provider, model, slot_role, exact_slot)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
         n_images = slot_roles.image_count(messages)
         replay, prompt_chars, replayed_tokens = self._fit_replay(
@@ -1447,6 +1615,7 @@ class LlmRouter:
                         tools,
                         reasoning_effort,
                         slot_role=slot_role,
+                        chat_key=chat_key,
                     )
         if final is not None:
             elapsed = time.perf_counter() - start
@@ -1463,6 +1632,7 @@ class LlmRouter:
                 reasoning_effort=reasoning_effort,
                 slot_role=slot_role,
                 conversation_key=conversation_key,
+                chat_key=chat_key,
                 output_tokens=final.usage.output_tokens,
                 cached_tokens=final.usage.cached_tokens,
                 prepare_seq=prepare_seq,

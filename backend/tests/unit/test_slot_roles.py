@@ -25,25 +25,78 @@ from jbrain.llm.types import (
 
 def test_flash_next_pool_shape() -> None:
     assert FLASH_NEXT_POOL.n_ctx == 524_288
-    assert FLASH_NEXT_POOL.n_slots == 9
+    assert FLASH_NEXT_POOL.n_slots == 10
     assert {r.role for r in FLASH_NEXT_POOL.reservations} == set(SlotRole)
+    assert FLASH_NEXT_POOL.chat_pair == (SlotRole.INTERACTIVE, SlotRole.INTERACTIVE_ALT)
 
 
 def test_no_cap_exceeds_the_trained_context() -> None:
     assert max(r.cap_tokens for r in FLASH_NEXT_POOL.reservations) == 262_144
 
 
-def test_interactive_prefix_is_freed_last_and_small_first() -> None:
+def test_the_chat_pair_is_freed_last_and_small_first() -> None:
     order = FLASH_NEXT_POOL.eviction_order()
-    assert order[-1] == FLASH_NEXT_POOL.slot(SlotRole.INTERACTIVE)
+    assert order[-2:] == [0, 9], "the two chat slots hold the top two ranks"
     assert order[0] == FLASH_NEXT_POOL.slot(SlotRole.SMALL)
 
 
+def test_the_slot_holding_the_latest_chat_is_freed_last_whatever_its_rank() -> None:
+    # Slot 9's static rank is the top one; when slot 0 holds the most recent conversation, the
+    # warm slot 9 (its prefix restorable from disk in ~2 s) goes before it.
+    assert FLASH_NEXT_POOL.eviction_order(keep_last=0)[-2:] == [9, 0]
+    assert FLASH_NEXT_POOL.eviction_order(keep_last=9)[-2:] == [0, 9]
+    assert FLASH_NEXT_POOL.eviction_order(keep_last=42) == FLASH_NEXT_POOL.eviction_order()
+
+
+def test_the_chat_pair_second_slot_is_appended_and_shares_the_interactive_cap() -> None:
+    alt = FLASH_NEXT_POOL.reservation(SlotRole.INTERACTIVE_ALT)
+    assert alt.slot == FLASH_NEXT_POOL.n_slots - 1 == 9
+    assert alt.cap_tokens == FLASH_NEXT_POOL.cap(SlotRole.INTERACTIVE)
+    assert alt.overflow is None
+    assert FLASH_NEXT_POOL.in_pair(SlotRole.INTERACTIVE)
+    assert FLASH_NEXT_POOL.in_pair(SlotRole.INTERACTIVE_ALT)
+    assert not FLASH_NEXT_POOL.in_pair(SlotRole.SCHEDULED)
+    # No caller names the second slot: every chat turn asks for the interactive role.
+    assert SlotRole.INTERACTIVE_ALT not in slot_roles.TASK_ROLES.values()
+
+
+def test_a_chat_pair_must_be_two_distinct_roles_with_one_cap_and_no_overflow() -> None:
+    pair = (SlotRole.INTERACTIVE, SlotRole.INTERACTIVE_ALT)
+    a = RoleReservation(SlotRole.INTERACTIVE, 0, 1024, 0, "a")
+    b = RoleReservation(SlotRole.INTERACTIVE_ALT, 1, 1024, 1, "b")
+    with pytest.raises(ValueError, match="two distinct roles"):
+        KvPool(65_536, (a, b), chat_pair=(SlotRole.INTERACTIVE, SlotRole.INTERACTIVE))
+    with pytest.raises(ValueError, match="two distinct roles"):
+        KvPool(65_536, (a,), chat_pair=pair)
+    wide = RoleReservation(SlotRole.INTERACTIVE_ALT, 1, 2048, 1, "b")
+    with pytest.raises(ValueError, match="same cap"):
+        KvPool(65_536, (a, wide), chat_pair=pair)
+    spill = RoleReservation(SlotRole.INTERACTIVE, 0, 1024, 0, "a", SlotRole.INTERACTIVE_ALT)
+    with pytest.raises(ValueError, match="no overflow"):
+        KvPool(65_536, (spill, b), chat_pair=pair)
+    assert KvPool(65_536, (a, b), chat_pair=pair).chat_pair == pair
+
+
+def test_an_exact_pin_names_the_role_and_only_pins_when_asked() -> None:
+    assert slot_roles.exact_pin(SlotRole.INTERACTIVE, False) == {"slot_role": SlotRole.INTERACTIVE}
+    assert slot_roles.exact_pin(SlotRole.INTERACTIVE_ALT, True) == {
+        "slot_role": SlotRole.INTERACTIVE_ALT,
+        "exact_slot": True,
+    }
+
+
+def test_the_conversation_pin_carries_the_routing_key_beside_the_disk_key() -> None:
+    assert slot_roles.conversation_pin(None) == {}
+    assert slot_roles.conversation_pin("c", "s") == {"conversation_key": "c", "chat_key": "s"}
+    # A firewalled chat has no disk key but is still routed by its chat.
+    assert slot_roles.conversation_pin(None, "s") == {"chat_key": "s"}
+
+
 def test_browse_has_its_own_slot_added_last_and_freed_early() -> None:
-    """The ninth slot was appended, so the first eight keep their ids (and their saved F4
-    prefixes); browse steps land there, not in the research slot research agents use."""
+    """The ninth slot was appended, so the first eight keep their ids; browse steps land
+    there, not in the research slot research agents use."""
     browse = FLASH_NEXT_POOL.reservation(SlotRole.BROWSE)
-    assert browse.slot == FLASH_NEXT_POOL.n_slots - 1 == 8
+    assert browse.slot == 8
     assert browse.cap_tokens == FLASH_NEXT_POOL.cap(SlotRole.INGEST) == 131_072
     assert browse.overflow is None
     assert [r.role for r in FLASH_NEXT_POOL.reservations[:8]] == [
@@ -153,7 +206,7 @@ def test_catalog_carries_the_pool_and_it_survives_the_manifest() -> None:
     assert entry.kv_pool is FLASH_NEXT_POOL
     assert entry.default_slots == FLASH_NEXT_POOL.n_slots
     assert local_catalog.pool_of(entry.served_model) is FLASH_NEXT_POOL
-    assert pool_shape(asdict(entry)) == (524_288, 9)
+    assert pool_shape(asdict(entry)) == (524_288, 10)
 
 
 def test_standard_entries_have_no_pool() -> None:
@@ -170,7 +223,9 @@ def test_slot_pin_names_a_role_or_nothing_at_all() -> None:
 
 
 def test_layout_matches_only_the_pools_own_slot_count() -> None:
-    assert slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 9)
+    assert slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 10)
+    # A server still on the nine-slot layout (before its config is re-stamped) is no match.
+    assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 9)
     assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 4)
     assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [])
 

@@ -621,3 +621,110 @@ async def test_a_reload_forgets_what_was_restored() -> None:
     assert not await guard.fits(MODEL, POOL, 3, 100_000)
     guard.forget_restored(MODEL)
     assert await guard.fits(MODEL, POOL, 3, 100_000)
+
+
+# ---- the chat pair's re-warm erase and eviction order ----------------------------------------
+
+
+async def test_a_restore_erase_goes_only_to_an_idle_slot_with_no_other_call_placed() -> None:
+    told: list[tuple[str, int]] = []
+    gw = _Gateway(_layout(s0=_slot(0, 47_000)))
+    guard = _guard(gw)
+    guard.add_erase_listener(lambda m, s: told.append((m, s)))
+    ticket = await guard.reserve_restore(MODEL, POOL, 0, 29_000)
+    assert ticket is not None
+    # Another call of this process is placed on the slot: refused.
+    guard._hold(MODEL, 0, ticket + 1000, 5_000)
+    assert not await guard.erase_for_restore(MODEL, POOL, 0, ticket)
+    guard.end_restore(MODEL, 0, ticket + 1000)
+    # Only the restore's own hold: erased, and the store is told.
+    assert await guard.erase_for_restore(MODEL, POOL, 0, ticket)
+    assert gw.erased == [0] and told == [(MODEL, 0)]
+    guard.end_restore(MODEL, 0, ticket)
+
+
+async def test_a_restore_erase_never_reaches_a_busy_slot_or_a_stale_layout() -> None:
+    busy = _Gateway(_layout(s0=_slot(0, 47_000, busy=True, decoded=5)))
+    assert not await _guard(busy).erase_for_restore(MODEL, POOL, 0, 1)
+    assert busy.erased == []
+    stale = _Gateway([_slot(i) for i in range(4)])
+    assert not await _guard(stale).erase_for_restore(MODEL, POOL, 0, 1)
+    assert stale.erased == []
+
+
+async def test_a_server_that_cannot_erase_is_remembered() -> None:
+    gw = _Gateway(_layout(s0=_slot(0, 47_000)), erase_ok=False)
+    guard = _guard(gw)
+    assert not await guard.erase_for_restore(MODEL, POOL, 0, 1)
+    assert guard._cannot_erase(MODEL)
+    refused = _Gateway(_layout(s0=_slot(0, 47_000)), refuse=frozenset({0}))
+    assert not await _guard(refused).erase_for_restore(MODEL, POOL, 0, 1)
+
+
+async def test_the_pool_frees_the_latest_chat_last_whichever_pair_slot_holds_it() -> None:
+    guard = _guard(_Gateway(_layout()))
+    guard.set_keep_last(lambda _m: 0)
+    assert guard._eviction_order(MODEL, POOL)[-2:] == [9, 0]
+
+    def broken(_m: str) -> int | None:
+        raise RuntimeError("store gone")
+
+    guard.set_keep_last(broken)
+    assert guard._eviction_order(MODEL, POOL) == POOL.eviction_order()
+
+
+async def test_an_eviction_spares_the_latest_chat_until_the_warm_slot_is_gone() -> None:
+    # Only the two chat slots hold anything, and the call needs one of them gone. Whichever
+    # holds the latest chat stays; the other — the warm prefix, restorable from disk — goes.
+    gw = _Gateway(_layout(s0=_slot(0, 520_000), s9=_slot(9, 520_000)))
+    guard = _guard(gw)
+    guard.set_keep_last(lambda _m: 0)
+    async with guard.placed(MODEL, POOL, SlotRole.RESEARCH, prompt_tokens=40_000, max_tokens=4_000):
+        pass
+    assert gw.erased == [9]
+    gw2 = _Gateway(_layout(s0=_slot(0, 520_000), s9=_slot(9, 520_000)))
+    guard2 = _guard(gw2)
+    guard2.set_keep_last(lambda _m: 9)
+    async with guard2.placed(
+        MODEL, POOL, SlotRole.RESEARCH, prompt_tokens=40_000, max_tokens=4_000
+    ):
+        pass
+    assert gw2.erased == [0]
+
+
+async def test_with_no_store_the_larger_chat_cache_is_kept_last() -> None:
+    """The worker's guard has no store to say which chat slot holds the latest conversation.
+    The conversation is the one grown past the prefix, so the smaller chat slot goes first —
+    whichever id it has; by static rank alone slot 0 would go first even holding the chat."""
+    conversation_in_a = _Gateway(_layout(s0=_slot(0, 700_000), s9=_slot(9, 100_000)))
+    guard = _guard(conversation_in_a)
+    assert guard._eviction_order(MODEL, POOL, conversation_in_a._reads[0])[-2:] == [9, 0]
+    async with guard.placed(
+        MODEL, POOL, SlotRole.RESEARCH, prompt_tokens=250_000, max_tokens=4_000
+    ):
+        pass
+    assert conversation_in_a.erased[-1] == 9, "the warm prefix goes; the conversation stays"
+    assert 0 not in conversation_in_a.erased
+
+    conversation_in_b = _Gateway(_layout(s0=_slot(0, 100_000), s9=_slot(9, 700_000)))
+    guard_b = _guard(conversation_in_b)
+    assert guard_b._eviction_order(MODEL, POOL, conversation_in_b._reads[0])[-2:] == [0, 9]
+    async with guard_b.placed(
+        MODEL, POOL, SlotRole.RESEARCH, prompt_tokens=250_000, max_tokens=4_000
+    ):
+        pass
+    assert conversation_in_b.erased[-1] == 0
+    assert 9 not in conversation_in_b.erased
+
+
+async def test_equal_or_empty_chat_slots_keep_the_static_order() -> None:
+    guard = _guard(_Gateway(_layout()))
+    assert guard._eviction_order(MODEL, POOL, _layout()) == POOL.eviction_order()
+    assert guard._eviction_order(MODEL, POOL) == POOL.eviction_order()
+
+
+async def test_a_store_that_knows_beats_the_size_guess() -> None:
+    layout = _layout(s0=_slot(0, 700_000), s9=_slot(9, 100_000))
+    guard = _guard(_Gateway(layout))
+    guard.set_keep_last(lambda _m: 9)
+    assert guard._eviction_order(MODEL, POOL, layout)[-1] == 9

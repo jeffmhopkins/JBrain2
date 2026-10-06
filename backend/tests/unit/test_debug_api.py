@@ -936,8 +936,8 @@ def test_slots_route_sets_and_bounds_a_local_models_slot_count() -> None:
             resp = client.put(url, headers=_auth(key), json={"slots": change})
             assert resp.status_code == 409 and "slot count is fixed" in resp.json()["detail"]
         assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
-        resp = client.put(url, headers=_auth(key), json={"slots": 9})
-        assert {m["id"]: m for m in resp.json()["local_models"]}[flash]["parallel_slots"] == 9
+        resp = client.put(url, headers=_auth(key), json={"slots": 10})
+        assert {m["id"]: m for m in resp.json()["local_models"]}[flash]["parallel_slots"] == 10
         window = f"/api/debug/llm/local-models/{flash}/context-window"
         resp = client.put(window, headers=_auth(key), json={"context_window": 65536})
         assert resp.status_code == 409 and "context window is fixed" in resp.json()["detail"]

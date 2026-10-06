@@ -8,9 +8,13 @@ pair) or the model is evicted.
 import asyncio
 import contextlib
 from collections.abc import Collection, Sequence
-from typing import cast
+from typing import Any, cast
+
+import pytest
 
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.llm import kv_prefix
+from jbrain.llm.kv_prefix import ChatSlotTakenError
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.slot_roles import SlotRole
@@ -74,6 +78,8 @@ class _FakeRouter:
         # Every prime's max_tokens. The store's exact-integer save gate is sound ONLY because
         # the prime generates exactly one token; nothing asserted it.
         self.max_tokens: list[int] = []
+        # (slot_role, exact_slot) of every prime: a chat pair's prime is pinned exactly.
+        self.pinned: list[tuple[object, bool]] = []
 
     async def primary_local_served_model(self) -> str | None:
         return self._served
@@ -95,9 +101,18 @@ class _FakeRouter:
             await self._gateway.load(served_model)
 
     async def converse(
-        self, task: str, *, system: str, messages, tools=(), max_tokens=4096, slot_role=None
+        self,
+        task: str,
+        *,
+        system: str,
+        messages,
+        tools=(),
+        max_tokens=4096,
+        slot_role=None,
+        exact_slot=False,
     ):
         self.max_tokens.append(max_tokens)
+        self.pinned.append((slot_role, exact_slot))
         if self._gateway is not None:
             self._gateway.events.append("prime")
         if self.fail:
@@ -405,6 +420,47 @@ class _FakeKvStore:
         self.raise_on_save = False
         self.roles: list[tuple[str, SlotRole | None]] = []  # the role each restore and save named
         self.idle_saves: list[str] = []
+        # The chat pair: the member a prime goes to, and what a re-warm says it could not serve.
+        self.target: SlotRole = SlotRole.INTERACTIVE
+        self.unservable: list[SlotRole] = []
+        self.pair_listeners: list[Any] = []
+        self.rewarms = 0
+        self.backgrounds: list[bool] = []
+        # The pair state the keeper reads: where the latest chat is, how long the chat has been
+        # quiet, whether a prime may claim its slot — and what it claimed and released.
+        self.recent: int | None = 0
+        self.quiet = float("inf")
+        self.claim_ok = True
+        self.claims: list[SlotRole] = []
+        self.released: list[SlotRole] = []
+
+    def recent_slot(self, served: str) -> int | None:
+        return self.recent
+
+    def chat_quiet_s(self, served: str) -> float:
+        return self.quiet
+
+    def claim_for_prime(self, served: str, role: SlotRole) -> bool:
+        if self.claim_ok:
+            self.claims.append(role)
+        return self.claim_ok
+
+    def release_prime(self, served: str, role: SlotRole) -> None:
+        self.released.append(role)
+
+    def add_pair_listener(self, listener: Any) -> None:
+        self.pair_listeners.append(listener)
+
+    def warm_target(self, served: str) -> SlotRole:
+        return self.target
+
+    async def rewarm_pair(
+        self, served: str, system: str, tools, *, reasoning_effort: str | None = None
+    ) -> list[SlotRole]:
+        self.rewarms += 1
+        self.roles.append(("rewarm", None))
+        due, self.unservable = self.unservable, []
+        return due
 
     async def restore_if_lost(
         self,
@@ -414,10 +470,12 @@ class _FakeKvStore:
         *,
         reasoning_effort: str | None = None,
         role: SlotRole | None = None,
+        background: bool = False,
     ) -> bool:
         self._gateway.events.append("kv_restore")
         self.restores.append(served)
         self.roles.append(("restore", role))
+        self.backgrounds.append(background)
         if self.raise_on_restore:
             raise RuntimeError("disk went away")
         return self.restore_result
@@ -648,7 +706,8 @@ async def test_a_settled_pooled_tick_refills_the_scheduled_slot_and_saves_an_idl
     assert await keeper.reconcile_once() is True  # primes
     store.roles.clear()
     assert await keeper.reconcile_once() is True  # settled
-    assert store.roles == [("restore", SlotRole.INTERACTIVE), ("restore", SlotRole.SCHEDULED)]
+    # The chat pair is tended by re-warm (the interactive restore is part of it).
+    assert store.roles == [("rewarm", None), ("restore", SlotRole.SCHEDULED)]
     assert store.idle_saves == [fn]
 
 
@@ -659,3 +718,153 @@ async def test_a_standard_model_tends_no_other_role() -> None:
     assert await keeper.reconcile_once() is True
     assert store.roles == [("restore", SlotRole.INTERACTIVE)]
     assert store.idle_saves == []
+
+
+# ---- the chat pair --------------------------------------------------------------------------
+
+
+def _pair_keeper(
+    *, slots: list[dict[str, object]] | None = None
+) -> tuple[WarmKeeper, _FakeGateway, _FakeRouter, _FakeKvStore]:
+    fn = "qwen3.8-flash-next"
+    keeper, gateway, router, store = _kept_with_store(fn, running={fn})
+    live = slots if slots is not None else [{"id": i, "is_processing": False} for i in range(10)]
+
+    async def read(_served: str) -> list[dict[str, object]]:
+        return live
+
+    gateway.slots = read  # type: ignore[attr-defined]
+    return keeper, gateway, router, store
+
+
+async def test_a_pair_prime_goes_exactly_to_the_member_the_store_names() -> None:
+    keeper, _gateway, router, store = _pair_keeper()
+    store.target = SlotRole.INTERACTIVE_ALT
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == [(SlotRole.INTERACTIVE_ALT, True)]
+    assert ("restore", SlotRole.INTERACTIVE_ALT) in store.roles
+    assert store.backgrounds[0] is True, "never waits on, or erases, a chat's slot"
+    assert ("save", SlotRole.INTERACTIVE_ALT) in store.roles
+    # The prime claimed its slot and let it go, whatever happened.
+    assert store.claims == store.released == [SlotRole.INTERACTIVE_ALT]
+
+
+async def test_a_prime_whose_slot_a_chat_holds_is_not_sent() -> None:
+    keeper, _gateway, router, store = _pair_keeper()
+    store.claim_ok = False
+    assert await keeper.reconcile_once() is False, "the next tick picks the target again"
+    assert router.pinned == []
+    assert store.released == []
+
+
+async def test_a_prime_the_router_refuses_at_dispatch_is_released() -> None:
+    keeper, _gateway, router, store = _pair_keeper()
+    assert await keeper.reconcile_once() is True
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    store.claims.clear()
+    store.released.clear()
+
+    async def taken(*_a: Any, **_kw: Any) -> Any:
+        raise ChatSlotTakenError("a chat took it")
+
+    router.converse = taken  # type: ignore[method-assign]
+    assert await keeper.reconcile_once() is True, "the chat's now: nothing to retry"
+    assert store.claims == store.released == [SlotRole.INTERACTIVE_ALT]
+
+
+async def test_no_fallback_prime_between_a_chats_tool_rounds() -> None:
+    # The new chat's first model call was just noted: the agent loop is running a tool, both
+    # chat slots read idle — but the chat is not quiet, so nothing is primed.
+    keeper, _gateway, router, store = _pair_keeper()
+    assert await keeper.reconcile_once() is True
+    router.pinned.clear()
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    store.quiet = 5.0
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == []
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    store.quiet = kv_prefix.PRIME_QUIET_S + 1
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == [(SlotRole.INTERACTIVE_ALT, True)]
+
+
+async def test_after_a_restart_with_the_gate_closed_only_the_first_prime_runs() -> None:
+    # A fresh api: the store knows no latest chat. The keeper primes its target once; the
+    # other slot, which may hold the owner's live chat, is not primed on a guess.
+    keeper, _gateway, router, store = _pair_keeper()
+    store.recent = None
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == [(SlotRole.INTERACTIVE, True)]
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == [(SlotRole.INTERACTIVE, True)]
+
+
+async def test_a_slot_no_restore_can_serve_is_primed_exactly_and_saved_as_warm() -> None:
+    keeper, _gateway, router, store = _pair_keeper()
+    assert await keeper.reconcile_once() is True  # the first prime
+    router.pinned.clear()
+    store.roles.clear()
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == [(SlotRole.INTERACTIVE_ALT, True)]
+    assert ("save", SlotRole.INTERACTIVE_ALT) in store.roles
+
+
+async def test_no_fallback_prime_runs_while_a_chat_slot_is_busy() -> None:
+    busy = [{"id": i, "is_processing": i == 0} for i in range(10)]
+    keeper, _gateway, router, store = _pair_keeper(slots=busy)
+    assert await keeper.reconcile_once() is True
+    router.pinned.clear()
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == [], "the owner's turn comes first"
+
+
+async def test_an_unreadable_slots_read_counts_as_busy() -> None:
+    keeper, gateway, router, store = _pair_keeper()
+    assert await keeper.reconcile_once() is True
+    router.pinned.clear()
+
+    async def broken(_served: str) -> list[dict[str, object]]:
+        raise RuntimeError("gateway gone")
+
+    gateway.slots = broken  # type: ignore[attr-defined]
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    assert await keeper.reconcile_once() is True
+    assert router.pinned == []
+
+
+async def test_a_failed_fallback_prime_asks_for_a_quick_retry() -> None:
+    keeper, _gateway, router, store = _pair_keeper()
+    assert await keeper.reconcile_once() is True
+    router.fail = True
+    store.unservable = [SlotRole.INTERACTIVE_ALT]
+    assert await keeper.reconcile_once() is False
+
+
+async def test_a_chat_moving_slots_wakes_the_keeper_now_and_after_each_quiet_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keeper, _gateway, _router, store = _pair_keeper()
+    assert len(store.pair_listeners) == 1
+    later: list[float] = []
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "call_later", lambda delay, _cb, *a: later.append(delay))
+    keeper._wake.clear()
+    store.pair_listeners[0]("qwen3.8-flash-next")
+    assert keeper._wake.is_set()
+    assert later == [kv_prefix.REWARM_QUIET_S + 1.0, kv_prefix.PRIME_QUIET_S + 1.0]
+
+
+def test_a_move_with_no_running_loop_still_wakes() -> None:
+    keeper, _gateway, _router, store = _pair_keeper()
+    store.pair_listeners[0]("qwen3.8-flash-next")
+    assert keeper._wake.is_set()
+
+
+async def test_a_model_without_a_pair_never_rewarms() -> None:
+    keeper, _gateway, _router, store = _kept_with_store(running={"gpt-oss-120b"})
+    assert await keeper.reconcile_once() is True
+    assert await keeper.reconcile_once() is True
+    assert store.rewarms == 0

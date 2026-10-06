@@ -177,7 +177,7 @@ from jbrain.llm import build_router, drain, engine_switch, gpu_guard
 from jbrain.llm import engine as engine_mod
 from jbrain.llm.engine_effort import EngineEffortCache
 from jbrain.llm.kv_pool_guard import KvPoolGuard
-from jbrain.llm.kv_prefix import KvPrefixStore
+from jbrain.llm.kv_prefix import KvPrefixStore, set_process_store
 from jbrain.llm.ledger import ReservationLedger
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import (
@@ -628,6 +628,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Restores into a pool are fitted under the same guard every pinned call uses.
             pool_guard=getattr(app.state, "kv_pool_guard", None),
         )
+        # The settings read shows what each chat pair slot holds off this store.
+        set_process_store(app.state.kv_prefix)
         app.state.llm_router = build_router(
             settings,
             recorder=SqlUsageRecorder(maker),
@@ -1603,6 +1605,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             engine_api.HttpSupervisor(app.state.supervisor_client, settings.supervisor_token),
         )
         yield
+        # The settings read stops reading this app's chat pair state once it is torn down.
+        set_process_store(None)
         # Finalize a recording that is still running, before anything else is torn down.
         # An Ops → Update while the tape deck is going would otherwise take the clip's
         # spool file with the container — and an interrupted recording is still a

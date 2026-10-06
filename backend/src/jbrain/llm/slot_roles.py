@@ -1,10 +1,15 @@
 """Which llama-server slot a call lands in on a pooled model, and how much of the pool it may use.
 
-Flash-Next serves one shared `--kv-unified` pool to nine slots (FLASH_NEXT_ENGINE_PLAN §4a).
+Flash-Next serves one shared `--kv-unified` pool to ten slots (FLASH_NEXT_ENGINE_PLAN §4a).
 Slots are prefix caches, not concurrency: each keeps the last prompt it ran warm, so the slot a
 call is pinned to decides whose prefix it reuses and whose it would evict. Pinning is by ROLE,
 and a role comes from the task name — except `agent.turn`, which the interactive chat and every
 background agent share, so those callers name their role explicitly (`role_for`'s override).
+
+The chat has TWO slots, the pool's `chat_pair` (owner, 2026-10-06): one always holds the most
+recent conversation, the other the bare jerv prefix, kept warm. Which is which alternates, so the
+pair is two roles routed per turn by the disk store (`KvPrefixStore.pick_chat_role`), not one
+role pinned to one slot.
 
 Each role carries a cap (prompt + output). Caps are per slot, not reservations: they add up to
 more than the pool, because most slots hold small prompts most of the time. What keeps the pool
@@ -47,6 +52,9 @@ class SlotRole(StrEnum):
     PET = "pet"  # the jpanel kid pet
     SMALL = "small"  # titles, triage, one-shot vision reads, probes; the pet's overflow
     BROWSE = "browse"  # the browse sub-agent's steps (one run at a time)
+    # jerv's second chat slot: the other half of the pool's `chat_pair`. Never named by a
+    # caller — a chat turn asks for INTERACTIVE and the router picks the pair member.
+    INTERACTIVE_ALT = "interactive_alt"
 
 
 @dataclass(frozen=True)
@@ -73,6 +81,9 @@ class KvPool:
     # Empty = fixed. Kept to sizes measured or worth measuring on the box, never free-form: a
     # unified pool allocates every cell at load, so a typo here is a load the guard aborts.
     cell_choices: tuple[int, ...] = ()
+    # The chat's two slots (see the module docstring), or None for a pool with one chat slot.
+    # Both are full roles with their own slot; the first is the one a caller names.
+    chat_pair: tuple[SlotRole, SlotRole] | None = None
 
     def __post_init__(self) -> None:
         if self.cell_choices and self.n_ctx not in self.cell_choices:
@@ -91,6 +102,19 @@ class KvPool:
                 raise ValueError(f"{r.role} cap {r.cap_tokens} exceeds the trained context")
             if r.overflow is not None and r.overflow not in roles:
                 raise ValueError(f"{r.role} overflows to a role the pool lacks")
+        if self.chat_pair is not None:
+            a, b = self.chat_pair
+            if a == b or a not in roles or b not in roles:
+                raise ValueError("the chat pair is two distinct roles of the pool")
+            for role in self.chat_pair:
+                # A pair member's turn is routed to the OTHER member by the store, never spilled.
+                if self.reservation(role).overflow is not None or any(
+                    o.overflow == role for o in self.reservations
+                ):
+                    raise ValueError("a chat pair slot takes part in no overflow")
+            if self.reservation(a).cap_tokens != self.reservation(b).cap_tokens:
+                # The chat's meter reads one cap whichever member a turn lands in.
+                raise ValueError("both chat pair slots carry the same cap")
 
     @property
     def n_slots(self) -> int:
@@ -111,9 +135,18 @@ class KvPool:
     def by_slot(self, slot: int) -> RoleReservation:
         return self.reservations[slot]
 
-    def eviction_order(self) -> list[int]:
-        """Slot ids, the first to free when the pool needs room first."""
-        return [r.slot for r in sorted(self.reservations, key=lambda r: r.eviction_rank)]
+    def in_pair(self, role: SlotRole) -> bool:
+        return self.chat_pair is not None and role in self.chat_pair
+
+    def eviction_order(self, keep_last: int | None = None) -> list[int]:
+        """Slot ids, the first to free when the pool needs room first. `keep_last` moves one
+        slot to the end — the chat pair member holding the most recent conversation, which its
+        static rank cannot say because the pair's two members swap jobs every new chat."""
+        order = [r.slot for r in sorted(self.reservations, key=lambda r: r.eviction_rank)]
+        if keep_last is not None and keep_last in order:
+            order.remove(keep_last)
+            order.append(keep_last)
+        return order
 
     def resized(self, cells: int | None) -> "KvPool":
         """This pool at a saved size, or unchanged when `cells` is not one of its choices.
@@ -141,8 +174,9 @@ FLASH_NEXT_POOL_CELLS: Final = (524_288, 1_048_576)
 FLASH_NEXT_POOL: Final = KvPool(
     n_ctx=524_288,
     cell_choices=FLASH_NEXT_POOL_CELLS,
+    chat_pair=(SlotRole.INTERACTIVE, SlotRole.INTERACTIVE_ALT),
     reservations=(
-        RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 8, "jerv (chat, omnibox)"),
+        RoleReservation(SlotRole.INTERACTIVE, 0, 262_144, 8, "jerv chat A"),
         RoleReservation(SlotRole.INGEST, 1, 131_072, 7, "Ingest and analysis"),
         RoleReservation(SlotRole.SCHEDULED, 2, 262_144, 6, "Scheduled tasks"),
         # A research run and a scheduled news run share this slot; spilling to the workshop
@@ -168,6 +202,13 @@ FLASH_NEXT_POOL: Final = KvPool(
         # cap, though a browse prompt compacts at ~24k (agent/browse.py). Freed early: its
         # prefix is worth something only while a run is going, and one run is a few minutes.
         RoleReservation(SlotRole.BROWSE, 8, 131_072, 1, "Browser agent"),
+        # jerv's second chat slot (owner, 2026-10-06), appended so slots 0-8 keep their ids.
+        # The pair holds the pool's top two ranks, and which member gets the last one follows
+        # the JOB, not the id: the pool guard is told which slot holds the most recent
+        # conversation and frees it last (`eviction_order(keep_last=...)`). Losing it
+        # re-prefills a whole conversation; the warm member holds only the jerv prefix, which
+        # the disk store restores in ~2 s. Same cap as A: a chat turn may land in either.
+        RoleReservation(SlotRole.INTERACTIVE_ALT, 9, 262_144, 9, "jerv chat B"),
     ),
 )
 
@@ -237,15 +278,38 @@ def slot_pin(role: SlotRole | None) -> SlotPin:
     return {"slot_role": role} if role is not None else {}
 
 
+class ExactPin(TypedDict, total=False):
+    slot_role: SlotRole
+    exact_slot: bool
+
+
+def exact_pin(role: SlotRole, exact: bool) -> ExactPin:
+    """The keywords that pin a router call to `role`'s own slot even on a chat pair, where a
+    turn naming no chat would otherwise be routed (the keeper priming a chosen member). Without
+    `exact` only the role is named, so a router fake without the keyword sees the old call."""
+    pin: ExactPin = {"slot_role": role}
+    if exact:
+        pin["exact_slot"] = True
+    return pin
+
+
 class ConversationPin(TypedDict, total=False):
     conversation_key: str
+    chat_key: str
 
 
-def conversation_pin(key: str | None) -> ConversationPin:
-    """The `conversation_key` keyword for a router turn — the chat conversation whose state the
-    disk store may save and restore around the interactive slot (FLASH_NEXT F4c). Absent when
-    there is none, for the same reason as `slot_pin`."""
-    return {"conversation_key": key} if key else {}
+def conversation_pin(key: str | None, chat_key: str | None = None) -> ConversationPin:
+    """The conversation keywords for a router turn. `conversation_key` names the chat whose
+    state the disk store may save and restore (FLASH_NEXT F4c) — only a chat that cannot hold
+    firewalled data has one. `chat_key` names EVERY chat, for routing alone: which chat pair
+    slot holds its live cache. It never leaves RAM. Each is absent when there is none, for the
+    same reason as `slot_pin`."""
+    pin: ConversationPin = {}
+    if key:
+        pin["conversation_key"] = key
+    if chat_key:
+        pin["chat_key"] = chat_key
+    return pin
 
 
 def layout_matches(pool: KvPool, slots: Sequence[object]) -> bool:

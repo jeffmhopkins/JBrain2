@@ -1,9 +1,10 @@
-// A pool model's KV pool (Flash-Next: one shared pool, nine role-pinned slots), read-only.
+// A pool model's KV pool (Flash-Next: one shared pool, ten role-pinned slots), read-only.
 // The server owns the window and the slot split and refuses changes (409), so the On-box row
 // shows one quiet line in place of the window/slot selects and this Sheet lists the slots.
 // GUI gate F3b, variant C — docs/mocks/kv-pool/c-slot-sheet.html, DESIGN.md "KV pool view".
 // Live per-slot use is not in the API yet; the mock's in-use tile, lit ticks and filled bars
-// stay out until it is, rather than being drawn from numbers nobody measured.
+// stay out until it is, rather than being drawn from numbers nobody measured. The one live
+// field is what each of jerv's two chat slots holds (`holds`), which the router does know.
 
 import { useEffect, useState } from "react";
 import type { KvPool } from "../api/client";
@@ -16,6 +17,7 @@ import { ArrowRightIcon, InfoIcon, LockIcon } from "./icons";
 // so a role named like an Object.prototype key can never read an inherited value.
 export const SLOT_SERVES: ReadonlyMap<string, string> = new Map([
   ["interactive", "Your chat turns and the omnibox."],
+  ["interactive_alt", "Your chat turns and the omnibox."],
   ["ingest", "Note ingest and the analysis pipeline."],
   ["scheduled", "Workflow runs fired on a schedule."],
   ["research", "Deep research and the sub-agents it fans out."],
@@ -30,6 +32,16 @@ export const SLOT_SERVES: ReadonlyMap<string, string> = new Map([
 // powers of two, so a decimal "1.4M" of caps beside a "1M" pool would misstate the
 // overcommit (the caps add up to more than the pool). Binary throughout, and the k/M boundary
 // is taken after rounding so a just-under-1M count can never print as "1024k".
+// What a chat pair slot holds — the chip beside its role. Unknown shows nothing: no guess.
+export const PAIR_HOLDS: ReadonlyMap<string, string> = new Map([
+  ["recent_conversation", "latest chat"],
+  ["warm_prefix", "warm, ready"],
+  ["older_conversation", "older chat"],
+]);
+
+const PAIR_NOTE =
+  " jerv has two chat slots that swap jobs: one keeps your latest chat, the other holds jerv's prompt ready, so a new chat starts there without re-reading it. The slot a chat leaves is refilled from disk.";
+
 export function fmtTokens(n: number): string {
   if (n < 1024) return `${n}`;
   const k = Math.round(n / 1024);
@@ -181,6 +193,9 @@ export function KvPoolSheet({
                   <span className="kvp-top">
                     <span className="kvp-label">{s.label}</span>
                     <span className="llm-chip kvp-rchip">{s.role}</span>
+                    {s.holds && PAIR_HOLDS.has(s.holds) && (
+                      <span className="llm-chip kvp-hold">{PAIR_HOLDS.get(s.holds)}</span>
+                    )}
                   </span>
                   <span className="kvp-capbar">
                     <i style={{ width: `${(s.cap / maxCap) * 100}%` }} />
@@ -194,6 +209,7 @@ export function KvPoolSheet({
               {open && (
                 <div className="kvp-exp">
                   {SLOT_SERVES.get(s.role) ?? `Serves the ${s.role} role.`}
+                  {s.chat_pair ? PAIR_NOTE : ""}
                   {target && (
                     <>
                       {` When it fills, its prompts spill to ${target.label}. `}

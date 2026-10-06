@@ -2223,6 +2223,63 @@ describe("KV pool view (Flash-Next F3b, GUI gate C)", () => {
     await waitFor(() => expect(document.activeElement).toBe(small));
   });
 
+  it("marks jerv's two chat slots with what each holds, and explains the swap", async () => {
+    const pair = { cap: 262144, overflow: null, chat_pair: true };
+    stubLlmFetch(
+      poolSeed({
+        kv_pool: {
+          n_ctx: 1048576,
+          slots: [
+            { slot: 0, role: "interactive", label: "jerv chat A", holds: "warm_prefix", ...pair },
+            { slot: 1, role: "small", label: "Small prompts", cap: 65536, overflow: null },
+            {
+              slot: 2,
+              role: "interactive_alt",
+              label: "jerv chat B",
+              holds: "recent_conversation",
+              ...pair,
+            },
+          ],
+        },
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    const sheet = await openSheet();
+    const a = within(sheet).getByRole("button", { name: /jerv chat A/ });
+    const b = within(sheet).getByRole("button", { name: /jerv chat B/ });
+    expect(within(a).getByText("warm, ready")).toBeInTheDocument();
+    expect(within(b).getByText("latest chat")).toBeInTheDocument();
+    // Not a pair slot: no holds chip.
+    const small = within(sheet).getByRole("button", { name: /Small prompts/ });
+    expect(small.querySelector(".kvp-hold")).toBeNull();
+    fireEvent.click(b);
+    expect(within(sheet).getByText(/two chat slots that swap jobs/)).toBeInTheDocument();
+  });
+
+  it("shows no holds chip when the server does not know what a pair slot holds", async () => {
+    stubLlmFetch(
+      poolSeed({
+        kv_pool: {
+          n_ctx: 524288,
+          slots: [
+            {
+              slot: 0,
+              role: "interactive",
+              label: "jerv chat A",
+              cap: 262144,
+              overflow: null,
+              chat_pair: true,
+              holds: "unknown",
+            },
+          ],
+        },
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    const sheet = await openSheet();
+    expect(sheet.querySelector(".kvp-hold")).toBeNull();
+  });
+
   it("shows the caps it will use when the pool model is off-engine", async () => {
     stubLlmFetch(
       poolSeed({

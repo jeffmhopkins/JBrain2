@@ -4139,6 +4139,18 @@ def _needs_save_path(resp: httpx.Response) -> bool:
     return resp.status_code == 501 or "slot-save-path" in resp.text
 
 
+def _probe_default_slots(served: str, n_slots: int) -> tuple[int, int]:
+    """The last two slots — except that on a pool with a chat pair, the chat slots are never
+    picked by default: the last one is jerv's second chat slot (the warm prefix or the owner's
+    latest chat), so the probe takes the last two OTHER slots."""
+    pool = local_catalog.pool_of(served)
+    if pool is not None and pool.chat_pair is not None and n_slots == pool.n_slots:
+        spare = [i for i in range(n_slots) if not pool.in_pair(pool.by_slot(i).role)]
+        if len(spare) >= 2:
+            return spare[-2], spare[-1]
+    return n_slots - 2, n_slots - 1
+
+
 @router.post("/llm/slot-probe")
 async def slot_probe(
     body: SlotProbeIn, request: Request, settings: SettingsDep, _p: DebugDep
@@ -4163,7 +4175,7 @@ async def slot_probe(
     gate. `sidecar` says whether the save wrote the checkpoint sidecar, i.e. whether the
     patched engine is running.
     Any slot pair may be named, slot 0 included (Flash-Next's slots are role-pinned: name ones
-    whose prefix you can afford to lose — 6 and 7 by default).
+    whose prefix you can afford to lose — 7 and 8 by default, never a chat pair slot).
 
     **Overwrites both slots' caches** — pick slots no live workload is pinned to (on
     Flash-Next, not slot 0's persona). 409 when no model is resident (this never loads one),
@@ -4207,8 +4219,9 @@ async def slot_probe(
             "itself only when there are three or more (it never defaults to slot 0, the "
             "persona slot) — name slot_a and slot_b to use slot 0 deliberately",
         )
-    slot_a = body.slot_a if body.slot_a is not None else n_slots - 2
-    slot_b = body.slot_b if body.slot_b is not None else n_slots - 1
+    default_a, default_b = _probe_default_slots(served, n_slots)
+    slot_a = body.slot_a if body.slot_a is not None else default_a
+    slot_b = body.slot_b if body.slot_b is not None else default_b
     if slot_a == slot_b or max(slot_a, slot_b) >= n_slots:
         raise HTTPException(
             status_code=400,

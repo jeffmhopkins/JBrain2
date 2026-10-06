@@ -674,12 +674,12 @@ permanent block at the top of Ops when nothing is happening.
 Sheet**; binding mock `docs/mocks/kv-pool/c-slot-sheet.html`, rivals A "summary that
 expands to a table" and B "stacked bar of caps" kept beside it with the round record in
 `docs/mocks/kv-pool/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` F3b).
-Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 512k tokens) across **nine
+Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 512k tokens) across **ten
 role-pinned slots**, each with a per-slot cap. Its window and slot count are the engine's,
 and the server refuses changes to them (409), so the per-model selects were a lie for it.
 
 - **Pool models only** (`kv_pool` non-null): the *context window* and *slots* selects give
-  way to one line — *KV pool · **512k** shared · 9 slots*, a strip of **nine slot ticks**,
+  way to one line — *KV pool · **512k** shared · 10 slots*, a strip of **ten slot ticks**,
   and **View slots →**. Standard rows keep their selects; *keep loaded* and *image detail*
   are unchanged on both.
 - **The Sheet** (the shared `Sheet`, "Modal system") is read-only and says so: a lock and
@@ -690,7 +690,13 @@ and the server refuses changes to them (409), so the per-model selects were a li
   where it spills when full, naming the target's label from the pool, and links to it: the
   link selects, scrolls to and focuses that slot. The slot's `overflow` field is the
   source; a server without it falls back to the engine's pet → small rule.
-- **Role hues pair by job family** — steel for you (interactive), amber for background
+- **jerv's two chat slots** (`chat_pair: true`, roles `interactive` and `interactive_alt`,
+  labelled *jerv chat A* / *B*) carry a neutral **holds chip** after the role chip, from the
+  one live per-slot field the API has (`holds`): *latest chat*, *warm, ready* or *older chat*;
+  `unknown` or a missing field shows no chip — never a guess. Their expanded line adds that the
+  two swap jobs: one keeps the latest chat, the other holds jerv's prompt ready for a new one,
+  refilled from disk. Neutral (surface-2, secondary text), so it reads as state, not a role.
+- **Role hues pair by job family** — steel for you (interactive, interactive_alt), amber for background
   work (ingest, scheduled), violet for agents (research, jcode), green for writing
   (workshop, pet), grey for small; the second slot of a pair is lighter. An unknown role
   reads grey rather than failing.
@@ -704,7 +710,7 @@ and the server refuses changes to them (409), so the per-model selects were a li
   `engine` ≠ the effective engine), not from "Stage is blocked": hosting off, not
   installed or switched unavailable must not claim the engine is stopped. Only with no
   engine state does the load route's *"Runs on the … engine"* sentence stand in.
-- **Caps only until the API reports use.** The mock's live states (an *In use* tile, lit
+- **Caps only until the API reports use** (the chat pair's `holds` aside). The mock's live states (an *In use* tile, lit
   ticks, filled bars, per-slot state dots, the router-freed-a-slot footer) are drawn only
   from a real per-slot occupancy field; there is none yet, so the ticks stay unlit and the
   third tile reads *Caps total*. Nothing is estimated.
