@@ -289,6 +289,12 @@ class KvPoolSlotOut(BaseModel):
     cap: int
     # The role a call goes to when this one's slot is busy and that one is idle, or null.
     overflow: str | None = None
+    # One of jerv's two chat slots (the pool's chat pair), which swap jobs every new chat.
+    chat_pair: bool = False
+    # For a chat pair slot: what it holds now, as this api process knows it —
+    # "recent_conversation", "warm_prefix", "older_conversation" or "unknown". Null for every
+    # other slot, and when nothing is known (no live store, e.g. the engine not running).
+    holds: str | None = None
 
 
 class KvPoolOut(BaseModel):
@@ -299,9 +305,12 @@ class KvPoolOut(BaseModel):
     slots: list[KvPoolSlotOut]
 
 
-def _kv_pool_out(pool: slot_roles.KvPool | None) -> KvPoolOut | None:
+def _kv_pool_out(
+    pool: slot_roles.KvPool | None, served_model: str | None = None
+) -> KvPoolOut | None:
     if pool is None:
         return None
+    holdings = {} if served_model is None else kv_prefix_mod.chat_pair_holdings(served_model)
     return KvPoolOut(
         n_ctx=pool.n_ctx,
         slots=[
@@ -311,6 +320,8 @@ def _kv_pool_out(pool: slot_roles.KvPool | None) -> KvPoolOut | None:
                 label=r.label,
                 cap=r.cap_tokens,
                 overflow=r.overflow.value if r.overflow is not None else None,
+                chat_pair=pool.in_pair(r.role),
+                holds=holdings.get(r.role),
             )
             for r in pool.reservations
         ],
@@ -974,7 +985,7 @@ def _local_model_info(
         slots_drop_disk_cache=bool(m.recurrent and m.is_mtp_speculative),
         parallel_slots_max=slots_max(m),
         default_slots=m.default_slots,
-        kv_pool=_kv_pool_out(pool),
+        kv_pool=_kv_pool_out(pool, m.served_model),
         engine=m.engine,
         loadable_now=blocked is None,
         blocked_reason=blocked,

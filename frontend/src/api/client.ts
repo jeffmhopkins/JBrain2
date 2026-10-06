@@ -1159,6 +1159,11 @@ export interface KvPoolSlot {
   /** The role whose slot takes this one's calls when it is busy (the pet spills to small),
    * or null. The server sends it on every slot of every pool it reports. */
   overflow: string | null;
+  /** One of jerv's two chat slots, which swap jobs every new chat. Absent on older servers. */
+  chat_pair?: boolean;
+  /** For a chat pair slot, what it holds now: "recent_conversation", "warm_prefix",
+   * "older_conversation" or "unknown"; null/absent when not known or not a pair slot. */
+  holds?: string | null;
 }
 
 /** A shared KV pool: `n_ctx` tokens split across role-pinned slots. The caps may add up to

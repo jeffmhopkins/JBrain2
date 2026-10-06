@@ -127,6 +127,18 @@ async def _now_time(arguments: Any, ctx: Any) -> ToolOutput:
     return ToolOutput("12:00")
 
 
+def _displace(client: TestClient, app: Any, gw: Any, a_tokens: int = 40_299) -> None:
+    """Two more chats after sess-A, so A's slot is reused. Flash-Next's chat has two slots
+    (the chat pair): the first other chat lands in the second slot and A stays live in slot 0;
+    only the next one takes slot 0, and A's conversation is saved off it first."""
+    _jerv(app, "sess-B")
+    _jerv(app, "sess-C")
+    gw.slot_state = _slots(s0=a_tokens)
+    _chat(client, "sess-B", "two", [])  # slot 9
+    gw.slot_state = _slots(s0=a_tokens, s9=31_299)
+    _chat(client, "sess-C", "three", [])  # slot 0: A is saved as C takes it
+
+
 def test_two_real_chat_turns_restore_the_conversation_on_the_second(
     box: tuple[TestClient, Any],
 ) -> None:
@@ -141,15 +153,17 @@ def test_two_real_chat_turns_restore_the_conversation_on_the_second(
             _tool_turn("current_time", 39_000),  # turn 1 of A runs a tool, then answers
             _final("it is noon", 40_000),
             _final("hello B", 31_000),
+            _final("hello C", 32_000),
             _final("still noon", 41_000, cached=40_100),
         ],
     )
     _chat(client, "sess-A", "what time is it?", [])
-    gw.slot_state = _slots(s0=40_299)  # slot 0 holds A's prompt + answer
-    _chat(client, "sess-B", "hi", [])  # B takes the slot: A is saved first
+    # B lands in the chat pair's other slot (A stays live); C takes A's slot: A is saved first.
+    _displace(client, app, gw)
     names = [n for _, n in gw.saved]
     assert len(names) == 1 and kv_conversation.is_conversation_file(names[0])
-    gw.slot_state = _slots(s0=31_099)
+    # Slot 0 now holds C (the latest chat), slot 9 B: A comes back into slot 9, saving B.
+    gw.slot_state = _slots(s0=32_299, s9=31_299)
     gw.restore_n = 40_299
     # Turn 2 of A: a different message list than turn 1 sent (history, no tool steps, fresh
     # volatile blocks) — restored anyway, on identity.
@@ -162,7 +176,7 @@ def test_two_real_chat_turns_restore_the_conversation_on_the_second(
             {"role": "assistant", "content": "it is noon"},
         ],
     )
-    assert gw.restored and gw.restored[-1] == (0, names[0])
+    assert gw.restored and gw.restored[-1] == (9, names[0])
     assert store._counters.get("conversation_restore_hit") == 1
 
 
@@ -180,17 +194,22 @@ def test_a_chat_that_ran_a_location_tool_never_reaches_disk(
             _tool_turn("current_location", 39_000),
             _final("you are home", 40_000),
             _final("hello B", 31_000),
+            _final("hello C", 32_000),
             _final("hello A", 41_000),
         ],
     )
     _chat(client, "sess-A", "where am I?", [])
-    gw.slot_state = _slots(s0=40_299)
-    _chat(client, "sess-B", "hi", [])
+    _displace(client, app, gw)
     assert store._counters.get("conversation_tainted") == 1
     assert gw.saved == [], "a conversation in which a location tool ran is never saved"
     _chat(client, "sess-A", "and now?", [{"role": "user", "content": "where am I?"}])
     assert gw.restored == []
-    assert not list(folder.glob("c-*.kvslot"))
+    # A's return displaced B (saved, as any clean chat is); nothing on disk is A's.
+    claims = [
+        kv_conversation.ConversationMeta.from_json(m.read_text())
+        for m in folder.glob("c-*.kvslot.meta")
+    ]
+    assert all(c is not None and c.key != kv_conversation.key_hash("sess-A") for c in claims)
 
 
 def test_a_brain_chat_never_gets_a_conversation_file(box: tuple[TestClient, Any]) -> None:
@@ -203,8 +222,7 @@ def test_a_brain_chat_never_gets_a_conversation_file(box: tuple[TestClient, Any]
     fake = _router(app, store, [_final("brain answer", 40_000), _final("hello B", 31_000)])
     _chat(client, "sess-A", "what do my notes say?", [])
     assert len(fake.stream_calls) == 1, "the turn ran"
-    gw.slot_state = _slots(s0=40_299)
-    _chat(client, "sess-B", "hi", [])
+    _displace(client, app, gw)
     assert gw.saved == []
 
 
@@ -217,8 +235,7 @@ def test_rescoping_a_session_forgets_its_files_and_keeps_it_off_disk(
     app.state.agent_registry = registry_with_tool("current_time", _now_time)
     _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
     _chat(client, "sess-A", "one", [])
-    gw.slot_state = _slots(s0=40_299)
-    _chat(client, "sess-B", "two", [])
+    _displace(client, app, gw)
     assert len(list(folder.glob("c-*.kvslot"))) == 1
     resp = client.post("/api/sessions/sess-A/scope", json={"domain_scopes": ["health"]})
     assert resp.status_code == 204
@@ -232,8 +249,7 @@ def test_the_delete_route_itself_deletes_the_sessions_files(box: tuple[TestClien
     app.state.agent_registry = registry_with_tool("current_time", _now_time)
     _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
     _chat(client, "sess-A", "one", [])
-    gw.slot_state = _slots(s0=40_299)
-    _chat(client, "sess-B", "two", [])  # A is saved as B takes the slot
+    _displace(client, app, gw)
     files = list(folder.glob("c-*.kvslot"))
     assert len(files) == 1
     assert client.delete("/api/sessions/sess-A").status_code == 204
@@ -253,8 +269,7 @@ def test_a_session_once_scoped_to_a_firewalled_domain_never_reaches_disk(
     assert resp.status_code == 204
     _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
     _chat(client, "sess-A", "one", [])
-    gw.slot_state = _slots(s0=40_299)
-    _chat(client, "sess-B", "two", [])
+    _displace(client, app, gw)
     assert gw.saved == []
     assert "sess-A" in app.state.settings_store.values["llm_kv_conversation_excluded_sessions"]
 
@@ -269,8 +284,7 @@ def test_the_routes_forget_under_the_canonical_id_whatever_case_they_were_called
     app.state.agent_registry = registry_with_tool("current_time", _now_time)
     _router(app, store, [_final("a", 40_000), _final("b", 31_000)])
     _chat(client, sid, "one", [])
-    gw.slot_state = _slots(s0=40_299)
-    _chat(client, "sess-B", "two", [])
+    _displace(client, app, gw)
     files = list(folder.glob("c-*.kvslot"))
     assert len(files) == 1
     # The chat keyed it on str(session.id); the route is called with the id upper-cased.

@@ -92,7 +92,7 @@ def test_render_stamps_the_saved_pool_size(tmp_path: Path) -> None:
     assert f" -c {ONE_M} " in _render(tmp_path, {FLASH_ID: ONE_M})
     # A stale per-sequence override is still ignored.
     assert f" -c {HALF_M} " in _render(tmp_path, {FLASH_ID: 65_536})
-    assert " -np 9 --kv-unified " in _render(tmp_path, {FLASH_ID: ONE_M})
+    assert " -np 10 --kv-unified " in _render(tmp_path, {FLASH_ID: ONE_M})
 
 
 def test_flash_next_loads_with_load_mode_none_and_keeps_the_engram_lazy_on_cpu(
@@ -106,9 +106,9 @@ def test_flash_next_loads_with_load_mode_none_and_keeps_the_engram_lazy_on_cpu(
 
 def test_pool_shape_honours_only_a_listed_saved_size() -> None:
     manifest = dataclasses.asdict(_flash())
-    assert slot_roles.pool_shape(manifest) == (HALF_M, 9)
-    assert slot_roles.pool_shape(manifest, ONE_M) == (ONE_M, 9)
-    assert slot_roles.pool_shape(manifest, 131_072) == (HALF_M, 9)
+    assert slot_roles.pool_shape(manifest) == (HALF_M, 10)
+    assert slot_roles.pool_shape(manifest, ONE_M) == (ONE_M, 10)
+    assert slot_roles.pool_shape(manifest, 131_072) == (HALF_M, 10)
 
 
 # --- the settings routes -------------------------------------------------------------------
@@ -135,7 +135,7 @@ def test_the_owner_route_sets_1m_and_reverts_to_512k() -> None:
     assert resp.status_code == 200, resp.text
     assert store.values["llm_local_context_windows"] == {FLASH_ID: ONE_M}
     row = _row(resp.json())
-    assert row["kv_pool"]["n_ctx"] == ONE_M and len(row["kv_pool"]["slots"]) == 9
+    assert row["kv_pool"]["n_ctx"] == ONE_M and len(row["kv_pool"]["slots"]) == 10
     assert row["kv_gb"] == pytest.approx(before["kv_gb"] + 14.0, abs=0.05)
     # The served pool is allocated at load, so a resident model is unloaded to re-stamp it.
     assert gw.unloaded == [FLASH_ID]
@@ -186,7 +186,7 @@ def test_a_standard_model_still_rejects_a_pool_sized_window_by_range() -> None:
 
 async def test_props_report_the_saved_pool_size() -> None:
     settings = _cloud_settings(local_llm_enabled=True, local_models=[FLASH_ID])
-    gw = FakeLocalGateway(props_payload={"n_ctx": 262144, "total_slots": 9})
+    gw = FakeLocalGateway(props_payload={"n_ctx": 262144, "total_slots": 10})
     props = await llm_settings.gateway_props(
         FLASH_ID,
         settings,
@@ -206,10 +206,11 @@ def _slots(held: int, cleared: frozenset[int] = frozenset()) -> list[dict[str, o
             "id": i,
             "n_ctx": 262_144,
             "is_processing": False,
-            "n_prompt_tokens": held if i and i not in cleared else 0,
+            # Slots 1-8 hold it; the chat pair (0 and 9) is empty.
+            "n_prompt_tokens": held if 0 < i < 9 and i not in cleared else 0,
             "next_token": [{"n_remain": 0, "n_decoded": 0}],
         }
-        for i in range(9)
+        for i in range(10)
     ]
 
 
@@ -348,7 +349,7 @@ def test_the_rendered_config_reports_the_served_pool(tmp_path: Path) -> None:
     }
     # The per-sequence shape is unchanged: a slot still cannot pass the training length.
     assert llama_swap_config.served_shape_from_config(str(tmp_path), engines.FLASH_NEXT) == {
-        FLASH_ID: (262_144, 9)
+        FLASH_ID: (262_144, 10)
     }
     assert llama_swap_config.served_pool_cells_from_config(str(tmp_path / "nope")) == {}
 

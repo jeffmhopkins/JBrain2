@@ -1127,6 +1127,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # Named only for a chat that cannot hold firewalled data — its slot state may then be
         # written to disk (FLASH_NEXT F4c). A Brain/curator chat never is.
         conversation_key=conversation_key,
+        # Every chat, for the chat pair's routing only: it never leaves RAM.
+        chat_key=str(session.id),
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain

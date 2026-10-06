@@ -759,6 +759,7 @@ class AgentLoop:
         hidden_tools_provider: Callable[[], Awaitable[Collection[str]]] | None = None,
         slot_role: SlotRole | None = None,
         conversation_key: str | None = None,
+        chat_key: str | None = None,
     ):
         self._router = router
         self._registry = registry
@@ -787,7 +788,9 @@ class AgentLoop:
         # The chat conversation this loop's turns belong to, named so the disk store can save
         # it when the interactive slot moves on and restore it when it speaks again. Only the
         # owner's chat passes one; every other caller's turns stay exactly as they were.
-        self._conversation: ConversationPin = conversation_pin(conversation_key)
+        # `chat_key` names every owner chat, firewalled or not, for routing alone: on a chat
+        # pair it keeps a chat's calls in the slot holding its live cache (never written out).
+        self._conversation: ConversationPin = conversation_pin(conversation_key, chat_key)
 
     async def _hidden(self) -> Collection[str]:
         """Tool names hidden this turn by the runtime provider (empty when no provider

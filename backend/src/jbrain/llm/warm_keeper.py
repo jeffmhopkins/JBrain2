@@ -33,6 +33,14 @@ conversation once it has idled (`KvPrefixStore.save_idle_conversation`). Restore
 prime: a second ~60 s prefill right after a load competed with the owner's first turn, which is
 why F3a dropped role priming.
 
+On a pool with a CHAT PAIR (two chat slots: the most recent conversation, and the warm jerv
+prefix) the keeper keeps the warm half warm. Its prime goes to the pair slot the store names
+(`KvPrefixStore.warm_target`), pinned exactly. And once a chat moves to the other slot the store
+wakes the keeper, whose tick re-warms the slot that chat left (`rewarm_pair`: erase, restore the
+file). When no restore can serve — no file for this identity yet, or the restore gate still
+awaiting its probe — it primes that slot instead, but only while neither chat slot is busy, so
+the background prefill never runs under the owner's turn.
+
 Best-effort throughout: a down gateway, a full box, the code-mode hold, or a failed prime is
 logged and retried on the next tick, never raised into boot or a turn.
 """
@@ -52,8 +60,8 @@ from jbrain.llm import local_catalog
 from jbrain.llm.kv_prefix import KvPrefixStore
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.slot_roles import WARM_ROLE, SlotRole
-from jbrain.llm.types import LlmTool, UserMessage
+from jbrain.llm.slot_roles import WARM_ROLE, SlotRole, exact_pin
+from jbrain.llm.types import LlmTool, LlmTurn, UserMessage
 
 log = structlog.get_logger()
 
@@ -140,6 +148,9 @@ class WarmKeeper:
         # longer overwritten by that prime's completion — a 60-200 s window in which the model
         # could be evicted and bare-reloaded, leaving it resident, cold, and marked primed.
         self._generation = 0
+        if kv_prefix is not None:
+            # A chat moving to the other pair slot leaves a slot to re-warm: tick now.
+            kv_prefix.add_pair_listener(lambda _served: self._wake.set())
 
     async def _auto_restore_allowed(self) -> bool:
         """Default OPEN when unwired (no loader) or on a settings read failure: this gate only
@@ -221,12 +232,16 @@ class WarmKeeper:
             # background task). The store CAN, by reading /slots, and puts it back from
             # disk off-turn — one cheap read per tick when nothing is wrong.
             if self._kv_prefix is not None:
-                try:
-                    await self._kv_prefix.restore_if_lost(
-                        served, system, tools, reasoning_effort=effort, role=WARM_ROLE
-                    )
-                except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
-                    log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
+                if self._has_pair(served):
+                    if not await self._tend_pair(served, system, tools, effort):
+                        return False
+                else:
+                    try:
+                        await self._kv_prefix.restore_if_lost(
+                            served, system, tools, reasoning_effort=effort, role=WARM_ROLE
+                        )
+                    except Exception:  # noqa: BLE001 — the disk layer must never wedge it
+                        log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
                 if local_catalog.pool_of(served) is not None:
                     await self._tend_pooled_roles(served, system, tools, effort)
             return True  # already primed with the current tool set — leave any live conversation be
@@ -271,10 +286,13 @@ class WarmKeeper:
         # means the prime pays the prefill, which is exactly the old behaviour. (This is
         # v2 of a removed idea; the module docstring of `kv_prefix` carries the post-mortem
         # of v1 and the verification rules that answer it.)
+        # On a chat pair the prime goes to the member the store names — the one due warming,
+        # never the most recent conversation — pinned there exactly.
+        role = self._prime_role(served)
         if self._kv_prefix is not None:
             try:
                 await self._kv_prefix.restore_if_lost(
-                    served, system, tools, reasoning_effort=effort, role=WARM_ROLE
+                    served, system, tools, reasoning_effort=effort, role=role
                 )
             except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
                 log.warning("warm_keeper.kv_restore_failed", model=served, exc_info=True)
@@ -291,17 +309,8 @@ class WarmKeeper:
         # ignores a role off a pool). No other role is primed — their stable prefixes are a few
         # hundred tokens, or a long prefill nobody is waiting on that would compete with the
         # owner's first turn after boot.
-        try:
-            prime_turn = await self._router.converse(
-                AGENT_TURN_TASK,
-                system=system,
-                messages=[UserMessage(text="warmup")],
-                tools=tools,
-                max_tokens=1,
-                slot_role=WARM_ROLE,
-            )
-        except Exception as exc:  # noqa: BLE001 — gateway down/cold/no-room: retry, never raise
-            log.info("warm_keeper.prime_failed", model=served, error=str(exc))
+        prime_turn = await self._prime(served, system, tools, role)
+        if prime_turn is None:
             return False
         if generation != self._generation:
             # The slot we primed was dropped while we were priming. Say nothing about being
@@ -320,7 +329,7 @@ class WarmKeeper:
                     tools,
                     prime_turn.usage.input_tokens,
                     reasoning_effort=effort,
-                    role=WARM_ROLE,
+                    role=role,
                 )
             except Exception:  # noqa: BLE001 — a failed save costs a future restore, nothing now
                 log.warning("warm_keeper.kv_save_failed", model=served, exc_info=True)
@@ -331,6 +340,80 @@ class WarmKeeper:
             hidden=sorted(hidden),
         )
         return True
+
+    def _has_pair(self, served: str) -> bool:
+        pool = local_catalog.pool_of(served)
+        return self._kv_prefix is not None and pool is not None and pool.chat_pair is not None
+
+    def _prime_role(self, served: str) -> SlotRole:
+        if self._kv_prefix is None or not self._has_pair(served):
+            return WARM_ROLE
+        return self._kv_prefix.warm_target(served) or WARM_ROLE
+
+    async def _prime(
+        self, served: str, system: str, tools: list[LlmTool], role: SlotRole
+    ) -> LlmTurn | None:
+        """One prime turn into `role`'s slot — exactly that slot on a chat pair, where the
+        router would otherwise route a turn naming no chat to the warm member."""
+        slot_kw = exact_pin(role, self._has_pair(served))
+        try:
+            return await self._router.converse(
+                AGENT_TURN_TASK,
+                system=system,
+                messages=[UserMessage(text="warmup")],
+                tools=tools,
+                max_tokens=1,
+                **slot_kw,
+            )
+        except Exception as exc:  # noqa: BLE001 — gateway down/cold/no-room: retry, never raise
+            log.info("warm_keeper.prime_failed", model=served, role=str(role), error=str(exc))
+            return None
+
+    async def _tend_pair(
+        self, served: str, system: str, tools: list[LlmTool], effort: str | None
+    ) -> bool:
+        """Keep the chat pair's warm half warm: re-warm from disk every pair slot due it, and
+        prime one that no restore can serve. False when such a prime failed (the tick retries
+        soon). Never primes while a chat slot is busy — the owner's turn comes first."""
+        store = self._kv_prefix
+        if store is None:
+            return True
+        try:
+            unservable = await store.rewarm_pair(served, system, tools, reasoning_effort=effort)
+        except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
+            log.warning("warm_keeper.kv_rewarm_failed", model=served, exc_info=True)
+            return True
+        if not unservable or await self._chat_busy(served):
+            return True
+        role = unservable[0]
+        generation = self._generation
+        turn = await self._prime(served, system, tools, role)
+        if turn is None:
+            return False
+        if generation != self._generation:
+            return False
+        try:
+            await store.save_after_prime(
+                served, system, tools, turn.usage.input_tokens, reasoning_effort=effort, role=role
+            )
+        except Exception:  # noqa: BLE001 — a failed save costs a future restore, nothing now
+            log.warning("warm_keeper.kv_save_failed", model=served, exc_info=True)
+        log.info("warm_keeper.pair_primed", model=served, role=str(role))
+        return True
+
+    async def _chat_busy(self, served: str) -> bool:
+        """Whether either chat pair slot is processing — or `/slots` cannot say."""
+        pool = local_catalog.pool_of(served)
+        if pool is None or pool.chat_pair is None:
+            return False
+        try:
+            slots = await self._gateway.slots(served)
+        except Exception:  # noqa: BLE001 — unreadable reads as busy: no blind prefill
+            return True
+        wanted = {pool.slot(role) for role in pool.chat_pair}
+        return any(
+            isinstance(s, dict) and s.get("id") in wanted and s.get("is_processing") for s in slots
+        )
 
     async def _tend_pooled_roles(
         self, served: str, system: str, tools: list[LlmTool], effort: str | None

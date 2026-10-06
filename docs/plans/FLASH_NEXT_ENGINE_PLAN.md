@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-05 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-06 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -24,7 +24,7 @@ upstream source and published measurements). §10 records what they changed.
 | Container | New `flash-next` compose profile, own image, own llama-swap config. Never co-resident with `local-llm`. |
 | Switching | PWA (Ops), no terminal. Drain → swap → smoke test → automatic rollback on failure. |
 | Routing | **Remap all calls**, inside the API — not by model-name aliases at the gateway (§4c). |
-| Slots | **9 role-pinned slots sharing one 524,288-cell (512k) `--kv-unified` pool**, each with a router-enforced per-slot **cap** (jerv 256k, ingest 128k, scheduled 256k, research 256k, jcode 256k, wiki/notes/intake 128k, pet 32k, small prompts 64k, browser agent 128k — §4a). The ninth, browse, was added 2026-10-05 (owner: research agents will browse a lot, so browsing gets its own prefix cache rather than sharing theirs). Caps oversubscribe the pool; a router **pool guard** frees idle slots in a fixed eviction order before the pool could overrun. Slots exist to **keep each hot prompt's prefix warm**, not for concurrency. Decided 2026-10-03 (superseding the 2026-10-01 512k/5-slot layout): the same cells as the 4×262k layout run live, with one slot per frequently-used prefix. |
+| Slots | **10 role-pinned slots sharing one 524,288-cell (512k) `--kv-unified` pool**, each with a router-enforced per-slot **cap** (jerv's two chat slots 256k each, ingest 128k, scheduled 256k, research 256k, jcode 256k, wiki/notes/intake 128k, pet 32k, small prompts 64k, browser agent 128k — §4a). The ninth, browse, was added 2026-10-05 (owner: research agents will browse a lot, so browsing gets its own prefix cache rather than sharing theirs); the tenth, jerv's second chat slot, 2026-10-06 (the chat pair, §4a). Caps oversubscribe the pool; a router **pool guard** frees idle slots in a fixed eviction order before the pool could overrun. Slots exist to **keep each hot prompt's prefix warm**, not for concurrency. Decided 2026-10-03 (superseding the 2026-10-01 512k/5-slot layout): the same cells as the 4×262k layout run live, with one slot per frequently-used prefix. |
 | Checkpoints | **8 per slot** to start; 16 only once F2 has measured their real cost (§3). |
 | Quant | Unsloth **UD-IQ4_XS** (93.7 GB on disk) + F16 vision projector (904 MB). |
 | Engram (PLE) table | **Memory-mapped from disk**, pinned to CPU (`-ot per_layer_token_embd=CPU`). |
@@ -191,7 +191,7 @@ every other range is dropped; §3a).
   this engine; `mmap` until 2026-10-03, see §3a — `none` reads the GPU weights buffered and
   still maps the lazy engram tensor), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
   4 GiB binding limit; GPU placement aborted for Soot/Silicon), `--lazy-mode on`,
-  `-np 9 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
+  `-np 10 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
   `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
   `--ctx-checkpoints 8 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the
   existing `--image-min-tokens` floor.
@@ -199,7 +199,7 @@ every other range is dropped; §3a).
   context; our one-slot rule for speculation is our own (`llama_swap_config.py`), and the
   evidence on multi-slot MTP conflicts (#27836 reported cross-slot contamination and a net
   loss on Vulkan; a fork reported 40→47 tok/s). A later wave can measure it.
-- **Slots:** a catalog `kv_pool` (9 slots since 2026-10-05, 512k cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
+- **Slots:** a catalog `kv_pool` (10 slots since 2026-10-06, 512k cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
   `residency._slots` and the served shape. The settings cap `PARALLEL_SLOTS_MAX = 2`
   (`api/llm_settings.py`) becomes per-model.
 
@@ -239,7 +239,7 @@ the live slot count and sends unpinned (still capped) on a mismatch.
 
 | Slot | Workload | Cap | Evicted |
 |---|---|---|---|
-| 0 | jerv — chat and omnibox turns, the warm prime | 256k (262,144) | last |
+| 0 | jerv chat A — the chat pair's first slot (chat and omnibox turns, the warm prime) | 256k (262,144) | 9th, or last while it holds the latest chat |
 | 1 | Ingest + analysis (`entity.disambiguate`, `fact.adjudicate`, OCR, captions, EMR) | 128k (131,072) | 8th |
 | 2 | Scheduled tasks, plan continuations, jmolt night, daily briefing | 256k (262,144) | 7th |
 | 3 | Research and sub-agents | 256k (262,144) | 5th |
@@ -248,6 +248,7 @@ the live slot count and sends unpinned (still capped) on a mismatch.
 | 6 | jpanel kid pet (`pet.*`); overflows to slot 7 when busy | 32k (32,768) | 3rd |
 | 7 | Small prompts: titles, `triage.classify`, one-shot vision reads, probes | 64k (65,536) | first |
 | 8 | The browser agent (`browse.step`, one run at a time) | 128k (131,072) | 2nd |
+| 9 | jerv chat B — the chat pair's second slot | 256k (262,144) | last, or 9th while it holds the warm prefix |
 | | **Pool** | **512k (524,288)** by default; 1M (1,048,576) selectable | `--kv-unified -c 524288` |
 
 **The ninth slot (browse, 2026-10-05).** Owner decision: research agents will search and
@@ -260,8 +261,9 @@ slot count moving GTT by noise. One more slot adds its recurrent state (~0.11 Gi
 inside that noise) and up to 8 more context checkpoints (8 × 0.11 = ~0.9 GiB, host-only, made
 lazily as the slot fills), which the footprint books: ~82.1 GiB for eviction and the meter, up
 from ~81.2; the load is still admitted on the device figure (~74.2 GiB). Rollout needs no
-terminal: Ops → Update (and every model load) re-stamps the config with `-np 9`; llama-swap's
-config watch stops the running server and the next load serves nine slots. Until then the
+terminal: Ops → Update (and every model load) re-stamps the config with `-np 9` (`-np 10`
+since the chat pair, below); llama-swap's config watch stops the running server and the next
+load serves the new count. Until then the
 live `/slots` count (8) does not match the pool (9), so the router sends every call unpinned
 (still capped) rather than wrap an `id_slot` onto another role's slot — one cold prefix per
 role, then normal. **The F4 disk cache starts over:** `-np` is part of the launch line that the
@@ -270,6 +272,56 @@ different server), so every saved role prefix and conversation file is orphaned 
 of the byte budget) and the gate is back to `awaiting_probe`. Role prefixes re-save on the next
 prime; nothing is restored until `POST /llm/slot-probe` passes again against the new launch line
 (its default pair is now slots 7 and 8 — overwriting the browse slot is harmless outside a run).
+
+**The chat pair (slot 9, 2026-10-06).** Owner design: *two agent slots — one always reserved
+for the most recent conversation, the other always kept warm.* Measured the same day: a new
+chat re-prefilled the whole ~47k-token jerv prompt (~2 min; `/slots` showed slot 0
+`n_prompt_tokens_processed: 47612`, a turn of 47,817 input tokens took 182 s), because the
+hybrid reuses a cached prefix only from a context checkpoint and a chat of eight or more model
+calls had evicted the one at the persona boundary (`--ctx-checkpoints 8`, oldest first) — and
+the disk store would not restore over the occupied slot. So slots 0 and 9 are one **chat pair**
+(`KvPool.chat_pair`; the second role, `interactive_alt`, is never named by a caller):
+
+- **Routing** (`KvPrefixStore.pick_chat_role`, called by the router for an `agent.turn` naming
+  the interactive role). Every owner chat carries a RAM-only `chat_key` (the session id — every
+  chat, firewalled or not; the disk `conversation_key` stays privacy-gated). A turn whose chat
+  one pair slot holds goes there (its live cache). Any other — a new chat, an older chat
+  returning, or a request naming no chat (a plan continuation, a keeper prime not pinned) —
+  goes to the slot that is NOT the most recent conversation, preferring the warm one: it never
+  lands on the latest chat. A request naming no chat leaves its slot "unknown", never a chat.
+- **Re-warm.** When a chat's turn lands on the other slot, the store wakes the warm keeper,
+  whose tick re-warms every pair slot that holds neither the latest chat nor the warm prefix:
+  it saves that slot's conversation first when conversation files are on, then (only if the
+  slot is idle, no request was just routed there, the restore gate is open, the file has its
+  sidecar and the pool guard reserves the cells) erases the slot through the pool guard — a
+  fresh `/slots` read under its lock must show it idle with no other call placed — and restores
+  jerv's prefix file (`rewarmed`). If no restore can serve (no file for this identity, the gate
+  not passed, no sidecar) the keeper primes that slot instead, pinned exactly
+  (`exact_slot`), and only while neither chat slot is processing. A chat request that reaches
+  such a slot before the keeper does replaces it inline before dispatch (`restored_on_switch`).
+  A slot this process cannot account for (after an api restart) is never erased until the
+  latest chat's slot is known.
+- **Eviction.** The pair holds the two top ranks; the pool guard is told which slot holds the
+  latest chat (`set_keep_last`) and frees it last, because losing it re-prefills a whole
+  conversation, while the warm slot's prefix comes back from disk in ~2 s.
+- **Steady state:** one slot is the latest chat (instant follow-ups), the other the bare jerv
+  prefix (instant new chat). An older chat returning lands in the warm slot and pays only its
+  own history beyond the prefix (or restores its conversation file, when that cache is on).
+- **Memory and pool.** No cells up front, as with browse. One more slot books its recurrent
+  state and up to 8 more host-side checkpoints: `0.11 × 8` ≈ 0.9 GiB, so the footprint books
+  ~83.0 GiB for eviction and the meter (was ~82.1); the load is still admitted on the device
+  figure (~74.2 GiB). In the pool the warm slot holds the prefix (~47k cells) permanently: about
+  9% of the default 512k pool and 4.5% of the 1M pool the box runs; the two chat caps together
+  (2 × 262,144) are the whole 512k pool and half of 1M, which the guard's eviction order covers.
+- **Rollout (no terminal).** Ops → Update re-stamps the config with `-np 10`; the next load
+  serves ten slots. Until then the live `/slots` count (9) does not match the pool (10), so
+  calls go unpinned (still capped) and the store restores nothing — as with browse. `-np` is in
+  every prefix fingerprint and in the restore gate's key, so saved prefixes are orphaned and the
+  gate returns to `awaiting_probe`: the keeper re-primes jerv's prefix (and saves it), and
+  until the probe passes again the pair's warm slot is re-warmed by a background PRIME after
+  each new chat (~2 min of prefill, never under the owner's turn) instead of a ~2 s restore. To
+  open restores: `POST /llm/slot-probe {"synth_tokens": 29000}` (its default pair is slots 7 and
+  8 — it never defaults to a chat pair slot) → `restore_gate: passed`.
 
 `agent.turn` is shared by the chat and every background agent, so the task name alone cannot
 pick the slot: background callers name their role (`slot_role`), and an unnamed `agent.turn`
@@ -694,7 +746,9 @@ Begins with the check moved out of F2, and gated on it:
   until the next api start (`patch_absent`), and a file without a sidecar is never restored.
   Memos and identity drift are per (model, role); saves read only the role's own slot; a
   restore targets the role's slot, only while it is idle and empty, only when the restored
-  tokens fit the pool (through the pool guard since the review, below). A restored-unused
+  tokens fit the pool (through the pool guard since the review, below) — except that since
+  2026-10-06 a chat pair slot holding neither the latest chat nor the warm prefix is erased and
+  restored over (§4a, the chat pair). A restored-unused
   slot is not restored again until a request uses it, the model reloads or the guard erases it.
   Each role's effort is in its fingerprint as before; the standard engine keeps its single-memo
   behaviour.
@@ -705,8 +759,9 @@ Begins with the check moved out of F2, and gated on it:
   no stable prefix, which is why F3a dropped role priming; a role's turn still restores into its
   own slot on demand if a file of its identity exists.
 - **F4c — conversations (owner extension).** The chat names its conversation to the router
-  (`conversation_key`, the session id). On a pooled model, before an interactive request that
-  is not the conversation slot 0 holds, the store saves the holder (only if `/slots` still
+  (`conversation_key`, the session id). On a pooled model, before a chat request that is not
+  the conversation its chat pair slot holds (slot 0 until 2026-10-06; since then the slot the
+  router picked), the store saves the holder (only if `/slots` still
   reads as that conversation's cache and `n_saved` matches) and then restores the request's own
   conversation file when its key and base identity match (see the review entry below).
   The keeper saves a conversation idle for 10 min. Conversation files live beside the role

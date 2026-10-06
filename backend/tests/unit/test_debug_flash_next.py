@@ -1391,3 +1391,11 @@ async def test_the_probe_records_the_restore_gate_for_the_running_flash_next(
         )
         is None
     )
+
+
+def test_the_probe_never_defaults_to_a_chat_pair_slot() -> None:
+    # Flash-Next's last slot is jerv's second chat slot: the probe takes the last two others.
+    assert debug._probe_default_slots("qwen3.8-flash-next", 10) == (7, 8)
+    # A server still on the old layout, or a model without a pool: the last two.
+    assert debug._probe_default_slots("qwen3.8-flash-next", 9) == (7, 8)
+    assert debug._probe_default_slots("gpt-oss-120b", 4) == (2, 3)

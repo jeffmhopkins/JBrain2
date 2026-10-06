@@ -216,6 +216,9 @@ class KvPoolGuard:
         self._restored: dict[tuple[str, int], int] = {}
         # Told of each slot this guard erases (the disk store drops its memo for that slot).
         self._erase_listeners: list[Callable[[str, int], None]] = []
+        # Which chat pair slot holds the most recent conversation (the disk store knows), so
+        # it is freed last whatever its static rank. None: the pool's static order.
+        self._keep_last: Callable[[str], int | None] | None = None
 
     async def _slots(self, model: str) -> list[dict[str, object]] | None:
         try:
@@ -350,6 +353,16 @@ class KvPoolGuard:
     def add_erase_listener(self, listener: Callable[[str, int], None]) -> None:
         self._erase_listeners.append(listener)
 
+    def set_keep_last(self, source: Callable[[str], int | None]) -> None:
+        self._keep_last = source
+
+    def _eviction_order(self, model: str, pool: KvPool) -> list[int]:
+        keep: int | None = None
+        if self._keep_last is not None:
+            with contextlib.suppress(Exception):  # a ranking hint, never a failed call
+                keep = self._keep_last(model)
+        return pool.eviction_order(keep_last=keep)
+
     async def reserve_restore(self, model: str, pool: KvPool, slot: int, need: int) -> int | None:
         """`fits`, and when it does, hold `need` cells on `slot` as pending in the SAME locked
         decision — so a placement deciding while the multi-second restore streams already
@@ -374,6 +387,28 @@ class KvPoolGuard:
         held.pop(ticket, None)
         if not held:
             self._pending.pop((model, slot), None)
+
+    async def erase_for_restore(self, model: str, pool: KvPool, slot: int, ticket: int) -> bool:
+        """Erase `slot` so the disk store can restore over what it holds, under the decision
+        lock and off a fresh `/slots` read that must still show it idle with no call but the
+        restore's own (`ticket`) placed on it — the same discipline as an eviction's erase, so
+        a turn that started on the slot meanwhile is never wiped. Tells the erase listeners."""
+        async with self._lock:
+            read = await self._layout(model, pool)
+            if read is None:
+                return False
+            others = {t for t in self._pending.get((model, slot), {}) if t != ticket}
+            if _busy(_by_id(read).get(slot, {})) or others:
+                return False
+            erased = await self._erase_one(model, slot)
+            if erased is False:
+                self._no_erase[model] = self._clock()
+            if not erased:
+                return False
+            self._restored.pop((model, slot), None)
+            for listener in self._erase_listeners:
+                listener(model, slot)
+            return True
 
     async def fits(self, model: str, pool: KvPool, slot: int, need: int) -> bool:
         """Whether writing `need` cells into idle `slot` keeps the pool within its size, judged
@@ -533,7 +568,8 @@ class KvPoolGuard:
                 # slots itself in its own order, which is worse but not a reason to refuse.
                 return True
             slot = next(
-                (s for s in pool.eviction_order() if s in freeable and s not in tried), None
+                (s for s in self._eviction_order(model, pool) if s in freeable and s not in tried),
+                None,
             )
             if slot is None or self._clock() >= deadline:
                 return False

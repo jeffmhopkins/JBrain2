@@ -72,16 +72,30 @@ re-prefills. Folding the date into this fingerprint instead would just orphan th
 midnight — so keep it out.
 
 PER ROLE AND PER CONVERSATION (FLASH_NEXT_ENGINE_PLAN F4). On a pooled model — Flash-Next's
-nine role-pinned slots over one shared KV pool — a prefix belongs to a ROLE: it is saved from
-that role's slot, restored into that role's slot only, never over an occupied slot, and never
-when the restore would push the pool past its cells. Memos and drift diagnostics are kept per
-(model, role), so a research or scheduled turn is not mistaken for jerv's identity drifting.
-The interactive slot also carries CONVERSATION files (`kv_conversation`): the conversation
-leaving slot 0 is saved as it goes, and one that speaks again is restored before its request
-when its saved messages still open the new prompt. Both kinds share the byte budget, and every
-conversation file is evicted before any role prefix. A hybrid's restore is only worth anything
-with the checkpoint-sidecar patch, so such a model is admitted only while each save proves the
-patch by writing its sidecar. A model with no pool keeps the single-identity behaviour above.
+role-pinned slots over one shared KV pool — a prefix belongs to a ROLE: it is saved from that
+role's slot, restored into that role's slot only, never over an occupied slot, and never when the
+restore would push the pool past its cells. Memos and drift diagnostics are kept per (model,
+role), so a research or scheduled turn is not mistaken for jerv's identity drifting.
+
+THE CHAT PAIR (owner, 2026-10-06). The chat has two slots (`KvPool.chat_pair`): one holds the
+most recent conversation, the other only the jerv prefix, kept warm. A turn goes to the slot that
+holds its own chat; any other chat — a new one, or an older one returning — goes to the warm slot
+(`pick_chat_role`), and once it has run there the slot it left is RE-WARMED: erased and the role
+prefix restored from disk with its checkpoint sidecar (`rewarm_pair`; the keeper primes it when
+nothing can be restored). That erase is the one exception to "never over an occupied slot", and
+only for a pair slot that holds neither the most recent conversation nor the warm prefix. WHY:
+the hybrid only reuses a cached prefix from a context checkpoint, and a chat of eight or more
+model calls evicts the one at the persona boundary (oldest-first), so a new chat that diverges
+~42k tokens in finds no checkpoint below it and re-prefills the whole ~47k-token prompt (~2 min;
+measured 2026-10-06, with conversation files off, on every new chat). A slot this process cannot
+account for (a restart, before any chat) is never erased while the most recent conversation's
+whereabouts are unknown. The pair slots also carry CONVERSATION files (`kv_conversation`): a
+conversation leaving a pair slot is saved before the slot is reused, and one that speaks again
+is restored into the warm slot before its request when its saved messages still open the new
+prompt. Both kinds share the byte budget, and every conversation file is evicted before any role
+prefix. A hybrid's restore is only worth anything with the checkpoint-sidecar patch, so such a
+model is admitted only while each save proves the patch by writing its sidecar. A model with no
+pool keeps the single-identity behaviour above.
 """
 
 from __future__ import annotations
@@ -95,7 +109,7 @@ import os
 import shutil
 import time
 from collections import deque
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
 import structlog
@@ -279,6 +293,12 @@ def _identity_components(
 RESTORE_BUSY_POLLS = 8
 RESTORE_BUSY_INTERVAL_S = 0.25
 
+# How long a request routed to a chat pair slot shields that slot from a re-warm until its turn
+# is noted. The shield only has to cover routing -> placement (the conversation prepare and the
+# prefix restore); from placement on, the pool guard's pending call and then the slot's own
+# `is_processing` refuse the erase. A request that dies unnoted stops shielding after this.
+CLAIM_TTL_S = 120.0
+
 # How many recent outcomes the store keeps for the debug read. The owner has no terminal
 # (CLAUDE.md #10) and box_events' widest owner surface is fifteen minutes, so a miss that
 # happened an hour ago is otherwise unreachable; this ring is what makes "what has this
@@ -306,12 +326,21 @@ MISS_OUTCOMES = frozenset(
         "restore_failed",
         "restore_rejected",
         "patch_absent",
+        "rewarm_erase_failed",
     }
 )
 
 # Outcomes counted as the cache HELPING / NOT HELPING in the owner's summary. Conversation
 # misses are not faults (a new conversation has no file), so they are counted, never narrated.
-HIT_OUTCOMES = frozenset({"restored", "conversation_restore_hit", "conversation_restore_partial"})
+HIT_OUTCOMES = frozenset(
+    {
+        "restored",
+        "restored_on_switch",
+        "rewarmed",
+        "conversation_restore_hit",
+        "conversation_restore_partial",
+    }
+)
 CONVERSATION_MISS_OUTCOMES = frozenset(
     {
         "conversation_no_file",
@@ -373,6 +402,18 @@ def write_gate_verdict(save_dir: str, verdict: dict[str, object]) -> bool:
     return True
 
 
+def chat_role(served_model: str, role: SlotRole | None) -> SlotRole | None:
+    """`role` when it is one of this model's chat slots — a member of its chat pair, or the
+    interactive slot of a pool without one — else None (no pool, or another role)."""
+    pool = local_catalog.pool_of(served_model)
+    if pool is None:
+        return None
+    role = role or SlotRole.INTERACTIVE
+    if pool.in_pair(role) or (pool.chat_pair is None and role is SlotRole.INTERACTIVE):
+        return role
+    return None
+
+
 def _by_slot_id(slots: Sequence[dict[str, object]], slot_id: int) -> dict[str, object] | None:
     return next((s for s in slots if isinstance(s, dict) and s.get("id") == slot_id), None)
 
@@ -402,6 +443,7 @@ class KvPrefixStore:
         self._pool_guard = pool_guard
         if pool_guard is not None:
             pool_guard.add_erase_listener(self.note_slot_erased)
+            pool_guard.set_keep_last(self.recent_slot)
         self._models_root = models_root
         # Which engine's llama-swap config launch lines are read from (`_resolve`). The
         # fingerprint is the launch line, so reading the wrong engine's file would describe a
@@ -460,9 +502,27 @@ class KvPrefixStore:
         # The owner's conversation-cache toggle (settings `llm_kv_conversation_cache`), set at
         # startup and live by the settings route (`configure`).
         self._conversations = conversations
-        # Per pooled served model: the conversation its interactive slot holds, as far as this
-        # process knows. None/absent = unknown, which is never saved.
-        self._conv_hold: dict[str, ConversationHold] = {}
+        # Per (pooled served model, chat slot role): the conversation that slot holds, as far
+        # as this process knows, for the conversation files. Absent = unknown, never saved.
+        self._conv_hold: dict[tuple[str, SlotRole], ConversationHold] = {}
+        # ---- the chat pair (`pick_chat_role`, `rewarm_pair`) ----
+        # Per (served model, pair role): the chat (`chat_key`, RAM only) whose turn last ran
+        # there. Kept whether or not conversation files are on. Dropped whenever the slot stops
+        # holding that chat — a turn with no chat, an erase, a restore, a reload.
+        self._slot_holder: dict[tuple[str, SlotRole], str] = {}
+        # Pair slots known to hold ONLY the role prefix: primed or restored, and not since used
+        # by a chat. A new chat goes here.
+        self._warm: set[tuple[str, SlotRole]] = set()
+        # Per served model: the pair role whose slot holds the most recent conversation. It is
+        # never erased by a re-warm and is the pool guard's last eviction choice.
+        self._recent: dict[str, SlotRole] = {}
+        # Per (served model, pair role): (requests routed there and not yet noted, last routed
+        # at). A re-warm never erases a slot a request was just routed to; a request that dies
+        # without a note stops counting after CLAIM_TTL_S.
+        self._claims: dict[tuple[str, SlotRole], tuple[int, float]] = {}
+        # Called when a chat moves to the other pair slot, leaving a slot to re-warm (the keeper
+        # wires its wake-up, so the re-warm runs off-turn with the prime's own identity).
+        self._pair_listeners: list[Callable[[str], None]] = []
         # Per patch-gated served model: (monotonic read time, gate fingerprint, state).
         self._gate_cache: dict[str, tuple[float, str, RestoreGate]] = {}
         # Every multi-GB slot write, and the prune that follows it, one at a time — and never
@@ -471,10 +531,10 @@ class KvPrefixStore:
         # Patch-gated models whose patch a save in THIS process life proved. Until then an
         # existing file does not short-circuit a prime's save: the image may have been rebuilt.
         self._patch_seen: set[str] = set()
-        # Per pooled served model: a counter bumped by every interactive request's prepare. A
-        # turn claims the slot only if no other prepare ran after its own (`note_conversation_
-        # turn`), so a concurrent request cannot leave a stale claim behind.
-        self._prepare_seq: dict[str, int] = {}
+        # Per (pooled served model, chat slot role): a counter bumped by every chat request's
+        # prepare for that slot. A turn claims the slot only if no other prepare ran after its
+        # own (`note_conversation_turn`), so a concurrent request cannot leave a stale claim.
+        self._prepare_seq: dict[tuple[str, SlotRole], int] = {}
         # Hashes of conversations in which an excluded tool ran: never saved again this process
         # life (the transcript check in the chat path covers restarts).
         self._tainted: set[str] = set()
@@ -720,6 +780,10 @@ class KvPrefixStore:
                     counters.get(k, 0) for k in MISS_OUTCOMES | CONVERSATION_MISS_OUTCOMES
                 ),
                 "role_restores": counters.get("restored", 0),
+                # The chat pair: the slot a chat left, re-warmed off-turn, and the rarer
+                # inline replace when a chat request reached such a slot first.
+                "pair_rewarms": counters.get("rewarmed", 0),
+                "switch_restores": counters.get("restored_on_switch", 0),
                 "conversation_restores": counters.get("conversation_restored", 0),
                 "conversation_misses": sum(counters.get(k, 0) for k in CONVERSATION_MISS_OUTCOMES),
                 "conversation_saves": counters.get("conversation_saved", 0),
@@ -728,6 +792,7 @@ class KvPrefixStore:
                 "conversation_restore_misses": counters.get("conversation_restore_miss", 0),
             },
             "roles": self._role_rows(),
+            "chat_pair": self._pair_rows(),
             "conversations": {
                 "enabled": self._conversations,
                 "held": self._held_rows(),
@@ -778,14 +843,60 @@ class KvPrefixStore:
         return [
             {
                 "model": served,
+                "role": str(role),
                 "conversation": kv_conversation.short_key(hold.key),
                 "awaiting_judgement": hold.restored_tokens is not None,
                 "input_tokens": hold.input_tokens,
                 "unsaved": hold.dirty,
                 "idle_s": round(now - hold.at),
             }
-            for served, hold in sorted(self._conv_hold.items())
+            for (served, role), hold in sorted(self._conv_hold.items())
         ]
+
+    def pair_holdings(self, served_model: str) -> dict[SlotRole, str]:
+        """What each chat pair slot holds, as far as this process knows: the most recent
+        conversation, the warm prefix, an older conversation, or unknown. Empty without a pair."""
+        pair = self._pair_of(served_model)
+        if pair is None:
+            return {}
+        out: dict[SlotRole, str] = {}
+        for role in pair:
+            key = (served_model, role)
+            if self._recent.get(served_model) is role:
+                out[role] = "recent_conversation"
+            elif key in self._warm:
+                out[role] = "warm_prefix"
+            elif key in self._slot_holder:
+                out[role] = "older_conversation"
+            else:
+                out[role] = "unknown"
+        return out
+
+    def _pair_rows(self) -> list[dict[str, object]]:
+        """Each chat pair slot of every model this process has pair state for."""
+        served_models = (
+            {m for m, _ in self._slot_holder} | {m for m, _ in self._warm} | set(self._recent)
+        )
+        rows: list[dict[str, object]] = []
+        for served in sorted(served_models):
+            pool = local_catalog.pool_of(served)
+            if pool is None:
+                continue
+            for role, holds in self.pair_holdings(served).items():
+                holder = self._slot_holder.get((served, role))
+                rows.append(
+                    {
+                        "model": served,
+                        "role": str(role),
+                        "slot": pool.slot(role),
+                        "holds": holds,
+                        "conversation": (
+                            None if holder is None else kv_conversation.short_key(holder)
+                        ),
+                        "claimed": self._claimed(served, role),
+                    }
+                )
+        return rows
 
     def _ineligible_reason(self, served_model: str) -> str:
         """Why `_eligible` said no — the difference between "this model will never use the
@@ -897,21 +1008,187 @@ class KvPrefixStore:
 
     @staticmethod
     def _identity_key(served_model: str, role: SlotRole | None) -> tuple[str, SlotRole]:
-        return (served_model, role or SlotRole.INTERACTIVE)
+        # Both chat pair slots carry jerv's one identity: a drift is judged against either.
+        pool = local_catalog.pool_of(served_model)
+        role = role or SlotRole.INTERACTIVE
+        if pool is not None and pool.chat_pair is not None and pool.in_pair(role):
+            role = pool.chat_pair[0]
+        return (served_model, role)
 
     def _memo_active(self, key: tuple[str, SlotRole]) -> bool:
         return key in self._restored_unused
 
     def note_slot_erased(self, served_model: str, slot: int) -> None:
         """The pool guard erased `slot`: whatever was restored there is gone. Drops that role's
-        memo, and the conversation claim when it is the interactive slot."""
+        memo, and for a chat slot its conversation claim and what the pair knows of it."""
         pool = local_catalog.pool_of(served_model)
         if pool is None or not 0 <= slot < pool.n_slots:
             return
         role = pool.by_slot(slot).role
         self._restored_unused.pop((served_model, role), None)
-        if role is SlotRole.INTERACTIVE:
-            self._conv_hold.pop(served_model, None)
+        self._conv_hold.pop((served_model, role), None)
+        self._forget_pair_slot(served_model, role)
+
+    # ---- the chat pair -----------------------------------------------------------------
+
+    @staticmethod
+    def _pair_of(served_model: str) -> tuple[SlotRole, SlotRole] | None:
+        pool = local_catalog.pool_of(served_model)
+        return None if pool is None else pool.chat_pair
+
+    @staticmethod
+    def chat_role(served_model: str, role: SlotRole | None) -> SlotRole | None:
+        return chat_role(served_model, role)
+
+    def add_pair_listener(self, listener: Callable[[str], None]) -> None:
+        self._pair_listeners.append(listener)
+
+    def _forget_pair_slot(self, served_model: str, role: SlotRole) -> None:
+        """The pair slot no longer holds what this process believed (erased, reloaded)."""
+        key = (served_model, role)
+        self._slot_holder.pop(key, None)
+        self._warm.discard(key)
+        if self._recent.get(served_model) is role:
+            del self._recent[served_model]
+
+    def _mark_warm(self, served_model: str, role: SlotRole | None) -> None:
+        """The pair slot now holds only the role prefix (primed or restored)."""
+        pair = self._pair_of(served_model)
+        if pair is None or role is None or role not in pair:
+            return
+        self._forget_pair_slot(served_model, role)
+        self._warm.add((served_model, role))
+
+    def _note_holder(self, served_model: str, role: SlotRole | None, chat_key: str | None) -> None:
+        """A request ran in `role`'s slot for `chat_key` (None: no chat, so the slot's content is
+        unknown). On a pair slot a chat becomes the most recent conversation, and when that
+        moved it off the other slot, that slot is now due a re-warm: the listeners hear."""
+        pair = self._pair_of(served_model)
+        if pair is None or role is None or role not in pair:
+            return
+        key = (served_model, role)
+        self._release_claim(served_model, role)
+        self._warm.discard(key)
+        # Whatever was restored there has been used, whatever identity used it: left set, the
+        # memo would refuse this slot's re-warm for good.
+        self._restored_unused.pop(key, None)
+        if chat_key is None:
+            self._slot_holder.pop(key, None)
+            if self._recent.get(served_model) is role:
+                del self._recent[served_model]
+            return
+        moved = self._recent.get(served_model) is not role
+        self._slot_holder[key] = chat_key
+        self._recent[served_model] = role
+        for other in pair:
+            if other is not role and self._slot_holder.get((served_model, other)) == chat_key:
+                # Its older copy (a request routed there before this one claimed the chat).
+                del self._slot_holder[(served_model, other)]
+        if moved:
+            for listener in self._pair_listeners:
+                with contextlib.suppress(Exception):  # a wake-up hint, never a failed turn
+                    listener(served_model)
+
+    def recent_slot(self, served_model: str) -> int | None:
+        """The slot holding the most recent conversation — the pool guard frees it last."""
+        role = self._recent.get(served_model)
+        pool = local_catalog.pool_of(served_model)
+        return None if role is None or pool is None else pool.slot(role)
+
+    def _claimed(self, served_model: str, role: SlotRole) -> bool:
+        claim = self._claims.get((served_model, role))
+        return claim is not None and claim[0] > 0 and time.monotonic() - claim[1] < CLAIM_TTL_S
+
+    def _release_claim(self, served_model: str, role: SlotRole) -> None:
+        key = (served_model, role)
+        claim = self._claims.get(key)
+        if claim is None:
+            return
+        if claim[0] <= 1:
+            del self._claims[key]
+        else:
+            self._claims[key] = (claim[0] - 1, claim[1])
+
+    def pick_chat_role(self, served_model: str, chat_key: str | None) -> SlotRole | None:
+        """The chat pair slot a chat request goes to, or None when this model has no pair.
+
+        The slot holding `chat_key`'s own conversation, when one does — its live cache. Any
+        other request (a new chat, an older one returning, or one naming no chat) goes to the
+        OTHER slot from the most recent conversation, preferring the warm prefix, then a slot
+        holding nothing known: it must never land on the most recent conversation, which a
+        follow-up there is about to reuse. The pick claims its slot until the request's turn is
+        noted, so a re-warm cannot erase it in between."""
+        pair = self._pair_of(served_model)
+        if pair is None:
+            return None
+        chosen: SlotRole | None = None
+        if chat_key is not None:
+            chosen = next(
+                (r for r in pair if self._slot_holder.get((served_model, r)) == chat_key), None
+            )
+        if chosen is None:
+            recent = self._recent.get(served_model)
+            candidates = [r for r in pair if r is not recent] or list(pair)
+
+            def preference(role: SlotRole) -> int:
+                key = (served_model, role)
+                if key in self._warm:
+                    return 0
+                return 1 if key not in self._slot_holder else 2
+
+            chosen = min(candidates, key=preference)
+        key = (served_model, chosen)
+        count = self._claims.get(key, (0, 0.0))[0] if self._claimed(served_model, chosen) else 0
+        self._claims[key] = (count + 1, time.monotonic())
+        return chosen
+
+    def release_chat_role(self, served_model: str, role: SlotRole) -> None:
+        """A routed request ended without a turn to note (it failed before any part arrived)."""
+        self._release_claim(served_model, role)
+
+    def warm_target(self, served_model: str) -> SlotRole | None:
+        """The pair slot the keeper should prime — one that is neither the most recent
+        conversation nor already warm, nor just handed a request; the warm one, failing that,
+        so a stale prime still lands somewhere harmless. None without a pair."""
+        pair = self._pair_of(served_model)
+        if pair is None:
+            return None
+        due = self._rewarm_due(served_model)
+        if due:
+            return due[0]
+        recent = self._recent.get(served_model)
+        return next((r for r in pair if r is not recent), pair[0])
+
+    def _rewarm_due(self, served_model: str) -> list[SlotRole]:
+        """Pair slots that should hold the warm prefix and do not: not the most recent
+        conversation, not warm, and not just handed a request."""
+        pair = self._pair_of(served_model)
+        if pair is None:
+            return []
+        recent = self._recent.get(served_model)
+        return [
+            r
+            for r in pair
+            if r is not recent
+            and (served_model, r) not in self._warm
+            and not self._claimed(served_model, r)
+        ]
+
+    def _pair_replaceable(self, served_model: str, role: SlotRole, chat_key: str | None) -> bool:
+        """Whether an OCCUPIED pair slot may be erased for the role prefix: it holds neither the
+        most recent conversation, nor the warm prefix, nor `chat_key`'s own conversation — and
+        this process knows where the most recent conversation lives, so a slot it cannot
+        account for (after a restart) is never the one wiped."""
+        pair = self._pair_of(served_model)
+        if pair is None or role not in pair:
+            return False
+        key = (served_model, role)
+        if key in self._warm:
+            return False
+        if chat_key is not None and self._slot_holder.get(key) == chat_key:
+            return False
+        recent = self._recent.get(served_model)
+        return recent is not None and recent is not role
 
     def set_engine(self, engine: engines.Engine) -> None:
         """Pin launch-line resolution to `engine`'s config, for a store built without a live
@@ -979,12 +1256,15 @@ class KvPrefixStore:
         full ~125 s prefill this store exists to prevent, with a valid file sitting on disk
         unread. Residency already reported this; only the keeper was listening.
 
-        Every role's memo goes, and so does the conversation the interactive slot held: an
-        unsaved one is lost with the slot, and claiming it afterwards would save a stranger's
-        cache under its name."""
+        Every role's memo goes, and so do the conversations the chat slots held: an unsaved one
+        is lost with the slot, and claiming it afterwards would save a stranger's cache under
+        its name. What the chat pair held goes too — after a reload its slots hold nothing."""
         for key in [k for k in self._restored_unused if k[0] == served_model]:
             del self._restored_unused[key]
-        self._conv_hold.pop(served_model, None)
+        for key in [k for k in self._conv_hold if k[0] == served_model]:
+            del self._conv_hold[key]
+        for role in self._pair_of(served_model) or ():
+            self._forget_pair_slot(served_model, role)
         # A reload may be a new image or a resized pool: the gate is read afresh.
         self.forget_gate(served_model)
         if self._pool_guard is not None:
@@ -997,9 +1277,12 @@ class KvPrefixStore:
         *,
         fingerprint: str | None = None,
         role: SlotRole | None = None,
+        chat_key: str | None = None,
     ) -> None:
         """A turn completed — if it was the turn our restore was FOR, that restore has now
         been used, and the slot it grew reports a prefix-sized cache on its own from here on.
+        On a chat pair slot it also records which chat now holds the slot (`chat_key`; None
+        leaves it unknown) — see `_note_holder`.
 
         The identity check is the point. `agent.turn` is not an interactive lane: the daily
         briefing, deep research and every spawned sub-agent run under the same task name with
@@ -1009,6 +1292,7 @@ class KvPrefixStore:
         reads /slots at all. A caller that cannot name the identity (`fingerprint=None`)
         clears nothing, which is the safe direction: a stale memo costs one restore, an
         early-cleared one costs a full prefill."""
+        self._note_holder(served_model, role, chat_key if input_tokens > 0 else None)
         if input_tokens <= 0:
             return
         self.note_prefix_used(served_model, fingerprint, role=role)
@@ -1067,12 +1351,15 @@ class KvPrefixStore:
         On a pooled model only `role`'s own slot is a candidate (the interactive one when no
         role is named): the prime was pinned there, and an equal count in another role's
         slot is a coincidence, not the prime."""
-        model = self._eligible(served_model)
-        if model is None or prime_tokens < MIN_PREFIX_TOKENS:
-            return False
         pool = local_catalog.pool_of(served_model)
         if pool is not None:
             role = role or SlotRole.INTERACTIVE
+        # Whether or not it reaches disk, the prime left a chat pair slot holding the prefix
+        # alone: that is what "warm" means, and a slot still due warming would be primed again.
+        self._mark_warm(served_model, role)
+        model = self._eligible(served_model)
+        if model is None or prime_tokens < MIN_PREFIX_TOKENS:
+            return False
         # A fresh prime supersedes any restored-but-unused state.
         self._restored_unused.pop(self._memo_key(served_model, role), None)
         await self._refresh_engine()
@@ -1272,7 +1559,8 @@ class KvPrefixStore:
                 del self._restored_unused[key]
             for key in [k for k in self._last_identity if k[0] == served_model]:
                 del self._last_identity[key]
-            self._conv_hold.pop(served_model, None)
+            for key in [k for k in self._conv_hold if k[0] == served_model]:
+                del self._conv_hold[key]
         for fingerprint in removed[1]:
             self._prime_tokens.pop(fingerprint, None)
         await self._note("cleared", served_model or "*", files=len(removed[1]), bytes=removed[0])
@@ -1389,6 +1677,8 @@ class KvPrefixStore:
         *,
         reasoning_effort: str | None = None,
         role: SlotRole | None = None,
+        chat_key: str | None = None,
+        background: bool = False,
     ) -> bool:
         """Put the prefix back if nothing prefix-sized is cached anywhere and a valid file
         exists. Returns True only when a verified restore happened.
@@ -1404,7 +1694,12 @@ class KvPrefixStore:
         turn or a fresh prime supersedes it.
 
         On a pooled model the gate is per slot: `role`'s own slot (the interactive one when
-        none is named), restored into only while it holds nothing."""
+        none is named), restored into only while it holds nothing — or, for a chat pair slot,
+        when it holds neither the most recent conversation, nor the warm prefix, nor
+        `chat_key`'s own conversation: it is erased first (`_restore_into_role_slot`; the
+        module docstring has the measurement that makes that worth it). A `background`
+        re-warm gives up at once on a busy slot instead of polling — it never waits on a
+        turn — and on a slot a request was just routed to."""
         if self._eligible(served_model) is None:
             return False
         # The lock opens HERE, not at the slots read. It used to sit below the memo check and
@@ -1413,7 +1708,9 @@ class KvPrefixStore:
         # slots, including the one whose separation from the interactive slot is the entire
         # point of a second slot. Reproduced; the comment on `self._lock` always claimed this.
         async with self._lock:
-            return await self._restore_locked(served_model, system, tools, reasoning_effort, role)
+            return await self._restore_locked(
+                served_model, system, tools, reasoning_effort, role, chat_key, background
+            )
 
     async def _restore_locked(
         self,
@@ -1422,6 +1719,8 @@ class KvPrefixStore:
         tools: Sequence[LlmTool],
         reasoning_effort: str | None,
         role: SlotRole | None = None,
+        chat_key: str | None = None,
+        background: bool = False,
     ) -> bool:
         """`restore_if_lost`'s body, with `self._lock` held. Split out only so the lock has
         one acquisition point and cannot be taken twice on one path."""
@@ -1458,7 +1757,7 @@ class KvPrefixStore:
         self._last_identity[identity_key] = identity
         if pool is not None and role is not None:
             return await self._restore_into_role_slot(
-                served_model, pool, role, fingerprint, path, line
+                served_model, pool, role, fingerprint, path, line, chat_key, background
             )
         try:
             slots = await self._gateway.slots(served_model)
@@ -1534,13 +1833,21 @@ class KvPrefixStore:
         fingerprint: str,
         path: str,
         line: str,
+        chat_key: str | None = None,
+        background: bool = False,
     ) -> bool:
         """The pooled restore: `role`'s own slot, only while it is idle and EMPTY, and only
         when the restored prefix fits the pool beside what every other slot may grow to.
 
-        Never over an occupied slot, whatever it holds — on a pool each role's traffic is
-        pinned to its slot, so anything there is that role's own live cache. Never past the
-        pool either: llama-server answers a full pool by failing every busy request."""
+        Never over an occupied slot — on a pool each role's traffic is pinned to its slot, so
+        anything there is that role's own live cache — except a chat pair slot that holds
+        neither the most recent conversation, nor the warm prefix, nor `chat_key`'s own chat
+        (`_pair_replaceable`): its content is being replaced anyway, so it is erased and the
+        prefix restored with its sidecar, ~2 s against a ~47k-token re-prefill (the module
+        docstring). Outcome `rewarmed` for the background re-warm, `restored_on_switch` when a
+        chat request routed there does it first. A `background` re-warm gives up on a busy or
+        just-claimed slot at once. Never past the pool either: llama-server answers a full
+        pool by failing every busy request."""
         if not await self._gate_open(served_model, role):
             return False
         if not await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
@@ -1551,7 +1858,7 @@ class KvPrefixStore:
         slot_id = pool.slot(role)
         target: dict[str, object] | None = None
         slots: list[dict[str, object]] = []
-        for attempt in range(RESTORE_BUSY_POLLS + 1):
+        for attempt in range(1 if background else RESTORE_BUSY_POLLS + 1):
             if attempt:
                 await asyncio.sleep(RESTORE_BUSY_INTERVAL_S)
             try:
@@ -1571,14 +1878,21 @@ class KvPrefixStore:
             if target is None or not target.get("is_processing"):
                 break
         else:
+            if background:
+                self._count("rewarm_skipped_busy")
+                return False
             await self._note("restore_skipped_busy", served_model, role=role, slot=slot_id)
             return False
         if target is None:
             return False
-        if _slot_int(target, "n_prompt_tokens") > 0:
+        replacing = _slot_int(target, "n_prompt_tokens") > 0
+        if replacing and not self._pair_replaceable(served_model, role, chat_key):
             # Occupied: the role's own cache, never overwritten. A healthy primed slot lands
             # here every keeper tick, so this is also where its file's LRU clock is kept.
             await asyncio.to_thread(self._touch, path)
+            return False
+        if background and self._claimed(served_model, role):
+            self._count("rewarm_skipped_claimed")
             return False
         need = self._prime_tokens.get(fingerprint) or await asyncio.to_thread(
             _file_token_bound, path
@@ -1592,9 +1906,103 @@ class KvPrefixStore:
             await self._note("restore_skipped_pool_full", served_model, role=role, need=need)
             return False
         try:
-            return await self._restore_file(served_model, slot_id, fingerprint, path, role=role)
+            if replacing:
+                # The reservation awaited: a request may have been routed here meanwhile.
+                if background and self._claimed(served_model, role):
+                    self._count("rewarm_skipped_claimed")
+                    return False
+                if not await self._erase_for_restore(served_model, pool, slot_id, ticket):
+                    await self._note("rewarm_erase_failed", served_model, role=role, slot=slot_id)
+                    return False
+            outcome = "restored"
+            if replacing:
+                outcome = "rewarmed" if background else "restored_on_switch"
+            return await self._restore_file(
+                served_model, slot_id, fingerprint, path, role=role, outcome=outcome
+            )
         finally:
             self._end_reserve(served_model, slot_id, ticket)
+
+    async def _erase_for_restore(
+        self, served_model: str, pool: KvPool, slot_id: int, ticket: int | None
+    ) -> bool:
+        """Erase a pair slot before restoring the prefix over it — through the pool guard when
+        wired (its fresh idle check under its lock, and its listeners drop every belief about
+        the slot), else straight to the server."""
+        if self._pool_guard is not None and ticket is not None:
+            return await self._pool_guard.erase_for_restore(served_model, pool, slot_id, ticket)
+        try:
+            erased = await self._gateway.erase_slot(served_model, slot_id)
+        except LocalGatewayError:
+            return False
+        if erased:
+            self.note_slot_erased(served_model, slot_id)
+        return erased
+
+    async def rewarm_pair(
+        self,
+        served_model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        *,
+        reasoning_effort: str | None = None,
+    ) -> list[SlotRole]:
+        """Put the warm prefix back in every chat pair slot due it (`_rewarm_due`): save the
+        conversation it holds first when conversation files are on, then erase it and restore
+        the role prefix. Returns the slots still due that NO restore can serve — no file for
+        this identity, the restore gate not passed, no sidecar, the model out of the disk
+        layer — which the keeper primes instead. A slot skipped for a passing reason (busy,
+        just claimed, the pool full) is not returned: the next tick tries again."""
+        due = self._rewarm_due(served_model)
+        if not due:
+            return []
+        pool = local_catalog.pool_of(served_model)
+        if pool is None:
+            return []
+        unservable = not await self._restorable(served_model, system, tools, reasoning_effort)
+        if unservable:
+            return due
+        for role in due:
+            hold = self._conv_hold.get((served_model, role))
+            if self._conversations and hold is not None and hold.dirty:
+                async with self._save_lock:
+                    if self._conv_hold.get((served_model, role)) is hold and hold.dirty:
+                        await self._save_conversation(served_model, pool, hold, role)
+            await self.restore_if_lost(
+                served_model,
+                system,
+                tools,
+                reasoning_effort=reasoning_effort,
+                role=role,
+                background=True,
+            )
+        return []
+
+    async def _restorable(
+        self,
+        served_model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        reasoning_effort: str | None,
+    ) -> bool:
+        """Whether a restore of this identity could happen at all: in the disk layer, a file
+        and its sidecar on disk, the restore gate open."""
+        if self._eligible(served_model) is None:
+            return False
+        await self._refresh_engine()
+        resolved = await asyncio.to_thread(
+            self._resolve, served_model, system, tools, reasoning_effort
+        )
+        if resolved is None:
+            return False
+        fingerprint, save_dir, _identity = resolved
+        path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
+        if not await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
+            return False
+        if not await asyncio.to_thread(os.path.exists, path):
+            return False
+        state = await self.restore_gate(served_model)
+        return state is None or state == "passed"
 
     async def _reserve(
         self,
@@ -1628,8 +2036,12 @@ class KvPrefixStore:
         path: str,
         *,
         role: SlotRole | None,
+        outcome: str = "restored",
     ) -> bool:
         """Restore `path` into `slot_id` and verify what came back."""
+        if role is not None:
+            # Whatever the slot held, it holds no conversation after this, verified or not.
+            self._forget_pair_slot(served_model, role)
         started = time.perf_counter()
         try:
             resp = await self._gateway.restore_slot(
@@ -1685,13 +2097,14 @@ class KvPrefixStore:
         )
         if self._pool_guard is not None and role is not None:
             self._pool_guard.note_restored(served_model, slot_id, n_restored)
+        self._mark_warm(served_model, role)
         await box_events.record(
             box_events.KV_PREFIX_RESTORED,
             served_model,
             detail=f"{n_restored}-token jerv prefix restored from disk in {elapsed_ms} ms",
         )
         await self._note(
-            "restored",
+            outcome,
             served_model,
             role=role,
             tokens=n_restored,
@@ -1700,11 +2113,11 @@ class KvPrefixStore:
         )
         return True
 
-    # ---- conversations (pooled interactive slot) ----------------------------------------
+    # ---- conversations (pooled chat slots) ----------------------------------------------
 
     def _conversation_pool(self, served_model: str) -> KvPool | None:
-        """The pool whose interactive slot carries conversation files, or None when the
-        feature does not apply: off, no pool, or the model is out of the disk layer."""
+        """The pool whose chat slots carry conversation files, or None when the feature does
+        not apply: off, no pool, or the model is out of the disk layer."""
         if not self._conversations:
             return None
         pool = local_catalog.pool_of(served_model)
@@ -1719,10 +2132,13 @@ class KvPrefixStore:
         system: str,
         tools: Sequence[LlmTool],
         reasoning_effort: str | None,
+        *,
+        role: SlotRole | None = None,
     ) -> tuple[bool, int]:
-        """Before an interactive request on a pooled model: save the conversation the slot
-        holds if this request is about to repurpose it, then restore this request's own
-        conversation if a file for it (same key, same base identity) is on disk. Returns
+        """Before a chat request on a pooled model, in its chat slot `role` (the interactive
+        one when none is named): save the conversation the slot holds if this request is about
+        to repurpose it, then restore this request's own conversation if a file for it (same
+        key, same base identity) is on disk. Returns
         (restored, sequence): on True the caller skips the persona restore, which would see the
         never-used slot as empty and overwrite it; the sequence goes back with the turn's note.
 
@@ -1730,8 +2146,10 @@ class KvPrefixStore:
         not reach disk) repurposes the slot too, so it saves the holder and restores nothing.
         The save runs outside `self._lock` (under `self._save_lock`): it streams gigabytes,
         and every other turn's restore check takes the main lock. Best-effort throughout."""
-        seq = self._prepare_seq.get(served_model, 0) + 1
-        self._prepare_seq[served_model] = seq
+        role = role or SlotRole.INTERACTIVE
+        slot_key = (served_model, role)
+        seq = self._prepare_seq.get(slot_key, 0) + 1
+        self._prepare_seq[slot_key] = seq
         pool = self._conversation_pool(served_model)
         if pool is None:
             return False, seq
@@ -1740,7 +2158,7 @@ class KvPrefixStore:
         ):
             conversation_key = None
         async with self._lock:
-            hold = self._conv_hold.get(served_model)
+            hold = self._conv_hold.get(slot_key)
             if hold is not None and conversation_key is not None and hold.key == conversation_key:
                 self._count("conversation_held")
                 return False, seq
@@ -1754,17 +2172,17 @@ class KvPrefixStore:
                 return False, seq
             base, save_dir, _identity, line = resolved
             # Whatever happens next, this request replaces what the slot held.
-            self._conv_hold.pop(served_model, None)
+            self._conv_hold.pop(slot_key, None)
         if hold is not None and hold.dirty:
             async with self._save_lock:
-                await self._save_conversation(served_model, pool, hold)
+                await self._save_conversation(served_model, pool, hold, role)
         if conversation_key is None:
             return False, seq
         async with self._lock:
-            if self._prepare_seq.get(served_model) != seq:
+            if self._prepare_seq.get(slot_key) != seq:
                 return False, seq  # another request is already taking the slot
             restored = await self._restore_conversation(
-                served_model, pool, conversation_key, base, save_dir, line
+                served_model, pool, conversation_key, base, save_dir, line, role
             )
         return restored, seq
 
@@ -1776,6 +2194,7 @@ class KvPrefixStore:
         base: str,
         save_dir: str,
         line: str,
+        role: SlotRole,
     ) -> bool:
         name = kv_conversation.file_name(base, conversation_key)
         path = os.path.join(save_dir, name)
@@ -1787,9 +2206,9 @@ class KvPrefixStore:
         if not await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
             self._count("conversation_skipped_no_sidecar")
             return False
-        if not await self._gate_open(served_model, SlotRole.INTERACTIVE):
+        if not await self._gate_open(served_model, role):
             return False
-        slot_id = pool.slot(SlotRole.INTERACTIVE)
+        slot_id = pool.slot(role)
         try:
             slots = [s for s in await self._gateway.slots(served_model) if isinstance(s, dict)]
         except LocalGatewayError as exc:
@@ -1797,7 +2216,7 @@ class KvPrefixStore:
             return False
         target = _by_slot_id(slots, slot_id) if layout_matches(pool, slots) else None
         if target is None or target.get("is_processing"):
-            # A busy interactive slot is another interactive request; this one queues behind
+            # A busy chat slot is another chat request; this one queues behind
             # it and overwrites whatever it leaves, so a restore now would be wasted.
             self._count("conversation_skipped_busy")
             return False
@@ -1809,7 +2228,7 @@ class KvPrefixStore:
             return False
         try:
             return await self._restore_conversation_file(
-                served_model, conversation_key, base, path, name, meta, slot_id
+                served_model, conversation_key, base, path, name, meta, slot_id, role
             )
         finally:
             self._end_reserve(served_model, slot_id, ticket)
@@ -1823,8 +2242,11 @@ class KvPrefixStore:
         name: str,
         meta: ConversationMeta,
         slot_id: int,
+        role: SlotRole,
     ) -> bool:
         """The conversation restore itself, with its pool cells already reserved."""
+        # The turn that uses the restore names the holder again (`note_agent_turn`).
+        self._forget_pair_slot(served_model, role)
         started = time.perf_counter()
         try:
             resp = await self._gateway.restore_slot(served_model, slot_id, name)
@@ -1836,7 +2258,7 @@ class KvPrefixStore:
             await self._note(
                 "conversation_restore_failed",
                 served_model,
-                role=SlotRole.INTERACTIVE,
+                role=role,
                 error=str(exc),
             )
             # The claim's read-modify-write, under the lock every other writer of it holds.
@@ -1852,7 +2274,7 @@ class KvPrefixStore:
                 "conversation_restore_rejected",
                 served_model,
                 warn=True,
-                role=SlotRole.INTERACTIVE,
+                role=role,
                 n_restored=n_restored,
                 expected=meta.n_tokens,
             )
@@ -1861,13 +2283,13 @@ class KvPrefixStore:
         await asyncio.to_thread(self._touch, path)
         # Stands in for the never-used slot's missing size, so the keeper's prefix restore
         # does not overwrite it; the turn that uses it retires it (`note_agent_turn`).
-        self._restored_unused[self._memo_key(served_model, SlotRole.INTERACTIVE)] = (
+        self._restored_unused[self._memo_key(served_model, role)] = (
             base,
             time.monotonic(),
         )
         if self._pool_guard is not None:
             self._pool_guard.note_restored(served_model, slot_id, n_restored)
-        self._conv_hold[served_model] = ConversationHold(
+        self._conv_hold[(served_model, role)] = ConversationHold(
             key=conversation_key,
             base=base,
             input_tokens=None,
@@ -1885,7 +2307,7 @@ class KvPrefixStore:
         await self._note(
             "conversation_restored",
             served_model,
-            role=SlotRole.INTERACTIVE,
+            role=role,
             tokens=n_restored,
             slot=slot_id,
             elapsed_ms=elapsed_ms,
@@ -1893,9 +2315,9 @@ class KvPrefixStore:
         return True
 
     async def _save_conversation(
-        self, served_model: str, pool: KvPool, hold: ConversationHold
+        self, served_model: str, pool: KvPool, hold: ConversationHold, role: SlotRole
     ) -> Literal["saved", "busy", "failed"]:
-        """Save the interactive slot as `hold`'s conversation — only when `/slots`, read just
+        """Save chat slot `role` as `hold`'s conversation — only when `/slots`, read just
         before, still shows that conversation's cache (see `ConversationHold.still_in_slot`)
         and the server saves exactly that many tokens. Under `self._save_lock`, never the main
         lock. `busy` means try again later; `failed` means the claim is no longer good."""
@@ -1909,7 +2331,7 @@ class KvPrefixStore:
         save_dir = None if line is None else _save_dir_from_line(line, self._models_root)
         if save_dir is None:
             return "failed"
-        slot_id = pool.slot(SlotRole.INTERACTIVE)
+        slot_id = pool.slot(role)
         try:
             slots = [s for s in await self._gateway.slots(served_model) if isinstance(s, dict)]
         except LocalGatewayError as exc:
@@ -1924,7 +2346,7 @@ class KvPrefixStore:
             await self._note(
                 "conversation_slot_moved",
                 served_model,
-                role=SlotRole.INTERACTIVE,
+                role=role,
                 slot_tokens=n_slot,
                 last_input=hold.input_tokens,
             )
@@ -1938,9 +2360,7 @@ class KvPrefixStore:
         try:
             resp = await self._gateway.save_slot(served_model, slot_id, name)
         except LocalGatewayError as exc:
-            await self._note(
-                "conversation_save_failed", served_model, role=SlotRole.INTERACTIVE, error=str(exc)
-            )
+            await self._note("conversation_save_failed", served_model, role=role, error=str(exc))
             await asyncio.to_thread(self._remove_quietly, path)
             return "failed"
         n_saved = resp.get("n_saved")
@@ -1948,16 +2368,14 @@ class KvPrefixStore:
             await self._note(
                 "conversation_save_mismatch",
                 served_model,
-                role=SlotRole.INTERACTIVE,
+                role=role,
                 expected=n_slot,
                 n_saved=n_saved,
             )
             await asyncio.to_thread(self._remove_quietly, path)
             return "failed"
         model = local_catalog.get_by_served(served_model)
-        if model is not None and not await self._patch_proven(
-            model, served_model, path, SlotRole.INTERACTIVE
-        ):
+        if model is not None and not await self._patch_proven(model, served_model, path, role):
             return "failed"
         # A re-save carries the miss streak: it judges the conversation, not one file.
         meta = ConversationMeta(
@@ -1972,9 +2390,7 @@ class KvPrefixStore:
             return "failed"
         hold.dirty = False
         await self._prune_and_note(served_model, path)
-        await self._note(
-            "conversation_saved", served_model, role=SlotRole.INTERACTIVE, tokens=n_saved
-        )
+        await self._note("conversation_saved", served_model, role=role, tokens=n_saved)
         return "saved"
 
     def note_conversation_turn(
@@ -1988,9 +2404,10 @@ class KvPrefixStore:
         cached_tokens: int = 0,
         seq: int | None = None,
         tool_names: Sequence[str] = (),
+        role: SlotRole | None = None,
     ) -> None:
-        """An interactive turn completed in the pooled interactive slot: the slot now holds
-        this request's prompt plus its answer, unsaved.
+        """A chat turn completed in pooled chat slot `role` (the interactive one when none is
+        named): the slot now holds this request's prompt plus its answer, unsaved.
 
         Judges a restore by the first request it served (`cached_tokens` against what was
         restored). Claims the slot only if no other request prepared after this one (`seq`).
@@ -1999,22 +2416,23 @@ class KvPrefixStore:
         unclaimed, which is never saved."""
         if self._conversation_pool(served_model) is None:
             return
+        slot_key = (served_model, role or SlotRole.INTERACTIVE)
         if conversation_key is not None and kv_conversation.key_hash(conversation_key) in (
             self._forgotten
         ):
             # The chat was deleted or re-scoped while this turn streamed: claim nothing.
-            self._conv_hold.pop(served_model, None)
+            self._conv_hold.pop(slot_key, None)
             return
         if conversation_key is not None and kv_conversation.any_excluded(tool_names):
             self._tainted.add(kv_conversation.key_hash(conversation_key))
-            self._conv_hold.pop(served_model, None)
+            self._conv_hold.pop(slot_key, None)
             self._spawn(self.forget_conversation(conversation_key))
             self._count("conversation_tainted")
             return
-        if seq is not None and self._prepare_seq.get(served_model) != seq:
+        if seq is not None and self._prepare_seq.get(slot_key) != seq:
             self._count("conversation_claim_superseded")
             return
-        previous = self._conv_hold.get(served_model)
+        previous = self._conv_hold.get(slot_key)
         if (
             previous is not None
             and conversation_key is not None
@@ -2025,9 +2443,9 @@ class KvPrefixStore:
             self._count(f"conversation_restore_{verdict}")
             self._spawn(self._judged(served_model, previous.base, conversation_key, verdict))
         if conversation_key is None or fingerprint is None or input_tokens <= 0:
-            self._conv_hold.pop(served_model, None)
+            self._conv_hold.pop(slot_key, None)
             return
-        self._conv_hold[served_model] = ConversationHold(
+        self._conv_hold[slot_key] = ConversationHold(
             key=conversation_key,
             base=fingerprint,
             input_tokens=input_tokens,
@@ -2098,10 +2516,19 @@ class KvPrefixStore:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    def note_conversation_abandoned(self, served_model: str) -> None:
-        """A request reached the interactive slot without a final turn (a stopped stream): what
-        the slot holds is unknown, so nothing may be saved under any conversation's name."""
-        self._conv_hold.pop(served_model, None)
+    def note_conversation_abandoned(
+        self,
+        served_model: str,
+        chat_key: str | None = None,
+        *,
+        role: SlotRole | None = None,
+    ) -> None:
+        """A request reached chat slot `role` without a final turn (a stopped stream): what the
+        slot holds is unknown, so nothing may be saved under any conversation's name. It is
+        still that request's chat, though, so the pair counts the slot as `chat_key`'s."""
+        role = role or SlotRole.INTERACTIVE
+        self._conv_hold.pop((served_model, role), None)
+        self._note_holder(served_model, role, chat_key)
 
     async def forget_conversation(self, conversation_key: str) -> int:
         """Delete every file this conversation has, under any base identity and model, and
@@ -2111,9 +2538,9 @@ class KvPrefixStore:
         # Marked BEFORE waiting for the save lock: a save already streaming finishes and its file
         # is then deleted below; one that starts later sees the mark and writes nothing.
         self._forgotten.add(digest)
-        for served, hold in list(self._conv_hold.items()):
+        for slot_key, hold in list(self._conv_hold.items()):
             if hold.key == conversation_key:
-                del self._conv_hold[served]
+                del self._conv_hold[slot_key]
         async with self._save_lock:
             removed = await asyncio.to_thread(self._remove_conversation_files, digest)
         if removed:
@@ -2153,22 +2580,41 @@ class KvPrefixStore:
     async def save_idle_conversation(
         self, served_model: str, *, idle_s: float = CONVERSATION_IDLE_SAVE_S
     ) -> bool:
-        """The keeper's tick: save the interactive slot's conversation once it has sat
-        unchanged for `idle_s`, so a restart or an engine switch does not take it."""
+        """The keeper's tick: save each chat slot's conversation once it has sat unchanged
+        for `idle_s`, so a restart or an engine switch does not take it. True when any saved."""
         pool = self._conversation_pool(served_model)
-        hold = self._conv_hold.get(served_model)
-        if pool is None or hold is None or not hold.dirty:
+        if pool is None:
             return False
-        if time.monotonic() - hold.at < idle_s:
-            return False
-        async with self._save_lock:
-            if self._conv_hold.get(served_model) is not hold or not hold.dirty:
-                return False
-            outcome = await self._save_conversation(served_model, pool, hold)
-        if outcome == "failed" and self._conv_hold.get(served_model) is hold:
-            # The slot moved on or the save failed: the claim is no longer good.
-            self._conv_hold.pop(served_model, None)
-        return outcome == "saved"
+        saved = False
+        for slot_key, hold in [(k, h) for k, h in self._conv_hold.items() if k[0] == served_model]:
+            if not hold.dirty or time.monotonic() - hold.at < idle_s:
+                continue
+            async with self._save_lock:
+                if self._conv_hold.get(slot_key) is not hold or not hold.dirty:
+                    continue
+                outcome = await self._save_conversation(served_model, pool, hold, slot_key[1])
+            if outcome == "failed" and self._conv_hold.get(slot_key) is hold:
+                # The slot moved on or the save failed: the claim is no longer good.
+                self._conv_hold.pop(slot_key, None)
+            saved = saved or outcome == "saved"
+        return saved
+
+
+# The api process's store, registered by its startup wiring so the settings read can show what
+# each chat pair slot holds without threading the store through every route. None elsewhere
+# (the worker, tests), where the read simply shows no live state.
+_process_store: KvPrefixStore | None = None
+
+
+def set_process_store(store: KvPrefixStore | None) -> None:
+    global _process_store
+    _process_store = store
+
+
+def chat_pair_holdings(served_model: str) -> dict[SlotRole, str]:
+    """`KvPrefixStore.pair_holdings` of this process's registered store, or empty."""
+    store = _process_store
+    return {} if store is None else store.pair_holdings(served_model)
 
 
 def _record_judgement(path: str, verdict: kv_conversation.Judgement) -> bool:

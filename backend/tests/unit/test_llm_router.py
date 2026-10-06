@@ -1089,6 +1089,7 @@ class _RecordingKvStore:
         *,
         reasoning_effort: str | None = None,
         role: object = None,
+        chat_key: str | None = None,
     ) -> bool:
         assert not self._dispatched, "restore must run BEFORE the turn is dispatched"
         self.restores.append((served, system, len(list(tools)), reasoning_effort))
@@ -1108,6 +1109,7 @@ class _RecordingKvStore:
         *,
         fingerprint: str | None = None,
         role: object = None,
+        chat_key: str | None = None,
     ) -> None:
         self.noted.append((served, input_tokens))
         self.named.append(fingerprint)
@@ -1124,7 +1126,9 @@ class _RecordingKvStore:
     ) -> None:
         return None
 
-    def note_conversation_abandoned(self, served: str) -> None:
+    def note_conversation_abandoned(
+        self, served: str, chat_key: object = None, *, role: object = None
+    ) -> None:
         return None
 
 

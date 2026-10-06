@@ -1238,9 +1238,10 @@ CATALOG: tuple[LocalModel, ...] = (
         note="125B MoE (~6B active) + a 51B n-gram engram table, text + vision — a hybrid "
         "reasoner meant to replace the gpt-oss-120b + Qwen3.8-27B pair on its own engine "
         "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container as one shared "
-        "512k-token pool across nine role-pinned slots; never co-resident with the standard "
-        "gateway. ~88 GiB on disk; booked at the measured ~74 GiB on the GPU plus up to 8 GiB "
-        "of host-side prompt checkpoints (~82 GiB in all), and a load needs ~80 GiB free.",
+        "512k-token pool across ten role-pinned slots (two of them jerv's chat pair); never "
+        "co-resident with the standard gateway. ~88 GiB on disk; booked at the measured ~74 GiB "
+        "on the GPU plus up to ~9 GiB of host-side prompt checkpoints (~83 GiB in all), and a "
+        "load needs ~80 GiB free.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,

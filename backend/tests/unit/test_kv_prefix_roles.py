@@ -55,6 +55,8 @@ class FakeGateway:
         self.restore_error: Exception | None = None
         self.saved: list[tuple[int, str]] = []
         self.restored: list[tuple[int, str]] = []
+        self.erased: list[int] = []
+        self.erase_result: bool | Exception = True
         self.build = BUILD
 
     async def props(self, served: str) -> dict[str, object]:
@@ -80,6 +82,16 @@ class FakeGateway:
                 0,
             )
         return {"n_saved": n}
+
+    async def erase_slot(self, served: str, slot_id: int) -> bool:
+        if isinstance(self.erase_result, Exception):
+            raise self.erase_result
+        if self.erase_result:
+            self.erased.append(slot_id)
+            for s in self.slot_state:
+                if s["id"] == slot_id:
+                    s["n_prompt_tokens"] = 0
+        return self.erase_result
 
     async def restore_slot(self, served: str, slot_id: int, filename: str) -> dict[str, object]:
         self.restored.append((slot_id, filename))
@@ -611,7 +623,7 @@ async def test_a_claim_from_a_superseded_request_is_ignored(root: Path) -> None:
     _restored, mine = await store.prepare_conversation(FLASH, "chat-A", "persona", TOOLS, None)
     await store.prepare_conversation(FLASH, "chat-B", "persona", TOOLS, None)  # took the slot
     _turn(store, gw, "chat-A", 40_000, seq=mine)
-    assert FLASH not in store._conv_hold
+    assert (FLASH, SlotRole.INTERACTIVE) not in store._conv_hold
     assert store._counters.get("conversation_claim_superseded") == 1
 
 
@@ -848,7 +860,7 @@ async def test_a_turn_still_streaming_at_the_delete_claims_nothing(root: Path) -
     store, gw = _store(root)
     await store.forget_conversation("chat-A")  # deleted while its turn was in flight
     _turn(store, gw, "chat-A", 40_000)  # ... which then completes
-    assert FLASH not in store._conv_hold
+    assert (FLASH, SlotRole.INTERACTIVE) not in store._conv_hold
     assert not await store.save_idle_conversation(FLASH, idle_s=0)
     await _prepare(store, "chat-B")
     assert gw.saved == []
@@ -892,3 +904,407 @@ async def test_a_restores_cells_are_held_by_the_guard_while_it_streams(root: Pat
 
 async def _no_erase(model: str, slot: int) -> bool:
     raise AssertionError("nothing needs erasing")
+
+
+# ---- the chat pair: two chat slots, the latest chat and the warm prefix ----------------------
+
+A, B = SlotRole.INTERACTIVE, SlotRole.INTERACTIVE_ALT
+
+
+def _chat(store: KvPrefixStore, gw: FakeGateway, role: SlotRole, key: str | None, n: int) -> None:
+    """A chat turn noted in `role`'s slot, leaving it holding `n` tokens."""
+    fp = store.identity_of(FLASH, "persona", TOOLS, None)
+    store.note_agent_turn(FLASH, n, fingerprint=fp, role=role, chat_key=key)
+    for s in gw.slot_state:
+        if s["id"] == FLASH_NEXT_POOL.slot(role):
+            s["n_prompt_tokens"] = n
+
+
+async def _paired(root: Path, **kw: Any) -> tuple[KvPrefixStore, FakeGateway]:
+    """A store whose jerv prefix is primed into chat slot A and saved (A is warm)."""
+    store, gw = _store(root, **kw)
+    await _prime_and_save(store, gw, A)
+    return store, gw
+
+
+async def _rewarm(store: KvPrefixStore) -> list[SlotRole]:
+    return await store.rewarm_pair(FLASH, "persona", TOOLS)
+
+
+async def test_a_new_chat_goes_to_the_warm_slot_and_a_follow_up_stays_with_its_chat(
+    root: Path,
+) -> None:
+    store, gw = await _paired(root)
+    assert store.pick_chat_role(FLASH, "chat-1") is A, "the warm slot"
+    _chat(store, gw, A, "chat-1", 47_000)
+    assert store.pick_chat_role(FLASH, "chat-1") is A, "its own live cache"
+    assert store.pick_chat_role(FLASH, "chat-2") is B, "never the latest chat's slot"
+    _chat(store, gw, B, "chat-2", 47_500)
+    assert store.pick_chat_role(FLASH, "chat-2") is B
+    assert store.pick_chat_role(FLASH, "chat-1") is A, "still live until re-warmed"
+    # A request naming no chat (the omnibox, a plan continuation) also avoids the latest chat.
+    assert store.pick_chat_role(FLASH, None) is A
+
+
+async def test_a_model_without_a_pair_is_not_routed(root: Path) -> None:
+    store, _gw = _store(root)
+    assert store.pick_chat_role("gpt-oss-120b", "chat-1") is None
+    assert store.warm_target("gpt-oss-120b") is None
+    assert await store.rewarm_pair("gpt-oss-120b", "persona", TOOLS) == []
+    assert kv_prefix.chat_role("gpt-oss-120b", A) is None
+    assert kv_prefix.chat_role(FLASH, SlotRole.SCHEDULED) is None
+    assert kv_prefix.chat_role(FLASH, B) is B
+    assert kv_prefix.chat_role(FLASH, None) is A
+
+
+async def test_the_slot_a_chat_left_is_rewarmed_erase_then_restore(root: Path) -> None:
+    store, gw = await _paired(root)
+    woken: list[str] = []
+    store.add_pair_listener(woken.append)
+    _chat(store, gw, A, "chat-1", 47_000)
+    assert woken == [FLASH], "the first chat moved onto A"
+    assert await _rewarm(store) == []
+    assert gw.erased == [], "B was empty: a plain restore, nothing erased"
+    assert gw.restored[-1][0] == 9
+    assert store.pair_holdings(FLASH) == {A: "recent_conversation", B: "warm_prefix"}
+    # The next new chat goes to the warm B; the slot it leaves (A) is then due a re-warm.
+    assert store.pick_chat_role(FLASH, "chat-2") is B
+    _chat(store, gw, B, "chat-2", 48_000)
+    assert woken == [FLASH, FLASH]
+    gw.restored.clear()
+    assert await _rewarm(store) == []
+    assert gw.erased == [0] and [s for s, _ in gw.restored] == [0]
+    assert store._counters.get("rewarmed") == 1
+    assert store.pair_holdings(FLASH) == {A: "warm_prefix", B: "recent_conversation"}
+    snap: Any = await store.snapshot()
+    assert snap["summary"]["pair_rewarms"] == 1
+    rows = {r["role"]: r for r in snap["chat_pair"]}
+    assert rows["interactive"]["holds"] == "warm_prefix"
+    assert rows["interactive_alt"]["holds"] == "recent_conversation"
+    assert rows["interactive_alt"]["conversation"] == kv_conversation.short_key("chat-2")
+
+
+async def test_a_follow_up_in_the_same_chat_triggers_no_rewarm(root: Path) -> None:
+    store, gw = await _paired(root)
+    woken: list[str] = []
+    store.add_pair_listener(woken.append)
+    _chat(store, gw, A, "chat-1", 47_000)
+    _chat(store, gw, A, "chat-1", 49_000)
+    assert woken == [FLASH], "only the move onto A"
+
+
+async def test_the_latest_chat_and_the_warm_slot_are_never_rewarmed(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)  # B warm
+    gw.restored.clear()
+    assert store._rewarm_due(FLASH) == []
+    assert await _rewarm(store) == []
+    assert gw.erased == [] and gw.restored == []
+
+
+async def test_a_processing_slot_is_never_rewarmed(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    gw.slot_state[0]["is_processing"] = True
+    gw.restored.clear()
+    assert await _rewarm(store) == []
+    assert gw.erased == [] and gw.restored == []
+    assert store._counters.get("rewarm_skipped_busy") == 1
+    assert "restore_skipped_busy" not in store._counters, "a background miss is not narrated"
+
+
+async def test_a_slot_a_request_was_just_routed_to_is_not_rewarmed(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    # chat-1 speaks again: routed back to A, its live cache, before the keeper gets there.
+    assert store.pick_chat_role(FLASH, "chat-1") is A
+    assert await _rewarm(store) == []
+    assert gw.erased == []
+    # Its turn is noted: A holds the latest chat again, and B is the one due.
+    _chat(store, gw, A, "chat-1", 50_000)
+    assert store._rewarm_due(FLASH) == [B]
+    store.release_chat_role(FLASH, A)  # a stray release is harmless
+
+
+async def test_a_claim_is_rechecked_under_the_lock_before_the_erase(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    # The re-warm found A due, then a request was routed there before its erase.
+    store.pick_chat_role(FLASH, "chat-1")
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=A, background=True)
+    assert gw.erased == []
+    assert store._counters.get("rewarm_skipped_claimed") == 1
+
+
+async def test_a_claim_that_never_reports_back_expires(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    store.pick_chat_role(FLASH, "chat-1")
+    store.pick_chat_role(FLASH, "chat-1")
+    store.release_chat_role(FLASH, A)
+    assert store._rewarm_due(FLASH) == [], "one of two claims still stands"
+    monkeypatch.setattr(kv_prefix, "CLAIM_TTL_S", 0.0)
+    assert store._rewarm_due(FLASH) == [A]
+
+
+async def test_after_a_restart_an_unaccounted_slot_is_never_erased(root: Path) -> None:
+    store, gw = _store(root)
+    await _prime_and_save(store, gw, A)
+    # A fresh process beside a long-running server: both chat slots hold something unknown.
+    fresh = KvPrefixStore(
+        gw,  # type: ignore[arg-type]
+        str(root),
+        engine=engines.FLASH_NEXT,
+    )
+    gw.slot_state = _slots(s0=60_000, s9=55_000)
+    gw.restored.clear()
+    assert await fresh.rewarm_pair(FLASH, "persona", TOOLS) == []
+    assert gw.erased == [] and gw.restored == []
+    assert fresh.pair_holdings(FLASH) == {A: "unknown", B: "unknown"}
+
+
+async def test_what_no_restore_can_serve_is_handed_back_for_a_prime(root: Path) -> None:
+    store, gw = await _paired(root, gate="awaiting_probe")
+    _chat(store, gw, A, "chat-1", 47_000)
+    assert await _rewarm(store) == [B], "the gate holds every restore back"
+    assert gw.restored == []
+    # No file for this identity at all.
+    store2, gw2 = _store(root)
+    _chat(store2, gw2, A, "chat-1", 47_000)
+    assert await store2.rewarm_pair(FLASH, "persona v2", TOOLS) == [B]
+
+
+async def test_no_sidecar_hands_the_slot_back_for_a_prime(root: Path) -> None:
+    store, gw = await _paired(root)
+    fp = store.identity_of(FLASH, "persona", TOOLS, None)
+    (_folder(root) / f"{fp}.kvslot.ckpt").unlink()
+    _chat(store, gw, A, "chat-1", 47_000)
+    assert await _rewarm(store) == [B]
+
+
+async def test_a_prime_marks_its_slot_warm_even_out_of_the_disk_layer(root: Path) -> None:
+    store, gw = _store(root, patched=False)
+    gw.slot_state = _slots(s9=PRIME)
+    assert not await store.save_after_prime(FLASH, "persona", TOOLS, PRIME, role=B)
+    assert store.pair_holdings(FLASH)[B] == "warm_prefix", "or the keeper primes it forever"
+    assert store.warm_target(FLASH) is A
+    # With both warm the prime lands on the slot that is not the latest chat.
+    store._mark_warm(FLASH, A)
+    _chat(store, gw, B, "chat-1", 47_000)
+    assert store.warm_target(FLASH) is A
+
+
+async def test_a_full_pool_stops_a_rewarm_before_anything_is_erased(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    for busy in (3, 4):
+        gw.slot_state[busy]["is_processing"] = True
+        gw.slot_state[busy]["n_prompt_tokens"] = 1000
+        gw.slot_state[busy]["next_token"] = [{"n_decoded": 0, "n_remain": 4096}]
+    gw.restored.clear()
+    assert await _rewarm(store) == []
+    assert gw.erased == [] and gw.restored == []
+    assert store._counters.get("restore_skipped_pool_full") == 1
+
+
+async def test_a_failed_erase_restores_nothing(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    gw.restored.clear()
+    gw.erase_result = LocalGatewayError("boom")
+    assert await _rewarm(store) == []
+    assert gw.restored == []
+    assert store._counters.get("rewarm_erase_failed") == 1
+    gw.erase_result = False  # a server that cannot erase at all
+    assert await _rewarm(store) == []
+    assert gw.restored == []
+
+
+async def test_a_chat_reaching_an_older_chats_slot_first_replaces_it_inline(root: Path) -> None:
+    """The re-warm had not run yet: chat-3 is routed to B, which still holds chat-2. Before
+    dispatch its restore erases B and restores the prefix — `restored_on_switch`."""
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    _chat(store, gw, A, "chat-1", 49_000)  # chat-1 back on A: B holds chat-2, older
+    assert store.pick_chat_role(FLASH, "chat-3") is B
+    gw.restored.clear()
+    assert await store.restore_if_lost(FLASH, "persona", TOOLS, role=B, chat_key="chat-3")
+    assert gw.erased == [9] and [s for s, _ in gw.restored] == [9]
+    assert store._counters.get("restored_on_switch") == 1
+
+
+async def test_a_chat_returning_to_its_own_older_slot_keeps_its_cache(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    _chat(store, gw, A, "chat-1", 49_000)
+    assert store.pick_chat_role(FLASH, "chat-2") is B, "its own live cache, though older"
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=B, chat_key="chat-2")
+    assert gw.erased == []
+
+
+async def test_the_latest_chat_is_never_replaced_inline(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=A, chat_key="chat-9")
+    assert gw.erased == []
+
+
+async def test_scheduled_and_browse_slots_are_never_replaced(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    gw.slot_state[2]["n_prompt_tokens"] = 30_000
+    gw.slot_state[8]["n_prompt_tokens"] = 20_000
+    for role in (SlotRole.SCHEDULED, SlotRole.BROWSE):
+        assert not await store.restore_if_lost(
+            FLASH, "persona", TOOLS, role=role, chat_key="chat-2"
+        )
+    assert gw.erased == []
+
+
+async def test_an_erase_or_a_reload_forgets_what_the_pair_held(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    store.note_slot_erased(FLASH, 0)
+    assert store.pair_holdings(FLASH) == {A: "unknown", B: "warm_prefix"}
+    assert store.recent_slot(FLASH) is None
+    _chat(store, gw, A, "chat-1", 47_000)
+    assert store.recent_slot(FLASH) == 0
+    store.note_prefix_lost(FLASH)
+    assert store.pair_holdings(FLASH) == {A: "unknown", B: "unknown"}
+
+
+async def test_a_turn_naming_no_chat_leaves_its_slot_unknown_and_due(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, None, 30_000)  # an omnibox turn in the warm slot
+    assert store.pair_holdings(FLASH) == {A: "recent_conversation", B: "unknown"}
+    assert store._rewarm_due(FLASH) == [B]
+    await _rewarm(store)
+    assert gw.erased == [9], "re-warmed: the latest chat is known to be on A"
+    # A turn naming no chat in the latest chat's slot leaves no latest chat at all.
+    _chat(store, gw, A, None, 30_000)
+    assert store.recent_slot(FLASH) is None
+
+
+async def test_any_chat_turn_retires_a_restore_memo_on_its_slot(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)  # B restored, unused: memo set
+    assert (FLASH, B) in store._restored_unused
+    # A turn of ANOTHER identity uses it — the memo would otherwise refuse B's next re-warm.
+    store.note_agent_turn(FLASH, 900, fingerprint="other", role=B, chat_key="chat-2")
+    assert (FLASH, B) not in store._restored_unused
+
+
+async def test_a_dirty_conversation_is_saved_before_its_slot_is_rewarmed(root: Path) -> None:
+    store, gw = await _paired(root, conversations=True)
+    _chat(store, gw, A, "chat-1", 47_000)
+    fp = store.identity_of(FLASH, "persona", TOOLS, None)
+    store.note_conversation_turn(
+        FLASH, "chat-1", fingerprint=fp, input_tokens=40_000, output_tokens=300, role=A
+    )
+    gw.slot_state[0]["n_prompt_tokens"] = 40_299
+    await _rewarm(store)  # B
+    _chat(store, gw, B, "chat-2", 48_000)
+    gw.saved.clear()
+    await _rewarm(store)
+    assert [s for s, _ in gw.saved] == [0], "chat-1 reached disk first"
+    assert kv_conversation.is_conversation_file(gw.saved[0][1])
+    assert gw.erased == [0]
+
+
+async def test_conversation_files_follow_their_pair_slot(root: Path) -> None:
+    store, gw = await _paired(root, conversations=True)
+    fp = store.identity_of(FLASH, "persona", TOOLS, None)
+    store.note_conversation_turn(
+        FLASH, "chat-2", fingerprint=fp, input_tokens=40_000, output_tokens=300, role=B
+    )
+    gw.slot_state = _slots(s9=40_299)
+    assert (FLASH, B) in store._conv_hold
+    assert await store.save_idle_conversation(FLASH, idle_s=0)
+    assert [s for s, _ in gw.saved][-1] == 9
+    store.note_conversation_turn(
+        FLASH, "chat-2", fingerprint=fp, input_tokens=40_000, output_tokens=300, role=B
+    )
+    gw.saved.clear()
+    # Another conversation prepared for B repurposes it: B's own chat is saved off slot 9.
+    restored, _seq = await store.prepare_conversation(
+        FLASH, "chat-3", "persona", TOOLS, None, role=B
+    )
+    assert not restored
+    assert [s for s, _ in gw.saved] == [9]
+    store.note_conversation_abandoned(FLASH, "chat-3", role=B)
+    assert store.pair_holdings(FLASH)[B] == "recent_conversation"
+
+
+async def test_through_the_pool_guard_the_erase_is_its_own_and_the_latest_chat_goes_last(
+    root: Path,
+) -> None:
+    erased: list[int] = []
+
+    async def erase(_model: str, slot: int) -> bool:
+        erased.append(slot)
+        return True
+
+    gw = FakeGateway(_folder(root))
+    guard = KvPoolGuard(gw.slots, erase)
+    store = KvPrefixStore(
+        gw,  # type: ignore[arg-type]
+        str(root),
+        engine=engines.FLASH_NEXT,
+        pool_guard=guard,
+    )
+    _record_gate(root, "passed")
+    await _prime_and_save(store, gw, A)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    _chat(store, gw, B, "chat-2", 48_000)
+    assert guard._eviction_order(FLASH, FLASH_NEXT_POOL)[-1] == 9, "the latest chat goes last"
+    # A call of this process already placed on A: the guard refuses the erase.
+    guard._hold(FLASH, 0, 999, 1000)
+    assert await _rewarm(store) == []
+    assert erased == []
+    guard._pending.clear()
+    assert await _rewarm(store) == []
+    assert erased == [0]
+    assert store.pair_holdings(FLASH)[A] == "warm_prefix"
+
+
+async def test_the_settings_read_shows_what_each_pair_slot_holds(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import llm_settings
+
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    monkeypatch.setattr(kv_prefix, "_process_store", None)
+    assert kv_prefix.chat_pair_holdings(FLASH) == {}
+    kv_prefix.set_process_store(store)
+    out = llm_settings._kv_pool_out(FLASH_NEXT_POOL, FLASH)
+    assert out is not None
+    by_role = {s.role: s for s in out.slots}
+    assert by_role["interactive"].holds == "recent_conversation"
+    assert by_role["interactive"].chat_pair is True
+    assert by_role["interactive_alt"].holds == "unknown"
+    assert by_role["scheduled"].holds is None and by_role["scheduled"].chat_pair is False

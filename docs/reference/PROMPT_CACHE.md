@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-10-05
+> **Status:** Living · **Last verified:** 2026-10-06
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -74,10 +74,11 @@ Saves are not gated. The state read and Ops show `awaiting_probe | passed | fail
 
 ## On Flash-Next: one prefix per role, and conversation files (F4)
 
-Flash-Next serves nine role-pinned slots over one shared KV pool
+Flash-Next serves ten role-pinned slots over one shared KV pool
 (`../plans/FLASH_NEXT_ENGINE_PLAN.md` §4a), so the store works per **role**:
 
-- jerv's prime is saved from slot 0 and restored into slot 0. The keeper also restores the
+- jerv's prime is saved from a chat slot and restored into the chat slots (the chat pair,
+  below). The keeper also restores the
   same file into the **scheduled-task** slot (2) when it is empty — scheduled turns send jerv's
   persona, tools and effort, so it is their identity too. Ingest, research, browse and the pet
   are not primed: their stable prefixes are a few hundred tokens or do not exist. Any role's
@@ -89,7 +90,8 @@ Flash-Next serves nine role-pinned slots over one shared KV pool
   slots orphaned every prefix and conversation file and put the gate back to awaiting the
   probe. Prefixes re-save on the next prime; restores resume once `POST /llm/slot-probe` passes.
 - A restore goes into the role's own slot only while that slot is idle and **empty**, never
-  over an occupied one, and only when the restored tokens fit the pool — judged by the router's
+  over an occupied one — the chat pair's re-warm below is the one exception — and only when the
+  restored tokens fit the pool — judged by the router's
   pool guard under its own lock, with its pending calls, so a restore can never push the pool
   past its cells under a busy request (a full pool fails every busy request). The guard also
   charges what a restore put in a slot that never ran a request (`/slots` reports no size for
@@ -103,7 +105,32 @@ Flash-Next serves nine role-pinned slots over one shared KV pool
 - No save leaves the models volume with less than 20 GiB free, or less than twice the file
   about to be written (`save_skipped_low_disk`); saves and prunes run one at a time.
 
-The interactive slot also carries **conversation files** (`llm/kv_conversation.py`, toggle
+### The chat pair: the latest chat, and a warm prefix (2026-10-06)
+
+jerv's chat has TWO slots, 0 and 9 (`KvPool.chat_pair`), because one was not enough: measured
+on the box, every new chat re-prefilled the whole ~47k-token jerv prompt (~2 min, the owner's
+"Reading your prompt 38%") — the hybrid reuses a cached prefix only from a context checkpoint,
+a chat of eight or more model calls evicts the one at the persona boundary (eight checkpoints,
+oldest first), and the store would not restore over the occupied slot. Now:
+
+- **One slot holds the most recent conversation**, the other **only jerv's prefix, warm**. The
+  router asks the store which slot a chat turn goes to (`pick_chat_role`) by its `chat_key`
+  (the session id, in RAM only — every chat has one, Brain chats included): the slot holding
+  that chat's live cache, else the warm one. A new chat, an older chat returning, or a request
+  naming no chat never lands on the latest chat's slot.
+- **Re-warm.** When a chat lands on the warm slot, the slot it left (the previous chat) is due:
+  the store wakes the keeper, whose tick saves that slot's conversation first (when conversation
+  files are on), then erases it through the pool guard and restores jerv's prefix file with its
+  sidecar — only while the slot is idle, no request was just routed to it, the gate is open, the
+  sidecar exists and the pool guard reserves the cells. A slot no restore can serve (no file, the
+  gate not passed) is primed by the keeper instead, never while a chat slot is busy.
+- **Never erased:** the latest chat, the warm prefix, a slot whose own chat is the incoming one,
+  or — after an api restart — any slot while this process does not know where the latest chat
+  is (it would otherwise guess, and might wipe the owner's live conversation).
+- The pool guard frees the warm slot before the latest chat's, whichever id holds which: the
+  first comes back from disk in ~2 s, the second only by re-reading the conversation.
+
+The chat slots also carry **conversation files** (`llm/kv_conversation.py`, toggle
 *Keep chats on disk*, default ON) — for **research-type chats only**. A slot file holds the
 conversation's token ids on disk, outside Postgres, where the domain firewalls (health, finance,
 location) cannot reach it, so a chat gets one only when it cannot hold firewalled or private
@@ -133,12 +160,12 @@ no `.meta`. It can never be restored — a file without a readable claim is neve
 it is the first thing the budget evicts; any forget or clear also deletes it, since a claimless
 conversation file cannot say whose it is.
 
-When another conversation, or the keeper's prime, is about to take slot 0, the conversation it
-holds is saved first — only if `/slots` still reads as that conversation's cache (between its
+When another conversation, the keeper's prime or a re-warm is about to take a chat slot, the
+conversation it holds is saved first — only if `/slots` still reads as that conversation's cache (between its
 last prompt and prompt + answer) and the server saves exactly that many tokens. The save streams
 outside the store's main lock. A conversation idle for 10 minutes is saved by the keeper's tick.
-When a conversation speaks again and slot 0 does not hold it, its file is restored before the
-request on **identity alone** — same conversation key, same base identity (launch line, persona,
+When a conversation speaks again and neither chat slot holds it, its file is restored into the
+slot it was routed to (the warm one) before the request on **identity alone** — same conversation key, same base identity (launch line, persona,
 tools, effort). A chat request's message list is not stable from turn to turn (a timestamped
 `now` block, resume/plan/artifact context, per-turn hints, the turn's own tool steps with their
 replayed thinking), so no message comparison could hold; llama-server compares TOKENS after the

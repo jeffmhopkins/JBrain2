@@ -2876,7 +2876,8 @@ fieldset.settings-field > legend {
   background: var(--steel-tint);
   border-radius: 10px;
 }
-.kvp-role-interactive {
+.kvp-role-interactive,
+.kvp-role-interactive_alt {
   --kvp-c: var(--steel);
   --kvp-tint: var(--steel-tint);
   --kvp-o: 1;
@@ -2901,7 +2902,8 @@ fieldset.settings-field > legend {
 }
 .kvp-role-scheduled,
 .kvp-role-jcode,
-.kvp-role-pet {
+.kvp-role-pet,
+.kvp-role-interactive_alt {
   --kvp-o: 0.6;
 }
 .kvp-slot-btn {
@@ -2952,6 +2954,12 @@ fieldset.settings-field > legend {
   flex: none;
   color: var(--kvp-c);
   background: var(--kvp-tint);
+}
+/* What a chat pair slot holds now: a plain neutral chip, so it reads as state, not role. */
+.kvp-hold {
+  flex: none;
+  color: var(--text-2);
+  background: var(--surface-2);
 }
 .kvp-capbar {
   display: block;
