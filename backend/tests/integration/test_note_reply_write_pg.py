@@ -1175,7 +1175,11 @@ async def test_a_handle_whose_entity_was_merged_away_writes_onto_the_survivor(  
         ctx,
     )
     assert isinstance(out, ToolOutput) and len(out.facts) == 1
-    assert [r.status for r in await _rows(maker, survivor, "jobTitle")] == ["active"]
+    # The ingest may already have written this address before the fold repointed it, so
+    # the survivor can also carry the row this write superseded; what matters is that the
+    # live value is on the survivor and nothing at all landed on the tombstone.
+    statuses = [r.status for r in await _rows(maker, survivor, "jobTitle")]
+    assert statuses.count("active") == 1
     assert await _rows(maker, gone, "jobTitle") == []
 
 
