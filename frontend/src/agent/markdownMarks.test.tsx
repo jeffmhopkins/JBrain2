@@ -61,7 +61,10 @@ describe("placeMarks", () => {
   it("inserts one sentinel per offset, in order, at safe boundaries", () => {
     const text = "One.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nTwo.";
     const out = placeMarks(text, [at(text, "One."), at(text, "| 1"), at(text, "One.")]);
-    expect(out).toBe("One.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n\n\n\n\nTwo.");
+    // Each on a line of its own: the two after "One." in call order, the table's after it.
+    expect(out).toBe(
+      "One.\n\n\ue000\n\n\ue002\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n\ue001\n\nTwo.",
+    );
   });
 
   it("neutralises a sentinel-range character the answer already held", () => {
@@ -70,15 +73,40 @@ describe("placeMarks", () => {
 });
 
 describe("Markdown with marks", () => {
-  it("renders a mark inline at the end of its paragraph", () => {
+  it("renders a mark on a line of its own between the paragraphs", () => {
     const text = "Let me look.\n\nThe page says so.";
     const { container } = render(
       <Markdown text={text} marks={[{ at: at(text, "look."), node: <b className="m">M</b> }]} />,
     );
     const paragraphs = container.querySelectorAll("p.md-p");
-    expect(paragraphs).toHaveLength(2);
-    expect(paragraphs[0]?.querySelector(".m")).not.toBeNull();
-    expect(paragraphs[0]?.textContent).toBe("Let me look.M");
+    expect([...paragraphs].map((p) => p.textContent)).toEqual([
+      "Let me look.",
+      "The page says so.",
+    ]);
+    const line = container.querySelector(".md-tmark-line");
+    expect(line?.textContent).toBe("M");
+    expect(line?.previousElementSibling).toBe(paragraphs[0]);
+  });
+
+  it("splits a paragraph where a mark falls mid-way, but never a heading or a quote", () => {
+    const text = "Let me look. Then more.\n\n## Head line\n\n> quoted text here";
+    const { container } = render(
+      <Markdown
+        text={text}
+        marks={[
+          { at: text.indexOf(" Then"), node: <i className="m">1</i> },
+          { at: text.indexOf("line"), node: <i className="m">2</i> },
+          { at: text.indexOf("text"), node: <i className="m">3</i> },
+        ]}
+      />,
+    );
+    expect([...container.querySelectorAll("p.md-p")].map((p) => p.textContent)).toEqual([
+      "Let me look.",
+      "Then more.",
+    ]);
+    expect(container.querySelector(".md-h")?.textContent).toBe("Head line");
+    expect(container.querySelector("blockquote")?.textContent).toContain("quoted text here");
+    expect(container.querySelectorAll(".md-tmark-line .m")).toHaveLength(3);
   });
 
   it("never breaks a table, fence or bold run it would have cut", () => {
@@ -105,13 +133,16 @@ describe("Markdown with marks", () => {
     ]);
   });
 
-  it("puts a mark inside a list at the end of its last item", () => {
+  it("puts a mark inside a list after the whole list", () => {
     const text = "- one\n- two\n\nAfter.";
     const { container } = render(
       <Markdown text={text} marks={[{ at: 3, node: <i className="m">x</i> }]} />,
     );
-    const items = container.querySelectorAll("li");
-    expect(items[1]?.textContent).toBe("twox");
+    expect([...container.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "one",
+      "two",
+    ]);
+    expect(container.querySelector("ul")?.nextElementSibling?.textContent).toBe("x");
   });
 
   it("renders text with no marks exactly as before", () => {

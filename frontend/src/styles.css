@@ -29985,3 +29985,13 @@ button.wf-sigpill {
 .llm-jcode-serving {
   margin-top: 8px;
 }
+
+/* A tool mark on its own line (`placeMarks`, owner 2026-10-06): a quiet row between the prose
+   it interrupts, tight enough that it reads as a pause rather than a paragraph. */
+.fb-shell .md-tmark-line {
+  margin: 0.15em 0 0.55em;
+  line-height: 1.6;
+}
+.fb-shell .md-tmark-line .tmark {
+  margin-left: 0;
+}

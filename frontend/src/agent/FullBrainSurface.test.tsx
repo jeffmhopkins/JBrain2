@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { type ModelLoad, api } from "../api/client";
 import { AgentStatusLine, FullBrainSurface, resolveSelectionClamp } from "./FullBrainSurface";
 import type { AgentStatus } from "./status";
+import { stepLabel } from "./toolSummary";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type ConvMode, type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
@@ -1046,7 +1047,9 @@ describe("FullBrainSurface", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
     // The friendly label stands in for the raw tool name, and the searched query
     // rides the row inline (kept whole under the hover title even if clipped).
-    expect(screen.getByText("Searched Gmail")).toBeInTheDocument();
+    expect(
+      within(document.querySelector(".fb-steps") as HTMLElement).getByText("Searched Gmail"),
+    ).toBeInTheDocument();
     const arg = document.querySelector(".fb-step-arg");
     expect(arg?.textContent).toBe("from:wellsfargo card reissue");
     expect(arg).toHaveAttribute("title", "from:wellsfargo card reissue");
@@ -3077,7 +3080,7 @@ describe("inline tool marks", () => {
             text_offset: (PRE + MID).length,
             view: trace,
           },
-          // At the very end: the ledger lists it, the answer gets no mark.
+          // At the very end: marked too (the latest tool shows as soon as it runs).
           {
             id: "c1",
             name: "clock",
@@ -3092,15 +3095,16 @@ describe("inline tool marks", () => {
 
   it("marks a reopened answer where each tool ran, grouped, with browse's verdict", async () => {
     render(<Harness d={deps({ getTranscript: vi.fn(async () => reopened()) })} />);
-    await waitFor(() => expect(document.querySelectorAll(".tmark")).toHaveLength(2));
+    await waitFor(() => expect(document.querySelectorAll(".tmark")).toHaveLength(3));
     const marks = [...document.querySelectorAll(".tmark")];
     expect(marks.map((m) => m.textContent)).toEqual([
       "Searched the web ×2",
       "Browsed a site · verified",
+      stepLabel("clock"),
     ]);
-    // Each sits at the end of the paragraph it followed, inside the prose.
-    expect(marks[0]?.closest("p")?.textContent).toBe(`${PRE}Searched the web ×2`);
-    expect(marks[1]?.closest("p")?.textContent).toContain("Let me drive it.");
+    // Each is a row of its own between the prose it interrupted, never inside a sentence.
+    expect(marks.every((m) => m.closest("p") === null)).toBe(true);
+    expect(marks.every((m) => m.parentElement?.classList.contains("md-tmark-line"))).toBe(true);
     expect(marks.every((m) => !m.classList.contains("on"))).toBe(true);
     expect(document.querySelector(".fb-act-body")).not.toHaveClass("open");
   });

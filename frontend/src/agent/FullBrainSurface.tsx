@@ -1086,7 +1086,7 @@ function Bubble({
   const markGroups = toolMarks(message.tools, shownText.length);
   const markNodes = (base: number, length: number) =>
     markGroups
-      .filter((g) => g.offset > base && g.offset < base + length)
+      .filter((g) => g.offset > base && g.offset <= base + length)
       .map((g) => ({
         at: g.offset - base,
         node: (

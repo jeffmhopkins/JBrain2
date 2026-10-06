@@ -21,12 +21,12 @@ describe("toolMarks", () => {
     ]);
   });
 
-  it("gives no mark at the start, at the end, or without an offset", () => {
+  it("gives no mark at the start or without an offset, but marks the latest tool at the end", () => {
     const marks = toolMarks(
       [tool("a", "web_search", 0), tool("b", "web_search", 40), tool("c", "web_search")],
       40,
     );
-    expect(marks).toEqual([]);
+    expect(marks.map((m) => [m.key, m.offset])).toEqual([["b", 40]]);
     // Past the revealed text (the paced reveal is behind the stream): not yet.
     expect(toolMarks([tool("d", "web_search", 45)], 40)).toEqual([]);
   });
