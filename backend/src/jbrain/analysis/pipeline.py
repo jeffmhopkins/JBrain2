@@ -339,6 +339,22 @@ def _review_card_domain(predicate: str, note_domain: str) -> str:
     return card_domain
 
 
+async def _through_fold(
+    session: AsyncSession, chosen: ResolvedEntity | None
+) -> ResolvedEntity | None:
+    """`chosen` as the live entity it now is: a merge tombstone becomes its survivor,
+    and an id with no live row becomes None, so its facts skip rather than land on a
+    row nothing reads."""
+    if chosen is None:
+        return None
+    live = await live_entity_by_id(session, chosen.id)
+    if live is None:
+        return None
+    if live.id == chosen.id:
+        return chosen
+    return replace(chosen, id=live.id, subject_id=live.subject_id, created=False)
+
+
 class AnalysisPipeline:
     def __init__(
         self,
@@ -1401,7 +1417,13 @@ class AnalysisPipeline:
                 # guard (_resolve_from_intent) deliberately withheld — that ref
                 # falls through below to deterministic resolution so its 2+-match
                 # ambiguity files a card instead of committing the agent's guess.
-                resolved[name] = resolution_override[name]
+                #
+                # Through the fold, as `_resolve_from_intent` already is: the note
+                # conversation's writer holds its handles across turns, so an entity the
+                # owner merged away mid-thread arrives here as its tombstone id. Written
+                # raw, the re-read put the live fact on the tombstone (invisible) and the
+                # settle then retracted the survivor's copy, leaving it with none.
+                resolved[name] = await _through_fold(session, resolution_override[name])
                 continue
             outcome = await resolve_entity(
                 session,

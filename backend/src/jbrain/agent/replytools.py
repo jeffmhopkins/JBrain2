@@ -127,7 +127,7 @@ from jbrain.agent.graphwritetools import (
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.proposals import NodeSpec, ProposalRepo, ProposalSpec
 from jbrain.agent.toolregistry import ToolHandler
-from jbrain.analysis.entities import are_distinct, live_entity_by_id
+from jbrain.analysis.entities import are_distinct, live_entity_by_id, normalize_alias
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.note_conversation import NoteConversationRepo
 from jbrain.schema import get_registry
@@ -650,6 +650,20 @@ def build_reply_write_handlers(
             )
         name_a, name_b = a.name, b.name
         reason = _clean(arguments.get("reason"))
+        # A spelling correction is why most folds raised here exist, and the survivor is
+        # chosen by anchoring, not by spelling — so without this the older, MISSPELLED row
+        # survives under its wrong name. Only one of the pair's own two names is accepted:
+        # the card must show the owner every name the approval can produce.
+        keep_name = _clean(arguments.get("keep_name"))
+        if keep_name:
+            by_norm = {normalize_alias(name_a): name_a, normalize_alias(name_b): name_b}
+            if normalize_alias(keep_name) not in by_norm:
+                return (
+                    f"merge_entities: keep_name must be one of the two names exactly as"
+                    f" they are on file — “{name_a}” or “{name_b}”. Nothing was staged."
+                )
+            keep_name = by_norm[normalize_alias(keep_name)]
+        title = f"Merge “{name_a}” and “{name_b}”" + (f" as “{keep_name}”" if keep_name else "")
         # The SAME node op the chat persona's `propose_merge` stages, so the owner's
         # approval runs the one enact path (`entity_merge_executor` ->
         # `SqlAnalysisRepo.merge_entities`) and the two can never diverge. The ids ride
@@ -659,7 +673,7 @@ def build_reply_write_handlers(
             id=str(uuid.uuid4()),
             type="leaf",
             op="merge_entities",
-            label=f"Merge “{name_a}” and “{name_b}”",
+            label=title,
             preview={
                 "entity_a": str(a.entity_id),
                 "entity_b": str(b.entity_id),
@@ -669,6 +683,7 @@ def build_reply_write_handlers(
                 "kind_b": str(b.view.get("kind") or ""),
                 "domain": domain,
                 **({"reason": reason} if reason else {}),
+                **({"keep_name": keep_name} if keep_name else {}),
             },
         )
         prop_id = await proposals.stage(
@@ -677,7 +692,7 @@ def build_reply_write_handlers(
             spec=ProposalSpec(
                 kind="merge",
                 domain=domain,
-                title=f"Merge “{name_a}” and “{name_b}”",
+                title=title,
                 nodes=[node],
                 # The notes tab of the review inbox unions the Proposals a note
                 # conversation raised, so the session id is what makes this card land
@@ -697,7 +712,13 @@ def build_reply_write_handlers(
             " entities is a write this conversation is not allowed to make on its own, so"
             " nothing has changed yet — when he approves it, the more-anchored identity"
             " survives and the other's mentions and facts repoint onto it, so nothing is"
-            " lost. Say that it is waiting on him; do not say they are merged.",
+            " lost"
+            + (
+                f", and the one record left is named “{keep_name}”"
+                if keep_name
+                else ", under whichever of the two names that identity already has"
+            )
+            + ". Say that it is waiting on him; do not say they are merged.",
             proposal=ProposalRef(proposal_id=prop_id, kind="merge"),
             # The sentence above ends "do not say they are merged". The row is held to the
             # same rule — it is the one surface the owner reads without opening anything.

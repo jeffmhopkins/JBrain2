@@ -1126,6 +1126,63 @@ async def test_the_reply_turns_four_verbs_share_one_handle_table(  # noqa: F811
     assert "no such handle" not in str(out)
 
 
+@pytest.mark.asyncio
+async def test_a_handle_whose_entity_was_merged_away_writes_onto_the_survivor(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """The box, 2026-10-06: the writer kept the corrected entity's handle across turns,
+    the owner approved a fold that tombstoned it, and the re-read wrote "hematology"
+    onto the TOMBSTONE — invisible everywhere — while the survivor showed 0 facts. A
+    handle is followed through the fold at commit, as a coreference id already is."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    handlers = _handlers(maker)
+    ctx = _ctx(owner_ctx, session_id)
+
+    await handlers["resolve_entity"](
+        {"entities": [{"surface": "Dr. Patel", "kind": "person"}]}, ctx
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        gone = str(
+            (
+                await s.execute(
+                    select(Entity.id).where(
+                        Entity.canonical_name == "Dr. Patel", Entity.status != "merged"
+                    )
+                )
+            ).scalar_one()
+        )
+    survivor = await _entity(maker, "Dr. Raj Patel")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await merge_entity_pair(s, keep=uuid.UUID(survivor), gone=uuid.UUID(gone))
+
+    out = await handlers["assert_fact"](
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "jobTitle",
+                    "object": "doctor",
+                    "statement": "Dr. Patel is a doctor.",
+                    "when": "",
+                    "quote": "Kaiya is seen by Dr. Patel",
+                }
+            ]
+        },
+        ctx,
+    )
+    assert isinstance(out, ToolOutput) and len(out.facts) == 1
+    # The ingest may already have written this address before the fold repointed it, so
+    # the survivor can also carry the row this write superseded; what matters is that the
+    # live value is on the survivor and nothing at all landed on the tombstone.
+    statuses = [r.status for r in await _rows(maker, survivor, "jobTitle")]
+    assert statuses.count("active") == 1
+    assert await _rows(maker, gone, "jobTitle") == []
+
+
 # --- the unprompted loop, end to end ------------------------------------------
 
 
@@ -1286,6 +1343,53 @@ async def test_a_fold_is_staged_and_nothing_is_folded(maker, tmp_path, owner_ctx
     assert "keep" not in node.preview and "survivor" not in node.preview
     # Tied to the thread that raised it, which is what puts it on the notes tab.
     assert row.session_id == session_id
+
+
+@pytest.mark.asyncio
+async def test_a_spelling_correction_stages_the_name_jeff_gave(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """`keep_name` rides on the card (label, title and preview), so the owner approves
+    the name as well as the fold — and the executor hands it to the enact."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    a = await _entity(maker, "Dana Whitfeld")
+    b = await _entity(maker, "Dana Whitfield")
+
+    out = await _handlers(maker)[MERGE_ENTITIES](
+        {"entity_a": a, "entity_b": b, "reason": "", "keep_name": "dana whitfield"},
+        _ctx(owner_ctx, session_id),
+    )
+    assert isinstance(out, ToolOutput) and out.proposal is not None
+    assert "named “Dana Whitfield”" in str(out)
+    row, nodes = await ProposalRepo(maker).load(owner_ctx, out.proposal.proposal_id)
+    assert nodes[0].preview["keep_name"] == "Dana Whitfield"
+    assert "as “Dana Whitfield”" in nodes[0].label
+
+
+@pytest.mark.asyncio
+async def test_a_keep_name_that_is_neither_name_is_refused(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    a = await _entity(maker, "Dana Whitfeld")
+    b = await _entity(maker, "Dana Whitfield")
+
+    out = str(
+        await _handlers(maker)[MERGE_ENTITIES](
+            {"entity_a": a, "entity_b": b, "reason": "", "keep_name": "Dana W."},
+            _ctx(owner_ctx, session_id),
+        )
+    )
+    assert "keep_name must be one of the two names" in out
+    assert "Nothing was staged" in out
 
 
 @pytest.mark.asyncio

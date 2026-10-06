@@ -100,3 +100,52 @@ async def test_merge_entities_refuses_a_permanent_distinction(
     repo = SqlAnalysisRepo(maker)
     with pytest.raises(UnknownAction):
         await repo.merge_entities(OWNER, a, b)
+
+
+async def test_a_spelling_correction_fold_keeps_the_corrected_name(
+    maker: async_sessionmaker[AsyncSession],  # noqa: F811
+) -> None:
+    """The misspelled row is the older one, so `plan_merge` keeps IT — and without
+    `keep_name` the fold left "Dr. Brochia" on file and tombstoned the correction. The
+    survivor takes the owner's spelling and keeps the old one as an alias, so the
+    note's text (which still says Brochia) resolves to it on a re-read."""
+    misspelled = await seed_entity(maker, "Dr. Brochia")
+    corrected = await seed_entity(maker, "Dr. Barochia")
+
+    outcome = await SqlAnalysisRepo(maker).merge_entities(
+        OWNER, misspelled, corrected, keep_name="dr. barochia"
+    )
+    assert outcome.merged is True
+    assert outcome.keep_id == misspelled  # the survivor is still plan_merge's
+
+    row = await one_row(
+        maker, OWNER, "SELECT canonical_name FROM app.entities WHERE id = :id", id=misspelled
+    )
+    assert row.canonical_name == "Dr. Barochia"  # the name as it was on file, not as typed
+    async with scoped_session(maker, OWNER) as s:
+        aliases = set(
+            (
+                await s.execute(
+                    text("SELECT alias_norm FROM app.entity_aliases WHERE entity_id = :id"),
+                    {"id": misspelled},
+                )
+            ).scalars()
+        )
+    assert {"dr. barochia", "dr. brochia"} <= aliases
+
+
+async def test_keep_name_outside_the_pair_renames_nothing(
+    maker: async_sessionmaker[AsyncSession],  # noqa: F811
+) -> None:
+    """Only a name the approved card showed can land: anything else folds without a
+    rename rather than writing a name the owner never saw."""
+    a = await seed_entity(maker, "Acme")
+    b = await seed_entity(maker, "Acme Inc")
+    outcome = await SqlAnalysisRepo(maker).merge_entities(OWNER, a, b, keep_name="Initech")
+    row = await one_row(
+        maker,
+        OWNER,
+        "SELECT canonical_name FROM app.entities WHERE id = :id",
+        id=outcome.keep_id,
+    )
+    assert row.canonical_name in {"Acme", "Acme Inc"}

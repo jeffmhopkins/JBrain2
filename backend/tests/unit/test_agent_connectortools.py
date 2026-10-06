@@ -116,7 +116,9 @@ class FakeAnalysis:
         self.merged: list[tuple[str, str]] = []
         self.resolved: list[tuple[str, str, dict]] = []
 
-    async def merge_entities(self, ctx: object, entity_a: str, entity_b: str) -> object:
+    async def merge_entities(
+        self, ctx: object, entity_a: str, entity_b: str, *, keep_name: str | None = None
+    ) -> object:
         self.merged.append((entity_a, entity_b))
         return None
 

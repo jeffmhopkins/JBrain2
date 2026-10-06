@@ -280,6 +280,7 @@ describe("InlineProposal", () => {
             name_b: "Robert Smith",
             kind_a: "Person",
             kind_b: "Person",
+            keep_name: "Robert Smith",
           },
           deps: [],
           status: "pending",
@@ -289,6 +290,8 @@ describe("InlineProposal", () => {
     renderCard({ getProposal: async () => merge });
     expect(await screen.findByText("Bob Smith")).toBeInTheDocument();
     expect(screen.getByText("Robert Smith")).toBeInTheDocument();
+    // The spelling the survivor takes is part of what Approve does.
+    expect(screen.getByText("named “Robert Smith”")).toBeInTheDocument();
     // Still decidable inline.
     expect(
       screen.getByRole("button", { name: 'Decline Merge "Bob" and "Robert"' }),

@@ -95,9 +95,13 @@ async def test_propose_merge_refuses_an_out_of_scope_domain() -> None:
 class FakeAnalysis:
     def __init__(self) -> None:
         self.merged: list[tuple[str, str]] = []
+        self.keep_names: list[str | None] = []
 
-    async def merge_entities(self, ctx: object, entity_a: str, entity_b: str) -> object:
+    async def merge_entities(
+        self, ctx: object, entity_a: str, entity_b: str, *, keep_name: str | None = None
+    ) -> object:
         self.merged.append((entity_a, entity_b))
+        self.keep_names.append(keep_name)
         return None
 
 
@@ -116,6 +120,24 @@ async def test_entity_merge_executor_folds_on_enact() -> None:
     )
     await entity_merge_executor(analysis)(CTX.session, proposal, node)  # type: ignore[arg-type]
     assert analysis.merged == [("a", "b")]
+    assert analysis.keep_names == [None]
+
+
+async def test_entity_merge_executor_passes_the_approved_name() -> None:
+    analysis = FakeAnalysis()
+    proposal = ProposalRow("prop-1", "merge", "approved", "general", "t", None)
+    node = NodeRow(
+        "n",
+        None,
+        "leaf",
+        "merge_entities",
+        "lbl",
+        {"entity_a": "a", "entity_b": "b", "keep_name": "Dr. Barochia"},
+        (),
+        "approved",
+    )
+    await entity_merge_executor(analysis)(CTX.session, proposal, node)  # type: ignore[arg-type]
+    assert analysis.keep_names == ["Dr. Barochia"]
 
 
 async def test_entity_merge_executor_ignores_other_ops() -> None:

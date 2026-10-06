@@ -105,6 +105,7 @@ def entity_merge_executor(analysis: SqlAnalysisRepo) -> LeafExecutor:
         a = str(node.preview.get("entity_a", ""))
         b = str(node.preview.get("entity_b", ""))
         if a and b:
-            await analysis.merge_entities(ctx, a, b)
+            keep_name = str(node.preview.get("keep_name") or "") or None
+            await analysis.merge_entities(ctx, a, b, keep_name=keep_name)
 
     return execute

@@ -913,6 +913,49 @@ async def merge_entity_pair(
     return repointed
 
 
+async def adopt_merged_name(session: AsyncSession, plan: MergePlan, name: str) -> bool:
+    """After `plan` folded, give the survivor the name the owner said is right.
+
+    `plan_merge` picks the survivor by anchoring, and among two one-note provisional
+    rows that is simply the OLDER one — which, when the fold exists because the owner
+    corrected a misspelling, is the misspelled row: the corrected entity was minted
+    after it. Without this the fold kept "Dr. Brochia" and tombstoned "Dr. Barochia",
+    the exact opposite of the correction that raised it.
+
+    Only one of the pair's own two names is adoptable, so the card the owner approved
+    names every outcome. The survivor's old spelling stays as an alias: the note text
+    still carries it, and a re-read that cannot resolve it mints the duplicate again.
+    Returns whether the name changed."""
+    norm = normalize_alias(name)
+    if norm not in {normalize_alias(plan.keep_name), normalize_alias(plan.gone_name)}:
+        return False
+    adopted = plan.gone_name if norm == normalize_alias(plan.gone_name) else plan.keep_name
+    domain = await session.scalar(
+        text(
+            "UPDATE app.entities SET canonical_name = :n, updated_at = now()"
+            " WHERE id = :id RETURNING domain_code"
+        ),
+        {"n": adopted, "id": str(plan.keep_id)},
+    )
+    if domain is None:
+        return False
+    for alias in (adopted, plan.keep_name):
+        await session.execute(
+            text(
+                "INSERT INTO app.entity_aliases (id, entity_id, alias, alias_norm, domain_code)"
+                " VALUES (:id, :e, :a, :n, :d) ON CONFLICT (entity_id, alias_norm) DO NOTHING"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "e": str(plan.keep_id),
+                "a": alias,
+                "n": normalize_alias(alias),
+                "d": domain,
+            },
+        )
+    return adopted != plan.keep_name
+
+
 # How far a stale id may be chased through folds. A fold does not re-point the
 # tombstones already aimed at its loser, so `a -> b -> c` chains are real; the bound
 # is what keeps a malformed cycle from spinning instead of resolving.

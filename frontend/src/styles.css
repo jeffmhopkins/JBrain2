@@ -14996,6 +14996,10 @@ button.small {
   color: var(--text-3);
   font-size: var(--fs-secondary);
 }
+.fb-shell .merge-keep {
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
 
 /* ===== Inline approval card (agent/InlineProposal; docs/mocks/inline-approvals/
    d-one-tree.html) — one staged Proposal acted on IN the answer bubble: per-leaf

@@ -179,6 +179,9 @@ export function MergeHead({ preview }: { preview: Record<string, unknown> }): Re
   const nameB = String(preview.name_b ?? "");
   const kindA = String(preview.kind_a ?? "Thing");
   const kindB = String(preview.kind_b ?? "Thing");
+  // A fold raised by a spelling correction names the spelling the survivor takes. It is
+  // part of what Approve does, so the card says it rather than leaving it in the label.
+  const keepName = String(preview.keep_name ?? "");
   return (
     <span className="merge-chips">
       <span className="merge-chip">
@@ -190,6 +193,7 @@ export function MergeHead({ preview }: { preview: Record<string, unknown> }): Re
       <span className="merge-chip">
         <EntityTypeIcon kind={kindB} size={20} /> {nameB}
       </span>
+      {keepName && <span className="merge-keep">named “{keepName}”</span>}
     </span>
   );
 }
