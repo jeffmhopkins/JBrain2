@@ -141,6 +141,9 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
   first minute straight from the resolved URL (`stream.native_stream_clip`, same protocol
   guard, headers and stall timeout as every other read) and watches it; `window`/`single` and
   live streams keep reading stills.
+- **Output budget.** The native call allows 8,192 output tokens: Flash-Next's thinking
+  spends from the same budget, and at the first 1,536 a careful answer about an 11.6 s clip
+  was cut off mid-sentence on the box (2026-10-06).
 - **Order change.** Whisper now runs before frame captioning, since the native call needs the
   transcript first; the live status reads "Extracting frames… → Transcribing audio… →
   Watching the video…" on the native path.
