@@ -122,13 +122,17 @@ oldest first), and the store would not restore over the occupied slot. Now:
   the store wakes the keeper, whose tick saves that slot's conversation first (when conversation
   files are on), then erases it through the pool guard and restores jerv's prefix file with its
   sidecar — only while the slot is idle, no request was just routed to it, the gate is open, the
-  sidecar exists and the pool guard reserves the cells. A slot no restore can serve (no file, the
-  gate not passed) is primed by the keeper instead, never while a chat slot is busy.
+  sidecar exists and the pool guard reserves the cells — and only once the chat has been quiet
+  10 s, because the wake comes between the new chat's tool rounds, when `/slots` reads idle. A
+  slot no restore can serve (no file, the gate not passed) is primed by the keeper instead,
+  after 45 s of quiet, never while a chat slot is busy; the prime claims its slot, and the
+  router drops it at dispatch if a chat took the slot meanwhile.
 - **Never erased:** the latest chat, the warm prefix, a slot whose own chat is the incoming one,
   or — after an api restart — any slot while this process does not know where the latest chat
   is (it would otherwise guess, and might wipe the owner's live conversation).
 - The pool guard frees the warm slot before the latest chat's, whichever id holds which: the
-  first comes back from disk in ~2 s, the second only by re-reading the conversation.
+  first comes back from disk in ~2 s, the second only by re-reading the conversation. The
+  worker's guard has no store to ask, so it keeps the chat slot with the larger cache last.
 
 The chat slots also carry **conversation files** (`llm/kv_conversation.py`, toggle
 *Keep chats on disk*, default ON) — for **research-type chats only**. A slot file holds the

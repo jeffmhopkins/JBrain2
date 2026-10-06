@@ -641,38 +641,53 @@ class LlmRouter:
         slot_role: SlotRole | None,
         chat_key: str | None,
         exact_slot: bool,
-    ) -> SlotRole | None:
-        """The role this call runs in. On a pool with a chat pair an `agent.turn` call naming a
-        pair role goes to the member the disk store picks (`KvPrefixStore.pick_chat_role`): the
-        slot holding `chat_key`'s live conversation, else the warm one — never the most recent
-        conversation of another chat. `exact_slot` (the keeper priming a chosen member) skips
-        the pick. Anything else keeps the role it named."""
+    ) -> tuple[SlotRole | None, bool]:
+        """(the role this call runs in, whether it was routed). On a pool with a chat pair an
+        `agent.turn` call naming a pair role goes to the member the disk store picks
+        (`KvPrefixStore.pick_chat_role`): the slot holding `chat_key`'s live conversation, else
+        the warm one — never the most recent conversation of another chat. The pick claims the
+        slot; a routed call releases it when it ends (`_release_chat_slot`). `exact_slot` (the
+        keeper priming a member it claimed itself) skips the pick and takes no chat claim.
+        Anything else keeps the role it named."""
         if (
             exact_slot
             or self._kv_prefix is None
             or task != kv_prefix_mod.AGENT_TURN_TASK
             or provider != local_catalog.LOCAL_PROVIDER
         ):
-            return slot_role
+            return slot_role, False
         pool = local_catalog.pool_of(model)
         if pool is None or not pool.in_pair(slot_roles.role_for(task, slot_role)):
-            return slot_role
+            return slot_role, False
         try:
             picked = self._kv_prefix.pick_chat_role(model, chat_key)
         except Exception:  # noqa: BLE001 — routing is a cache choice, never a failed turn
             log.warning("llm.chat_slot_pick_failed", model=model, exc_info=True)
-            return slot_role
-        return picked or slot_role
+            return slot_role, False
+        return (picked, True) if picked is not None else (slot_role, False)
 
-    def _release_chat_slot(self, provider: str, model: str, role: SlotRole | None) -> None:
-        """A routed call ended with nothing to note (it failed before any part arrived): drop
-        its claim on the pair slot so the next re-warm need not wait out the claim's TTL."""
-        if self._kv_prefix is None or provider != local_catalog.LOCAL_PROVIDER or role is None:
+    def _release_chat_slot(self, model: str, role: SlotRole | None) -> None:
+        """A routed call ended, however it ended: its claim on the pair slot goes."""
+        if self._kv_prefix is None or role is None:
             return
-        pool = local_catalog.pool_of(model)
-        if pool is not None and pool.in_pair(role):
-            with contextlib.suppress(Exception):
-                self._kv_prefix.release_chat_role(model, role)
+        with contextlib.suppress(Exception):
+            self._kv_prefix.release_chat_role(model, role)
+
+    def _check_exact_slot(
+        self, provider: str, model: str, role: SlotRole | None, exact_slot: bool
+    ) -> None:
+        """Right before an exact-slot prime is sent: refuse it if a chat took the slot while
+        it waited (`ChatSlotTakenError`) — the prime would overwrite the latest conversation."""
+        if (
+            not exact_slot
+            or self._kv_prefix is None
+            or provider != local_catalog.LOCAL_PROVIDER
+            or self._kv_prefix.prime_target_free(model, role)
+        ):
+            return
+        raise kv_prefix_mod.ChatSlotTakenError(
+            f"{model}'s {role} chat slot was taken by a chat; the prime is not sent"
+        )
 
     async def _admit_local(self, provider: str, model: str) -> str:
         """Admit a local model; the served name residency actually admitted (it differs only
@@ -1254,7 +1269,7 @@ class LlmRouter:
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        slot_role = self._chat_slot(task, provider, model, slot_role, chat_key, exact_slot)
+        slot_role, routed = self._chat_slot(task, provider, model, slot_role, chat_key, exact_slot)
         try:
             return await self._converse_in_slot(
                 task,
@@ -1270,10 +1285,11 @@ class LlmRouter:
                 slot_role=slot_role,
                 conversation_key=conversation_key,
                 chat_key=chat_key,
+                exact_slot=exact_slot,
             )
-        except BaseException:
-            self._release_chat_slot(provider, model, slot_role)
-            raise
+        finally:
+            if routed:
+                self._release_chat_slot(model, slot_role)
 
     async def _converse_in_slot(
         self,
@@ -1291,6 +1307,7 @@ class LlmRouter:
         slot_role: SlotRole | None,
         conversation_key: str | None,
         chat_key: str | None,
+        exact_slot: bool = False,
     ) -> LlmTurn:
         """`converse` once its route and slot are chosen."""
         prepare_seq = await self._ensure_agent_prefix(
@@ -1304,6 +1321,7 @@ class LlmRouter:
             conversation_key=conversation_key,
             chat_key=chat_key,
         )
+        self._check_exact_slot(provider, model, slot_role, exact_slot)
         n_images = slot_roles.image_count(messages)
         replay, chars, replayed_tokens = self._fit_replay(
             task,
@@ -1402,8 +1420,7 @@ class LlmRouter:
             reasoning_effort = effort_override
         resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
-        slot_role = self._chat_slot(task, provider, model, slot_role, chat_key, exact_slot)
-        noted = False
+        slot_role, routed = self._chat_slot(task, provider, model, slot_role, chat_key, exact_slot)
         # Closed explicitly: an owner's Stop closes THIS generator, and the inner one's own
         # cleanup (the abandoned-stream note, the slot pin's release) must run then, not
         # whenever the garbage collector gets to it.
@@ -1421,17 +1438,15 @@ class LlmRouter:
             slot_role=slot_role,
             conversation_key=conversation_key,
             chat_key=chat_key,
+            exact_slot=exact_slot,
         )
         try:
             async with contextlib.aclosing(inner):
                 async for part in inner:
-                    # Anything that streamed means the store hears of the call (its turn
-                    # note, or the abandoned-stream note), which releases the pair slot.
-                    noted = True
                     yield part
         finally:
-            if not noted:
-                self._release_chat_slot(provider, model, slot_role)
+            if routed:
+                self._release_chat_slot(model, slot_role)
 
     async def _stream_in_slot(
         self,
@@ -1449,6 +1464,7 @@ class LlmRouter:
         slot_role: SlotRole | None,
         conversation_key: str | None,
         chat_key: str | None,
+        exact_slot: bool = False,
     ) -> AsyncGenerator[StreamPart]:
         """`converse_stream` once its route and slot are chosen."""
         final: LlmTurn | None = None
@@ -1471,6 +1487,7 @@ class LlmRouter:
             conversation_key=conversation_key,
             chat_key=chat_key,
         )
+        self._check_exact_slot(provider, model, slot_role, exact_slot)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
         n_images = slot_roles.image_count(messages)
         replay, prompt_chars, replayed_tokens = self._fit_replay(

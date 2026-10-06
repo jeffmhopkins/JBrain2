@@ -927,7 +927,10 @@ async def _paired(root: Path, **kw: Any) -> tuple[KvPrefixStore, FakeGateway]:
     return store, gw
 
 
-async def _rewarm(store: KvPrefixStore) -> list[SlotRole]:
+async def _rewarm(store: KvPrefixStore, *, quiet_for: float = 3600.0) -> list[SlotRole]:
+    """The keeper's re-warm, as if the chat had been quiet `quiet_for` seconds."""
+    if FLASH in store._chat_at:
+        store._chat_at[FLASH] = time.monotonic() - quiet_for
     return await store.rewarm_pair(FLASH, "persona", TOOLS)
 
 
@@ -970,6 +973,7 @@ async def test_the_slot_a_chat_left_is_rewarmed_erase_then_restore(root: Path) -
     # The next new chat goes to the warm B; the slot it leaves (A) is then due a re-warm.
     assert store.pick_chat_role(FLASH, "chat-2") is B
     _chat(store, gw, B, "chat-2", 48_000)
+    store.release_chat_role(FLASH, B)  # the router, as the call ends
     assert woken == [FLASH, FLASH]
     gw.restored.clear()
     assert await _rewarm(store) == []
@@ -1308,3 +1312,85 @@ async def test_the_settings_read_shows_what_each_pair_slot_holds(
     assert by_role["interactive"].chat_pair is True
     assert by_role["interactive_alt"].holds == "unknown"
     assert by_role["scheduled"].holds is None and by_role["scheduled"].chat_pair is False
+
+
+async def test_nothing_is_rewarmed_until_the_chat_has_been_quiet(root: Path) -> None:
+    """The listener fires right after a new chat's FIRST model call; between its tool rounds
+    both chat slots read idle on /slots. Only the quiet clock tells the gap from the end."""
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    await _rewarm(store)
+    assert store.pick_chat_role(FLASH, "chat-2") is B
+    _chat(store, gw, B, "chat-2", 48_000)
+    # Mid-call: the routed request still holds its claim.
+    assert store.chat_quiet_s(FLASH) == 0.0
+    store.release_chat_role(FLASH, B)
+    # Between two tool rounds: the call ended a moment ago.
+    assert await store.rewarm_pair(FLASH, "persona", TOOLS) == []
+    assert gw.erased == []
+    assert store._counters.get("rewarm_waiting_quiet") == 1
+    assert await _rewarm(store, quiet_for=kv_prefix.REWARM_QUIET_S - 1) == []
+    assert gw.erased == []
+    # The chat has stopped.
+    assert await _rewarm(store, quiet_for=kv_prefix.REWARM_QUIET_S + 1) == []
+    assert gw.erased == [0]
+
+
+async def test_an_unservable_slot_still_waits_for_the_quiet_window(root: Path) -> None:
+    store, gw = await _paired(root, gate="awaiting_probe")
+    _chat(store, gw, A, "chat-1", 47_000)
+    store.pick_chat_role(FLASH, "chat-1")
+    store.release_chat_role(FLASH, A)
+    assert await store.rewarm_pair(FLASH, "persona", TOOLS) == [], "not quiet: no prime asked"
+    assert await _rewarm(store) == [B]
+
+
+async def test_a_prime_claims_its_slot_and_never_one_a_chat_holds(root: Path) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    assert not store.claim_for_prime(FLASH, A), "the latest chat"
+    assert store.claim_for_prime(FLASH, B)
+    assert not store.claim_for_prime(FLASH, B), "one prime at a time"
+    assert store._rewarm_due(FLASH) == [], "a re-warm leaves a slot being primed alone"
+    assert store.pair_holdings(FLASH)[B] == "unknown"
+    rows = {r["role"]: r for r in (await store.snapshot())["chat_pair"]}  # type: ignore[index]
+    assert rows["interactive_alt"]["priming"] is True
+    store.release_prime(FLASH, B)
+    assert store._rewarm_due(FLASH) == [B]
+    # A chat routed there first (claimed): the prime is refused.
+    store.pick_chat_role(FLASH, "chat-2")
+    assert not store.claim_for_prime(FLASH, B)
+    assert store.claim_for_prime("gpt-oss-120b", A), "nothing to claim off a pair"
+
+
+async def test_the_last_check_before_a_prime_sees_a_chat_that_arrived_meanwhile(
+    root: Path,
+) -> None:
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    store._chat_at[FLASH] = time.monotonic() - 3600
+    assert store.prime_target_free(FLASH, B)
+    assert not store.prime_target_free(FLASH, A), "the latest chat"
+    # During the prepare's save window a chat is routed to B …
+    assert store.pick_chat_role(FLASH, "chat-2") is B
+    assert not store.prime_target_free(FLASH, B)
+    store.release_chat_role(FLASH, B)
+    assert not store.prime_target_free(FLASH, B), "… and the chat is not quiet yet"
+    store._chat_at[FLASH] = time.monotonic() - 3600
+    assert store.prime_target_free(FLASH, B)
+    assert store.prime_target_free(FLASH, SlotRole.SCHEDULED), "not a pair slot"
+    assert store.prime_target_free("gpt-oss-120b", A)
+
+
+async def test_a_prime_overtaken_by_a_chat_does_not_mark_the_chat_warm(root: Path) -> None:
+    """A chat queued behind a prime on the same slot, and noted before the prime's save: the
+    slot is that chat's, the latest conversation — never warm."""
+    store, gw = await _paired(root)
+    _chat(store, gw, A, "chat-1", 47_000)
+    _chat(store, gw, B, "chat-2", 48_000)
+    gw.slot_state = _slots(s0=47_000, s9=PRIME)
+    await store.save_after_prime(FLASH, "persona", TOOLS, PRIME, role=B)
+    assert store.pair_holdings(FLASH)[B] == "recent_conversation"
+    store.pick_chat_role(FLASH, "chat-1")  # A claimed by a chat
+    await store.save_after_prime(FLASH, "persona", TOOLS, PRIME, role=A)
+    assert store.pair_holdings(FLASH)[A] == "older_conversation"

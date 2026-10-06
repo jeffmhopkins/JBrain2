@@ -12,7 +12,7 @@ import pytest
 from jbrain.agent.loop import AgentLoop
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.db.session import SessionContext
-from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, UserMessage
+from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, UserMessage, kv_prefix
 from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.types import LlmTool
 
@@ -29,6 +29,12 @@ class RecordingStore:
         # What `pick_chat_role` answers: the chat pair member a chat turn is routed to.
         self._picks = picks or SlotRole.INTERACTIVE_ALT
         self.released: list[SlotRole] = []
+        # The last check before an exact-slot prime is sent.
+        self.prime_free = True
+
+    def prime_target_free(self, model: str, role: SlotRole | None) -> bool:
+        self.calls.append(("prime_check", {"model": model, "role": role}))
+        return self.prime_free
 
     def pick_chat_role(self, model: str, chat_key: str | None) -> SlotRole:
         self.calls.append(("pick", {"model": model, "chat_key": chat_key}))
@@ -186,7 +192,8 @@ async def test_a_chat_turn_is_routed_to_the_pair_slot_the_store_picks_end_to_end
     assert dict(store.calls)["conversation_turn"]["role"] is SlotRole.INTERACTIVE_ALT
     # The pick reaches the engine as the slot id of the member it chose.
     assert fake.converse_calls[0]["id_slot"] == 9
-    assert store.released == [], "a noted turn releases through its note, not separately"
+    # The claim covers the whole call and goes when it ends.
+    assert store.released == [SlotRole.INTERACTIVE_ALT]
 
 
 async def test_a_turn_naming_no_chat_is_still_routed_never_pinned_to_slot_0() -> None:
@@ -209,6 +216,35 @@ async def test_an_exact_pin_skips_the_pick() -> None:
     )
     assert "pick" not in _kinds(store)
     assert fake.converse_calls[0]["id_slot"] == 0
+    # Checked after the prepare (whose save can stream for seconds), right before dispatch.
+    assert _kinds(store).index("prime_check") > _kinds(store).index("restore")
+    assert store.released == [], "an exact call took no chat claim, so it releases none"
+
+
+async def test_an_exact_prime_whose_slot_a_chat_took_is_never_sent() -> None:
+    store = RecordingStore()
+    store.prime_free = False
+    router, fake = _router(store)
+    with pytest.raises(kv_prefix.ChatSlotTakenError):
+        await router.converse(
+            "agent.turn",
+            system="s",
+            messages=[UserMessage("warmup")],
+            slot_role=SlotRole.INTERACTIVE_ALT,
+            exact_slot=True,
+        )
+    assert fake.converse_calls == []
+    with pytest.raises(kv_prefix.ChatSlotTakenError):
+        async for _part in router.converse_stream(
+            "agent.turn",
+            system="s",
+            messages=[UserMessage("warmup")],
+            slot_role=SlotRole.INTERACTIVE_ALT,
+            exact_slot=True,
+        ):
+            pass
+    assert fake.stream_calls == []
+    assert store.released == []
 
 
 async def test_background_roles_and_other_tasks_are_never_routed() -> None:
@@ -270,7 +306,7 @@ async def test_a_stream_that_never_starts_releases_its_claim_and_a_stopped_one_n
     await stream.aclose()  # type: ignore[attr-defined]
     abandoned = dict(store.calls)["abandoned"]
     assert abandoned["chat_key"] == "session-2" and abandoned["role"] is SlotRole.INTERACTIVE_ALT
-    assert store.released == [SlotRole.INTERACTIVE_ALT], "the abandoned note released it"
+    assert store.released == [SlotRole.INTERACTIVE_ALT] * 2, "a stopped stream releases too"
 
 
 async def test_a_stream_routes_like_a_turn() -> None:

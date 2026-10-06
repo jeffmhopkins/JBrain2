@@ -290,20 +290,35 @@ the disk store would not restore over the occupied slot. So slots 0 and 9 are on
   goes to the slot that is NOT the most recent conversation, preferring the warm one: it never
   lands on the latest chat. A request naming no chat leaves its slot "unknown", never a chat.
 - **Re-warm.** When a chat's turn lands on the other slot, the store wakes the warm keeper,
-  whose tick re-warms every pair slot that holds neither the latest chat nor the warm prefix:
+  whose tick re-warms every pair slot that holds neither the latest chat nor the warm prefix —
+  once the chat has been **quiet** (no routed request running or ended) for 10 s before a
+  restore and 45 s before a prime. The wake comes right after the new chat's first model call,
+  when the agent loop is running tools and both chat slots read idle on `/slots`, so `/slots`
+  cannot tell a gap between tool rounds from the end of the turn; the quiet clock can. A ~2 s
+  restore overlapping a model call costs that call ~2 s; a ~2 min prime would share the GPU
+  with the owner's turn, hence its longer window. The keeper re-wakes after each window:
   it saves that slot's conversation first when conversation files are on, then (only if the
   slot is idle, no request was just routed there, the restore gate is open, the file has its
   sidecar and the pool guard reserves the cells) erases the slot through the pool guard — a
   fresh `/slots` read under its lock must show it idle with no other call placed — and restores
   jerv's prefix file (`rewarmed`). If no restore can serve (no file for this identity, the gate
   not passed, no sidecar) the keeper primes that slot instead, pinned exactly
-  (`exact_slot`), and only while neither chat slot is processing. A chat request that reaches
+  (`exact_slot`), and only while neither chat slot is processing. The prime CLAIMS its slot
+  first (`claim_for_prime`: refused on the latest chat's slot or one a chat claims, and no
+  re-warm touches a slot being primed), and the router checks again right before sending it —
+  after the conversation prepare, whose save can stream for seconds — refusing it
+  (`ChatSlotTakenError`) if a chat was routed there, made it the latest chat, or the chat is
+  not quiet. A chat routed to a slot whose prime was already sent queues behind it, reuses the
+  primed prefix, and stays the latest chat (the prime's save never marks it warm). A chat request that reaches
   such a slot before the keeper does replaces it inline before dispatch (`restored_on_switch`).
-  A slot this process cannot account for (after an api restart) is never erased until the
-  latest chat's slot is known.
+  A slot this process cannot account for (after an api restart) is never erased, and never
+  primed, until the latest chat's slot is known; the keeper's first prime after a restart
+  still goes to its one target.
 - **Eviction.** The pair holds the two top ranks; the pool guard is told which slot holds the
   latest chat (`set_keep_last`) and frees it last, because losing it re-prefills a whole
-  conversation, while the warm slot's prefix comes back from disk in ~2 s.
+  conversation, while the warm slot's prefix comes back from disk in ~2 s. A guard with no
+  store to ask — the worker's — keeps the chat slot holding the LARGER cache last, read off
+  the same `/slots` read: a conversation grows past the prefix the warm slot holds.
 - **Steady state:** one slot is the latest chat (instant follow-ups), the other the bare jerv
   prefix (instant new chat). An older chat returning lands in the warm slot and pays only its
   own history beyond the prefix (or restores its conversation file, when that cache is on).
@@ -319,9 +334,13 @@ the disk store would not restore over the occupied slot. So slots 0 and 9 are on
   every prefix fingerprint and in the restore gate's key, so saved prefixes are orphaned and the
   gate returns to `awaiting_probe`: the keeper re-primes jerv's prefix (and saves it), and
   until the probe passes again the pair's warm slot is re-warmed by a background PRIME after
-  each new chat (~2 min of prefill, never under the owner's turn) instead of a ~2 s restore. To
-  open restores: `POST /llm/slot-probe {"synth_tokens": 29000}` (its default pair is slots 7 and
-  8 — it never defaults to a chat pair slot) → `restore_gate: passed`.
+  each new chat (~2 min of prefill, after 45 s of quiet) instead of a ~2 s restore. **The
+  operator's step, debug API only, once the model has loaded with ten slots** (`GET
+  /api/debug/llm/local-models/qwen3.8-flash-next/props` shows `total_slots: 10`):
+  `POST /api/debug/llm/slot-probe` with body `{"synth_tokens": 29000}` — no slots named; its
+  default pair is 7 and 8, never a chat pair slot. Expect `passed: true`, `sidecar: true` and
+  `restore_gate: "passed"`; then `GET /api/debug/llm/kv-prefix` shows `restore_gate` passed for
+  the model, and after the next new chat `summary.pair_rewarms` moves.
 
 `agent.turn` is shared by the chat and every background agent, so the task name alone cannot
 pick the slot: background callers name their role (`slot_role`), and an unnamed `agent.turn`

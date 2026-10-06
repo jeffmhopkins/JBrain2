@@ -117,6 +117,7 @@ import structlog
 from jbrain import box_events
 from jbrain.llm import engine as engines
 from jbrain.llm import kv_conversation, kv_pool_guard, llama_swap_config, local_catalog
+from jbrain.llm.errors import LlmError
 from jbrain.llm.kv_conversation import ConversationHold, ConversationMeta
 from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
 from jbrain.llm.slot_roles import KvPool, SlotRole, layout_matches
@@ -293,11 +294,28 @@ def _identity_components(
 RESTORE_BUSY_POLLS = 8
 RESTORE_BUSY_INTERVAL_S = 0.25
 
-# How long a request routed to a chat pair slot shields that slot from a re-warm until its turn
-# is noted. The shield only has to cover routing -> placement (the conversation prepare and the
-# prefix restore); from placement on, the pool guard's pending call and then the slot's own
-# `is_processing` refuse the erase. A request that dies unnoted stops shielding after this.
+# How long a request routed to a chat pair slot shields that slot from a re-warm before the
+# shield lapses on its own. The router releases it when the call ends, however it ends; the TTL
+# only bounds a release that never came (a cancelled task). What it must cover is routing ->
+# placement (the conversation prepare and the prefix restore); from placement on, the pool
+# guard's pending call and then the slot's own `is_processing` refuse the erase too.
 CLAIM_TTL_S = 120.0
+
+# How long the chat pair must have been quiet — no chat request routed or running — before the
+# keeper touches the slot a chat left. The listener fires the moment a chat moves, which is right
+# after its FIRST model call: the agent loop is then running tools, both chat slots read idle,
+# and the next model call is seconds away. A re-warm is a ~2 s disk restore, so a short window
+# that clears a typical tool round is enough — the worst overlap delays one call by ~2 s. A prime
+# is ~2 minutes of prefill sharing the GPU with the owner's turn, so it waits until the chat has
+# plainly stopped (no tool round on this box runs this long between model calls).
+REWARM_QUIET_S = 10.0
+PRIME_QUIET_S = 45.0
+
+
+class ChatSlotTakenError(LlmError):
+    """A prime pinned to a chat pair slot was refused at dispatch: a chat claimed the slot or
+    made it the latest conversation while the prime waited, or the chat is not quiet yet."""
+
 
 # How many recent outcomes the store keeps for the debug read. The owner has no terminal
 # (CLAUDE.md #10) and box_events' widest owner surface is fifteen minutes, so a miss that
@@ -516,10 +534,16 @@ class KvPrefixStore:
         # Per served model: the pair role whose slot holds the most recent conversation. It is
         # never erased by a re-warm and is the pool guard's last eviction choice.
         self._recent: dict[str, SlotRole] = {}
-        # Per (served model, pair role): (requests routed there and not yet noted, last routed
-        # at). A re-warm never erases a slot a request was just routed to; a request that dies
-        # without a note stops counting after CLAIM_TTL_S.
+        # Per (served model, pair role): (routed requests still running, last routed at). A
+        # re-warm never erases a slot a running request was routed to; a claim the router never
+        # released stops counting after CLAIM_TTL_S.
         self._claims: dict[tuple[str, SlotRole], tuple[int, float]] = {}
+        # Pair slots the keeper is priming (`claim_for_prime`): no re-warm touches them, and a
+        # second prime does not start there.
+        self._prime_claims: set[tuple[str, SlotRole]] = set()
+        # Per served model: when a chat request was last routed to, or left, a pair slot — the
+        # clock `REWARM_QUIET_S` and `PRIME_QUIET_S` are measured on.
+        self._chat_at: dict[str, float] = {}
         # Called when a chat moves to the other pair slot, leaving a slot to re-warm (the keeper
         # wires its wake-up, so the re-warm runs off-turn with the prime's own identity).
         self._pair_listeners: list[Callable[[str], None]] = []
@@ -894,6 +918,7 @@ class KvPrefixStore:
                             None if holder is None else kv_conversation.short_key(holder)
                         ),
                         "claimed": self._claimed(served, role),
+                        "priming": (served, role) in self._prime_claims,
                     }
                 )
         return rows
@@ -1067,7 +1092,6 @@ class KvPrefixStore:
         if pair is None or role is None or role not in pair:
             return
         key = (served_model, role)
-        self._release_claim(served_model, role)
         self._warm.discard(key)
         # Whatever was restored there has been used, whatever identity used it: left set, the
         # memo would refuse this slot's re-warm for good.
@@ -1116,8 +1140,9 @@ class KvPrefixStore:
         other request (a new chat, an older one returning, or one naming no chat) goes to the
         OTHER slot from the most recent conversation, preferring the warm prefix, then a slot
         holding nothing known: it must never land on the most recent conversation, which a
-        follow-up there is about to reuse. The pick claims its slot until the request's turn is
-        noted, so a re-warm cannot erase it in between."""
+        follow-up there is about to reuse. The pick claims its slot until the router releases
+        it when the call ends (`release_chat_role`), so a re-warm cannot erase it meanwhile,
+        and restarts the chat's quiet clock."""
         pair = self._pair_of(served_model)
         if pair is None:
             return None
@@ -1140,11 +1165,57 @@ class KvPrefixStore:
         key = (served_model, chosen)
         count = self._claims.get(key, (0, 0.0))[0] if self._claimed(served_model, chosen) else 0
         self._claims[key] = (count + 1, time.monotonic())
+        self._chat_at[served_model] = time.monotonic()
         return chosen
 
     def release_chat_role(self, served_model: str, role: SlotRole) -> None:
-        """A routed request ended without a turn to note (it failed before any part arrived)."""
+        """A routed request ended, however it ended: its claim goes, and the quiet clock
+        restarts from now."""
         self._release_claim(served_model, role)
+        if self._pair_of(served_model) is not None:
+            self._chat_at[served_model] = time.monotonic()
+
+    def chat_quiet_s(self, served_model: str) -> float:
+        """Seconds since a chat request was last routed to or left a pair slot (infinite when
+        none has been), and zero while one holds a claim."""
+        pair = self._pair_of(served_model)
+        if pair is not None and any(self._claimed(served_model, r) for r in pair):
+            return 0.0
+        at = self._chat_at.get(served_model)
+        return float("inf") if at is None else time.monotonic() - at
+
+    def claim_for_prime(self, served_model: str, role: SlotRole) -> bool:
+        """Claim a pair slot for a keeper prime. Refused when it holds the latest chat, a chat
+        claims it, or a prime is already there; True for a slot outside any pair (nothing to
+        claim). Released by `release_prime`, whatever the prime's outcome."""
+        pair = self._pair_of(served_model)
+        if pair is None or role not in pair:
+            return True
+        key = (served_model, role)
+        if (
+            self._recent.get(served_model) is role
+            or self._claimed(served_model, role)
+            or key in self._prime_claims
+        ):
+            return False
+        self._prime_claims.add(key)
+        return True
+
+    def release_prime(self, served_model: str, role: SlotRole) -> None:
+        self._prime_claims.discard((served_model, role))
+
+    def prime_target_free(self, served_model: str, role: SlotRole | None) -> bool:
+        """The router's last check before an exact-slot prime is sent: the slot is still not
+        the latest chat, no chat claims it, and the chat has been quiet `PRIME_QUIET_S` — what
+        a conversation prepare (a save can stream for seconds) may have changed meanwhile."""
+        pair = self._pair_of(served_model)
+        if pair is None or role is None or role not in pair:
+            return True
+        return (
+            self._recent.get(served_model) is not role
+            and not self._claimed(served_model, role)
+            and self.chat_quiet_s(served_model) >= PRIME_QUIET_S
+        )
 
     def warm_target(self, served_model: str) -> SlotRole | None:
         """The pair slot the keeper should prime — one that is neither the most recent
@@ -1171,6 +1242,7 @@ class KvPrefixStore:
             for r in pair
             if r is not recent
             and (served_model, r) not in self._warm
+            and (served_model, r) not in self._prime_claims
             and not self._claimed(served_model, r)
         ]
 
@@ -1356,7 +1428,14 @@ class KvPrefixStore:
             role = role or SlotRole.INTERACTIVE
         # Whether or not it reaches disk, the prime left a chat pair slot holding the prefix
         # alone: that is what "warm" means, and a slot still due warming would be primed again.
-        self._mark_warm(served_model, role)
+        # Unless a chat got there after it (queued behind the prime, then noted): that slot is
+        # the chat's now.
+        if (
+            role is not None
+            and self._recent.get(served_model) is not role
+            and not self._claimed(served_model, role)
+        ):
+            self._mark_warm(served_model, role)
         model = self._eligible(served_model)
         if model is None or prime_tokens < MIN_PREFIX_TOKENS:
             return False
@@ -1952,9 +2031,13 @@ class KvPrefixStore:
         the role prefix. Returns the slots still due that NO restore can serve — no file for
         this identity, the restore gate not passed, no sidecar, the model out of the disk
         layer — which the keeper primes instead. A slot skipped for a passing reason (busy,
-        just claimed, the pool full) is not returned: the next tick tries again."""
+        just claimed, the pool full) is not returned: the next tick tries again. Nothing at all
+        happens until the chat has been quiet `REWARM_QUIET_S`."""
         due = self._rewarm_due(served_model)
         if not due:
+            return []
+        if self.chat_quiet_s(served_model) < REWARM_QUIET_S:
+            self._count("rewarm_waiting_quiet")
             return []
         pool = local_catalog.pool_of(served_model)
         if pool is None:
