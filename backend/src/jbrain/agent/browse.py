@@ -153,7 +153,8 @@ IDLE_STOP_AT = 2
 # B1's `finish` slow (148 s, 2,942 tokens, measured live 2026-10-05). "none" is a real off on
 # a hybrid (`enable_thinking=false`); other models get it as the adapter already sends "none".
 EXTRACT_EFFORT = "none"
-EXTRACT_MAX_TOKENS = 700
+# Room for a full `MAX_ANSWER_CHARS` answer (~4 characters a token).
+EXTRACT_MAX_TOKENS = 1_400
 # The page text the extraction reads: the whole of what `parse_page` keeps readable.
 EXTRACT_PAGE_CHARS = policy.MAX_SNAPSHOT_CHARS
 # The end of the wall clock kept for the extraction: no step starts inside it, so a `finish`

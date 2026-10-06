@@ -29,7 +29,10 @@ COMMANDS = ("click", "select", "type", "enter", "goto", "read", "back", "done")
 TARGETED = frozenset({"click", "select", "type"})
 # Commands that need a value.
 VALUED = frozenset({"select", "type", "goto"})
-MAX_VALUE_CHARS = policy.MAX_ANSWER_CHARS
+# A typed or chosen value is short; refusing a long one costs a model call, so the model is
+# told the limit. `done`'s answer is never refused for length — a whole decision rewritten
+# to fit is the costliest refusal there is — it is cut to `policy.MAX_ANSWER_CHARS` instead.
+MAX_VALUE_CHARS = 500
 # One text line's share of the indexed view: the model reads to choose; `read` has the rest.
 VIEW_LINE_CHARS = 200
 # A run of identical controls longer than this shows its first few and a count.
@@ -220,10 +223,25 @@ def parse(arguments: dict[str, Any]) -> tuple[list[Command], str | None]:
             value = "" if value is None else str(value)
         if do in VALUED and not value.strip():
             return [], f"Command {i}: {do} needs a `value`."
-        if len(value) > MAX_VALUE_CHARS:
-            return [], f"Command {i}: `value` is too long."
+        if do == "done":
+            value = _cut_answer(value)
+        elif len(value) > MAX_VALUE_CHARS:
+            return [], (
+                f"Command {i}: `value` is too long ({len(value)} characters; at most"
+                f" {MAX_VALUE_CHARS})."
+            )
         out.append(Command(do, index if do in TARGETED else None, value.strip()))
     return out, None
+
+
+def _cut_answer(value: str) -> str:
+    """`done`'s answer within `policy.MAX_ANSWER_CHARS`, cut at a line break so no item is
+    left half-written (the fact check would sink a torn time)."""
+    if len(value) <= policy.MAX_ANSWER_CHARS:
+        return value
+    head = value[: policy.MAX_ANSWER_CHARS]
+    cut = head.rfind("\n")
+    return head[:cut] if cut > 0 else head
 
 
 def _number(raw: object) -> int | None:

@@ -20,6 +20,7 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.db.session import SessionContext
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
+from jbrain.llm.openai_compat import REASONING_BUDGET_MESSAGE
 from jbrain.web.mcp_client import McpHttpClient
 from tests.unit.browse_fakes import HOME, TITUSVILLE, FakeBrowser
 
@@ -183,6 +184,22 @@ async def test_a_re_rendered_target_shows_as_re_found_with_its_settle() -> None:
     assert "refound" not in first and again["refound"] is True
     assert rung["badges"] == [{"kind": "re", "text": "1 re-found"}]
     assert rung["summary"] == "Picked “Tomorrow” in “Show date”, picked “Today” in “Show date”"
+
+
+async def test_the_servers_thinking_cap_line_is_not_shown_as_thinking() -> None:
+    """At a thinking budget of 0 the server's cap line is the whole reasoning; it read as the
+    model musing "That is enough thinking" on every step. A real thought keeps its text."""
+    turns = [
+        _call("click", 1, reasoning=REASONING_BUDGET_MESSAGE, ref="e1"),
+        _call(
+            "click", 2, reasoning="Titusville is the match." + REASONING_BUDGET_MESSAGE, ref="e10"
+        ),
+        _call("finish", 3, note="the Dune listing"),
+        _say(DUNE),
+    ]
+    data = build_view(await _agent(turns, loop="b1").run(GOAL, HOME)).data
+    assert data["steps"][1]["reasoning"] == ""
+    assert data["steps"][2]["reasoning"] == "Titusville is the match."
 
 
 async def test_the_b1_loop_fills_the_trace_with_its_reasoning_and_extraction() -> None:

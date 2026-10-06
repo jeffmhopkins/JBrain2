@@ -590,8 +590,10 @@ def check_key(key: object) -> str | None:
 
 # --- Verification and quarantine ------------------------------------------------
 
-# The answer is raw facts for jerv to write up, not prose (B1's short-finish fix).
-MAX_ANSWER_CHARS = 1_200
+# The answer is raw facts for jerv to write up, not prose (B1's short-finish fix). Sized for a
+# whole day's list at a multiplex: 1,200 cut a 16-film Epic day short, and the model spent
+# two refused `done` calls (80 s) squeezing it under (box, 2026-10-06).
+MAX_ANSWER_CHARS = 4_000
 # Of an answer's names and other numbers, the share that must be on the page. Times and
 # prices are held to all of them: they are the facts a caller acts on, and one invented
 # showtime among real ones is still a wrong answer.
