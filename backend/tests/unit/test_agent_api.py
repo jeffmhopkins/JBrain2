@@ -64,6 +64,13 @@ class FakeAgentSessions:
     async def get(self, ctx, session_id):  # type: ignore[no-untyped-def]
         return self._by_id.get(session_id)
 
+    async def replay_floor(self, ctx, session_id):  # type: ignore[no-untyped-def]
+        return getattr(self, "floors", {}).get(session_id, 0)
+
+    async def advance_replay_floor(self, ctx, session_id, seq):  # type: ignore[no-untyped-def]
+        floors = self.__dict__.setdefault("floors", {})
+        floors[session_id] = max(floors.get(session_id, 0), seq)
+
     async def touch(self, ctx, session_id):  # type: ignore[no-untyped-def]
         self.touched.append(session_id)
 
@@ -4137,3 +4144,131 @@ def test_the_newest_clips_keep_the_budget_so_anchors_never_flip_flop(
     assert inline.asks == [("new", 65_536), ("old", 25_536)]
     shown = [v.data for m in fake.stream_calls[0]["messages"] for v in getattr(m, "videos", ())]
     assert shown == ["clip-new"]
+
+
+# --- tool-result replay (TOOL_RESULT_REPLAY_PLAN R1): a jerv chat's history is the transcript's
+
+
+def _jerv_session(sessions_store: FakeAgentSessions) -> None:
+    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
+
+
+def _frame_turns() -> list[TurnRecord]:
+    steps = [
+        {
+            "id": "c1",
+            "name": "grab_frame",
+            "args": {"seek": 9},
+            "ok": True,
+            "summary": "thumb and three fingers extended, pinky folded",
+            "text_offset": 0,
+        }
+    ]
+    return [
+        TurnRecord(role="user", content="what numbers?", seq=1),
+        TurnRecord(role="assistant", content="1, 2, 0, 4", tools=steps, seq=2),
+    ]
+
+
+def test_jerv_replays_an_earlier_turns_tool_results(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    from jbrain.llm import AssistantMessage, ToolResultMessage
+
+    login(client, repo)
+    _jerv_session(sessions_store)
+    transcript.turns["sess-j"] = _frame_turns()
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
+    resp = client.post(
+        "/api/chat",
+        # The client's text history is ignored for a jerv chat: the transcript is the source.
+        json={"session_id": "sess-j", "message": "how is that a four?", "history": []},
+    )
+    assert resp.status_code == 200
+    messages = fake.stream_calls[0]["messages"]
+    calls = [m for m in messages if isinstance(m, AssistantMessage) and m.tool_calls]
+    assert [c.name for c in calls[0].tool_calls] == ["grab_frame"]
+    results = [m for m in messages if isinstance(m, ToolResultMessage)]
+    assert results[0].results[0].content == "thumb and three fingers extended, pinky folded"
+    assert any(isinstance(m, AssistantMessage) and m.text == "1, 2, 0, 4" for m in messages)
+    assert "how is that a four?" in messages[-1].text
+
+
+def test_jerv_replay_moves_and_stores_the_floor_once_over_budget(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    _jerv_session(sessions_store)
+    turns: list[TurnRecord] = []
+    for i in range(20):
+        step = {"id": f"c{i}", "name": "web_fetch", "args": {}, "ok": True, "summary": "x" * 16_000}
+        turns.append(TurnRecord(role="user", content=f"q{i}", seq=2 * i + 1))
+        turns.append(TurnRecord(role="assistant", content="a", tools=[step], seq=2 * i + 2))
+    transcript.turns["sess-j"] = turns
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "next"})
+    floor = sessions_store.floors["sess-j"]  # type: ignore[attr-defined]
+    assert floor == 17
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "again"})
+    assert sessions_store.floors["sess-j"] == floor  # type: ignore[attr-defined]
+
+
+def test_jerv_falls_back_to_client_history_when_the_transcript_cannot_be_read(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    _jerv_session(sessions_store)
+
+    async def broken(ctx, session_id):  # type: ignore[no-untyped-def]
+        raise RuntimeError("db down")
+
+    transcript.load = broken  # type: ignore[method-assign]
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-j",
+            "message": "and then?",
+            "history": [
+                {"role": "user", "content": "earlier"},
+                {"role": "assistant", "content": "an answer"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    texts = [getattr(m, "text", "") for m in fake.stream_calls[0]["messages"]]
+    assert "earlier" in texts and "an answer" in texts
+
+
+def test_a_curator_chat_keeps_the_client_history(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    transcript.turns["sess-1"] = _frame_turns()
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "next",
+            "history": [{"role": "user", "content": "from the client"}],
+        },
+    )
+    texts = [getattr(m, "text", "") for m in fake.stream_calls[0]["messages"]]
+    assert "from the client" in texts and "what numbers?" not in texts

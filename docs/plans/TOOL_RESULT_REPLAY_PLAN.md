@@ -1,6 +1,6 @@
 # Tool results that stay real — replaying earlier turns' tool calls
 
-> **Status:** Scheduled · **Last verified:** 2026-10-06 · **Waves:** R1◻️ R2◻️ R3◻️
+> **Status:** In progress · **Last verified:** 2026-10-06 · **Waves:** R1✅ R2◻️ R3◻️
 
 **The owner's rule (2026-10-06): a tool result jerv saw should stay real on every later turn.**
 Today it does not. A chat turn's history reaches the model as TEXT only: the PWA replays each
@@ -88,7 +88,7 @@ history for that turn and log it — never fail the owner's turn.
 
 ## 4. Waves
 
-### R1 — Replay from the transcript, with the budget ◻️
+### R1 — Replay from the transcript, with the budget ✅
 - `agent/history_replay.py`: stored turns → `LlmMessage`s (rounds by `text_offset`, stubs,
   the 16k per-result cap, the 64k/48k stepped budget, the never-replay set).
 - `agent_sessions.replay_floor_seq` (migration + RLS isolation test); the boundary only moves
@@ -113,6 +113,25 @@ history for that turn and log it — never fail the owner's turn.
   for pages older than the budget; reconcile and archive that plan.
 - Trim the jerv v61 stopgap to what still applies (never guess a URL or id).
 - `ChatMessageIn` docstring and `docs/reference/ASSISTANT.md` "history is text-only" passages.
+
+### R1 as built (2026-10-06)
+- `agent/history_replay.py` (`build`, `advance_floor`, `result_text`), `agent_sessions.replay_floor_seq`
+  (migration 0222) with `AgentSessionRepo.replay_floor` / `advance_replay_floor` (a GREATEST
+  update — never backward), and `TurnRecord.seq`.
+- Scoped to **jerv** chats (`session.agent == "jerv"`); other personas keep the client's text
+  history for now (open question 2).
+- **Anchors: still text-matched, but against the server-built history.** Each replayed user
+  turn is spelled exactly as the PWA decorates it, so the existing `_claim` matcher runs over
+  stored rows instead of client text — deterministic, and no new anchoring code. Matching by
+  `turn_id` is left for R3 if the text match ever misses.
+- Rounds are rebuilt from each step's stored `text_offset`; a failed step replays as an
+  error result. Token counts use a fixed 4 characters per token, so the boundary depends on
+  the stored text alone.
+- The newest turn with results is never stubbed, even if it alone exceeds the budget.
+- **Re-scope:** `set_scopes` moves the boundary past every turn so far, in the same
+  transaction — the firewall rule from §3, implemented with the same column.
+- The guard is live: any read failure logs `agent.history_replay_unread` and the turn runs on
+  the client's text history.
 
 ## 5. Relationship to other plans
 

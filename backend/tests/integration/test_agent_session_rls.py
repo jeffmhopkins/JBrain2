@@ -227,6 +227,34 @@ async def test_set_scopes_rescopes_and_is_owner_only(maker: async_sessionmaker) 
     assert (await repo.get(owner, info.id)).domain_scopes == ("health",)  # type: ignore[union-attr]
 
 
+async def test_the_replay_floor_only_moves_forward_and_a_rescope_passes_every_turn(
+    maker: async_sessionmaker,
+) -> None:
+    """Migration 0222 (TOOL_RESULT_REPLAY_PLAN): the boundary jerv's replayed tool results stop
+    at. It never moves back (a move back would re-expand old results and break the prompt
+    cache), a non-owner cannot move it, and a re-scope moves it past every turn so far so
+    nothing read under the old scope replays into the new one."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    transcript = AgentTranscript(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="chat", agent="jerv")
+    assert await repo.replay_floor(owner, info.id) == 0
+
+    await repo.advance_replay_floor(owner, info.id, 40)
+    await repo.advance_replay_floor(owner, info.id, 10)
+    assert await repo.replay_floor(owner, info.id) == 40
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    await repo.advance_replay_floor(token, info.id, 10_000)
+    assert await repo.replay_floor(owner, info.id) == 40
+
+    await transcript.record_exchange(
+        owner, session_id=info.id, run_id=None, user_text="q", assistant_text="a", tools=[]
+    )
+    newest = max(t.seq for t in await transcript.load(owner, info.id))
+    await repo.set_scopes(owner, info.id, ["general", "health"])
+    assert await repo.replay_floor(owner, info.id) == max(40, newest + 1)
+
+
 async def test_an_engine_opened_note_conversation_cannot_be_rescoped(
     maker: async_sessionmaker,
 ) -> None:

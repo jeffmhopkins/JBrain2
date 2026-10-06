@@ -360,6 +360,41 @@ class AgentSessionRepo:
                 .where(AgentSession.id == uuid.UUID(session_id))
                 .values(domain_scopes=list(domain_scopes))
             )
+            # Results read under the old scope must never replay into the new one
+            # (docs/plans/TOOL_RESULT_REPLAY_PLAN.md): every turn so far replays stubs.
+            await self._raise_replay_floor(
+                session,
+                session_id,
+                select(func.coalesce(func.max(AgentTurn.seq), 0) + 1)
+                .where(AgentTurn.session_id == uuid.UUID(session_id))
+                .scalar_subquery(),
+            )
+
+    async def replay_floor(self, ctx: SessionContext, session_id: str) -> int:
+        """The first turn seq whose tool results still replay in full; 0 for none stubbed."""
+        async with scoped_session(self._maker, ctx) as session:
+            floor = (
+                await session.execute(
+                    select(AgentSession.replay_floor_seq).where(
+                        AgentSession.id == uuid.UUID(session_id)
+                    )
+                )
+            ).scalar_one_or_none()
+        return int(floor or 0)
+
+    async def advance_replay_floor(self, ctx: SessionContext, session_id: str, seq: int) -> None:
+        """Move the replay boundary to `seq`, never back: a boundary that moved backward would
+        re-expand old results and break the prompt cache it exists to keep."""
+        async with scoped_session(self._maker, ctx) as session:
+            await self._raise_replay_floor(session, session_id, seq)
+
+    @staticmethod
+    async def _raise_replay_floor(session: AsyncSession, session_id: str, seq: object) -> None:
+        await session.execute(
+            update(AgentSession)
+            .where(AgentSession.id == uuid.UUID(session_id))
+            .values(replay_floor_seq=func.greatest(AgentSession.replay_floor_seq, seq))
+        )
 
     async def rename(self, ctx: SessionContext, session_id: str, title: str) -> None:
         async with scoped_session(self._maker, ctx) as session:
