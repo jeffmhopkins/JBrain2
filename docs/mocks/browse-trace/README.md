@@ -1,11 +1,17 @@
 # GUI gate — browse trace and inline tool marks
 
-> **Status:** Plan · **Last verified:** 2026-10-06
+> **Status:** Living · **Last verified:** 2026-10-06
 >
 > **Decided 2026-10-06 (owner pick): A — "timeline"** is the binding spec for what a
 > `browse` step shows when expanded (`a-timeline.html`). **Inline tool marks** in the answer
 > are binding too (owner request 2026-10-06, `inline-tool-marks.html`). The reasoning lands
 > in `docs/reference/DESIGN.md` with the frontend.
+>
+> **Both are built (2026-10-06).** The trace is the `browse_trace` step view
+> (`backend/src/jbrain/agent/browse_trace.py`, `frontend/src/agent/views/browseTrace.tsx`); the
+> marks are `frontend/src/agent/toolMarks.ts` with `markdown.placeMarks`. Where the build
+> departs from these mocks (no *show all* link, the *JS shell* badge's source, a tapped group
+> opening every step it stands for, `N tools used` for a mixed group) DESIGN.md says why.
 
 Today a jerv turn that used `browse` shows one Worked row: *Browsed a site · On
 epictheatres.com's "Epic Thea… · ● verified · 6 steps*. Expanding it shows only the web

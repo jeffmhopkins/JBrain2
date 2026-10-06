@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-05
+> **Status:** Living · **Last verified:** 2026-10-06
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1955,6 +1955,44 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   rendered as markup, and a program's own output is never highlighted. The containment chips
   under a run name controls that are checked against the compose file, and `calculate`, which
   never enters the container, does not borrow them.
+- **A browse step opens onto what the browser did** (`views/browseTrace.tsx`, a `STEP_VIEWS`
+  member like `code_run` — binding mock `docs/mocks/browse-trace/a-timeline.html`, owner pick
+  2026-10-06, A "timeline" over B "filmstrip" and C "transcript"). Above the step's sources
+  rung, a rail of one rung per model turn in the host's plain words (*Clicked “Showtimes”*),
+  where it landed, how long it took, and badges (*JS shell*, *1 re-found*, *1 refused*, *1 not
+  run*). Dots: green ok, amber partly refused, rose failed; the host's own work is drawn
+  differently from the model's — a hollow dot for the opening navigation, a ringed one for the
+  closing check, which carries the answer, the host's fact check and whether the separate
+  extraction ran. Inside a rung: each command with the element it acted on (`[41] button "Tue
+  Oct 6"`), the timings and tokens, then the shipped Thinking/Worked chip strip reused as a
+  segmented control over ONE panel — **Thinking** (the turn's reasoning; the fast loop says *No
+  thinking — fast mode*), **Actions** (the exact call, coloured from a closed token set the
+  component applies, then what the host did with each command), **Page it saw** (a capped
+  excerpt of the view the model chose from, full or changes-only). An open trace lifts the
+  `.fb-steps` cap (`:has()`): a scroll pane inside a scroll pane is what the cap exists to
+  prevent. **Every page- or model-shaped string is plain text** — sanitised and capped by the
+  backend, put only in text nodes here, never markdown, HTML or a link. Two departures from the
+  mock, both forced by the bounded payload: the *show all* link under an excerpt is not drawn
+  (the full page is never stored), and the opening rung's *JS shell* badge says why the run
+  needed a browser (the turn's `web_fetch` verdict, `browse_gate`) rather than a host-measured
+  render wait, which nothing records.
+- **Where the model stopped to use a tool, the answer says so, quietly** (`toolMarks.ts`,
+  `markdown.placeMarks` — binding mock `docs/mocks/browse-trace/inline-tool-marks.html`, owner
+  request 2026-10-06). A mark sits at each tool's `textOffset` (persisted `text_offset`), so a
+  live turn and a reopened one place it the same. No mark at offset 0 or at the end of the text —
+  the ledger already lists those. Consecutive tools at one offset share a mark: the label with
+  *×N* for the same tool (*Searched the web ×2*), *N tools used* otherwise; a lone `browse` adds
+  its verdict (*· verified*, green; anything else rose). Text-3 on no fill with a hairline,
+  sized in `em` below the prose, so it reads as punctuation; the tapped one takes the open
+  Worked chip's steel tint. A tap is the owner's own act on the foot strip (`reconcileFoot`
+  ownership, like tapping Worked): it opens Worked, expands the step — every step, for a group
+  (the mock opened only the first; the build request asked for all) — scrolls the first into
+  view and lights them briefly (`fb-flash`, a held tint under reduced motion). **A mark never
+  breaks the markdown it sits in**: the offset is first moved onto a safe boundary
+  (`snapBreak`) — out of an inline token, to the end of a list, and past a table, a code fence
+  or display math onto a line of its own — and the mark rides a sentinel the inline renderer
+  turns into the button, so the prose parses exactly as it would without it. The image-turn
+  split takes the same boundary, so an image called mid-table splits after the table.
 - **Every step row says what came back**, not only what was asked (`stepLedger.ts`, build
   plan `docs/archive/SHOW_THE_WORKING_PLAN.md` W1 — binding mock
   `docs/mocks/code-run/h-worked-ledger.html`). The right-hand column is one slot with one
