@@ -373,7 +373,7 @@ async def test_an_injected_page_reaches_no_other_tool_and_cannot_forge_the_answe
         ({"commands": [_cmd("scroll")]}, "`do` must be one of"),
         ({"commands": [_cmd("click")]}, "needs the element's number"),
         ({"commands": [_cmd("type", SEARCH)]}, "type needs a `value`"),
-        ({"commands": [_cmd("goto", value="x" * 2_000)]}, "`value` is too long"),
+        ({"commands": [_cmd("goto", value="x" * 2_000)]}, "`value` is too long (2000 characters"),
     ],
 )
 async def test_a_malformed_act_runs_nothing(arguments: dict[str, Any], why: str) -> None:
@@ -599,6 +599,22 @@ def test_read_returns_the_full_text_from_a_phrase() -> None:
     assert bindex.read_text(policy.PageView()) == "(the page has no readable text)"
     big = policy.PageView(readable="line\n" * 3_000)
     assert bindex.read_text(big).endswith("read again with a phrase from further down]")
+
+
+def test_a_long_done_answer_is_cut_at_a_line_never_refused() -> None:
+    """A refused `done` costs a whole model call to rewrite (two of them, 80 s, on a 16-film
+    day at Epic, 2026-10-06): an over-long answer is kept, cut at the last whole line."""
+    line = "Film: 11:00 AM, 1:40 PM, 4:20 PM, 7:00 PM, 9:40 PM"
+    answer = "\n".join([line] * 200)
+    commands, problem = bindex.parse({"commands": [_cmd("done", value=answer)]})
+    assert problem is None
+    kept = commands[0].value
+    assert len(kept) <= policy.MAX_ANSWER_CHARS and kept.endswith("9:40 PM")
+    assert set(kept.splitlines()) == {line}
+    one_line = bindex.parse({"commands": [_cmd("done", value="y" * 5_000)]})[0][0].value
+    assert len(one_line) == policy.MAX_ANSWER_CHARS
+    full_day = "\n".join([line] * 30)  # ~1,500 characters: past the old 1,200 cap, kept whole
+    assert bindex.parse({"commands": [_cmd("done", value=full_day)]})[0][0].value == full_day
 
 
 def test_indexes_parse_from_the_shapes_a_model_sends() -> None:

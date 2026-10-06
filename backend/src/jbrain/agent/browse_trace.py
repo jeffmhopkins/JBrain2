@@ -30,6 +30,7 @@ from jbrain.agent import browse_gate
 from jbrain.agent import browse_policy as policy
 from jbrain.agent.browse import OUTCOME_TEXT, BrowseRun, BrowseStep, BrowseTurn
 from jbrain.agent.contracts import ViewPayload
+from jbrain.llm.openai_compat import REASONING_BUDGET_MESSAGE
 
 VIEW = "browse_trace"
 # Per field. A line the owner reads at a glance; an element as the snapshot names it; a host
@@ -240,12 +241,19 @@ def _badges(commands: list[dict[str, Any]]) -> list[dict[str, str]]:
     return out
 
 
+def _own_reasoning(text: str) -> str:
+    """The model's own thinking, without the line the server writes when a thinking budget
+    runs out. At a budget of 0 (the fast loop) that line is ALL there is, and showing it read
+    as the model musing "That is enough thinking" on every step (owner, 2026-10-06)."""
+    return text.replace(REASONING_BUDGET_MESSAGE.strip(), "").strip()
+
+
 def _turn_panels(turn: BrowseTurn | None) -> dict[str, Any]:
     if turn is None:
         return {}
     excerpt, total = _excerpt(turn.page_view)
     out: dict[str, Any] = {
-        "reasoning": _block(turn.reasoning, REASONING_CHARS),
+        "reasoning": _block(_own_reasoning(turn.reasoning), REASONING_CHARS),
         "call": _block(turn.call, CALL_CHARS),
     }
     if excerpt:

@@ -714,6 +714,14 @@ function inlineRun(text: string, key: string, ctx: Ctx): ReactNode[] {
 
 /** Render one paragraph's text, turning soft newlines into line breaks. */
 function paragraph(text: string, key: string, ctx: Ctx): ReactNode {
+  // A tool mark alone on its line (`placeMarks`) is a row of its own, not a paragraph.
+  if (ctx.marks && /^[\ue000-\ue0ff]$/.test(text.trim())) {
+    return (
+      <div key={key} className="md-tmark-line">
+        {inline(text.trim(), key, ctx)}
+      </div>
+    );
+  }
   const lines = text.split("\n");
   return (
     <p key={key} className="md-p">
@@ -1022,21 +1030,33 @@ export function snapBreak(text: string, offset: number): { at: number; own: bool
   return { at, own: false };
 }
 
-/** `text` with a mark sentinel for each offset, on safe boundaries (`snapBreak`). Marks that
- * land on the same spot keep their order. A sentinel-range character the text already held
- * becomes U+FFFD first, so nothing in the answer can stand in for a mark. */
+/** `text` with a mark sentinel for each offset, on safe boundaries (`snapBreak`), each on a
+ * line of its own (owner, 2026-10-06: a mark trailing the sentence read as part of it). A
+ * break inside a paragraph splits it there; one inside a heading or a quote line moves to
+ * that line's end, so neither is cut in two. Marks that land on the same spot keep their
+ * order. A sentinel-range character the text already held becomes U+FFFD first, so nothing
+ * in the answer can stand in for a mark. */
 export function placeMarks(text: string, offsets: readonly number[]): string {
   const clean = text.replace(MARK_CHARS, "\ufffd");
   const placed = offsets
     .slice(0, MAX_MARKS)
-    .map((offset, index) => ({ ...snapBreak(clean, offset), index }))
+    .map((offset, index) => ({ at: lineSafe(clean, snapBreak(clean, offset).at), index }))
     .sort((a, b) => b.at - a.at || b.index - a.index);
   let out = clean;
-  for (const { at, own, index } of placed) {
+  for (const { at, index } of placed) {
     const mark = String.fromCharCode(MARK_BASE + index);
-    out = out.slice(0, at) + (own ? `\n\n${mark}\n\n` : mark) + out.slice(at);
+    out = `${out.slice(0, at).trimEnd()}\n\n${mark}\n\n${out.slice(at).trimStart()}`;
   }
   return out;
+}
+
+/** `at`, or the end of its line when that line is a heading or a quote: a paragraph break
+ * there would cut the heading or drop the rest of the line out of the quote. */
+function lineSafe(text: string, at: number): number {
+  const start = text.lastIndexOf("\n", at - 1) + 1;
+  if (!/^\s{0,3}(#|>)/.test(text.slice(start))) return at;
+  const end = text.indexOf("\n", at);
+  return end < 0 ? text.length : end;
 }
 
 /** Inline text with its mark sentinels rendered as the marks they stand for. */

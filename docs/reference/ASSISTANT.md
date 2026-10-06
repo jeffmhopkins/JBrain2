@@ -988,7 +988,7 @@ agent — often the caller — never evicts it mid-run). The design is the Rule 
   `reasoning_budget_tokens`, which forces the end of thinking at the cap; never sent to a cloud
   model), and once two steps or 60 s remain the
   newest page carries a note to finish now. The extraction hands back the raw facts, one per
-  line, with no prose (capped at 1,200 characters): jerv writes them up.
+  line, with no prose (capped at 4,000 characters — a whole day at a multiplex; an over-long `done` is cut at a line, never refused): jerv writes them up.
 - **Quarantined result.** jerv receives fenced plain text (links, images, markup, addresses
   and control characters stripped), the answer last on one line between
   `<<<BROWSE ANSWER BEGIN/END>>>` markers so it cannot forge the host's lines, and citation

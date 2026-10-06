@@ -79,8 +79,10 @@ When the model writes some text, calls tools, then writes more, the answer gets 
 mark at that point. *Searched the web ×2*, *Read a web page*, *Browsed a site · verified*.
 
 - **Placement.** Each tool's `textOffset` (`frontend/src/agent/transcript.ts`, persisted as
-  `text_offset`). A tool at offset 0 or at the very end of the text gets no mark, because
-  the ledger already lists it.
+  `text_offset`). A tool at offset 0 gets no mark, because the ledger already lists it.
+  **Built differently from the mock (owner, 2026-10-06):** each mark sits on a line of its
+  own rather than trailing the sentence, and a tool at the end of the text is marked as soon
+  as it runs, so the latest tool shows while the model keeps thinking.
 - **Grouping.** Consecutive tools at the same offset share one mark. If the names fit, it
   shows them (*Searched the web ×2*, or up to three names). Otherwise it reads *N tools
   used*.

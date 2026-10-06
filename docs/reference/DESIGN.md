@@ -1979,8 +1979,12 @@ the step that made it. Not a surface of its own and not a note-screen change: th
 - **Where the model stopped to use a tool, the answer says so, quietly** (`toolMarks.ts`,
   `markdown.placeMarks` — binding mock `docs/mocks/browse-trace/inline-tool-marks.html`, owner
   request 2026-10-06). A mark sits at each tool's `textOffset` (persisted `text_offset`), so a
-  live turn and a reopened one place it the same. No mark at offset 0 or at the end of the text —
-  the ledger already lists those. Consecutive tools at one offset share a mark: the label with
+  live turn and a reopened one place it the same. **Each mark is a row of its own** between the
+  prose it interrupted (owner, 2026-10-06: a mark trailing the sentence read as part of it) — a
+  break inside a paragraph splits it there; one in a heading or quote line moves to the line's
+  end. No mark at offset 0 (the ledger lists it); a tool at the end of the text shown so far is
+  marked at once, so the latest tool shows while the model goes on thinking (owner, 2026-10-06),
+  and one past the paced reveal waits for it. Consecutive tools at one offset share a mark: the label with
   *×N* for the same tool (*Searched the web ×2*), *N tools used* otherwise; a lone `browse` adds
   its verdict (*· verified*, green; anything else rose). Text-3 on no fill with a hairline,
   sized in `em` below the prose, so it reads as punctuation; the tapped one takes the open

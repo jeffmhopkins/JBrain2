@@ -20,15 +20,16 @@ export interface ToolMarkGroup {
   brief?: { text: string; ok: boolean };
 }
 
-/** The marks for a turn's tools. A tool at offset 0 (before any text) or at the end of the
- * text (nothing written after it yet) gets none: the ledger already lists it, and a mark at
- * the end of the answer marks nothing. Consecutive tools at the same offset share one mark:
+/** The marks for a turn's tools. A tool at offset 0 (before any text) gets none: the ledger
+ * already lists it. One at the end of the text shown so far gets its mark at once (owner,
+ * 2026-10-06: the latest tool should show the same way while the model goes on thinking),
+ * and one past it waits until the paced reveal reaches it. Consecutive tools at the same offset share one mark:
  * "Searched the web ×2" when they are the same tool, "3 tools used" when not. */
 export function toolMarks(tools: readonly ToolActivity[], textLength: number): ToolMarkGroup[] {
   const groups: { offset: number; tools: ToolActivity[] }[] = [];
   for (const tool of tools) {
     const offset = tool.textOffset;
-    if (offset === undefined || offset <= 0 || offset >= textLength) continue;
+    if (offset === undefined || offset <= 0 || offset > textLength) continue;
     const last = groups.at(-1);
     if (last && last.offset === offset) last.tools.push(tool);
     else groups.push({ offset, tools: [tool] });
