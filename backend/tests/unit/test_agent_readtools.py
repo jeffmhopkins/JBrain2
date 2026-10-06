@@ -1085,8 +1085,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "merge_entities.tool": (
             "merge_entities",
-            1,
-            "2f39f5cc71d59ea54595e1afb5a2d1be3e927754f283e4737fcad516eb831030",
+            2,
+            "b5c0900d513f55142c33e386649b2674730303e51b81dc371fd14ea45c434041",
         ),
         "aprs_recent.tool": (
             "aprs_recent",

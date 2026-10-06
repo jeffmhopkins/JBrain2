@@ -1289,6 +1289,53 @@ async def test_a_fold_is_staged_and_nothing_is_folded(maker, tmp_path, owner_ctx
 
 
 @pytest.mark.asyncio
+async def test_a_spelling_correction_stages_the_name_jeff_gave(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """`keep_name` rides on the card (label, title and preview), so the owner approves
+    the name as well as the fold — and the executor hands it to the enact."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    a = await _entity(maker, "Dana Whitfeld")
+    b = await _entity(maker, "Dana Whitfield")
+
+    out = await _handlers(maker)[MERGE_ENTITIES](
+        {"entity_a": a, "entity_b": b, "reason": "", "keep_name": "dana whitfield"},
+        _ctx(owner_ctx, session_id),
+    )
+    assert isinstance(out, ToolOutput) and out.proposal is not None
+    assert "named “Dana Whitfield”" in str(out)
+    row, nodes = await ProposalRepo(maker).load(owner_ctx, out.proposal.proposal_id)
+    assert nodes[0].preview["keep_name"] == "Dana Whitfield"
+    assert "as “Dana Whitfield”" in nodes[0].label
+
+
+@pytest.mark.asyncio
+async def test_a_keep_name_that_is_neither_name_is_refused(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    a = await _entity(maker, "Dana Whitfeld")
+    b = await _entity(maker, "Dana Whitfield")
+
+    out = str(
+        await _handlers(maker)[MERGE_ENTITIES](
+            {"entity_a": a, "entity_b": b, "reason": "", "keep_name": "Dana W."},
+            _ctx(owner_ctx, session_id),
+        )
+    )
+    assert "keep_name must be one of the two names" in out
+    assert "Nothing was staged" in out
+
+
+@pytest.mark.asyncio
 async def test_the_narrowed_conversation_could_not_have_folded_even_if_it_tried(  # noqa: F811
     maker,  # noqa: F811
     tmp_path,

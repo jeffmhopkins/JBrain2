@@ -19,6 +19,7 @@ from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import (
     MergeScopeError,
+    adopt_merged_name,
     are_distinct,
     live_entity_by_id,
     merge_entity_pair,
@@ -967,14 +968,21 @@ class SqlAnalysisRepo:
         }
 
     async def merge_entities(
-        self, ctx: SessionContext, entity_a: str, entity_b: str
+        self,
+        ctx: SessionContext,
+        entity_a: str,
+        entity_b: str,
+        *,
+        keep_name: str | None = None,
     ) -> MergeOutcome:
         """Enact a merge the owner approved (the agent's merge_entities leaf). The
         agent never picks the survivor: plan_merge re-ranks the pair so the
         more-anchored identity is kept (the owner is never merged away), a permanent
         distinct_from blocks the fold, and a re-enact whose pair already merged is a
         no-op (idempotent). Runs through the same merge_entity_pair the review inbox
-        uses, in the caller's RLS scope."""
+        uses, in the caller's RLS scope. `keep_name` — one of the pair's two names, as
+        the approved card showed it — is the name the survivor ends up with, whichever
+        row survives (`adopt_merged_name`)."""
         a, b = _as_uuid(entity_a), _as_uuid(entity_b)
         if a is None or b is None or a == b:
             raise UnknownAction("merge_entities needs two distinct entity ids")
@@ -998,6 +1006,8 @@ class SqlAnalysisRepo:
                 raise UnknownAction("a permanent distinct_from forbids merging these")
             plan = await plan_merge(session, a, b)
             await merge_entity_pair(session, keep=plan.keep_id, gone=plan.gone_id)
+            if keep_name:
+                await adopt_merged_name(session, plan, keep_name)
             return MergeOutcome(str(plan.keep_id), str(plan.gone_id), merged=True)
 
     async def set_entity_image(self, ctx: SessionContext, entity_id: str, image_sha: str) -> bool:
