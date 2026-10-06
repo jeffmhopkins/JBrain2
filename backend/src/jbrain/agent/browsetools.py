@@ -10,7 +10,7 @@ host itself loaded, as citation chips.
 
 from __future__ import annotations
 
-from jbrain.agent import browse_gate
+from jbrain.agent import browse_gate, browse_trace
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.browse import BrowseAgent, render_for_caller
 from jbrain.agent.contracts import WebSource
@@ -59,10 +59,15 @@ def build_browse_handlers(
             if run.answered
             else run.outcome.replace("_", " ")
         )
+        # The trace is the OWNER's (a step view); jerv reads `render_for_caller` alone.
+        domain = browse_gate.registrable_domain(start_url) if start_url else None
         return ToolOutput(
             render_for_caller(run),
             web_sources=sources,
             result_brief=f"{brief} · {len(run.steps)} steps",
+            view=browse_trace.build_view(
+                run, ctx.browser_needed.get(domain) if domain is not None else None
+            ),
         )
 
     return {"browse": browse_tool}

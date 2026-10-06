@@ -3035,3 +3035,144 @@ describe("resolveSelectionClamp", () => {
     });
   });
 });
+
+// Inline tool marks (binding mock docs/mocks/browse-trace/inline-tool-marks.html): where the
+// model stopped to use a tool, the answer carries a quiet mark; tapping it opens Worked to
+// that step. Both a reopened chat (the persisted `text_offset`) and a live one.
+describe("inline tool marks", () => {
+  const PRE = "I'll look it up.";
+  const MID = "\n\nFound the page. Let me drive it.";
+  const POST = "\n\nTomorrow there are 12 films.";
+  const trace = {
+    view: "browse_trace",
+    surface: "inline" as const,
+    refs: [],
+    data: {
+      site: "epictheatres.com",
+      loop: "fast",
+      elapsed_ms: 26400,
+      pages: 1,
+      steps: [],
+      check: { summary: "Checked the answer against the page", answered: true, verified: true },
+    },
+  };
+
+  function reopened(): TranscriptTurn[] {
+    return [
+      { role: "user", content: "what's on?", tools: [] },
+      {
+        role: "assistant",
+        content: PRE + MID + POST,
+        tools: [
+          { id: "s1", name: "web_search", ok: true, sources: [], text_offset: 0 },
+          { id: "s2", name: "web_search", ok: true, sources: [], text_offset: PRE.length },
+          { id: "s3", name: "web_search", ok: true, sources: [], text_offset: PRE.length },
+          {
+            id: "b1",
+            name: "browse",
+            ok: true,
+            sources: [],
+            args: { goal: "showtimes" },
+            result_brief: "verified · 6 steps",
+            text_offset: (PRE + MID).length,
+            view: trace,
+          },
+          // At the very end: the ledger lists it, the answer gets no mark.
+          {
+            id: "c1",
+            name: "clock",
+            ok: true,
+            sources: [],
+            text_offset: (PRE + MID + POST).length,
+          },
+        ],
+      },
+    ];
+  }
+
+  it("marks a reopened answer where each tool ran, grouped, with browse's verdict", async () => {
+    render(<Harness d={deps({ getTranscript: vi.fn(async () => reopened()) })} />);
+    await waitFor(() => expect(document.querySelectorAll(".tmark")).toHaveLength(2));
+    const marks = [...document.querySelectorAll(".tmark")];
+    expect(marks.map((m) => m.textContent)).toEqual([
+      "Searched the web ×2",
+      "Browsed a site · verified",
+    ]);
+    // Each sits at the end of the paragraph it followed, inside the prose.
+    expect(marks[0]?.closest("p")?.textContent).toBe(`${PRE}Searched the web ×2`);
+    expect(marks[1]?.closest("p")?.textContent).toContain("Let me drive it.");
+    expect(marks.every((m) => !m.classList.contains("on"))).toBe(true);
+    expect(document.querySelector(".fb-act-body")).not.toHaveClass("open");
+  });
+
+  it("tapping a mark opens Worked, expands its step, scrolls to it and lights it", async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      render(<Harness d={deps({ getTranscript: vi.fn(async () => reopened()) })} />);
+      const mark = await screen.findByRole("button", { name: /Browsed a site · verified/ });
+      fireEvent.click(mark);
+      expect(mark).toHaveClass("on");
+      const worked = screen.getByRole("button", { name: /Worked/ });
+      expect(worked).toHaveAttribute("aria-expanded", "true");
+      const step = [...document.querySelectorAll(".fb-step")].find(
+        (s) => s.querySelector(".fb-step-lab")?.textContent === "Browsed a site",
+      ) as HTMLElement;
+      expect(step).toHaveClass("open");
+      // The step view renders inside it — the browse trace above the sources rung.
+      expect(step.querySelector(".bt")).not.toBeNull();
+      await waitFor(() => expect(step).toHaveClass("flash"));
+      await waitFor(() => expect(scrolled).toContain(step));
+      // The light goes out on its own.
+      await waitFor(() => expect(step).not.toHaveClass("flash"), { timeout: 2500 });
+
+      // A group opens every step it stands for, and the tint moves with the tap.
+      fireEvent.click(screen.getByRole("button", { name: /Searched the web ×2/ }));
+      expect(mark).not.toHaveClass("on");
+      const searches = [...document.querySelectorAll(".fb-step")].filter((s) =>
+        s.textContent?.startsWith("Searched the web"),
+      );
+      expect(searches.map((s) => s.classList.contains("open"))).toEqual([false, true, true]);
+      expect(worked).toHaveAttribute("aria-expanded", "true");
+
+      // Closing Worked by hand drops the mark's tint; it is the owner's toggle.
+      fireEvent.click(worked);
+      expect(worked).toHaveAttribute("aria-expanded", "false");
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /Searched the web ×2/ })).not.toHaveClass("on"),
+      );
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("marks a live answer as it streams, and the browse trace rides its step", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: PRE };
+      yield { type: "tool_call", id: "b1", name: "browse", arguments: { goal: "showtimes" } };
+      yield {
+        type: "tool_result",
+        tool_call_id: "b1",
+        ok: true,
+        summary: "[BROWSE RESULT]",
+        result_brief: "unverified · 3 steps",
+      };
+      yield { type: "tool_view", tool_call_id: "b1", view: trace };
+      yield { type: "text_delta", text: POST };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what's on?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    const mark = await screen.findByRole("button", { name: /Browsed a site · unverified/ });
+    expect(mark.querySelector(".v.bad")?.textContent).toBe(" · unverified");
+    // A step view never renders in the bubble — only inside its step.
+    const bubble = mark.closest(".bubble") as HTMLElement;
+    expect(bubble.querySelector(".fb-act-body .bt")).not.toBeNull();
+    expect([...bubble.querySelectorAll(".bt")].every((b) => b.closest(".fb-step"))).toBe(true);
+  });
+});

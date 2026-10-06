@@ -19,7 +19,7 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { type ReactNode, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
@@ -364,6 +364,8 @@ interface Ctx {
   /** The turn is still streaming — a not-yet-valid formula shows a placeholder
    * instead of degrading to raw source. */
   streaming: boolean;
+  /** The inline tool marks, by the index their sentinel carries (`placeMarks`). */
+  marks?: readonly ReactNode[] | undefined;
 }
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -588,7 +590,7 @@ function WebCite({ n, url, title }: { n: number; url: string; title: string }): 
   );
 }
 
-function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
+function inlineRun(text: string, key: string, ctx: Ctx): ReactNode[] {
   const out: ReactNode[] = [];
   let rest = text;
   let n = 0;
@@ -840,10 +842,24 @@ const startsTable = (lines: string[], i: number): boolean =>
   (lines[i] ?? "").includes("|") && isDelimRow(lines[i + 1] ?? "");
 
 function parseBlocks(src: string): Block[] {
+  return parseRanges(src).blocks;
+}
+
+/** The blocks, and the line range `[from, to)` each one was parsed from — what an inline tool
+ * mark needs to know it would land inside a table, a fence or a list (`snapBreak`). */
+function parseRanges(src: string): { blocks: Block[]; ranges: [number, number][] } {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   const blocks: Block[] = [];
+  const ranges: [number, number][] = [];
   let i = 0;
+  let from = 0;
+  // A block pushed in the last pass ends where this one starts.
+  const close = () => {
+    if (blocks.length > ranges.length) ranges.push([from, Math.min(i, lines.length)]);
+  };
   while (i < lines.length) {
+    close();
+    from = i;
     const line = lines[i] ?? "";
     if (/^```/.test(line.trim())) {
       i++;
@@ -936,7 +952,112 @@ function parseBlocks(src: string): Block[] {
       buf.push(lines[i++] ?? "");
     blocks.push({ kind: "p", text: buf.join("\n") });
   }
-  return blocks;
+  close();
+  return { blocks, ranges };
+}
+
+// --- Inline tool marks -----------------------------------------------------------------
+//
+// A mark sits where the answer stood when a tool ran (the tool's `textOffset`). It is placed
+// by a private-use sentinel character dropped into the text BEFORE it is parsed, which the
+// inline renderer turns into the mark — so the prose around it parses exactly as it would
+// without it. The offset is first moved onto a boundary that cannot break the markdown:
+// never inside an inline token (a `**bold**`, a link, a code span), never inside a list,
+// a table, a code fence or display math — those move to the end of their block.
+
+const MARK_BASE = 0xe000;
+const MAX_MARKS = 256;
+const MARK_CHAR = /[\ue000-\ue0ff]/;
+const MARK_CHARS = /[\ue000-\ue0ff]/g;
+// Blocks a mark may sit at the end of, inline. A table, fence or formula gets its mark on a
+// line of its own after it.
+const INLINE_END = new Set<Block["kind"]>(["p", "h", "quote", "ul", "ol"]);
+
+/** Where a break at `offset` may go without cutting a block or an inline token, and whether
+ * it needs a line of its own (after a table, fence or formula). An offset at the very start
+ * of a block, or between blocks, belongs to the END of the block before it: the text that
+ * was on screen when the tool ran. */
+export function snapBreak(text: string, offset: number): { at: number; own: boolean } {
+  const lines = text.split("\n");
+  const starts: number[] = [];
+  let pos = 0;
+  for (const line of lines) {
+    starts.push(pos);
+    pos += line.length + 1;
+  }
+  const at = Math.max(0, Math.min(offset, text.length));
+  let line = starts.length - 1;
+  while (line > 0 && (starts[line] ?? 0) > at) line--;
+  const col = at - (starts[line] ?? 0);
+  const { blocks, ranges } = parseRanges(text);
+  const endOf = (k: number): { at: number; own: boolean } => {
+    const [bFrom, bTo] = ranges[k] ?? [0, 0];
+    let last = bTo - 1;
+    while (last > bFrom && (lines[last] ?? "").trim() === "") last--;
+    const block = blocks[k];
+    return {
+      at: (starts[last] ?? 0) + (lines[last] ?? "").length,
+      own: block === undefined || !INLINE_END.has(block.kind),
+    };
+  };
+  const inside = ranges.findIndex(([bFrom, bTo]) => line >= bFrom && line < bTo);
+  const block = inside >= 0 ? blocks[inside] : undefined;
+  if (block === undefined || (line === ranges[inside]?.[0] && col === 0)) {
+    // Between blocks, or at a block's first character: the end of the block before.
+    let prev = -1;
+    ranges.forEach(([, bTo], k) => {
+      if (bTo <= line) prev = k;
+    });
+    return prev >= 0 ? endOf(prev) : { at, own: true };
+  }
+  if (block.kind !== "p" && block.kind !== "h" && block.kind !== "quote") return endOf(inside);
+  // Inside prose: step out of any inline token the offset would cut.
+  const lineText = lines[line] ?? "";
+  const token = new RegExp(INLINE.source, "g");
+  for (const m of lineText.matchAll(token)) {
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    if (col > start && col < end) return { at: (starts[line] ?? 0) + end, own: false };
+  }
+  return { at, own: false };
+}
+
+/** `text` with a mark sentinel for each offset, on safe boundaries (`snapBreak`). Marks that
+ * land on the same spot keep their order. A sentinel-range character the text already held
+ * becomes U+FFFD first, so nothing in the answer can stand in for a mark. */
+export function placeMarks(text: string, offsets: readonly number[]): string {
+  const clean = text.replace(MARK_CHARS, "\ufffd");
+  const placed = offsets
+    .slice(0, MAX_MARKS)
+    .map((offset, index) => ({ ...snapBreak(clean, offset), index }))
+    .sort((a, b) => b.at - a.at || b.index - a.index);
+  let out = clean;
+  for (const { at, own, index } of placed) {
+    const mark = String.fromCharCode(MARK_BASE + index);
+    out = out.slice(0, at) + (own ? `\n\n${mark}\n\n` : mark) + out.slice(at);
+  }
+  return out;
+}
+
+/** Inline text with its mark sentinels rendered as the marks they stand for. */
+function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
+  if (!ctx.marks || !MARK_CHAR.test(text)) return inlineRun(text, key, ctx);
+  const out: ReactNode[] = [];
+  let piece = "";
+  let n = 0;
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code >= MARK_BASE && code < MARK_BASE + MAX_MARKS) {
+      if (piece) out.push(...inlineRun(piece, `${key}-m${n++}`, ctx));
+      piece = "";
+      const node = ctx.marks[code - MARK_BASE];
+      if (node !== undefined) out.push(<Fragment key={`${key}-mk${n++}`}>{node}</Fragment>);
+    } else {
+      piece += ch;
+    }
+  }
+  if (piece) out.push(...inlineRun(piece, `${key}-m${n++}`, ctx));
+  return out;
 }
 
 function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
@@ -1050,6 +1171,7 @@ export function Markdown({
   openFlag,
   streaming = false,
   harmonyCitations = false,
+  marks,
 }: {
   text: string;
   /** Tap handler for a `[^n]` source citation. */
@@ -1081,8 +1203,12 @@ export function Markdown({
    * gpt-oss harmony citation (【N†…】) is a REAL source ref — convert it to `[^N]` instead
    * of stripping it as browse noise. Off everywhere else. */
   harmonyCitations?: boolean;
+  /** Inline tool marks: each renders at its `at` offset into `text`, moved onto a boundary
+   * that cannot break the markdown (`placeMarks`). */
+  marks?: readonly { at: number; node: ReactNode }[] | undefined;
 }): ReactNode {
   const index = useMemo(() => buildIndex(entities), [entities]);
+  const markAt = marks?.map((m) => m.at).join(",") ?? "";
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.
   const flagIndex = useMemo(() => buildFlagIndex(flags), [flags]);
@@ -1099,10 +1225,16 @@ export function Markdown({
     () => calcCount === 1 && (text.match(/\[=\d+\]/g) ?? []).length === 1,
     [calcCount, text],
   );
-  const blocks = useMemo(
-    () => parseBlocks(stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text)),
-    [text, harmonyCitations],
-  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `markAt` is the marks' identity
+  const blocks = useMemo(() => {
+    const marked = marks?.length
+      ? placeMarks(
+          text,
+          marks.map((m) => m.at),
+        )
+      : text;
+    return parseBlocks(stripModelCitations(harmonyCitations ? harmonyToFootnotes(marked) : marked));
+  }, [text, harmonyCitations, markAt]);
   const ctx: Ctx = {
     onCite,
     cites,
@@ -1115,6 +1247,7 @@ export function Markdown({
     index,
     flags: flagIndex,
     streaming,
+    marks: marks?.map((m) => m.node),
   };
   const rendered = blocks.map((b, i) => renderBlock(b, `b${i}`, ctx));
   // Graceful fallback: any flagged claim the scanner couldn't anchor in the prose

@@ -262,6 +262,39 @@ class BrowseStep:
     prompt_tokens: int = 0
     cached_tokens: int = 0
     output_tokens: int = 0
+    # For the owner's trace view (`browse_trace`), never jerv's text. Raw page-derived
+    # strings: the view sanitises them. `element` is the target as role + name; `refound`
+    # says a batch re-found it by role + name after its ref went stale.
+    title: str = ""
+    element: str = ""
+    refound: bool = False
+    settle_ms: int = 0
+
+
+# What one model turn's trace keeps raw, before `browse_trace` caps it far lower: enough to
+# bound a run's memory whatever a page or a model sends.
+_TURN_RAW_CHARS = 4_000
+
+
+@dataclass
+class BrowseTurn:
+    """What one model turn saw and sent, for the owner's trace view (`browse_trace`). The
+    view is the owner's: none of this reaches jerv (`render_for_caller` never reads it)."""
+
+    n: int
+    reasoning: str = ""
+    # The call as the model sent it: `name(arguments)`, one line per call.
+    call: str = ""
+    # The page as the model was last shown it before choosing: the whole view or only
+    # what changed (`page_changes`), its title, address and size.
+    page_view: str = ""
+    page_changes: bool = False
+    page_title: str = ""
+    page_url: str = ""
+    page_tokens: int = 0
+    page_lines: int = 0
+    # Commands the host did not run, each as its label ("read \"Showtimes\"").
+    not_run: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -279,6 +312,8 @@ class BrowseRun:
     steps: list[BrowseStep] = field(default_factory=list)
     elapsed_ms: int = 0
     error: str = ""
+    turns: list[BrowseTurn] = field(default_factory=list)
+    loop: str = ""
 
     @property
     def answered(self) -> bool:
@@ -360,6 +395,16 @@ class _Run:
         # The page as the model last saw it — the baseline the next view is a delta against.
         self.shown: policy.PageView | None = None
         self.compactions = 0
+        # The last page message as sent, for the trace's "page it saw".
+        self.seen = ""
+        self.seen_changes = False
+
+    def turn(self, n: int) -> BrowseTurn:
+        """The trace record for model turn `n`, created on first use."""
+        turns = self.result.turns
+        if not turns or turns[-1].n != n:
+            turns.append(BrowseTurn(n))
+        return turns[-1]
 
     def display(self) -> policy.PageView:
         """The current page as the model reads it: the indexed view in the fast loop."""
@@ -371,7 +416,9 @@ class _Run:
         shown = self.display()
         delta = policy.page_delta(self.shown, shown)
         self.shown = shown
-        return delta if delta is not None else shown.render()
+        text = delta if delta is not None else shown.render()
+        self.seen, self.seen_changes = text[:_TURN_RAW_CHARS], delta is not None
+        return text
 
     def prompt_chars(self) -> int:
         return slot_roles.prompt_chars("", self.history, ())
@@ -394,6 +441,7 @@ class _Run:
         )
         self.history = [UserMessage(text=text)]
         self.shown = self.display()
+        self.seen, self.seen_changes = self.shown.render()[:_TURN_RAW_CHARS], False
         self.compactions += 1
 
     def note_page(self, page: policy.PageView) -> None:
@@ -483,6 +531,7 @@ class BrowseAgent:
         fast: bool = False,
     ) -> BrowseRun:
         state = _Run(goal.strip(), fast=fast)
+        state.result.loop = FAST_LOOP if fast else B1_LOOP
         state.reasoning_budget = reasoning_budget
         started = self._clock()
         steps = _clamp_steps(max_steps, self._max_steps)
@@ -579,6 +628,11 @@ class BrowseAgent:
         """One model turn and the action it picked. True when the run is over."""
         if state.prompt_chars() > MAX_PROMPT_CHARS:
             state.compact(self._hint(state, n))
+        trace = state.turn(n)
+        trace.page_view, trace.page_changes = state.seen, state.seen_changes
+        trace.page_title, trace.page_url = state.page.title, state.page.url
+        trace.page_tokens = state.display().tokens
+        trace.page_lines = len(state.display().outline.splitlines())
         t0 = self._clock()
         turn = await self._router.converse(
             BROWSE_TASK,
@@ -595,6 +649,8 @@ class BrowseAgent:
             slot_role=SlotRole.BROWSE,
         )
         model_ms = int((self._clock() - t0) * 1000)
+        trace.reasoning = turn.reasoning[:_TURN_RAW_CHARS]
+        trace.call = "\n".join(_call_line(c) for c in turn.tool_calls)[:_TURN_RAW_CHARS]
         mark = len(state.result.steps)
         done = await self._take_turn(session, state, n, turn, model_ms)
         # The prompt and cache counts the server reported, on the step this turn produced — how
@@ -634,6 +690,7 @@ class BrowseAgent:
         for skipped in extra:
             note = "Not run: one action per step. Look at the page above and choose again."
             results.append(ToolResult(skipped.id, note))
+            state.turn(n).not_run.append(skipped.name)
         state.history.append(AssistantMessage(text=turn.text, tool_calls=list(calls)))
         state.history.append(ToolResultMessage(results=results))
         return done
@@ -690,7 +747,15 @@ class BrowseAgent:
             )
         if problem is not None:
             state.result.steps.append(
-                BrowseStep(n, name, _brief_args(name, args), False, problem, model_ms=model_ms)
+                BrowseStep(
+                    n,
+                    name,
+                    _brief_args(name, args),
+                    False,
+                    problem,
+                    model_ms=model_ms,
+                    element=_element_line(state.page.elements.get(str(args.get("ref", "")))),
+                )
             )
             # Nothing ran, so the page is the one the model just read: it is not sent again.
             return False, f"Refused: {problem}\n\n{_UNCHANGED}"
@@ -785,6 +850,7 @@ class BrowseAgent:
         ok, note = True, "done"
         mcp_tool = MCP_TOOL_FOR.get(name)
         state.last_result = ""
+        target = state.page.elements.get(str(args.get("ref", "")).strip())
         if mcp_tool is not None:
             result = await session.call_tool(mcp_tool, self._mcp_args(state.page, name, args))
             state.last_result = result.text
@@ -808,6 +874,8 @@ class BrowseAgent:
                 snapshot_tokens=state.page.tokens,
                 model_ms=model_ms,
                 browser_ms=browser_ms,
+                title=state.page.title,
+                element=_element_line(target),
             )
         )
         return ok, note, browser_ms
@@ -832,6 +900,7 @@ class BrowseAgent:
                 snapshot_tokens=state.page.tokens,
                 model_ms=model_ms,
                 browser_ms=browser_ms,
+                title=state.page.title,
             )
         )
         state.finish_note = str(args.get("note") or "")
@@ -908,6 +977,7 @@ class BrowseAgent:
                 not missing and check.verified,
                 "the page does not show the answer" if missing else check.describe(),
                 url=page.url,
+                title=page.title,
                 model_ms=model_ms,
                 prompt_tokens=turn.usage.input_tokens,
                 cached_tokens=turn.usage.cached_tokens,
@@ -1009,20 +1079,28 @@ class BrowseAgent:
         before = state.page.fingerprint
         lines: list[str] = []
         reads: list[str] = []
+        trace = state.turn(n)
         for i, command in enumerate(commands):
             if command.do == "done":
                 lines.append(
                     f"{i + 1}. done: not run — done goes alone, once you have seen the page that"
                     " shows the answer. That page is below."
                 )
+                trace.not_run.extend(_command_text(c) for c in commands[i:])
                 break
+            settle_ms = 0
             if i:
                 # The page as it is NOW, before this command's target is found on it.
+                t0 = self._clock()
                 await asyncio.sleep(self._settle)
                 state.note_page(policy.parse_page(await _look(session)))
+                settle_ms = int((self._clock() - t0) * 1000)
+            mark = len(state.result.steps)
             ok, note, stop, text = await self._command(
                 session, state, n, command, refind=i > 0, model_ms=model_ms if i == 0 else 0
             )
+            for step in state.result.steps[mark:]:
+                step.settle_ms = settle_ms
             lines.append(f"{i + 1}. {_command_label(command)}: {note}")
             if text:
                 reads.append(text)
@@ -1033,6 +1111,7 @@ class BrowseAgent:
                 rest = len(commands) - i - 1
                 if rest:
                     lines.append(f"Not run: the {rest} command(s) after it.")
+                    trace.not_run.extend(_command_text(c) for c in commands[i + 1 :])
                 break
         state.no_progress = state.no_progress + 1 if state.page.fingerprint == before else 0
         if state.no_progress >= NO_PROGRESS_STOP_AT:
@@ -1087,6 +1166,7 @@ class BrowseAgent:
                     f"{len(text)} chars of page text",
                     url=state.page.url,
                     model_ms=model_ms,
+                    title=state.page.title,
                 )
             )
             lead = f' from "{command.value}"' if command.value else ""
@@ -1096,10 +1176,13 @@ class BrowseAgent:
             problem = self._gate(state.page, name, args)
         if problem is None and command.do == "enter" and state.typed_url != state.page.url:
             problem = "enter only submits after a type into a search or filter field on this page."
+        bound = state.book.bound.get(command.index) if command.index is not None else None
         if problem is not None:
             brief = {**command.brief(), **({"ref": args["ref"]} if "ref" in args else {})}
+            # The element as the model was shown it: the one it meant, even when it is gone.
+            shown = f'{bound.role} "{bound.name}"' if bound is not None else ""
             state.result.steps.append(
-                BrowseStep(n, command.do, brief, False, problem, model_ms=model_ms)
+                BrowseStep(n, command.do, brief, False, problem, model_ms=model_ms, element=shown)
             )
             return False, f"Refused: {problem}", True, ""
         url_before = state.page.url
@@ -1107,6 +1190,7 @@ class BrowseAgent:
         step = state.result.steps[-1]
         step.action = command.do
         step.args = {**command.brief(), **({"ref": args["ref"]} if "ref" in args else {})}
+        step.refound = bound is not None and args.get("ref") != bound.ref
         if command.do == "type" and ok:
             state.typed_url = url_before
         if ok and command.do == "click":
@@ -1153,6 +1237,7 @@ class BrowseAgent:
                 snapshot_tokens=state.page.tokens,
                 model_ms=model_ms,
                 browser_ms=int((self._clock() - t0) * 1000),
+                title=state.page.title,
             )
         )
         return True, "done"
@@ -1207,6 +1292,23 @@ def _open_tabs(text: str) -> list[tuple[int, bool, str]]:
 
 def _address(url: str) -> str:
     return url.split("#", 1)[0]
+
+
+def _command_text(command: bindex.Command) -> str:
+    """A command as the trace lists one the host did not run."""
+    value = f' "{command.value[:80]}"' if command.value and command.do != "done" else ""
+    return _command_label(command) + value
+
+
+def _call_line(call: ToolCall) -> str:
+    return f"{call.name}({json.dumps(call.arguments or {}, ensure_ascii=False, default=str)})"
+
+
+def _element_line(element: policy.Element | None) -> str:
+    """An element as role + quoted name, the shape the snapshot shows it in."""
+    if element is None:
+        return ""
+    return f'{element.role} "{element.name}"' if element.name else element.role
 
 
 def _command_label(command: bindex.Command) -> str:

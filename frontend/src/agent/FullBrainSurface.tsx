@@ -53,11 +53,13 @@ import {
   type CiteTarget,
   Markdown,
   type MdFlag,
+  snapBreak,
   stripModelCitations,
 } from "./markdown";
 import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { stepLedger } from "./stepLedger";
+import { type ToolMarkGroup, toolMarks } from "./toolMarks";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import {
   type FootSection,
@@ -940,6 +942,9 @@ function Bubble({
   const [calc, setCalc] = useState<{ target: CalcTarget; anchor: () => Element | null } | null>(
     null,
   );
+  // The inline tool mark last tapped: the Worked panel opens to its step(s). `nonce` makes a
+  // second tap on the same mark land again (re-scroll, re-flash).
+  const [markFocus, setMarkFocus] = useState<MarkFocus | null>(null);
   // Pace the *displayed* prose: a steady typewriter reveal while the turn streams,
   // snapping to the full text once it settles. Only the Markdown text is paced —
   // sources, entities, and flags below still read the full `message.text`, so they
@@ -1076,6 +1081,24 @@ function Bubble({
     ...(t.entities ?? []).map((e): CiteTarget => ({ kind: "entity", entityId: e.entity_id })),
   ]);
   const calcTargets = computations(message);
+  // Where the model stopped to use a tool, the answer says so (inline-tool-marks.html). Only
+  // offsets inside the text revealed so far: a mark never runs ahead of the paced prose.
+  const markGroups = toolMarks(message.tools, shownText.length);
+  const markNodes = (base: number, length: number) =>
+    markGroups
+      .filter((g) => g.offset > base && g.offset < base + length)
+      .map((g) => ({
+        at: g.offset - base,
+        node: (
+          <ToolMark
+            group={g}
+            on={markFocus?.key === g.key}
+            onTap={() =>
+              setMarkFocus((cur) => ({ key: g.key, ids: g.ids, nonce: (cur?.nonce ?? 0) + 1 }))
+            }
+          />
+        ),
+      }));
   const onCite =
     onOpenNote || onOpenEntity
       ? (n: number) => {
@@ -1210,6 +1233,7 @@ function Bubble({
             });
           }}
           streaming={message.streaming}
+          marks={markNodes(0, shownText.length)}
         />
       )}
       {livePreviews.map((t) => (
@@ -1281,6 +1305,10 @@ function Bubble({
         audio={settledAnswer || streamingAudio ? audio : undefined}
         onOpenNote={onOpenNote}
         onOpenEntity={onOpenEntity}
+        focus={markFocus}
+        onWorkShown={(shown) => {
+          if (!shown) setMarkFocus((cur) => (cur ? { ...cur, key: "" } : cur));
+        }}
       />
     ) : null;
 
@@ -1291,7 +1319,13 @@ function Bubble({
   // passes the split, then fills in.
   const imageTool = message.tools.find((t) => IMAGE_TOOL_NAMES.has(t.name));
   const imageViews = viewsToRender.filter((v) => v.view === "generated_image");
-  const splitAt = imageTool?.textOffset;
+  // The same safe boundary an inline tool mark takes (`snapBreak`): an image called in the
+  // middle of a table or a list splits after it, never through it.
+  const rawSplit = imageTool?.textOffset;
+  const splitAt =
+    rawSplit !== undefined && rawSplit <= shownText.length
+      ? snapBreak(shownText, rawSplit).at
+      : rawSplit;
   if (splitAt !== undefined && (livePreviews.length > 0 || imageViews.length > 0)) {
     const preText = shownText.slice(0, splitAt);
     const postText = shownText.slice(splitAt);
@@ -1310,6 +1344,7 @@ function Bubble({
               entities={entities}
               onEntity={onOpenEntity}
               streaming={message.streaming}
+              marks={markNodes(0, preText.length)}
             />
           </div>
         )}
@@ -1339,6 +1374,7 @@ function Bubble({
                 entities={entities}
                 onEntity={onOpenEntity}
                 streaming={message.streaming}
+                marks={markNodes(splitAt, postText.length)}
               />
             )}
             {otherViews.map((v, i) => (
@@ -1387,6 +1423,7 @@ function Bubble({
               onFlag={(id) => setOpenFlag((cur) => (cur === id ? null : id))}
               openFlag={openFlag}
               streaming={message.streaming}
+              marks={markNodes(0, shownText.length)}
             />
           </div>
         )}
@@ -1534,6 +1571,8 @@ function ActivityLine({
   audio,
   onOpenNote,
   onOpenEntity,
+  focus,
+  onWorkShown,
 }: {
   reasoning: string;
   thinking: boolean;
@@ -1547,6 +1586,10 @@ function ActivityLine({
   audio?: AudioControl | undefined;
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
+  /** An inline tool mark was tapped: open Worked to its step(s). */
+  focus?: MarkFocus | null | undefined;
+  /** Whether the Worked body is showing — the tapped mark keeps its tint only while it is. */
+  onWorkShown?: ((shown: boolean) => void) | undefined;
 }): ReactNode {
   // The trace and the steps are one disclosure with two segments: at most one body
   // is open, and tapping a segment switches the view to it (tapping the open one
@@ -1590,6 +1633,18 @@ function ActivityLine({
       signal(streaming ? "text" : "settle");
     }
   }, [thinking]);
+
+  // A tapped mark is the owner's own act — the same as tapping Worked, so it is HIS section
+  // (`reconcileFoot` will not auto-close it), opened rather than toggled.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new tap is the only trigger
+  useEffect(() => {
+    if (focus) openByHand("work", false);
+  }, [focus?.nonce]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the open section is the only trigger
+  useEffect(() => {
+    onWorkShown?.(open === "work");
+  }, [open]);
 
   // A settled turn ends collapsed, bar a section the owner opened by hand.
   // biome-ignore lint/correctness/useExhaustiveDependencies: settling is the only trigger
@@ -1738,6 +1793,8 @@ function ActivityLine({
                       step={s}
                       onOpenNote={onOpenNote}
                       onOpenEntity={onOpenEntity}
+                      focusNonce={focus?.ids.includes(s.id) ? focus.nonce : undefined}
+                      scrollOnFocus={focus?.ids[0] === s.id}
                     />
                   ))}
                 </div>
@@ -2220,13 +2277,47 @@ function StepRow({
   step,
   onOpenNote,
   onOpenEntity,
+  focusNonce,
+  scrollOnFocus = false,
 }: {
   step: ToolStep;
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
+  /** Bumped when an inline tool mark pointing here is tapped: open, light briefly. */
+  focusNonce?: number | undefined;
+  /** This is the first step of the tapped mark: scroll it into view as well. */
+  scrollOnFocus?: boolean;
 }): ReactNode {
   const isErr = step.ok === false;
   const [open, setOpen] = useState(isErr);
+  const [flash, setFlash] = useState(false);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new tap is the only trigger
+  useEffect(() => {
+    if (focusNonce === undefined) {
+      // Another mark took the focus: whatever light this step had goes with it.
+      setFlash(false);
+      return;
+    }
+    setOpen(true);
+    // Off for a frame, then on: a second tap restarts the light rather than finding it lit.
+    // Cleared on a timer rather than on animationend, which reduced motion never fires.
+    setFlash(false);
+    const frame = requestAnimationFrame(() => setFlash(true));
+    const unlit = setTimeout(() => setFlash(false), MARK_FLASH_MS);
+    const scroll = scrollOnFocus
+      ? // After the Worked body has started to open, so the step has somewhere to scroll to.
+        setTimeout(() => {
+          const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+          rowRef.current?.scrollIntoView?.({ block: "start", behavior: still ? "auto" : "smooth" });
+        }, MARK_SCROLL_DELAY_MS)
+      : undefined;
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(unlit);
+      clearTimeout(scroll);
+    };
+  }, [focusNonce]);
   // A step that comes back failed opens itself so the error is visible without a
   // tap — including when it transitions mid-stream (it mounts in-flight).
   useEffect(() => {
@@ -2262,7 +2353,10 @@ function StepRow({
   const inline = step.inline;
 
   return (
-    <div className={`fb-step${isErr ? " err" : ""}${open ? " open" : ""}`}>
+    <div
+      ref={rowRef}
+      className={`fb-step${isErr ? " err" : ""}${open ? " open" : ""}${flash ? " flash" : ""}`}
+    >
       <button
         type="button"
         className={`fb-step-row${inline ? " has-arg" : ""}`}
@@ -2516,6 +2610,75 @@ function ChevronGlyph({ className }: { className: string }): ReactNode {
       <path d="m9 6 6 6-6 6" />
     </svg>
   );
+}
+
+/** An inline tool mark the owner tapped: which mark, the steps it opens, and a counter so
+ * tapping the same mark again lands again. */
+interface MarkFocus {
+  key: string;
+  ids: string[];
+  nonce: number;
+}
+
+// Long enough for the Worked body's open transition to begin, as the mock does.
+const MARK_SCROLL_DELAY_MS = 200;
+// The step's light, matching the stylesheet's `fb-flash` animation.
+const MARK_FLASH_MS = 1400;
+
+/** A quiet mark in the answer where the model stopped to use a tool (inline-tool-marks.html):
+ * text-3, no fill, a hairline, smaller than the prose — punctuation, not a link. */
+function ToolMark({
+  group,
+  on,
+  onTap,
+}: {
+  group: ToolMarkGroup;
+  on: boolean;
+  onTap: () => void;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      className={`tmark${on ? " on" : ""}`}
+      data-mark={group.key}
+      aria-label={`${group.label}${group.brief ? ` · ${group.brief.text}` : ""} — show the step`}
+      onClick={onTap}
+    >
+      <MarkGlyph name={group.name} />
+      {group.label}
+      {group.brief && (
+        <span className={`v${group.brief.ok ? "" : " bad"}`}> · {group.brief.text}</span>
+      )}
+    </button>
+  );
+}
+
+function MarkGlyph({ name }: { name: string | undefined }): ReactNode {
+  if (name === "web_search" || name === "search") {
+    return (
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="6" />
+        <path d="M20 20l-4.5-4.5" />
+      </svg>
+    );
+  }
+  if (name === "web_fetch" || name?.startsWith("read_")) {
+    return (
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="4" y="3" width="16" height="18" rx="2" />
+        <path d="M8 8h8M8 12h8M8 16h5" />
+      </svg>
+    );
+  }
+  if (name === "browse") {
+    return (
+      <svg className="tw-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" />
+      </svg>
+    );
+  }
+  return <GearGlyph />;
 }
 
 function StepGlyph({ name }: { name: string }): ReactNode {
