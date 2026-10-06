@@ -78,7 +78,10 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
         # so the model can't garble it and the user gets a real control.
         return ToolOutput(
             "Staged a correction for your approval. I won't change anything until you approve"
-            " it — it then re-enters as a normal, source-attributed note.",
+            " it — it then re-enters as a normal, source-attributed note, and its facts land"
+            " once that note has been read, usually within a minute or two of the approval."
+            " Checking the entity in the same breath as the approval will not show them yet;"
+            " say they are on their way rather than that something is missing.",
             proposal=ProposalRef(proposal_id=prop_id, kind="correction"),
             result_brief="staged, not applied",
         )

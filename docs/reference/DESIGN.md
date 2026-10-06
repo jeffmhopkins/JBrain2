@@ -1959,6 +1959,9 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   stray ⚠ at the bubble's end. `markdown.FlagMark` stays in the renderer, unwired. Before
   this, a `grounding` verdict marked sentences "Not in your notes" and an `arithmetic` one
   marked untraced numbers, on notes personas only.
+- **Every proposal a turn staged gets its own card** (`FullBrainSurface.stagedAffordance`).
+  It drew only the first: a turn staging two address corrections showed "1 of 1", and the
+  second sat unseen in `staged`.
 - **An inline approval's ✓ and ✕ are icons in 44px squares** (`InlineProposal`,
   `.ip-ctl button`). The `CheckIcon`/`XIcon` glyphs sit dead centre in a flex box with the
   global `button` padding zeroed — left in, it widened the old 30px box and pushed a text ✓

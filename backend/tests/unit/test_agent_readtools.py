@@ -479,6 +479,35 @@ def test_format_entity_shows_kind_aliases_and_edges() -> None:
     assert out.count("note n1") == 1  # two mentions in n1 collapse to one line
 
 
+def test_format_entity_shows_a_plain_value_apart_from_its_sentence() -> None:
+    """Shown only the sentence, the agent read "Dr. Rosado's specialty is neurology." AS
+    the stored value and offered to tidy a value that was exactly "neurology"."""
+    view = entity_view()
+    view["predicates"] = [
+        {
+            "predicate": "specialty",
+            "qualifier": "",
+            "current": {
+                "predicate": "specialty",
+                "statement": "Dr. Rosado's specialty is neurology.",
+                "value_json": {"value": "neurology"},
+                "object_entity_id": None,
+            },
+            "history": [],
+        }
+    ]
+    out = format_entity(view)
+    assert "- specialty: neurology (stated: “Dr. Rosado's specialty is neurology.”)" in out
+
+
+def test_format_entity_says_when_the_id_was_merged_away() -> None:
+    """A tombstoned id serves its survivor, and says so — never a live-looking stub."""
+    view = entity_view()
+    view["merged_from"] = "gone-1"
+    assert "id gone-1 was merged into this record" in format_entity(view)
+    assert "was merged" not in format_entity(entity_view())
+
+
 def test_format_entity_caps_source_notes_and_counts_the_rest() -> None:
     view = entity_view()
     view["mentions"] = [

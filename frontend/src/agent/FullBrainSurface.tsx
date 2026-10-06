@@ -1081,19 +1081,33 @@ function Bubble({
   // Worked drop-down) so reviewing it is a single tap on the response. Inline-able kinds
   // render the interactive card (approve/decline/correct + one Enact that returns its
   // outcome to the assistant); the rest keep the navigational chip to the panel.
-  const staged = message.tools.find((t) => t.proposal)?.proposal;
-  const stagedAffordance = staged ? (
-    INLINE_KINDS.has(staged.kind) ? (
-      <InlineProposal
-        proposalId={staged.proposal_id}
-        onOutcome={(outcome) => onProposalOutcome?.(outcome) ?? Promise.resolve(false)}
-        onEnacted={onProposalEnacted}
-        chatBusy={chatBusy}
-      />
-    ) : (
-      <ProposalChip proposal={staged} onOpen={onOpenProposal} />
-    )
-  ) : null;
+  //
+  // EVERY proposal the turn staged, not the first: on the box a turn staged two address
+  // corrections, the bubble drew one card ("1 of 1"), and the second sat unseen in
+  // `staged` while the agent re-staged a duplicate of it.
+  const staged = [
+    ...new Map(
+      message.tools.flatMap((t): [string, ProposalRef][] =>
+        t.proposal ? [[t.proposal.proposal_id, t.proposal]] : [],
+      ),
+    ).values(),
+  ];
+  const stagedAffordance =
+    staged.length > 0
+      ? staged.map((p) =>
+          INLINE_KINDS.has(p.kind) ? (
+            <InlineProposal
+              key={p.proposal_id}
+              proposalId={p.proposal_id}
+              onOutcome={(outcome) => onProposalOutcome?.(outcome) ?? Promise.resolve(false)}
+              onEnacted={onProposalEnacted}
+              chatBusy={chatBusy}
+            />
+          ) : (
+            <ProposalChip key={p.proposal_id} proposal={p} onOpen={onOpenProposal} />
+          ),
+        )
+      : null;
 
   // Carry each image tool's last live preview to its generated_image view (1:1, in
   // call order) so the view holds it as a placeholder until the full-res image loads —

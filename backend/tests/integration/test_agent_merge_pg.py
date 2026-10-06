@@ -149,3 +149,19 @@ async def test_keep_name_outside_the_pair_renames_nothing(
         id=outcome.keep_id,
     )
     assert row.canonical_name in {"Acme", "Acme Inc"}
+
+
+async def test_entity_view_of_a_merged_away_id_is_its_survivor(
+    maker: async_sessionmaker[AsyncSession],  # noqa: F811
+) -> None:
+    """On the box a stale id read as a live, fact-less "Dr. Barochia" and the agent offered
+    twice to fold it. Read through the fold, it is the survivor, marked as such."""
+    keep = await seed_entity(maker, "Dr. Amit Barochia")
+    gone = await seed_entity(maker, "Dr. Barochia")
+    outcome = await SqlAnalysisRepo(maker).merge_entities(OWNER, keep, gone)
+    view = await SqlAnalysisRepo(maker).entity_view(OWNER, outcome.gone_id)
+    assert view is not None
+    assert view["id"] == outcome.keep_id
+    assert view["merged_from"] == outcome.gone_id
+    live = await SqlAnalysisRepo(maker).entity_view(OWNER, outcome.keep_id)
+    assert live is not None and live["merged_from"] is None

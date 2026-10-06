@@ -5,7 +5,7 @@ import { type ModelLoad, api } from "../api/client";
 import { AgentStatusLine, FullBrainSurface, resolveSelectionClamp } from "./FullBrainSurface";
 import type { AgentStatus } from "./status";
 import { stepLabel } from "./toolSummary";
-import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
+import type { AgentSession, ChatEvent, ChatRequest, ProposalDetail, TranscriptTurn } from "./types";
 import { type ConvMode, type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
 function session(over: Partial<AgentSession> = {}): AgentSession {
@@ -2220,6 +2220,55 @@ describe("FullBrainSurface", () => {
     expect(await screen.findByText("Add note — HCTZ 12.5 mg")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Enact/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Review proposal/ })).not.toBeInTheDocument();
+  });
+
+  it("draws a card for EVERY proposal a turn staged, not just the first", async () => {
+    // The box, 2026-10-06: two address corrections staged in one turn, one card drawn
+    // ("1 of 1"), and the second left unseen in `staged`.
+    const detail = (id: string, title: string): ProposalDetail => ({
+      id,
+      kind: "correction",
+      status: "staged",
+      domain: "health",
+      title,
+      nodes: [
+        {
+          id: `${id}-n`,
+          parent_id: null,
+          type: "leaf",
+          op: "add_note",
+          label: title,
+          preview: { body: title },
+          deps: [],
+          status: "pending",
+        },
+      ],
+    });
+    vi.spyOn(api, "getProposal").mockImplementation(async (id: string) =>
+      id === "p1" ? detail("p1", "Rosado's address") : detail("p2", "Barochia's address"),
+    );
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      for (const id of ["p1", "p2"]) {
+        yield { type: "tool_call", id: `c-${id}`, name: "propose_correction", arguments: {} };
+        yield {
+          type: "tool_result",
+          tool_call_id: `c-${id}`,
+          ok: true,
+          summary: "staged",
+          proposal: { proposal_id: id, kind: "correction" },
+        };
+      }
+      yield { type: "text_delta", text: "Staged both." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "both" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    expect(await screen.findByLabelText("Proposal: Rosado's address")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Proposal: Barochia's address")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Enact/ })).toHaveLength(2);
   });
 
   it("a [^1] citation in the answer opens the cited source note", async () => {
