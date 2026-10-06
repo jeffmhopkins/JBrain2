@@ -1,5 +1,13 @@
 """The `analyze_video` agent tool: jerv reads an attached video by sampling its
-frames and transcribing its audio (docs/archive/VIDEO_ANALYSIS_PLAN.md, Wave 3).
+frames and transcribing its audio (docs/archive/VIDEO_ANALYSIS_PLAN.md, Wave 3), or — for a
+clip of a minute or less on a video-capable model — by watching it whole
+(docs/plans/NATIVE_VIDEO_PLAN.md).
+
+The clip never enters jerv's own context (owner, 2026-10-04): a minute of video is far more
+tokens than the conversation, and would be carried on every later turn. jerv passes its
+`question` here instead, and one separate native call answers it as text. A follow-up
+question is another call; it re-sends the stored clip, which the engine still holds cached in
+the native video slot, so only the new question is read.
 
 The video sibling of `analyze_image`/`transcribe`: it resolves a chat attachment by
 id under the session's RLS scope (a foreign/out-of-scope id reads as a clean miss,
@@ -24,8 +32,15 @@ import structlog
 from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo, is_video_media_type
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
-from jbrain.ingest.video import ProgressFn, VideoSampler, run_video_analysis
-from jbrain.llm import LlmRouter
+from jbrain.ingest.video import (
+    PATH_NATIVE,
+    NativeClipper,
+    ProgressFn,
+    VideoSampler,
+    ask_native,
+    run_video_analysis,
+)
+from jbrain.llm import LlmError, LlmRouter
 from jbrain.llm.local_gateway import LocalGateway
 from jbrain.media import sample_frames
 from jbrain.storage import BlobStore
@@ -57,12 +72,33 @@ def build_video_handlers(
     transcribe_model: str = "",
     gateway: LocalGateway | None = None,
     sampler: VideoSampler | None = None,
+    clipper: NativeClipper | None = None,
     max_bytes: int = DEFAULT_TOOL_MAX_BYTES,
 ) -> dict[str, ToolHandler]:
     """The `analyze_video` handler, bound to its services. `transcribe`/`gateway` are
     optional (frames-only without whisper, the same best-effort posture as the audio
-    tool); `sampler` defaults to the ffmpeg frame sampler; `max_bytes` caps the clip."""
+    tool); `sampler` defaults to the ffmpeg frame sampler and `clipper` to the native
+    probe-and-transcode; `max_bytes` caps the clip."""
     frame_sampler: VideoSampler = sampler or sample_frames
+
+    async def answer(analysis: dict[str, Any], question: str) -> str | None:
+        """The native answer to `question`, or None when the clip was read as stills (the
+        summary is then all there is) or the call failed (the summary still answers)."""
+        clip_id = analysis.get("native_clip_id")
+        if not question or analysis.get("path") != PATH_NATIVE or not clip_id:
+            return None
+        try:
+            clip = await blobs.get(str(clip_id))
+            return await ask_native(
+                router,
+                clip,
+                seconds=analysis.get("native_seconds"),
+                transcript=analysis.get("transcript"),
+                request=question,
+            )
+        except (FileNotFoundError, LlmError) as exc:
+            log.warning("analyze_video_answer_failed", error=repr(exc))
+            return None
 
     async def analyze_video_tool(arguments: dict, ctx: ToolContext) -> str:
         attachment_id = str(arguments.get("source_attachment_id", "")).strip()
@@ -70,6 +106,7 @@ def build_video_handlers(
         # scrubbing card is suppressed — for when the video read is an intermediate step
         # toward the answer, not something the owner needs to see (VIDEO_IMAGE_TOOLS_PLAN.md).
         show = arguments.get("show", True) is not False
+        question = str(arguments.get("question") or "").strip()
         if ctx.agent_session_id is None or not _is_uuid(attachment_id):
             return _NO_VIDEO
         # A chat attachment is domain-scoped, so it is read under the session's
@@ -89,7 +126,7 @@ def build_video_handlers(
         cached = await attachments.analysis(att_ctx, attachment_id)
         if cached is not None:
             return ToolOutput(
-                _summary_line(info.filename, cached),
+                _summary_line(info.filename, cached, question, await answer(cached, question)),
                 view=_video_view(attachment_id, info, cached) if show else None,
                 result_brief="already analyzed",
             )
@@ -119,32 +156,47 @@ def build_video_handlers(
                 transcribe_model=transcribe_model,
                 gateway=gateway,
                 on_progress=on_progress,
+                clipper=clipper,
+                keep_clip=True,
             )
+            stored = {"summary": result.summary, **result.analysis} if result else None
+            if on_progress is not None and question and stored and stored["path"] == PATH_NATIVE:
+                on_progress(0, 0, "Answering your question…")
+            answered = await answer(stored, question) if stored else None
         except Exception as exc:  # noqa: BLE001 - a tool error is a recoverable observation
             log.warning("analyze_video_tool_failed", error=repr(exc))
             return "I couldn't analyze that video right now — the local models didn't respond."
-        if result is None:
+        if stored is None:
             return f'I couldn\'t read any frames or speech from "{info.filename}".'
-        stored = {"summary": result.summary, **result.analysis}
         await attachments.set_analysis(att_ctx, attachment_id, stored)
         # The model reads the summary; the owner sees the rich scrubbing card. The view
         # carries the attachment id + structured analysis, never a URL — the component
         # builds the media/thumbnail srcs (invariant #9).
         frames = stored.get("frames") or []
+        if stored.get("path") == PATH_NATIVE:
+            brief = "watched the clip"
+        else:
+            brief = f"{len(frames)} frames" if frames else "analyzed"
         return ToolOutput(
-            _summary_line(info.filename, stored),
+            _summary_line(info.filename, stored, question, answered),
             view=_video_view(attachment_id, info, stored) if show else None,
-            result_brief=f"{len(frames)} frames" if frames else "analyzed",
+            result_brief=brief,
         )
 
     return {"analyze_video": analyze_video_tool}
 
 
-def _summary_line(filename: str, analysis: dict[str, Any]) -> str:
+def _summary_line(
+    filename: str, analysis: dict[str, Any], question: str = "", answer: str | None = None
+) -> str:
     summary = str(analysis.get("summary") or "").strip()
     if not summary:
-        return f'"{filename}" has no speech or clearly described content.'
-    return f'Analysis of "{filename}":\n{summary}'
+        line = f'"{filename}" has no speech or clearly described content.'
+    else:
+        line = f'Analysis of "{filename}":\n{summary}'
+    if answer:
+        return f'{line}\n\nAnswer to "{question}", from watching the clip:\n{answer}'
+    return line
 
 
 def _video_view(attachment_id: str, info: AttachmentInfo, analysis: dict[str, Any]) -> ViewPayload:

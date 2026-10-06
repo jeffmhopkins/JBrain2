@@ -47,7 +47,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import box_events, media, queue
 from jbrain.db.session import scoped_session
-from jbrain.llm import LlmImage, LlmRouter
+from jbrain.llm import LlmError, LlmImage, LlmRouter, LlmVideo, slot_roles
+from jbrain.llm.errors import LlmBadResponseError
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.residency import ResidencyError
@@ -97,6 +98,21 @@ SUMMARY_MAX_TOKENS = int(_SUMMARY.config["max_tokens"])
 
 FRAME_CAPTION_TASK = "agent.vision"
 SUMMARY_TASK = "video.summarize"
+
+# The native path (docs/plans/NATIVE_VIDEO_PLAN.md): a clip of a minute or less goes to a
+# video-capable model whole, as one `input_video` part beside its whispered transcript (owner,
+# 2026-10-04); anything longer, of unknown length, or on a model without video reads stills.
+# It routes by `video.summarize`, the model that already writes a video's account, so one
+# Settings pick decides both paths. Its system prompt is fixed and the request rides last in
+# the user text, so a second request about the same clip reuses the cached clip prefix.
+_NATIVE = load_prompt(Path(__file__).parent / "prompts" / "video_native.prompt")
+NATIVE_SYSTEM = _NATIVE.render()
+NATIVE_MAX_TOKENS = int(_NATIVE.config["max_tokens"])
+NATIVE_TASK = SUMMARY_TASK
+NATIVE_MAX_SECONDS = 60.0
+SUMMARY_REQUEST = "Summarize this clip."
+PATH_NATIVE = "native"
+PATH_FRAMES = "frames"
 
 # Group transcript words into short utterances for the timeline: flush on a
 # sentence end or once a line reaches this many words, so a long monologue becomes
@@ -157,6 +173,17 @@ class VideoSampler(Protocol):
     def __call__(self, video: bytes) -> Awaitable[list[SampledFrame]]: ...
 
 
+class NativeClipper(Protocol):
+    """Probe a clip and transcode it for the native path when it qualifies (faked in tests,
+    so they need no ffmpeg). Raises `media.TranscodeError` when a qualifying clip fails."""
+
+    def __call__(self, video: bytes) -> Awaitable[media.NativeClip]: ...
+
+
+async def default_clipper(video: bytes) -> media.NativeClip:
+    return await media.native_clip(video, max_seconds=NATIVE_MAX_SECONDS, fps=slot_roles.VIDEO_FPS)
+
+
 class ProgressFn(Protocol):
     """A phase reporter the caller passes to stream live updates into a turn: a human
     `label` ("Extracting frames…", "Analyzing frame 12/30") plus a `step`/`total` that
@@ -189,38 +216,158 @@ async def run_video_analysis(
     transcribe_model: str = "",
     gateway: LocalGateway | None = None,
     on_progress: ProgressFn | None = None,
+    clipper: NativeClipper | None = None,
+    keep_clip: bool = False,
 ) -> VideoAnalysis | None:
-    """Run map→fuse→reduce on one video's bytes (no DB, no attachment identity).
+    """Read one video's bytes (no DB, no attachment identity): natively when it qualifies,
+    else map→fuse→reduce over sampled stills.
 
-    Sample + caption frames, transcribe the audio (best-effort), fuse both on one
-    [mm:ss] timeline, and summarize. Frame JPEGs are stored as content-addressed
-    blobs whose ids ride the timeline as `thumb_id` (no URLs — invariant #9). Returns
-    None when the clip yields neither a frame nor any speech (nothing to summarize),
-    so the caller skips rather than inventing a summary from an empty timeline.
+    Frames are always sampled and stored as content-addressed blobs whose ids ride the
+    timeline as `thumb_id` (no URLs — invariant #9); on the native path they are the card's
+    thumbnails only, never captioned. The audio is whispered either way — the model cannot
+    hear. A native failure of any kind falls back to the frames in the same call, and
+    `analysis["path"]` / `analysis["fallback"]` record which path ran and why. Returns None
+    when the clip yields neither a frame nor any speech (nothing to summarize).
 
-    `on_progress` (when given) reports each phase for a live in-turn status."""
+    `on_progress` (when given) reports each phase for a live in-turn status. `keep_clip` stores
+    the transcoded clip for a caller that will ask about it again (the chat tool)."""
 
     def report(step: int, total: int, label: str) -> None:
         if on_progress is not None:
             on_progress(step, total, label)
 
-    # MAP — sample frames (a cancel-safe ffmpeg subprocess on the loop) and caption each.
     report(0, 0, "Extracting frames…")
     frames = await sampler(data)
-    captioned = await caption_frames(
-        frames, filename=filename, router=router, blobs=blobs, on_progress=on_progress
-    )
+    clip, reason = await _native_clip(data, router=router, clipper=clipper or default_clipper)
 
-    # MAP — transcribe the audio track (best-effort; absent when whisper is off). The
-    # gateway's ffmpeg pulls the audio track from the whole video container.
+    # The gateway's ffmpeg pulls the audio track from the whole video container.
     if transcribe is not None:
         report(0, 0, "Transcribing audio…")
     transcript = await transcribe_audio(
         transcribe, gateway, transcribe_model, data, filename=filename, media_type=media_type
     )
 
-    # FUSE + REDUCE — one timeline, one summary.
-    return await fuse_and_reduce(captioned, transcript, router=router, on_progress=on_progress)
+    if clip is not None and clip.data is not None:
+        report(0, 0, "Watching the video…")
+        try:
+            summary = await ask_native(
+                router, clip.data, seconds=clip.seconds, transcript=transcript
+            )
+        except LlmError as exc:
+            reason = f"native call failed: {type(exc).__name__}"
+            log.warning("video.native_failed", error=repr(exc))
+        else:
+            return await native_analysis(
+                summary,
+                clip.data,
+                clip.seconds,
+                frames,
+                transcript,
+                router=router,
+                blobs=blobs,
+                keep_clip=keep_clip,
+            )
+
+    captioned = await caption_frames(
+        frames, filename=filename, router=router, blobs=blobs, on_progress=on_progress
+    )
+    result = await fuse_and_reduce(captioned, transcript, router=router, on_progress=on_progress)
+    if result is None:
+        return None
+    result.analysis.update(path=PATH_FRAMES, fallback=reason)
+    return result
+
+
+async def _native_clip(
+    data: bytes, *, router: LlmRouter, clipper: NativeClipper
+) -> tuple[media.NativeClip | None, str]:
+    """The clip to send natively, or None with the reason the frames path runs instead. The
+    model gate comes first, so a box without a video model never probes or transcodes."""
+    if not await router.supports_video(NATIVE_TASK):
+        return None, "model has no video input"
+    try:
+        clip = await clipper(data)
+    except media.TranscodeError as exc:
+        log.warning("video.native_transcode_failed", error=str(exc))
+        return None, "transcode failed"
+    if clip.data is None:
+        if clip.seconds is None:
+            return clip, "unknown length"
+        return clip, f"longer than {NATIVE_MAX_SECONDS:g} s"
+    return clip, ""
+
+
+def native_user_text(transcript: dict[str, Any] | None, request: str) -> str:
+    """The text beside the clip: the transcript on the engine's own [mm:ss] timeline, then the
+    request. The request goes last so two requests about one clip share every token before it."""
+    timeline = build_timeline([], list(transcript["words"])) if transcript else ""
+    heard = f"Transcript:\n{timeline}" if timeline else "Transcript: (no speech)"
+    return f"{heard}\n\nRequest: {request}"
+
+
+async def ask_native(
+    router: LlmRouter,
+    clip: bytes,
+    *,
+    seconds: float | None,
+    transcript: dict[str, Any] | None,
+    request: str = SUMMARY_REQUEST,
+) -> str:
+    """One native call: the transcoded clip, its transcript and a request, pinned to the native
+    video slot so the clip's prefix stays cached for the next request. Raises `LlmError`
+    (an empty answer included) so the caller can fall back."""
+    video = LlmVideo(
+        media_type=media.NATIVE_VIDEO_MEDIA_TYPE,
+        data=base64.b64encode(clip).decode("ascii"),
+        seconds=seconds,
+    )
+    result = await router.complete(
+        NATIVE_TASK,
+        system=NATIVE_SYSTEM,
+        user_text=native_user_text(transcript, request),
+        videos=[video],
+        max_tokens=NATIVE_MAX_TOKENS,
+        slot_role=slot_roles.NATIVE_VIDEO_ROLE,
+    )
+    text = result.text.strip()
+    if not text:
+        raise LlmBadResponseError("native video call returned no text")
+    return text
+
+
+async def native_analysis(
+    summary: str,
+    clip: bytes,
+    seconds: float | None,
+    frames: list[SampledFrame],
+    transcript: dict[str, Any] | None,
+    *,
+    router: LlmRouter,
+    blobs: BlobStore,
+    keep_clip: bool = False,
+) -> VideoAnalysis:
+    """The native result in the frame path's shape, so callers and the card do not change.
+    With `keep_clip` the transcoded clip is stored as a blob (`native_clip_id`) so a follow-up
+    question sends the same bytes without re-transcoding — and the engine's cache matches
+    them; a caller that never asks again does not spend the disk."""
+    thumbs = [
+        {"t_ms": f.timestamp_ms, "caption": "", "thumb_id": await blobs.put(f.jpeg)} for f in frames
+    ]
+    clip_id = await blobs.put(clip) if keep_clip else None
+    duration_ms = round(seconds * 1000) if seconds else _duration_ms(thumbs, transcript)
+    return VideoAnalysis(
+        summary=summary,
+        analysis={
+            "duration_ms": duration_ms,
+            "frames": thumbs,
+            "transcript": transcript,
+            "path": PATH_NATIVE,
+            "fallback": "",
+            "native_clip_id": clip_id,
+            "native_seconds": seconds,
+        },
+        tool=":".join(await router.effective_spec(NATIVE_TASK)),
+    )
 
 
 async def caption_frames(

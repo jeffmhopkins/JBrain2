@@ -257,6 +257,11 @@ IMAGE_TOKENS_CHARGE: Final = 4096
 # charged as the longest clip sent natively, so an unprobed video never under-books its slot.
 VIDEO_FPS: Final = 1.0
 VIDEO_UNKNOWN_SECONDS: Final = 60.0
+# Where a native video call runs. A minute's charge (~127k) leaves the 128k workshop slot no room
+# for the transcript and the answer, so it takes a 256k slot. The scheduled slot's prefix is the
+# cheapest of those to lose (its runs are periodic and re-prefill anyway), and one fixed slot
+# keeps the clip cached there, so a follow-up question re-reads it rather than re-prefilling it.
+NATIVE_VIDEO_ROLE: Final = SlotRole.SCHEDULED
 # A clamp that would leave less output than this refuses instead — a reply cut to a few hundred
 # tokens is a worse failure than a clear "too long for its slot".
 MIN_CLAMPED_OUTPUT: Final = 1024

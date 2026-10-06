@@ -977,6 +977,15 @@ class LlmRouter:
             return local_catalog.supports_vision(model)
         return True
 
+    async def supports_video(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ) -> bool:
+        """Whether the model `task` resolves to (after live overrides and the engine remap)
+        takes a native video part. Keyed on the catalog flag, never on `provider == "local"`:
+        the Standard engine is local too and has no video path (NATIVE_VIDEO_PLAN V1)."""
+        provider, model, _ = await self._resolve_live(task, strength, spec_override)
+        return provider == local_catalog.LOCAL_PROVIDER and local_catalog.supports_video(model)
+
     async def effective_reasoning_effort(
         self,
         task: str,

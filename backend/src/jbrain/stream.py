@@ -52,6 +52,7 @@ from jbrain.media import (
     dedup_frames,
     ffmpeg_available,
     run_media_proc,
+    transcode_for_native_video,
 )
 from jbrain.web.fetch import WebFetchError, guard_public_host
 
@@ -615,6 +616,21 @@ async def sample_stream_full(
                 headers=resolved.http_headers,
             )
     return StreamSample(frames=deduped, audio_wav=audio)
+
+
+async def native_stream_clip(resolved: ResolvedStream, *, max_seconds: float, fps: float) -> bytes:
+    """The first `max_seconds` of a finite resolved video, transcoded for the native video path
+    with the same input guard, headers and stall timeout as every other read of it. Raises
+    `TranscodeError` (ffmpeg failure, stall, nothing produced)."""
+    input_args = [
+        "-rw_timeout",
+        str(_RW_TIMEOUT_US),
+        *_input_guard_args(resolved.media_url),
+        *_header_args(resolved.http_headers),
+    ]
+    return await transcode_for_native_video(
+        resolved.media_url, max_seconds=max_seconds, fps=fps, input_args=input_args
+    )
 
 
 def _input_guard_args(media_url: str) -> list[str]:

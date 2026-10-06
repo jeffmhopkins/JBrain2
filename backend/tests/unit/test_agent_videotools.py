@@ -224,13 +224,13 @@ async def test_streams_phase_progress_labels() -> None:
     await handlers["analyze_video"]({"source_attachment_id": ATT}, ctx)
     assert [label for *_, label in ticks] == [
         "Extracting frames…",
+        "Transcribing audio…",
         "Analyzing frame 1/2",
         "Analyzing frame 2/2",
-        "Transcribing audio…",
         "Writing summary…",
     ]
     # The per-frame ticks carry a step/total for an optional bar.
-    assert (ticks[1][0], ticks[1][1]) == (1, 2)
+    assert (ticks[2][0], ticks[2][1]) == (1, 2)
 
 
 async def test_frames_only_when_no_whisper() -> None:
