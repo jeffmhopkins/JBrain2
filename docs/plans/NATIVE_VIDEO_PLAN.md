@@ -148,7 +148,7 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
 
 | Clip | Length | Payload | Prompt tokens | Transcode | Call | Notes |
 |---|---|---|---|---|---|---|
-| Hand-held numbers (phone, 2026-10-06) | 7.4 s | 547 KB | 10,460 | 0.6 s | 77 s (655 output tokens, thinking on) | ≈ 2.5k tokens per frame pair; the charge booked 20.5k. The frame pipeline took ~3 min of per-frame calls on the same clip. |
+| Hand-held numbers (phone, 2026-10-06) | 7.4 s | 547 KB | 10,460 | 0.6 s | 77 s (655 output tokens, thinking on) | ≈ 2.5k tokens per frame pair; the charge booked 20.5k. Answered the question with an ordered, timestamped sequence (1, 2, 0, 3, 1). The frame pipeline on the same clip took 238 s and named the gestures (fist, one, two, three fingers) but in no order — per-frame captions lose the sequence. |
 
 ## 4. Open questions
 1. **fps 1 or 2.** One is cheaper and fits every role at 60 s; two sees faster motion.
