@@ -94,6 +94,14 @@ given a path that tries. It stages the Proposal the owner's approval enacts — 
 enact runs `SqlAnalysisRepo.merge_entities`, which is already the one fold-and-repoint
 the review inbox uses, tombstone check and `distinct_from` check included.
 
+**It may reach past the note's domain, and only it.** A general note's conversation
+is firewalled from health/finance/location records, so "Dr. Brochia is Dr. Amit
+Barochia" (a health record) found nothing and staged nothing. On the owner's reply turn a
+name the turn cannot see is looked up once more on his own unnarrowed session
+(`_owner_wide`), by that exact name or id only, returning a name — never facts — onto a
+card filed in the firewalled side's domain and enacted only on his approval. Nothing else
+here widens: `correct_fact` and every read keep the note's scopes.
+
 **The direction is server-chosen.** `plan_merge` ranks the pair at ENACT time (a
 subject-linked identity outranks a bare one, confirmed outranks provisional, older breaks
 the tie), so the owner is never merged away and the model never picks a survivor. The
@@ -110,7 +118,7 @@ from __future__ import annotations
 import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -178,6 +186,18 @@ class Named:
     @property
     def domain(self) -> str:
         return str(self.view["domain"])
+
+
+def _owner_wide(ctx: ToolContext) -> SessionContext | None:
+    """The owner's own session WITHOUT the note's domain narrowing, or None.
+
+    Only an owner principal widens: the note conversation runs as the owner narrowed to
+    `(note_domain, 'general')`, and lifting the narrowing returns exactly what his own
+    PWA session already sees. Any other principal keeps its narrowing — there is nothing
+    of its own to widen to."""
+    if ctx.session.principal_kind != "owner" or not ctx.session.principal_id:
+        return None
+    return replace(ctx.session, owner_scoped=False, domain_scopes=())
 
 
 def _clean(value: object) -> str:
@@ -409,7 +429,9 @@ def build_reply_write_handlers(
             )
         return _writer(session_id, note, analyzer, ctx), note_id, ""
 
-    async def _resolve_one(ctx: ToolContext, token: str, *, field: str) -> tuple[Named | None, str]:
+    async def _resolve_one(
+        ctx: ToolContext, token: str, *, field: str, scope: SessionContext | None = None
+    ) -> tuple[Named | None, str]:
         """One entity the model named, under the TURN's read scopes.
 
         An id or a name, both resolved through the RLS-scoped reads the persona already
@@ -424,14 +446,18 @@ def build_reply_write_handlers(
         the duplicate an earlier merge removed. That call is also where `subject_id`
         comes from, which `entity_view` does not carry and the write path's identity key
         needs: without it a correction to one of the owner's own facts would filter on
-        `subject_id IS NULL`, miss the head it meant to supersede, and land beside it."""
+        `subject_id IS NULL`, miss the head it meant to supersede, and land beside it.
+
+        `scope` replaces the turn's session for the reads, and only `merge_entities`
+        passes one (`_owner_wide`) — see there for why a fold alone may look wider."""
+        session_ctx = scope or ctx.session
         if not token:
             return None, f"{field} is empty. Name the entity, or give the id find_entity showed."
         eid = _as_uuid(token)
         if eid is None:
             rows = [
                 row
-                for row in await entities.list_entities(ctx.session, q=token, limit=12)
+                for row in await entities.list_entities(session_ctx, q=token, limit=12)
                 if _clean(row.get("canonical_name")).casefold() == token.casefold()
                 or token.casefold() in {_clean(a).casefold() for a in (row.get("aliases") or [])}
             ]
@@ -440,6 +466,12 @@ def build_reply_write_handlers(
                     f'nothing in scope is called "{token}". Use find_entity to get the'
                     " right one, then pass its id."
                 )
+            if len(rows) > 1 and scope is not None:
+                # Past the turn's own scopes, so it names nothing it found there.
+                return None, (
+                    f'more than one record across Jeff\'s domains answers to "{token}", so'
+                    " it can't be folded from this note. Tell him to do it from Brain."
+                )
             if len(rows) > 1:
                 names = ", ".join(f"{r['canonical_name']} (id={r['id']})" for r in rows[:4])
                 return None, (
@@ -447,14 +479,14 @@ def build_reply_write_handlers(
                     " one you mean."
                 )
             eid = _as_uuid(str(rows[0]["id"]))
-        async with scoped_session(maker, ctx.session) as s:
+        async with scoped_session(maker, session_ctx) as s:
             live = None if eid is None else await live_entity_by_id(s, eid)
         if live is None:
             return None, (
                 f'"{token}" is not an entity this conversation can see, or it has been'
                 " folded away with nowhere to go. Use find_entity."
             )
-        view = await entities.entity_view(ctx.session, str(live.id))
+        view = await entities.entity_view(session_ctx, str(live.id))
         if view is None:
             return None, f'"{token}" is not an entity this conversation can see.'
         named = Named(
@@ -614,12 +646,24 @@ def build_reply_write_handlers(
             )
         if not ctx.session.principal_id:
             return "merge_entities can't stage a fold without an owner principal."
-        a, why = await _resolve_one(ctx, _clean(arguments.get("entity_a")), field="entity_a")
-        if a is None:
-            return f"merge_entities: {why}"
-        b, why = await _resolve_one(ctx, _clean(arguments.get("entity_b")), field="entity_b")
-        if b is None:
-            return f"merge_entities: {why}"
+        # The owner's own reply named this pair, and the note's domain firewall is what
+        # hides a health or finance record from `find_entity` here — so a name the
+        # turn's scopes cannot see is looked up once more across his records. Only this
+        # verb looks wider, only for the exact name or id it was given, and what it finds
+        # comes back as a NAME on a card he must approve, never as facts: the fold itself
+        # was always a full-owner write at enact, and that is unchanged.
+        wide = _owner_wide(ctx)
+        sides: list[Named] = []
+        for field in ("entity_a", "entity_b"):
+            token = _clean(arguments.get(field))
+            named, why = await _resolve_one(ctx, token, field=field)
+            if named is None and wide is not None and token:
+                named, wide_why = await _resolve_one(ctx, token, field=field, scope=wide)
+                why = wide_why if named is None and "more than one" in wide_why else why
+            if named is None:
+                return f"merge_entities: {why}"
+            sides.append(named)
+        a, b = sides
 
         # Both ids arrive already followed to their live rows (`_resolve_one`), so a pair
         # that has ALREADY been folded reads as one entity here rather than staging a
@@ -627,7 +671,7 @@ def build_reply_write_handlers(
         # merge-accept arm still reaches, and the reason its shape is not copied.
         if a.entity_id == b.entity_id:
             return f"“{a.name}” and “{b.name}” are already the same entity — nothing to merge."
-        async with scoped_session(maker, ctx.session) as s:
+        async with scoped_session(maker, wide or ctx.session) as s:
             # A rejected merge writes a permanent `distinct_from`, and the enact refuses
             # on it. Checking here means the owner is not handed a card whose only
             # possible outcome is a refusal of a question he already answered.
@@ -637,17 +681,23 @@ def build_reply_write_handlers(
                     " people or things, so they cannot be merged. Nothing was staged."
                 )
 
-        domain = a.domain
-        # A fold spans domains by construction (an entity's facts carry their own
-        # domain), and constraint 12 makes enacting one a full-owner write. A note
-        # conversation is narrowed to `(note_domain, 'general')`, so it may not even
-        # stage a fold into a domain it cannot read: the card it would raise names two
-        # entities it cannot check, for a write it cannot make.
-        if ctx.scopes and (domain not in ctx.scopes or b.domain not in ctx.scopes):
+        # The card is filed in the side's FIREWALLED domain when one is out of this
+        # turn's scopes, so a health record's name is stored as health data rather than
+        # as general data beside the note. Two sides in two different out-of-scope
+        # domains have no one home for the card, and that rare pair goes to Brain.
+        outside = {n.domain for n in (a, b) if ctx.scopes and n.domain not in ctx.scopes}
+        if len(outside) > 1:
             return (
-                f"this conversation isn't scoped to '{domain}', so it can't stage a fold"
-                " there. Nothing was staged."
+                f"“{a.name}” and “{b.name}” are filed in two different restricted"
+                " domains, so the fold can't be staged from this note. Tell Jeff to do"
+                " it from Brain. Nothing was staged."
             )
+        if outside and wide is None:
+            return (
+                "one of these is outside this conversation's domains, and only Jeff's own"
+                " session can stage a fold that reaches it. Nothing was staged."
+            )
+        domain = next(iter(outside)) if outside else a.domain
         name_a, name_b = a.name, b.name
         reason = _clean(arguments.get("reason"))
         # A spelling correction is why most folds raised here exist, and the survivor is
@@ -687,7 +737,7 @@ def build_reply_write_handlers(
             },
         )
         prop_id = await proposals.stage(
-            ctx.session,
+            wide if outside and wide is not None else ctx.session,
             principal_id=ctx.session.principal_id,
             spec=ProposalSpec(
                 kind="merge",
@@ -718,7 +768,14 @@ def build_reply_write_handlers(
                 if keep_name
                 else ", under whichever of the two names that identity already has"
             )
-            + ". Say that it is waiting on him; do not say they are merged.",
+            + "."
+            + (
+                f" One of the two is filed with his {domain} records, outside this note's"
+                " domain, so the card is filed there too."
+                if outside
+                else ""
+            )
+            + " Say that it is waiting on him; do not say they are merged.",
             proposal=ProposalRef(proposal_id=prop_id, kind="merge"),
             # The sentence above ends "do not say they are merged". The row is held to the
             # same rule — it is the one surface the owner reads without opening anything.

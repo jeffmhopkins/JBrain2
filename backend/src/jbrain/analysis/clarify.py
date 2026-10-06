@@ -112,6 +112,7 @@ from jbrain.models.note_conversation import (
     AskedQuestion,
     NoteConversationRepo,
     note_body_sha,
+    questions_from_args,
     state_for_stop,
 )
 from jbrain.notes.service import NotesRepo
@@ -1257,6 +1258,63 @@ def owner_turn_text(
     if rendered and typed:
         return f"{rendered}\n\n{typed}"
     return rendered or safe
+
+
+async def chat_answers_text(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    session_id: str,
+    message: str,
+    answers: Sequence[tuple[str, str]],
+) -> str:
+    """`owner_turn_text` for a conversation with NO note behind it — Brain, Research.
+
+    `ask_owner` stops an ordinary chat too (W4), and the PWA answers it exactly as it
+    answers a note thread: an answers-only send with `message` blank and the answers
+    structured. Only the note path ever rendered them, so on the box (2026-10-06) a Brain
+    turn answering two address questions reached the model as an EMPTY user message and
+    the agent replied "looks like that came through empty".
+
+    A chat has no ledger; its open set is the `ask_owner` step on its LAST assistant turn,
+    where the PWA's question block reads it from too, so the pairing is by the same ids.
+    Rendered as `owner_turn_text` renders a note reply — `Q:`/`A:` pairs, then the typed
+    words with their labels stripped — so the bubble the PWA drew (`ownerTurnText`) is the
+    turn a reload replays. An answer whose id names no open question is kept as its bare
+    words rather than dropped: in a chat nothing else would carry them."""
+    if not answers:
+        return message
+    async with scoped_session(maker, ctx) as session:
+        tools = (
+            await session.execute(
+                select(AgentTurn.tools)
+                .where(
+                    AgentTurn.session_id == uuid.UUID(session_id),
+                    AgentTurn.role == "assistant",
+                )
+                .order_by(AgentTurn.seq.desc())
+                .limit(1)
+            )
+        ).scalar()
+    step = next(
+        (
+            t
+            for t in reversed(tools or [])
+            if isinstance(t, dict) and t.get("name") == ASK_OWNER_TOOL and t.get("ok")
+        ),
+        None,
+    )
+    asked = questions_from_args(step.get("args")) if step is not None else []
+    by_id = {q.id: q.question for q in asked}
+    parts = [
+        f"Q: {by_id[qid]}\nA: {answer}" if qid in by_id else answer
+        for qid, answer in capped_answers(answers)
+    ]
+    rendered = "\n\n".join(parts)
+    typed = _pair_trim(_strip_pair_labels(message))
+    if rendered and typed:
+        return f"{rendered}\n\n{typed}"
+    return rendered or typed
 
 
 async def close_owner_reply(

@@ -1,6 +1,6 @@
 ---
 name: merge_entities
-version: 2
+version: 3
 permission: sensitive
 mutating: true
 side_effecting: true
@@ -62,6 +62,12 @@ mint a new record for it; when it is there, the fold is the misspelled record in
 one, and no new record is needed.
 
 Use it when he tells you two records are the same person, place or thing, or when he
-confirms it after you asked. Not on a hunch about two similar names — a wrong fold is
+confirms it after you asked.
+
+find_entity only sees this note's domain. A record he names that it cannot find may be
+filed in another of his domains (health, finance, location) — pass the name exactly as
+he gave it, and this looks it up across his records. If it is found the card is staged
+like any other; if it is not, say plainly that no record by that name exists, never
+"try again later". Not on a hunch about two similar names — a wrong fold is
 his to undo, and the point of asking him is that he knows and you do not. If he has
 already said they are different, this refuses and says so.

@@ -1953,17 +1953,19 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   The marker covers `run_python` exactly as it covers `calculate`: one namespace, one
   numbering, one panel, because *a number a program printed* and *a number an expression
   evaluated to* are the same claim about where a figure came from.
-- **A reflexion flag says which check it is, and anchors on what it checked**
-  (`FullBrainSurface.mdFlags`, `markdown.FlagMark`). An amber ⚠ after flagged prose, tap for
-  the reason. A `grounding` verdict flags answer SENTENCES the surfaced notes did not support
-  ("Not in your notes — …"), anchored on sentence boundaries. An `arithmetic` verdict flags
-  bare NUMBERS that traced to no result this turn ("Not traced to a calculation — …"),
-  anchored right after the number's first occurrence, with a matching hover title. Both are
-  shown only on a persona that reads the notes (`useFullBrain.readsNotes`: curator,
-  note_ingest); jerv and every other KB-blind persona show NO ⚠ of either kind (owner's
-  ruling, 2026-10-04), and the backend no longer computes either verdict for them. A jerv
-  answer used to end in three anonymous ⚠, the arithmetic check's untraced numbers worded as
-  "not in your notes".
+- **No reflexion flag is drawn on the prose** (owner's ruling, 2026-10-06: "get rid of the
+  yellow highlighting and notice"). The verdict still rides the turn (`TranscriptMessage.
+  verdict`) but no surface reads it: no amber underline, no ⚠ after a sentence or number, no
+  stray ⚠ at the bubble's end. `markdown.FlagMark` stays in the renderer, unwired. Before
+  this, a `grounding` verdict marked sentences "Not in your notes" and an `arithmetic` one
+  marked untraced numbers, on notes personas only.
+- **Every proposal a turn staged gets its own card** (`FullBrainSurface.stagedAffordance`).
+  It drew only the first: a turn staging two address corrections showed "1 of 1", and the
+  second sat unseen in `staged`.
+- **An inline approval's ✓ and ✕ are icons in 44px squares** (`InlineProposal`,
+  `.ip-ctl button`). The `CheckIcon`/`XIcon` glyphs sit dead centre in a flex box with the
+  global `button` padding zeroed — left in, it widened the old 30px box and pushed a text ✓
+  toward the bottom-right. A merge leaf's chip row is centred on them (`:has(> .merge-chips)`).
 - **`code_run` is a STEP view, not a bubble card** (`views/codeRun.tsx`, build plan
   `docs/archive/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
   belongs where the owner goes to check a number, not stacked under every reply that did some

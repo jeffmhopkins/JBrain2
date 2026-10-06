@@ -799,6 +799,14 @@ class SqlAnalysisRepo:
         if eid is None:
             return None
         async with scoped_session(self._maker, ctx) as session:
+            # Through the fold: a merged-away id is the record it became. Served raw, the
+            # tombstone read as a live, fact-less record — on the box the agent offered
+            # twice to "fold the leftover Dr. Barochia stub", one that was already gone.
+            live = await live_entity_by_id(session, eid)
+            if live is None:
+                return None
+            merged_from = str(eid) if str(live.id) != str(eid) else None
+            eid = uuid.UUID(str(live.id))
             entity = (
                 await session.execute(
                     text(
@@ -939,6 +947,7 @@ class SqlAnalysisRepo:
             "kind": entity.kind,
             "canonical_name": entity.canonical_name,
             "status": entity.status,
+            "merged_from": merged_from,
             "aliases": list(aliases),
             "domain": entity.domain_code,
             "image_sha": entity.image_sha,

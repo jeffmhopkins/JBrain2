@@ -52,7 +52,6 @@ import {
   type CalcTarget,
   type CiteTarget,
   Markdown,
-  type MdFlag,
   snapBreak,
   stripModelCitations,
 } from "./markdown";
@@ -66,12 +65,11 @@ import {
   type FootSignal,
   type ToolActivity,
   type TranscriptMessage,
-  type Verdict,
   nextAutoSection,
   reconcileFoot,
 } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
-import { type FullBrain, readsNotes } from "./useFullBrain";
+import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
 import { STEP_VIEWS, ToolView } from "./views/registry";
 
@@ -386,7 +384,6 @@ export function AgentTranscript({
               // owner answered lives only in a component.
               ask={ask(fb.messages, i, fb.answers, fb.setAnswer)}
               noteDomainCode={threadDomain}
-              notesSurface={readsNotes(fb.active?.agent)}
               onOpenNote={onOpenNote}
               onOpenEntity={onOpenEntity}
               onOpenProposal={(id) => {
@@ -762,36 +759,6 @@ export function AgentStatusLine({
   );
 }
 
-// The reason shown when a ⚠ flag is tapped — short and plain, the owner's words
-// not the verifier's. One per check, because they say different things: the grounding
-// check means "your notes don't support this sentence", the arithmetic one "this number
-// came from no calculation this turn". Wording the second as the first told a jerv owner
-// — whose agent reads no notes at all — that a figure was missing from his notes.
-const FLAG_REASON: Record<Verdict["kind"], string> = {
-  grounding: "Not in your notes — I couldn't ground this in a source.",
-  arithmetic: "Not traced to a calculation — no result this turn produced this number.",
-};
-
-// Build the inline flags for a turn from its reflexion verdict: one amber ⚠ per
-// ungrounded answer sentence (or untraced number), each carrying its reason. A passing or
-// absent verdict yields none, so the bubble is byte-for-byte unchanged (Option 1 is
-// purely additive). The id is the claim's index so it's stable across renders.
-//
-// A surface whose persona reads no notes (jerv and the rest) shows NO reflexion flag of
-// either kind — the owner's ruling. A grounding flag could not be true there ("not in your
-// notes" of an agent with none); an arithmetic one was ruled noise on those surfaces. The
-// backend no longer sends either there; this holds for an older server too.
-function mdFlags(message: TranscriptMessage, notesSurface = true): MdFlag[] {
-  const v = message.verdict;
-  if (!v || v.passed || !notesSurface) return [];
-  return v.ungroundedClaims.map((claim, i) => ({
-    id: `ug-${i}`,
-    claim,
-    reason: FLAG_REASON[v.kind],
-    kind: v.kind,
-  }));
-}
-
 /** The turn's computations, positional with `[=n]`. Built from the STEPS, not from anything
  * the model wrote: a marker names a position and the popover's contents come from the
  * persisted call, so a marker can never assert a computation that did not happen
@@ -877,7 +844,6 @@ function Bubble({
   readAloud,
   ask,
   noteDomainCode,
-  notesSurface = true,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
@@ -930,13 +896,7 @@ function Bubble({
     | undefined;
   /** The note's own domain, for the rule down turn 0's left edge. Null = no colour. */
   noteDomainCode?: string | null | undefined;
-  /** This conversation's persona reads the owner's notes (`readsNotes`) — false on jerv and
-   * every other KB-blind persona, where no reflexion flag of either kind is shown. */
-  notesSurface?: boolean | undefined;
 }): ReactNode {
-  // Which ungrounded-claim flag's reason note is open (one at a time). Declared
-  // before the early returns so the hook order is stable across renders.
-  const [openFlag, setOpenFlag] = useState<string | null>(null);
   // The open computation popover, if any — one at a time per turn, because it is a glance
   // at one number rather than a panel you leave up.
   const [calc, setCalc] = useState<{ target: CalcTarget; anchor: () => Element | null } | null>(
@@ -1121,24 +1081,33 @@ function Bubble({
   // Worked drop-down) so reviewing it is a single tap on the response. Inline-able kinds
   // render the interactive card (approve/decline/correct + one Enact that returns its
   // outcome to the assistant); the rest keep the navigational chip to the panel.
-  const staged = message.tools.find((t) => t.proposal)?.proposal;
-  const stagedAffordance = staged ? (
-    INLINE_KINDS.has(staged.kind) ? (
-      <InlineProposal
-        proposalId={staged.proposal_id}
-        onOutcome={(outcome) => onProposalOutcome?.(outcome) ?? Promise.resolve(false)}
-        onEnacted={onProposalEnacted}
-        chatBusy={chatBusy}
-      />
-    ) : (
-      <ProposalChip proposal={staged} onOpen={onOpenProposal} />
-    )
-  ) : null;
-
-  // Reflexion flagged this turn (Loop 1): map each ungrounded answer sentence to an
-  // amber ⚠ flag anchored after it, tappable for the reason. A passing/absent
-  // verdict makes no flags, so the bubble renders exactly as before.
-  const flags = mdFlags(message, notesSurface);
+  //
+  // EVERY proposal the turn staged, not the first: on the box a turn staged two address
+  // corrections, the bubble drew one card ("1 of 1"), and the second sat unseen in
+  // `staged` while the agent re-staged a duplicate of it.
+  const staged = [
+    ...new Map(
+      message.tools.flatMap((t): [string, ProposalRef][] =>
+        t.proposal ? [[t.proposal.proposal_id, t.proposal]] : [],
+      ),
+    ).values(),
+  ];
+  const stagedAffordance =
+    staged.length > 0
+      ? staged.map((p) =>
+          INLINE_KINDS.has(p.kind) ? (
+            <InlineProposal
+              key={p.proposal_id}
+              proposalId={p.proposal_id}
+              onOutcome={(outcome) => onProposalOutcome?.(outcome) ?? Promise.resolve(false)}
+              onEnacted={onProposalEnacted}
+              chatBusy={chatBusy}
+            />
+          ) : (
+            <ProposalChip key={p.proposal_id} proposal={p} onOpen={onOpenProposal} />
+          ),
+        )
+      : null;
 
   // Carry each image tool's last live preview to its generated_image view (1:1, in
   // call order) so the view holds it as a placeholder until the full-res image loads —
@@ -1215,9 +1184,6 @@ function Bubble({
           cites={citeTargets}
           entities={entities}
           onEntity={onOpenEntity}
-          flags={flags}
-          onFlag={(id) => setOpenFlag((cur) => (cur === id ? null : id))}
-          openFlag={openFlag}
           calcs={calcTargets}
           onCalc={(n, el) => {
             const target = calcTargets[n - 1];
@@ -1262,10 +1228,8 @@ function Bubble({
   );
 
   // A turn answered from the model's own knowledge with no retrieval carries a calm
-  // neutral provenance chip. The backend guarantees this never co-occurs with an
-  // amber flag (zero-retrieval ⇒ this; retrieval ⇒ maybe a verdict), so guard on the
-  // verdict too and the bubble renders at most one of the two.
-  const generalKnowledge = message.generalKnowledge === true && flags.length === 0;
+  // neutral provenance chip.
+  const generalKnowledge = message.generalKnowledge === true;
 
   // A settled spawn turn whose fan was interrupted before it produced a roster (a Stop,
   // a dropped connection, a timeout: the spawn step persisted failed with no
@@ -1420,9 +1384,6 @@ function Bubble({
               cites={citeTargets}
               entities={entities}
               onEntity={onOpenEntity}
-              flags={flags}
-              onFlag={(id) => setOpenFlag((cur) => (cur === id ? null : id))}
-              openFlag={openFlag}
               streaming={message.streaming}
               marks={markNodes(0, shownText.length)}
             />
