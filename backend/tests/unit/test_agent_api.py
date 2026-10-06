@@ -152,6 +152,9 @@ class FakeTranscript:
     async def recent_image_turns(self, ctx, session_id, *, now):  # type: ignore[no-untyped-def]
         return self.recent_image_turn_rows.get(session_id, [])
 
+    async def recent_video_turns(self, ctx, session_id, *, now):  # type: ignore[no-untyped-def]
+        return getattr(self, "recent_video_turn_rows", {}).get(session_id, [])
+
 
 class FakeChatBlobs:
     """An in-memory blob store keyed by sha256, for the /chat attachment path."""
@@ -2467,7 +2470,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v59") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v61") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def _note_write_registry() -> ToolRegistry:
@@ -3942,3 +3945,195 @@ def test_chat_wires_the_research_report_reference_block(
     assert texts.index(framed[0].text) < texts.index("why no citations?")
     # The library was queried for THIS session, bounded by the ref cap.
     assert lib.calls and lib.calls[0][1:] == ("sess-rr", _MAX_REPORT_REFS)
+
+
+# --- inline video (NATIVE_VIDEO_PLAN §5): a short clip rides jerv's own context ------------
+
+
+class FakeInlineVideos:
+    """Hands back a fixed clip per attachment id when it fits the budget it is given, and
+    records each ask — the real one transcodes once and caches on the row."""
+
+    def __init__(self, tokens: dict[str, int]) -> None:
+        self.tokens = tokens
+        self.asks: list[tuple[str, int]] = []
+
+    async def clip(self, ctx, info, *, budget):  # type: ignore[no-untyped-def]
+        from jbrain.agent.inline_video import InlineClip
+        from jbrain.llm import LlmVideo
+
+        self.asks.append((info.id, budget))
+        tokens = self.tokens.get(info.id)
+        if tokens is None or tokens > budget:
+            return None
+        video = LlmVideo(media_type="video/x-matroska", data=f"clip-{info.id}", seconds=7.0)
+        return InlineClip(info, video, tokens, 7.0, "[00:01] (said) \u201cfour\u201d")
+
+
+def _video_client(client: TestClient, inline: FakeInlineVideos, *, sees_video: bool = True):  # type: ignore[no-untyped-def]
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+
+    async def supports_video(task, strength=None, spec_override=None):  # type: ignore[no-untyped-def]
+        return sees_video
+
+    router.supports_video = supports_video  # type: ignore[method-assign]
+    client.app.state.inline_videos = inline  # type: ignore[attr-defined]
+    return cast(FakeLlmClient, router._clients["xai"])
+
+
+def _vid(attachment_id: str, name: str = "clip.mp4") -> AttachmentInfo:
+    return AttachmentInfo(attachment_id, name, "video/mp4", 10, f"sha-{attachment_id}", "general")
+
+
+def test_chat_shows_a_short_attached_video_inline(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    chat_attachments: FakeChatAttachments,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    fake = _video_client(client, FakeInlineVideos({"v1": 20_000}))
+    chat_attachments.add(_vid("v1"))
+
+    resp = client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "what am I holding?", "attachment_ids": ["v1"]},
+    )
+    assert resp.status_code == 200
+    messages = fake.stream_calls[0]["messages"]
+    pre = next(m for m in messages if getattr(m, "text", "").startswith("what am I holding?"))
+    assert pre.text == (
+        "what am I holding?\n\n[Images the owner attached this turn — "
+        "source_attachment_id=v1 (clip.mp4)]"
+    )
+    anchor = messages[messages.index(pre) + 1]
+    assert [v.data for v in anchor.videos] == ["clip-v1"]
+    assert "you can watch this clip here" in anchor.text and "four" in anchor.text
+    final = messages[-1]
+    assert final.videos == () and "analyze_video" not in final.text
+    assert "what they attached is shown above" in final.text
+
+
+def test_inline_video_follow_up_renders_byte_for_byte(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    chat_attachments: FakeChatAttachments,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    fake = _video_client(client, FakeInlineVideos({"v1": 20_000}))
+    info = _vid("v1")
+    chat_attachments.add(info)
+    client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "what am I holding?", "attachment_ids": ["v1"]},
+    )
+    live = fake.stream_calls[0]["messages"]
+    live_pre = next(m for m in live if getattr(m, "text", "").startswith("what am I holding?"))
+    live_anchor = live[live.index(live_pre) + 1]
+
+    transcript.recent_video_turn_rows = {"sess-1": [("what am I holding?", [info])]}  # type: ignore[attr-defined]
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "and the third one?",
+            "history": [
+                {"role": "user", "content": live_pre.text},
+                {"role": "assistant", "content": "1, 2, 0"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    follow = fake.stream_calls[1]["messages"]
+    follow_pre = next(m for m in follow if getattr(m, "text", "") == live_pre.text)
+    follow_anchor = follow[follow.index(follow_pre) + 1]
+    assert follow_anchor.text == live_anchor.text
+    assert follow_anchor.videos == live_anchor.videos
+    assert follow[follow.index(follow_pre) + 2].text == "1, 2, 0"
+    assert follow[-1].videos == ()
+
+
+def test_clips_share_one_budget_and_the_overflow_stays_a_reference(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    chat_attachments: FakeChatAttachments,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    inline = FakeInlineVideos({"v1": 40_000, "v2": 40_000})
+    fake = _video_client(client, inline)
+    chat_attachments.add(_vid("v1", "first.mp4"))
+    chat_attachments.add(_vid("v2", "second.mp4"))
+
+    client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "compare", "attachment_ids": ["v1", "v2"]},
+    )
+    assert inline.asks == [("v1", 65_536), ("v2", 25_536)]
+    messages = fake.stream_calls[0]["messages"]
+    pre = next(m for m in messages if getattr(m, "text", "").startswith("compare"))
+    assert "v1 (first.mp4); source_attachment_id=v2 (second.mp4)]" in pre.text
+    anchor = messages[messages.index(pre) + 1]
+    assert [v.data for v in anchor.videos] == ["clip-v1"]
+    final = messages[-1]
+    assert 'attached video "second.mp4"' in final.text
+
+
+def test_no_inline_video_when_the_chat_model_cannot_take_video(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    chat_attachments: FakeChatAttachments,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    inline = FakeInlineVideos({"v1": 20_000})
+    fake = _video_client(client, inline, sees_video=False)
+    chat_attachments.add(_vid("v1"))
+    client.post(
+        "/api/chat",
+        json={"session_id": "sess-1", "message": "what is this?", "attachment_ids": ["v1"]},
+    )
+    assert inline.asks == []
+    messages = fake.stream_calls[0]["messages"]
+    assert all(not getattr(m, "videos", ()) for m in messages)
+    assert 'attached video "clip.mp4"' in messages[-1].text
+
+
+def test_the_newest_clips_keep_the_budget_so_anchors_never_flip_flop(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    inline = FakeInlineVideos({"old": 40_000, "new": 40_000})
+    fake = _video_client(client, inline)
+    transcript.recent_video_turn_rows = {  # type: ignore[attr-defined]
+        "sess-1": [("first clip", [_vid("old", "old.mp4")]), ("second clip", [_vid("new")])]
+    }
+    deco = "\n\n[Images the owner attached this turn — source_attachment_id="
+    resp = client.post(
+        "/api/chat",
+        json={
+            "session_id": "sess-1",
+            "message": "which was longer?",
+            "history": [
+                {"role": "user", "content": f"first clip{deco}old (old.mp4)]"},
+                {"role": "assistant", "content": "a cat"},
+                {"role": "user", "content": f"second clip{deco}new (clip.mp4)]"},
+                {"role": "assistant", "content": "a dog"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    # Matched oldest-first, budgeted newest-first: the newer clip is the one kept in view.
+    assert inline.asks == [("new", 65_536), ("old", 25_536)]
+    shown = [v.data for m in fake.stream_calls[0]["messages"] for v in getattr(m, "videos", ())]
+    assert shown == ["clip-new"]

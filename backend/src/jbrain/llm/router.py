@@ -1108,6 +1108,7 @@ class LlmRouter:
         tools: Sequence[LlmTool],
         n_images: int,
         max_tokens: int,
+        video_tokens: int = 0,
     ) -> tuple[bool, int, int]:
         """(replay?, prompt chars to book, estimated replayed tokens) for one tool-aware turn.
 
@@ -1125,7 +1126,9 @@ class LlmRouter:
         pool = local_catalog.pool_of(model)
         if pool is not None:
             role = slot_roles.role_for(task, slot_role)
-            prompt_tokens = slot_roles.estimate_prompt_tokens(model, chars=chars, n_images=n_images)
+            prompt_tokens = slot_roles.estimate_prompt_tokens(
+                model, chars=chars, n_images=n_images, video_tokens=video_tokens
+            )
             try:
                 slot_roles.admit(pool, role, prompt_tokens=prompt_tokens, max_tokens=max_tokens)
             except slot_roles.SlotCapError:
@@ -1332,6 +1335,7 @@ class LlmRouter:
         )
         self._check_exact_slot(provider, model, slot_role, exact_slot)
         n_images = slot_roles.image_count(messages)
+        video_tokens = slot_roles.message_video_tokens(messages)
         replay, chars, replayed_tokens = self._fit_replay(
             task,
             slot_role,
@@ -1342,6 +1346,7 @@ class LlmRouter:
             tools=tools,
             n_images=n_images,
             max_tokens=max_tokens,
+            video_tokens=video_tokens,
         )
         start = time.perf_counter()
         async with self._slot_pin(
@@ -1352,6 +1357,7 @@ class LlmRouter:
             chars=chars,
             n_images=n_images,
             max_tokens=max_tokens,
+            video_tokens=video_tokens,
         ) as (id_slot, max_tokens):
             turn = await client.converse(
                 model=model,
@@ -1366,7 +1372,8 @@ class LlmRouter:
             )
         turn = dataclasses.replace(turn, model=model, replayed_tokens=replayed_tokens)
         elapsed = time.perf_counter() - start
-        self._calibrate(provider, model, chars, n_images, turn.usage)
+        # A clip's frames are image tokens with no characters behind them.
+        self._calibrate(provider, model, chars, n_images + bool(video_tokens), turn.usage)
         self._note_agent_turn(
             task,
             provider,
@@ -1499,6 +1506,7 @@ class LlmRouter:
         self._check_exact_slot(provider, model, slot_role, exact_slot)
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
         n_images = slot_roles.image_count(messages)
+        video_tokens = slot_roles.message_video_tokens(messages)
         replay, prompt_chars, replayed_tokens = self._fit_replay(
             task,
             slot_role,
@@ -1509,6 +1517,7 @@ class LlmRouter:
             tools=tools,
             n_images=n_images,
             max_tokens=max_tokens,
+            video_tokens=video_tokens,
         )
         # The row is opened by the first fraction that shows a wait, so a turn that answers
         # off a primed prefix — which is most of them — writes nothing at all.
@@ -1521,6 +1530,7 @@ class LlmRouter:
                 chars=prompt_chars,
                 n_images=n_images,
                 max_tokens=max_tokens,
+                video_tokens=video_tokens,
             ) as (id_slot, max_tokens),
             box_events.lazy_span(box_events.PREFILL, model, detail=_reading(messages)) as (
                 publish,
@@ -1630,7 +1640,9 @@ class LlmRouter:
             elapsed = time.perf_counter() - start
             # The exact token count for the characters we just sent — the only free, exact
             # calibration this box offers, and it arrives on every turn.
-            self._calibrate(provider, model, prompt_chars, n_images, final.usage)
+            self._calibrate(
+                provider, model, prompt_chars, n_images + bool(video_tokens), final.usage
+            )
             self._note_agent_turn(
                 task,
                 provider,

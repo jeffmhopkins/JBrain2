@@ -1,6 +1,6 @@
 # Native video on Flash-Next — the one-minute hybrid
 
-> **Status:** In progress · **Last verified:** 2026-10-06 · **Waves:** V0🟡 V1✅ V2✅
+> **Status:** In progress · **Last verified:** 2026-10-06 · **Waves:** V0🟡 V1✅ V2✅ V3✅
 
 Flash-Next's engine accepts video directly (`/props` on the box, llama.cpp b11332-869034b:
 `modalities {vision: true, video: true, audio: false}`), but the app never sends it any.
@@ -100,7 +100,8 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
   routes, every fallback trigger, the serialised part, the charge.
 
 ### V2 — Chat and links, through a separate call ✅
-- **The clip never enters jerv's own context** (owner decision 2026-10-04). A minute of video
+- **The clip never enters jerv's own context** (owner decision 2026-10-04 — narrowed by V3 on
+  2026-10-06: a clip within 64k tokens now does). A minute of video
   is 60–120k tokens; inline, it would crowd the conversation out of the interactive slot and
   be carried, or re-read, on every later turn. Instead a chat-attached video of ≤ 60 s goes
   to `analyze_video` with jerv's question: one native call holding the clip and its
@@ -140,6 +141,9 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
   first minute straight from the resolved URL (`stream.native_stream_clip`, same protocol
   guard, headers and stall timeout as every other read) and watches it; `window`/`single` and
   live streams keep reading stills.
+- **Output budget.** The native call allows 8,192 output tokens: Flash-Next's thinking
+  spends from the same budget, and at the first 1,536 a careful answer about an 11.6 s clip
+  was cut off mid-sentence on the box (2026-10-06).
 - **Order change.** Whisper now runs before frame captioning, since the native call needs the
   transcript first; the live status reads "Extracting frames… → Transcribing audio… →
   Watching the video…" on the native path.
@@ -150,6 +154,9 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
 |---|---|---|---|---|---|---|
 | Hand-held numbers (phone, 2026-10-06) | 7.4 s | 547 KB | 10,460 | 0.6 s | 77 s (655 output tokens, thinking on) | ≈ 2.5k tokens per frame pair; the charge booked 20.5k. Answered the question with an ordered, timestamped sequence (1, 2, 0, 3, 1). The frame pipeline on the same clip took 238 s and named the gestures (fist, one, two, three fingers) but in no order — per-frame captions lose the sequence. |
 
+### V3 — A short clip inside jerv's own context ✅
+See §5.
+
 ## 4. Open questions
 1. **fps 1 or 2.** One is cheaper and fits every role at 60 s; two sees faster motion.
    V0's numbers decide.
@@ -157,3 +164,37 @@ path the thumbnails are sampled for display only, not captioned. Callers do not 
    128k ingest cap, pin the call to a 256k role rather than shorten the threshold.
 </content>
 </invoke>
+
+## 5. Inline video in jerv's context (V3, owner 2026-10-06)
+
+V2's separate call answered the question but not naturally: jerv read a tool's text about the
+clip instead of seeing it, and every follow-up was another tool call. The owner reversed the
+2026-10-04 rule for short clips: **a clip whose charge fits 64k tokens rides jerv's own
+conversation**, the way an attached image does; anything longer keeps the V2 tool path.
+
+- **Budget.** `agent/inline_video.py` `INLINE_VIDEO_BUDGET_TOKENS` = 65,536, shared by every
+  clip in view at once — this turn's first, then the recent turns' oldest-first. At the
+  engine's 1 fps that is about 31 s for a single clip (`INLINE_MAX_SECONDS`); a longer one is
+  never transcoded for inlining.
+- **Gate.** The chat model sees images and `LlmRouter.supports_video("agent.turn")` (the
+  per-chat model pick included), and ffmpeg is on the api (`app.state.inline_videos`).
+- **Cache-stable by construction.** The clip is transcoded once, kept as a blob, and its
+  record — blob id, seconds, token charge, rendered transcript — cached on the attachment row
+  (`turn_attachments.native_clip`, migration 0221; separate from analyze_video's `analysis`).
+  Every turn re-reads that record, so the bytes and the note are identical and the engine's
+  prefix cache holds the clip. A clip too long, or one ffmpeg cannot transcode, is recorded
+  too, so it is probed once.
+- **Placement.** Exactly the image anchor (`api/agent.py`): the attaching turn renders its
+  question as the client will echo it, then one anchor message with the clip and its note;
+  later turns in the recent window re-insert that anchor after the same history entry. The
+  client decorates video attachments like images (`useFullBrain.ts` `historyContent`, same
+  marker — the cache contract). A clip whose turn cannot be matched is not carried on the
+  volatile tail (that would re-read it every turn); its id stays in the history text.
+- **What the model is told.** The anchor note says the clip is in view (about 1 fps, its
+  length), gives the whispered transcript as `[mm:ss]` lines (the model cannot hear), and says
+  not to call `analyze_video` for it. A video not inlined gets a note pointing at
+  `analyze_video` with the owner's question.
+- **Adapter.** `UserMessage.videos` serialises as `input_video` parts on the local engine;
+  the xAI and Anthropic adapters refuse a clip. The router books each clip's charge against
+  the chat slot and skips prefill calibration for a turn carrying one.
+

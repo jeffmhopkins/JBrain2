@@ -121,13 +121,16 @@ def apply_local_reasoning(payload: dict[str, Any], reasoning_effort: str | None)
     payload["reasoning_effort"] = reasoning_effort
 
 
-def _user_content(text: str, images: Sequence[LlmImage]) -> str | list[dict[str, Any]]:
-    if not images:
+def _user_content(
+    text: str, images: Sequence[LlmImage], videos: Sequence[LlmVideo] = ()
+) -> str | list[dict[str, Any]]:
+    if not images and not videos:
         return text
     parts: list[dict[str, Any]] = [
         {"type": "image_url", "image_url": {"url": f"data:{i.media_type};base64,{i.data}"}}
         for i in images
     ]
+    parts.extend({"type": "input_video", "input_video": {"data": v.data}} for v in videos)
     parts.append({"type": "text", "text": text})
     return parts
 
@@ -145,7 +148,7 @@ def _openai_messages(
     replayed = replayed_steps(messages, replay_model)
     for index, msg in enumerate(messages):
         if isinstance(msg, UserMessage):
-            out.append({"role": "user", "content": _user_content(msg.text, msg.images)})
+            out.append({"role": "user", "content": _user_content(msg.text, msg.images, msg.videos)})
         elif isinstance(msg, AssistantMessage):
             entry: dict[str, Any] = {"role": "assistant", "content": msg.text or None}
             if index in replayed:
@@ -333,6 +336,10 @@ class OpenAiCompatClient:
         # The router decides whether to replay (it may turn it off to fit a slot); the catalog
         # gate is re-checked here so no caller can put thinking on a wire that cannot take it.
         preserving = local_catalog.replays_reasoning(self.provider, model)
+        if self.provider != local_catalog.LOCAL_PROVIDER and any(
+            isinstance(m, UserMessage) and m.videos for m in messages
+        ):
+            raise LlmVideoUnsupportedError(f"{self.provider}: video input is not supported")
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,

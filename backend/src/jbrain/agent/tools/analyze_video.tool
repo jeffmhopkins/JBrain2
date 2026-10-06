@@ -1,6 +1,6 @@
 ---
 name: analyze_video
-version: 4
+version: 5
 permission: web
 cost_class: expensive
 params:
@@ -18,7 +18,8 @@ params:
   required: [source_attachment_id]
 ---
 Understand a video the owner attached this chat — what it shows and what is said —
-using the owner's local models. Pass source_attachment_id (the id from the
+using the owner's local models. A clip already shown to you ("you can watch this clip
+here") needs no call: answer from it. Pass source_attachment_id (the id from the
 "[attached video …]" line) and, when the owner asked something specific about the
 clip, their question. A clip of a minute or less is watched whole when the model can
 take video, and your question is answered from watching it; a longer clip is read as

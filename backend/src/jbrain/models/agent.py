@@ -226,6 +226,10 @@ class TurnAttachment(Base):
     # jerv analyses the clip; the thumbnail endpoint validates a thumb_id against the
     # frame list here before serving the blob (the firewall, invariant #3).
     analysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # The clip jerv sees inline (migration 0221): {clip_id, seconds, tokens, transcript} once
+    # transcoded, or {seconds, tokens, clip_id: null} for a clip too long to inline. NULL until
+    # a video-capable turn first looks at it.
+    native_clip: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
 
 class TurnToolArtifact(Base):

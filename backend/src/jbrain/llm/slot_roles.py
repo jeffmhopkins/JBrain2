@@ -452,3 +452,13 @@ def prompt_chars(
 
 def image_count(messages: Sequence[LlmMessage]) -> int:
     return sum(len(m.images) for m in messages if isinstance(m, UserMessage))
+
+
+def message_video_tokens(messages: Sequence[LlmMessage]) -> int:
+    """The charge for every clip riding the conversation (jerv's inline videos)."""
+    return sum(
+        video_tokens_charge(v.seconds)
+        for m in messages
+        if isinstance(m, UserMessage)
+        for v in m.videos
+    )

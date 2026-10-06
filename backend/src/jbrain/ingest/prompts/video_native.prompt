@@ -1,10 +1,12 @@
 ---
 name: video.native
-version: video-native-v1
+version: video-native-v2
 description: Read a short video clip natively (frames + transcript) and summarize it or answer a question about it.
 strength: low
 config:
-  max_tokens: 1536
+  # The engine's thinking spends from this same budget; at 1536 a careful answer about an
+  # 11.6 s clip was cut off mid-sentence on the box (2026-10-06).
+  max_tokens: 8192
 ---
 You are watching a short video clip. The clip is given to you as video, sampled at about one frame per second with its timestamps; you cannot hear it, so when it has speech, the spoken transcript follows as text lines stamped [mm:ss], aligned to the same timeline. After the transcript comes the request: either summarize the clip, or answer a question about it.
 

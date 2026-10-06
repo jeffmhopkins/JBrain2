@@ -184,10 +184,12 @@ class ToolResult:
 
 @dataclass(frozen=True)
 class UserMessage:
-    """Owner/user input for a turn, with optional vision images."""
+    """Owner/user input for a turn, with optional vision images and native video clips
+    (sent only to a video-capable local engine; every other adapter refuses them)."""
 
     text: str
     images: Sequence[LlmImage] = ()
+    videos: Sequence[LlmVideo] = ()
 
 
 @dataclass(frozen=True)

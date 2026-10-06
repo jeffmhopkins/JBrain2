@@ -170,6 +170,18 @@ class AgentTranscript:
         image are dropped; images only (a re-injected PDF's pages would be heavy; the
         owner's case is a picture). Empty when this transcript has no attachment repo, or
         the session has no recent image."""
+        return await self._recent_media_turns(ctx, session_id, now=now, prefix="image/")
+
+    async def recent_video_turns(
+        self, ctx: SessionContext, session_id: str, *, now: datetime
+    ) -> list[tuple[str, list[AttachmentInfo]]]:
+        """`recent_image_turns` for video attachments: the recent turns whose clip a
+        video-capable follow-up keeps in view, anchored at its own turn the same way."""
+        return await self._recent_media_turns(ctx, session_id, now=now, prefix="video/")
+
+    async def _recent_media_turns(
+        self, ctx: SessionContext, session_id: str, *, now: datetime, prefix: str
+    ) -> list[tuple[str, list[AttachmentInfo]]]:
         if self._attachments is None:
             return []
         async with scoped_session(self._maker, ctx) as session:
@@ -190,10 +202,10 @@ class AgentTranscript:
         content_by_id = {str(r[0]): r[2] for r in rows}
         by_turn = await self._attachments.list_for_turns(ctx, turn_ids)
         out: list[tuple[str, list[AttachmentInfo]]] = []
-        for tid in turn_ids:  # oldest-first, so the images read chronologically
-            images = [i for i in by_turn.get(tid, []) if i.media_type.startswith("image/")]
-            if images:
-                out.append((content_by_id.get(tid, ""), images))
+        for tid in turn_ids:  # oldest-first, so the media read chronologically
+            media = [i for i in by_turn.get(tid, []) if i.media_type.startswith(prefix)]
+            if media:
+                out.append((content_by_id.get(tid, ""), media))
         return out
 
     async def tool_names(self, ctx: SessionContext, session_id: str) -> set[str]:

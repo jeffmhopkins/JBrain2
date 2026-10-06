@@ -222,6 +222,70 @@ async def test_set_analysis_cannot_write_across_the_firewall(
     assert await repo.analysis(health, att.id) is None  # the out-of-scope write was a no-op
 
 
+async def test_native_clip_cache_respects_the_firewall(
+    repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
+) -> None:
+    """The inline-clip record (migration 0221) is firewalled like the analysis cache: read and
+    written only in scope, and kept apart from analyze_video's `analysis`."""
+    pid = await _owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    health = read_context(pid, ("health",))
+    general = read_context(pid, ("general",))
+    session_id = await _session(sessions, owner, ("health",))
+    att = await repo.add(
+        health,
+        session_id,
+        sha256="c3" * 32,
+        filename="clip.mp4",
+        media_type="video/mp4",
+        size_bytes=4,
+        domain_code="health",
+    )
+    record = {"clip_id": "clip-sha", "seconds": 7.4, "tokens": 20480, "transcript": ""}
+    await repo.set_native_clip(general, att.id, {"clip_id": "sneak"})
+    assert await repo.native_clip(health, att.id) is None  # the out-of-scope write was a no-op
+    await repo.set_native_clip(health, att.id, record)
+    assert await repo.native_clip(health, att.id) == record
+    assert await repo.native_clip(general, att.id) is None
+    assert await repo.native_clip(UNSCOPED, att.id) is None
+    assert await repo.analysis(health, att.id) is None
+
+
+async def test_recent_video_turns_returns_only_video_turns(
+    repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
+) -> None:
+    pid = await _owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    att_ctx = read_context(pid, attachment_scopes(()))
+    session_id = await _session(sessions, owner, ())
+    transcript = AgentTranscript(maker, repo)
+    for text_, sha, name, kind in (
+        ("a photo", "d" * 64, "a.png", "image/png"),
+        ("a clip", "e" * 64, "b.mp4", "video/mp4"),
+    ):
+        att = await repo.add(
+            att_ctx,
+            session_id,
+            sha256=sha,
+            filename=name,
+            media_type=kind,
+            size_bytes=4,
+            domain_code="general",
+        )
+        turn_id = await transcript.record_exchange(
+            owner,
+            session_id=session_id,
+            run_id=None,
+            user_text=text_,
+            assistant_text="ok",
+            tools=[],
+        )
+        await repo.bind_to_turn(att_ctx, [att.id], turn_id)
+
+    recent = await transcript.recent_video_turns(att_ctx, session_id, now=datetime.now(UTC))
+    assert [(c, [a.filename for a in infos]) for c, infos in recent] == [("a clip", ["b.mp4"])]
+
+
 async def test_bind_to_turn_and_transcript_replay(
     repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
 ) -> None:

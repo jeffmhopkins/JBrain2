@@ -293,7 +293,7 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
 // generated images appends a compact, machine-readable reference — each image's id
 // (for edit_image's source_image_id) and seed (to reproduce or tweak) — so a later
 // "edit that" or "use the same seed" turn can act on a picture it can't otherwise see.
-function historyContent(m: TranscriptMessage): string {
+export function historyContent(m: TranscriptMessage): string {
   if (m.role === "user") {
     // An attached image's id must persist in history so a later "is the person female?" /
     // "make it night" turn can pass it to analyze_image or edit_image instead of guessing
@@ -302,8 +302,11 @@ function historyContent(m: TranscriptMessage): string {
     // image-attach turn (backend attachment_content.decorated_history_text), so the
     // follow-up turn's KV prefix matches byte-for-byte and the image is never re-encoded.
     // Change the format there in the same PR, or every follow-up turn silently re-pays
-    // the full vision encode (~35 s on the box).
-    const imgs = (m.attachments ?? []).filter((a) => a.media_type.startsWith("image/"));
+    // the full vision encode (~35 s on the box). Videos are decorated too, under the same
+    // marker: a short clip jerv watched inline is anchored at its turn exactly like an image.
+    const imgs = (m.attachments ?? []).filter(
+      (a) => a.media_type.startsWith("image/") || a.media_type.startsWith("video/"),
+    );
     if (imgs.length === 0) return m.text;
     const refs = imgs.map((a) => `source_attachment_id=${a.id} (${a.filename})`).join("; ");
     return `${m.text}\n\n[Images the owner attached this turn — ${refs}]`;
