@@ -252,3 +252,59 @@ def test_the_exact_path_moves_the_floor_over_the_combined_bulk() -> None:
     # 8 × 20k chars of results fit the 256k-char budget; with their thinking they do not.
     assert hr.advance_floor(turns, 0) == 0
     assert hr.advance_floor(turns, 0, exact=True) > 0
+
+
+# ---- review follow-ups: what the exact path must not do
+
+
+def _research_then(*follow_ups: TurnRecord) -> list[TurnRecord]:
+    steps = [{**_step(f"r{i}"), "summary": "x" * 20_000} for i in range(16)]
+    wire = {
+        "v": 1,
+        "rounds": [_round("", "think", *((f"r{i}", "{}") for i in range(16)))],
+        "input": {"head": [], "tail": ["[now]", "research it"]},
+    }
+    return [
+        TurnRecord(role="user", content="research it", seq=1),
+        TurnRecord(role="assistant", content="found", tools=steps, seq=2, wire=wire),
+        *follow_ups,
+    ]
+
+
+def test_a_trivial_follow_up_never_compacts_the_research_turn_before_it() -> None:
+    # Every recorded turn has bulk (its `now` block, its thinking), but only results make a
+    # turn the one a follow-up asks about: "thanks" must not stub the research it thanks.
+    thanks = {
+        "v": 1,
+        "rounds": [],
+        "final": {"text": "You're welcome.", "reasoning": "polite", "model": "flash"},
+        "input": {"head": [], "tail": ["[now]", "thanks"]},
+    }
+    turns = _research_then(
+        TurnRecord(role="user", content="thanks", seq=3),
+        TurnRecord(role="assistant", content="You're welcome.", seq=4, wire=thanks),
+    )
+    assert hr.advance_floor(turns, 0) == 0
+    assert hr.advance_floor(turns, 0, exact=True) == 0
+
+
+def test_a_turn_that_ended_at_the_ceiling_replays_cut_not_whole() -> None:
+    # Replayed whole it would overflow every follow-up and brick the chat.
+    turns = _research_then()
+    full = dataclasses.replace(turns[1], wire={**(turns[1].wire or {}), "full": True})
+    (_, assistant) = hr.build([turns[0], full], 0, exact=True)
+    result = assistant.messages[1].results[0].content  # type: ignore[union-attr]
+    assert len(result) < 20_000 and "cut at 16,000 characters" in result
+    assert all(not getattr(m, "reasoning", "") for m in assistant.messages)
+
+
+def test_a_reclassified_round_still_leaves_the_answer_in_the_replay() -> None:
+    # gpt-oss: a round's leaked analysis was moved into the thinking, so the prose does not
+    # start with the recorded round text; the answer after the last call still replays.
+    wire = {"v": 1, "rounds": [_round("Let me look.", "", ("a", "{}"))]}
+    turns = [
+        TurnRecord(role="user", content="q", seq=1),
+        TurnRecord(role="assistant", content="It is 4.", tools=[_step("a")], seq=2, wire=wire),
+    ]
+    (_, assistant) = hr.build(turns, 0, exact=True)
+    assert assistant.messages[-1] == AssistantMessage(text="It is 4.")

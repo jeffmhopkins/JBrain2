@@ -178,7 +178,9 @@ async def test_the_wire_record_round_trips_and_stays_owner_only(maker: async_ses
     await store.record_answer(
         owner, session_id=info.id, run_id=run_id, assistant_text="y.", tools=[], wire=None
     )
-    user, answered, answer_only = await store.load(owner, info.id)
+    # A plain reopen does not read the record at all (deferred, raise-on-load).
+    assert all(t.wire is None for t in await store.load(owner, info.id))
+    user, answered, answer_only = await store.load(owner, info.id, with_wire=True)
     assert user.wire is None and answer_only.wire is None
     assert answered.wire is not None and answered.wire == wire
     assert answered.wire["rounds"][0]["calls"][0]["arguments"] == '{"q": "x", "a": 1}'

@@ -15,6 +15,7 @@ never copied note bodies.
 
 import asyncio
 import contextlib
+import json
 import time
 import uuid
 from bisect import bisect_left
@@ -177,6 +178,12 @@ _THINK_FLUSH_S = 0.7
 # effectively a global cap; `live_turns` counts only parent /chat turns (children run inside
 # a parent, headless Task runs never register here).
 _MAX_CONCURRENT_TURNS = 4
+# A turn whose last prompt came within this of the window replays cut, not whole (`_wire_record`):
+# the follow-up's own messages and the answer must still fit.
+FULL_HEADROOM_TOKENS = 32_768
+# The per-turn replay record's ceiling. It holds thinking, arguments and the turn's own blocks (the
+# results stay in `tools`); a turn past this replays from its prose.
+MAX_WIRE_CHARS = 2_000_000
 
 
 class ChatMessageIn(BaseModel):
@@ -876,16 +883,49 @@ def _conversation(
 def _turn_input(
     live_anchor: tuple[str, str, tuple[LlmImage, ...], tuple[LlmVideo, ...]] | None,
     own_blocks: Sequence[LlmMessage],
+    unrecorded: Sequence[LlmMessage] = (),
 ) -> dict[str, list[str]] | None:
     """The turn's own user-side messages as sent: `head` before the live image anchor (the
-    question spelled as history spells it), `tail` after it. None if any is not plain user
-    text, which the replay could not reproduce."""
+    question spelled as history spells it), `tail` after it, less the `unrecorded` blocks
+    (matched by identity — two blocks may share a text). None if any is not plain user text,
+    which the replay could not reproduce."""
     if not all(isinstance(m, UserMessage) for m in own_blocks):
         return None
+    skip = {id(m) for m in unrecorded}
     return {
         "head": [live_anchor[0]] if live_anchor is not None else [],
-        "tail": [m.text for m in own_blocks if isinstance(m, UserMessage)],
+        "tail": [m.text for m in own_blocks if isinstance(m, UserMessage) and id(m) not in skip],
     }
+
+
+def _wire_record(
+    acc: TranscriptAccumulator,
+    turn_input: dict[str, list[str]] | None,
+    *,
+    agent: str,
+    stop_reason: str,
+    context_used: int | None,
+    context_window: int | None,
+) -> dict[str, Any] | None:
+    """The turn as the model was sent it, for the exact replay — kept only for the persona
+    whose history replays it (jerv), and only within `MAX_WIRE_CHARS`. A turn that ended at
+    the slot's ceiling (overflowed, or within `FULL_HEADROOM_TOKENS` of the window) is marked
+    `full`: replayed whole it would overflow every follow-up, so the replay cuts it instead."""
+    if agent != "jerv":
+        return None
+    wire = acc.wire(turn_input)
+    if wire is None:
+        return None
+    near_full = (
+        context_used is not None
+        and context_window is not None
+        and context_used >= context_window - FULL_HEADROOM_TOKENS
+    )
+    if stop_reason == "context_overflow" or near_full:
+        wire["full"] = True
+    if len(json.dumps(wire)) > MAX_WIRE_CHARS:
+        return None
+    return wire
 
 
 async def _disk_conversation_key(
@@ -950,7 +990,7 @@ async def _replayed_history(
     runs on the client's text history rather than failing. `exact` (a local route) replays
     each recorded turn exactly as it was sent (`history_replay.build`)."""
     try:
-        turns = await get_agent_transcript(request).load(ctx, session_id)
+        turns = await get_agent_transcript(request).load(ctx, session_id, with_wire=True)
         sessions = get_agent_sessions(request)
         floor = await sessions.replay_floor(ctx, session_id)
         moved = history_replay.advance_floor(turns, floor, exact=exact)
@@ -1529,9 +1569,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # Both stay before the current turn (the model sees them when it answers) but after the
     # history, so a per-turn change no longer invalidates the reusable prefix.
     volatile: list[LlmMessage] = []
+    # Never recorded with the turn (`_turn_input`): see `unrecorded` below.
+    unrecorded: list[LlmMessage] = []
     presence = await _presence_block(request, owner_ctx, session)
     if presence:
         volatile.append(UserMessage(text=presence))
+        unrecorded.append(volatile[-1])
     volatile.append(UserMessage(text=now_block(owner_tz)))
     # Whether this chat still has no name. The `name_session` tool names it from inside the
     # turn; this line is how the model knows it is needed. It lives in the VOLATILE suffix on
@@ -1583,7 +1626,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # one replays them in place (`history_replay.build`): without them the follow-up's prompt
     # diverges right here, before any of this turn's steps, and the engine re-reads the turn.
     # The image anchor's bytes are not kept; the anchor is re-placed between head and tail.
-    turn_input = _turn_input(live_anchor, own_blocks)
+    # Three blocks are NEVER recorded, and the replay diverges where they were (one re-read):
+    # presence is location-domain data, which must not outlive its scope in a transcript
+    # column outside that firewall; the approved plan and the unclaimed-analysis resume are
+    # standing instructions that would keep replaying after the plan is revoked or the analysis
+    # claimed, one copy per turn.
+    unrecorded.extend([*resume_blocks, *plan_blocks])
+    turn_input = _turn_input(live_anchor, own_blocks, unrecorded)
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
@@ -1791,7 +1840,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     body.attachment_ids,
                     acc.reasoning_text,
                     omit_user_turn=body.deferred_outcome,
-                    wire=acc.wire(turn_input),
+                    wire=_wire_record(
+                        acc,
+                        turn_input,
+                        agent=session.agent,
+                        stop_reason=stop_reason,
+                        context_used=last_context_used,
+                        context_window=context_window,
+                    ),
                 )
                 # Persist the turn's context fill so the meter restores on reopen
                 # (best-effort — the transcript above is the record of the turn; this
@@ -1896,7 +1952,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             body.attachment_ids,
                             acc.reasoning_text,
                             omit_user_turn=body.deferred_outcome,
-                            wire=acc.wire(turn_input),
+                            wire=_wire_record(
+                                acc,
+                                turn_input,
+                                agent=session.agent,
+                                stop_reason=stop_reason,
+                                context_used=last_context_used,
+                                context_window=context_window,
+                            ),
                         )
                 with contextlib.suppress(Exception):
                     await runlog.finish(

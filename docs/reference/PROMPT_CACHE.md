@@ -210,7 +210,7 @@ minutes of "Reading your prompt"). The causes, every one of them now closed:
 | What diverged | Where | Now |
 |---|---|---|
 | Earlier turns' thinking | the adapter sent `reasoning_content` and `preserve_thinking=false` only for the turn in flight, so a step rendered WITH its thinking during its turn and WITHOUT it on the next | every step this model thought replays its thinking (`types.replayed_steps`), `preserve_thinking=true` is sent explicitly |
-| The turn's own blocks | the `now` block, unnamed-chat line, presence, resume / artifact / report / plan blocks, the model hint and attachment text sat before the turn's message; the next turn rebuilt history from the bare text | recorded with the turn (`wire.input`) and replayed in place, after the image anchor where there was one |
+| The turn's own blocks | the `now` block, unnamed-chat line, presence, resume / artifact / report / plan blocks, the model hint and attachment text sat before the turn's message; the next turn rebuilt history from the bare text | recorded with the turn (`wire.input`) and replayed in place, after the image anchor where there was one — except presence, the plan and the resume (below) |
 | Round boundaries | rounds were regrouped by prose offset, so two rounds with no prose between them replayed as one | each round recorded (`wire.rounds`) |
 | Tool-call arguments | re-serialized from the JSONB copy, whose object keys Postgres reorders | kept as the exact serialized string |
 | Tool results | replayed without the model-only `[=n]` citation line, and cut at 16k characters | summary + recorded suffix, uncut |
@@ -218,7 +218,9 @@ minutes of "Reading your prompt"). The causes, every one of them now closed:
 
 The record is `agent_turns.wire` (`TranscriptAccumulator.wire`, fed by the loop's `on_round`),
 replayed by `agent/history_replay.build(exact=True)` — only when the turn routes to the local
-provider; a cloud provider keeps the prose replay it has always had. A turn stored without a
+provider; a cloud provider keeps the prose replay it has always had. It is kept for jerv only
+(the persona whose history replays), capped in size, and read only by the replay (a plain
+transcript reopen defers the column). A turn stored without a
 usable record (older turns, the buffered reflexion path, a round cut mid-dispatch) replays from
 its prose, and so diverges once.
 
@@ -228,7 +230,19 @@ the prose on the exact path — results, thinking and the turns' own blocks — 
 thinking cannot grow a chat without limit. When it is exceeded the boundary
 (`agent_sessions.replay_floor_seq`) moves forward by whole turns to the low-water mark, and the
 turns it passes re-render compact (stubbed results, no thinking, bare question): that turn's
-prompt re-reads from the oldest of them, once per ~16k tokens of new bulk.
+prompt re-reads from the oldest of them, once per ~16k tokens of new bulk. The newest turn with
+tool RESULTS, and everything after it, is never compacted — keyed on results, so a "thanks"
+after a research turn (which has bulk of its own: its `now` block, its thinking) cannot stub the
+research it thanks. A turn that ended at the slot's ceiling (`context_overflow`, or its last
+prompt within 32k tokens of the window) is recorded `full` and replays the prose way, its
+results cut: replayed whole, every follow-up would overflow and the chat could never answer.
+
+**Never recorded, so the replay diverges where they were (one re-read of that turn):** the
+owner's presence line (location-domain data must not outlive its scope in a transcript column
+outside that firewall — and a session holding `location` never gets a conversation file, so it
+never reaches disk either), the approved-plan block and the unclaimed-analysis resume (standing
+instructions that would otherwise keep replaying after the plan is revoked or the analysis
+claimed, a copy per turn). The artifact and research-report pointer blocks are recorded.
 
 **Still divergent, by nature:** a change of model, effort, persona, tools or scope (a different
 prefix altogether); an image anchor leaving its recency window (the turn's own anchor stops

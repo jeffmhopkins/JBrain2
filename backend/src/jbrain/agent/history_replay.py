@@ -93,6 +93,10 @@ def _wire(turn: TurnRecord) -> dict[str, Any] | None:
     wire = turn.wire
     if turn.role != "assistant" or not isinstance(wire, dict) or wire.get("v") != 1:
         return None
+    if wire.get("full"):
+        # The turn ended at (or near) the slot's ceiling: replayed whole it would overflow
+        # every follow-up. The prose replay cuts its results — one re-read, and the chat lives.
+        return None
     rounds = wire.get("rounds")
     if not isinstance(rounds, list):
         return None
@@ -157,16 +161,23 @@ def _turn_chars(turn: TurnRecord, *, exact: bool = False) -> int:
 def advance_floor(turns: Sequence[TurnRecord], floor: int, *, exact: bool = False) -> int:
     """The boundary this render uses: `floor`, moved forward by whole turns when the bulk
     it keeps exceeds the budget, until it is under the low water mark. The newest turn with
-    any is never compacted — it is what a follow-up asks about. Moving it is the ONE place a
-    render deliberately stops extending the last one: every turn it passes is re-rendered
-    compact, once, and the engine re-reads from the oldest of them."""
+    tool RESULTS is never compacted, nor anything after it — it is what a follow-up asks about.
+    Keyed on results, not on bulk: on the exact path every recorded turn has some (its `now`
+    block, its thinking), and protecting merely the newest would let a "thanks" after a big
+    research turn stub that turn for good. Moving it is the ONE place a render deliberately
+    stops extending the last one: every turn it passes is re-rendered compact, once, and the
+    engine re-reads from the oldest of them."""
     kept = [
         t for t in turns if t.role == "assistant" and t.seq >= floor and _turn_chars(t, exact=exact)
     ]
     total = sum(_turn_chars(t, exact=exact) for t in kept)
     if total <= REPLAY_BUDGET_TOKENS * CHARS_PER_TOKEN:
         return floor
-    for turn in kept[:-1]:
+    with_results = [t.seq for t in kept if _turn_chars(t)]
+    protected = with_results[-1] if with_results else kept[-1].seq
+    for turn in kept:
+        if turn.seq >= protected:
+            break
         total -= _turn_chars(turn, exact=exact)
         floor = turn.seq + 1
         if total <= REPLAY_LOW_WATER_TOKENS * CHARS_PER_TOKEN:
@@ -267,7 +278,15 @@ def _exact_messages(turn: TurnRecord, wire: dict[str, Any]) -> tuple[LlmMessage,
     # No final round recorded (the turn stopped on a tool, a cap or an error): the prose after
     # the rounds, which no earlier prompt held, so any spelling of it extends the last one.
     said = "".join(r["text"] for r in wire["rounds"])
-    rest = turn.content[len(said) :] if turn.content.startswith(said) else ""
+    if turn.content.startswith(said):
+        rest = turn.content[len(said) :]
+    else:
+        # A round's text was moved into the thinking on the way to the transcript (gpt-oss's
+        # leaked analysis), so the prose no longer starts with it: the answer is what was
+        # streamed after the last call, as the prose replay reads it.
+        called = {c["id"] for r in wire["rounds"] for c in r["calls"]}
+        offsets = [int(s.get("text_offset") or 0) for s in turn.tools if s.get("id") in called]
+        rest = turn.content[max(offsets, default=0) :]
     if rest or not out:
         out.append(AssistantMessage(text=rest))
     return tuple(out)

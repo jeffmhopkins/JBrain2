@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import defer
 
 from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -237,18 +238,23 @@ class AgentTranscript:
                         names.add(name)
         return names
 
-    async def load(self, ctx: SessionContext, session_id: str) -> list[TurnRecord]:
-        async with scoped_session(self._maker, ctx) as session:
+    async def load(
+        self, ctx: SessionContext, session_id: str, *, with_wire: bool = False
+    ) -> list[TurnRecord]:
+        """The session's turns in order. `with_wire` also reads each turn's replay record —
+        only the history replay wants it, and every reopen of a chat would otherwise read it."""
+        query = (
             # One outer join to the turn's run for its start — no per-turn round-trip; a
             # turn whose run aged out (SET NULL) or never had one just reads no span.
-            rows = (
-                await session.execute(
-                    select(AgentTurn, Run.started_at)
-                    .outerjoin(Run, Run.id == AgentTurn.run_id)
-                    .where(AgentTurn.session_id == uuid.UUID(session_id))
-                    .order_by(AgentTurn.seq)
-                )
-            ).all()
+            select(AgentTurn, Run.started_at)
+            .outerjoin(Run, Run.id == AgentTurn.run_id)
+            .where(AgentTurn.session_id == uuid.UUID(session_id))
+            .order_by(AgentTurn.seq)
+        )
+        if not with_wire:
+            query = query.options(defer(AgentTurn.wire, raiseload=True))
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (await session.execute(query)).all()
         # One RLS-scoped round-trip for every user turn's attachments, so a reopened
         # session replays the files on the turn that carried them.
         by_turn: dict[str, list[AttachmentInfo]] = {}
@@ -266,7 +272,7 @@ class AgentTranscript:
                     turn_elapsed_ms(r.created_at, started_at) if r.role == "assistant" else None
                 ),
                 seq=r.seq,
-                wire=r.wire,
+                wire=r.wire if with_wire else None,
             )
             for r, started_at in rows
         ]
