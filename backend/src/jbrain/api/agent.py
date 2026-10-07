@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from jbrain.agent import history_replay
 from jbrain.agent.agents import (
     CITES_COMPUTATIONS,
     DEEP_RESEARCH_TOOL,
@@ -179,8 +180,9 @@ _MAX_CONCURRENT_TURNS = 4
 
 
 class ChatMessageIn(BaseModel):
-    """A prior conversation turn the client replays for context. Only the text is
-    carried — tool calls live inside a single turn-loop, not across them."""
+    """A prior conversation turn the client replays for context, as text. A jerv chat
+    rebuilds its history from the transcript instead — tool calls and results included
+    (`history_replay`) — and falls back to this only when the transcript can't be read."""
 
     role: Literal["user", "assistant"]
     content: str
@@ -806,8 +808,11 @@ def _conversation(
     anchored: Mapping[int, tuple[str, tuple[LlmImage, ...], tuple[LlmVideo, ...]]] | None = None,
     live_anchor: tuple[str, str, tuple[LlmImage, ...], tuple[LlmVideo, ...]] | None = None,
     videos: Sequence[LlmVideo] = (),
+    replayed: Sequence[history_replay.Entry] | None = None,
 ) -> list[LlmMessage]:
-    """The conversation to feed the loop. The turn's own attachments ride the FINAL
+    """The conversation to feed the loop. `replayed` (a jerv chat) replaces the client's
+    text history with the transcript's, earlier turns' tool calls and results included;
+    `anchored` indexes whichever history is used. The turn's own attachments ride the FINAL
     user message: its `images` carry the vision content and `extra_text` (PDF text +
     decoded text files) is appended to the model-facing message. History stays text,
     EXCEPT `anchored` inserts: {history index → (note, images)} places a recent earlier
@@ -818,10 +823,16 @@ def _conversation(
     short clips jerv watches inline; `videos` are a framed turn's own clips."""
     anchors = anchored or {}
     messages: list[LlmMessage] = []
-    for i, m in enumerate(body.history):
-        messages.append(
-            UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)
-        )
+    history: Sequence[Sequence[LlmMessage]] = (
+        [entry.messages for entry in replayed]
+        if replayed is not None
+        else [
+            [UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)]
+            for m in body.history
+        ]
+    )
+    for i, turn_messages in enumerate(history):
+        messages.extend(turn_messages)
         anchor = anchors.get(i)
         if anchor is not None:
             note, anchor_images, anchor_videos = anchor
@@ -891,6 +902,26 @@ async def _disk_conversation_key(
         log.warning("agent.kv_conversation_history_unread", exc_info=True)
         return None
     return None if kv_conversation.any_excluded(ran) else str(session.id)
+
+
+async def _replayed_history(
+    request: Request, ctx: SessionContext, session_id: str
+) -> list[history_replay.Entry] | None:
+    """The transcript-built history, with the replay boundary moved (and stored) first so
+    every render after this one agrees on it. None when anything can't be read: the turn then
+    runs on the client's text history rather than failing."""
+    try:
+        turns = await get_agent_transcript(request).load(ctx, session_id)
+        sessions = get_agent_sessions(request)
+        floor = await sessions.replay_floor(ctx, session_id)
+        moved = history_replay.advance_floor(turns, floor)
+        if moved != floor:
+            await sessions.advance_replay_floor(ctx, session_id, moved)
+            log.info("agent.replay_floor_advanced", session=session_id, floor=moved)
+        return history_replay.build(turns, moved)
+    except Exception:  # noqa: BLE001 - the owner's turn must never fail on its history
+        log.warning("agent.history_replay_unread", session=session_id, exc_info=True)
+        return None
 
 
 @router.post("/chat")
@@ -1216,6 +1247,16 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             if clip is not None:
                 live_clips.append(clip)
                 video_budget -= clip.tokens
+    # A jerv chat's earlier turns replay their tool calls and results, not just their prose
+    # (docs/plans/TOOL_RESULT_REPLAY_PLAN.md); None falls back to the client's text history.
+    replayed = (
+        await _replayed_history(request, owner_ctx, session.id) if session.agent == "jerv" else None
+    )
+    history_text = (
+        [ChatMessageIn(role=e.role, content=e.text) for e in replayed]
+        if replayed is not None
+        else body.history
+    )
     content = await build_attachment_content(
         get_turn_attachments(request),
         get_blob_store(request),
@@ -1312,7 +1353,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         marker = "\n\n[Images the owner attached this turn"
         decorated_index: dict[str, list[int]] = {}
         exact_index: dict[str, list[int]] = {}
-        for i, m in enumerate(body.history):
+        for i, m in enumerate(history_text):
             if m.role != "user":
                 continue
             at = m.content.find(marker)
@@ -1415,6 +1456,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         anchored=anchored,
         live_anchor=live_anchor,
         videos=final_videos,
+        replayed=replayed,
     )
     # Cache-stable prompt layout (docs/reference/PROMPT_CACHE.md): keep the STATIC
     # content leading so [system + owner-self + history] is a byte-stable prefix the local

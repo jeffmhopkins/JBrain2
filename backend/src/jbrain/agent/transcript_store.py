@@ -81,6 +81,8 @@ class TurnRecord:
     # The assistant turn's total wall time (ms) for the bubble's "Thought for …" label on
     # reopen; None for user turns and turns with no (sane) run span.
     elapsed_ms: int | None = None
+    # The turn's position in the transcript — what the tool-result replay boundary counts in.
+    seq: int = 0
 
 
 class AgentTranscript:
@@ -256,6 +258,7 @@ class AgentTranscript:
                 elapsed_ms=(
                     turn_elapsed_ms(r.created_at, started_at) if r.role == "assistant" else None
                 ),
+                seq=r.seq,
             )
             for r, started_at in rows
         ]

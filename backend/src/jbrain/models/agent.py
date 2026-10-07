@@ -65,6 +65,9 @@ class AgentSession(Base):
     # context-usage meter at once (token counts aren't in the stored transcript). Null
     # until a turn reports usage; a pre-feature chat stays null and the meter waits for
     # the next turn rather than showing a wrong figure.
+    # The first turn seq whose tool results jerv's history still replays in full (migration
+    # 0222, docs/plans/TOOL_RESULT_REPLAY_PLAN.md); earlier turns replay stubs. Only grows.
+    replay_floor_seq: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     context_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Selected read scope: domain codes and subject ids the session may read.
