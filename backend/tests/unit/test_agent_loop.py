@@ -2355,9 +2355,9 @@ async def test_buffered_turn_carries_each_tool_steps_reasoning_into_the_next_rou
     assert step.reasoning == "I should search for x first."
 
 
-async def test_earlier_turn_history_reaches_the_model_without_reasoning() -> None:
-    # History rebuilt from a stored conversation is text-only; only the turn in flight's own
-    # steps carry a trace, and they all sit after the newest user message.
+async def test_prose_history_reaches_the_model_without_reasoning() -> None:
+    # History given as prose (a cloud route's replay) carries no trace; only the turn in
+    # flight's own steps do, and they all sit after the newest user message.
     router, fake = router_with(_thinking_tool_turns())
     await AgentLoop(router, registry_with(make_tool("search", search))).run(
         session=OWNER,
@@ -2468,9 +2468,10 @@ async def test_replayed_thinking_is_not_billed_against_the_cost_guardrail(
     assert result.text == "the answer"
 
 
-async def test_a_budget_warning_starts_a_new_replay_boundary() -> None:
-    # The warning is a user message, so the steps before it are no longer the latest query's
-    # (the template draws the same line); the step after it is replayed again.
+async def test_a_budget_warning_does_not_stop_the_earlier_steps_replaying() -> None:
+    # The warning is a user message, but every step keeps its thinking on the wire
+    # (`preserve_thinking=true`): dropping it behind a user message is what re-rendered history
+    # differently and cost the engine its cache.
     from jbrain.agent.loop import BUDGET_WARNING_DIRECTIVE
 
     step = LlmTurn(
@@ -2489,7 +2490,7 @@ async def test_a_budget_warning_starts_a_new_replay_boundary() -> None:
         force_final_answer=True,
     )
     assert fake.converse_calls[1]["messages"][-1] == UserMessage(text=BUDGET_WARNING_DIRECTIVE)
-    assert [c["replay_reasoning"] for c in fake.converse_calls[:3]] == [False, False, True]
+    assert [c["replay_reasoning"] for c in fake.converse_calls[:3]] == [False, True, True]
 
 
 async def test_an_arithmetic_verdict_says_it_is_one() -> None:
@@ -2580,6 +2581,31 @@ async def test_each_computation_result_names_its_marker_and_a_failed_run_takes_n
     assert views["c1"]["computation_index"] == 1
     assert "computation_index" not in views["c2"]
     assert views["c3"]["computation_index"] == 2
+
+
+async def test_each_round_is_reported_as_the_model_read_it_marker_included() -> None:
+    # The transcript replays a round exactly as sent: the result as the model read it is the
+    # step's summary plus this model-only suffix (docs/reference/PROMPT_CACHE.md).
+    from jbrain.agent.transcript_accumulator import RoundRecord
+
+    router, fake = stream_router_with(_three_computations())
+    rounds: list[RoundRecord] = []
+    events = [
+        ev
+        async for ev in AgentLoop(router, _computing_registry()).run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="how long until christmas?")],
+            cite_computations=True,
+            on_round=rounds.append,
+        )
+    ]
+    model = _model_saw(fake.stream_calls[1]["messages"])
+    summaries = {e.tool_call_id: e.summary for e in events if isinstance(e, ToolResultEvent)}
+    tool_round, answer = rounds
+    assert [c.id for c in tool_round.calls] == ["c1", "c2", "c3"]
+    assert {i: summaries[i] + tool_round.suffixes.get(i, "") for i in model} == model
+    assert answer.text == "82 days" and not answer.calls
 
 
 async def test_no_marker_note_unless_the_turn_cites_computations() -> None:

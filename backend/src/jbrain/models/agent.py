@@ -194,6 +194,9 @@ class AgentTurn(Base):
     tools: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default="[]")
     # The model's reasoning trace for an assistant turn (gpt-oss/GLM); "" otherwise.
     reasoning: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # An assistant turn exactly as the model was sent it (`TranscriptAccumulator.wire`), so a
+    # later turn replays it byte for byte; None for a turn replayed from its prose.
+    wire: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

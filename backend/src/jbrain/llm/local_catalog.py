@@ -336,10 +336,12 @@ class LocalModel:
     no_reasoning_off: bool = False
     # The chat template renders a prior assistant step's `reasoning_content` back into the
     # prompt and honours a `preserve_thinking` kwarg. When set, the adapter replays the
-    # reasoning of the turn in flight's own tool steps (never an earlier user turn's) and
-    # sends `preserve_thinking=false` so the template draws that same boundary — the card's
-    # lighter mode, which keeps the agent's decisions consistent across a tool loop and the
-    # re-rendered steps byte-equal to what was generated (KV reuse). Set only where the
+    # reasoning of every step this model thought, earlier turns' included, and sends
+    # `preserve_thinking=true` so the template renders all of them — which keeps the agent's
+    # decisions consistent across a tool loop, the re-rendered steps byte-equal to what was
+    # generated, and each follow-up an exact extension of the last prompt (KV reuse; the
+    # bounded-thinking `false` mode re-rendered the previous turn differently and cost a
+    # full re-prefill of the chat, 2026-10-07). Set only where the
     # served template is KNOWN to read both: Flash-Next (llama-server logs "chat template
     # supports preserving reasoning"). Unset elsewhere, a template that ignores the field
     # would gain nothing and one that renders it differently would break the prefix.
@@ -1392,7 +1394,7 @@ def tool_round_text_is_analysis(served_model: str) -> bool:
 
 
 def replays_reasoning(provider: str, served_model: str) -> bool:
-    """Whether the turn in flight's reasoning goes back on the wire to (provider, model).
+    """Whether assistant steps' reasoning goes back on the wire to (provider, model).
     The ONE gate the adapter's serializer and the router's slot estimate share. Never a cloud
     provider, and never a served name outside the catalog (an unknown template)."""
     if provider != LOCAL_PROVIDER:

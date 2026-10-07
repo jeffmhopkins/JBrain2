@@ -18,7 +18,6 @@ from jbrain.llm.types import (
     AssistantMessage,
     LlmMessage,
     UserMessage,
-    current_turn_start,
     replayed_steps,
 )
 
@@ -271,15 +270,17 @@ def _replay_messages() -> list[LlmMessage]:
     ]
 
 
-def test_prompt_chars_counts_only_the_in_flight_reasoning_when_replayed() -> None:
+def test_prompt_chars_counts_every_replayed_trace_earlier_turns_included() -> None:
     messages = _replay_messages()
     without = slot_roles.prompt_chars("s", messages, ())
-    assert slot_roles.prompt_chars("s", messages, (), replay_model=FLASH) == without + 15
+    assert slot_roles.prompt_chars("s", messages, (), replay_model=FLASH) == without + 30 + 15
 
 
-def test_replayed_steps_are_the_in_flight_ones_the_same_model_thought() -> None:
+def test_replayed_steps_are_every_step_the_same_model_thought() -> None:
+    # Earlier turns' steps too: a step sent with its trace during its own turn must be sent
+    # with it on every later turn, or the follow-up's prompt diverges at that step.
     messages = _replay_messages()
-    assert replayed_steps(messages, FLASH) == {3}
+    assert replayed_steps(messages, FLASH) == {1, 3}
     assert replayed_steps(messages, "gpt-oss-120b") == {4}
     assert replayed_steps(messages, "") == frozenset()
 
@@ -288,12 +289,6 @@ def test_prompt_chars_ignores_reasoning_a_model_is_not_sent() -> None:
     messages = _replay_messages()
     bare = [AssistantMessage(m.text) if isinstance(m, AssistantMessage) else m for m in messages]
     assert slot_roles.prompt_chars("s", messages, ()) == slot_roles.prompt_chars("s", bare, ())
-
-
-def test_current_turn_start_is_just_past_the_last_user_message() -> None:
-    assert current_turn_start(_replay_messages()) == 3
-    assert current_turn_start([AssistantMessage(text="a")]) == 0
-    assert current_turn_start([UserMessage(text="u")]) == 1
 
 
 def test_only_flash_next_replays_reasoning_and_only_locally() -> None:

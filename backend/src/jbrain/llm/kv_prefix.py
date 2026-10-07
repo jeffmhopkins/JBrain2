@@ -322,6 +322,8 @@ class ChatSlotTakenError(LlmError):
 # happened an hour ago is otherwise unreachable; this ring is what makes "what has this
 # store actually been doing?" answerable at all.
 OUTCOME_HISTORY = 40
+# Agent-turn calls kept for `turn_reuse`: a long research turn plus its follow-up.
+TURN_REUSE_HISTORY = 40
 
 # Minimum gap between box_events rows for the SAME (model, outcome). Counters below record
 # every occurrence — they are the truth. This only rate-limits the owner-facing surface, so
@@ -589,6 +591,9 @@ class KvPrefixStore:
         self._last_role_outcome: dict[tuple[str, str], dict[str, object]] = {}
         # (model, outcome) -> monotonic time of the last box_events row, for the rate limit.
         self._box_event_at: dict[tuple[str, str], float] = {}
+        # The last agent-turn calls and how much of each prompt the engine reused — the check
+        # that a follow-up extends the last prompt (docs/reference/PROMPT_CACHE.md). Bounded ring.
+        self._turn_reuse: deque[dict[str, object]] = deque(maxlen=TURN_REUSE_HISTORY)
 
     # ---- instrumentation ------------------------------------------------------------
 
@@ -825,6 +830,7 @@ class KvPrefixStore:
             "patch_absent": sorted(self._patch_absent),
             "restore_gate": gates,
             "recent": list(self._events),
+            "turn_reuse": list(self._turn_reuse),
             "store": {
                 "bytes": usage[0],
                 "files": usage[1],
@@ -1350,6 +1356,7 @@ class KvPrefixStore:
         fingerprint: str | None = None,
         role: SlotRole | None = None,
         chat_key: str | None = None,
+        cached_tokens: int = 0,
     ) -> None:
         """A turn completed — if it was the turn our restore was FOR, that restore has now
         been used, and the slot it grew reports a prefix-sized cache on its own from here on.
@@ -1363,7 +1370,23 @@ class KvPrefixStore:
         that nothing had used — and `restore_if_lost` returns False on that belief before it
         reads /slots at all. A caller that cannot name the identity (`fingerprint=None`)
         clears nothing, which is the safe direction: a stale memo costs one restore, an
-        early-cleared one costs a full prefill."""
+        early-cleared one costs a full prefill.
+
+        Every call also lands in `turn_reuse`: its prompt, what the engine reused of it
+        (`cached_tokens`) and the difference it re-read. A follow-up whose prompt extends the
+        last one re-reads only its own new tail; a large `reprocessed` there is a divergence."""
+        if input_tokens > 0:
+            self._turn_reuse.append(
+                {
+                    "at": time.time(),
+                    "model": served_model,
+                    "role": str(role or SlotRole.INTERACTIVE),
+                    "chat": kv_conversation.key_hash(chat_key)[:12] if chat_key else None,
+                    "input_tokens": input_tokens,
+                    "cached_tokens": cached_tokens,
+                    "reprocessed": max(0, input_tokens - cached_tokens),
+                }
+            )
         self._note_holder(served_model, role, chat_key if input_tokens > 0 else None)
         if input_tokens <= 0:
             return

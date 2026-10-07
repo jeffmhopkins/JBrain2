@@ -83,6 +83,9 @@ class TurnRecord:
     elapsed_ms: int | None = None
     # The turn's position in the transcript — what the tool-result replay boundary counts in.
     seq: int = 0
+    # The assistant turn as the model was sent it (`TranscriptAccumulator.wire`); None when
+    # unrecorded. Server-side only — the replay reads it, the PWA never does.
+    wire: dict[str, Any] | None = None
 
 
 class AgentTranscript:
@@ -108,6 +111,7 @@ class AgentTranscript:
         assistant_text: str,
         tools: Sequence[dict[str, Any]],
         reasoning: str = "",
+        wire: dict[str, Any] | None = None,
     ) -> str:
         """Append the user turn then the assistant turn for one completed exchange.
         Returns the new USER turn's id so the caller can bind the turn's pre-uploaded
@@ -128,6 +132,7 @@ class AgentTranscript:
                     content=assistant_text,
                     tools=list(tools),
                     reasoning=reasoning,
+                    wire=wire,
                 )
             )
             await session.flush()
@@ -142,6 +147,7 @@ class AgentTranscript:
         assistant_text: str,
         tools: Sequence[dict[str, Any]],
         reasoning: str = "",
+        wire: dict[str, Any] | None = None,
     ) -> None:
         """Append ONLY an assistant turn — no user turn — for a completion the owner didn't
         type. The deferred-analysis auto-resume is driven by a server-authored system notice,
@@ -156,6 +162,7 @@ class AgentTranscript:
                     content=assistant_text,
                     tools=list(tools),
                     reasoning=reasoning,
+                    wire=wire,
                 )
             )
 
@@ -259,6 +266,7 @@ class AgentTranscript:
                     turn_elapsed_ms(r.created_at, started_at) if r.role == "assistant" else None
                 ),
                 seq=r.seq,
+                wire=r.wire,
             )
             for r, started_at in rows
         ]

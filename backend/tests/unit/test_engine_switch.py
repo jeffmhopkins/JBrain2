@@ -1672,7 +1672,7 @@ async def test_a_standard_pick_remapped_to_flash_next_replays_its_thinking() -> 
     )
     turn = await router.converse("agent.turn", system="s", messages=_in_flight_step(FN))
     assert _reasoning_on_wire(seen["local"][-1]) == ["plan"]
-    assert seen["local"][-1]["chat_template_kwargs"]["preserve_thinking"] is False
+    assert seen["local"][-1]["chat_template_kwargs"]["preserve_thinking"] is True
     assert turn.model == FN
 
 

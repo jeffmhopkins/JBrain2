@@ -45,6 +45,14 @@ from jbrain.llm.types import (
 log = structlog.get_logger()
 
 
+def _timings_cached(body: Any) -> int:
+    """llama-server's own `timings.cache_n` (prompt tokens reused from the slot), for a build
+    whose usage block carries no `cached_tokens`; 0 when absent or malformed."""
+    timings = body.get("timings") if isinstance(body, dict) else None
+    value = timings.get("cache_n") if isinstance(timings, dict) else None
+    return value if isinstance(value, int) and value >= 0 else 0
+
+
 def _cached_tokens(usage_body: Any) -> int:
     """`prompt_tokens_details.cached_tokens`, 0 when absent or malformed."""
     details = usage_body.get("prompt_tokens_details") if isinstance(usage_body, dict) else None
@@ -142,8 +150,9 @@ def _openai_messages(
     results become individual `tool`-role messages, one per result.
 
     `replay_model` (a preserving local model the router chose to replay to) puts each of its
-    own steps' traces back as `reasoning_content` — only for the turn in flight
-    (`replayed_steps`): an earlier turn's thinking would grow every prompt without bound."""
+    own steps' traces back as `reasoning_content` — earlier turns' too (`replayed_steps`), so
+    the next turn's prompt extends this one byte for byte. The growth that costs is bounded
+    upstream, by the transcript replay's budget (`agent/history_replay.py`)."""
     out: list[dict[str, Any]] = [{"role": "system", "content": system}]
     replayed = replayed_steps(messages, replay_model)
     for index, msg in enumerate(messages):
@@ -351,12 +360,15 @@ class OpenAiCompatClient:
             payload["tools"] = openai_tools(tools)
         self._apply_reasoning(payload, reasoning_effort)
         if preserving:
-            # The template's own default keeps EVERY historical assistant's thinking; false
-            # bounds it to the turn in flight, the same line the replay above draws. Sent on
-            # every call to this model, replayed or not, so a round that had to drop its replay
-            # to fit still renders the history the same way.
+            # Every historical assistant step renders with its thinking, the line the replay
+            # above draws. `false` would render a step WITH its trace while its turn runs and
+            # WITHOUT it once a newer user message arrives — the follow-up's prompt then
+            # diverges at the previous turn's first step, and a hybrid model, which reuses only
+            # from a context checkpoint before the divergence, re-read a 117k-token chat
+            # (measured 2026-10-07). Explicit, not the template default, so a template update
+            # cannot move it; sent on every call to this model, replayed or not.
             kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
-            kwargs["preserve_thinking"] = False
+            kwargs["preserve_thinking"] = True
         self._apply_sampling(payload, sampling)
         self._apply_slot(payload, id_slot)
         return payload
@@ -417,7 +429,7 @@ class OpenAiCompatClient:
         usage = LlmUsage(
             input_tokens=int(usage_body.get("prompt_tokens", 0)),
             output_tokens=int(usage_body.get("completion_tokens", 0)),
-            cached_tokens=_cached_tokens(usage_body),
+            cached_tokens=_cached_tokens(usage_body) or _timings_cached(data),
         )
         return LlmTurn(
             text=text,
@@ -496,6 +508,7 @@ class OpenAiCompatClient:
                 input_tokens = int(usage_body.get("prompt_tokens", input_tokens))
                 output_tokens = int(usage_body.get("completion_tokens", output_tokens))
                 cached_tokens = _cached_tokens(usage_body) or cached_tokens
+            cached_tokens = cached_tokens or _timings_cached(event)
             for choice in event.get("choices") or ():
                 delta = choice.get("delta") or {}
                 # A reasoning model (gpt-oss/GLM via the local gateway) streams its

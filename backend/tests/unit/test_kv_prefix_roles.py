@@ -1394,3 +1394,21 @@ async def test_a_prime_overtaken_by_a_chat_does_not_mark_the_chat_warm(root: Pat
     store.pick_chat_role(FLASH, "chat-1")  # A claimed by a chat
     await store.save_after_prime(FLASH, "persona", TOOLS, PRIME, role=A)
     assert store.pair_holdings(FLASH)[A] == "older_conversation"
+
+
+async def test_every_agent_turn_reports_how_much_of_its_prompt_was_reused(root: Path) -> None:
+    """The no-terminal check that a follow-up extends the last prompt: the debug read lists
+    each agent-turn call with what the engine reused and what it re-read."""
+    store, _gw = _store(root)
+    fp = store.identity_of(FLASH, "persona", TOOLS, None)
+    store.note_agent_turn(FLASH, 113_500, fingerprint=fp, role=B, chat_key="chat-1")
+    store.note_agent_turn(
+        FLASH, 117_512, fingerprint=fp, role=B, chat_key="chat-1", cached_tokens=117_000
+    )
+    snap: Any = await store.snapshot()
+    first, follow_up = snap["turn_reuse"]
+    assert first["reprocessed"] == 113_500
+    assert (follow_up["input_tokens"], follow_up["cached_tokens"]) == (117_512, 117_000)
+    assert follow_up["reprocessed"] == 512 and follow_up["role"] == str(B)
+    # The chat is named by a hash, as the conversation files are — never the session id.
+    assert follow_up["chat"] and follow_up["chat"] != "chat-1"

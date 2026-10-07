@@ -588,7 +588,12 @@ class LlmRouter:
             fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
         role = slot_roles.role_for(task, slot_role)
         self._kv_prefix.note_agent_turn(
-            model, input_tokens, fingerprint=fingerprint, role=role, chat_key=chat_key
+            model,
+            input_tokens,
+            fingerprint=fingerprint,
+            role=role,
+            chat_key=chat_key,
+            cached_tokens=cached_tokens,
         )
         if kv_prefix_mod.chat_role(model, role) is not None:
             with contextlib.suppress(Exception):
@@ -1112,11 +1117,13 @@ class LlmRouter:
     ) -> tuple[bool, int, int]:
         """(replay?, prompt chars to book, estimated replayed tokens) for one tool-aware turn.
 
-        Replays the turn in flight's own reasoning to a model that preserves it — unless that
-        is what would push the prompt past its role's slot cap. Then the turn runs WITHOUT the
-        replay rather than failing: the thinking is an aid to consistency, the turn is the
-        thing the owner asked for. Only the cap is checked here (pure, nothing is reserved);
-        the pin that follows books whichever size was chosen."""
+        Replays every step's reasoning to a model that preserves it — unless that is what
+        would push the prompt past its role's slot cap. Then the turn runs WITHOUT the replay
+        rather than failing: the thinking is an aid to consistency, the turn is the thing the
+        owner asked for. That round's prompt then diverges from the last one at its first
+        replayed step and re-reads from there — the price of not overflowing, paid only at the
+        cap. Only the cap is checked here (pure, nothing is reserved); the pin that follows
+        books whichever size was chosen."""
         bare = slot_roles.prompt_chars(system, messages, tools)
         if not local_catalog.replays_reasoning(provider, model):
             return False, bare, 0
@@ -1399,6 +1406,7 @@ class LlmRouter:
             stop_reason=turn.stop_reason,
             tool_calls=len(turn.tool_calls),
             input_tokens=turn.usage.input_tokens,
+            cached_tokens=turn.usage.cached_tokens,
             output_tokens=turn.usage.output_tokens,
             elapsed_ms=round(elapsed * 1000),
             output_tokens_per_s=self._toks_per_s(turn.usage.output_tokens, elapsed),
@@ -1668,6 +1676,7 @@ class LlmRouter:
                 stop_reason=final.stop_reason,
                 tool_calls=len(final.tool_calls),
                 input_tokens=final.usage.input_tokens,
+                cached_tokens=final.usage.cached_tokens,
                 output_tokens=final.usage.output_tokens,
                 elapsed_ms=round(elapsed * 1000),
                 output_tokens_per_s=self._toks_per_s(final.usage.output_tokens, elapsed),

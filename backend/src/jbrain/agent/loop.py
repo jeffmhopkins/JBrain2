@@ -57,6 +57,7 @@ from jbrain.agent.reflexion import (
     verify_grounding,
 )
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.transcript_accumulator import RoundRecord
 from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
@@ -673,10 +674,9 @@ def _user_text(conversation: Sequence[LlmMessage]) -> str:
 
 def _step_message(turn: LlmTurn, reasoning: str | None = None) -> AssistantMessage:
     """A tool step of the turn in flight, appended for the next round — with its reasoning
-    and the served model that produced it (stamped by the router).
-
-    Only these in-flight steps ever carry a trace (history rebuilt from earlier turns is
-    text-only); the router and adapter decide whether it goes on the wire. `reasoning`
+    and the served model that produced it (stamped by the router). The transcript keeps the
+    same fields per round (`RoundRecord`), so a later turn replays this step exactly as it is
+    sent now; the router and adapter decide whether the trace goes on the wire. `reasoning`
     overrides `turn.reasoning` where the two differ: `_converse_turn` folds a hidden tool
     round's content onto the turn's reasoning for the persisted trace, but that content
     already replays as `text`, so the step carries the model's own channel only."""
@@ -690,9 +690,10 @@ def _step_message(turn: LlmTurn, reasoning: str | None = None) -> AssistantMessa
 
 def _billable_tokens(turn: LlmTurn) -> int:
     """A round's cost against the loop's guardrail and the tree budget: its usage less the
-    replayed reasoning, which the model re-reads every round but which is the turn's own
-    earlier output, already paid for once. Counting it would end a long Flash-Next tool loop
-    on `budget` well before the same work on a model that does not replay."""
+    replayed reasoning, which the model re-reads every round but which is its own earlier
+    output (this turn's or an earlier turn's), already paid for once. Counting it would end a
+    long Flash-Next tool loop on `budget` well before the same work on a model that does not
+    replay."""
     return max(turn.usage.input_tokens - turn.replayed_tokens, 0) + turn.usage.output_tokens
 
 
@@ -1204,6 +1205,7 @@ class AgentLoop:
         tree: TreeState | None = None,
         run_id: str | None = None,
         cite_computations: bool = False,
+        on_round: Callable[[RoundRecord], None] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -1227,6 +1229,10 @@ class AgentLoop:
         non-streaming, the verifiers run, and `reflect` may re-produce (strict
         improvement, capped at N=2) before the kept attempt's events stream. This
         trades the live token stream for a spinner while verification clears.
+
+        `on_round` receives each model round as the next one is sent it — the tool rounds once
+        their results are in, then the answer — so the transcript can replay the turn exactly
+        (`RoundRecord`); a round that never reached a later prompt is not reported.
 
         `context_window`, when given, drives a `UsageEvent` emitted after each model
         turn so the PWA can show a live context-usage meter (None suppresses it, so a
@@ -1448,6 +1454,9 @@ class AgentLoop:
                 )
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
+                if on_round is not None:
+                    # The answer: no calls, even from a round cut mid-call, whose were never run.
+                    on_round(RoundRecord(turn.text, turn.reasoning, turn.model))
                 async for ev in self._finish(
                     _round_stop(turn),
                     answer_parts,
@@ -1492,6 +1501,7 @@ class AgentLoop:
             any_error = False
             deferred_seen: DeferredRef | None = None
             halt_seen: str | None = None
+            suffixes: dict[str, str] = {}
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
                 # Run the tool while draining any progress it reports into
@@ -1567,6 +1577,8 @@ class AgentLoop:
                     args=dispatched.recorded_args,
                     result_brief=dispatched.result_brief,
                 )
+                if dispatched.cite_note:
+                    suffixes[call.id] = dispatched.cite_note
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
                 if dispatched.job is not None:
@@ -1584,6 +1596,8 @@ class AgentLoop:
                 )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+            if on_round is not None:
+                on_round(RoundRecord.of(turn, suffixes))
 
             if halt_seen is not None:
                 # A tool ENDED the turn (`ask_owner`: the note now waits on the owner).

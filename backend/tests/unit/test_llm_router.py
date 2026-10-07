@@ -1075,6 +1075,7 @@ class _RecordingKvStore:
         # The identity each note carried — None means the router cleared blind, which is how
         # a background turn used to retire the owner's unused restore.
         self.named: list[str | None] = []
+        self.cached: list[int] = []
         self.used: list[tuple[str, str | None]] = []
         self.raise_on_restore = False
         # Shared with the FakeLlmClient's call list, so ORDER is assertable: a restore
@@ -1110,9 +1111,11 @@ class _RecordingKvStore:
         fingerprint: str | None = None,
         role: object = None,
         chat_key: str | None = None,
+        cached_tokens: int = 0,
     ) -> None:
         self.noted.append((served, input_tokens))
         self.named.append(fingerprint)
+        self.cached.append(cached_tokens)
 
     def note_prefix_used(
         self, served: str, fingerprint: str | None, *, role: object = None
@@ -1210,6 +1213,22 @@ async def test_the_stream_path_carries_the_same_disk_hooks() -> None:
         pass
     assert store.restores == [("gpt-oss-120b", "s", 0, TASK_REASONING_DEFAULTS.get("agent.turn"))]
     assert store.noted == [("gpt-oss-120b", 7)]
+
+
+async def test_a_streamed_turn_tells_the_store_what_the_engine_reused() -> None:
+    # `turn_reuse` (the debug kv-prefix read) is fed from here, streamed turns included.
+    turn = LlmTurn("ok", (), "end_turn", LlmUsage(7, 1, cached_tokens=5))
+    fake = FakeLlmClient(turns=[turn])
+    store = _RecordingKvStore(dispatched=fake.stream_calls)
+    router = LlmRouter(
+        {"local": fake},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        kv_prefix=store,  # type: ignore[arg-type]
+    )
+    async for _ in router.converse_stream("agent.turn", system="s", messages=[]):
+        pass
+    await router.converse("agent.turn", system="s", messages=[])
+    assert store.cached == [5, 5]
 
 
 def test_warm_reasoning_effort_mirrors_a_routed_turns_encoding() -> None:

@@ -1,6 +1,8 @@
 """jerv's history rebuilt from the transcript (docs/plans/TOOL_RESULT_REPLAY_PLAN.md R1):
 rounds in order, stubs before the boundary, the stepped boundary, byte-identical renders."""
 
+import dataclasses
+
 from jbrain.agent import history_replay as hr
 from jbrain.agent.attachments import AttachmentInfo
 from jbrain.agent.transcript_store import TurnRecord
@@ -124,3 +126,129 @@ def test_a_user_turn_with_media_is_spelled_as_the_client_decorates_it() -> None:
 def test_the_render_is_identical_turn_over_turn() -> None:
     turns = _turns([_step("a"), _step("b", offset=3)], [_step("c")], content="abc def")
     assert hr.build(turns, 0) == hr.build(list(turns), 0)
+
+
+# ---- the exact replay: a turn as the model was sent it (docs/reference/PROMPT_CACHE.md)
+
+
+def _round(text: str, reasoning: str, *calls: tuple[str, str]) -> dict:
+    return {
+        "text": text,
+        "reasoning": reasoning,
+        "model": "flash",
+        "calls": [{"id": i, "name": "grab_frame", "arguments": args} for i, args in calls],
+    }
+
+
+def _wired(*, final: bool = True, own: dict | None = None) -> list[TurnRecord]:
+    wire: dict = {
+        "v": 1,
+        "rounds": [
+            _round("", "first", ("a", '{"seek": 9, "at": 1}')),
+            _round("", "second", ("b", "{}")),
+            _round("Closer. ", "third", ("c", '{"seek": 3}')),
+        ],
+        "suffixes": {"c": "\n[=1]"},
+        "input": own or {"head": [], "tail": ["[now: 21:04]", "what numbers?"]},
+    }
+    if final:
+        wire["final"] = {"text": "It is 4.", "reasoning": "settled", "model": "flash"}
+    steps = [_step("a"), _step("b"), _step("c", offset=8)]
+    return [
+        TurnRecord(role="user", content="what numbers?", seq=1),
+        TurnRecord(role="assistant", content="Closer. It is 4.", tools=steps, seq=2, wire=wire),
+    ]
+
+
+def test_an_exact_replay_is_the_turn_as_sent() -> None:
+    user, assistant = hr.build(_wired(), 0, exact=True)
+    # The turn's own blocks and message, after the anchor point (`tail`), not the bare text.
+    assert user.messages == () and user.text == "what numbers?"
+    assert user.tail == (UserMessage(text="[now: 21:04]"), UserMessage(text="what numbers?"))
+    m = assistant.messages
+    # Each round on its own, with its own thinking — even two with no prose between them.
+    assert [x.reasoning for x in m if isinstance(x, AssistantMessage)] == [
+        "first",
+        "second",
+        "third",
+        "settled",
+    ]
+    assert all(x.reasoning_model == "flash" for x in m if isinstance(x, AssistantMessage))
+    # The arguments in the order the model wrote them, and the model-only suffix.
+    assert list(m[0].tool_calls[0].arguments) == ["seek", "at"]  # type: ignore[union-attr]
+    assert m[5].results[0].content == "result c\n[=1]"  # type: ignore[union-attr]
+    assert m[-1] == AssistantMessage(text="It is 4.", reasoning="settled", reasoning_model="flash")
+
+
+def test_an_anchored_turn_keeps_its_question_before_the_anchor() -> None:
+    own = {"head": ["what is this?\n\n[Images…]"], "tail": ["[now]", "(Answer the owner…)"]}
+    user, _ = hr.build(_wired(own=own), 0, exact=True)
+    assert user.messages == (UserMessage(text="what is this?\n\n[Images…]"),)
+    assert [t.text for t in user.tail] == ["[now]", "(Answer the owner…)"]  # type: ignore[union-attr]
+
+
+def test_without_a_final_round_the_rest_of_the_prose_closes_the_turn() -> None:
+    (_, assistant) = hr.build(_wired(final=False), 0, exact=True)
+    assert assistant.messages[-1] == AssistantMessage(text="It is 4.")
+
+
+def test_a_deferred_turn_with_no_user_turn_carries_its_own_input() -> None:
+    (_, assistant) = hr.build(_wired(), 0, exact=True)
+    (alone,) = hr.build([_wired()[1]], 0, exact=True)
+    assert alone.messages[:2] == (
+        UserMessage(text="[now: 21:04]"),
+        UserMessage(text="what numbers?"),
+    )
+    assert alone.messages[2:] == assistant.messages
+
+
+def test_before_the_floor_an_exact_turn_is_compacted_like_any_other() -> None:
+    turns = _wired()
+    user, assistant = hr.build(turns, floor=3, exact=True)
+    assert user.messages == (UserMessage(text="what numbers?"),) and user.tail == ()
+    assert all(not getattr(x, "reasoning", "") for x in assistant.messages)
+    assert assistant.messages[1].results[0].content == hr.STUB  # type: ignore[union-attr]
+
+
+def test_a_cloud_route_keeps_the_prose_replay() -> None:
+    turns = _wired()
+    plain = [TurnRecord(role=t.role, content=t.content, tools=t.tools, seq=t.seq) for t in turns]
+    assert hr.build(turns, 0) == hr.build(plain, 0)
+
+
+def test_a_malformed_record_falls_back_to_the_prose() -> None:
+    turns = _wired()
+    plain = [TurnRecord(role=t.role, content=t.content, tools=t.tools, seq=t.seq) for t in turns]
+    for broken in (
+        {"v": 2},
+        {"v": 1, "rounds": [_round("", "x", ("zz", "{}"))]},  # a call with no stored step
+        {"v": 1, "rounds": [_round("", "x", ("a", "[1]"))]},  # arguments not an object
+        {"v": 1, "rounds": [_round("", "x", ("a", "{"))]},  # not JSON at all
+        {"v": 1, "rounds": [], "final": {"text": "x"}},
+    ):
+        turns[1] = dataclasses.replace(turns[1], wire=broken)
+        assert hr.build(turns, 0, exact=True) == hr.build(plain, 0, exact=True)
+
+
+def test_on_the_exact_path_the_budget_counts_thinking_and_the_turns_own_blocks() -> None:
+    (_, assistant) = _wired()
+    results = sum(len(s["summary"]) for s in assistant.tools) + len("\n[=1]")
+    thinking = len("first" + "second" + "third" + "settled")
+    blocks = len("[now: 21:04]" + "what numbers?")
+    assert hr._turn_chars(assistant, exact=True) == results + thinking + blocks
+    assert hr._turn_chars(assistant) == sum(len(s["summary"]) for s in assistant.tools)
+
+
+def test_the_exact_path_moves_the_floor_over_the_combined_bulk() -> None:
+    def turn(seq: int) -> list[TurnRecord]:
+        wire = {"v": 1, "rounds": [{**_round("", "t" * 20_000, (f"c{seq}", "{}"))}]}
+        step = {**_step(f"c{seq}"), "summary": "x" * 20_000}
+        return [
+            TurnRecord(role="user", content="q", seq=seq),
+            TurnRecord(role="assistant", content="a", tools=[step], seq=seq + 1, wire=wire),
+        ]
+
+    turns = [t for i in range(8) for t in turn(2 * i + 1)]
+    # 8 × 20k chars of results fit the 256k-char budget; with their thinking they do not.
+    assert hr.advance_floor(turns, 0) == 0
+    assert hr.advance_floor(turns, 0, exact=True) > 0

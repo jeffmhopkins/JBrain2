@@ -138,7 +138,7 @@ class FakeTranscript:
         self.recent_image_turn_rows: dict[str, list] = {}
 
     async def record_exchange(  # type: ignore[no-untyped-def]
-        self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
+        self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning="", wire=None
     ):
         self.recorded.append(
             {
@@ -148,6 +148,7 @@ class FakeTranscript:
                 "assistant": assistant_text,
                 "tools": list(tools),
                 "reasoning": reasoning,
+                "wire": wire,
             }
         )
         # Hand back a user-turn id so the endpoint can bind the turn's attachments.
@@ -594,6 +595,10 @@ def test_chat_persists_the_exchange_to_the_transcript(
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     client.post("/api/chat", json={"session_id": "sess-1", "message": "hello?"})
+    # The turn as the model was sent it, for an exact replay (checked in its own tests below).
+    wire = transcript.recorded[0].pop("wire")
+    assert wire["rounds"] == [] and wire["final"]["text"] == "hi there"
+    assert wire["input"]["head"] == [] and "hello?" in wire["input"]["tail"][-1]
     assert transcript.recorded == [
         {
             "session_id": "sess-1",
@@ -4272,3 +4277,127 @@ def test_a_curator_chat_keeps_the_client_history(
     )
     texts = [getattr(m, "text", "") for m in fake.stream_calls[0]["messages"]]
     assert "from the client" in texts and "what numbers?" not in texts
+
+
+# --- exact replay (docs/reference/PROMPT_CACHE.md): a local follow-up extends the last prompt
+
+
+def _jsonb(value: Any) -> Any:
+    """What a JSONB column hands back: object keys reordered (shortest first, then bytewise)."""
+    if isinstance(value, dict):
+        return {k: _jsonb(value[k]) for k in sorted(value, key=lambda k: (len(k), k))}
+    if isinstance(value, list):
+        return [_jsonb(v) for v in value]
+    return value
+
+
+def _stored(recorded: dict, seq: int) -> list[TurnRecord]:
+    return [
+        TurnRecord(role="user", content=recorded["user"], seq=seq),
+        TurnRecord(
+            role="assistant",
+            content=recorded["assistant"],
+            tools=_jsonb(recorded["tools"]),
+            reasoning=recorded["reasoning"],
+            seq=seq + 1,
+            wire=_jsonb(recorded["wire"]),
+        ),
+    ]
+
+
+def _fetching_turns() -> list[LlmTurn]:
+    def fetch(i: str, url: str, reasoning: str, text: str = "") -> LlmTurn:
+        call = ToolCall(i, "web_fetch", {"url": url, "max_chars": 4000})
+        return LlmTurn(text, (call,), "tool_use", LlmUsage(10, 2), reasoning=reasoning)
+
+    return [
+        fetch("c1", "https://a.example", "Read a first."),
+        fetch("c2", "https://b.example", "Then b."),
+        fetch("c3", "https://c.example", "And c.", text="One more source."),
+        LlmTurn("They agree.", (), "end_turn", LlmUsage(20, 3), reasoning="Compare."),
+        LlmTurn("Because both say so.", (), "end_turn", LlmUsage(30, 3), reasoning="Easy."),
+    ]
+
+
+def test_a_local_follow_up_extends_the_previous_turns_last_prompt(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    from jbrain.llm.openai_compat import OpenAiCompatClient
+
+    login(client, repo)
+    _jerv_session(sessions_store)
+
+    async def fetch(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput(f"page text of {arguments['url']}")
+
+    client.app.state.agent_registry = registry_with_tool("web_fetch", fetch)  # type: ignore[attr-defined]
+    fake = FakeLlmClient(turns=_fetching_turns())
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"local": fake},
+        {"agent.turn": ("local", "qwen3.8-flash-next")},
+        pinned=frozenset({"agent.turn"}),
+    )
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "do they agree?"})
+    assert len(fake.stream_calls) == 4
+    # Reopened: the next turn's history comes from what was persisted, not from memory.
+    transcript.turns["sess-j"] = _stored(transcript.recorded[-1], 1)
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "why?"})
+    assert len(fake.stream_calls) == 5
+
+    adapter = OpenAiCompatClient("http://gateway/v1", "", provider="local")
+
+    def payload(call: dict) -> dict:
+        return adapter._converse_payload(
+            model=call["model"],
+            system=call["system"],
+            messages=call["messages"],
+            tools=call["tools"],
+            max_tokens=call["max_tokens"],
+            reasoning_effort=call["reasoning_effort"],
+            replay_reasoning=call["replay_reasoning"],
+        )
+
+    last, follow_up = payload(fake.stream_calls[3]), payload(fake.stream_calls[4])
+    n = len(last["messages"])
+    assert follow_up["messages"][:n] == last["messages"]
+    assert follow_up["messages"][n] == {
+        "role": "assistant",
+        "content": "They agree.",
+        "reasoning_content": "Compare.",
+    }
+    assert follow_up["tools"] == last["tools"]
+    assert follow_up["chat_template_kwargs"] == last["chat_template_kwargs"]
+    assert last["chat_template_kwargs"]["preserve_thinking"] is True
+
+
+def test_a_cloud_route_keeps_the_prose_replay_even_with_a_record(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    _jerv_session(sessions_store)
+    turns = _frame_turns()
+    wire = {
+        "v": 1,
+        "rounds": [
+            {
+                "text": "",
+                "reasoning": "secret thinking",
+                "model": "grok-4.3",
+                "calls": [{"id": "c1", "name": "grab_frame", "arguments": '{"seek": 9}'}],
+            }
+        ],
+        "input": {"head": [], "tail": ["[an old now block]", "what numbers?"]},
+    }
+    transcript.turns["sess-j"] = [turns[0], replace(turns[1], wire=wire)]
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "and?"})
+    messages = fake.stream_calls[0]["messages"]
+    assert not any(getattr(m, "text", "") == "[an old now block]" for m in messages)
+    assert not any(getattr(m, "reasoning", "") for m in messages)

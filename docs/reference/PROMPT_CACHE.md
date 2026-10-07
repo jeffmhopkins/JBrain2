@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-10-06
+> **Status:** Living · **Last verified:** 2026-10-07
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -170,9 +170,9 @@ last prompt and prompt + answer) and the server saves exactly that many tokens. 
 outside the store's main lock. A conversation idle for 10 minutes is saved by the keeper's tick.
 When a conversation speaks again and neither chat slot holds it, its file is restored into the
 slot it was routed to (the warm one) before the request on **identity alone** — same conversation key, same base identity (launch line, persona,
-tools, effort). A chat request's message list is not stable from turn to turn (a timestamped
-`now` block, resume/plan/artifact context, per-turn hints, the turn's own tool steps with their
-replayed thinking), so no message comparison could hold; llama-server compares TOKENS after the
+tools, effort). The store compares no messages: a follow-up is built to extend the last prompt
+exactly (below), but a compaction, a model change or an older turn without a record still moves
+it, so llama-server compares TOKENS after the
 restore and re-evaluates from the first divergence, reusing up to the nearest context checkpoint
 before it — a restore is never wrong, only more or less useful. How useful is **measured**: the
 first request after a restore reports `cached_tokens`, judged a hit (at least half the restored
@@ -191,6 +191,58 @@ is ~0.55 GiB; a conversation file grows with its length from there.
 One consequence worth knowing before you touch Settings: raising a hybrid's slot count to 2
 strips `--spec-type`, which withholds `--slot-save-path`, which turns the disk layer off for
 that model. Correct, and the screen now says so.
+
+## A follow-up is an exact extension of the last prompt (2026-10-07)
+
+**The rule:** on the local route, the first request of a chat's next turn must begin with
+exactly the tokens of the previous turn's LAST request — same system prompt, same tools, and
+every earlier message rendered identically — followed only by the previous answer and the new
+turn's own messages. Anything else is a divergence, and where it falls decides the cost: a
+hybrid model (Flash-Next) reuses its cache only from a context checkpoint at or before the first
+differing token, and it keeps eight checkpoints per slot, all taken during the last turn's own
+model calls. A divergence anywhere inside the previous turn therefore lands before every one of
+them, and the engine re-reads the whole conversation.
+
+Measured on the box: a 16-call research turn grew the chat's prompt from 47k to 113.5k tokens;
+the follow-up, correctly routed to the slot holding that chat, re-processed all ~117k (five
+minutes of "Reading your prompt"). The causes, every one of them now closed:
+
+| What diverged | Where | Now |
+|---|---|---|
+| Earlier turns' thinking | the adapter sent `reasoning_content` and `preserve_thinking=false` only for the turn in flight, so a step rendered WITH its thinking during its turn and WITHOUT it on the next | every step this model thought replays its thinking (`types.replayed_steps`), `preserve_thinking=true` is sent explicitly |
+| The turn's own blocks | the `now` block, unnamed-chat line, presence, resume / artifact / report / plan blocks, the model hint and attachment text sat before the turn's message; the next turn rebuilt history from the bare text | recorded with the turn (`wire.input`) and replayed in place, after the image anchor where there was one |
+| Round boundaries | rounds were regrouped by prose offset, so two rounds with no prose between them replayed as one | each round recorded (`wire.rounds`) |
+| Tool-call arguments | re-serialized from the JSONB copy, whose object keys Postgres reorders | kept as the exact serialized string |
+| Tool results | replayed without the model-only `[=n]` citation line, and cut at 16k characters | summary + recorded suffix, uncut |
+| The previous answer | replayed as prose | replayed with its own thinking (`wire.final`), so even the generated tokens can be reused |
+
+The record is `agent_turns.wire` (`TranscriptAccumulator.wire`, fed by the loop's `on_round`),
+replayed by `agent/history_replay.build(exact=True)` — only when the turn routes to the local
+provider; a cloud provider keeps the prose replay it has always had. A turn stored without a
+usable record (older turns, the buffered reflexion path, a round cut mid-dispatch) replays from
+its prose, and so diverges once.
+
+**The ONE deliberate divergence is compaction.** The replay budget
+(`history_replay.REPLAY_BUDGET_TOKENS`, the owner's 64k) now bounds everything replayed beyond
+the prose on the exact path — results, thinking and the turns' own blocks — so keeping the
+thinking cannot grow a chat without limit. When it is exceeded the boundary
+(`agent_sessions.replay_floor_seq`) moves forward by whole turns to the low-water mark, and the
+turns it passes re-render compact (stubbed results, no thinking, bare question): that turn's
+prompt re-reads from the oldest of them, once per ~16k tokens of new bulk.
+
+**Still divergent, by nature:** a change of model, effort, persona, tools or scope (a different
+prefix altogether); an image anchor leaving its recency window (the turn's own anchor stops
+being re-inserted); media that rode a turn's final message (PDF pages, carried images — no
+bytes are kept to replay them); a plan continuation turn, which runs on its own minimal prompt;
+and a round the router ran without its replayed thinking because the thinking alone would have
+overflowed the slot (`llm.reasoning_replay_dropped`).
+
+**Check it without a terminal:** `GET /api/debug/llm/kv-prefix` → `turn_reuse` lists the last 40
+agent-turn calls on the local engine with `input_tokens`, `cached_tokens` (llama-server's
+`prompt_tokens_details.cached_tokens`, else its `timings.cache_n`) and `reprocessed`. A
+follow-up's first call should re-process roughly its own new messages plus the previous answer;
+a `reprocessed` near `input_tokens` is a divergence. The same two figures ride every
+`llm.converse` / `llm.converse_stream` log line.
 
 ## What it is worth (measured on the box, 2026-09-18)
 
@@ -270,6 +322,7 @@ show you when one bites.
 | `llm/kv_conversation.py` | conversation file names, claims, the privacy rule, the restore decision and its judging |
 | `llm/warm_keeper.py` | the keep-warm loop: prime, re-prime, the edge triggers |
 | `agent/priming.py` | the prime's (system, tools) — the same call a real turn makes |
+| `agent/history_replay.py`, `agent/transcript_accumulator.py` | the exact replay of earlier turns, and the per-turn record it reads (`agent_turns.wire`) |
 | `llm/llama_swap_config.py` | `--slot-save-path`, `-np`, `--cache-reuse`, `-cram` |
 | `llm/router.py` | restore-before-dispatch, and the post-turn identity note |
 | `api/llm_settings.py`, `api/debug.py` | the operator surface above |
