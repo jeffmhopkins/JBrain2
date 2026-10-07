@@ -138,7 +138,7 @@ class FakeTranscript:
         self.recent_image_turn_rows: dict[str, list] = {}
 
     async def record_exchange(  # type: ignore[no-untyped-def]
-        self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
+        self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning="", wire=None
     ):
         self.recorded.append(
             {
@@ -148,12 +148,13 @@ class FakeTranscript:
                 "assistant": assistant_text,
                 "tools": list(tools),
                 "reasoning": reasoning,
+                "wire": wire,
             }
         )
         # Hand back a user-turn id so the endpoint can bind the turn's attachments.
         return f"turn-{len(self.recorded)}"
 
-    async def load(self, ctx, session_id):  # type: ignore[no-untyped-def]
+    async def load(self, ctx, session_id, *, with_wire=False):  # type: ignore[no-untyped-def]
         return self.turns.get(session_id, [])
 
     async def recent_image_turns(self, ctx, session_id, *, now):  # type: ignore[no-untyped-def]
@@ -594,6 +595,8 @@ def test_chat_persists_the_exchange_to_the_transcript(
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     client.post("/api/chat", json={"session_id": "sess-1", "message": "hello?"})
+    # No replay record: only jerv's history replays one (its own tests are below).
+    assert transcript.recorded[0].pop("wire") is None
     assert transcript.recorded == [
         {
             "session_id": "sess-1",
@@ -4272,3 +4275,234 @@ def test_a_curator_chat_keeps_the_client_history(
     )
     texts = [getattr(m, "text", "") for m in fake.stream_calls[0]["messages"]]
     assert "from the client" in texts and "what numbers?" not in texts
+
+
+# --- exact replay (docs/reference/PROMPT_CACHE.md): a local follow-up extends the last prompt
+
+
+def _jsonb(value: Any) -> Any:
+    """What a JSONB column hands back: object keys reordered (shortest first, then bytewise)."""
+    if isinstance(value, dict):
+        return {k: _jsonb(value[k]) for k in sorted(value, key=lambda k: (len(k), k))}
+    if isinstance(value, list):
+        return [_jsonb(v) for v in value]
+    return value
+
+
+def _stored(recorded: dict, seq: int) -> list[TurnRecord]:
+    return [
+        TurnRecord(role="user", content=recorded["user"], seq=seq),
+        TurnRecord(
+            role="assistant",
+            content=recorded["assistant"],
+            tools=_jsonb(recorded["tools"]),
+            reasoning=recorded["reasoning"],
+            seq=seq + 1,
+            wire=_jsonb(recorded["wire"]),
+        ),
+    ]
+
+
+def _fetching_turns() -> list[LlmTurn]:
+    def fetch(i: str, url: str, reasoning: str, text: str = "") -> LlmTurn:
+        call = ToolCall(i, "web_fetch", {"url": url, "max_chars": 4000})
+        return LlmTurn(text, (call,), "tool_use", LlmUsage(10, 2), reasoning=reasoning)
+
+    return [
+        fetch("c1", "https://a.example", "Read a first."),
+        fetch("c2", "https://b.example", "Then b."),
+        fetch("c3", "https://c.example", "And c.", text="One more source."),
+        LlmTurn("They agree.", (), "end_turn", LlmUsage(20, 3), reasoning="Compare."),
+        LlmTurn("Because both say so.", (), "end_turn", LlmUsage(30, 3), reasoning="Easy."),
+    ]
+
+
+def test_a_local_follow_up_extends_the_previous_turns_last_prompt(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    from jbrain.llm.openai_compat import OpenAiCompatClient
+
+    login(client, repo)
+    _jerv_session(sessions_store)
+
+    async def fetch(arguments, ctx):  # type: ignore[no-untyped-def]
+        return ToolOutput(f"page text of {arguments['url']}")
+
+    client.app.state.agent_registry = registry_with_tool("web_fetch", fetch)  # type: ignore[attr-defined]
+    fake = FakeLlmClient(turns=_fetching_turns())
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"local": fake},
+        {"agent.turn": ("local", "qwen3.8-flash-next")},
+        pinned=frozenset({"agent.turn"}),
+    )
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "do they agree?"})
+    assert len(fake.stream_calls) == 4
+    # Reopened: the next turn's history comes from what was persisted, not from memory.
+    transcript.turns["sess-j"] = _stored(transcript.recorded[-1], 1)
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "why?"})
+    assert len(fake.stream_calls) == 5
+
+    adapter = OpenAiCompatClient("http://gateway/v1", "", provider="local")
+
+    def payload(call: dict) -> dict:
+        return adapter._converse_payload(
+            model=call["model"],
+            system=call["system"],
+            messages=call["messages"],
+            tools=call["tools"],
+            max_tokens=call["max_tokens"],
+            reasoning_effort=call["reasoning_effort"],
+            replay_reasoning=call["replay_reasoning"],
+        )
+
+    last, follow_up = payload(fake.stream_calls[3]), payload(fake.stream_calls[4])
+    n = len(last["messages"])
+    assert follow_up["messages"][:n] == last["messages"]
+    assert follow_up["messages"][n] == {
+        "role": "assistant",
+        "content": "They agree.",
+        "reasoning_content": "Compare.",
+    }
+    assert follow_up["tools"] == last["tools"]
+    assert follow_up["chat_template_kwargs"] == last["chat_template_kwargs"]
+    assert last["chat_template_kwargs"]["preserve_thinking"] is True
+
+
+def test_a_cloud_route_keeps_the_prose_replay_even_with_a_record(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    login(client, repo)
+    _jerv_session(sessions_store)
+    turns = _frame_turns()
+    wire = {
+        "v": 1,
+        "rounds": [
+            {
+                "text": "",
+                "reasoning": "secret thinking",
+                "model": "grok-4.3",
+                "calls": [{"id": "c1", "name": "grab_frame", "arguments": '{"seek": 9}'}],
+            }
+        ],
+        "input": {"head": [], "tail": ["[an old now block]", "what numbers?"]},
+    }
+    transcript.turns["sess-j"] = [turns[0], replace(turns[1], wire=wire)]
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "and?"})
+    messages = fake.stream_calls[0]["messages"]
+    assert not any(getattr(m, "text", "") == "[an old now block]" for m in messages)
+    assert not any(getattr(m, "reasoning", "") for m in messages)
+
+
+def test_presence_plan_and_resume_are_sent_but_never_recorded_or_replayed(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Presence is location-domain data: it must not outlive its scope in a transcript column
+    # outside that firewall. The plan and the resume are standing instructions that must not
+    # replay after the plan is revoked or the analysis claimed.
+    from jbrain.api import agent as agent_api
+    from jbrain.llm import UserMessage
+
+    async def presence(*_a, **_kw):  # type: ignore[no-untyped-def]
+        return "[PRESENCE: at home]"
+
+    async def plan(*_a, **_kw):  # type: ignore[no-untyped-def]
+        return [UserMessage(text="[APPROVED PLAN]")]
+
+    async def resume(*_a, **_kw):  # type: ignore[no-untyped-def]
+        return [UserMessage(text="[UNCLAIMED ANALYSIS]")]
+
+    monkeypatch.setattr(agent_api, "_presence_block", presence)
+    monkeypatch.setattr(agent_api, "_plan_blocks", plan)
+    monkeypatch.setattr(agent_api, "_pending_resume_blocks", resume)
+    login(client, repo)
+    _jerv_session(sessions_store)
+    fake = FakeLlmClient(turns=[LlmTurn("ok", (), "end_turn", LlmUsage(5, 1))])
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"local": fake},
+        {"agent.turn": ("local", "qwen3.8-flash-next")},
+        pinned=frozenset({"agent.turn"}),
+    )
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "where am I?"})
+    unrecorded = {"[PRESENCE: at home]", "[APPROVED PLAN]", "[UNCLAIMED ANALYSIS]"}
+    sent = {getattr(m, "text", "") for m in fake.stream_calls[0]["messages"]}
+    assert unrecorded <= sent
+    tail = transcript.recorded[-1]["wire"]["input"]["tail"]
+    assert not unrecorded & set(tail) and "where am I?" in tail[-1]
+
+    # The scope is gone (no presence now): nothing of the earlier turn's presence comes back.
+    async def none(*_a, **_kw):  # type: ignore[no-untyped-def]
+        return ""
+
+    async def no_blocks(*_a, **_kw):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(agent_api, "_presence_block", none)
+    monkeypatch.setattr(agent_api, "_plan_blocks", no_blocks)
+    monkeypatch.setattr(agent_api, "_pending_resume_blocks", no_blocks)
+    transcript.turns["sess-j"] = _stored(transcript.recorded[-1], 1)
+    client.post("/api/chat", json={"session_id": "sess-j", "message": "and now?"})
+    replayed = {getattr(m, "text", "") for m in fake.stream_calls[-1]["messages"]}
+    assert not unrecorded & replayed
+
+
+def test_the_record_is_jerv_only_bounded_and_marks_a_turn_at_the_ceiling() -> None:
+    from jbrain.agent.transcript_accumulator import RoundRecord, TranscriptAccumulator
+    from jbrain.api.agent import FULL_HEADROOM_TOKENS, MAX_WIRE_CHARS, _wire_record
+
+    acc = TranscriptAccumulator()
+    acc.record_round(RoundRecord("ok", "t", "m"))
+    own = {"head": [], "tail": ["q"]}
+
+    def record(**kw: Any) -> dict | None:
+        args: dict[str, Any] = {
+            "agent": "jerv",
+            "stop_reason": "end_turn",
+            "context_used": 1_000,
+            "context_window": 262_144,
+            **kw,
+        }
+        return _wire_record(acc, own, **args)
+
+    plain = record()
+    assert plain is not None and "full" not in plain
+    assert record(agent="curator") is None
+    # Overflowed, or so close to the window that the follow-up could not fit: replay it cut.
+    assert record(stop_reason="context_overflow", context_used=None)["full"] is True  # type: ignore[index]
+    assert record(context_used=262_144 - FULL_HEADROOM_TOKENS)["full"] is True  # type: ignore[index]
+    big = TranscriptAccumulator()
+    big.record_round(RoundRecord("ok", "x" * MAX_WIRE_CHARS, "m"))
+    assert (
+        _wire_record(
+            big, own, agent="jerv", stop_reason="end_turn", context_used=None, context_window=None
+        )
+        is None
+    )
+
+
+async def test_presence_and_the_disk_conversation_cache_never_meet() -> None:
+    # Presence is injected only into a session holding `location`; such a session never gets
+    # a conversation file (and a re-scope away from it is excluded for good, api/sessions).
+    from jbrain.api.agent import _presence_block
+    from jbrain.llm import kv_conversation
+
+    without = AgentSessionInfo("s", "", "active", ("general",), (), NOW, NOW, agent="jerv")
+    assert await _presence_block(None, None, without) == ""  # type: ignore[arg-type]
+    assert not kv_conversation.cache_allowed(
+        reads_knowledge_base=False,
+        persona_tools=frozenset({"web_search"}),
+        domain_scopes=("general", "location"),
+        subject_ids=(),
+        tools_ran=(),
+    )

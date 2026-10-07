@@ -257,7 +257,7 @@ async def test_glm_keeps_its_genuine_none() -> None:
     assert captured["payload"]["reasoning_effort"] == "none"
 
 
-# --- Preserved thinking within a turn -----------------------------------------------
+# --- Preserved thinking, every turn ---------------------------------------------------
 
 FLASH = "qwen3.8-flash-next"
 _CALL = ToolCall(id="c1", name="search", arguments={"q": "x"})
@@ -266,8 +266,7 @@ _CALL = ToolCall(id="c1", name="search", arguments={"q": "x"})
 def _two_turns(model: str = FLASH) -> list[LlmMessage]:
     return [
         UserMessage(text="earlier"),
-        # An earlier turn's step cannot carry a trace in practice; given one anyway, it must
-        # not be replayed — the boundary is the serializer's, not the caller's good behaviour.
+        # An earlier turn's answer, replayed from the transcript with its own thinking.
         AssistantMessage(text="earlier answer", reasoning="old thinking", reasoning_model=model),
         UserMessage(text="now"),
         AssistantMessage(
@@ -285,17 +284,19 @@ def _assistant_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [m for m in payload["messages"] if m["role"] == "assistant"]
 
 
-async def test_flash_next_replays_reasoning_only_after_the_last_user_message() -> None:
+async def test_flash_next_replays_every_steps_reasoning_earlier_turns_included() -> None:
+    # A step sent with its thinking during its own turn is sent with it on every later turn,
+    # so the follow-up's prompt extends the last one instead of diverging at that step.
     captured, client = _capturing_client()
     await client.converse(model=FLASH, system="s", messages=_two_turns(), replay_reasoning=True)
     entries = _assistant_entries(captured["payload"])
-    assert "reasoning_content" not in entries[0]
-    assert [e["reasoning_content"] for e in entries[1:]] == [
+    assert [e["reasoning_content"] for e in entries] == [
+        "old thinking",
         "step one thinking",
         "step two thinking",
     ]
-    # The template's own boundary matches the serializer's: thinking of the latest query only.
-    assert captured["payload"]["chat_template_kwargs"]["preserve_thinking"] is False
+    # And the template is told to render all of it, not to drop history's thinking.
+    assert captured["payload"]["chat_template_kwargs"]["preserve_thinking"] is True
 
 
 async def test_the_router_decides_replay_but_the_template_kwarg_always_rides() -> None:
@@ -303,7 +304,7 @@ async def test_the_router_decides_replay_but_the_template_kwarg_always_rides() -
     captured, client = _capturing_client()
     await client.converse(model=FLASH, system="s", messages=_two_turns())
     assert all("reasoning_content" not in e for e in _assistant_entries(captured["payload"]))
-    assert captured["payload"]["chat_template_kwargs"] == {"preserve_thinking": False}
+    assert captured["payload"]["chat_template_kwargs"] == {"preserve_thinking": True}
 
 
 async def test_another_models_thinking_is_never_replayed() -> None:
@@ -327,7 +328,7 @@ async def test_preserve_thinking_rides_beside_the_reasoning_toggle() -> None:
     assert captured["payload"]["chat_template_kwargs"] == {
         "enable_thinking": True,
         "reasoning_effort": "low",
-        "preserve_thinking": False,
+        "preserve_thinking": True,
     }
 
 
@@ -351,7 +352,7 @@ async def test_flash_next_stream_replays_reasoning_too() -> None:
         pass
     entries = _assistant_entries(captured["payload"])
     assert [e.get("reasoning_content") for e in entries] == [
-        None,
+        "old thinking",
         "step one thinking",
         "step two thinking",
     ]

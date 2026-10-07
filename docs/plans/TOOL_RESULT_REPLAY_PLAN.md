@@ -1,6 +1,6 @@
 # Tool results that stay real — replaying earlier turns' tool calls
 
-> **Status:** In progress · **Last verified:** 2026-10-06 · **Waves:** R1✅ R2◻️ R3◻️
+> **Status:** In progress · **Last verified:** 2026-10-07 · **Waves:** R1✅ R2◻️ R3◻️
 
 **The owner's rule (2026-10-06): a tool result jerv saw should stay real on every later turn.**
 Today it does not. A chat turn's history reaches the model as TEXT only: the PWA replays each
@@ -132,6 +132,18 @@ history for that turn and log it — never fail the owner's turn.
   transaction — the firewall rule from §3, implemented with the same column.
 - The guard is live: any read failure logs `agent.history_replay_unread` and the turn runs on
   the client's text history.
+
+### After R1: the exact replay (2026-10-07)
+On the box R1's render was still not byte-identical turn over turn where it mattered: a follow-up
+to a 16-call research turn re-read the whole ~117k-token chat. R1 rebuilt each turn from its
+prose, which had lost what the model was actually sent — each step's thinking, the turn's own
+volatile blocks, round boundaries, the arguments' key order, the `[=n]` suffix. Each assistant
+turn now records that (`agent_turns.wire`, migration 0223) and, on the local route,
+`history_replay.build(exact=True)` replays it as sent; the cloud route keeps the R1 render. On
+that path the budget counts thinking and the turns' own blocks beside results, and a result is
+no longer cut at 16k characters (it was sent whole). The rule, its causes and the on-box check
+(`turn_reuse` in `GET /llm/kv-prefix`) are in `../reference/PROMPT_CACHE.md`, "A follow-up is
+an exact extension of the last prompt". R2's prefill measurement reads that same field.
 
 ## 5. Relationship to other plans
 

@@ -144,3 +144,49 @@ async def test_child_tool_steps_and_reasoning_round_trip(maker: async_sessionmak
     assert step["name"] == "read_external_video"
     assert step["web_sources"][0]["url"] == "https://youtu.be/x"
     assert step["reasoning_offset"] == 12
+
+
+async def test_the_wire_record_round_trips_and_stays_owner_only(maker: async_sessionmaker) -> None:
+    # Migration 0223: the turn as the model was sent it, for the exact replay
+    # (docs/reference/PROMPT_CACHE.md). The arguments are a STRING inside the JSONB, so the
+    # object's key reordering cannot touch them; the column rides the table's owner-only RLS.
+    owner = await _owner(maker)
+    info = await AgentSessionRepo(maker).create(owner, domain_scopes=["general"], title="w")
+    run_id = await AgentRunLog(maker).start(owner, session_id=info.id, prompt_version="v1")
+    wire = {
+        "v": 1,
+        "rounds": [
+            {
+                "text": "",
+                "reasoning": "look first",
+                "model": "flash",
+                "calls": [{"id": "c1", "name": "search", "arguments": '{"q": "x", "a": 1}'}],
+            }
+        ],
+        "input": {"head": [], "tail": ["[now]", "what?"]},
+    }
+    store = AgentTranscript(maker)
+    await store.record_exchange(
+        owner,
+        session_id=info.id,
+        run_id=run_id,
+        user_text="what?",
+        assistant_text="x.",
+        tools=[{"id": "c1", "name": "search", "ok": True, "summary": "r"}],
+        wire=wire,
+    )
+    await store.record_answer(
+        owner, session_id=info.id, run_id=run_id, assistant_text="y.", tools=[], wire=None
+    )
+    # A plain reopen does not read the record at all (deferred, raise-on-load).
+    assert all(t.wire is None for t in await store.load(owner, info.id))
+    user, answered, answer_only = await store.load(owner, info.id, with_wire=True)
+    assert user.wire is None and answer_only.wire is None
+    assert answered.wire is not None and answered.wire == wire
+    assert answered.wire["rounds"][0]["calls"][0]["arguments"] == '{"q": "x", "a": 1}'
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    async with scoped_session(maker, token) as session:
+        seen = await session.execute(
+            text("SELECT count(*) FROM app.agent_turns WHERE wire IS NOT NULL")
+        )
+        assert seen.scalar() == 0

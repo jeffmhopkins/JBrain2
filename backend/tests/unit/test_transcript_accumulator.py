@@ -11,7 +11,8 @@ from jbrain.agent.contracts import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from jbrain.agent.transcript_accumulator import TranscriptAccumulator
+from jbrain.agent.transcript_accumulator import RoundRecord, TranscriptAccumulator
+from jbrain.llm import ToolCall
 
 
 def test_records_text_and_reasoning_offsets_at_the_tool_call() -> None:
@@ -175,3 +176,65 @@ def test_a_step_keeps_the_models_args_when_the_tool_records_none_of_its_own() ->
 
     (step,) = acc.tool_steps()
     assert step["args"] == {"q": "sarah"}
+
+
+# ---- the wire record: each round as the model was sent it (docs/reference/PROMPT_CACHE.md)
+
+
+def _call(i: str, args: dict | None = None) -> ToolCall:
+    return ToolCall(id=i, name="search", arguments=args or {})
+
+
+def _resulted(acc: TranscriptAccumulator, *ids: str) -> None:
+    for i in ids:
+        acc.feed(ToolCallEvent(id=i, name="search", arguments={}))
+        acc.feed(ToolResultEvent(tool_call_id=i, ok=True, summary=f"r{i}"))
+
+
+def test_the_wire_record_keeps_each_round_its_arguments_and_the_final_answer() -> None:
+    acc = TranscriptAccumulator()
+    _resulted(acc, "c1", "c2")
+    first = (_call("c1", {"q": "x", "a": 1}), _call("c2"))
+    acc.record_round(RoundRecord("", "think a", "m", first, {"c1": "\n[=1]", "c2": ""}))
+    _resulted(acc, "c3")
+    acc.record_round(RoundRecord("More.", "think b", "m", (_call("c3", {"q": "y"}),)))
+    acc.record_round(RoundRecord("Done.", "think c", "m"))
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+
+    wire = acc.wire({"head": [], "tail": ["now", "q"]})
+    assert wire is not None
+    assert [[c["id"] for c in r["calls"]] for r in wire["rounds"]] == [["c1", "c2"], ["c3"]]
+    # Serialized as the adapter serializes it, so a JSONB round trip cannot reorder it.
+    assert wire["rounds"][0]["calls"][0]["arguments"] == '{"q": "x", "a": 1}'
+    assert wire["rounds"][1]["text"] == "More." and wire["rounds"][1]["reasoning"] == "think b"
+    assert wire["suffixes"] == {"c1": "\n[=1]"}
+    assert wire["final"] == {"text": "Done.", "reasoning": "think c", "model": "m"}
+    assert wire["input"] == {"head": [], "tail": ["now", "q"]}
+
+
+def test_no_rounds_reported_means_no_wire_record() -> None:
+    # A producer that reports no rounds (the buffered path, a headless task): prose replay.
+    acc = TranscriptAccumulator()
+    _resulted(acc, "c1")
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+    assert acc.wire() is None
+
+
+def test_a_result_no_recorded_round_accounts_for_means_no_wire_record() -> None:
+    # A round cut mid-dispatch after one of its results landed: the record would drop a call
+    # the owner saw, so the turn replays from its prose instead.
+    acc = TranscriptAccumulator()
+    _resulted(acc, "c1")
+    acc.record_round(RoundRecord("", "t", "m", (_call("c1"),)))
+    _resulted(acc, "c2")
+    assert acc.wire() is None
+
+
+def test_a_round_that_never_reached_a_later_prompt_is_simply_absent() -> None:
+    # Stopped mid-tool: no result, no round — and nothing a later prompt held is missing.
+    acc = TranscriptAccumulator()
+    _resulted(acc, "c1")
+    acc.record_round(RoundRecord("", "t", "m", (_call("c1"),)))
+    acc.feed(ToolCallEvent(id="c2", name="search", arguments={}))
+    wire = acc.wire()
+    assert wire is not None and [r["calls"][0]["id"] for r in wire["rounds"]] == ["c1"]

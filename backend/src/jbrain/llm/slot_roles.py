@@ -430,8 +430,9 @@ def prompt_chars(
     them per tile, not per byte, so their characters would swamp the estimate.
 
     `replay_model` mirrors the adapter's replay to a preserving model (`replayed_steps`):
-    the turn in flight's own thinking goes back into the prompt, and a deep tool loop's traces
-    can outweigh its transcript — left out, the pool guard would book a slot short."""
+    every step's thinking goes back into the prompt, earlier turns' included, and a deep tool
+    loop's traces can outweigh its transcript — left out, the pool guard would book a slot
+    short."""
     total = len(system)
     replayed = replayed_steps(messages, replay_model)
     for index, message in enumerate(messages):

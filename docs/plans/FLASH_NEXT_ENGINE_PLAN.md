@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-06 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-07 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -731,6 +731,15 @@ reasoning"). The adapter never sent it back. Owner decision: the card's lighter
   rendered an (empty) think block on earlier turns' assistant messages, `preserve_thinking=false`
   drops it, so each conversation's history prefix changes once and its first turn re-reads the
   history cold. Not yet observed on-box.
+- **Revised 2026-10-07: every turn's thinking, `preserve_thinking=true`.** Observed on-box
+  instead: the bounded mode re-rendered the previous turn's steps without their thinking the
+  moment a new user message arrived, so EVERY follow-up diverged at the previous turn's first
+  step, behind all eight checkpoints — a follow-up to a 16-call turn re-read ~117k tokens.
+  `replayed_steps` now picks every step the model thought, the kwarg is sent `true`, earlier
+  turns replay their recorded thinking (`agent_turns.wire`), and the replay budget bounds the
+  growth. `replayed_tokens` and the cost guardrail cover all of it, so a long chat costs the
+  loop what it would on a model that does not replay. See `../reference/PROMPT_CACHE.md`,
+  "A follow-up is an exact extension of the last prompt".
 
 ### F4 — Per-role disk prefix cache 🟡 (code built 2026-10-04; the on-box check is pending)
 Begins with the check moved out of F2, and gated on it:
@@ -816,9 +825,9 @@ Begins with the check moved out of F2, and gated on it:
   guard's locked decision and holds them while it streams. A session ever scoped to a firewalled
   domain or a subject before a re-scope is recorded (owner setting, no new table) and stays off
   disk for good. APRS tools join the excluded list; the toggle reads malformed values as off.
-- **Preserved thinking (#1560).** Restores compare no messages at all; the next turn's text-only,
-  `preserve_thinking=false` render diverges at the previous turn's first tool step, where reuse
-  stops at the nearest checkpoint before it — which the hit/partial/miss judging measures.
+- **Preserved thinking (#1560).** Restores compare no messages at all. The next turn's render
+  now extends the last prompt exactly (2026-10-07, F3b follow-on above), so a restored
+  conversation should reuse through to its end — which the hit/partial/miss judging measures.
 
 **Pending on the box (in order; each needs only the debug token):**
 1. Ops → Update (rebuilds the flash-next image with the patch), switch to Flash-Next.

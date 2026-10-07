@@ -197,11 +197,12 @@ class AssistantMessage:
     """A prior assistant turn: any text it produced plus the tool calls it made.
     Replayed back so the model sees its own tool requests in context.
 
-    `reasoning` is that step's own thinking trace, set only by the agent loop on the tool
-    steps of the turn in flight, and `reasoning_model` the served model that thought it.
-    The adapter replays it solely to that same model, solely when its chat template
-    preserves reasoning (`LocalModel.preserves_reasoning`), and solely after the last user
-    message (`replayed_steps`) — history rebuilt from earlier turns never carries it."""
+    `reasoning` is that step's own thinking trace and `reasoning_model` the served model that
+    thought it: set by the agent loop on the turn in flight's steps, and by the transcript
+    replay on earlier turns' steps (`agent/history_replay.py`). The adapter replays it solely
+    to that same model and solely when its chat template preserves reasoning
+    (`LocalModel.preserves_reasoning`) — then for EVERY step, earlier turns included
+    (`replayed_steps`), so a follow-up's prompt is an exact extension of the last one."""
 
     text: str = ""
     tool_calls: Sequence[ToolCall] = ()
@@ -219,32 +220,23 @@ class ToolResultMessage:
 LlmMessage = UserMessage | AssistantMessage | ToolResultMessage
 
 
-def current_turn_start(messages: Sequence[LlmMessage]) -> int:
-    """Index just past the last user message: where the turn in flight's own steps begin.
-
-    The boundary the Qwen3.8 template draws for `preserve_thinking=False` (its
-    `last_query_index`), shared by the serializer that replays reasoning and the slot
-    estimate that must count it, so the two cannot disagree on which steps are replayed."""
-    for index in range(len(messages) - 1, -1, -1):
-        if isinstance(messages[index], UserMessage):
-            return index + 1
-    return 0
-
-
 def replayed_steps(messages: Sequence[LlmMessage], model: str) -> frozenset[int]:
-    """Indices of the steps whose reasoning goes back to `model`: assistant steps of the turn
-    in flight that have a trace, and that `model` itself produced. Another model's thinking
-    (a mid-turn engine switch) is not this template's to render. An empty `model` is no replay.
-    The one rule the serializer and the slot estimate both apply."""
+    """Indices of the steps whose reasoning goes back to `model`: every assistant step that has
+    a trace `model` itself produced — earlier turns' as well as the turn in flight's. Another
+    model's thinking (an engine switch) is not this template's to render. An empty `model` is
+    no replay. The one rule the serializer and the slot estimate both apply.
+
+    All of them, not only the turn in flight's: the template renders history with its
+    thinking (`preserve_thinking=true`), so a step sent WITH its trace during its own turn
+    must be sent with the same trace on every later turn, or the prompt diverges at the
+    previous turn's first step and a hybrid model re-reads everything after it
+    (docs/reference/PROMPT_CACHE.md, "A follow-up is an exact extension")."""
     if not model:
         return frozenset()
-    start = current_turn_start(messages)
     return frozenset(
         index
-        for index in range(start, len(messages))
-        if isinstance(step := messages[index], AssistantMessage)
-        and step.reasoning
-        and step.reasoning_model == model
+        for index, step in enumerate(messages)
+        if isinstance(step, AssistantMessage) and step.reasoning and step.reasoning_model == model
     )
 
 
@@ -269,8 +261,9 @@ class LlmTurn:
     reasoning: str = ""
     # Stamped by the router, not the client: the served model that produced this turn (so a
     # replayed step names its thinker), and the ESTIMATED share of `usage.input_tokens` that was
-    # this turn's own earlier reasoning replayed back — re-billed every round, so the agent
-    # loop's cost guardrail leaves it out rather than spending its budget on it.
+    # replayed reasoning (this turn's earlier steps and earlier turns') — re-billed every round,
+    # so the agent loop's cost guardrail leaves it out rather than spending its budget on it,
+    # and charges a preserving model the same as one that never replays.
     model: str = ""
     replayed_tokens: int = 0
 

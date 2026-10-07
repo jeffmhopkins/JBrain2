@@ -78,6 +78,38 @@ async def test_a_streamed_turn_carries_them_too_and_absent_reads_as_zero() -> No
     assert bare.usage.cached_tokens == 0
 
 
+async def test_llama_servers_own_timings_stand_in_when_usage_carries_no_cached_count() -> None:
+    # A build whose usage block omits `cached_tokens` still reports `timings.cache_n`: the
+    # reuse diagnostic (`turn_reuse`) must not read every follow-up as a full re-read.
+    timings = {"cache_n": 117_000, "prompt_n": 512}
+    body = {
+        "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 117_512, "completion_tokens": 3},
+        "timings": timings,
+    }
+    client = _client(httpx.MockTransport(lambda _r: httpx.Response(200, json=body)))
+    turn = await client.converse(model="m", system="s", messages=[UserMessage(text="u")])
+    assert turn.usage.cached_tokens == 117_000
+
+    events = [
+        {"choices": [{"delta": {"content": "hi"}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}], "timings": timings},
+        {"choices": [], "usage": {"prompt_tokens": 117_512, "completion_tokens": 1}},
+    ]
+    sse = ("\n\n".join(f"data: {json.dumps(e)}" for e in events) + "\n\ndata: [DONE]\n\n").encode()
+    client = _client(
+        httpx.MockTransport(
+            lambda _r: httpx.Response(
+                200, content=sse, headers={"content-type": "text/event-stream"}
+            )
+        )
+    )
+    parts = [
+        p async for p in client.converse_stream(model="m", system="s", messages=[UserMessage("u")])
+    ]
+    assert isinstance(parts[-1], LlmTurn) and parts[-1].usage.cached_tokens == 117_000
+
+
 class _Store:
     def __init__(self) -> None:
         self.calls: list[object] = []

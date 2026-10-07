@@ -15,6 +15,7 @@ never copied note bodies.
 
 import asyncio
 import contextlib
+import json
 import time
 import uuid
 from bisect import bisect_left
@@ -177,6 +178,12 @@ _THINK_FLUSH_S = 0.7
 # effectively a global cap; `live_turns` counts only parent /chat turns (children run inside
 # a parent, headless Task runs never register here).
 _MAX_CONCURRENT_TURNS = 4
+# A turn whose last prompt came within this of the window replays cut, not whole (`_wire_record`):
+# the follow-up's own messages and the answer must still fit.
+FULL_HEADROOM_TOKENS = 32_768
+# The per-turn replay record's ceiling. It holds thinking, arguments and the turn's own blocks (the
+# results stay in `tools`); a turn past this replays from its prose.
+MAX_WIRE_CHARS = 2_000_000
 
 
 class ChatMessageIn(BaseModel):
@@ -492,6 +499,7 @@ async def _record_transcript(
     attachment_ids: list[str],
     reasoning: str = "",
     omit_user_turn: bool = False,
+    wire: dict[str, Any] | None = None,
 ) -> None:
     """Persist the completed exchange so the session replays on reopen, then bind the
     turn's attachments to its USER turn row. The transcript is owner metadata (owner
@@ -512,6 +520,7 @@ async def _record_transcript(
                 assistant_text="".join(answer_parts),
                 tools=tools,
                 reasoning=reasoning,
+                wire=wire,
             )
             return
         user_turn_id = await transcript.record_exchange(
@@ -522,6 +531,7 @@ async def _record_transcript(
             assistant_text="".join(answer_parts),
             tools=tools,
             reasoning=reasoning,
+            wire=wire,
         )
         if attachment_ids:
             await get_turn_attachments(request).bind_to_turn(
@@ -823,20 +833,29 @@ def _conversation(
     short clips jerv watches inline; `videos` are a framed turn's own clips."""
     anchors = anchored or {}
     messages: list[LlmMessage] = []
-    history: Sequence[Sequence[LlmMessage]] = (
-        [entry.messages for entry in replayed]
+    history: Sequence[tuple[Sequence[LlmMessage], Sequence[LlmMessage]]] = (
+        [(entry.messages, entry.tail) for entry in replayed]
         if replayed is not None
         else [
-            [UserMessage(text=m.content) if m.role == "user" else AssistantMessage(text=m.content)]
+            (
+                [
+                    UserMessage(text=m.content)
+                    if m.role == "user"
+                    else AssistantMessage(text=m.content)
+                ],
+                (),
+            )
             for m in body.history
         ]
     )
-    for i, turn_messages in enumerate(history):
+    for i, (turn_messages, tail) in enumerate(history):
         messages.extend(turn_messages)
         anchor = anchors.get(i)
         if anchor is not None:
             note, anchor_images, anchor_videos = anchor
             messages.append(UserMessage(text=note, images=anchor_images, videos=anchor_videos))
+        # A replayed turn's own blocks and message came after its live anchor (`Entry.tail`).
+        messages.extend(tail)
     if live_anchor is not None:
         # This turn's own image goes straight to its cache-stable home: the question
         # text spelled exactly as the client's next-turn history entry will spell it,
@@ -859,6 +878,54 @@ def _conversation(
         text = f"{text}\n\n{extra_text}"
     messages.append(UserMessage(text=text, images=tuple(images), videos=tuple(videos)))
     return messages
+
+
+def _turn_input(
+    live_anchor: tuple[str, str, tuple[LlmImage, ...], tuple[LlmVideo, ...]] | None,
+    own_blocks: Sequence[LlmMessage],
+    unrecorded: Sequence[LlmMessage] = (),
+) -> dict[str, list[str]] | None:
+    """The turn's own user-side messages as sent: `head` before the live image anchor (the
+    question spelled as history spells it), `tail` after it, less the `unrecorded` blocks
+    (matched by identity — two blocks may share a text). None if any is not plain user text,
+    which the replay could not reproduce."""
+    if not all(isinstance(m, UserMessage) for m in own_blocks):
+        return None
+    skip = {id(m) for m in unrecorded}
+    return {
+        "head": [live_anchor[0]] if live_anchor is not None else [],
+        "tail": [m.text for m in own_blocks if isinstance(m, UserMessage) and id(m) not in skip],
+    }
+
+
+def _wire_record(
+    acc: TranscriptAccumulator,
+    turn_input: dict[str, list[str]] | None,
+    *,
+    agent: str,
+    stop_reason: str,
+    context_used: int | None,
+    context_window: int | None,
+) -> dict[str, Any] | None:
+    """The turn as the model was sent it, for the exact replay — kept only for the persona
+    whose history replays it (jerv), and only within `MAX_WIRE_CHARS`. A turn that ended at
+    the slot's ceiling (overflowed, or within `FULL_HEADROOM_TOKENS` of the window) is marked
+    `full`: replayed whole it would overflow every follow-up, so the replay cuts it instead."""
+    if agent != "jerv":
+        return None
+    wire = acc.wire(turn_input)
+    if wire is None:
+        return None
+    near_full = (
+        context_used is not None
+        and context_window is not None
+        and context_used >= context_window - FULL_HEADROOM_TOKENS
+    )
+    if stop_reason == "context_overflow" or near_full:
+        wire["full"] = True
+    if len(json.dumps(wire)) > MAX_WIRE_CHARS:
+        return None
+    return wire
 
 
 async def _disk_conversation_key(
@@ -904,21 +971,33 @@ async def _disk_conversation_key(
     return None if kv_conversation.any_excluded(ran) else str(session.id)
 
 
+async def _exact_replay(router: LlmRouter, model_override: str | None) -> bool:
+    """Whether this turn replays earlier turns exactly as they were sent: on the local route,
+    where the engine's cache reuses only an exact extension of the last prompt. A cloud
+    provider keeps the prose replay it has always been sent."""
+    try:
+        provider, _model = await router.effective_spec("agent.turn", spec_override=model_override)
+    except Exception:  # noqa: BLE001 - a routing hiccup keeps the prose replay
+        return False
+    return provider == local_catalog.LOCAL_PROVIDER
+
+
 async def _replayed_history(
-    request: Request, ctx: SessionContext, session_id: str
+    request: Request, ctx: SessionContext, session_id: str, *, exact: bool = False
 ) -> list[history_replay.Entry] | None:
     """The transcript-built history, with the replay boundary moved (and stored) first so
     every render after this one agrees on it. None when anything can't be read: the turn then
-    runs on the client's text history rather than failing."""
+    runs on the client's text history rather than failing. `exact` (a local route) replays
+    each recorded turn exactly as it was sent (`history_replay.build`)."""
     try:
-        turns = await get_agent_transcript(request).load(ctx, session_id)
+        turns = await get_agent_transcript(request).load(ctx, session_id, with_wire=True)
         sessions = get_agent_sessions(request)
         floor = await sessions.replay_floor(ctx, session_id)
-        moved = history_replay.advance_floor(turns, floor)
+        moved = history_replay.advance_floor(turns, floor, exact=exact)
         if moved != floor:
             await sessions.advance_replay_floor(ctx, session_id, moved)
             log.info("agent.replay_floor_advanced", session=session_id, floor=moved)
-        return history_replay.build(turns, moved)
+        return history_replay.build(turns, moved, exact=exact)
     except Exception:  # noqa: BLE001 - the owner's turn must never fail on its history
         log.warning("agent.history_replay_unread", session=session_id, exc_info=True)
         return None
@@ -1250,7 +1329,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # A jerv chat's earlier turns replay their tool calls and results, not just their prose
     # (docs/plans/TOOL_RESULT_REPLAY_PLAN.md); None falls back to the client's text history.
     replayed = (
-        await _replayed_history(request, owner_ctx, session.id) if session.agent == "jerv" else None
+        await _replayed_history(
+            request, owner_ctx, session.id, exact=await _exact_replay(router, model_override)
+        )
+        if session.agent == "jerv"
+        else None
     )
     history_text = (
         [ChatMessageIn(role=e.role, content=e.text) for e in replayed]
@@ -1486,9 +1569,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # Both stay before the current turn (the model sees them when it answers) but after the
     # history, so a per-turn change no longer invalidates the reusable prefix.
     volatile: list[LlmMessage] = []
+    # Never recorded with the turn (`_turn_input`): see `unrecorded` below.
+    unrecorded: list[LlmMessage] = []
     presence = await _presence_block(request, owner_ctx, session)
     if presence:
         volatile.append(UserMessage(text=presence))
+        unrecorded.append(volatile[-1])
     volatile.append(UserMessage(text=now_block(owner_tz)))
     # Whether this chat still has no name. The `name_session` tool names it from inside the
     # turn; this line is how the model knows it is needed. It lives in the VOLATILE suffix on
@@ -1527,8 +1613,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     plan_blocks: list[LlmMessage] = []
     with contextlib.suppress(Exception):
         plan_blocks = await _plan_blocks(request, owner_ctx, session)
-    conversation = [
-        *conversation[:-1],
+    own_blocks = [
         *resume_blocks,
         *artifact_blocks,
         *report_blocks,
@@ -1536,6 +1621,18 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         *volatile,
         conversation[-1],
     ]
+    conversation = [*conversation[:-1], *own_blocks]
+    # This turn's own user-side messages exactly as sent, recorded with the turn so the next
+    # one replays them in place (`history_replay.build`): without them the follow-up's prompt
+    # diverges right here, before any of this turn's steps, and the engine re-reads the turn.
+    # The image anchor's bytes are not kept; the anchor is re-placed between head and tail.
+    # Three blocks are NEVER recorded, and the replay diverges where they were (one re-read):
+    # presence is location-domain data, which must not outlive its scope in a transcript
+    # column outside that firewall; the approved plan and the unclaimed-analysis resume are
+    # standing instructions that would keep replaying after the plan is revoked or the analysis
+    # claimed, one copy per turn.
+    unrecorded.extend([*resume_blocks, *plan_blocks])
+    turn_input = _turn_input(live_anchor, own_blocks, unrecorded)
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
@@ -1667,6 +1764,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # (docs/archive/SUBAGENT_SPAWNING_PLAN.md). Harmless for personas that never spawn.
             tree=TreeState.rooted(guardrails.max_cost_tokens),
             run_id=run_id,
+            # Each round as the model was sent it, for the exact replay on later turns.
+            on_round=acc.record_round,
         )
         try:
             # A long blocking tool may stream nothing for minutes; the pull is never
@@ -1741,6 +1840,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     body.attachment_ids,
                     acc.reasoning_text,
                     omit_user_turn=body.deferred_outcome,
+                    wire=_wire_record(
+                        acc,
+                        turn_input,
+                        agent=session.agent,
+                        stop_reason=stop_reason,
+                        context_used=last_context_used,
+                        context_window=context_window,
+                    ),
                 )
                 # Persist the turn's context fill so the meter restores on reopen
                 # (best-effort — the transcript above is the record of the turn; this
@@ -1845,6 +1952,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             body.attachment_ids,
                             acc.reasoning_text,
                             omit_user_turn=body.deferred_outcome,
+                            wire=_wire_record(
+                                acc,
+                                turn_input,
+                                agent=session.agent,
+                                stop_reason=stop_reason,
+                                context_used=last_context_used,
+                                context_window=context_window,
+                            ),
                         )
                 with contextlib.suppress(Exception):
                     await runlog.finish(

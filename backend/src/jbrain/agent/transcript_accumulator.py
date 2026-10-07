@@ -9,10 +9,33 @@ place that folds the event stream into that shape, so the two callers cannot dri
 emptier record — see tasks/runner.py).
 """
 
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from jbrain.agent.contracts import ChatEvent
+from jbrain.llm import LlmTurn, ToolCall
+
+
+@dataclass(frozen=True)
+class RoundRecord:
+    """One model round exactly as the next round was sent it (`loop._step_message`): its text,
+    thinking and the served model that thought it, the calls it made, and anything appended to
+    a result for the model only (the `[=n]` citation line). No calls: the turn's answer.
+
+    The agent loop reports these (`run_stream(on_round=…)`) instead of riding the PWA's event
+    stream, which already carried the text and thinking once."""
+
+    text: str
+    reasoning: str
+    model: str
+    calls: Sequence[ToolCall] = ()
+    suffixes: Mapping[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def of(cls, turn: LlmTurn, suffixes: Mapping[str, str] | None = None) -> "RoundRecord":
+        return cls(turn.text, turn.reasoning, turn.model, tuple(turn.tool_calls), suffixes or {})
 
 
 @dataclass
@@ -30,6 +53,12 @@ class TranscriptAccumulator:
     done: bool = False
     _steps: dict[str, dict[str, Any]] = field(default_factory=dict)
     _order: list[str] = field(default_factory=list)
+    # The turn's model rounds exactly as they were sent back to the model (`wire`).
+    _rounds: list[dict[str, Any]] = field(default_factory=list)
+    _suffixes: dict[str, str] = field(default_factory=dict)
+    _final: dict[str, str] | None = None
+    _recording: bool = False
+    _resulted: set[str] = field(default_factory=set)
 
     def feed(self, event: ChatEvent) -> None:
         if event.type == "text_delta":
@@ -70,6 +99,7 @@ class TranscriptAccumulator:
             }
             self._order.append(event.id)
         elif event.type == "tool_result":
+            self._resulted.add(event.tool_call_id)
             step = self._steps.get(event.tool_call_id)
             if step is not None:
                 step["ok"] = event.ok
@@ -147,6 +177,42 @@ class TranscriptAccumulator:
                 s["ok"] = False
                 s.setdefault("summary", "(interrupted)")
         return steps
+
+    def record_round(self, record: RoundRecord) -> None:
+        """The loop's `on_round` sink: keep the round as the model was sent it."""
+        self._recording = True
+        said = {"text": record.text, "reasoning": record.reasoning, "model": record.model}
+        if not record.calls:
+            self._final = said
+            return
+        # The arguments as the adapter serializes them, kept as a STRING: a JSONB object
+        # reorders its keys, and a reordered call is a different prompt.
+        calls = [
+            {"id": c.id, "name": c.name, "arguments": json.dumps(c.arguments)} for c in record.calls
+        ]
+        self._rounds.append({**said, "calls": calls})
+        self._suffixes.update({k: v for k, v in record.suffixes.items() if v})
+
+    def wire(self, turn_input: dict[str, list[str]] | None = None) -> dict[str, Any] | None:
+        """The turn as the model was sent it, for an exact replay on later turns
+        (`agent/history_replay.py`): each round's text, thinking, model and calls (arguments
+        as serialized), the model-only suffix of any result, the final round, and
+        `turn_input` — the turn's own user-side messages (`head` before an image anchor,
+        `tail` after it). None when a round went unrecorded: the replay then rebuilds the
+        turn from its prose, as for a turn stored before this existed — and so is a turn with a
+        result no recorded round accounts for (a producer that reports no rounds, or a round
+        cut mid-dispatch)."""
+        recorded = {c["id"] for r in self._rounds for c in r["calls"]}
+        if not self._recording or not self._resulted <= recorded:
+            return None
+        record: dict[str, Any] = {"v": 1, "rounds": [dict(r) for r in self._rounds]}
+        if self._suffixes:
+            record["suffixes"] = dict(self._suffixes)
+        if self._final is not None:
+            record["final"] = dict(self._final)
+        if turn_input is not None:
+            record["input"] = turn_input
+        return record
 
     def render_snapshot(self) -> dict[str, Any]:
         """The in-flight assistant turn's render SO FAR, in the transcript's own shape, so a

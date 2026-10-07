@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import defer
 
 from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -83,6 +84,9 @@ class TurnRecord:
     elapsed_ms: int | None = None
     # The turn's position in the transcript — what the tool-result replay boundary counts in.
     seq: int = 0
+    # The assistant turn as the model was sent it (`TranscriptAccumulator.wire`); None when
+    # unrecorded. Server-side only — the replay reads it, the PWA never does.
+    wire: dict[str, Any] | None = None
 
 
 class AgentTranscript:
@@ -108,6 +112,7 @@ class AgentTranscript:
         assistant_text: str,
         tools: Sequence[dict[str, Any]],
         reasoning: str = "",
+        wire: dict[str, Any] | None = None,
     ) -> str:
         """Append the user turn then the assistant turn for one completed exchange.
         Returns the new USER turn's id so the caller can bind the turn's pre-uploaded
@@ -128,6 +133,7 @@ class AgentTranscript:
                     content=assistant_text,
                     tools=list(tools),
                     reasoning=reasoning,
+                    wire=wire,
                 )
             )
             await session.flush()
@@ -142,6 +148,7 @@ class AgentTranscript:
         assistant_text: str,
         tools: Sequence[dict[str, Any]],
         reasoning: str = "",
+        wire: dict[str, Any] | None = None,
     ) -> None:
         """Append ONLY an assistant turn — no user turn — for a completion the owner didn't
         type. The deferred-analysis auto-resume is driven by a server-authored system notice,
@@ -156,6 +163,7 @@ class AgentTranscript:
                     content=assistant_text,
                     tools=list(tools),
                     reasoning=reasoning,
+                    wire=wire,
                 )
             )
 
@@ -230,18 +238,23 @@ class AgentTranscript:
                         names.add(name)
         return names
 
-    async def load(self, ctx: SessionContext, session_id: str) -> list[TurnRecord]:
-        async with scoped_session(self._maker, ctx) as session:
+    async def load(
+        self, ctx: SessionContext, session_id: str, *, with_wire: bool = False
+    ) -> list[TurnRecord]:
+        """The session's turns in order. `with_wire` also reads each turn's replay record —
+        only the history replay wants it, and every reopen of a chat would otherwise read it."""
+        query = (
             # One outer join to the turn's run for its start — no per-turn round-trip; a
             # turn whose run aged out (SET NULL) or never had one just reads no span.
-            rows = (
-                await session.execute(
-                    select(AgentTurn, Run.started_at)
-                    .outerjoin(Run, Run.id == AgentTurn.run_id)
-                    .where(AgentTurn.session_id == uuid.UUID(session_id))
-                    .order_by(AgentTurn.seq)
-                )
-            ).all()
+            select(AgentTurn, Run.started_at)
+            .outerjoin(Run, Run.id == AgentTurn.run_id)
+            .where(AgentTurn.session_id == uuid.UUID(session_id))
+            .order_by(AgentTurn.seq)
+        )
+        if not with_wire:
+            query = query.options(defer(AgentTurn.wire, raiseload=True))
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (await session.execute(query)).all()
         # One RLS-scoped round-trip for every user turn's attachments, so a reopened
         # session replays the files on the turn that carried them.
         by_turn: dict[str, list[AttachmentInfo]] = {}
@@ -259,6 +272,7 @@ class AgentTranscript:
                     turn_elapsed_ms(r.created_at, started_at) if r.role == "assistant" else None
                 ),
                 seq=r.seq,
+                wire=r.wire if with_wire else None,
             )
             for r, started_at in rows
         ]
