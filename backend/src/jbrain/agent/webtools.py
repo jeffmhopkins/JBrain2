@@ -721,6 +721,12 @@ def build_web_handlers(
             " against today). Prefer freely-fetchable outlets (AP, NPR, BBC, PBS, Guardian,"
             " primary sources) over walled ones:"
         )
+        if any(h.window_widened for h in kept):
+            # Said so the model does not take the window as the engines' own filter.
+            note += (
+                f"\n\n(The news engines that filter by date were unavailable, so these are the"
+                f" unfiltered results kept to the last {since} by each story's own date.)"
+            )
         return ToolOutput(
             header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
         )

@@ -20,7 +20,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
@@ -189,6 +189,9 @@ class NewsHit:
     url: str
     snippet: str
     published: str
+    # The window blanked every engine that can filter by date, so this hit came from the
+    # unwindowed search and passed the window on its own publish date instead (`search_news`).
+    window_widened: bool = False
 
 
 @dataclass(frozen=True)
@@ -207,6 +210,13 @@ class ScienceHit:
 # SearXNG's recency filter values (`time_range`) — the coarse windows the engines support,
 # mapping "today"/"this week" to a filter. Shared by every search that takes recency.
 TIME_RANGES = ("day", "week", "month", "year")
+# How far back each window reaches when news is dated here rather than by SearXNG.
+_WINDOW_SPAN = {
+    "day": timedelta(days=1),
+    "week": timedelta(days=7),
+    "month": timedelta(days=31),
+    "year": timedelta(days=366),
+}
 # Back-compat alias (news was the first taker); prefer TIME_RANGES for new call sites.
 NEWS_TIME_RANGES = TIME_RANGES
 
@@ -308,6 +318,26 @@ def _unresponsive_rows(body: dict[str, object]) -> list[tuple[str, str]]:
 def _unresponsive_engines(body: dict[str, object]) -> list[str]:
     """`_unresponsive_rows` rendered for the log line: `name: reason`, or a bare name."""
     return [f"{n}: {r}" if r else n for n, r in _unresponsive_rows(body)]
+
+
+def _published_at(value: str) -> datetime | None:
+    """A news row's publish date as an aware datetime; SearXNG gives ISO text, naive as UTC."""
+    try:
+        when = datetime.fromisoformat(value.strip().replace(" ", "T", 1))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
+
+
+def _within_window(hits: list[NewsHit], time_range: str) -> list[NewsHit]:
+    """The hits published inside `time_range`, by their own dates, flagged as dated here."""
+    cutoff = datetime.now(UTC) - _WINDOW_SPAN[time_range]
+    kept: list[NewsHit] = []
+    for h in hits:
+        when = _published_at(h.published) if h.published else None
+        if when is not None and when >= cutoff:
+            kept.append(replace(h, window_widened=True))
+    return kept
 
 
 def _answered_engines(body: dict[str, object]) -> tuple[str, ...]:
@@ -955,13 +985,29 @@ class SearxngClient:
         TIME_RANGES; anything else means no window). News rows carry a `publishedDate` the general
         category lacks, so each hit keeps that date as a freshness signal. Order is SearXNG's
         blended ranking (not re-sorted), so a strong recent story stays on top rather than a bare
-        date sort burying the relevant lead. Raises WebSearchError like `search`."""
+        date sort burying the relevant lead. Raises WebSearchError like `search`.
+
+        A window that comes back EMPTY is retried without it, and the hits are then held to the
+        window by their own publish dates (undated ones dropped), flagged `window_widened`. A
+        window skips every engine without `time_range_support` — Google News, this deployment's
+        one dependable news engine, among them — so on 2026-10-07 "AI news, last day" came back
+        empty because the only engines left (Reuters, Brave News) were erroring and throttled."""
         tr = time_range if time_range in TIME_RANGES else ""
         key = (query.strip(), tr, limit)
         if self._news_cache is not None and (cached := self._news_cache.get(key)) is not None:
             return cached
-        body = await self._query(query, categories="news", time_range=tr)
-        hits = [
+        hits = self._news_hits(await self._query(query, categories="news", time_range=tr), limit)
+        if tr and not hits:
+            # Wider than `limit` so the date filter still leaves enough of them.
+            wide = self._news_hits(await self._query(query, categories="news"), limit * 3)
+            hits = _within_window(wide, tr)[:limit]
+            log.info("web.news_window_widened", time_range=tr, found=len(wide), kept=len(hits))
+        if self._news_cache is not None and hits:
+            self._news_cache[key] = hits
+        return hits
+
+    def _news_hits(self, body: dict[str, object], limit: int) -> list[NewsHit]:
+        return [
             NewsHit(
                 title=str(r.get("title") or "").strip() or str(r["url"]).strip(),
                 url=str(r["url"]).strip(),
@@ -970,9 +1016,6 @@ class SearxngClient:
             )
             for r in self._rows(body, limit)
         ]
-        if self._news_cache is not None and hits:
-            self._news_cache[key] = hits
-        return hits
 
     async def search_science(self, query: str, limit: int = _DEFAULT_LIMIT) -> list[ScienceHit]:
         """Search SearXNG's SCIENCE category — the scholarly engines (arXiv, PubMed, Semantic /

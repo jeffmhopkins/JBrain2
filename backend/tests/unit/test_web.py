@@ -150,6 +150,91 @@ async def test_search_news_is_cached_separately_per_window() -> None:
     assert len(calls) == 2
 
 
+def _news_row(title: str, published: str | None) -> dict:
+    row = {"title": title, "url": f"https://news.example/{title}", "content": title}
+    if published is not None:
+        row["publishedDate"] = published
+    return row
+
+
+def _iso(hours_ago: float, *, tz: bool = False) -> str:
+    from datetime import UTC, datetime, timedelta
+
+    when = datetime.now(UTC) - timedelta(hours=hours_ago)
+    return when.isoformat() if tz else when.replace(tzinfo=None).isoformat(sep=" ")
+
+
+def _news_handler(windowed: dict, wide: dict, calls: list[httpx.Request]):  # type: ignore[no-untyped-def]
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        body = windowed if "time_range" in request.url.params else wide
+        return httpx.Response(200, json=body)
+
+    return handle
+
+
+async def test_an_empty_news_window_is_retried_wide_and_dated_here() -> None:
+    """2026-10-07: "AI news, last day" came back empty — the window skips Google News (no
+    time_range_support) and the engines left were erroring. The retry runs unwindowed and
+    keeps only stories the window covers by their own dates."""
+    calls: list[httpx.Request] = []
+    wide = {
+        "results": [
+            _news_row("fresh", _iso(3)),
+            _news_row("aware", _iso(20, tz=True)),
+            _news_row("stale", _iso(50)),
+            _news_row("undated", None),
+            _news_row("garbled", "yesterday-ish"),
+        ]
+    }
+    client = _searx(_news_handler({"results": []}, wide, calls))
+    hits = await client.search_news("artificial intelligence news today", time_range="day")
+    assert [h.title for h in hits] == ["fresh", "aware"]
+    assert all(h.window_widened for h in hits)
+    assert calls[0].url.params["time_range"] == "day"
+    assert "time_range" not in calls[1].url.params
+    assert calls[1].url.params["categories"] == "news"
+    # Cached under the window asked for: a repeat makes no request.
+    await client.search_news("artificial intelligence news today", time_range="day")
+    assert len(calls) == 2
+
+
+async def test_a_week_window_keeps_a_week_and_honours_the_limit() -> None:
+    calls: list[httpx.Request] = []
+    wide = {"results": [_news_row(f"s{i}", _iso(24 * i + 1)) for i in range(10)]}
+    hits = await _searx(_news_handler({"results": []}, wide, calls)).search_news(
+        "q", time_range="week", limit=3
+    )
+    assert [h.title for h in hits] == ["s0", "s1", "s2"]
+
+
+async def test_a_window_that_answers_is_not_widened() -> None:
+    calls: list[httpx.Request] = []
+    windowed = {"results": [_news_row("from the window", None)]}
+    hits = await _searx(_news_handler(windowed, {"results": []}, calls)).search_news(
+        "q", time_range="day"
+    )
+    assert [h.title for h in hits] == ["from the window"] and not hits[0].window_widened
+    assert len(calls) == 1
+
+
+async def test_no_window_means_no_retry() -> None:
+    calls: list[httpx.Request] = []
+    await _searx(_news_handler({"results": []}, {"results": []}, calls)).search_news(
+        "q", time_range="fortnight"
+    )
+    assert len(calls) == 1
+
+
+async def test_the_news_tool_says_when_it_dated_the_results_itself() -> None:
+    calls: list[httpx.Request] = []
+    wide = {"results": [_news_row("fresh", _iso(2))]}
+    handlers = build_web_handlers(_searx(_news_handler({"results": []}, wide, calls)), WebFetcher())
+    out = str(await handlers["news_search"]({"query": "ai", "since": "day"}, CTX))
+    assert "fresh" in out
+    assert "kept to the last day by each story's own date" in out
+
+
 async def test_search_news_unconfigured_raises() -> None:
     with pytest.raises(WebSearchError):
         await SearxngClient("").search_news("q")
