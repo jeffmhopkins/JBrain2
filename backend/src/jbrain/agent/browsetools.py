@@ -10,7 +10,7 @@ host itself loaded, as citation chips.
 
 from __future__ import annotations
 
-from jbrain.agent import browse_gate, browse_trace
+from jbrain.agent import browse_gate, browse_trace, url_provenance
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.browse import BrowseAgent, render_for_caller
 from jbrain.agent.contracts import WebSource
@@ -37,6 +37,12 @@ def build_browse_handlers(
             )
         raw_start = arguments.get("start_url")
         start_url = str(raw_start).strip() if raw_start else None
+        # The provenance gate first, as web_fetch applies it: a start_url whose site the
+        # conversation never produced is refused before the fetch-first gate can echo it.
+        if start_url is not None:
+            unseen = url_provenance.refusal(start_url, ctx.seen_sites)
+            if unseen is not None:
+                return ToolOutput(unseen, result_brief=url_provenance.REFUSAL_BRIEF)
         # The fetch-first gate, before anything runs: no browser for a site this turn's
         # web_fetch did not find needing one (browse_gate's docstring has the why).
         refused = browse_gate.refusal(start_url, ctx.browser_needed)

@@ -4,6 +4,8 @@ return before any DB/model touch; the success path uses fakes + a loop seam so t
 service's wiring (clamp, depth, no-location, tree threading, lineage) is asserted
 without a database or an LLM."""
 
+from dataclasses import replace
+
 import pytest
 
 from jbrain.agent import spawn as spawn_mod
@@ -20,6 +22,7 @@ from jbrain.agent.tree import (
     TreeState,
     child_steps_for,
 )
+from jbrain.agent.url_provenance import SeenSites
 from jbrain.db.session import SessionContext
 from jbrain.llm.slot_roles import SlotRole
 
@@ -422,6 +425,20 @@ async def test_fan_mints_clamped_sandboxed_children_in_order(service: SpawnServi
     assert out.index("Alpha") < out.index("Beta")
     assert "2 ran" in out
     assert len(by_session) == 2
+
+
+async def test_child_inherits_the_parents_url_provenance_set(service: SpawnService) -> None:
+    """The child loop starts from the parent's seen sites, not from the brief the parent
+    model wrote (url_provenance); the loop copies it, so the child cannot grow the parent's."""
+    ctx = _ctx()
+    parent_sites = SeenSites()
+    parent_sites.add_url("https://owner-gave.com/a")
+    ctx = replace(ctx, seen_sites=parent_sites)
+    await service.spawn_fan(
+        ctx,
+        {"tasks": [{"persona": "research", "brief": "read https://made-up.org/x", "label": "A"}]},
+    )
+    assert _FakeLoop.calls[0]["seen_sites"] is parent_sites
 
 
 async def test_child_effort_is_threaded_to_the_loop(service: SpawnService) -> None:

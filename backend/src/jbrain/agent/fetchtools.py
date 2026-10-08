@@ -21,6 +21,7 @@ from __future__ import annotations
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent import url_provenance
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.chat_images import (
     PROVENANCE_FETCHED,
@@ -53,6 +54,10 @@ def build_fetch_image_handlers(
         url = str(arguments.get("url", "")).strip()
         if not url:
             return "fetch_image needs a url."
+        # Same provenance gate as web_fetch: no bytes from an address the model made up.
+        refused = url_provenance.refusal(url, ctx.seen_sites)
+        if refused is not None:
+            return ToolOutput(refused, result_brief=url_provenance.REFUSAL_BRIEF)
         show = arguments.get("show", True) is not False
         if emit:
             emit("web_fetch", url)
