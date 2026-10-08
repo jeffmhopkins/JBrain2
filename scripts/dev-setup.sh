@@ -129,6 +129,8 @@ sync_python jcode
 sync_python jlaunch
 
 # --- Frontend (React/Vite, vitest, biome) ---
+# npm deps of note: katex (math), leaflet (maps), xterm (jcode), lowlight + highlight.js
+# (chat code-block syntax colour — a lazy chunk, curated grammars only).
 if [ -f frontend/package.json ]; then
   if fresh node frontend/package-lock.json; then
     log "frontend dependencies already current"

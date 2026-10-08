@@ -55,6 +55,18 @@
   --location: #6fb6b1;
   --location-tint: rgba(111, 182, 177, 0.13);
 
+  /* Syntax highlighting — the closed token set every code listing colours with (chat code
+     blocks and the code_run view). Named by role so a listing never reaches for an accent
+     directly. Dark uses the accents as-is; light deepens them (below). See
+     docs/reference/DESIGN.md "Code blocks". */
+  --syn-keyword: var(--violet);
+  --syn-string: var(--green);
+  --syn-number: var(--amber);
+  --syn-func: var(--steel);
+  --syn-comment: var(--text-3);
+  --syn-type: var(--teal);
+  --syn-meta: var(--rose);
+
   /* Type scale */
   /* Type scale = DESIGN.md px values × the user's font-scale setting
      (Settings → Text size, default 0.75). fontScale.ts sets --font-scale. */
@@ -112,6 +124,15 @@
   --surface-composer: #ffffff;
   --scrim: rgba(247, 247, 245, 0.6);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+  /* The muted accents sit near 2:1 on the light code surface — fine for a chip, too faint
+     for reading code. Deepened toward --text, the hues stay recognisably the dark theme's. */
+  --syn-keyword: color-mix(in srgb, var(--violet) 62%, var(--text));
+  --syn-string: color-mix(in srgb, var(--green) 58%, var(--text));
+  --syn-number: color-mix(in srgb, var(--amber) 62%, var(--text));
+  --syn-func: color-mix(in srgb, var(--steel) 62%, var(--text));
+  --syn-comment: var(--text-2);
+  --syn-type: color-mix(in srgb, var(--teal) 58%, var(--text));
+  --syn-meta: color-mix(in srgb, var(--rose) 62%, var(--text));
 }
 
 /* Dark variant with brighter hairlines. Inherits every dark neutral from

@@ -1028,3 +1028,30 @@ async def test_web_fetch_reads_a_bare_non_repo_path_as_a_page() -> None:
     out = await _handler(fake)({"url": "https://github.com/acme/notarepo"}, _ctx())
     assert "https://github.com/acme/notarepo" in fake.calls
     assert "no public repository archive" in str(out)
+
+
+@pytest.mark.parametrize(
+    ("path", "lang"),
+    [
+        ("src/app.py", "python"),
+        ("web/App.TSX", "tsx"),
+        ("deploy/Dockerfile", "dockerfile"),
+        ("Dockerfile.dev", "dockerfile"),
+        ("conf/settings.yml", "yaml"),
+        ("lib/x.hpp", "cpp"),
+        ("notes.txt", None),
+        ("LICENSE", None),
+        (".gitignore", None),
+    ],
+)
+def test_a_blob_names_its_language_for_the_fence(path: str, lang: str | None) -> None:
+    snap = index_tarball(_tarball({path: b"x = 1\n"}), owner="a", repo="b", ref="m")
+    view = gh.render_blob(snap, snap.files[path], None)
+    header = view.split("\n\n")[1]
+    if lang is None:
+        assert "language:" not in header
+    else:
+        assert header.endswith(f" · language: {lang}")
+    ranged = gh.render_blob(snap, snap.files[path], (1, 1))
+    if lang is not None:
+        assert f"· language: {lang} · showing lines 1–1" in ranged

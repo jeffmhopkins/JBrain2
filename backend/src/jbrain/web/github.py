@@ -150,6 +150,34 @@ _BINARY_EXTS = frozenset(
         "zip", "zst",
     }
 )  # fmt: skip
+# A blob's language, named as a code-fence tag, so jerv quoting the file fences it with the
+# right one and the chat colours it. Only unambiguous extensions: a wrong tag colours worse
+# than none, so anything not here gets no language line.
+_FENCE_LANGS = {
+    "py": "python", "pyi": "python", "ts": "typescript", "tsx": "tsx", "mts": "typescript",
+    "js": "javascript", "jsx": "jsx", "mjs": "javascript", "cjs": "javascript",
+    "sh": "bash", "bash": "bash", "zsh": "bash", "json": "json", "yaml": "yaml", "yml": "yaml",
+    "sql": "sql", "rs": "rust", "c": "c", "h": "c", "cc": "cpp", "cpp": "cpp", "cxx": "cpp",
+    "hpp": "cpp", "go": "go", "html": "html", "htm": "html", "xml": "xml", "svg": "xml",
+    "css": "css", "diff": "diff", "patch": "diff", "md": "markdown", "toml": "toml",
+    "ini": "ini", "cfg": "ini", "java": "java", "kt": "kotlin", "rb": "ruby", "php": "php",
+    "swift": "swift", "cs": "csharp", "lua": "lua", "r": "r", "scss": "scss",
+}  # fmt: skip
+_FENCE_NAMES = {"dockerfile": "dockerfile", "containerfile": "dockerfile", "makefile": "makefile"}
+
+
+def _fence_lang(path: str) -> str | None:
+    """The fence tag for a file, from its extension (or its whole name, for a Dockerfile)."""
+    name = path.rsplit("/", 1)[-1].lower()
+    if name in _FENCE_NAMES:
+        return _FENCE_NAMES[name]
+    if name.startswith("dockerfile."):
+        return "dockerfile"
+    if "." not in name.lstrip("."):
+        return None
+    return _FENCE_LANGS.get(name.rsplit(".", 1)[-1])
+
+
 _DESC_RE = re.compile(r'<meta\s+name="description"\s+content="([^"]*)"', re.IGNORECASE)
 _DEFAULT_BRANCH_RE = re.compile(r'"defaultBranch"\s*:\s*"([^"\\]{1,255})"')
 
@@ -634,9 +662,11 @@ def render_blob(snap: Snapshot, f: RepoFile, lines: tuple[int, int] | None) -> s
         span = f" · showing lines {start}–{end}"
     width = len(str(max(end, 1)))
     body = "\n".join(f"{i:>{width}}  {all_lines[i - 1]}" for i in range(start, end + 1))
+    lang = _fence_lang(f.path)
+    tag = f" · language: {lang}" if lang else ""
     return (
         head
-        + f"`{f.path}` at {_ref_line(snap)} — {n:,} lines, {_fmt_size(f.size)}{span}\n\n"
+        + f"`{f.path}` at {_ref_line(snap)} — {n:,} lines, {_fmt_size(f.size)}{tag}{span}\n\n"
         + body
     )
 

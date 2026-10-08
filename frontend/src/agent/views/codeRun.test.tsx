@@ -1,7 +1,7 @@
 // The `code_run` view. Two things are worth testing and they are both about the boundary:
 // the component decides the colours, and model text reaches the DOM as TEXT.
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ToolView } from "./registry";
 
@@ -30,15 +30,30 @@ describe("code_run", () => {
     expect(screen.getByText("no network · scratch only")).toBeTruthy();
   });
 
-  it("colours the code from a closed token set the COMPONENT owns", () => {
+  it("colours the code from a closed token set the COMPONENT owns", async () => {
     const { container } = render(
-      <ToolView payload={view({ language: "python", code: "for x in range(3):\n    pass" })} />,
+      <ToolView
+        payload={view({
+          language: "python",
+          code: "def f(n):\n    for x in range(n):\n        pass",
+        })}
+      />,
     );
-    // `for`/`in`/`pass` are keywords, `range` is a call — classes, never colours, so the
-    // theme owns the palette.
+    // `def`/`for`/`in`/`pass` are keywords, `f` a function title, `range` a built-in —
+    // classes, never colours, so the theme owns the palette. The grammars load lazily (the
+    // same highlighter as chat code blocks), so the colour arrives a tick after the text.
+    await waitFor(() => expect(container.querySelector("pre.fb-code span.hl-k")).not.toBeNull());
     const classes = [...container.querySelectorAll("pre.fb-code span")].map((el) => el.className);
-    expect(classes).toContain("k");
-    expect(classes).toContain("f");
+    expect(classes).toContain("hl-f");
+    expect(classes).toContain("hl-t");
+  });
+
+  it("leaves a `calculate` expression uncoloured", async () => {
+    const { container } = render(
+      <ToolView payload={view({ language: "expression", code: "sqrt(2) * 3", result: "4.24" })} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.querySelectorAll("pre.fb-code span")).toHaveLength(0);
   });
 
   it("a snippet cannot smuggle markup into the transcript", () => {
