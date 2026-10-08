@@ -20,9 +20,11 @@ by a token budget, newest first. A turn before the session's stored
 `replay_floor_seq` keeps its calls but replays a one-line stub for each result, so jerv knows
 what it did and can run it again. The boundary moves only forward and in steps (over the high
 water mark it advances whole turns until the kept results are under the low one), so the replay
-is byte-identical turn over turn and the engine's prefix cache holds it. Everything is computed
-from stored rows with a fixed character-per-token ratio — never from a calibrated estimate that
-drifts, which would move the boundary on its own.
+is byte-identical turn over turn and the engine's prefix cache holds it. On the exact path the
+marks are fractions of the whole prompt's estimated size against the context window, far apart:
+every move costs one re-read of nearly the whole chat, so it should come rarely and go deep.
+Everything is computed from stored rows with a fixed character-per-token ratio — never from a
+calibrated estimate that drifts, which would move the boundary on its own.
 """
 
 import json
@@ -48,6 +50,23 @@ CHARS_PER_TOKEN = 4
 # blocks count against it too, so the chat's growth stays inside the same ceiling.
 REPLAY_BUDGET_TOKENS = 64 * 1024
 REPLAY_LOW_WATER_TOKENS = 48 * 1024
+# The exact (local) path compacts rarely and deeply instead (owner, 2026-10-08). A move there
+# re-reads nearly the whole chat — measured: 99,160 tokens from zero, ~5½ minutes — and the
+# 64k/48k marks, only 16k apart, had a page-heavy chat paying that every couple of research
+# turns. Measured against the whole prompt and the window instead: compact when the estimate
+# reaches 80% of it, down to 50% — one re-read per ~80k tokens of growth.
+EXACT_COMPACT_AT = 0.80
+EXACT_COMPACT_TO = 0.50
+# Past this, even the newest turn with results yields: the fixed ratio undercounts real
+# tokens by ~8% (`llm/prefill.py` measures ~3.7 chars a token), so 90% of the window by the
+# estimate is the slot cap in fact, and a render over it overflows the moment it is sent.
+EXACT_CEILING = 0.90
+# The window when the caller cannot name one: the local chat slot's cap.
+EXACT_CONTEXT_WINDOW = 262_144
+# What every prompt carries besides the history: the system prompt, the tool array and this
+# turn's own `now`/context blocks. Measured at 43.6k tokens for jerv on the box (2026-10-08),
+# rounded up so a growing tool roster does not quietly push the real prompt past the marks.
+EXACT_OVERHEAD_TOKENS = 48 * 1024
 # One huge page must not spend the whole budget.
 MAX_RESULT_CHARS = 16_000
 # Tools whose output is never replayed in full, whatever the budget. None yet: the session's
@@ -158,7 +177,21 @@ def _turn_chars(turn: TurnRecord, *, exact: bool = False) -> int:
     return results + thinking + blocks
 
 
-def advance_floor(turns: Sequence[TurnRecord], floor: int, *, exact: bool = False) -> int:
+def _prose_chars(turn: TurnRecord) -> int:
+    """What a turn replays whatever the floor: its prose, its calls' arguments, and a stub
+    per result (counted on every turn — a few hundred characters over, never under)."""
+    steps = [s for s in turn.tools if _replayable(s)] if turn.role == "assistant" else []
+    return len(turn.content) + sum(len(json.dumps(s.get("args") or {})) + len(STUB) for s in steps)
+
+
+def advance_floor(
+    turns: Sequence[TurnRecord],
+    floor: int,
+    *,
+    exact: bool = False,
+    context_window: int | None = None,
+    overhead_tokens: int = EXACT_OVERHEAD_TOKENS,
+) -> int:
     """The boundary this render uses: `floor`, moved forward by whole turns when the bulk
     it keeps exceeds the budget, until it is under the low water mark. The newest turn with
     tool RESULTS is never compacted, nor anything after it — it is what a follow-up asks about.
@@ -166,21 +199,36 @@ def advance_floor(turns: Sequence[TurnRecord], floor: int, *, exact: bool = Fals
     block, its thinking), and protecting merely the newest would let a "thanks" after a big
     research turn stub that turn for good. Moving it is the ONE place a render deliberately
     stops extending the last one: every turn it passes is re-rendered compact, once, and the
-    engine re-reads from the oldest of them."""
+    engine re-reads from the oldest of them.
+
+    `exact` measures the whole prompt against `context_window` instead (`EXACT_COMPACT_AT`),
+    and lets the protected turn go only when keeping it would leave the render over the slot."""
     kept = [
         t for t in turns if t.role == "assistant" and t.seq >= floor and _turn_chars(t, exact=exact)
     ]
     total = sum(_turn_chars(t, exact=exact) for t in kept)
-    if total <= REPLAY_BUDGET_TOKENS * CHARS_PER_TOKEN:
+    if exact:
+        window = (context_window or EXACT_CONTEXT_WINDOW) * CHARS_PER_TOKEN
+        total += overhead_tokens * CHARS_PER_TOKEN + sum(_prose_chars(t) for t in turns)
+        high, low, ceiling = (
+            window * EXACT_COMPACT_AT,
+            window * EXACT_COMPACT_TO,
+            window * EXACT_CEILING,
+        )
+    else:
+        high = REPLAY_BUDGET_TOKENS * CHARS_PER_TOKEN
+        low = REPLAY_LOW_WATER_TOKENS * CHARS_PER_TOKEN
+        ceiling = float("inf")
+    if total <= high:
         return floor
     with_results = [t.seq for t in kept if _turn_chars(t)]
     protected = with_results[-1] if with_results else kept[-1].seq
     for turn in kept:
-        if turn.seq >= protected:
+        if turn.seq >= protected and total <= ceiling:
             break
         total -= _turn_chars(turn, exact=exact)
         floor = turn.seq + 1
-        if total <= REPLAY_LOW_WATER_TOKENS * CHARS_PER_TOKEN:
+        if total <= low:
             break
     return floor
 

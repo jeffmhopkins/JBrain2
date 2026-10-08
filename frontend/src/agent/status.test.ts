@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
-import type { TranscriptMessage } from "./transcript";
+import { agentStatus, compactingPrefill, modelLoadStatus, planWaitingStatus } from "./status";
+import { type TranscriptMessage, applyEvent } from "./transcript";
 
 function asst(over: Partial<TranscriptMessage> = {}): TranscriptMessage {
   return {
@@ -78,6 +78,20 @@ describe("modelLoadStatus", () => {
     expect(modelLoadStatus("gpt-oss-120b", null, 1000, "prefill", null).emphasis).toBe(
       "your prompt",
     );
+  });
+
+  it("names a compacted chat's first read as the compaction", () => {
+    // A turn whose render moved the replay floor re-reads most of the chat — minutes on a long
+    // one (measured: 99k tokens, ~5½ min). "Reading your prompt" made that look like a hang.
+    expect(modelLoadStatus("flash", 0.3, 1000, "prefill", "your prompt", true)).toEqual({
+      kind: "loading",
+      label: "Compacting",
+      emphasis: "a long chat",
+      percent: 0.3,
+      sinceMs: 1000,
+    });
+    // It names a prefill only: a model still loading is still a load.
+    expect(modelLoadStatus("flash", 0.3, 1000, "model_load", null, true).label).toBe("Loading");
   });
 
   it("carries a null fraction through rather than inventing a zero", () => {
@@ -217,5 +231,26 @@ describe("agentStatus", () => {
     expect(a).toBe("sess-A#1");
     expect(b).toBe("sess-B#1");
     expect(a).not.toBe(b);
+  });
+});
+
+describe("compactingPrefill", () => {
+  it("holds from the history_compacted event until the turn produces anything", () => {
+    let ms: TranscriptMessage[] = [USER, asst()];
+    expect(compactingPrefill(ms)).toBe(false);
+    ms = applyEvent(ms, { type: "history_compacted" });
+    expect(compactingPrefill(ms)).toBe(true);
+    // The first round's read is over once anything streams: later reads are ordinary.
+    expect(compactingPrefill(applyEvent(ms, { type: "reasoning_delta", text: "hm" }))).toBe(false);
+    expect(compactingPrefill(applyEvent(ms, { type: "text_delta", text: "So" }))).toBe(false);
+    expect(compactingPrefill(applyEvent(ms, { type: "done", stop_reason: "end_turn" }))).toBe(
+      false,
+    );
+  });
+
+  it("is off for a turn that did not compact, and for a settled one", () => {
+    expect(compactingPrefill([USER, asst({ tools: [] })])).toBe(false);
+    expect(compactingPrefill([USER, asst({ compacted: true, streaming: false })])).toBe(false);
+    expect(compactingPrefill([USER])).toBe(false);
   });
 });

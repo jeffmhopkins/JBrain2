@@ -608,6 +608,15 @@ class GeneralKnowledgeEvent(BaseModel):
     type: Literal["general_knowledge"] = "general_knowledge"
 
 
+class HistoryCompactedEvent(BaseModel):
+    """This turn's render moved the replay floor (`history_replay.advance_floor`): older
+    results went to stubs, so the prompt no longer extends the last one and the engine
+    re-reads most of the chat. Sent once, before the first model call, so the PWA can name
+    that wait "Compacting a long chat" instead of "Reading your prompt". Ephemeral."""
+
+    type: Literal["history_compacted"] = "history_compacted"
+
+
 ChatEvent = Annotated[
     TextDelta
     | ReasoningDelta
@@ -626,6 +635,7 @@ ChatEvent = Annotated[
     | SubagentDoneEvent
     | DoneEvent
     | VerdictEvent
-    | GeneralKnowledgeEvent,
+    | GeneralKnowledgeEvent
+    | HistoryCompactedEvent,
     Field(discriminator="type"),
 ]

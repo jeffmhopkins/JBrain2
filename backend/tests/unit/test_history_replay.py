@@ -239,19 +239,106 @@ def test_on_the_exact_path_the_budget_counts_thinking_and_the_turns_own_blocks()
     assert hr._turn_chars(assistant) == sum(len(s["summary"]) for s in assistant.tools)
 
 
-def test_the_exact_path_moves_the_floor_over_the_combined_bulk() -> None:
-    def turn(seq: int) -> list[TurnRecord]:
-        wire = {"v": 1, "rounds": [{**_round("", "t" * 20_000, (f"c{seq}", "{}"))}]}
-        step = {**_step(f"c{seq}"), "summary": "x" * 20_000}
-        return [
-            TurnRecord(role="user", content="q", seq=seq),
-            TurnRecord(role="assistant", content="a", tools=[step], seq=seq + 1, wire=wire),
-        ]
+def _research(seq: int, *, results: int = 20_000, thinking: int = 20_000) -> list[TurnRecord]:
+    """One recorded local research turn: `results` chars of results and `thinking` of thinking."""
+    wire = {"v": 1, "rounds": [{**_round("", "t" * thinking, (f"c{seq}", "{}"))}]}
+    step = {**_step(f"c{seq}"), "summary": "x" * results}
+    return [
+        TurnRecord(role="user", content="q", seq=seq),
+        TurnRecord(role="assistant", content="a", tools=[step], seq=seq + 1, wire=wire),
+    ]
 
-    turns = [t for i in range(8) for t in turn(2 * i + 1)]
-    # 8 × 20k chars of results fit the 256k-char budget; with their thinking they do not.
-    assert hr.advance_floor(turns, 0) == 0
-    assert hr.advance_floor(turns, 0, exact=True) > 0
+
+def _chat(n: int, first: int = 1, **kw: int) -> list[TurnRecord]:
+    return [t for i in range(n) for t in _research(first + 2 * i, **kw)]
+
+
+def _estimate(turns: list[TurnRecord], floor: int) -> float:
+    """The whole prompt as the exact path sizes it, as a fraction of the default window."""
+    kept = sum(
+        hr._turn_chars(t, exact=True) for t in turns if t.role == "assistant" and t.seq >= floor
+    )
+    prose = sum(hr._prose_chars(t) for t in turns)
+    chars = hr.EXACT_OVERHEAD_TOKENS * hr.CHARS_PER_TOKEN + prose + kept
+    return chars / (hr.EXACT_CONTEXT_WINDOW * hr.CHARS_PER_TOKEN)
+
+
+def test_the_exact_path_stays_put_under_80_percent_of_the_window() -> None:
+    # 12 × 40k chars of bulk is ~120k tokens: far past the cloud path's 64k budget on its
+    # thinking alone, but the whole prompt is still under 80% of the window.
+    turns = _chat(12)
+    assert hr.EXACT_COMPACT_TO < _estimate(turns, 0) <= hr.EXACT_COMPACT_AT
+    assert hr.advance_floor(turns, 0, exact=True) == 0
+
+
+def test_over_80_percent_the_exact_path_compacts_to_half_the_window() -> None:
+    turns = _chat(17)
+    assert _estimate(turns, 0) > hr.EXACT_COMPACT_AT
+    floor = hr.advance_floor(turns, 0, exact=True)
+    assert floor > 0 and _estimate(turns, floor) <= hr.EXACT_COMPACT_TO
+    # Deep, not a nibble: the move stops at the first turn that gets it under half.
+    assert _estimate(turns, floor - 2) > hr.EXACT_COMPACT_TO
+
+
+def test_after_a_compaction_growth_does_not_move_it_again_until_80_percent() -> None:
+    turns = _chat(17)
+    floor = hr.advance_floor(turns, 0, exact=True)
+    grown = list(turns)
+    seq = turns[-1].seq + 1
+    while True:
+        nxt = [*grown, *_research(seq)]
+        if _estimate(nxt, floor) > hr.EXACT_COMPACT_AT:
+            break
+        grown, seq = nxt, seq + 2
+        assert hr.advance_floor(grown, floor, exact=True) == floor
+    # Every one of those turns extended the last prompt — about 80k tokens of growth.
+    assert (_estimate(grown, floor) - _estimate(turns, floor)) * hr.EXACT_CONTEXT_WINDOW > 70_000
+    assert hr.advance_floor(nxt, floor, exact=True) > floor
+
+
+def test_the_exact_path_measures_against_the_slot_it_is_given() -> None:
+    turns = _chat(12)
+    assert hr.advance_floor(turns, 0, exact=True) == 0
+    assert hr.advance_floor(turns, 0, exact=True, context_window=131_072) > 0
+
+
+def test_the_cloud_path_keeps_its_64k_budget_whatever_the_window() -> None:
+    # 17 turns × 16k chars of (cut) results = 272k chars, over the 256k-char budget: the
+    # prose path moves to its 48k low water mark exactly as before, the window ignored.
+    turns = _chat(17)
+    floor = hr.advance_floor(turns, 0)
+    assert floor == hr.advance_floor(turns, 0, context_window=10_000_000)
+    kept = sum(hr._turn_chars(t) for t in turns if t.seq >= floor)
+    low = hr.REPLAY_LOW_WATER_TOKENS * hr.CHARS_PER_TOKEN
+    assert kept <= low < kept + hr.MAX_RESULT_CHARS
+
+
+def test_the_exact_path_never_compacts_the_newest_research_turn() -> None:
+    # Over 80% with a "thanks" after the research: the move stops at the research turn.
+    thanks = {
+        "v": 1,
+        "rounds": [],
+        "final": {"text": "You're welcome.", "reasoning": "polite", "model": "flash"},
+        "input": {"head": [], "tail": ["[now]", "thanks"]},
+    }
+    turns = [
+        *_chat(4),
+        *_research(9, results=480_000),
+        TurnRecord(role="user", content="thanks", seq=11),
+        TurnRecord(role="assistant", content="You're welcome.", seq=12, wire=thanks),
+    ]
+    assert hr.EXACT_COMPACT_AT < _estimate(turns, 0) <= hr.EXACT_CEILING
+    floor = hr.advance_floor(turns, 0, exact=True)
+    assert floor == 9  # everything before the research turn, and not the research turn
+    assert _estimate(turns, floor) > hr.EXACT_COMPACT_TO  # it held, though it costs the target
+
+
+def test_the_newest_research_turn_yields_only_when_keeping_it_would_overflow_the_slot() -> None:
+    # A render over the slot fails the moment it is sent; stubbing it is the lesser loss.
+    turns = [*_chat(2), *_research(5, results=1_000_000)]
+    assert _estimate(turns, 4) > hr.EXACT_CEILING
+    floor = hr.advance_floor(turns, 0, exact=True)
+    assert floor == 7 and _estimate(turns, floor) <= hr.EXACT_COMPACT_TO
 
 
 # ---- review follow-ups: what the exact path must not do

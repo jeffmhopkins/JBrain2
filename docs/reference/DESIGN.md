@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-06
+> **Status:** Living · **Last verified:** 2026-10-08
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -493,7 +493,10 @@ plus expandable detail — with **two levels**:
   both surfaces repeat it rather than guessing: the status line and the vitals row cannot
   describe different work. It is not named by model, on either wording: while the weights are
   still arriving the model's name answers "why is nothing happening", and once they have
-  arrived it explains nothing.
+  arrived it explains nothing. One exception names the cause instead: a jerv turn whose
+  render compacted the chat (the stream's `history_compacted`) re-reads most of it, minutes
+  on a long one, so until that turn produces anything its first read shows *Compacting **a
+  long chat**…* (`status.compactingPrefill`); every later round reads normally.
 - **It rides the stream that is already open** [decided]. The load is a field on the 1 Hz
   vitals frame (`/ops/vitals/stream`), not a poll or a socket of its own. That stream is
   already open on every screen, already foreground-gated, already access-probed, and

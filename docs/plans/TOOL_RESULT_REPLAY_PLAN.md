@@ -1,6 +1,6 @@
 # Tool results that stay real — replaying earlier turns' tool calls
 
-> **Status:** In progress · **Last verified:** 2026-10-07 · **Waves:** R1✅ R2◻️ R3◻️
+> **Status:** In progress · **Last verified:** 2026-10-08 · **Waves:** R1✅ R2◻️ R3◻️
 
 **The owner's rule (2026-10-06): a tool result jerv saw should stay real on every later turn.**
 Today it does not. A chat turn's history reaches the model as TEXT only: the PWA replays each
@@ -62,7 +62,9 @@ in the request (old PWAs, and the guard below) but no longer feeds the model for
 video). Results are kept newest-first; once the budget is spent, an older call keeps its call
 and gets a one-line stub result instead:
 `[result not shown — older than this chat's replay budget; call the tool again to see it]`.
-jerv still knows what it did and with what arguments, and can re-run it.
+jerv still knows what it did and with what arguments, and can re-run it. (The cloud route
+keeps these numbers; the local exact replay now compacts at 80% → 50% of the whole prompt
+against the slot — "R2, first move" below.)
 
 **Cache-stable by construction.** The replay must be byte-identical turn over turn or the
 engine re-reads the conversation:
@@ -145,13 +147,27 @@ no longer cut at 16k characters (it was sent whole). The rule, its causes and th
 (`turn_reuse` in `GET /llm/kv-prefix`) are in `../reference/PROMPT_CACHE.md`, "A follow-up is
 an exact extension of the last prompt". R2's prefill measurement reads that same field.
 
+### R2, first move: compact the exact path rarely and deeply (2026-10-08)
+Measured on the box: with the exact replay every follow-up extended the last prompt — except
+when the floor moved, and at 64k/48k it moved every couple of research turns; one move in a
+176k-token chat re-read 99,160 tokens from zero (~5½ min). On the exact (local) path the marks
+are now fractions of the whole prompt's estimate against the slot's context window: compact at
+**80%** (~209.7k of the 262,144 chat slot), down to **50%** (~131k). The estimate is a 48k
+fixed overhead (system prompt + tools + the turn's own blocks; measured 43.6k for jerv) + every
+turn's prose, arguments and stubs + the kept turns' bulk, at 4 characters a token. The newest
+research turn yields only when keeping it would leave the estimate over 90% of the window (a
+render past the slot cap). The cloud path keeps **64k / 48k / 16k**. A turn that compacted
+streams `history_compacted` first, and the PWA labels that read *Compacting a long chat…*.
+Details: `../reference/PROMPT_CACHE.md`, "The ONE deliberate divergence is compaction".
+
 ## 5. Relationship to other plans
 
 - **CROSS_TURN_TOOL_RESULTS_PLAN** — W0/W1 stay (the artifact store backs pages too big to
   replay); W2/W3 fold into R3 here.
 - **NATIVE_VIDEO_PLAN V3** — inline clips share the interactive slot with replayed results:
   64k of video plus 64k of results plus the ~29k persona and the conversation fit the 262k chat
-  slot. Its anchor moves to turn-id matching with R1.
+  slot. On the local route the replay now compacts against the whole prompt (80% → 50% of the
+  slot); an inline clip's tokens are not in that character estimate. Its anchor moves to turn-id matching with R1.
 
 ## 6. Open questions
 

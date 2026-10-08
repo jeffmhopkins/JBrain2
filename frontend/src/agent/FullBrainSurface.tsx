@@ -56,7 +56,13 @@ import {
   stripModelCitations,
 } from "./markdown";
 import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
-import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
+import {
+  type AgentStatus,
+  agentStatus,
+  compactingPrefill,
+  modelLoadStatus,
+  planWaitingStatus,
+} from "./status";
 import { stepLedger } from "./stepLedger";
 import { type ToolMarkGroup, toolMarks } from "./toolMarks";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
@@ -359,6 +365,7 @@ export function AgentTranscript({
         modelLoad.at_ms,
         modelLoad.kind,
         modelLoad.reading,
+        compactingPrefill(fb.messages),
       )
     : null;
 

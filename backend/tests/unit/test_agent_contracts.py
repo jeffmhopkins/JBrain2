@@ -10,6 +10,7 @@ from jbrain.agent.contracts import (
     CitationRef,
     EntityRef,
     FactRef,
+    HistoryCompactedEvent,
     NoteRef,
     TextDelta,
     ToolSpec,
@@ -89,6 +90,12 @@ def test_chat_event_discriminates_on_type() -> None:
     )
     assert isinstance(usage, UsageEvent)
     assert usage.input_tokens == 1200 and usage.context_window == 32768
+
+
+def test_history_compacted_is_a_bare_chat_event() -> None:
+    event = TypeAdapter(ChatEvent).validate_python({"type": "history_compacted"})
+    assert isinstance(event, HistoryCompactedEvent)
+    assert event.model_dump_json() == '{"type":"history_compacted"}'
 
 
 def test_chat_event_rejects_unknown_type() -> None:

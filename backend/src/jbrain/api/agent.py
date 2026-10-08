@@ -56,6 +56,7 @@ from jbrain.agent.attachments import (
 from jbrain.agent.brainevents import brain_text_enabled
 from jbrain.agent.clock import now_block
 from jbrain.agent.continuation import maybe_schedule_continuation
+from jbrain.agent.contracts import HistoryCompactedEvent
 from jbrain.agent.identity import me_block
 from jbrain.agent.inline_video import (
     INLINE_VIDEO_BUDGET_TOKENS,
@@ -983,21 +984,29 @@ async def _exact_replay(router: LlmRouter, model_override: str | None) -> bool:
 
 
 async def _replayed_history(
-    request: Request, ctx: SessionContext, session_id: str, *, exact: bool = False
-) -> list[history_replay.Entry] | None:
+    request: Request,
+    ctx: SessionContext,
+    session_id: str,
+    *,
+    exact: bool = False,
+    context_window: int | None = None,
+) -> tuple[list[history_replay.Entry], bool] | None:
     """The transcript-built history, with the replay boundary moved (and stored) first so
-    every render after this one agrees on it. None when anything can't be read: the turn then
-    runs on the client's text history rather than failing. `exact` (a local route) replays
-    each recorded turn exactly as it was sent (`history_replay.build`)."""
+    every render after this one agrees on it, and whether this render moved it. None when
+    anything can't be read: the turn then runs on the client's text history rather than
+    failing. `exact` (a local route) replays each recorded turn exactly as it was sent
+    (`history_replay.build`) and compacts against `context_window`, the turn's slot cap."""
     try:
         turns = await get_agent_transcript(request).load(ctx, session_id, with_wire=True)
         sessions = get_agent_sessions(request)
         floor = await sessions.replay_floor(ctx, session_id)
-        moved = history_replay.advance_floor(turns, floor, exact=exact)
+        moved = history_replay.advance_floor(
+            turns, floor, exact=exact, context_window=context_window
+        )
         if moved != floor:
             await sessions.advance_replay_floor(ctx, session_id, moved)
             log.info("agent.replay_floor_advanced", session=session_id, floor=moved)
-        return history_replay.build(turns, moved, exact=exact)
+        return history_replay.build(turns, moved, exact=exact), moved != floor
     except Exception:  # noqa: BLE001 - the owner's turn must never fail on its history
         log.warning("agent.history_replay_unread", session=session_id, exc_info=True)
         return None
@@ -1328,13 +1337,18 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 video_budget -= clip.tokens
     # A jerv chat's earlier turns replay their tool calls and results, not just their prose
     # (docs/plans/TOOL_RESULT_REPLAY_PLAN.md); None falls back to the client's text history.
-    replayed = (
+    replay = (
         await _replayed_history(
-            request, owner_ctx, session.id, exact=await _exact_replay(router, model_override)
+            request,
+            owner_ctx,
+            session.id,
+            exact=await _exact_replay(router, model_override),
+            context_window=context_window,
         )
         if session.agent == "jerv"
         else None
     )
+    replayed, compacted = replay if replay is not None else (None, False)
     history_text = (
         [ChatMessageIn(role=e.role, content=e.text) for e in replayed]
         if replayed is not None
@@ -1767,6 +1781,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # Each round as the model was sent it, for the exact replay on later turns.
             on_round=acc.record_round,
         )
+        if compacted:
+            # Ahead of the first model call: the prefill the owner is about to watch is the
+            # engine re-reading the compacted chat, and the status line should say so.
+            live.emit(f"data: {HistoryCompactedEvent().model_dump_json()}\n\n".encode())
         try:
             # A long blocking tool may stream nothing for minutes; the pull is never
             # cancelled here (only a client disconnect cancelled the old wrapper, which no

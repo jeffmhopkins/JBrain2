@@ -224,16 +224,29 @@ transcript reopen defers the column). A turn stored without a
 usable record (older turns, the buffered reflexion path, a round cut mid-dispatch) replays from
 its prose, and so diverges once.
 
-**The ONE deliberate divergence is compaction.** The replay budget
-(`history_replay.REPLAY_BUDGET_TOKENS`, the owner's 64k) now bounds everything replayed beyond
-the prose on the exact path — results, thinking and the turns' own blocks — so keeping the
-thinking cannot grow a chat without limit. When it is exceeded the boundary
-(`agent_sessions.replay_floor_seq`) moves forward by whole turns to the low-water mark, and the
-turns it passes re-render compact (stubbed results, no thinking, bare question): that turn's
-prompt re-reads from the oldest of them, once per ~16k tokens of new bulk. The newest turn with
+**The ONE deliberate divergence is compaction — rare and deep.** When the boundary
+(`agent_sessions.replay_floor_seq`) moves, the turns it passes re-render compact (stubbed
+results, no thinking, bare question) and that turn's prompt re-reads from the oldest of them —
+nearly the whole chat. Measured on the box (2026-10-08): a 176k-token chat moved its floor and
+the next call re-read 99,160 tokens from zero, ~5½ minutes. The R1 marks (64k of replayed bulk,
+compacting to 48k) left only 16k between them, so a page-heavy chat paid that every couple of
+research turns. The exact path therefore measures the **whole prompt** against the turn's
+context window instead (the slot cap, `router.context_window`; 262,144 for the Flash-Next chat
+slot): compact when the estimate reaches **80%** (`EXACT_COMPACT_AT`, ~209.7k tokens), down to
+**50%** (`EXACT_COMPACT_TO`, ~131k) — one re-read per ~80k tokens of growth instead of per ~16k.
+The estimate is a fixed overhead for the system prompt, tool array and the turn's own `now` /
+context blocks (`EXACT_OVERHEAD_TOKENS`, 48k: measured 43.6k for jerv, rounded up) plus every
+turn's prose, call arguments and a stub per result, plus the kept turns' bulk (results,
+thinking, own blocks), all at the fixed 4 characters a token — stored rows only, so the
+boundary cannot drift on its own. The cloud (prose) path keeps the 64k/48k marks on results
+alone. The turn whose render moved the floor sends `history_compacted` before its first model
+call, and the PWA's status line reads *Compacting **a long chat**…* through that first read
+instead of *Reading your prompt…*. The newest turn with
 tool RESULTS, and everything after it, is never compacted — keyed on results, so a "thanks"
 after a research turn (which has bulk of its own: its `now` block, its thinking) cannot stub the
-research it thanks. A turn that ended at the slot's ceiling (`context_overflow`, or its last
+research it thanks — unless keeping it would leave the estimate over 90% of the window
+(`EXACT_CEILING`; the fixed ratio undercounts real tokens by ~8%, so that is the slot cap in
+fact), where the render would overflow the moment it was sent. A turn that ended at the slot's ceiling (`context_overflow`, or its last
 prompt within 32k tokens of the window) is recorded `full` and replays the prose way, its
 results cut: replayed whole, every follow-up would overflow and the chat could never answer.
 

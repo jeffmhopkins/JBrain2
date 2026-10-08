@@ -4200,6 +4200,7 @@ def test_jerv_replays_an_earlier_turns_tool_results(
     assert results[0].results[0].content == "thumb and three fingers extended, pinky folded"
     assert any(isinstance(m, AssistantMessage) and m.text == "1, 2, 0, 4" for m in messages)
     assert "how is that a four?" in messages[-1].text
+    assert "history_compacted" not in resp.text  # nothing moved, nothing to announce
 
 
 def test_jerv_replay_moves_and_stores_the_floor_once_over_budget(
@@ -4216,11 +4217,15 @@ def test_jerv_replay_moves_and_stores_the_floor_once_over_budget(
         turns.append(TurnRecord(role="user", content=f"q{i}", seq=2 * i + 1))
         turns.append(TurnRecord(role="assistant", content="a", tools=[step], seq=2 * i + 2))
     transcript.turns["sess-j"] = turns
-    client.post("/api/chat", json={"session_id": "sess-j", "message": "next"})
+    moved = client.post("/api/chat", json={"session_id": "sess-j", "message": "next"})
     floor = sessions_store.floors["sess-j"]  # type: ignore[attr-defined]
     assert floor == 17
-    client.post("/api/chat", json={"session_id": "sess-j", "message": "again"})
+    # The turn that moved it says so ahead of its first model call; the next one does not.
+    frames = [f for f in moved.text.split("\n\n") if f.startswith("data: ")]
+    assert frames[0] == 'data: {"type":"history_compacted"}'
+    again = client.post("/api/chat", json={"session_id": "sess-j", "message": "again"})
     assert sessions_store.floors["sess-j"] == floor  # type: ignore[attr-defined]
+    assert "history_compacted" not in again.text
 
 
 def test_jerv_falls_back_to_client_history_when_the_transcript_cannot_be_read(

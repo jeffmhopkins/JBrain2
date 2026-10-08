@@ -155,6 +155,7 @@ export function modelLoadStatus(
   sinceMs: number,
   what: "model_load" | "prefill" = "model_load",
   reading?: string | null,
+  compacting = false,
 ): AgentStatus {
   // A prefill names no model on purpose. "Loading gpt-oss-120b" answers "why is nothing
   // happening" — the model is not there yet. Once it IS there and the wait is the prompt
@@ -162,10 +163,30 @@ export function modelLoadStatus(
   // name — which is only "your prompt" on the first round. Every later round of a tool loop
   // is cached except the result that just came back, so a 30 s wait after a fetch is the box
   // reading the page, and the box says so (`reading`). Falls back to the prompt for a box
-  // that predates the field.
+  // that predates the field. A turn that compacted its chat re-reads most of it, minutes on a
+  // long one, and "your prompt" would make that wait look like a hang (`compactingPrefill`).
+  if (what === "prefill" && compacting) {
+    return { kind: "loading", label: "Compacting", emphasis: "a long chat", percent, sinceMs };
+  }
   return what === "prefill"
     ? { kind: "loading", label: "Reading", emphasis: reading || "your prompt", percent, sinceMs }
     : { kind: "loading", label: "Loading", emphasis: model, percent, sinceMs };
+}
+
+/** Whether the live turn compacted its chat and has not yet produced anything — so a prefill
+ * showing now is that turn's first read, the one the compaction made long. Every later round
+ * reads only what came back, and gets the ordinary label. */
+export function compactingPrefill(messages: TranscriptMessage[]): boolean {
+  const last = messages[messages.length - 1];
+  return (
+    !!last &&
+    last.role === "assistant" &&
+    last.streaming &&
+    !!last.compacted &&
+    !last.text &&
+    !last.reasoning &&
+    last.tools.length === 0
+  );
 }
 
 /** The current agent status, or null when idle (nothing to show). Reads only the
