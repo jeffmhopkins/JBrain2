@@ -4200,6 +4200,7 @@ def test_jerv_replays_an_earlier_turns_tool_results(
     assert results[0].results[0].content == "thumb and three fingers extended, pinky folded"
     assert any(isinstance(m, AssistantMessage) and m.text == "1, 2, 0, 4" for m in messages)
     assert "how is that a four?" in messages[-1].text
+    assert "history_compacted" not in resp.text  # nothing moved, nothing to announce
 
 
 def test_jerv_replay_moves_and_stores_the_floor_once_over_budget(
@@ -4216,11 +4217,15 @@ def test_jerv_replay_moves_and_stores_the_floor_once_over_budget(
         turns.append(TurnRecord(role="user", content=f"q{i}", seq=2 * i + 1))
         turns.append(TurnRecord(role="assistant", content="a", tools=[step], seq=2 * i + 2))
     transcript.turns["sess-j"] = turns
-    client.post("/api/chat", json={"session_id": "sess-j", "message": "next"})
+    moved = client.post("/api/chat", json={"session_id": "sess-j", "message": "next"})
     floor = sessions_store.floors["sess-j"]  # type: ignore[attr-defined]
     assert floor == 17
-    client.post("/api/chat", json={"session_id": "sess-j", "message": "again"})
+    # The turn that moved it says so ahead of its first model call; the next one does not.
+    frames = [f for f in moved.text.split("\n\n") if f.startswith("data: ")]
+    assert frames[0] == 'data: {"type":"history_compacted"}'
+    again = client.post("/api/chat", json={"session_id": "sess-j", "message": "again"})
     assert sessions_store.floors["sess-j"] == floor  # type: ignore[attr-defined]
+    assert "history_compacted" not in again.text
 
 
 def test_jerv_falls_back_to_client_history_when_the_transcript_cannot_be_read(
@@ -4340,6 +4345,8 @@ def test_a_local_follow_up_extends_the_previous_turns_last_prompt(
     )
     client.post("/api/chat", json={"session_id": "sess-j", "message": "do they agree?"})
     assert len(fake.stream_calls) == 4
+    # The answer call's real size rides the record, for the next render's compaction check.
+    assert transcript.recorded[-1]["wire"]["usage"] == {"input": 20, "output": 3}
     # Reopened: the next turn's history comes from what was persisted, not from memory.
     transcript.turns["sess-j"] = _stored(transcript.recorded[-1], 1)
     client.post("/api/chat", json={"session_id": "sess-j", "message": "why?"})
@@ -4369,6 +4376,45 @@ def test_a_local_follow_up_extends_the_previous_turns_last_prompt(
     assert follow_up["tools"] == last["tools"]
     assert follow_up["chat_template_kwargs"] == last["chat_template_kwargs"]
     assert last["chat_template_kwargs"]["preserve_thinking"] is True
+
+
+def test_a_local_turn_sizes_its_compaction_against_its_own_slot(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The exact path's rule is only as good as the window it is given: the turn's real slot
+    # cap, the same one its context meter reports, and the owner's new message on top.
+    import json as _json
+
+    from jbrain.agent import history_replay
+
+    seen: list[dict[str, Any]] = []
+    real = history_replay.advance_floor
+
+    def spy(turns, floor, **kw):  # type: ignore[no-untyped-def]
+        seen.append(kw)
+        return real(turns, floor, **kw)
+
+    monkeypatch.setattr(history_replay, "advance_floor", spy)
+    login(client, repo)
+    _jerv_session(sessions_store)
+    transcript.turns["sess-j"] = _frame_turns()
+    fake = FakeLlmClient(turns=[LlmTurn("ok", (), "end_turn", LlmUsage(5, 1))])
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"local": fake},
+        {"agent.turn": ("local", "qwen3.8-flash-next")},
+        pinned=frozenset({"agent.turn"}),
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "and the five?"})
+    frames = [_json.loads(f[6:]) for f in resp.text.split("\n\n") if f.startswith("data: ")]
+    window = next(f["context_window"] for f in frames if f["type"] == "usage")
+    assert seen == [
+        {"exact": True, "context_window": window, "pending_chars": len("and the five?")}
+    ]
+    assert window == 262_144
 
 
 def test_a_cloud_route_keeps_the_prose_replay_even_with_a_record(

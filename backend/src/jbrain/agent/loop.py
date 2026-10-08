@@ -1455,8 +1455,7 @@ class AgentLoop:
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 if on_round is not None:
-                    # The answer: no calls, even from a round cut mid-call, whose were never run.
-                    on_round(RoundRecord(turn.text, turn.reasoning, turn.model))
+                    on_round(RoundRecord.answer(turn))
                 async for ev in self._finish(
                     _round_stop(turn),
                     answer_parts,

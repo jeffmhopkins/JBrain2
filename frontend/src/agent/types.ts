@@ -249,6 +249,12 @@ export interface VerdictEvent {
 export interface GeneralKnowledgeEvent {
   type: "general_knowledge";
 }
+/** This turn's render moved jerv's replay floor: older tool results went to stubs, so the
+ * engine re-reads most of the chat before the first token. Sent once, before the first model
+ * call; the status line names that wait "Compacting a long chat". Ephemeral. */
+export interface HistoryCompactedEvent {
+  type: "history_compacted";
+}
 /** A web-sandboxed sub-agent child `jerv` launched inside a `spawn_subagent` fan
  * (docs/archive/SUBAGENT_SPAWNING_PLAN.md). `tool_call_id` anchors the row under the spawning
  * tool call; `child_id` keys it; `persona` is a neutral text tag (never a color).
@@ -337,6 +343,7 @@ export type ChatEvent =
   | RunEvent
   | VerdictEvent
   | GeneralKnowledgeEvent
+  | HistoryCompactedEvent
   | SubagentSpawnedEvent
   | SubagentProgressEvent
   | SubagentUsageEvent

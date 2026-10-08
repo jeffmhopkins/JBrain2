@@ -2537,7 +2537,7 @@ def _three_computations() -> list[LlmTurn]:
             "tool_use",
             LlmUsage(1, 1),
         ),
-        LlmTurn("82 days", (), "end_turn", LlmUsage(1, 1)),
+        LlmTurn("82 days", (), "end_turn", LlmUsage(1_234, 56)),
     ]
 
 
@@ -2606,6 +2606,8 @@ async def test_each_round_is_reported_as_the_model_read_it_marker_included() -> 
     assert [c.id for c in tool_round.calls] == ["c1", "c2", "c3"]
     assert {i: summaries[i] + tool_round.suffixes.get(i, "") for i in model} == model
     assert answer.text == "82 days" and not answer.calls
+    # Each round carries its call's real counts, which size the next turn's prompt.
+    assert (tool_round.input_tokens, answer.input_tokens, answer.output_tokens) == (1, 1_234, 56)
 
 
 async def test_no_marker_note_unless_the_turn_cites_computations() -> None:

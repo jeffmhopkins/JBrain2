@@ -178,6 +178,9 @@ export interface TranscriptMessage {
    * retrieval — set when a `general_knowledge` event lands (mutually exclusive with
    * `verdict`). Drives the calm "not your notes" footer chip. */
   generalKnowledge?: boolean;
+  /** This turn's render compacted the chat (`history_compacted`), so its first prompt read is
+   * the engine re-reading most of it. Live-only: drives the status line, never persisted. */
+  compacted?: boolean;
   /** Files the owner attached to this (user) turn — rendered as compact chips
    * inside the bubble, above the text. Empty/absent on assistant turns. */
   attachments?: ChatAttachment[];
@@ -442,6 +445,9 @@ export function applyEvent(
         ungroundedClaims: event.ungrounded_claims ?? [],
         kind: event.kind ?? verdictKind(event.ungrounded_claims ?? []),
       };
+      break;
+    case "history_compacted":
+      next.compacted = true;
       break;
     case "general_knowledge":
       // Rides after `done`, like the verdict — but neutral. The backend guarantees
