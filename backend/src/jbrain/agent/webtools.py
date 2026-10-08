@@ -39,6 +39,7 @@ from jbrain.web.fetch import (
     is_youtube_url,
     window_text,
 )
+from jbrain.web.github import GitHubReader, GitHubUnavailable
 from jbrain.web.search import (
     DEPTHS,
     NEWS_TIME_RANGES,
@@ -444,11 +445,13 @@ def _with_structured_data(out: str, result: FetchResult, *, offset: int, find: s
 def _with_budget_note(out: str, note: str) -> str:
     """Append a tool-budget note to a handler result while preserving a ToolOutput's
     `web_sources` (a fetched page stays citable). Plain-str results just get the text
-    appended. A web_fetch ToolOutput only ever carries web_sources (see `_present_fetch`)."""
+    appended. The result brief rides along too, so a note never costs the chip its title."""
     if not note:
         return out
     if isinstance(out, ToolOutput):
-        return ToolOutput(str(out) + note, web_sources=out.web_sources)
+        return ToolOutput(
+            str(out) + note, web_sources=out.web_sources, result_brief=out.result_brief
+        )
     return out + note
 
 
@@ -461,6 +464,7 @@ def build_web_handlers(
     blobs: BlobStore | None = None,
     domain_skips: DomainSkipRepo | None = None,
     feeds: FeedClient | None = None,
+    github: GitHubReader | None = None,
 ) -> dict[str, ToolHandler]:
     """`emit(kind, text)`, if given, fires a best-effort wall-display tendril event the
     moment jerv reaches out to the web (see jbrain.agent.brainevents). The query / URL
@@ -477,7 +481,9 @@ def build_web_handlers(
     drops listed hosts from its results with a transparency note; None disables both.
     `feeds`, if given, backs the `news_feed` tool (curated per-category RSS/Atom pulls,
     docs/plans/NEWS_FEED_PLAN.md); the handler is always registered so its sidecar binds, and
-    reports 'not configured' when `feeds` is None or has no feeds."""
+    reports 'not configured' when `feeds` is None or has no feeds. `github`, if given, answers
+    a public GitHub repo/tree/blob/raw URL from a repo snapshot (docs/plans/GITHUB_FETCH_PLAN.md)
+    rather than the page's HTML; None reads GitHub like any other site."""
 
     async def _remember(ctx: ToolContext, result: FetchResult, url: str, kind: str) -> None:
         """Best-effort: persist the fetched page's FULL text as a cross-turn artifact so a
@@ -898,7 +904,10 @@ def build_web_handlers(
         # Short-circuit a host on the 24h skip list (recently paywalled / bot-walled /
         # unreadable): re-fetching it would only hit the same wall, so refuse WITHOUT a network
         # call and point the model at web_search for the same information elsewhere.
-        if domain_skips is not None:
+        # A GitHub URL the snapshot reader answers is exempt: the archive comes from codeload,
+        # which is never walled, and a snapshot failure never records a block of its own.
+        github_url = github is not None and github.handles(url)
+        if domain_skips is not None and not github_url:
             host = normalize_host(url)
             if host is not None and host in await domain_skips.active_hosts():
                 # A site skipped for a wall is one a real browser may still get through.
@@ -1029,6 +1038,47 @@ def build_web_handlers(
                     ),
                     fetch_note,
                 )
+        # A public GitHub repo/folder/file reads from a snapshot of the repo: the whole folder,
+        # line-numbered files, a search across every file. Rendered through the same windowing
+        # and presentation as a page, so it pages, finds and cites identically. When the
+        # snapshot can't answer, a missing/private repo is said plainly; anything else falls
+        # through to the plain page fetch below with a note.
+        github_note = ""
+        if github is not None and github_url:
+            if emit:
+                emit("web_fetch", url)
+            try:
+                page = await github.read(url, find=find, regex=find_regex or extract)
+            except GitHubUnavailable as exc:
+                if not exc.fallback:
+                    return _with_budget_note(exc.message, fetch_note)
+                github_note = (
+                    f"\n\n[GitHub repo snapshot unavailable — {exc.message}; this is the page"
+                    " read the ordinary way.]"
+                )
+            else:
+                if page is not None:
+                    result = window_text(
+                        page.text,
+                        url=page.url,
+                        title=page.title,
+                        offset=offset,
+                        find=page.find,
+                        find_regex=find_regex,
+                        tier="github",
+                    )
+                    await _remember(ctx, result, url, "web_fetch")
+                    presented = _present_result(
+                        result,
+                        url=url,
+                        offset=offset,
+                        find=page.find,
+                        find_regex=find_regex,
+                        # A repo/tree search already ran the pattern over every file.
+                        outline_only=outline_only,
+                        extract=extract and bool(page.find),
+                    )
+                    return _with_budget_note(presented, fetch_note)
         # Break the re-fetch loop: a URL that already failed this turn (a 404 the model
         # keeps reconstructing, a bot-wall) will keep failing, so refuse it without a
         # network call and point at web_search instead of burning the budget on it. Keyed
@@ -1057,8 +1107,11 @@ def build_web_handlers(
             # A persistent hard block (paywall / bot-wall) also lands the DOMAIN on the 24h
             # skip list so later fetches/searches across turns skip it (best-effort, no-op for
             # a transient glitch / 404 / search form).
-            await _record_block(url, exc)
-            return _with_budget_note(str(exc), fetch_note)
+            # Never for a GitHub URL: a rate-limited github.com would drop out of web_search
+            # for a day, and the snapshot path already reads around it.
+            if not github_url:
+                await _record_block(url, exc)
+            return _with_budget_note(str(exc) + github_note, fetch_note)
         await _remember(ctx, result, url, "web_fetch")
         browse_gate.record_fetch(ctx.browser_needed, result, url, offset=offset, find=find)
         presented = _present_result(
@@ -1072,7 +1125,7 @@ def build_web_handlers(
         )
         presented = _with_structured_data(presented, result, offset=offset, find=find)
         hinted = _with_browse_hint(presented, result, url, ctx, offset=offset, find=find)
-        return _with_budget_note(hinted, fetch_note)
+        return _with_budget_note(hinted, github_note + fetch_note)
 
     async def read_artifact_tool(arguments: dict, ctx: ToolContext) -> str:
         # read_artifact is only registered when the artifact store is wired, so these are

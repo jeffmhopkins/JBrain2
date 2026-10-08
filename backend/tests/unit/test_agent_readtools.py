@@ -1480,10 +1480,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             4,
             "636b14551df38e562a5ee22659e87674973e93ccdc158f3b673573ff3e3f7e8e",
         ),
+        # v13: one sentence on reading a public GitHub repo/folder/file from a snapshot
+        # (GITHUB_FETCH_PLAN.md) — no new params, the schema is unchanged.
         "web_fetch.tool": (
             "web_fetch",
-            12,
-            "33c21f4fbee439400092e2828ef982e346a8d7c11f26cb2e1d5f4130cc1be1c5",
+            13,
+            "918f982088c858f409ae2d5e57c1bd5ab908aeb522d2a1ed61676ee056480804",
         ),
         "portal_search.tool": (
             "portal_search",
