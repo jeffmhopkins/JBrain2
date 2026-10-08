@@ -325,12 +325,6 @@ OUTCOME_HISTORY = 40
 # Agent-turn calls kept for `turn_reuse`: a long research turn plus its follow-up.
 TURN_REUSE_HISTORY = 40
 
-# Minimum gap between box_events rows for the SAME (model, outcome). Counters below record
-# every occurrence — they are the truth. This only rate-limits the owner-facing surface, so
-# a pathological loop (a poisoned file re-rejected on every tick) reports once rather than
-# flooding the box's narration with a fault the counters already state precisely.
-BOX_EVENT_MIN_INTERVAL_S = 300.0
-
 # The outcomes that mean THE CACHE DID NOT HELP — each one costs a full prefill somewhere.
 # They are the reason this instrumentation exists: every one of them was previously an
 # `info` log line on a box whose owner cannot read logs, which is how this feature shipped
@@ -589,8 +583,6 @@ class KvPrefixStore:
         # (served model, role) for the pooled roles.
         self._last_outcome: dict[str, dict[str, object]] = {}
         self._last_role_outcome: dict[tuple[str, str], dict[str, object]] = {}
-        # (model, outcome) -> monotonic time of the last box_events row, for the rate limit.
-        self._box_event_at: dict[tuple[str, str], float] = {}
         # The last agent-turn calls and how much of each prompt the engine reused — the check
         # that a follow-up extends the last prompt (docs/reference/PROMPT_CACHE.md). Bounded ring.
         self._turn_reuse: deque[dict[str, object]] = deque(maxlen=TURN_REUSE_HISTORY)
@@ -691,13 +683,12 @@ class KvPrefixStore:
         role: SlotRole | None = None,
         **fields: object,
     ) -> None:
-        """Record one outcome: count it, ring it, log it, and — for a miss — put it on the
-        owner's own surface.
+        """Record one outcome: count it, ring it, log it. The counter is the truth (it moves on
+        every occurrence); the debug read (`/api/debug/llm/kv-prefix`) is where a miss shows.
 
-        Everything this store does is best-effort, and that used to mean every failure was an
-        `info` line on a box whose owner cannot read logs. The counter is the truth (it moves
-        on every occurrence); the box_events row is the attention, rate-limited so a repeating
-        fault reports once rather than burying the narration it belongs in."""
+        A miss no longer writes a vitals row: most of them are the keeper finding a slot in
+        use and skipping politely, which read as a red "missed" on the owner's screen every
+        five minutes while nothing was wrong (owner, 2026-10-08)."""
         self._counters[outcome] = self._counters.get(outcome, 0) + 1
         record: dict[str, object] = {
             "at": time.time(),
@@ -715,26 +706,6 @@ class KvPrefixStore:
             log.warning(f"kv_prefix.{outcome}", model=served_model, **extra, **fields)
         else:
             log.info(f"kv_prefix.{outcome}", model=served_model, **extra, **fields)
-        if outcome not in MISS_OUTCOMES:
-            return
-        key = (served_model, outcome)
-        now = time.monotonic()
-        last = self._box_event_at.get(key)
-        if last is not None and (now - last) < BOX_EVENT_MIN_INTERVAL_S:
-            return
-        self._box_event_at[key] = now
-        # Only short scalar fields reach the owner's row: `identity_drift` carries two whole
-        # component maps, which would fill the 200-char detail with digests and push out the
-        # one thing that matters (WHICH component moved). The log line keeps them all.
-        detail = ", ".join(
-            f"{k}={v}" for k, v in fields.items() if v is not None and len(str(v)) <= 60
-        )
-        await box_events.record(
-            box_events.KV_PREFIX_MISSED,
-            served_model,
-            detail=f"{outcome}{': ' + detail if detail else ''}",
-            status="failed",
-        )
 
     async def snapshot(
         self,

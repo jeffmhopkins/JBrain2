@@ -823,13 +823,12 @@ async def test_every_outcome_is_counted_including_the_ones_that_never_get_a_row(
     assert snap["counters"] == {"identity_drift": 1, "saved": 1}
 
 
-async def test_a_repeated_miss_reports_once_but_counts_every_time(
+async def test_a_miss_counts_every_time_and_writes_no_vitals_row(
     root: Path, events: list, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The failure loop this throttle exists for: a poisoned file rejected on every keeper
-    tick would otherwise bury the box's narration in one recurring fault. The owner gets one
-    row; the counter keeps the true rate, so the debug read still says 'this happened 47
-    times' rather than 'this happened'."""
+    """A miss is counted and ringed for the debug read, never put on the owner's vitals: most
+    are the keeper skipping a slot in use, which read as a red "missed" every five minutes
+    while nothing was wrong (owner, 2026-10-08)."""
     monkeypatch.setattr(kv_prefix, "RESTORE_BUSY_INTERVAL_S", 0.0)
     store, gw = _store(root)
     gw.slot_state = []  # no slots at all -> nothing to identify the prime in
@@ -839,23 +838,15 @@ async def test_a_repeated_miss_reports_once_but_counts_every_time(
     for _ in range(3):
         assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
 
-    misses = [e for e in events if e[0] == box_events.KV_PREFIX_MISSED]
-    assert len(misses) == 1, "a repeating fault must not flood the owner's surface"
-    assert misses[0][1] == SERVED
+    assert events == [], "a miss writes no vitals row"
     snap = await store.snapshot()
     assert _d(snap["counters"])["restore_skipped_busy"] == 3, "the counter is the complete record"
 
-    # Past the throttle window the owner hears about it again — a fault that is still
-    # happening an hour later must not have gone permanently silent.
-    monkeypatch.setattr(kv_prefix, "BOX_EVENT_MIN_INTERVAL_S", 0.0)
-    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
-    assert len([e for e in events if e[0] == box_events.KV_PREFIX_MISSED]) == 2
 
-
-async def test_a_miss_names_itself_on_the_owner_surface(root: Path, events: list) -> None:
-    """The row has to say WHICH miss: `restore_rejected` (the file was bad and is gone) and
-    `identity_drift` (the file is fine, the turn wants a different one) have completely
-    different remedies and previously looked identical — both being nothing at all."""
+async def test_a_miss_names_itself_in_the_debug_read(root: Path, events: list) -> None:
+    """The debug read has to say WHICH miss: `restore_rejected` (the file was bad and is gone)
+    and `identity_drift` (the file is fine, the turn wants a different one) have completely
+    different remedies."""
     store, gw = _store(root)
     _seed_prime(store, "persona")
     path = _plant_file(root, store, "persona")
@@ -864,10 +855,10 @@ async def test_a_miss_names_itself_on_the_owner_surface(root: Path, events: list
 
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert not path.exists(), "a proven-bad file is still deleted"
-    kinds = [(e[0], e[2]) for e in events if e[0] == box_events.KV_PREFIX_MISSED]
-    assert len(kinds) == 1
-    assert kinds[0][1] is not None and kinds[0][1].startswith("restore_rejected")
-    assert "n_restored=11" in kinds[0][1]
+    assert events == []
+    recent = _d(await store.snapshot())["recent"]
+    last = recent[-1]
+    assert last["outcome"] == "restore_rejected" and last["n_restored"] == 11
 
 
 async def test_the_snapshot_says_whether_the_file_a_turn_wants_is_on_disk(root: Path) -> None:
@@ -935,7 +926,6 @@ async def test_an_ineligible_model_says_why_it_will_never_use_the_disk_layer(
 
 async def test_the_outcome_ring_is_bounded(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A store that has been up for weeks must not accumulate its own history in RAM."""
-    monkeypatch.setattr(kv_prefix, "BOX_EVENT_MIN_INTERVAL_S", 0.0)
     monkeypatch.setattr(kv_prefix, "RESTORE_BUSY_INTERVAL_S", 0.0)
     store, gw = _store(root)
     gw.slot_state = []
