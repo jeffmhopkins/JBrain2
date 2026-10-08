@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-10-07
+> **Status:** Living · **Last verified:** 2026-10-08
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -292,7 +292,9 @@ Everything else is the owner debug API (`runbooks/DEBUG_ACCESS.md` has the full 
   same-slot re-read already moves deep-tail logprobs by over a nat); `passed` and `sidecar`
   are Flash-Next's F4 gate.
 
-A miss also writes a `kv_prefix_missed` box event, so it reaches the PWA's vitals.
+A miss writes no vitals row: most were the keeper skipping a slot in use, shown as a red
+"missed" every five minutes while nothing was wrong (owner, 2026-10-08). The debug read is
+where misses show.
 
 **Read the counters before believing anything else.** This feature shipped inert twice — once
 on a read-only mount, once on a flag/eligibility split — and both times the reason it survived
