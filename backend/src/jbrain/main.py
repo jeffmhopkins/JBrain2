@@ -245,6 +245,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
+from jbrain.web.github import GitHubReader
 from jbrain.web.mcp_client import McpHttpClient
 from jbrain.web.portals import FlDfsResolver, FlSunbizResolver
 from jbrain.web.tavily_health import NOTIFY_KIND as TAVILY_NOTIFY_KIND
@@ -859,6 +860,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             blobs=app.state.blob_store,
             domain_skips=app.state.domain_skips,
             feeds=news_feeds,
+            # Public GitHub repos read from an in-memory tarball snapshot through the same
+            # SSRF-guarded fetcher (docs/archive/GITHUB_FETCH_PLAN.md).
+            github=GitHubReader(web_fetcher),
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).

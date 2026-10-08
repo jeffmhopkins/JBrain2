@@ -1,6 +1,6 @@
 ---
 name: web_fetch
-version: 12
+version: 13
 permission: web
 params:
   type: object
@@ -77,7 +77,10 @@ full contents behind a result when the snippet isn't enough, or to read a specif
 link the owner gave you. The reply also ends with a list of the links found on the
 page, as absolute URLs — call web_fetch again on one of them to NAVIGATE (follow a
 link, open the next page, drill into a file in a repository) rather than stopping at
-the first page. Only fetch a URL you actually obtained from a web_search result, a
+the first page. A public GitHub repo, folder or file URL (github.com/…, raw.githubusercontent.com/…)
+is read from a snapshot of the whole repo: the repo URL gives an overview, a tree URL the full
+folder listing, a blob URL the file with line numbers (add #L10-L40 for a range), and find on a
+repo or tree URL searches every file in it. Only fetch a URL you actually obtained from a web_search result, a
 link on a page you fetched, or the owner directly — never build, guess, or extrapolate
 a URL yourself (e.g. appending a year suffix to an article title); if you don't have
 the URL you want, web_search for it. To call a JSON or search API endpoint that requires

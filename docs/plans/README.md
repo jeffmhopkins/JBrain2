@@ -1,6 +1,6 @@
 # Plans — active build plans
 
-> **Status:** Living · **Last verified:** 2026-10-06
+> **Status:** Living · **Last verified:** 2026-10-08
 
 Active, multi-wave build plans (`Scheduled` / `In progress` / `Parked`, per
 `../DOC_LIFECYCLE.md`). A plan archives to `../archive/` in the PR that lands its
