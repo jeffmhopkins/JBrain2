@@ -802,7 +802,8 @@ with `offset`** and names the next offset, rather than advising a `limit` it can
   Atom feeds); a tree URL the whole folder with sizes (not link-capped); a blob URL the file
   with line numbers or just the anchored range; `find` on a repo/tree URL searches every text
   file (path, line number, line; bounded, true totals reported; `regex`/`extract` make it a
-  pattern), while `find` on a file keeps the ordinary jump-to-keyword. Each view is windowed and
+  pattern; run off the event loop with a per-match timeout, 2,000-char lines and a 3 s budget,
+  past which it says it stopped early), while `find` on a file keeps the ordinary jump-to-keyword. Each view is windowed and
   presented by the same `window_text` → `_present_result` path as any page, so `offset`,
   `outline`, the citation chip and `read_artifact` behave identically. No `api.github.com` (60
   requests an hour per IP, shared) and no token — private repos read as missing. The default
@@ -811,9 +812,12 @@ with `offset`** and names the next offset, rather than advising a `limit` it can
   header and the branch name (display only) from the repo page. A ref with slashes
   (`tree/feature/x/src`) is resolved by trying the splits shortest-first (`feature`, then
   `feature/x`, at most four segments), a codeload 404 moving to the next. Snapshots are cached
-  per process by `owner/repo@ref` for 30 minutes (six at most, 192 MB of text), misses for
-  five, and concurrent reads of one repo share one download. A missing/private repo gets a
-  plain message; any other snapshot failure (over a cap, 403/429, network) falls back to the
+  per process by `owner/repo@ref` for 30 minutes (six at most, 192 MB counted as in-memory
+  size), every miss for five; concurrent reads of one repo share one download, one snapshot
+  is built at a time across repos, and a download has 120 s in all. A raw URL takes the
+  ordinary fetch unless its repo is already snapshotted; a listed file the snapshot cannot
+  show (binary, over 1 MB) is read raw the ordinary way; a bare `{o}/{r}` with no archive is
+  read as a page. A missing/private repo behind a tree/blob URL gets a plain message; any other snapshot failure (over a cap, 403/429, network) falls back to the
   ordinary page fetch with a note — and a GitHub URL never lands `github.com` or codeload on
   the 24h skip list, nor is it short-circuited by it.
 

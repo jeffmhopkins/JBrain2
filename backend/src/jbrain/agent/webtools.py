@@ -1052,10 +1052,15 @@ def build_web_handlers(
             except GitHubUnavailable as exc:
                 if not exc.fallback:
                     return _with_budget_note(exc.message, fetch_note)
-                github_note = (
-                    f"\n\n[GitHub repo snapshot unavailable — {exc.message}; this is the page"
-                    " read the ordinary way.]"
-                )
+                if exc.plain_url:
+                    # A file the snapshot lists but cannot show: read the raw file instead.
+                    url = exc.plain_url
+                    github_note = f"\n\n[{exc.message}.]"
+                else:
+                    github_note = (
+                        f"\n\n[GitHub repo snapshot unavailable — {exc.message}; this is the"
+                        " page read the ordinary way.]"
+                    )
             else:
                 if page is not None:
                     result = window_text(

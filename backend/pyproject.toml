@@ -55,6 +55,10 @@ dependencies = [
     # EVALUATION ONLY: the expression is parsed by our own restricted AST walker first, so
     # sympy's own `sympify`/`parse_expr` (which eval() their input) is never reached.
     "sympy>=1.13",
+    # A regex engine with a per-call `timeout`: `web_fetch`'s search across a GitHub repo
+    # snapshot runs a model-supplied pattern over attacker-written text, and the stdlib `re`
+    # cannot be stopped mid-match, so a catastrophic pattern would pin a thread forever.
+    "regex>=2024.4",
     # The Public Suffix List, bundled (no network): the browse tool's fetch-first gate keys
     # on a URL's registrable domain (eTLD+1), so www./a subdomain match and co.uk does not
     # lump every UK site together (docs/plans/BROWSER_AGENT_PLAN.md B1). Already present

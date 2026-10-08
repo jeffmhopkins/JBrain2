@@ -169,11 +169,11 @@ def _reader(fake: _GitHub, **kw: Any) -> GitHubReader:
         ),
         (
             "https://raw.githubusercontent.com/acme/demo/main/src/a.py",
-            GitHubTarget("acme", "demo", "blob", ("main", "src", "a.py")),
+            GitHubTarget("acme", "demo", "blob", ("main", "src", "a.py"), raw=True),
         ),
         (
             "https://raw.githubusercontent.com/acme/demo/refs/heads/dev/a.py",
-            GitHubTarget("acme", "demo", "blob", ("dev", "a.py")),
+            GitHubTarget("acme", "demo", "blob", ("dev", "a.py"), raw=True),
         ),
         (
             "https://github.com/acme/demo/blob/main/my%20file.txt",
@@ -421,13 +421,25 @@ async def test_a_file_with_line_numbers_and_a_range() -> None:
     assert ranged is not None
     assert "showing lines 5–6" in ranged.text
     assert "def widget" not in ranged.text and "5  def gadget():" in ranged.text
+    clipped = await reader.read("https://github.com/acme/demo/blob/main/src/demo/core.py#L6-L99")
+    assert clipped is not None and "showing lines 6–6" in clipped.text
     past = await reader.read("https://github.com/acme/demo/blob/main/src/demo/core.py#L90-L99")
-    assert past is not None and "showing lines 6–6" in past.text
+    assert past is not None and "has 6 line(s), so there is no line 90" in past.text
+    # A raw URL is served from a snapshot already here...
     raw = await reader.read("https://raw.githubusercontent.com/acme/demo/main/setup.py")
     assert raw is not None and "2  setup(name='demo')" in raw.text
-    binary = await reader.read("https://github.com/acme/demo/blob/main/assets/logo.png")
-    assert binary is not None and "binary — its contents are not readable here" in binary.text
     assert len(fake.archive_calls()) == 1  # one snapshot served all of it
+    # ...but a file the snapshot cannot show is read raw, through the ordinary fetch.
+    with pytest.raises(GitHubUnavailable) as exc:
+        await reader.read("https://github.com/acme/demo/blob/main/assets/logo.png")
+    assert exc.value.fallback
+    assert exc.value.plain_url == (
+        f"https://raw.githubusercontent.com/acme/demo/{SHA}/assets/logo.png"
+    )
+    assert (
+        await reader.read("https://raw.githubusercontent.com/acme/demo/main/assets/logo.png")
+        is None
+    )
 
 
 async def test_a_missing_path_shows_the_nearest_folder() -> None:
@@ -514,11 +526,14 @@ async def test_a_missing_or_private_repo_is_a_clear_message() -> None:
     fake = _GitHub({})
     reader = _reader(fake)
     with pytest.raises(GitHubUnavailable) as exc:
-        await reader.read("https://github.com/acme/secret")
+        await reader.read("https://github.com/acme/secret/blob/nope/a.py")
     assert not exc.value.fallback
     assert "not found" in exc.value.message and "private" in exc.value.message
-    with pytest.raises(GitHubUnavailable, match="branch/tag"):
-        await reader.read("https://github.com/acme/secret/blob/nope/a.py")
+    assert "branch/tag" in exc.value.message
+    # A bare two-segment URL with no archive may still be a real page: read it plainly.
+    with pytest.raises(GitHubUnavailable) as bare:
+        await reader.read("https://github.com/acme/secret")
+    assert bare.value.fallback and "no public repository archive" in bare.value.message
     # The miss is remembered: a retry does not download again.
     n = len(fake.calls)
     with pytest.raises(GitHubUnavailable):
@@ -528,9 +543,15 @@ async def test_a_missing_or_private_repo_is_a_clear_message() -> None:
 
 async def test_over_the_compressed_cap_is_refused_for_the_fallback() -> None:
     fake = _GitHub()
+    reader = _reader(fake, max_compressed=100)
     with pytest.raises(GitHubUnavailable) as exc:
-        await _reader(fake, max_compressed=100).read("https://github.com/acme/demo")
+        await reader.read("https://github.com/acme/demo")
     assert exc.value.fallback and "too large to snapshot" in exc.value.message
+    # Remembered: the retry refuses the same way without downloading again.
+    n = len(fake.calls)
+    with pytest.raises(GitHubUnavailable, match="too large to snapshot"):
+        await reader.read("https://github.com/acme/demo")
+    assert len(fake.calls) == n
 
 
 async def test_a_blocked_archive_falls_back() -> None:
@@ -622,7 +643,9 @@ async def test_the_cache_is_bounded_by_count_and_text() -> None:
         await reader.read(f"https://github.com/acme/demo/blob/r{i}/a.txt")
     await reader.read("https://github.com/acme/demo/blob/r0/a.txt")  # evicted → downloaded again
     assert len(fake.archive_calls()) == 4
-    by_text = _reader(_GitHub(archives), max_text_bytes=15)
+    one = index_tarball(_tarball({"a.txt": b"x" * 10}), owner="acme", repo="demo", ref="r0")
+    assert one.mem_bytes > one.text_bytes  # the decoded str + bookkeeping, not raw bytes
+    by_text = _reader(_GitHub(archives), max_text_bytes=one.mem_bytes * 3 // 2)
     await by_text.read("https://github.com/acme/demo/blob/r0/a.txt")
     await by_text.read("https://github.com/acme/demo/blob/r1/a.txt")
     assert len(by_text._cache) == 1
@@ -745,9 +768,10 @@ async def test_web_fetch_pages_finds_and_extracts_through_a_snapshot() -> None:
 async def test_web_fetch_says_a_missing_repo_plainly_without_a_plain_fetch() -> None:
     fake = _GitHub({})
     skips = _Skips()
-    out = await _handler(fake, skips)({"url": "https://github.com/acme/secret"}, _ctx())
+    url = "https://github.com/acme/secret/blob/main/a.py"
+    out = await _handler(fake, skips)({"url": url}, _ctx())
     assert "not found" in str(out) and "private" in str(out)
-    assert "https://github.com/acme/secret" not in fake.calls  # no HTML fetch after it
+    assert url not in fake.calls  # no HTML fetch after it
     assert skips.recorded == []
 
 
@@ -815,3 +839,192 @@ async def test_the_overview_reports_what_it_dropped() -> None:
     # A direct snapshot lookup is a cache hit, not a second download.
     await reader._snapshot("acme", "demo", None)
     assert len(fake.archive_calls()) == 1
+
+
+# --- review follow-ups ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # An encoded slash would carry `..` segments inside one "segment" past the check and,
+        # once collapsed, aim the archive URL at another repository.
+        "https://github.com/o/r/blob/a%2f..%2f..%2f..%2fevil%2fx%2ftar.gz%2fmain/f.py",
+        "https://github.com/o/r/tree/a%2F..%2Fb",
+        "https://raw.githubusercontent.com/o/r/main%2f..%2f..%2fevil/f.py",
+        "https://github.com/solutions/devops",
+        "https://github.com/readme/stories",
+        "https://github.com/copilot/chat",
+    ],
+)
+def test_encoded_slashes_and_site_sections_are_refused(url: str) -> None:
+    assert parse_github_url(url) is None
+
+
+async def test_ref_components_are_percent_encoded_in_every_url() -> None:
+    assert gh._ref_path("feat/a b#c?d") == "feat/a%20b%23c%3Fd"
+    fake = _GitHub(
+        {"https://codeload.github.com/acme/demo/tar.gz/v1%231": _tarball({"a.txt": b"x"})}
+    )
+    page = await _reader(fake).read("https://github.com/acme/demo/blob/v1%231/a.txt")
+    assert page is not None
+    assert "https://codeload.github.com/acme/demo/tar.gz/v1%231" in fake.calls
+
+
+def test_line_numbers_follow_newlines_only() -> None:
+    text = "one\fstill one\r\ntwo\vstill two still two\rstill two\nthree\n"
+    assert gh._lines(text) == [
+        "one\fstill one",
+        "two\vstill two still two\rstill two",
+        "three",
+    ]
+    snap = index_tarball(_tarball({"f.txt": text.encode()}), owner="a", repo="b", ref="m")
+    view = gh.render_blob(snap, snap.files["f.txt"], None)
+    assert "— 3 lines" in view and "3  three" in view
+    found = gh.render_search(snap, "", "three", regex=False)
+    assert "  3: three" in found
+
+
+def test_an_lfs_pointer_says_so() -> None:
+    pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 3145728\n"
+    snap = index_tarball(_tarball({"model.txt": pointer}), owner="a", repo="b", ref="m")
+    view = gh.render_blob(snap, snap.files["model.txt"], None)
+    assert "Git LFS pointer: the real content (3.0 MB) is stored outside" in view
+    bare = index_tarball(
+        _tarball({"p.txt": b"version https://git-lfs.github.com/spec/v1\n"}),
+        owner="a",
+        repo="b",
+        ref="m",
+    )
+    assert "Git LFS pointer: the real content is stored" in gh.render_blob(
+        bare, bare.files["p.txt"], None
+    )
+
+
+def test_a_catastrophic_pattern_is_stopped_not_run_forever() -> None:
+    snap = index_tarball(
+        _tarball({"evil.txt": b"a" * 40 + b"!\n", "z.txt": b"aaa\n"}), owner="a", repo="b", ref="m"
+    )
+    out = gh.render_search(snap, "", "(a|aa)+$", regex=True, match_timeout_s=0.01)
+    assert "Search stopped early" in out
+
+
+def test_the_search_budget_stops_a_long_search() -> None:
+    snap = index_tarball(
+        _tarball({f"f{i}.txt": b"hit\n" for i in range(5)}), owner="a", repo="b", ref="m"
+    )
+    ticks = iter(range(100))
+    out = gh.render_search(
+        snap, "", "hit", regex=False, budget_s=4.5, clock=lambda: float(next(ticks))
+    )
+    assert "Search stopped early" in out
+    assert "matching line(s) in 2 file(s)" in out  # partial results are kept
+    none = gh.render_search(snap, "", "zzz", regex=False, budget_s=0.5, clock=lambda: 0.0)
+    assert "No match" in none and "stopped early" not in none
+
+
+def test_a_match_past_the_scan_cap_is_not_searched_and_a_bad_pattern_is_reported() -> None:
+    line = b"x" * (gh._SEARCH_SCAN_CHARS + 10) + b"needle\n"
+    snap = index_tarball(_tarball({"f.txt": line}), owner="a", repo="b", ref="m")
+    assert "No match" in gh.render_search(snap, "", "needle", regex=False)
+    assert "Invalid regex for find" in gh.render_search(snap, "", "(unclosed", regex=True)
+
+
+async def test_a_repo_search_runs_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran: list[object] = []
+    real = asyncio.to_thread
+
+    async def spy(fn: Callable[..., Any], *a: Any, **k: Any) -> Any:
+        ran.append(fn)
+        return await real(fn, *a, **k)
+
+    monkeypatch.setattr(gh.asyncio, "to_thread", spy)
+    page = await _reader(_GitHub()).read("https://github.com/acme/demo", find="widget")
+    assert page is not None and gh.render_search in ran
+
+
+async def test_snapshots_of_different_repos_are_built_one_at_a_time() -> None:
+    archives = {
+        "https://codeload.github.com/acme/one/tar.gz/main": _tarball({"a.txt": b"1"}),
+        "https://codeload.github.com/acme/two/tar.gz/main": _tarball({"a.txt": b"2"}),
+    }
+    fake = _GitHub(archives)
+    fake.gate = asyncio.Event()
+    reader = _reader(fake)
+    one = asyncio.create_task(reader.read("https://github.com/acme/one/blob/main/a.txt"))
+    two = asyncio.create_task(reader.read("https://github.com/acme/two/blob/main/a.txt"))
+    await asyncio.sleep(0.02)
+    assert len(fake.archive_calls()) == 1  # the second waits for the first to finish
+    fake.gate.set()
+    assert all(p is not None for p in await asyncio.gather(one, two))
+    assert len(fake.archive_calls()) == 2
+
+
+async def test_a_download_has_an_overall_deadline() -> None:
+    fake = _GitHub()
+    fake.gate = asyncio.Event()  # never set: the archive never arrives
+    with pytest.raises(GitHubUnavailable) as exc:
+        await _reader(fake, deadline_s=0.05).read("https://github.com/acme/demo")
+    assert exc.value.fallback and "took over" in exc.value.message
+
+
+async def test_a_blocked_archive_is_remembered_and_rebuilt_per_hit() -> None:
+    fake = _GitHub()
+    fake.status["https://github.com/acme/demo/archive/HEAD.tar.gz"] = 429
+    reader = _reader(fake)
+    with pytest.raises(GitHubUnavailable) as first:
+        await reader.read("https://github.com/acme/demo")
+    n = len(fake.calls)
+    with pytest.raises(GitHubUnavailable) as second:
+        await reader.read("https://github.com/acme/demo")
+    assert len(fake.calls) == n  # no second download inside the window
+    assert second.value is not first.value
+    assert second.value.message == first.value.message and second.value.fallback
+
+
+async def test_expired_misses_are_pruned_on_insert() -> None:
+    clock = _Clock()
+    reader = _reader(_GitHub({}), clock=clock)
+    with pytest.raises(GitHubUnavailable):
+        await reader.read("https://github.com/acme/gone")
+    clock.now += gh.NEGATIVE_TTL_S + 1
+    with pytest.raises(GitHubUnavailable):
+        await reader.read("https://github.com/acme/other")
+    assert {k[1] for k in reader._negative} == {"other"}
+
+
+def test_skipped_members_count_toward_the_uncompressed_cap() -> None:
+    def big_unsafe(tf: tarfile.TarFile) -> None:
+        info = tarfile.TarInfo("../outside.txt")
+        info.size = 100
+        tf.addfile(info, io.BytesIO(b"x" * 100))
+
+    with pytest.raises(SnapshotRefused, match="uncompressed"):
+        index_tarball(
+            _tarball({}, extra=big_unsafe), owner="a", repo="b", ref=None, max_uncompressed=50
+        )
+
+
+async def test_web_fetch_reads_a_raw_file_plainly_when_no_snapshot_is_cached() -> None:
+    fake = _GitHub()
+    url = "https://raw.githubusercontent.com/acme/demo/main/setup.py"
+    out = await _handler(fake)({"url": url}, _ctx())
+    assert fake.calls == [url]  # the file itself, no tarball
+    assert "snapshot" not in str(out)
+
+
+async def test_web_fetch_reads_an_unshowable_file_from_raw() -> None:
+    raw = f"https://raw.githubusercontent.com/acme/demo/{SHA}/assets/logo.png"
+    fake = _GitHub()
+    out = await _handler(fake)(
+        {"url": "https://github.com/acme/demo/blob/HEAD/assets/logo.png"}, _ctx()
+    )
+    assert fake.calls[-1] == raw
+    assert f"is read from {raw}" in str(out)
+
+
+async def test_web_fetch_reads_a_bare_non_repo_path_as_a_page() -> None:
+    fake = _GitHub({})
+    out = await _handler(fake)({"url": "https://github.com/acme/notarepo"}, _ctx())
+    assert "https://github.com/acme/notarepo" in fake.calls
+    assert "no public repository archive" in str(out)

@@ -29,6 +29,7 @@ import asyncio
 import html
 import io
 import re
+import sys
 import tarfile
 import time
 from collections import OrderedDict
@@ -38,6 +39,7 @@ from pathlib import PurePosixPath
 from typing import Literal
 from urllib.parse import quote, unquote, urlsplit
 
+import regex as rx
 import structlog
 
 from jbrain.web.feeds import FeedItem, parse_feed
@@ -59,8 +61,16 @@ MAX_SNAPSHOT_TEXT_BYTES = 64_000_000
 CACHE_TTL_S = 1800.0
 CACHE_MAX_SNAPSHOTS = 6
 CACHE_MAX_TEXT_BYTES = 192_000_000
-# A repo that 404'd or was over the caps is not re-downloaded on every retry.
+# A repo that 404'd, was over the caps, or was blocked is not re-downloaded on every retry.
 NEGATIVE_TTL_S = 300.0
+# One snapshot download (every archive URL tried, plus indexing) gets this long in all.
+DOWNLOAD_DEADLINE_S = 120.0
+# Snapshots built at once, across every repo: each one briefly holds its compressed archive
+# plus the decoded text, so N agents reading N different repos must not stack N peaks.
+CONCURRENT_SNAPSHOTS = 1
+# Per-file bookkeeping beyond the text itself (the RepoFile, its path, the dict slot), so the
+# cache budget counts what a snapshot really costs in memory rather than its raw bytes.
+_FILE_OVERHEAD = 200
 # A ref with slashes is ambiguous against the path after it; try at most this many splits.
 MAX_REF_SEGMENTS = 4
 # The repo page is read only for its description and default-branch name.
@@ -76,6 +86,13 @@ _FEED_RELEASES = 5
 _SEARCH_MAX_LINES = 200
 _SEARCH_MAX_PATHS = 50
 _SEARCH_LINE_CHARS = 240
+# A repo search runs a model-supplied pattern over attacker-written text: each line is cut to
+# this many chars before matching, each match has its own timeout, and the whole search a
+# time budget — past either it stops and says so.
+_SEARCH_SCAN_CHARS = 2_000
+_SEARCH_MATCH_TIMEOUT_S = 0.05
+_SEARCH_BUDGET_S = 3.0
+_LFS_HEAD = "version https://git-lfs.github.com/spec/v1"
 
 _GITHUB_HOSTS = frozenset({"github.com", "www.github.com"})
 _RAW_HOST = "raw.githubusercontent.com"
@@ -86,15 +103,20 @@ _LINES_RE = re.compile(r"^L(\d+)(?:C\d+)?(?:-L(\d+)(?:C\d+)?)?$")
 _RESERVED_OWNERS = frozenset(
     {
         "about",
+        "account",
         "apps",
+        "codespaces",
         "collections",
         "contact",
+        "copilot",
         "customer-stories",
+        "dashboard",
         "enterprise",
         "events",
         "explore",
         "features",
         "issues",
+        "join",
         "login",
         "logout",
         "marketplace",
@@ -104,11 +126,15 @@ _RESERVED_OWNERS = frozenset(
         "organizations",
         "pricing",
         "pulls",
+        "readme",
+        "resources",
         "search",
         "security",
         "settings",
         "site",
+        "solutions",
         "sponsors",
+        "team",
         "topics",
         "trending",
         "users",
@@ -142,6 +168,9 @@ class GitHubTarget:
     kind: Literal["repo", "tree", "blob"]
     rest: tuple[str, ...] = ()
     lines: tuple[int, int] | None = None
+    # A raw.githubusercontent.com URL: one file, answered from a snapshot only when one is
+    # already cached — never worth downloading a whole repo for.
+    raw: bool = False
 
     @property
     def slug(self) -> str:
@@ -167,7 +196,9 @@ def _clean_segments(path: str) -> list[str] | None:
     (`..`, `.`, a NUL, a backslash) — such a URL is not one we answer from a snapshot."""
     segs = [unquote(s) for s in path.split("/") if s]
     for s in segs:
-        if s in {".", ".."} or "\x00" in s or "\\" in s:
+        # A decoded `/` (`%2f`) would let a ref carry its own `..` segments past this check
+        # and steer the archive URL at another repository once the client collapses them.
+        if s in {".", ".."} or "\x00" in s or "\\" in s or "/" in s:
             return None
     return segs
 
@@ -212,7 +243,7 @@ def parse_github_url(url: str) -> GitHubTarget | None:
         # raw.githubusercontent.com/o/r/refs/heads/main/path — the fully qualified form.
         if len(rest) >= 4 and rest[0] == "refs" and rest[1] in {"heads", "tags"}:
             rest = rest[2:]
-        return GitHubTarget(segs[0], segs[1], "blob", tuple(rest), lines)
+        return GitHubTarget(segs[0], segs[1], "blob", tuple(rest), lines, raw=True)
     if host not in _GITHUB_HOSTS or len(segs) < 2:
         return None
     owner, repo = segs[0], segs[1].removesuffix(".git")
@@ -266,6 +297,9 @@ class Snapshot:
     skipped_links: int = 0
     skipped_unsafe: int = 0
     text_bytes: int = 0
+    # What the snapshot costs in memory (decoded str sizes + per-file overhead) — the cache
+    # budget's unit, since a str of non-ASCII text can take up to 4x its UTF-8 bytes.
+    mem_bytes: int = 0
     meta: RepoMeta | None = None
     meta_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -318,6 +352,7 @@ def index_tarball(
     files: dict[str, RepoFile] = {}
     entries = declared = text_bytes = links = unsafe = 0
     commit = ""
+    mem = 0
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r|gz") as tf:
             for member in tf:
@@ -326,6 +361,11 @@ def index_tarball(
                     raise SnapshotRefused(f"more than {max_entries:,} files")
                 if member.isdir():
                     continue
+                # Every member's declared size counts, including ones skipped below: the
+                # inflate work to skip past a member is the same as to read it.
+                declared += member.size
+                if declared > max_uncompressed:
+                    raise SnapshotRefused(f"over {max_uncompressed // 1_000_000} MB uncompressed")
                 if not member.isreg():
                     # Symlinks, hardlinks, devices, FIFOs: never followed, never read.
                     links += 1
@@ -334,9 +374,6 @@ def index_tarball(
                 if rel is None:
                     unsafe += 1
                     continue
-                declared += member.size
-                if declared > max_uncompressed:
-                    raise SnapshotRefused(f"over {max_uncompressed // 1_000_000} MB uncompressed")
                 if _is_binary_name(rel):
                     files[rel] = RepoFile(rel, member.size, None, "binary")
                     continue
@@ -354,6 +391,10 @@ def index_tarball(
                 text_bytes += len(raw)
                 files[rel] = RepoFile(rel, member.size, raw.decode("utf-8", errors="replace"))
             commit = str(tf.pax_headers.get("comment", "")).strip()
+        for f in files.values():
+            mem += _FILE_OVERHEAD + sys.getsizeof(f.path)
+            if f.text is not None:
+                mem += sys.getsizeof(f.text)
     except (tarfile.TarError, EOFError, OSError) as exc:
         raise SnapshotRefused("the archive could not be read") from exc
     return Snapshot(
@@ -365,6 +406,7 @@ def index_tarball(
         skipped_links=links,
         skipped_unsafe=unsafe,
         text_bytes=text_bytes,
+        mem_bytes=mem,
     )
 
 
@@ -380,7 +422,7 @@ def _fmt_size(n: int) -> str:
 
 
 def _line_count(text: str) -> int:
-    return text.count("\n") + (0 if text.endswith("\n") or not text else 1)
+    return len(_lines(text))
 
 
 def _blob_url(snap: Snapshot, path: str) -> str:
@@ -549,24 +591,49 @@ def render_tree(snap: Snapshot, folder: str) -> str:
     return head + "\n".join(lines)
 
 
+def _lines(text: str) -> list[str]:
+    """A file's lines as GitHub numbers them: split on "\n" only (`splitlines` would also break
+    on \f, \v, U+2028 and a lone \r and shift every number after it), one trailing "\r"
+    dropped from each, no phantom empty line after a final newline."""
+    out = [line.removesuffix("\r") for line in text.split("\n")]
+    if out and out[-1] == "":
+        out.pop()
+    return out
+
+
+def _lfs_note(text: str) -> str | None:
+    """A Git LFS pointer stands in for a file stored outside the repo: say so in one line."""
+    if not text.startswith(_LFS_HEAD):
+        return None
+    size = next((ln.split(" ", 1)[1] for ln in _lines(text) if ln.startswith("size ")), "")
+    real = f" ({_fmt_size(int(size))})" if size.isdigit() else ""
+    return (
+        f"This file is a Git LFS pointer: the real content{real} is stored outside the"
+        " repository archive and is not readable here."
+    )
+
+
 def render_blob(snap: Snapshot, f: RepoFile, lines: tuple[int, int] | None) -> str:
+    """The file (whose text the caller has checked is present) with line numbers."""
+    text = f.text or ""
     head = f"# {f.path} — {snap.slug}\n{_blob_url(snap, f.path)}\n\n"
-    if f.text is None:
-        return (
-            head + f"`{f.path}` is {_fmt_size(f.size)} and {f.note} — its contents are not"
-            " readable here."
-        )
-    all_lines = f.text.splitlines()
+    lfs = _lfs_note(text)
+    if lfs is not None:
+        return head + lfs
+    all_lines = _lines(text)
     n = len(all_lines)
     start, end = 1, n
     span = ""
     if lines is not None:
-        start, end = min(lines[0], max(n, 1)), min(lines[1], n)
+        if lines[0] > n:
+            return head + (
+                f"`{f.path}` has {n:,} line(s), so there is no line {lines[0]}. Read it without"
+                f" the #L anchor, or pick a range within 1–{n}."
+            )
+        start, end = lines[0], min(lines[1], n)
         span = f" · showing lines {start}–{end}"
     width = len(str(max(end, 1)))
-    body = "\n".join(
-        f"{i:>{width}}  {all_lines[i - 1]}" for i in range(start, end + 1) if 0 < i <= n
-    )
+    body = "\n".join(f"{i:>{width}}  {all_lines[i - 1]}" for i in range(start, end + 1))
     return (
         head
         + f"`{f.path}` at {_ref_line(snap)} — {n:,} lines, {_fmt_size(f.size)}{span}\n\n"
@@ -574,41 +641,87 @@ def render_blob(snap: Snapshot, f: RepoFile, lines: tuple[int, int] | None) -> s
     )
 
 
-def render_search(snap: Snapshot, folder: str, term: str, *, regex: bool) -> str:
+class _SearchStopped(Exception):
+    """The search's time budget ran out, or one match exceeded its own timeout."""
+
+
+def render_search(
+    snap: Snapshot,
+    folder: str,
+    term: str,
+    *,
+    regex: bool,
+    budget_s: float = _SEARCH_BUDGET_S,
+    match_timeout_s: float = _SEARCH_MATCH_TIMEOUT_S,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
     """Every line matching `term` in the text files under `folder` — path, line number, the
-    line — plus files whose PATH matches. Bounded; the true totals are reported."""
-    pattern = re.compile(term if regex else re.escape(term), re.IGNORECASE)
+    line — plus files whose PATH matches. Bounded in output AND in work: the pattern is the
+    model's and the text is a stranger's, so each line is cut to `_SEARCH_SCAN_CHARS`, each
+    match has a timeout (the `regex` engine can be stopped mid-backtrack; `re` cannot), and the
+    whole search a budget. A stopped search reports what it found and that it stopped."""
+    label = f"regex '{term}'" if regex else f"'{term}'"
     scope = f"{snap.slug}/{folder}" if folder else snap.slug
+    head = f"# Search {label} in {scope}\n{_tree_url(snap, folder)}\n\n"
+    try:
+        pattern = rx.compile(term if regex else rx.escape(term), rx.IGNORECASE | rx.VERSION0)
+    except rx.error as exc:
+        return head + f"Invalid regex for find: {exc}. Fix the pattern, or drop regex=true."
+    deadline = clock() + budget_s
+
+    def hit(text: str) -> bool:
+        if clock() > deadline:
+            raise _SearchStopped
+        try:
+            return pattern.search(text[:_SEARCH_SCAN_CHARS], timeout=match_timeout_s) is not None
+        except TimeoutError as exc:
+            raise _SearchStopped from exc
+
     hits: list[str] = []
     path_hits: list[str] = []
     match_total = file_total = path_total = searched = 0
-    for path in sorted(snap.files, key=str.lower):
-        if not _under(path, folder):
-            continue
-        f = snap.files[path]
-        if pattern.search(path):
-            path_total += 1
-            if len(path_hits) < _SEARCH_MAX_PATHS:
-                path_hits.append(f"- {path}")
-        if f.text is None:
-            continue
-        searched += 1
-        file_hits = []
-        for no, line in enumerate(f.text.splitlines(), 1):
-            if pattern.search(line):
-                match_total += 1
-                if len(hits) + len(file_hits) < _SEARCH_MAX_LINES:
-                    file_hits.append(f"  {no}: {line.strip()[:_SEARCH_LINE_CHARS]}")
-        if file_hits:
-            file_total += 1
-            hits.append(path)
-            hits.extend(file_hits)
-    label = f"regex '{term}'" if regex else f"'{term}'"
-    head = f"# Search {label} in {scope}\n{_tree_url(snap, folder)}\n\n"
+    stopped = False
+    try:
+        for path in sorted(snap.files, key=str.lower):
+            if not _under(path, folder):
+                continue
+            f = snap.files[path]
+            if hit(path):
+                path_total += 1
+                if len(path_hits) < _SEARCH_MAX_PATHS:
+                    path_hits.append(f"- {path}")
+            if f.text is None:
+                continue
+            searched += 1
+            file_hits = []
+            try:
+                for no, line in enumerate(_lines(f.text), 1):
+                    if hit(line):
+                        match_total += 1
+                        if len(hits) + len(file_hits) < _SEARCH_MAX_LINES:
+                            file_hits.append(f"  {no}: {line.strip()[:_SEARCH_LINE_CHARS]}")
+            finally:
+                if file_hits:
+                    file_total += 1
+                    hits.append(path)
+                    hits.extend(file_hits)
+    except _SearchStopped:
+        stopped = True
+    stop_note = (
+        "\n[Search stopped early: the pattern was too slow over this repo (a per-match timeout"
+        " or the search's time budget). Results above are partial — use a simpler or literal"
+        " term, or search a sub-folder's tree URL.]"
+        if stopped
+        else ""
+    )
     if not match_total and not path_total:
-        return head + (
-            f"No match for {label} in {searched} text file(s) at {_ref_line(snap)}. Try a"
-            " different term, or open the folder listing to browse."
+        return (
+            head
+            + (
+                f"No match for {label} in {searched} text file(s) at {_ref_line(snap)}. Try a"
+                " different term, or open the folder listing to browse."
+            )
+            + stop_note
         )
     shown = sum(1 for h in hits if h.startswith("  "))
     out = [
@@ -625,7 +738,7 @@ def render_search(snap: Snapshot, folder: str, term: str, *, regex: bool) -> str
             f"\n[+{match_total - shown} more matching line(s) not shown — narrow the term or"
             " search a sub-folder's tree URL.]"
         )
-    return head + "\n".join(out)
+    return head + "\n".join(out) + stop_note
 
 
 # --- The reader ----------------------------------------------------------------------------
@@ -633,13 +746,16 @@ def render_search(snap: Snapshot, folder: str, term: str, *, regex: bool) -> str
 
 class GitHubUnavailable(Exception):
     """The snapshot could not answer. `fallback` True → the caller reads the URL the ordinary
-    way (with `message` as a note); False → `message` IS the reply (the repo is missing or
-    private, so a plain fetch would only 404 again)."""
+    way (with `message` as a note) — or, when `plain_url` is set, reads THAT URL instead (a
+    file the snapshot lists but cannot show, read from raw.githubusercontent.com); False →
+    `message` IS the reply (the branch/file's repo is missing or private, so a plain fetch
+    would only 404 again)."""
 
-    def __init__(self, message: str, *, fallback: bool) -> None:
+    def __init__(self, message: str, *, fallback: bool, plain_url: str | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.fallback = fallback
+        self.plain_url = plain_url
 
 
 class _NotFound(Exception):
@@ -658,11 +774,23 @@ class GitHubPage:
 
 
 _Key = tuple[str, str, str | None]
+# A remembered failure: which kind, and its message. The exception is rebuilt per hit rather
+# than one instance re-raised to every caller (a shared instance accumulates tracebacks).
+_Miss = tuple[Literal["not_found", "refused", "unavailable"], str]
+
+
+def _ref_path(ref: str) -> str:
+    """A ref as URL path segments, each percent-encoded on its own. Parsing already refused
+    `.`/`..`/encoded-slash segments; encoding is the second lock on the URL we build."""
+    return "/".join(quote(part, safe="") for part in ref.split("/"))
 
 
 class GitHubReader:
     """Answers GitHub URLs from cached repo snapshots, downloading each through `fetcher`
-    (the SSRF-guarded path) at most once at a time."""
+    (the SSRF-guarded path) at most once at a time per repo@ref, and building at most
+    `CONCURRENT_SNAPSHOTS` at once overall. One reader serves the whole process (main.py
+    builds one), so the instance-level gate is the process-wide one; it is not a module
+    global only because an asyncio primitive must not outlive the event loop it was used on."""
 
     def __init__(
         self,
@@ -673,17 +801,21 @@ class GitHubReader:
         max_snapshots: int = CACHE_MAX_SNAPSHOTS,
         max_text_bytes: int = CACHE_MAX_TEXT_BYTES,
         max_compressed: int = MAX_COMPRESSED_BYTES,
+        deadline_s: float = DOWNLOAD_DEADLINE_S,
+        concurrent: int = CONCURRENT_SNAPSHOTS,
         index: Callable[..., Snapshot] = index_tarball,
     ) -> None:
         self._fetcher = fetcher
         self._clock = clock
         self._ttl = ttl_s
         self._max_snapshots = max_snapshots
-        self._max_text = max_text_bytes
+        self._max_mem = max_text_bytes
         self._max_compressed = max_compressed
+        self._deadline = deadline_s
+        self._gate = asyncio.Semaphore(concurrent)
         self._index = index
         self._cache: OrderedDict[_Key, tuple[Snapshot, float]] = OrderedDict()
-        self._negative: dict[_Key, tuple[Exception, float]] = {}
+        self._negative: dict[_Key, tuple[_Miss, float]] = {}
         self._inflight: dict[_Key, asyncio.Task[Snapshot]] = {}
 
     @staticmethod
@@ -712,31 +844,41 @@ class GitHubReader:
         self._evict()
 
     def _evict(self) -> None:
-        def total() -> int:
+        def unique() -> list[Snapshot]:
             # A snapshot aliased under two keys counts once.
-            return sum(s.text_bytes for s in {id(s): s for s, _ in self._cache.values()}.values())
+            return list({id(s): s for s, _ in self._cache.values()}.values())
 
         while self._cache and (
-            len({id(s) for s, _ in self._cache.values()}) > self._max_snapshots
-            or total() > self._max_text
+            len(unique()) > self._max_snapshots
+            or sum(s.mem_bytes for s in unique()) > self._max_mem
         ):
             self._cache.popitem(last=False)
+
+    def _remember_miss(self, key: _Key, miss: _Miss) -> None:
+        now = self._clock()
+        for k in [k for k, (_m, expires) in self._negative.items() if now >= expires]:
+            del self._negative[k]
+        self._negative[key] = (miss, now + NEGATIVE_TTL_S)
 
     def _negative_hit(self, key: _Key) -> Exception | None:
         hit = self._negative.get(key)
         if hit is None:
             return None
-        exc, expires = hit
+        (kind, message), expires = hit
         if self._clock() >= expires:
             del self._negative[key]
             return None
-        return exc
+        if kind == "not_found":
+            return _NotFound()
+        if kind == "refused":
+            return SnapshotRefused(message)
+        return GitHubUnavailable(message, fallback=True)
 
     # -- download --
 
     def _archive_urls(self, owner: str, repo: str, ref: str | None) -> list[str]:
         if ref is not None:
-            return [f"https://codeload.github.com/{owner}/{repo}/tar.gz/{quote(ref, safe='/')}"]
+            return [f"https://codeload.github.com/{owner}/{repo}/tar.gz/{_ref_path(ref)}"]
         # The default branch without the API: HEAD through github.com's archive route (which
         # redirects to codeload), codeload's own HEAD, then the two conventional names.
         return [
@@ -788,13 +930,26 @@ class GitHubReader:
         return await asyncio.shield(task)
 
     async def _fill(self, key: _Key, owner: str, repo: str, ref: str | None) -> Snapshot:
-        """One download for every concurrent caller of `key`; its outcome is cached here, not
-        by whichever caller happened to start it."""
+        """One download for every concurrent caller of `key`; its outcome — a snapshot or a
+        miss of any kind — is cached here, not by whichever caller happened to start it."""
         try:
-            snap = await self._download(owner, repo, ref)
-        except (_NotFound, SnapshotRefused) as exc:
-            self._negative[key] = (exc, self._clock() + NEGATIVE_TTL_S)
+            async with self._gate:
+                snap = await asyncio.wait_for(
+                    self._download(owner, repo, ref), timeout=self._deadline
+                )
+        except _NotFound:
+            self._remember_miss(key, ("not_found", ""))
             raise
+        except SnapshotRefused as exc:
+            self._remember_miss(key, ("refused", str(exc)))
+            raise
+        except GitHubUnavailable as exc:
+            self._remember_miss(key, ("unavailable", exc.message))
+            raise
+        except TimeoutError as exc:
+            message = f"the repo archive took over {self._deadline:.0f} s to download"
+            self._remember_miss(key, ("unavailable", message))
+            raise GitHubUnavailable(message, fallback=True) from exc
         finally:
             self._inflight.pop(key, None)
         self._store(key, snap)
@@ -816,14 +971,25 @@ class GitHubReader:
                 raise GitHubUnavailable(
                     f"{target.slug} is too large to snapshot ({exc})", fallback=True
                 ) from exc
-        what = f"GitHub repository {target.slug}"
-        if target.kind != "repo":
-            what += " (or the branch/tag named in the URL)"
+        if target.kind == "repo":
+            # Two path segments that are not a public repo may still be a real page (a site
+            # section this parser does not know): read it the ordinary way.
+            raise GitHubUnavailable(
+                f"{target.slug} has no public repository archive", fallback=True
+            )
         raise GitHubUnavailable(
-            f"{what} was not found — it does not exist, or it is private (only public repos"
-            " can be read). Check the spelling, or web_search for the right repository.",
+            f"GitHub repository {target.slug} (or the branch/tag named in the URL) was not"
+            " found — it does not exist, or it is private (only public repos can be read)."
+            " Check the spelling, or web_search for the right repository.",
             fallback=False,
         )
+
+    def _cached_only(self, target: GitHubTarget) -> tuple[Snapshot, str] | None:
+        for ref, path in target.ref_candidates():
+            snap = self._cached(self._key(target.owner, target.repo, ref))
+            if snap is not None:
+                return snap, path
+        return None
 
     async def _ensure_meta(self, snap: Snapshot) -> None:
         """Fetch the overview extras once per snapshot: the description and default-branch
@@ -833,10 +999,10 @@ class GitHubReader:
                 return
             meta = RepoMeta()
             base = f"https://github.com/{snap.owner}/{snap.repo}"
-            commits_ref = snap.commit or snap.ref or "HEAD"
+            commits_ref = _ref_path(snap.commit or snap.ref or "HEAD")
             page, commits, releases = await asyncio.gather(
                 self._fetcher.fetch_bytes(base, max_bytes=_REPO_PAGE_BYTES),
-                self._fetcher.fetch_feed(f"{base}/commits/{quote(commits_ref, safe='/')}.atom"),
+                self._fetcher.fetch_feed(f"{base}/commits/{commits_ref}.atom"),
                 self._fetcher.fetch_feed(f"{base}/releases.atom"),
                 return_exceptions=True,
             )
@@ -861,31 +1027,51 @@ class GitHubReader:
                     self._store(key, snap)
 
     async def read(self, url: str, *, find: str = "", regex: bool = False) -> GitHubPage | None:
-        """The rendered view for `url`, or None when it is not a GitHub URL this reader answers.
+        """The rendered view for `url`, or None when the ordinary page fetch should answer it
+        (not a GitHub URL this reader answers, or a raw file with no snapshot already cached).
         Raises GitHubUnavailable when the snapshot cannot answer (see its `fallback`)."""
         target = parse_github_url(url)
         if target is None:
             return None
+        if target.raw:
+            # One file: a plain fetch reads it whole (PDFs and 5 MB windows included), so a
+            # repo download is worth it only when a snapshot is already here and has the text.
+            cached = self._cached_only(target)
+            if cached is None:
+                return None
+            snap, path = cached
+            f = snap.files.get(path)
+            if f is None or f.text is None:
+                return None
+            return self._file_page(snap, f, target, find)
         snap, path = await self._resolve(target)
         if target.kind == "repo" or (target.kind == "tree" and not path):
             if find:
-                return self._search(snap, "", find, regex)
+                return await self._search(snap, "", find, regex)
             await self._ensure_meta(snap)
             return GitHubPage(
                 snap.slug, f"https://github.com/{snap.slug}", render_overview(snap), ""
             )
         f = snap.files.get(path)
         if f is not None:
+            if f.text is None:
+                # Listed but not shown here (binary, over the per-file cap, over the budget):
+                # the raw file through the ordinary fetch reads PDFs and big text in windows.
+                raw_url = (
+                    f"https://raw.githubusercontent.com/{snap.owner}/{snap.repo}/"
+                    f"{_ref_path(snap.commit or snap.label_ref)}/{_ref_path(f.path)}"
+                )
+                raise GitHubUnavailable(
+                    f"`{f.path}` is {_fmt_size(f.size)} and {f.note} in the snapshot, so it is"
+                    f" read from {raw_url}",
+                    fallback=True,
+                    plain_url=raw_url,
+                )
             # A tree URL that names a file (or a blob URL) reads the file.
-            return GitHubPage(
-                f"{f.path} — {snap.slug}",
-                _blob_url(snap, f.path),
-                render_blob(snap, f, target.lines),
-                find,
-            )
+            return self._file_page(snap, f, target, find)
         if any(p.startswith(path + "/") for p in snap.files):
             if find:
-                return self._search(snap, path, find, regex)
+                return await self._search(snap, path, find, regex)
             return GitHubPage(
                 f"{snap.slug}/{path}", _tree_url(snap, path), render_tree(snap, path), ""
             )
@@ -901,13 +1087,19 @@ class GitHubReader:
             "",
         )
 
-    def _search(self, snap: Snapshot, folder: str, term: str, regex: bool) -> GitHubPage:
+    @staticmethod
+    def _file_page(snap: Snapshot, f: RepoFile, target: GitHubTarget, find: str) -> GitHubPage:
         return GitHubPage(
-            f"Search '{term}' — {snap.slug}",
-            _tree_url(snap, folder),
-            render_search(snap, folder, term, regex=regex),
-            "",
+            f"{f.path} — {snap.slug}",
+            _blob_url(snap, f.path),
+            render_blob(snap, f, target.lines),
+            find,
         )
+
+    async def _search(self, snap: Snapshot, folder: str, term: str, regex: bool) -> GitHubPage:
+        # Off the event loop: a search over a full snapshot is real CPU even when bounded.
+        text = await asyncio.to_thread(render_search, snap, folder, term, regex=regex)
+        return GitHubPage(f"Search '{term}' — {snap.slug}", _tree_url(snap, folder), text, "")
 
 
 def _clean_description(desc: str, snap: Snapshot) -> str:
