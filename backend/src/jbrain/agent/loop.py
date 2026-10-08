@@ -59,7 +59,7 @@ from jbrain.agent.reflexion import (
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import RoundRecord
 from jbrain.agent.tree import TreeState
-from jbrain.agent.url_provenance import SeenSites, seeded
+from jbrain.agent.url_provenance import SeenSites, seeded, without_echoes
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
     AssistantMessage,
@@ -393,6 +393,14 @@ class ToolContext:
     # (agent/url_provenance.py). The loop seeds it from the conversation and adds every tool
     # result as it lands. None — a handler driven outside the loop — means no gate.
     seen_sites: SeenSites | None = None
+
+
+def _initial_sites(
+    messages: Sequence[LlmMessage], seed: Sequence[str], given: SeenSites | None
+) -> SeenSites:
+    """A run's provenance set: a copy of the one it was given (each run grows its own), else
+    one seeded from its conversation and `seed`."""
+    return given.copy() if given is not None else seeded(messages, seed)
 
 
 def _ms_since(started: float) -> int:
@@ -982,6 +990,9 @@ class AgentLoop:
         # Texts whose sites seed the URL provenance gate beyond `conversation` (see
         # `ToolContext.seen_sites`).
         seen_seed: Sequence[str] = (),
+        # A set to start from INSTEAD of scanning `conversation` — a spawned child inherits its
+        # parent's, so a brief the parent model wrote cannot vouch for an address on its own.
+        seen_sites: SeenSites | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         hidden = await self._hidden()
@@ -1005,7 +1016,7 @@ class AgentLoop:
             canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
-            seen_sites=seeded(messages, seen_seed),
+            seen_sites=_initial_sites(messages, seen_seed, seen_sites),
         )
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
@@ -1217,6 +1228,7 @@ class AgentLoop:
         cite_computations: bool = False,
         on_round: Callable[[RoundRecord], None] | None = None,
         seen_seed: Sequence[str] = (),
+        seen_sites: SeenSites | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -1267,6 +1279,7 @@ class AgentLoop:
                 run_id,
                 cite_computations=cite_computations,
                 seen_seed=seen_seed,
+                seen_sites=seen_sites,
             ):
                 yield ev
             return
@@ -1306,7 +1319,7 @@ class AgentLoop:
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
             cite_computations=cite_computations,
-            seen_sites=seeded(messages, seen_seed),
+            seen_sites=_initial_sites(messages, seen_seed, seen_sites),
         )
         cost = 0
         consecutive_errors = 0
@@ -1697,6 +1710,7 @@ class AgentLoop:
         run_id: str | None = None,
         cite_computations: bool = False,
         seen_seed: Sequence[str] = (),
+        seen_sites: SeenSites | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -1735,6 +1749,7 @@ class AgentLoop:
                 run_id,
                 cite_computations=cite_computations,
                 seen_seed=seen_seed,
+                seen_sites=seen_sites,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             cited = len(turn.sources) + len(turn.entities)
@@ -1808,6 +1823,7 @@ class AgentLoop:
         run_id: str | None = None,
         cite_computations: bool = False,
         seen_seed: Sequence[str] = (),
+        seen_sites: SeenSites | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
@@ -1834,7 +1850,7 @@ class AgentLoop:
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
             cite_computations=cite_computations,
-            seen_sites=seeded(messages, seen_seed),
+            seen_sites=_initial_sites(messages, seen_seed, seen_sites),
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []
@@ -2142,7 +2158,9 @@ class AgentLoop:
         if tool_ctx.seen_sites is not None:
             # What the tool returned is provenance for the next fetch: the model now has these
             # addresses from somewhere other than its own memory.
-            tool_ctx.seen_sites.add_text(result.content)
+            # Less anything the call itself said: a tool echoing the model's own arguments
+            # (a search's "no results for '<url>'") is not a second source for them.
+            tool_ctx.seen_sites.add_text(without_echoes(result.content, call.arguments))
             for web_source in out.web_sources if out else ():
                 tool_ctx.seen_sites.add_url(web_source.url)
         view = out.view if out else None

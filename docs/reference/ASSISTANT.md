@@ -801,12 +801,23 @@ with `offset`** and names the next offset, rather than advising a `limit` it can
   lives on `ToolContext.seen_sites`, built per run by the agent loop from the conversation it
   was handed (history included) plus `seen_seed`, the stored results and cited URLs of every
   earlier turn (`history_replay.Entry.provenance`, so a compacted turn's sites survive its
-  stub), and grown by each tool result as it lands; it is bounded (4,096 sites, oldest out).
-  A spawned sub-agent is seeded from its own brief the same way. The GitHub reader's internal
-  fetches (codeload, the API) never pass through it. Accepted gaps: a tool that echoes the
-  model's own text (`run_python` output) can launder a host in, and a handler driven outside
-  the loop (no set) is ungated. `grab_frame`/`analyze_stream`/`external_video` URLs are not
-  gated yet.
+  stub; seeded first, so when the bound of 4,096 sites bites, old results fall out and the
+  owner's current message stays), and grown by each tool result as it lands — less any
+  argument string of the call that names a site (`without_echoes`), because a zero-hit
+  `web_search` repeats its query and searching an invented URL would otherwise open it. A
+  spawned sub-agent starts from a copy of its parent's set, not from the brief the parent
+  model wrote (a brief naming an unseen host does not open it); only a parent with no set
+  (the deepest orchestrator) leaves the child to scan its brief. A plan continuation, whose
+  conversation is model-written plan text, seeds from the chat's stored transcript
+  (`history_replay.transcript_sites`). Names compare in punycode, so `bücher.de` and
+  `xn--bcher-kva.de` match. An IP literal, a dotless host (`localhost`) or a private suffix
+  (`nas.local`) counts only from the owner's own words, never a tool result; the fetcher's
+  SSRF guard is unchanged and still decides whether a private address is reachable. No site
+  is blocked as such — the incident's `aliyuncs.com` is refused only because nothing produced
+  it. The GitHub reader's internal fetches (codeload, the API) never pass through the gate.
+  Accepted gaps: a tool that transforms the model's text before echoing it (`run_python`
+  output) can launder a host in, and a handler driven outside the loop (no set) is ungated.
+  `grab_frame`/`analyze_stream`/`external_video` URLs are not gated yet.
 
   **Paywalled/blocked domains are auto-skipped for 24h.** When `web_fetch` hits a persistent
   hard block on a site (a paywall/subscriber wall, a bot-challenge wall), the **domain** is

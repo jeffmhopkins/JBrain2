@@ -28,6 +28,7 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import TreeState
+from jbrain.agent.url_provenance import SeenSites
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.llm.slot_roles import SlotRole
@@ -89,6 +90,7 @@ class TurnExecutor(Protocol):
         on_event: Callable[[ChatEvent], None] | None = None,
         supervised: bool = False,
         root_tree: bool = False,
+        seen_sites: SeenSites | None = None,
     ) -> ExecutedTurn: ...
 
 
@@ -126,6 +128,7 @@ class LoopTurnExecutor:
         on_event: Callable[[ChatEvent], None] | None = None,
         supervised: bool = False,
         root_tree: bool = False,
+        seen_sites: SeenSites | None = None,
     ) -> ExecutedTurn:
         effort = await self.router.effective_reasoning_effort("agent.turn")
         # The context window the turn runs against — the meter's denominator, resolved exactly
@@ -189,6 +192,9 @@ class LoopTurnExecutor:
             general_knowledge_label=profile.reads_knowledge_base,
             context_window=context_window,
             tree=tree,
+            # The URL provenance set to start from instead of scanning `conversation` (a plan
+            # continuation's conversation is model-written plan text); None scans it.
+            seen_sites=seen_sites,
         ):
             acc.feed(event)
             # Track the latest UsageEvent — the fullest the context got this turn — so the

@@ -4203,6 +4203,49 @@ def test_jerv_replays_an_earlier_turns_tool_results(
     assert "history_compacted" not in resp.text  # nothing moved, nothing to announce
 
 
+def test_jerv_replay_seeds_the_url_provenance_gate(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Earlier turns' stored results and cited URLs reach the loop as `seen_seed`, so a site a
+    compacted turn found stays fetchable after its result is cut to a stub."""
+    from jbrain.agent.loop import AgentLoop
+
+    login(client, repo)
+    _jerv_session(sessions_store)
+    steps = [
+        {
+            "id": "c1",
+            "name": "web_search",
+            "args": {"query": "x"},
+            "ok": True,
+            "summary": "1 result",
+            "web_sources": [{"url": "https://earlier-hit.org/a", "title": "A"}],
+            "text_offset": 0,
+        }
+    ]
+    transcript.turns["sess-j"] = [
+        TurnRecord(role="user", content="find x", seq=1),
+        TurnRecord(role="assistant", content="found", tools=steps, seq=2),
+    ]
+    seeds: list[object] = []
+    real = AgentLoop.run_stream
+
+    def spy(self: AgentLoop, **kwargs: Any) -> Any:
+        seeds.append(kwargs.get("seen_seed"))
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(AgentLoop, "run_stream", spy)
+    resp = client.post(
+        "/api/chat", json={"session_id": "sess-j", "message": "open it", "history": []}
+    )
+    assert resp.status_code == 200
+    assert seeds == [["1 result", "https://earlier-hit.org/a"]]
+
+
 def test_jerv_replay_moves_and_stores_the_floor_once_over_budget(
     client: TestClient,
     repo: FakeAuthRepo,

@@ -37,6 +37,7 @@ import structlog
 
 from jbrain.agent.agents import agent_for
 from jbrain.agent.clock import now_block
+from jbrain.agent.history_replay import transcript_sites
 from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.plantools import format_plan_results
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
 
     from jbrain.agent.runlog import AgentRunLog
     from jbrain.agent.transcript_store import AgentTranscript
+    from jbrain.agent.url_provenance import SeenSites
     from jbrain.notify import NotifyBus
     from jbrain.settings_store import SqlSettingsStore
     from jbrain.tasks.runner import LoopTurnExecutor, PushPoke
@@ -317,6 +319,7 @@ class PlanContinuationRunner:
                     on_event=lambda ev: live.emit(f"data: {ev.model_dump_json()}\n\n".encode()),
                     supervised=supervised,
                     root_tree=True,
+                    seen_sites=await self._seen_sites(owner_ctx, sid),
                 )
             )
             live.task = turn_task
@@ -409,6 +412,17 @@ class PlanContinuationRunner:
         finally:
             live.done = True
             self.live_turns.pop(active_key, None)
+
+    async def _seen_sites(self, owner_ctx: SessionContext, sid: str) -> SeenSites | None:
+        """The sites this chat's transcript vouches for, so the step's fetches answer to what
+        the owner said and the tools returned rather than to the plan text the model wrote.
+        None (unreadable) leaves the loop to seed from the conversation as before."""
+        try:
+            turns = await self.transcript.load(owner_ctx, sid)
+        except Exception:  # noqa: BLE001 - a transcript hiccup must not sink the step
+            log.warning("plan.continuation_sites_unread", session_id=sid, exc_info=True)
+            return None
+        return transcript_sites(turns)
 
     async def _nudge(self) -> None:
         """Best-effort, content-free wake so a backgrounded PWA fetches the new turn."""

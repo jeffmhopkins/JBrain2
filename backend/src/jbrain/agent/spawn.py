@@ -1137,6 +1137,12 @@ class SpawnService:
                         # On step exhaustion, synthesize a final answer from what was
                         # gathered rather than returning an empty "(no answer)".
                         force_final_answer=True,
+                        # The child starts from the parent's provenance set, not from the
+                        # brief: the brief is the parent MODEL's text, so an address it
+                        # invented there must not become fetchable by being handed down. A
+                        # parent with no set (the deepest orchestrator) leaves the child to
+                        # seed from its own conversation.
+                        seen_sites=ctx.seen_sites,
                     ),
                     timeout=child_timeout,
                 )

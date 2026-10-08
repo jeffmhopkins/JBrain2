@@ -15,9 +15,10 @@ import httpx
 from jbrain.agent import url_provenance
 from jbrain.agent.browse import BrowseAgent
 from jbrain.agent.browsetools import build_browse_handlers
+from jbrain.agent.continuation import PlanContinuationRunner
 from jbrain.agent.contracts import ToolSpec, WebSource
 from jbrain.agent.fetchtools import build_fetch_image_handlers
-from jbrain.agent.history_replay import build
+from jbrain.agent.history_replay import build, transcript_sites
 from jbrain.agent.loop import AgentLoop, ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
@@ -101,8 +102,13 @@ def test_site_of_folds_subdomains_aliases_and_bare_hosts() -> None:
     assert site_of("https://codeload.github.com/o/r/tar.gz/main") == "github.com"
     assert site_of("https://youtu.be/abc") == "youtube.com"
     assert site_of("http://192.168.1.5:8080/x") == "192.168.1.5"
-    assert site_of("http://localhost/") is None
+    assert site_of("http://localhost:8080/") == "localhost"
+    assert site_of("http://[::1]/") == "::1"
     assert site_of("not a url") is None
+    assert site_of("http://[bad") is None
+    # A name the IDNA codec rejects (a label over 63 characters) is kept as written.
+    long_label = "a" * 70 + ".com"
+    assert site_of(f"https://{long_label}/") == long_label
 
 
 def test_add_text_takes_urls_and_bare_hosts_but_not_paths_or_dotted_words() -> None:
@@ -291,28 +297,149 @@ async def test_a_search_hit_and_a_fetched_pages_links_open_their_sites() -> None
     assert net.hosts == ["hit.example.org", "linked.example.net"]
 
 
-async def test_a_sub_agent_is_seeded_from_its_task_text() -> None:
-    """A spawned child's conversation is its now-block and its brief (spawn.py); the site the
-    brief names is fetchable, one only the parent ever saw is not."""
+async def test_a_sub_agent_inherits_its_parents_sites_not_its_brief() -> None:
+    """A spawned child runs on a copy of the parent's set (spawn.py passes `ctx.seen_sites`):
+    a site the parent saw is fetchable whether or not the brief names it, and one only the
+    brief names — the parent MODEL's text — is not."""
     net = _Net()
     loop, fake = _loop(
         net,
         _calls(
-            ("web_fetch", {"url": "https://task.example.com/report"}),
-            ("web_fetch", {"url": "https://parent-only.org/x"}),
+            ("web_fetch", {"url": "https://parent-seen.com/report"}),
+            ("web_fetch", {"url": "https://brief-only.org/x"}),
+            ("web_fetch", {"url": "https://inherited.net/y"}),
         ),
     )
+    parent = _seen("compare https://parent-seen.com/a with https://inherited.net/b")
     await loop.run(
         session=OWNER,
         scopes=(),
         conversation=[
             UserMessage(text="Now: 2026-10-08"),
-            UserMessage(text="Summarize https://task.example.com/report for the parent."),
+            UserMessage(text="Read https://parent-seen.com/report and https://brief-only.org/x."),
         ],
         force_final_answer=True,
+        seen_sites=parent,
     )
-    assert net.hosts == ["task.example.com"]
+    assert net.hosts == ["parent-seen.com", "inherited.net"]
     assert _results(fake)[1] == REFUSAL
+    # The child grew its own copy; the parent's set is untouched by the child's run.
+    assert "brief-only.org" not in parent
+
+
+async def test_a_child_with_no_parent_set_seeds_from_its_brief() -> None:
+    """The deepest orchestrator holds no set, so its children scan their own brief."""
+    net = _Net()
+    loop, _fake = _loop(net, _calls(("web_fetch", {"url": "https://task-site.com/r"})))
+    await loop.run(
+        session=OWNER,
+        scopes=(),
+        conversation=[UserMessage(text="Summarize https://task-site.com/r")],
+        force_final_answer=True,
+    )
+    assert net.hosts == ["task-site.com"]
+
+
+async def _echoing_search(arguments: dict, ctx: ToolContext) -> str:
+    # web_search's own zero-hit wording, which repeats the query back.
+    return f"No web results for '{arguments.get('query', '')}'."
+
+
+async def test_searching_an_invented_address_does_not_open_it() -> None:
+    """The refusal says to search first; a search that finds nothing echoes the query, and
+    the echo of the model's own argument must not count as a source for it."""
+    net = _Net()
+    fake = FakeLlmClient(
+        turns=_calls(
+            ("web_fetch", {"url": INVENTED}),
+            ("web_search", {"query": INVENTED}),
+            ("web_fetch", {"url": INVENTED}),
+        )
+    )
+    router = LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")})
+    fetch = build_web_handlers(SearxngClient(""), net.fetcher())["web_fetch"]
+    registry = ToolRegistry([_tool("web_fetch", fetch), _tool("web_search", _echoing_search)])
+    await AgentLoop(router, registry).run(
+        session=OWNER, scopes=(), conversation=[UserMessage(text="show me codeLang.ts")]
+    )
+    results = _results(fake)
+    assert results[0] == REFUSAL and results[2] == REFUSAL
+    assert net.hosts == []
+
+
+def test_without_echoes_cuts_only_arguments_that_name_a_site() -> None:
+    content = "No results for 'evil.com/x'; see https://real.org/p about python"
+    args = {"query": "evil.com/x", "nested": [{"q": "python"}], "n": 3}
+    cut = url_provenance.without_echoes(content, args)
+    assert "evil.com" not in cut and "python" in cut and "https://real.org/p" in cut
+
+
+def test_internationalized_names_match_in_either_spelling() -> None:
+    assert _seen("https://bücher.de/katalog").allows("https://www.xn--bcher-kva.de/x")
+    assert _seen("https://xn--bcher-kva.de/").allows("https://bücher.de/y")
+
+
+def test_private_hosts_count_only_from_the_owners_words() -> None:
+    owner = _seen("my NAS is at http://192.168.1.5:5000 or nas.local; also http://localhost:8080")
+    for url in ("http://192.168.1.5/", "http://nas.local/x", "http://localhost:8080/"):
+        assert owner.allows(url)
+    tool = SeenSites()
+    tool.add_text("links: http://192.168.1.5/ http://nas.local/ http://localhost/ nas.local")
+    tool.add_url("http://localhost/")
+    assert len(tool) == 0
+
+
+def test_the_bound_keeps_the_current_message_over_old_results() -> None:
+    seen = seeded(
+        [UserMessage(text="now open https://current.com/x")],
+        ["https://old1.com", "https://old2.com", "https://old3.com"],
+        limit=2,
+    )
+    assert seen.allows("https://current.com/") and not seen.allows("https://old1.com/")
+
+
+def test_transcript_sites_reads_owner_turns_and_tool_results_only() -> None:
+    turns = [
+        TurnRecord(role="user", content="see https://owner-said.com", seq=1),
+        TurnRecord(
+            role="assistant",
+            content="I made up https://invented.org/x",
+            tools=[{"id": "t1", "name": "web_search", "summary": "https://hit.net/a"}],
+            seq=2,
+        ),
+    ]
+    seen = transcript_sites(turns)
+    assert seen.allows("https://owner-said.com/") and seen.allows("https://hit.net/")
+    assert not seen.allows("https://invented.org/x")
+
+
+class _Transcript:
+    def __init__(self, turns: list[TurnRecord] | None) -> None:
+        self._turns = turns
+
+    async def load(self, ctx: object, session_id: str) -> list[TurnRecord]:
+        if self._turns is None:
+            raise RuntimeError("db down")
+        return self._turns
+
+
+def _continuations(transcript: _Transcript) -> PlanContinuationRunner:
+    return PlanContinuationRunner(
+        maker=None,  # type: ignore[arg-type]
+        executor=None,  # type: ignore[arg-type]
+        runlog=None,  # type: ignore[arg-type]
+        transcript=transcript,  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=None,  # type: ignore[arg-type]
+    )
+
+
+async def test_a_plan_continuation_seeds_from_the_transcript_not_the_plan() -> None:
+    turns = [TurnRecord(role="user", content="plan a trip using https://owner-site.com", seq=1)]
+    seen = await _continuations(_Transcript(turns))._seen_sites(OWNER, "s1")
+    assert seen is not None and seen.allows("https://owner-site.com/")
+    # Unreadable: None, and the loop falls back to scanning the conversation.
+    assert await _continuations(_Transcript(None))._seen_sites(OWNER, "s1") is None
 
 
 async def test_a_reopened_chat_keeps_its_history_sites_and_compacted_ones() -> None:

@@ -16,22 +16,31 @@ comes from. There is no always-allowed site; github.com is open as soon as any g
 link has appeared, and `githubusercontent.com` / `youtu.be` count as github.com / youtube.com.
 
 The set is per run (`ToolContext.seen_sites`), seeded by the agent loop from the conversation
-it was handed — history included, so a reopened chat keeps its sites — plus the persisted
-results of turns whose replay was compacted to a stub (`history_replay.Entry.provenance`).
-A sub-agent is seeded from its own task text the same way. It is bounded; the oldest sites
-fall out first.
+it was handed — history included, so a reopened chat keeps its sites — after the persisted
+results of every earlier turn (`history_replay.Entry.provenance`, which survive a compacted
+turn's stub), so when the bound bites the owner's current message is what stays. Each tool
+result grows it, less any argument string the call itself carried (`without_echoes`): a
+search answering "No web results for '<invented URL>'" must not open the URL it was asked
+about. A spawned sub-agent inherits a copy of its parent's set rather than scanning the brief
+the parent model wrote, and a plan continuation seeds from the chat's stored transcript
+(`history_replay.transcript_sites`) rather than its model-written plan text. Sites are
+compared in punycode, so an internationalized name matches either spelling. An IP literal, a
+dotless host (`localhost`) or a private-network suffix (`nas.local`) counts only from the
+owner's own words; the fetcher's SSRF guard still decides whether it may be reached.
 
-Accepted gaps: a tool that echoes the model's own text (python output, a note it wrote) can
-launder an invented host into the set, and a site the model names from memory that the owner
-also happened to mention is allowed. The gate stops regurgitated addresses, not an adversary.
-The internal fetches the GitHub reader makes (codeload, the API) never pass through here.
+Accepted gaps: a tool that transforms the model's own text before echoing it (python output)
+can launder a host in, and a site the model names from memory that the owner also happened to
+mention is allowed. The gate stops regurgitated addresses, not an adversary. No site is
+blocked as such: the live incident's `aliyuncs.com` is refused only because nothing produced
+it, and would be fetched if a search did. The internal fetches the GitHub reader makes
+(codeload, the API) never pass through here.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from urllib.parse import urlsplit
 
 from tld import get_fld
@@ -62,9 +71,25 @@ _BARE_RE = re.compile(
 )
 
 
+# Suffixes no public list carries but an owner types for a box on his own network. The
+# fetcher's SSRF guard still decides whether a private address may be reached at all; this
+# only stops the gate from refusing what the owner himself named.
+_PRIVATE_SUFFIXES = ("local", "lan", "internal", "home.arpa", "localdomain")
+
+
+def _idna(domain: str) -> str:
+    """One spelling per site: an internationalized name in its ASCII (punycode) form, so a
+    link written either way opens the other. A name the codec rejects stays as it is."""
+    try:
+        return domain.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return domain
+
+
 def site_of(url: str) -> str | None:
-    """The key a URL is gated on: its registrable domain (aliases folded), an IP literal's
-    address, or None for junk. A scheme-less address reads as http."""
+    """The key a URL is gated on: its registrable domain (IDN-normalized, aliases folded), or
+    for a host with none — an IP literal, a dotless name like `localhost` — the host itself;
+    None for junk. A scheme-less address reads as http."""
     raw = url.strip()
     if "://" not in raw:
         raw = "http://" + raw
@@ -72,23 +97,78 @@ def site_of(url: str) -> str | None:
     if domain is None:
         try:
             host = (urlsplit(raw).hostname or "").rstrip(".")
-            ipaddress.ip_address(host)
         except ValueError:
             return None
-        return host
+        return host if host and _HOST_RE.fullmatch(host) else None
+    domain = _idna(domain)
     for suffix, canonical in _ALIASES.items():
         if domain == suffix or domain.endswith("." + suffix):
             return canonical
     return domain
 
 
-def _bare_site(token: str) -> str | None:
-    """A bare token's site, only when the Public Suffix List knows its suffix: `file.py` and
+# What `site_of` falls back to for a host with no registrable domain: a dotless label or an
+# IPv4 literal (an IPv6 one is the address in brackets, which `hostname` strips).
+_HOST_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|[0-9a-f:.]+", re.IGNORECASE)
+
+
+def _owner_only(site: str) -> bool:
+    """A site only the owner can vouch for: an IP literal, a dotless host or a private-network
+    suffix. A tool result naming one (a page's link to `localhost`) opens nothing."""
+    if "." not in site or site.endswith(tuple("." + s for s in _PRIVATE_SUFFIXES)):
+        return True
+    try:
+        ipaddress.ip_address(site)
+    except ValueError:
+        return False
+    return True
+
+
+def _bare_site(token: str, *, owner: bool) -> str | None:
+    """A bare token's site, only when the Public Suffix List knows its suffix — `file.py` and
     `os.path` in prose are not hosts, and the fallback `registrable_domain` allows for an
-    unknown suffix would turn every dotted word into one."""
+    unknown suffix would turn every dotted word into one — or, in the owner's own words, when
+    it ends in a private-network suffix (`nas.local`)."""
     if get_fld("http://" + token, fail_silently=True) is None:
-        return None
+        private = token.lower().endswith(tuple("." + s for s in _PRIVATE_SUFFIXES))
+        if not (owner and private):
+            return None
     return site_of(token)
+
+
+def _sites_in(text: str, *, owner: bool) -> list[str]:
+    found: list[str] = []
+    for match in _URL_RE.finditer(text):
+        site = site_of(match.group(0))
+        if site is not None and (owner or not _owner_only(site)):
+            found.append(site)
+    for match in _BARE_RE.finditer(text):
+        site = _bare_site(match.group(1), owner=owner)
+        if site is not None and (owner or not _owner_only(site)):
+            found.append(site)
+    return found
+
+
+def _strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+
+
+def without_echoes(content: str, arguments: object) -> str:
+    """`content` with every argument string that names a site cut out. A tool that echoes
+    what the model sent it — a search's "No web results for '<query>'" — must not vouch for
+    the model's own address: searching an invented URL would otherwise open it. Arguments
+    that name no site (a plain query) are left in, so a real hit is never cut."""
+    for value in sorted(set(_strings(arguments)), key=len, reverse=True):
+        if value and _sites_in(value, owner=True):
+            content = content.replace(value, " ")
+    return content
 
 
 class SeenSites:
@@ -105,42 +185,50 @@ class SeenSites:
     def __len__(self) -> int:
         return len(self._sites)
 
-    def _add(self, site: str | None) -> None:
-        if site is None:
-            return
+    def copy(self) -> SeenSites:
+        clone = SeenSites(self._limit)
+        clone._sites = dict(self._sites)
+        return clone
+
+    def _add(self, site: str) -> None:
         self._sites.pop(site, None)
         self._sites[site] = None
         while len(self._sites) > self._limit:
             del self._sites[next(iter(self._sites))]
 
     def add_url(self, url: str) -> None:
-        self._add(site_of(url))
+        """A URL a tool reached or cited (a web source). Never an owner-only site."""
+        site = site_of(url)
+        if site is not None and not _owner_only(site):
+            self._add(site)
 
-    def add_text(self, text: str) -> None:
-        """Every site a block of text names: its http(s) URLs and its bare hostnames."""
-        for match in _URL_RE.finditer(text):
-            self._add(site_of(match.group(0)))
-        for match in _BARE_RE.finditer(text):
-            self._add(_bare_site(match.group(1)))
+    def add_text(self, text: str, *, owner: bool = False) -> None:
+        """Every site a block of text names: its http(s) URLs and its bare hostnames. `owner`
+        (a user-side message) also admits IP literals, dotless hosts and private suffixes."""
+        for site in _sites_in(text, owner=owner):
+            self._add(site)
 
     def allows(self, url: str) -> bool:
         site = site_of(url)
         return site is not None and site in self._sites
 
 
-def seeded(messages: Sequence[LlmMessage], extra: Iterable[str] = ()) -> SeenSites:
-    """A run's set, seeded from what it was handed: every user-side message and tool result
-    in `messages` (never an assistant message), then `extra` texts — the persisted results of
-    turns whose replay is only a stub."""
-    seen = SeenSites()
+def seeded(
+    messages: Sequence[LlmMessage], extra: Iterable[str] = (), *, limit: int = MAX_SITES
+) -> SeenSites:
+    """A run's set, seeded from what it was handed: `extra` texts first — the persisted
+    results of earlier turns, oldest — then every user-side message and tool result in
+    `messages` (never an assistant message), so when the bound bites it is the old results
+    that fall out and the owner's current message that stays."""
+    seen = SeenSites(limit)
+    for text in extra:
+        seen.add_text(text)
     for message in messages:
         if isinstance(message, UserMessage):
-            seen.add_text(message.text)
+            seen.add_text(message.text, owner=True)
         elif isinstance(message, ToolResultMessage):
             for result in message.results:
                 seen.add_text(result.content)
-    for text in extra:
-        seen.add_text(text)
     return seen
 
 

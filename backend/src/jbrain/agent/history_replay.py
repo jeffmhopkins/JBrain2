@@ -35,6 +35,7 @@ from typing import Any, Literal
 from jbrain.agent.attachment_content import decorated_history_text
 from jbrain.agent.loop import TURN_MAX_TOKENS
 from jbrain.agent.transcript_store import TurnRecord
+from jbrain.agent.url_provenance import SeenSites
 from jbrain.llm import (
     AssistantMessage,
     LlmMessage,
@@ -456,6 +457,20 @@ def _provenance(turn: TurnRecord) -> tuple[str, ...]:
             if isinstance(source, dict):
                 texts.append(str(source.get("url") or ""))
     return tuple(t for t in texts if t)
+
+
+def transcript_sites(turns: Sequence[TurnRecord]) -> SeenSites:
+    """The URL provenance set a session's stored transcript vouches for: what the owner typed
+    and what its tools returned, never the assistant's prose. For a turn that is not handed
+    the chat as messages (a plan continuation, whose conversation is model-written plan text)."""
+    seen = SeenSites()
+    for turn in turns:
+        if turn.role == "user":
+            seen.add_text(turn.content, owner=True)
+        elif turn.role == "assistant":
+            for text in _provenance(turn):
+                seen.add_text(text)
+    return seen
 
 
 def _users(texts: Sequence[str]) -> tuple[LlmMessage, ...]:
