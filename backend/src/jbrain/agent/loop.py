@@ -59,6 +59,7 @@ from jbrain.agent.reflexion import (
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import RoundRecord
 from jbrain.agent.tree import TreeState
+from jbrain.agent.url_provenance import SeenSites, seeded
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
     AssistantMessage,
@@ -387,6 +388,11 @@ class ToolContext:
     # wrong-tool one and pointed the owner's marker at the wrong working). Per turn for the
     # same reason as `failed_fetches`: the PWA numbers the markers per message.
     computations: list[str] = field(default_factory=list)
+    # The sites this run's conversation has produced (owner messages, tool results), which a
+    # model-supplied URL must belong to before web_fetch / fetch_image / browse touch it
+    # (agent/url_provenance.py). The loop seeds it from the conversation and adds every tool
+    # result as it lands. None — a handler driven outside the loop — means no gate.
+    seen_sites: SeenSites | None = None
 
 
 def _ms_since(started: float) -> int:
@@ -973,6 +979,9 @@ class AgentLoop:
         # fetch loop (see ToolCallBudget).
         search_budget: int | None = None,
         fetch_budget: int | None = None,
+        # Texts whose sites seed the URL provenance gate beyond `conversation` (see
+        # `ToolContext.seen_sites`).
+        seen_seed: Sequence[str] = (),
     ) -> AgentResult:
         scopes = tuple(scopes)
         hidden = await self._hidden()
@@ -996,6 +1005,7 @@ class AgentLoop:
             canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
+            seen_sites=seeded(messages, seen_seed),
         )
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
@@ -1206,6 +1216,7 @@ class AgentLoop:
         run_id: str | None = None,
         cite_computations: bool = False,
         on_round: Callable[[RoundRecord], None] | None = None,
+        seen_seed: Sequence[str] = (),
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -1255,6 +1266,7 @@ class AgentLoop:
                 tree,
                 run_id,
                 cite_computations=cite_computations,
+                seen_seed=seen_seed,
             ):
                 yield ev
             return
@@ -1294,6 +1306,7 @@ class AgentLoop:
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
             cite_computations=cite_computations,
+            seen_sites=seeded(messages, seen_seed),
         )
         cost = 0
         consecutive_errors = 0
@@ -1683,6 +1696,7 @@ class AgentLoop:
         tree: TreeState | None = None,
         run_id: str | None = None,
         cite_computations: bool = False,
+        seen_seed: Sequence[str] = (),
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -1720,6 +1734,7 @@ class AgentLoop:
                 tree,
                 run_id,
                 cite_computations=cite_computations,
+                seen_seed=seen_seed,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             cited = len(turn.sources) + len(turn.entities)
@@ -1792,6 +1807,7 @@ class AgentLoop:
         tree: TreeState | None = None,
         run_id: str | None = None,
         cite_computations: bool = False,
+        seen_seed: Sequence[str] = (),
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
@@ -1818,6 +1834,7 @@ class AgentLoop:
             canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
             html_render_budget=ToolCallBudget(limit=HTML_RENDER_BUDGET),
             cite_computations=cite_computations,
+            seen_sites=seeded(messages, seen_seed),
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []
@@ -2122,6 +2139,12 @@ class AgentLoop:
         elapsed = _ms_since(started)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        if tool_ctx.seen_sites is not None:
+            # What the tool returned is provenance for the next fetch: the model now has these
+            # addresses from somewhere other than its own memory.
+            tool_ctx.seen_sites.add_text(result.content)
+            for web_source in out.web_sources if out else ():
+                tool_ctx.seen_sites.add_url(web_source.url)
         view = out.view if out else None
         cite_note = ""
         if tool_ctx.cite_computations and view is not None and is_computation(view):

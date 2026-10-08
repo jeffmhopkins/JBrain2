@@ -16,7 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import structlog
 
-from jbrain.agent import browse_gate
+from jbrain.agent import browse_gate, url_provenance
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
@@ -901,6 +901,12 @@ def build_web_handlers(
         url = str(arguments.get("url", "")).strip()
         if not url:
             return "web_fetch needs a url."
+        # The provenance gate, ahead of everything — the skip list, the budget, the network:
+        # an address whose site the conversation never produced is one the model made up
+        # (agent/url_provenance.py). A plain result, so no memo or skip list learns from it.
+        refused = url_provenance.refusal(url, ctx.seen_sites)
+        if refused is not None:
+            return ToolOutput(refused, result_brief=url_provenance.REFUSAL_BRIEF)
         # Short-circuit a host on the 24h skip list (recently paywalled / bot-walled /
         # unreadable): re-fetching it would only hit the same wall, so refuse WITHOUT a network
         # call and point the model at web_search for the same information elsewhere.

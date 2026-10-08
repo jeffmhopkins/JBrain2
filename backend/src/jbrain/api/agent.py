@@ -1787,6 +1787,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             run_id=run_id,
             # Each round as the model was sent it, for the exact replay on later turns.
             on_round=acc.record_round,
+            # Earlier turns' stored results, so the URL provenance gate still knows the sites
+            # a compacted turn found (its replay carries only a stub).
+            seen_seed=[t for e in replayed or () for t in e.provenance],
         )
         if compacted:
             # Ahead of the first model call: the prefill the owner is about to watch is the

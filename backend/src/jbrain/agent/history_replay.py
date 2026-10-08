@@ -93,6 +93,10 @@ class Entry:
     text: str
     messages: tuple[LlmMessage, ...]
     tail: tuple[LlmMessage, ...] = ()
+    # The turn's stored results and cited URLs whatever `messages` replays — what the URL
+    # provenance gate (agent/url_provenance.py) seeds from, so a site a compacted turn found
+    # stays fetchable after its result is cut to a stub. Never sent to the model.
+    provenance: tuple[str, ...] = ()
 
 
 def _replayable(step: dict[str, Any]) -> bool:
@@ -444,6 +448,16 @@ def _user_text(turn: TurnRecord) -> str:
     return decorated_history_text(turn.content, media) if media else turn.content
 
 
+def _provenance(turn: TurnRecord) -> tuple[str, ...]:
+    texts: list[str] = []
+    for step in turn.tools:
+        texts.append(str(step.get("summary") or ""))
+        for source in step.get("web_sources") or ():
+            if isinstance(source, dict):
+                texts.append(str(source.get("url") or ""))
+    return tuple(t for t in texts if t)
+
+
 def _users(texts: Sequence[str]) -> tuple[LlmMessage, ...]:
     return tuple(UserMessage(text=t) for t in texts)
 
@@ -478,5 +492,5 @@ def build(turns: Sequence[TurnRecord], floor: int, *, exact: bool = False) -> li
                 own = _input(wire)
                 if own is not None and (index == 0 or turns[index - 1].role != "user"):
                     messages = (*_users(own[0]), *_users(own[1]), *messages)
-            entries.append(Entry("assistant", turn.content, messages))
+            entries.append(Entry("assistant", turn.content, messages, provenance=_provenance(turn)))
     return entries
