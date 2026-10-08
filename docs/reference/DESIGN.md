@@ -136,6 +136,25 @@ set normalizes to **Thing**.
 The disc is `color-mix(in srgb, <accent> 16%, transparent)` background with the
 accent as the glyph color — one tint formula, no per-type `-tint` tokens.
 
+### Syntax tokens
+
+Code is coloured from a closed set of seven role tokens (`tokens.css`), never from an
+accent directly, so every listing — a chat code block, the `code_run` step view — reads
+the same. Dark takes the accents as they are; light deepens each toward `--text`, because
+the muted pastels sit near 2:1 on the light `--surface-2` (fine for a chip, too faint to
+read code by) — a deliberate exception to "accents identical across themes", scoped to
+these tokens.
+
+| Token | Dark | Light | Colours |
+|---|---|---|---|
+| `--syn-keyword` | `--violet` | violet 62% → `--text` | keywords, literals (`True`, `null`), `self`/`this` |
+| `--syn-string` | `--green` | green 58% → `--text` | strings, regexes, diff additions |
+| `--syn-number` | `--amber` | amber 62% → `--text` | numbers, symbols, list bullets |
+| `--syn-func` | `--steel` | steel 62% → `--text` | function names, keys/attributes, headings |
+| `--syn-comment` | `--text-3` | `--text-2` | comments |
+| `--syn-type` | `--teal` | teal 58% → `--text` | types, classes, built-ins |
+| `--syn-meta` | `--rose` | rose 62% → `--text` | decorators/preprocessor, variables, diff deletions |
+
 ## Typography
 
 - System font stack: `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`.
@@ -1976,10 +1995,31 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   them out) and the step (which renders them), so a view cannot appear twice or nowhere.
   `calculate` renders the same component with an expression in place of the code — one
   component, two tools, because they are the same act. Syntax highlighting is a closed set of
-  token classes the COMPONENT applies from `language`; the code is tokenized into nodes, never
-  rendered as markup, and a program's own output is never highlighted. The containment chips
+  token classes the COMPONENT applies from `language` — the same highlighter as chat code
+  blocks (below), so a run's code and a quoted snippet look alike; the code is tokenized into
+  nodes, never rendered as markup, and a program's own output is never highlighted. The containment chips
   under a run name controls that are checked against the compose file, and `calculate`, which
   never enters the container, does not borrow them.
+- **Code blocks in answers are coloured** (`agent/codeBlock.tsx`; owner request 2026-10-08 —
+  **the owner waived the mock-up gate for this one**: an in-place change to an existing
+  element, styled from the settled `code_run` palette). A fence's language tag is read
+  (```` ```py ````, ```` ```ts ````, ```` ```sh ````, ```` ```yml ````, ```` ```c++ ```` and the
+  other common aliases normalise onto 18 curated highlight.js grammars via `lowlight`); a tag
+  naming anything else renders plain rather than in a near-miss grammar, and an untagged block
+  is auto-detected among the curated set only above a relevance floor. The grammars are a
+  code-split chunk fetched the first time a block needs colour, so a block renders plain at
+  once and colours a beat later; a block still streaming (closing fence not yet in) stays
+  plain, and a block over 60,000 characters or 2,000 lines is never coloured. Colour maps
+  onto the seven syntax tokens (Color tokens → Syntax tokens) as `hl-*` classes; the
+  highlighter's tree is walked into React text and `<span>`s — never `innerHTML` — so model-
+  or repository-authored text reaches the DOM only as text. **A numbered listing gets a
+  gutter**: when (almost) every line opens with a line number followed by a tab or two
+  spaces (the GitHub reader's blob view, a quoted range) and the numbers run consecutively,
+  the numbers render as a dim, unselectable, sticky left column (`.md-gutter`) and only the
+  code is coloured; a single-space or non-consecutive run (a list of data) is left alone.
+  Horizontal scroll, no wrapping, and the font-scale sizing are unchanged; the block's
+  `<code>` is now `display: block`, so lines take their own 1.5 pitch — left inline they
+  took the bubble's prose strut and every listing read double-spaced.
 - **A browse step opens onto what the browser did** (`views/browseTrace.tsx`, a `STEP_VIEWS`
   member like `code_run` — binding mock `docs/mocks/browse-trace/a-timeline.html`, owner pick
   2026-10-06, A "timeline" over B "filmstrip" and C "transcript"). Above the step's sources

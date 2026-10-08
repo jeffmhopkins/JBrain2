@@ -9616,6 +9616,56 @@ button.small {
   font-size: var(--fs-micro);
   line-height: 1.5;
   white-space: pre;
+  /* Block, so its own 1.5 sets the line pitch: left inline, every line took the prose
+     strut of the bubble around it and a listing read double-spaced. */
+  display: block;
+}
+/* A numbered listing (the GitHub reader's blob view, a quoted range): the numbers become a
+   dim gutter column that a selection skips, so copying takes only the code. Both columns
+   are one line per row and never wrap, so they align; the gutter sticks to the left edge
+   while a long line scrolls under it. */
+:is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-pre-numbered {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  padding-left: 0;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-gutter {
+  position: sticky;
+  left: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  white-space: pre;
+  text-align: right;
+  color: var(--text-3);
+  background: var(--surface-2);
+  padding: 0 calc(10px * var(--font-scale)) 0 calc(12px * var(--font-scale));
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* The closed syntax token set (codeBlock.tsx maps highlight.js scopes onto it). Model and
+   repository text select a class here; they never author one (DESIGN.md #1/#9). Shared by
+   chat code blocks and the code_run view so code looks the same everywhere. */
+:is(.md-pre, .fb-code) .hl-k {
+  color: var(--syn-keyword);
+}
+:is(.md-pre, .fb-code) .hl-s {
+  color: var(--syn-string);
+}
+:is(.md-pre, .fb-code) .hl-n {
+  color: var(--syn-number);
+}
+:is(.md-pre, .fb-code) .hl-f {
+  color: var(--syn-func);
+}
+:is(.md-pre, .fb-code) .hl-c {
+  color: var(--syn-comment);
+}
+:is(.md-pre, .fb-code) .hl-t {
+  color: var(--syn-type);
+}
+:is(.md-pre, .fb-code) .hl-m {
+  color: var(--syn-meta);
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-quote {
   margin: 0;
@@ -11095,23 +11145,6 @@ button.small {
    would let a snippet print something that looks like syntax. */
 .fb-shell .fb-code.out {
   color: var(--text);
-}
-/* the closed token set the component applies from `language`. Model output selects a class
-   here; it never authors one (DESIGN.md #1/#9). */
-.fb-shell .fb-code .k {
-  color: var(--violet);
-}
-.fb-shell .fb-code .s {
-  color: var(--green);
-}
-.fb-shell .fb-code .n {
-  color: var(--amber);
-}
-.fb-shell .fb-code .f {
-  color: var(--accent);
-}
-.fb-shell .fb-code .c {
-  color: var(--text-3);
 }
 .fb-shell .fb-sealrow {
   display: flex;

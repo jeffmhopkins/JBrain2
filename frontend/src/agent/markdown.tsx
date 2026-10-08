@@ -23,6 +23,8 @@ import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { CodeBlock } from "./codeBlock";
+import { type FenceLang, fenceLang } from "./codeLang";
 import type { ViewPayload } from "./types";
 
 /** What a `[^n]` citation marker resolves to: an owner note (tap opens it, via
@@ -744,7 +746,9 @@ type Block =
   | { kind: "h"; level: number; text: string }
   | { kind: "ul"; items: string[] }
   | { kind: "ol"; items: string[]; start: number }
-  | { kind: "code"; code: string }
+  // `closed`: the closing fence arrived. A block still streaming renders plain, so a partial
+  // answer is not re-highlighted on every token (codeBlock.tsx).
+  | { kind: "code"; code: string; lang: FenceLang; closed: boolean }
   | { kind: "quote"; text: string }
   | { kind: "table"; head: string[]; align: Align[]; rows: string[][] }
   | { kind: "math"; latex: string };
@@ -870,11 +874,13 @@ function parseRanges(src: string): { blocks: Block[]; ranges: [number, number][]
     from = i;
     const line = lines[i] ?? "";
     if (/^```/.test(line.trim())) {
+      const lang = fenceLang(line);
       i++;
       const buf: string[] = [];
       while (i < lines.length && !/^```/.test((lines[i] ?? "").trim())) buf.push(lines[i++] ?? "");
+      const closed = i < lines.length;
       i++; // consume closing fence (or run off the end on a partial answer)
-      blocks.push({ kind: "code", code: buf.join("\n") });
+      blocks.push({ kind: "code", code: buf.join("\n"), lang, closed });
       continue;
     }
     if (line.trim() === "") {
@@ -1112,9 +1118,8 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
       );
     case "code":
       return (
-        <pre key={key} className="md-pre">
-          <code>{b.code}</code>
-        </pre>
+        // An unclosed fence on a FINISHED answer (the model never closed it) is whole too.
+        <CodeBlock key={key} code={b.code} lang={b.lang} ready={b.closed || !ctx.streaming} />
       );
     case "math":
       // Scroll wrapper: a wide equation stays bounded on a narrow phone (mirrors

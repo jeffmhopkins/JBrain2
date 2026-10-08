@@ -7,103 +7,16 @@
 // number the owner should be able to check. A second component would be a second place for
 // them to disagree.
 //
-// SYNTAX HIGHLIGHTING IS OWNED HERE, not sent. The model fills data-only slots and authors
-// no markup, colour or URL (DESIGN.md invariant #1/#9) — `language` selects a closed set of
-// token classes the stylesheet colours, so a snippet cannot smuggle a span into the
-// transcript by printing one. That is also why the code is tokenized from plain text rather
-// than rendered as HTML: there is no path from tool output to the DOM as markup.
+// SYNTAX HIGHLIGHTING IS OWNED BY THE CLIENT, not sent. The model fills data-only slots and
+// authors no markup, colour or URL (DESIGN.md invariant #1/#9) — `language` selects a
+// grammar whose output maps onto a closed set of token classes the stylesheet colours, so a
+// snippet cannot smuggle a span into the transcript by printing one. It is the same
+// highlighter chat code blocks use (../codeBlock.tsx), which walks a token tree into React
+// text and spans: there is no path from tool output to the DOM as markup.
 
 import type { ReactNode } from "react";
+import { useHighlighted } from "../codeBlock";
 import type { ViewProps } from "./registry";
-
-/** The closed token set. A class here is a NAME, never a colour — the stylesheet owns the
- * palette, so a theme change is a stylesheet change (DESIGN.md). */
-type Token = "k" | "s" | "n" | "f" | "c" | "";
-
-const PY_KEYWORDS = new Set([
-  "and",
-  "as",
-  "assert",
-  "async",
-  "await",
-  "break",
-  "class",
-  "continue",
-  "def",
-  "del",
-  "elif",
-  "else",
-  "except",
-  "finally",
-  "for",
-  "from",
-  "global",
-  "if",
-  "import",
-  "in",
-  "is",
-  "lambda",
-  "nonlocal",
-  "not",
-  "or",
-  "pass",
-  "raise",
-  "return",
-  "try",
-  "while",
-  "with",
-  "yield",
-  "True",
-  "False",
-  "None",
-]);
-
-// One pass, ordered so the greedy things win: comments and strings before anything can be
-// found inside them, then numbers, then words. Nothing here can match across the whole
-// input unboundedly — every alternative is anchored to a short shape, so a pathological
-// snippet cannot turn this into a hang.
-const PY_TOKENS =
-  /(#[^\n]*)|('''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*")|(\b\d[\d_]*(?:\.\d+)?\b)|([A-Za-z_]\w*)/g;
-
-function classify(match: RegExpExecArray, source: string): Token {
-  if (match[1] !== undefined) return "c";
-  if (match[2] !== undefined) return "s";
-  if (match[3] !== undefined) return "n";
-  const word = match[4];
-  if (word === undefined) return "";
-  if (PY_KEYWORDS.has(word)) return "k";
-  // A call, not a name: the character after the word decides, which is enough to make a
-  // listing readable without pretending to parse Python.
-  return source[match.index + word.length] === "(" ? "f" : "";
-}
-
-/** Plain text in, React nodes out. Never `dangerouslySetInnerHTML` — the whole point is
- * that model-authored text reaches the DOM as TEXT. */
-function highlight(code: string, language: string): ReactNode[] {
-  if (language !== "python") return [code];
-  const out: ReactNode[] = [];
-  let last = 0;
-  PY_TOKENS.lastIndex = 0;
-  let match = PY_TOKENS.exec(code);
-  while (match !== null) {
-    const cls = classify(match, code);
-    if (match.index > last) out.push(code.slice(last, match.index));
-    const text = match[0];
-    out.push(
-      cls ? (
-        <span key={`${match.index}`} className={cls}>
-          {text}
-        </span>
-      ) : (
-        text
-      ),
-    );
-    last = match.index + text.length;
-    match = PY_TOKENS.exec(code);
-  }
-  if (last < code.length) out.push(code.slice(last));
-  return out;
-}
 
 function str(value: unknown): string {
   return typeof value === "string"
@@ -126,13 +39,13 @@ function Section({
   language?: string;
   out?: boolean;
 }): ReactNode {
+  // Only Python is coloured: `calculate`'s "expression" is arithmetic, not a program.
+  const coloured = useHighlighted(body, language === "python" ? "python" : "text", true);
   if (!body.trim()) return null;
   return (
     <>
       <div className="fb-res-lab">{label}</div>
-      <pre className={out ? "fb-code out" : "fb-code"}>
-        {language ? highlight(body, language) : body}
-      </pre>
+      <pre className={out ? "fb-code out" : "fb-code"}>{language ? coloured : body}</pre>
     </>
   );
 }
