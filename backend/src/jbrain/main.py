@@ -861,7 +861,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             domain_skips=app.state.domain_skips,
             feeds=news_feeds,
             # Public GitHub repos read from an in-memory tarball snapshot through the same
-            # SSRF-guarded fetcher (docs/plans/GITHUB_FETCH_PLAN.md).
+            # SSRF-guarded fetcher (docs/archive/GITHUB_FETCH_PLAN.md).
             github=GitHubReader(web_fetcher),
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA

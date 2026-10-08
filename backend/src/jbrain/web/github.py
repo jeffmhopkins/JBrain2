@@ -1,4 +1,4 @@
-"""`web_fetch` for public GitHub repositories (docs/plans/GITHUB_FETCH_PLAN.md).
+"""`web_fetch` for public GitHub repositories (docs/archive/GITHUB_FETCH_PLAN.md).
 
 A GitHub page read as HTML is one file at a time, its link list capped, with no line
 numbers and no way to search the repo. So a recognised GitHub URL is answered from a

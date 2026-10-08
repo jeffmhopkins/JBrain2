@@ -1,4 +1,4 @@
-"""web_fetch reads public GitHub repos from a snapshot (docs/plans/GITHUB_FETCH_PLAN.md).
+"""web_fetch reads public GitHub repos from a snapshot (docs/archive/GITHUB_FETCH_PLAN.md).
 
 URL parsing, safe tar indexing, every view, the cache and single-flight, and the web_fetch
 seams (identical presentation, fallbacks, no skip-list entry). No network: the real

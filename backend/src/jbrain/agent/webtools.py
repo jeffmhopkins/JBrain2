@@ -482,7 +482,7 @@ def build_web_handlers(
     `feeds`, if given, backs the `news_feed` tool (curated per-category RSS/Atom pulls,
     docs/plans/NEWS_FEED_PLAN.md); the handler is always registered so its sidecar binds, and
     reports 'not configured' when `feeds` is None or has no feeds. `github`, if given, answers
-    a public GitHub repo/tree/blob/raw URL from a repo snapshot (docs/plans/GITHUB_FETCH_PLAN.md)
+    a public GitHub repo/tree/blob/raw URL from a repo snapshot (docs/archive/GITHUB_FETCH_PLAN.md)
     rather than the page's HTML; None reads GitHub like any other site."""
 
     async def _remember(ctx: ToolContext, result: FetchResult, url: str, kind: str) -> None:

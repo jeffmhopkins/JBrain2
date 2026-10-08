@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-06
+> **Status:** Living · **Last verified:** 2026-10-08
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -445,6 +445,14 @@ selector, headless), T2 ✅ (learned Tavily-first routing: the `solver_failed` r
 route), T3 ✅ (the Settings GUI — dedicated `/settings/tavily` never-echoed endpoint + panel + three
 mocks, owner chose mock B (status pill + switch)), T4 ◻️ (live on-box validation + `extract_depth`/timeout tuning +
 24h re-probe confirmation).
+
+**Shipped:** GitHub-aware `web_fetch` (build record: `docs/archive/GITHUB_FETCH_PLAN.md`) — a public
+GitHub repo/tree/blob/raw URL is read from an in-memory tarball snapshot (codeload + public Atom feeds,
+no API, no token, no new tool): overview, whole-folder listings, line-numbered files with `#L` ranges,
+and `find` across the repo. *Open:* confirm on the box which default-branch archive URL GitHub serves
+(`archive/HEAD.tar.gz` → codeload `HEAD` → `main` → `master` is the fallback chain), that the repo
+page still carries `defaultBranch`, and that the pax commit header and `commits/{sha}.atom` feed are
+live — each degrades gracefully if not. *Deferred:* private repos (would need a token on the box).
 
 **Shipped:** Blocked-domain skip list (build record: `docs/archive/DOMAIN_HEALTH_PLAN.md`) — a global
 24h paywall/bot-wall skip list (`app.blocked_domains`, migration 0163) so `web_fetch`/`web_search`

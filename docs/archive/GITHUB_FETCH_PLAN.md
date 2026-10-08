@@ -1,6 +1,6 @@
 # GitHub Fetch — `web_fetch` reads a public GitHub repo natively
 
-> **Status:** Scheduled · **Last verified:** 2026-10-08 · **Waves:** G1◻️
+> **Status:** Shipped 2026-10 · no migration · **Superseded-by:** —
 
 jerv reads GitHub today the way it reads any site: the HTML of one page at a time, with
 the link list capped at 40, no line numbers, and no way to search a repository. The owner
@@ -54,7 +54,7 @@ repo, and any execution of repo content.
 
 ## Waves
 
-### G1 — the GitHub snapshot reader ◻️
+### G1 — the GitHub snapshot reader ✅
 
 `jbrain/web/github.py` (URL parsing, safe tar indexing, the snapshot cache + single-flight,
 the overview/tree/blob/search renderers); `webtools.web_fetch` routes a recognised URL
@@ -66,3 +66,11 @@ safety (traversal, symlink, huge file, too many files, binary skip), every view,
 quarantine-identical rendering, the fallback paths, no skip-list entry on failure, the SSRF
 guard on a codeload redirect, cache reuse and single-flight — security paths at 100%; the
 backend gates and `docs-freshness` are green.
+
+**Landed:** `backend/src/jbrain/web/github.py`, the `web_fetch` route in
+`agent/webtools.py`, `web_fetch.tool` v13, `tests/unit/test_web_github.py` (the module at
+100% line coverage). **Not verifiable without network, carried to `ROADMAP.md`:** which of
+the four default-branch archive URLs GitHub actually serves today, the `defaultBranch` key
+in the repo page HTML, the pax `comment` commit header on codeload archives, and the Atom
+feed for `commits/{sha}.atom` — each degrades gracefully (next URL / "default branch" label
+/ no commit shown / no commits section), none blocks a read.
