@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from jbrain.agent.attachment_content import decorated_history_text
+from jbrain.agent.loop import TURN_MAX_TOKENS
 from jbrain.agent.transcript_store import TurnRecord
 from jbrain.llm import (
     AssistantMessage,
@@ -53,20 +54,24 @@ REPLAY_LOW_WATER_TOKENS = 48 * 1024
 # The exact (local) path compacts rarely and deeply instead (owner, 2026-10-08). A move there
 # re-reads nearly the whole chat — measured: 99,160 tokens from zero, ~5½ minutes — and the
 # 64k/48k marks, only 16k apart, had a page-heavy chat paying that every couple of research
-# turns. Measured against the whole prompt and the window instead: compact when the estimate
-# reaches 80% of it, down to 50% — one re-read per ~80k tokens of growth.
+# turns. Measured against the whole prompt and the window instead, in REAL tokens: compact when
+# the prompt reaches 80% of the window, down to 50% — one re-read per ~80k tokens of growth.
 EXACT_COMPACT_AT = 0.80
 EXACT_COMPACT_TO = 0.50
-# Past this, even the newest turn with results yields: the fixed ratio undercounts real
-# tokens by ~8% (`llm/prefill.py` measures ~3.7 chars a token), so 90% of the window by the
-# estimate is the slot cap in fact, and a render over it overflows the moment it is sent.
-EXACT_CEILING = 0.90
 # The window when the caller cannot name one: the local chat slot's cap.
 EXACT_CONTEXT_WINDOW = 262_144
 # What every prompt carries besides the history: the system prompt, the tool array and this
 # turn's own `now`/context blocks. Measured at 43.6k tokens for jerv on the box (2026-10-08),
-# rounded up so a growing tool roster does not quietly push the real prompt past the marks.
+# rounded up. Only a chat with no real count yet (turns stored before the count was) leans on
+# it; once a turn carries one, that count already holds all of this.
 EXACT_OVERHEAD_TOKENS = 48 * 1024
+# A chat's own characters-per-token, measured off its last call, is held to this range: code
+# and JSON run near 2.5, prose near 4.5, and anything outside is a count gone wrong.
+MEASURED_CHARS_PER_TOKEN = (2.5, 4.5)
+# Room the newest research turn must leave for a model call to answer in — the loop's per-call
+# output cap, a quarter of it. Keeping that turn whole with less than this is a render past the
+# slot cap, which overflows the moment it is sent, so it yields too.
+OUTPUT_ROOM_TOKENS = TURN_MAX_TOKENS // 4
 # One huge page must not spend the whole budget.
 MAX_RESULT_CHARS = 16_000
 # Tools whose output is never replayed in full, whatever the budget. None yet: the session's
@@ -184,6 +189,43 @@ def _prose_chars(turn: TurnRecord) -> int:
     return len(turn.content) + sum(len(json.dumps(s.get("args") or {})) + len(STUB) for s in steps)
 
 
+def _measured(turn: TurnRecord) -> int | None:
+    """The real size, in tokens, of the turn's last model call — its prompt plus what it wrote —
+    as the engine reported it. None for a turn stored before the count was recorded."""
+    wire = turn.wire
+    usage = wire.get("usage") if turn.role == "assistant" and isinstance(wire, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    read, wrote = usage.get("input"), usage.get("output")
+    if not isinstance(read, int) or not isinstance(wrote, int) or read <= 0:
+        return None
+    return read + max(wrote, 0)
+
+
+def _unread_results(turn: TurnRecord) -> int:
+    """Characters of results the turn's last call never read: its last round's, when the turn
+    ended on calls rather than on an answer (a halt, a cut, a Stop)."""
+    wire = turn.wire
+    if not isinstance(wire, dict) or wire.get("final") is not None:
+        return 0
+    rounds = wire.get("rounds")
+    last = rounds[-1] if isinstance(rounds, list) and rounds else None
+    called = {c.get("id") for c in last.get("calls", [])} if isinstance(last, dict) else set()
+    suffixes = wire.get("suffixes") or {}
+    return sum(
+        len(str(s.get("summary") or "")) + len(str(suffixes.get(s.get("id"), "")))
+        for s in turn.tools
+        if s.get("id") in called
+    )
+
+
+def _ended_full(turns: Sequence[TurnRecord]) -> bool:
+    """The newest assistant turn overflowed, or ended within reach of the window (`full`)."""
+    newest = next((t for t in reversed(turns) if t.role == "assistant"), None)
+    wire = newest.wire if newest is not None else None
+    return isinstance(wire, dict) and bool(wire.get("full"))
+
+
 def advance_floor(
     turns: Sequence[TurnRecord],
     floor: int,
@@ -191,6 +233,7 @@ def advance_floor(
     exact: bool = False,
     context_window: int | None = None,
     overhead_tokens: int = EXACT_OVERHEAD_TOKENS,
+    pending_chars: int = 0,
 ) -> int:
     """The boundary this render uses: `floor`, moved forward by whole turns when the bulk
     it keeps exceeds the budget, until it is under the low water mark. The newest turn with
@@ -201,34 +244,86 @@ def advance_floor(
     stops extending the last one: every turn it passes is re-rendered compact, once, and the
     engine re-reads from the oldest of them.
 
-    `exact` measures the whole prompt against `context_window` instead (`EXACT_COMPACT_AT`),
-    and lets the protected turn go only when keeping it would leave the render over the slot."""
+    `exact` sizes the whole prompt against `context_window` instead (`_whole_prompt`), unless
+    the window is too small for that to leave the history any room. `pending_chars` is the
+    message this render adds, which no stored row holds yet."""
     kept = [
         t for t in turns if t.role == "assistant" and t.seq >= floor and _turn_chars(t, exact=exact)
     ]
-    total = sum(_turn_chars(t, exact=exact) for t in kept)
-    if exact:
-        window = (context_window or EXACT_CONTEXT_WINDOW) * CHARS_PER_TOKEN
-        total += overhead_tokens * CHARS_PER_TOKEN + sum(_prose_chars(t) for t in turns)
-        high, low, ceiling = (
-            window * EXACT_COMPACT_AT,
-            window * EXACT_COMPACT_TO,
-            window * EXACT_CEILING,
-        )
-    else:
-        high = REPLAY_BUDGET_TOKENS * CHARS_PER_TOKEN
-        low = REPLAY_LOW_WATER_TOKENS * CHARS_PER_TOKEN
-        ceiling = float("inf")
-    if total <= high:
+    if not kept:
         return floor
-    with_results = [t.seq for t in kept if _turn_chars(t)]
-    protected = with_results[-1] if with_results else kept[-1].seq
+    window = context_window or EXACT_CONTEXT_WINDOW
+    if exact and overhead_tokens <= window * EXACT_COMPACT_TO:
+        return _whole_prompt(turns, kept, floor, window, overhead_tokens, pending_chars)
+    # The cloud path; and a small local window (a 32k or 64k model), whose fixed overhead alone
+    # is past the 50% target — the whole-prompt rule would compact it on every turn.
+    total = sum(_turn_chars(t, exact=exact) for t in kept)
+    if total <= REPLAY_BUDGET_TOKENS * CHARS_PER_TOKEN:
+        return floor
+    protected = _protected(kept)
     for turn in kept:
-        if turn.seq >= protected and total <= ceiling:
+        if turn.seq >= protected:
             break
         total -= _turn_chars(turn, exact=exact)
         floor = turn.seq + 1
-        if total <= low:
+        if total <= REPLAY_LOW_WATER_TOKENS * CHARS_PER_TOKEN:
+            break
+    return floor
+
+
+def _protected(kept: Sequence[TurnRecord]) -> int:
+    with_results = [t.seq for t in kept if _turn_chars(t)]
+    return with_results[-1] if with_results else kept[-1].seq
+
+
+def _whole_prompt(
+    turns: Sequence[TurnRecord],
+    kept: Sequence[TurnRecord],
+    floor: int,
+    window: int,
+    overhead_tokens: int,
+    pending_chars: int,
+) -> int:
+    """The exact path's rule, in real tokens. The newest turn that carries the engine's own
+    count of its last call anchors the size; what came after it — later turns stored without a
+    count, results that call never read, and this render's new message — is estimated from its
+    characters at the chat's OWN ratio, measured off that same render, so a code- or JSON-heavy
+    chat is not undercounted. A pasted document or an image on the new message is not in that
+    estimate; everything already in the history is, by the count. A chat with no count at all
+    falls back to the fixed overhead and 4 characters a token.
+
+    Compacts when the prompt reaches `EXACT_COMPACT_AT` of the window — or regardless, when the
+    newest turn ended `full` (it overflowed, or came within reach of the window) — down to
+    `EXACT_COMPACT_TO`. The newest research turn yields only when keeping it would leave less
+    than `OUTPUT_ROOM_TOKENS` of the window to answer in."""
+
+    def bulk(t: TurnRecord) -> int:
+        return _turn_chars(t, exact=True) if t.role == "assistant" and t.seq >= floor else 0
+
+    anchor = next((i for i in range(len(turns) - 1, -1, -1) if _measured(turns[i])), None)
+    if anchor is None:
+        ratio = float(CHARS_PER_TOKEN)
+        chars = overhead_tokens * CHARS_PER_TOKEN
+        chars += sum(_prose_chars(t) + bulk(t) for t in turns) + pending_chars
+        size = chars / ratio
+    else:
+        real = _measured(turns[anchor]) or 0
+        unread = _unread_results(turns[anchor])
+        rendered = overhead_tokens * CHARS_PER_TOKEN
+        rendered += sum(_prose_chars(t) + bulk(t) for t in turns[: anchor + 1]) - unread
+        low, high = MEASURED_CHARS_PER_TOKEN
+        ratio = min(high, max(low, rendered / real))
+        since = sum(_prose_chars(t) + bulk(t) for t in turns[anchor + 1 :])
+        size = real + (unread + since + pending_chars) / ratio
+    if size < window * EXACT_COMPACT_AT and not _ended_full(turns):
+        return floor
+    protected = _protected(kept)
+    for turn in kept:
+        if turn.seq >= protected and size <= window - OUTPUT_ROOM_TOKENS:
+            break
+        size -= _turn_chars(turn, exact=True) / ratio
+        floor = turn.seq + 1
+        if size <= window * EXACT_COMPACT_TO:
             break
     return floor
 

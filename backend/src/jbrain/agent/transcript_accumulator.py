@@ -32,10 +32,32 @@ class RoundRecord:
     model: str
     calls: Sequence[ToolCall] = ()
     suffixes: Mapping[str, str] = field(default_factory=dict)
+    # The call's own counts as the engine reported them: the prompt it read and what it wrote.
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     @classmethod
     def of(cls, turn: LlmTurn, suffixes: Mapping[str, str] | None = None) -> "RoundRecord":
-        return cls(turn.text, turn.reasoning, turn.model, tuple(turn.tool_calls), suffixes or {})
+        return cls(
+            turn.text,
+            turn.reasoning,
+            turn.model,
+            tuple(turn.tool_calls),
+            suffixes or {},
+            turn.usage.input_tokens,
+            turn.usage.output_tokens,
+        )
+
+    @classmethod
+    def answer(cls, turn: LlmTurn) -> "RoundRecord":
+        """The turn's answer: no calls, even from a round cut mid-call, whose were never run."""
+        return cls(
+            turn.text,
+            turn.reasoning,
+            turn.model,
+            input_tokens=turn.usage.input_tokens,
+            output_tokens=turn.usage.output_tokens,
+        )
 
 
 @dataclass
@@ -57,6 +79,8 @@ class TranscriptAccumulator:
     _rounds: list[dict[str, Any]] = field(default_factory=list)
     _suffixes: dict[str, str] = field(default_factory=dict)
     _final: dict[str, str] | None = None
+    # The last recorded call's real (input, output) tokens, when the engine reported them.
+    _usage: tuple[int, int] | None = None
     _recording: bool = False
     _resulted: set[str] = field(default_factory=set)
 
@@ -181,6 +205,8 @@ class TranscriptAccumulator:
     def record_round(self, record: RoundRecord) -> None:
         """The loop's `on_round` sink: keep the round as the model was sent it."""
         self._recording = True
+        if record.input_tokens > 0:
+            self._usage = (record.input_tokens, record.output_tokens)
         said = {"text": record.text, "reasoning": record.reasoning, "model": record.model}
         if not record.calls:
             self._final = said
@@ -210,6 +236,10 @@ class TranscriptAccumulator:
             record["suffixes"] = dict(self._suffixes)
         if self._final is not None:
             record["final"] = dict(self._final)
+        if self._usage is not None:
+            # The real size of the turn's last call, which the replay sizes the next prompt by
+            # (`history_replay.advance_floor`) instead of a character estimate.
+            record["usage"] = {"input": self._usage[0], "output": self._usage[1]}
         if turn_input is not None:
             record["input"] = turn_input
         return record

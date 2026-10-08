@@ -990,18 +990,24 @@ async def _replayed_history(
     *,
     exact: bool = False,
     context_window: int | None = None,
+    pending_chars: int = 0,
 ) -> tuple[list[history_replay.Entry], bool] | None:
     """The transcript-built history, with the replay boundary moved (and stored) first so
     every render after this one agrees on it, and whether this render moved it. None when
     anything can't be read: the turn then runs on the client's text history rather than
     failing. `exact` (a local route) replays each recorded turn exactly as it was sent
-    (`history_replay.build`) and compacts against `context_window`, the turn's slot cap."""
+    (`history_replay.build`) and compacts against `context_window`, the turn's slot cap;
+    `pending_chars` is the owner's new message, which the stored rows do not hold yet."""
     try:
         turns = await get_agent_transcript(request).load(ctx, session_id, with_wire=True)
         sessions = get_agent_sessions(request)
         floor = await sessions.replay_floor(ctx, session_id)
         moved = history_replay.advance_floor(
-            turns, floor, exact=exact, context_window=context_window
+            turns,
+            floor,
+            exact=exact,
+            context_window=context_window,
+            pending_chars=pending_chars,
         )
         if moved != floor:
             await sessions.advance_replay_floor(ctx, session_id, moved)
@@ -1344,6 +1350,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             session.id,
             exact=await _exact_replay(router, model_override),
             context_window=context_window,
+            pending_chars=len(body.message),
         )
         if session.agent == "jerv"
         else None

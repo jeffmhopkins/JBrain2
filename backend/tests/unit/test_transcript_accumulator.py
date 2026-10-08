@@ -238,3 +238,16 @@ def test_a_round_that_never_reached_a_later_prompt_is_simply_absent() -> None:
     acc.feed(ToolCallEvent(id="c2", name="search", arguments={}))
     wire = acc.wire()
     assert wire is not None and [r["calls"][0]["id"] for r in wire["rounds"]] == ["c1"]
+
+
+def test_the_wire_record_keeps_the_last_calls_real_counts() -> None:
+    acc = TranscriptAccumulator()
+    _resulted(acc, "c1")
+    acc.record_round(RoundRecord("", "t", "m", (_call("c1"),), input_tokens=900, output_tokens=40))
+    acc.record_round(RoundRecord("Done.", "t", "m", input_tokens=1_000, output_tokens=25))
+    wire = acc.wire()
+    assert wire is not None and wire["usage"] == {"input": 1_000, "output": 25}
+    # A provider that reports nothing leaves no count rather than a zero one.
+    bare = TranscriptAccumulator()
+    bare.record_round(RoundRecord("Done.", "t", "m"))
+    assert "usage" not in (bare.wire() or {})

@@ -327,7 +327,8 @@ def test_the_exact_path_never_compacts_the_newest_research_turn() -> None:
         TurnRecord(role="user", content="thanks", seq=11),
         TurnRecord(role="assistant", content="You're welcome.", seq=12, wire=thanks),
     ]
-    assert hr.EXACT_COMPACT_AT < _estimate(turns, 0) <= hr.EXACT_CEILING
+    room = 1 - hr.OUTPUT_ROOM_TOKENS / hr.EXACT_CONTEXT_WINDOW
+    assert hr.EXACT_COMPACT_AT < _estimate(turns, 0) <= room
     floor = hr.advance_floor(turns, 0, exact=True)
     assert floor == 9  # everything before the research turn, and not the research turn
     assert _estimate(turns, floor) > hr.EXACT_COMPACT_TO  # it held, though it costs the target
@@ -336,7 +337,7 @@ def test_the_exact_path_never_compacts_the_newest_research_turn() -> None:
 def test_the_newest_research_turn_yields_only_when_keeping_it_would_overflow_the_slot() -> None:
     # A render over the slot fails the moment it is sent; stubbing it is the lesser loss.
     turns = [*_chat(2), *_research(5, results=1_000_000)]
-    assert _estimate(turns, 4) > hr.EXACT_CEILING
+    assert _estimate(turns, 4) > 1 - hr.OUTPUT_ROOM_TOKENS / hr.EXACT_CONTEXT_WINDOW
     floor = hr.advance_floor(turns, 0, exact=True)
     assert floor == 7 and _estimate(turns, floor) <= hr.EXACT_COMPACT_TO
 
@@ -395,3 +396,82 @@ def test_a_reclassified_round_still_leaves_the_answer_in_the_replay() -> None:
     ]
     (_, assistant) = hr.build(turns, 0, exact=True)
     assert assistant.messages[-1] == AssistantMessage(text="It is 4.")
+
+
+# ---- real counts: the engine's own size of the last call anchors the exact path
+
+
+def _measured(turns: list[TurnRecord], real: int) -> list[TurnRecord]:
+    """`turns` with the newest assistant turn ending on an answer whose call read and wrote
+    `real` tokens in all."""
+    last = turns[-1]
+    wire = {**(last.wire or {}), "final": {"text": "a", "reasoning": "", "model": "flash"}}
+    wire["usage"] = {"input": real - 100, "output": 100}
+    return [*turns[:-1], dataclasses.replace(last, wire=wire)]
+
+
+W = hr.EXACT_CONTEXT_WINDOW
+
+
+def test_an_undercounted_chat_compacts_on_its_real_size() -> None:
+    # By characters the chat is well under 80% — but the engine read 85% of the window.
+    turns = _chat(12)
+    assert _estimate(turns, 0) < hr.EXACT_COMPACT_AT
+    assert hr.advance_floor(_measured(turns, int(W * 0.85)), 0, exact=True) > 0
+
+
+def test_an_overcounted_chat_holds_on_its_real_size() -> None:
+    turns = _chat(17)
+    assert _estimate(turns, 0) > hr.EXACT_COMPACT_AT
+    assert hr.advance_floor(_measured(turns, int(W * 0.6)), 0, exact=True) == 0
+
+
+def test_the_cut_is_sized_at_the_chats_own_ratio() -> None:
+    # The same characters measured as more tokens (code, JSON) are worth more each: reaching
+    # half the window takes stubbing more of them.
+    turns = _chat(17)
+    prose_like = hr.advance_floor(_measured(turns, int(W * 0.81)), 0, exact=True)
+    json_like = hr.advance_floor(_measured(turns, int(W * 0.95)), 0, exact=True)
+    assert 0 < prose_like < json_like
+
+
+def test_what_came_after_the_count_is_estimated_on_top_of_it() -> None:
+    # The count sits just under the trigger; the owner's new message and a turn stored without
+    # a count since are what take it over.
+    turns = _measured(_chat(4), int(W * 0.79))
+    assert hr.advance_floor(turns, 0, exact=True) == 0
+    assert hr.advance_floor(turns, 0, exact=True, pending_chars=W // 10) > 0
+    assert hr.advance_floor([*turns, *_research(9, results=60_000)], 0, exact=True) > 0
+
+
+def test_a_turn_that_ended_full_compacts_the_next_render_whatever_the_size() -> None:
+    turns = _measured(_chat(6), int(W * 0.3))
+    assert hr.advance_floor(turns, 0, exact=True) == 0
+    full = dataclasses.replace(turns[-1], wire={**(turns[-1].wire or {}), "full": True})
+    assert hr.advance_floor([*turns[:-1], full], 0, exact=True) > 0
+
+
+def test_nothing_kept_is_nothing_to_compact() -> None:
+    # The prose alone is over the window, but every result is already stubbed: no move, no
+    # IndexError looking for the turn to protect.
+    turns = _turns([_step("a")], [_step("b")], content="x" * 1_000_000)
+    assert hr.advance_floor(turns, 99, exact=True) == 99
+    no_results = _turns([], [], content="x" * 1_000_000)
+    assert hr.advance_floor(no_results, 0, exact=True) == 0
+
+
+def test_a_small_local_window_keeps_the_stepped_bulk_rule() -> None:
+    # A 64k window: the fixed overhead alone is past half of it, so the whole-prompt rule would
+    # compact on every turn. The 64k/48k bulk rule holds instead — and a run of research turns
+    # after a move does not move it again each time.
+    small = 65_536
+    assert small * hr.EXACT_COMPACT_TO < hr.EXACT_OVERHEAD_TOKENS
+    turns = _chat(16, results=16_000, thinking=4_000)  # 320k chars of bulk: over 64k tokens
+    floor = hr.advance_floor(turns, 0, exact=True, context_window=small)
+    kept = sum(hr._turn_chars(t, exact=True) for t in turns if t.seq >= floor)
+    assert floor > 0 and kept <= hr.REPLAY_LOW_WATER_TOKENS * hr.CHARS_PER_TOKEN
+    seq = turns[-1].seq + 1
+    for _ in range(3):
+        turns = [*turns, *_research(seq, results=4_000, thinking=1_000)]
+        seq += 2
+        assert hr.advance_floor(turns, floor, exact=True, context_window=small) == floor

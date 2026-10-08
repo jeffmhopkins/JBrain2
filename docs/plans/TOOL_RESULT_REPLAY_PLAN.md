@@ -151,13 +151,17 @@ an exact extension of the last prompt". R2's prefill measurement reads that same
 Measured on the box: with the exact replay every follow-up extended the last prompt — except
 when the floor moved, and at 64k/48k it moved every couple of research turns; one move in a
 176k-token chat re-read 99,160 tokens from zero (~5½ min). On the exact (local) path the marks
-are now fractions of the whole prompt's estimate against the slot's context window: compact at
-**80%** (~209.7k of the 262,144 chat slot), down to **50%** (~131k). The estimate is a 48k
-fixed overhead (system prompt + tools + the turn's own blocks; measured 43.6k for jerv) + every
-turn's prose, arguments and stubs + the kept turns' bulk, at 4 characters a token. The newest
-research turn yields only when keeping it would leave the estimate over 90% of the window (a
-render past the slot cap). The cloud path keeps **64k / 48k / 16k**. A turn that compacted
-streams `history_compacted` first, and the PWA labels that read *Compacting a long chat…*.
+are now fractions of the whole prompt against the slot's context window, in **real tokens**:
+compact at **80%** (~209.7k of the 262,144 chat slot), down to **50%** (~131k). Each recorded
+turn keeps its last call's engine-reported size (`wire.usage`); the newest such count anchors
+the size, and only what came after it (later uncounted turns, unread results, the new message)
+is estimated, at the chat's own measured characters-per-token (clamped 2.5–4.5). A chat with no
+count yet falls back to a 48k fixed overhead (measured 43.6k for jerv) + prose + bulk at 4
+characters a token. A turn that ended `full` compacts the next render regardless. The newest
+research turn yields only when keeping it would leave under `TURN_MAX_TOKENS // 4` to answer
+in. A window whose fixed overhead alone is past half (32k/64k local models) keeps the stepped
+bulk rule, and the cloud path keeps **64k / 48k / 16k**. A turn that compacted streams
+`history_compacted` first, and the PWA labels that read *Compacting a long chat…*.
 Details: `../reference/PROMPT_CACHE.md`, "The ONE deliberate divergence is compaction".
 
 ## 5. Relationship to other plans
