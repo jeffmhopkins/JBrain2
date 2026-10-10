@@ -928,7 +928,18 @@ any dimension. So a red chest at the base and a red chest in the Nether hold the
 things, and a blue pair is a separate store. This is late-game ("End") content: crafted,
 not handed out.
 
-**The engineering problem, and the proposed answer.**
+**Two kinds (owner, 2026-10-10):**
+
+| | **Private** trans-dimensional chest | **Cargo** trans-dimensional chest (hopperable) |
+|---|---|---|
+| Whose store | **The opener's**: like a vanilla ender chest, everyone sees their own red store in any red chest | **The placer's**: a red cargo chest moves items to the placer's other red cargo chests |
+| Hoppers | **No**, like a vanilla ender chest. A hopper under it would drain someone's private store | **Yes**, hoppers feed in and pull out on both ends |
+| What it's for | Carrying your own things between bases and dimensions | Automation: a farm in one place feeding storage at the base, across dimensions |
+| How it works | The travelling vault (below) | An item pipe (below) |
+
+The private chest is the design below. The cargo chest follows it.
+
+**The engineering problem, and the proposed answer (private chest).**
 - **The problem:** a stable-API script can't copy an item's full data (enchantments,
   names, durability, shulker contents) into storage and back. Syncing a "shared"
   inventory between several chests risks losing items or duplicating them, especially
@@ -944,7 +955,7 @@ not handed out.
   - **Items are never copied, only the vault moves**, so nothing can be duplicated or
     lost. A chest of a channel whose vault is out (open somewhere else) says "In use at
     the other red chest".
-- **The chest itself** is a custom block, `jbrain:td_chest`, with a `color` state. Its
+- **The private chest itself** is a custom block, `jbrain:td_chest`, with a `color` state. Its
   model and colours come in the join-download resource pack (§3c rule 2).
   - **Dyeing:** use a dye on it (`playerInteractWithBlock`) to set the colour, which
     switches the chest to that colour's channel. A channel's items stay in its vault, so
@@ -957,11 +968,38 @@ not handed out.
   - the tickingarea vault room survives a server restart;
   - the interaction events this needs are on stable.
 
+**The cargo chest: an item pipe between chests of one colour.**
+- **Why it can't share one inventory:** hoppers act on real containers, in many places
+  at once, while a travelling vault can be in only one place. So a cargo chest is a real
+  container, and its colour makes a **pipe**.
+- **Send or receive:** each cargo chest is set to one of the two, by sneak-using it, and
+  shows an in or out arrow. Items arriving in a red **sender**, by hopper or by hand, are
+  moved to the placer's red **receivers**. They fill in order, and a hopper under a
+  receiver pulls them onward.
+- **Moves are real `Container.moveItem` calls**, stable, run inside one script tick.
+  Items keep all their data and can't be duplicated.
+- **Back-pressure:** when every receiver is full, items simply wait in the sender, just
+  like a full hopper chain. Nothing is dropped or destroyed.
+- **Loading:** the sender is loaded because its hopper is working. A receiver in an
+  unloaded area (another dimension, a far base) is kept loaded with a `tickingarea`.
+  - BDS limits how many ticking areas there are, so each player gets a small number of
+    receivers (for example 4).
+  - That limit is also a natural cost lever.
+- **The container:** a custom block with an inventory, if the M11 spike shows custom
+  blocks can hold one on stable and hoppers see it. Otherwise it's a vanilla barrel the
+  script registers by position, marked with a coloured particle and a name, which
+  hoppers already handle.
+- **Who can use it:** anyone can put items into a sender, which makes it a public drop
+  box. Only the placer can re-colour or flip it, and breaking it drops its contents like
+  a normal chest.
+- **Spike additions:** hopper interaction with the chosen container; `moveItem` keeping
+  enchanted, named and shulker items across dimensions; how many ticking areas BDS
+  allows.
+
 **Open (owner):**
-1. **Whose channel?** It's either **the opener's**, like a vanilla ender chest (everyone
-   sees their own red store in any red chest), or **the placer's**, a shared hub where
-   anyone opening Sam's red chest sees Sam's red store. The first is private and safe;
-   the second allows trading posts.
+1. **Cargo routing:** with several red receivers, fill them in order or share items
+   round-robin? And can a cargo network be shared between players (Sam's red feeds
+   Josh's), or is it only ever the placer's?
 2. **Cost.** For example, crafting one chest needs an ender chest plus a Power Pack
    (nine eyes), and the dye is free. Or the chest is cheap but each **new colour channel**
    costs a Power Pack the first time it's used.
