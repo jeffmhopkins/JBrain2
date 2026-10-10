@@ -32,6 +32,7 @@ import { clearEngineFocus, useEngineSnapshot } from "../engineState";
 import {
   type ConfirmSpec,
   MC_SERVICE,
+  type McLevel,
   confirmContext,
   confirmFor,
   glanceOf,
@@ -1376,6 +1377,9 @@ interface OpsTile {
   sub: string;
   /** A longer line for the tile's label, where the tile itself has room for one word. */
   detail?: string;
+  /** A live state dot shown even when all is well — Minecraft's, the same dot its launcher
+   *  tile carries, so "running" reads green in both places. */
+  dot?: McLevel | undefined;
   tone: "" | "warn" | "bad";
   onOpen: () => void;
 }
@@ -1645,6 +1649,7 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
             sub: mcTile?.word ?? mcGlance.word,
             detail: mcGlance.meta,
             tone: mcTone,
+            dot: mcTile?.level,
             onOpen: onOpenMinecraft,
           },
         ]
@@ -1731,7 +1736,11 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
               onClick={t.onOpen}
               aria-label={`${t.title}: ${t.sub}${t.detail ? ` — ${t.detail}` : ""}`}
             >
-              {t.tone && <span className={`ops-tile-dot ${t.tone}`} aria-hidden="true" />}
+              {t.dot ? (
+                <span className={`mc-tile-dot ${t.dot}`} aria-hidden="true" />
+              ) : (
+                t.tone && <span className={`ops-tile-dot ${t.tone}`} aria-hidden="true" />
+              )}
               <span className="tile-icon">{t.icon}</span>
               <span className="tile-title">{t.title}</span>
               <span className={`tile-sub${t.tone ? ` ${t.tone}` : ""}`}>{t.sub}</span>

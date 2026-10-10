@@ -3295,7 +3295,7 @@ follows the Data screen's precedent of being lifted off Ops.
 
 - **Two entry points, one screen.** A **Minecraft** launcher tile under SYSTEM carries a
   state dot and word, and flags *update*, *update failed* or *install failed* instead. The
-  **Ops Minecraft tile** carries the same word (dotted amber or rose when it needs a look),
+  **Ops Minecraft tile** carries the same dot and word (green while running),
   with the glance — version and who's on, or *update available · {version} — newer clients
   can't join* — in its accessible name. Opened from Ops, the back chevron and swipe-down
   return to Ops.
