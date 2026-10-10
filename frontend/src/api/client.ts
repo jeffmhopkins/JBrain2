@@ -396,6 +396,129 @@ export interface OpsStatus {
   containers: ContainerStatus[];
 }
 
+// ===== Minecraft (the owner's Bedrock server, /api/minecraft) =====
+// Times are epoch seconds (floats) unless named `*_at` as an ISO string below.
+
+export type MinecraftServerState =
+  | "installing"
+  | "install_failed"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "stopped";
+
+export type MinecraftUpdateState =
+  | "idle"
+  | "backing_up"
+  | "downloading"
+  | "restarting"
+  | "done"
+  /** The download or install failed: still on `from`, restarted if it had been running. */
+  | "failed"
+  /** The new version wouldn't start, so `from` was reinstalled and the world restored. */
+  | "rolled_back";
+
+export interface MinecraftUpdate {
+  state: MinecraftUpdateState;
+  from: string | null;
+  to: string | null;
+  /** The pre-update backup's file name, once taken. */
+  backup: string | null;
+  error: string | null;
+  started_at: number;
+  finished_at: number | null;
+}
+
+export interface MinecraftOnlinePlayer {
+  name: string;
+  xuid: string;
+  joined_at: number;
+}
+
+export interface MinecraftServer {
+  state: MinecraftServerState;
+  /** Whether the game server should be running; a stop is remembered across a reboot. */
+  run: boolean;
+  install_error: string | null;
+  version: string | null;
+  level_name: string;
+  server_name: string;
+  gamemode: string;
+  difficulty: string;
+  allow_list: boolean;
+  lan_ip: string | null;
+  port: number;
+  uptime_s: number | null;
+  players: MinecraftOnlinePlayer[];
+  update: MinecraftUpdate;
+  auto_update: boolean;
+}
+
+/** GET /api/minecraft. Start/Stop/Restart act on the game server inside the container, so
+ *  a stopped server is still a `server` (state "stopped"). A null or down `container` is a
+ *  deploy-level problem; `server_error` is set when the container runs but its wrapper is
+ *  unreachable. */
+export interface MinecraftStatus {
+  container: { state: string; health: string | null; started_at: string | null } | null;
+  server: MinecraftServer | null;
+  server_error: string | null;
+}
+
+export interface MinecraftNotes {
+  version: string;
+  title: string;
+  url: string;
+  /** ISO timestamp. */
+  published_at: string;
+  /** Mojang's own bullets, verbatim, at most four. */
+  lines: string[];
+}
+
+/** GET /api/minecraft/version. `notes` is about `latest` when an update is available,
+ *  otherwise `running`; null means Mojang hasn't published the article yet. */
+export interface MinecraftVersion {
+  running: string | null;
+  latest: string | null;
+  update_available: boolean;
+  checked_at: number | null;
+  check_error: string | null;
+  notes: MinecraftNotes | null;
+  notes_fallback_url: string;
+}
+
+export interface MinecraftPlayer {
+  xuid: string;
+  gamertag: string;
+  online: boolean;
+  session_started_at: number | null;
+  /** Includes the live session. */
+  total_seconds: number;
+  /** Includes the live session. */
+  sessions: number;
+  first_seen: number;
+  /** "Now" for an online player. */
+  last_seen: number;
+}
+
+export interface MinecraftPlayers {
+  players: MinecraftPlayer[];
+  /** False until the companion add-on feeds lifetime stats. */
+  stats_available: boolean;
+}
+
+/** POST /api/minecraft/start | /restart. With auto-update on and an update waiting, the act
+ *  runs the backed-up update first and returns it; `deferred` means the container is still
+ *  booting and will start the server on its own. */
+export interface MinecraftLifecycleResult {
+  action: string;
+  update?: MinecraftUpdate;
+  deferred?: boolean;
+}
+
+/** POST /api/minecraft/update: the update now running, or "current" when there's nothing
+ *  newer to install. */
+export type MinecraftUpdateStarted = MinecraftUpdate | { state: "current"; running: string };
+
 /** One host setting the app depends on, and whether that dependency currently holds.
  *  Mirrors `jbrain.host_settings.HostSetting`. */
 export interface HostSetting {
@@ -2671,6 +2794,16 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
   return response;
 }
 
+/** A 202 with no JSON body still counts as a plain act. */
+async function lifecycleResult(response: Response): Promise<MinecraftLifecycleResult> {
+  try {
+    const body = (await response.json()) as MinecraftLifecycleResult;
+    return body && typeof body === "object" ? body : { action: "" };
+  } catch {
+    return { action: "" };
+  }
+}
+
 async function errorDetail(response: Response): Promise<string> {
   try {
     const body = (await response.clone().json()) as { detail?: unknown };
@@ -4383,6 +4516,64 @@ export const api = {
 
   async opsStart(service: string): Promise<void> {
     await request("/api/ops/start", jsonInit("POST", { service }));
+  },
+
+  // The launcher tile and Ops row read these from screens that never asked for Minecraft, so
+  // a body that isn't the contract's shape is refused here rather than crashing a render.
+  async minecraftStatus(): Promise<MinecraftStatus> {
+    const response = await request("/api/minecraft");
+    const body = (await response.json()) as MinecraftStatus;
+    if (!body || typeof body !== "object" || !("container" in body) || !("server" in body)) {
+      throw new ApiError(502, "Unexpected response from the Minecraft server.");
+    }
+    return body;
+  },
+
+  /** `refresh` asks Mojang now (the screen's "Check for updates"); otherwise the cached check. */
+  async minecraftVersion(refresh = false): Promise<MinecraftVersion> {
+    const response = await request(`/api/minecraft/version?refresh=${refresh}`);
+    const body = (await response.json()) as MinecraftVersion;
+    if (!body || typeof body !== "object" || typeof body.update_available !== "boolean") {
+      throw new ApiError(502, "Unexpected response from the Minecraft version check.");
+    }
+    return body;
+  },
+
+  // Lifecycle acts never refuse with players on: the confirm is the screen's job.
+  async minecraftStart(): Promise<MinecraftLifecycleResult> {
+    return lifecycleResult(await request("/api/minecraft/start", { method: "POST" }));
+  },
+
+  async minecraftStop(): Promise<void> {
+    await request("/api/minecraft/stop", { method: "POST" });
+  },
+
+  async minecraftRestart(): Promise<MinecraftLifecycleResult> {
+    return lifecycleResult(await request("/api/minecraft/restart", { method: "POST" }));
+  },
+
+  /** For `install_failed`: re-runs the first-boot install now. There's no server to restart. */
+  async minecraftRetryInstall(): Promise<void> {
+    await request("/api/minecraft/retry-install", { method: "POST" });
+  },
+
+  async minecraftUpdate(): Promise<MinecraftUpdateStarted> {
+    const response = await request("/api/minecraft/update", { method: "POST" });
+    return (await response.json()) as MinecraftUpdateStarted;
+  },
+
+  async minecraftSettings(body: { auto_update: boolean }): Promise<{ auto_update: boolean }> {
+    const response = await request("/api/minecraft/settings", jsonInit("PUT", body));
+    return (await response.json()) as { auto_update: boolean };
+  },
+
+  async minecraftPlayers(): Promise<MinecraftPlayers> {
+    const response = await request("/api/minecraft/players");
+    const body = (await response.json()) as MinecraftPlayers;
+    if (!body || !Array.isArray(body.players)) {
+      throw new ApiError(502, "Unexpected response from the Minecraft player list.");
+    }
+    return body;
   },
 
   async opsLogs(service: string, tail: number): Promise<string> {

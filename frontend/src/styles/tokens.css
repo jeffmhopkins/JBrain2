@@ -67,6 +67,14 @@
   --syn-type: var(--teal);
   --syn-meta: var(--rose);
 
+  /* Accent-coloured WORDS (button labels, badges, links, state words). Dark reads the pastel
+     as-is; light deepens it toward --text so the words clear 4.5:1 — the Syntax tokens'
+     pattern. Dots, tints and rules keep the pastel. See DESIGN.md "Minecraft server screen". */
+  --ok-text: var(--green);
+  --warn-text: var(--amber);
+  --danger-text: var(--rose);
+  --steel-text: var(--steel);
+
   /* Type scale */
   /* Type scale = DESIGN.md px values × the user's font-scale setting
      (Settings → Text size, default 0.75). fontScale.ts sets --font-scale. */
@@ -133,6 +141,10 @@
   --syn-comment: var(--text-2);
   --syn-type: color-mix(in srgb, var(--teal) 58%, var(--text));
   --syn-meta: color-mix(in srgb, var(--rose) 62%, var(--text));
+  --ok-text: color-mix(in srgb, var(--green) 46%, var(--text));
+  --warn-text: color-mix(in srgb, var(--amber) 50%, var(--text));
+  --danger-text: color-mix(in srgb, var(--rose) 54%, var(--text));
+  --steel-text: color-mix(in srgb, var(--steel) 52%, var(--text));
 }
 
 /* Dark variant with brighter hairlines. Inherits every dark neutral from

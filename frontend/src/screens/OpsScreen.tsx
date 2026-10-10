@@ -5,15 +5,20 @@ import {
   type HostSettings,
   type MetricRange,
   type MetricsHistory,
+  type MinecraftStatus,
+  type MinecraftVersion,
   type OpsMetrics,
   type PanelStatusOut,
   type UpdateStatus,
   api,
 } from "../api/client";
+import { Dialog } from "../components/Dialog";
 import { LocalEngineCard } from "../components/LocalEngineCard";
+import { MinecraftOpsRow } from "../components/MinecraftOpsRow";
 import { OpsCard } from "../components/OpsCard";
 import { TimeSeriesPlot } from "../components/TimeSeriesPlot";
 import { serverMetricSeries } from "../components/serverMetricSeries";
+import { type ConfirmSpec, MC_SERVICE, confirmContext, confirmFor } from "../minecraft";
 import { agoLabel, panelConcerns, panelFacts, panelHealth } from "../panelStatus";
 import { useForeground, useForegroundRef } from "../visibility";
 import { RunsScreen } from "./RunsScreen";
@@ -1475,7 +1480,17 @@ function MemoryCard({
   );
 }
 
-export function OpsScreen() {
+// The Ops row's glance doesn't need the screen's 5 s beat; it only has to be current enough
+// that "who's on" isn't stale when the owner looks.
+const MC_POLL_MS = 15_000;
+
+interface McSnapshot {
+  status: MinecraftStatus | null;
+  version: MinecraftVersion | null;
+  error: string | null;
+}
+
+export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } = {}) {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1487,6 +1502,41 @@ export function OpsScreen() {
   // The Runs surface (Direction C) is an Ops sub-screen: it slides over Ops and
   // its back chevron returns here, matching the mock.
   const [showRuns, setShowRuns] = useState(false);
+  const foreground = useForeground();
+
+  // Minecraft has its own screen, but its container is also stoppable from here — the
+  // service row and Restart all — so Ops keeps a snapshot to warn before bouncing players.
+  const [mc, setMc] = useState<McSnapshot>({ status: null, version: null, error: null });
+  const mcRef = useRef(mc);
+  mcRef.current = mc;
+  const [mcConfirm, setMcConfirm] = useState<{
+    spec: ConfirmSpec;
+    run: () => Promise<void>;
+  } | null>(null);
+
+  /** A fresh Minecraft read for a confirm decision, falling back to the last one. */
+  const loadMc = useCallback(async (): Promise<McSnapshot | null> => {
+    try {
+      const [status, version] = await Promise.all([
+        api.minecraftStatus(),
+        api.minecraftVersion(false).catch(() => mcRef.current.version),
+      ]);
+      const next = { status, version, error: null };
+      setMc(next);
+      return next;
+    } catch (err) {
+      setMc((m) => ({ ...m, error: errorMessage(err) }));
+      return mcRef.current.status ? mcRef.current : null;
+    }
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the "refresh everything" signal.
+  useEffect(() => {
+    if (!foreground) return;
+    void loadMc();
+    const id = setInterval(() => void loadMc(), MC_POLL_MS);
+    return () => clearInterval(id);
+  }, [foreground, loadMc, refreshKey]);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -1506,8 +1556,42 @@ export function OpsScreen() {
     void refresh();
   }, [refresh]);
 
+  /** Act on the Minecraft container through its own API, so the world is saved first. */
+  const runMc = useCallback(
+    async (act: () => Promise<unknown>) => {
+      setError(null);
+      try {
+        await act();
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+      await refresh();
+      void loadMc();
+    },
+    [refresh, loadMc],
+  );
+
   const restart = useCallback(
     async (service: string) => {
+      // Neither path may bounce players silently: the confirm is the Minecraft screen's own.
+      if (service === "all" || service === MC_SERVICE) {
+        const snap = await loadMc();
+        if (snap) {
+          const ctx = confirmContext(snap.status, snap.version);
+          if (service === MC_SERVICE) {
+            const spec = confirmFor("restart", ctx);
+            const run = () => runMc(() => api.minecraftRestart());
+            if (spec) setMcConfirm({ spec, run });
+            else await run();
+            return;
+          }
+          const spec = confirmFor("all", ctx);
+          if (spec) {
+            setMcConfirm({ spec, run: () => runMc(() => api.opsRestart("all")) });
+            return;
+          }
+        }
+      }
       const target = service === "all" ? "ALL services" : service;
       if (!window.confirm(`Restart ${target}?`)) return;
       setError(null);
@@ -1518,12 +1602,22 @@ export function OpsScreen() {
         setError(errorMessage(err));
       }
     },
-    [refresh],
+    [refresh, loadMc, runMc],
   );
 
   // Power a single container off/on. Stop is disruptive, so it confirms; Start is safe.
   const lifecycle = useCallback(
     async (service: string, action: "start" | "stop") => {
+      if (action === "stop" && service === MC_SERVICE) {
+        const snap = await loadMc();
+        if (snap) {
+          const spec = confirmFor("stop", confirmContext(snap.status, snap.version));
+          const run = () => runMc(() => api.minecraftStop());
+          if (spec) setMcConfirm({ spec, run });
+          else await run();
+          return;
+        }
+      }
       if (action === "stop" && !window.confirm(`Stop ${service}?`)) return;
       setError(null);
       try {
@@ -1533,7 +1627,7 @@ export function OpsScreen() {
         setError(errorMessage(err));
       }
     },
-    [refresh],
+    [refresh, loadMc, runMc],
   );
 
   // Per-service rebuild (compose build + up -d) via the supervisor one-shot. Long-running,
@@ -1634,6 +1728,15 @@ export function OpsScreen() {
 
       <LocalEngineCard />
 
+      {onOpenMinecraft && mc.status?.container !== null && (mc.status !== null || mc.error) && (
+        <MinecraftOpsRow
+          status={mc.status}
+          version={mc.version}
+          error={mc.error}
+          onOpen={onOpenMinecraft}
+        />
+      )}
+
       <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />
 
       <PanelsCard refreshKey={refreshKey} />
@@ -1659,6 +1762,22 @@ export function OpsScreen() {
       )}
 
       {showRuns && <RunsScreen onClose={() => setShowRuns(false)} />}
+
+      {mcConfirm && (
+        <Dialog
+          title={mcConfirm.spec.title}
+          confirmLabel={mcConfirm.spec.confirmLabel}
+          tone={mcConfirm.spec.tone}
+          onCancel={() => setMcConfirm(null)}
+          onConfirm={() => {
+            const { run } = mcConfirm;
+            setMcConfirm(null);
+            void run();
+          }}
+        >
+          {mcConfirm.spec.body}
+        </Dialog>
+      )}
     </section>
   );
 }

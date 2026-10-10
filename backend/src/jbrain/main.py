@@ -135,6 +135,7 @@ from jbrain.api import image_settings as image_settings_api
 from jbrain.api import jpanel as jpanel_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
+from jbrain.api import minecraft as minecraft_api
 from jbrain.api import moltbook_settings as moltbook_settings_api
 from jbrain.api import panel_ws as panel_ws_api
 from jbrain.api import pet as pet_api
@@ -195,6 +196,8 @@ from jbrain.locations.pairing import SqlPairingRepo
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.media import ffmpeg_available
+from jbrain.minecraft.changelog import Changelog as MinecraftChangelog
+from jbrain.minecraft.sessions import SessionDrain, run_session_drain
 from jbrain.models.images import GeneratedImageRepo
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.notes.repo import SqlNotesRepo
@@ -1510,6 +1513,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # as long as the owner is logging. It fills the derived columns on rows written
         # before they existed — and on any row a later classifier reads better.
         aprs_backfill_task = asyncio.create_task(run_aprs_backfill_loop(aprs_logger))
+        # Minecraft play sessions (MINECRAFT_BEDROCK_PLAN §M1): drain the sidecar's
+        # join/leave events into app.mc_player_sessions, so play time is recorded
+        # whether or not the screen is open. A stopped server is a quiet no-op.
+        minecraft_drain_task = asyncio.create_task(run_session_drain(SessionDrain(maker, settings)))
         # jmolt's integrity watch (W4): the tamper watch diffing the public profile against
         # the outbox ledger (M21) and account-state surfacing with auto-pause on suspension
         # (M22). A slow loop under a non-jmolt owner context; engages the kill (M6) + reverts
@@ -1661,6 +1668,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         jmolt_sweep_loop_task.cancel()
         aprs_log_loop_task.cancel()
         aprs_backfill_task.cancel()
+        minecraft_drain_task.cancel()
         jmolt_integrity_loop_task.cancel()
         await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()
@@ -1718,6 +1726,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # show every /api/debug/* call as it lands — including ones run from outside
     # that browser tab. Only the verb/route/outcome are kept (no bodies).
     app.state.debug_activity = DebugActivity()
+    # Mojang's release-notes listing, cached hourly (minecraft/changelog.py).
+    app.state.minecraft_changelog = MinecraftChangelog()
     # In-memory async-completion jobs (slow models behind a short proxy timeout):
     # job_id -> {status, result, error}, plus the live task refs so they aren't GC'd.
     app.state.debug_jobs = {}
@@ -1765,6 +1775,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(debug_minecraft.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
+    # The owner's Minecraft screen (MINECRAFT_BEDROCK_PLAN §M1). Owner-gated; a box
+    # whose sidecar is stopped or unconfigured answers with that state, not a 500.
+    app.include_router(minecraft_api.router, prefix="/api")
     app.include_router(engine_api.router, prefix="/api")
     app.include_router(jpanel_api.router, prefix="/api")
     app.include_router(panel_ws_api.router, prefix="/api")

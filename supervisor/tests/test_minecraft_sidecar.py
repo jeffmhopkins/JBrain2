@@ -68,9 +68,10 @@ FAKE_BDS = textwrap.dedent(
                 print(f"[x INFO] {ready}", flush=True)
                 print("world/db/000005.ldb:4, world/level.dat:3", flush=True)
         elif cmd == "save resume":
-            print("[x INFO] Changes to the level are resumed.", flush=True)
+            # The marker first: the test waits for the log line, then reads the file.
             with open("resumed", "w") as fh:
                 fh.write("yes")
+            print("[x INFO] Changes to the level are resumed.", flush=True)
         elif cmd == "stop":
             print("[x INFO] Quit correctly", flush=True)
             sys.exit(0)
@@ -354,10 +355,15 @@ def test_versions_compare_numerically_not_as_text() -> None:
 
 
 class _FakeBds:
-    def __init__(self, version: str = "1.26.52.3") -> None:
+    def __init__(self, version: str = "1.26.52.3", *, starts: bool = True) -> None:
         self.version = version
         self.running = True
+        self.starts = starts
+        self.state = "running"
         self.calls: list[str] = []
+
+    def wait_running(self, _timeout_s: float) -> bool:
+        return self.starts
 
     def stop(self) -> None:
         self.calls.append("stop")
@@ -368,16 +374,35 @@ class _FakeBds:
         self.running = True
 
 
-def _update_rig(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, snapshot_ok: bool):
+def _update_rig(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    snapshot_ok: bool,
+    starts: bool = True,
+    downloads: tuple[str, ...] = ("1.26.60.4", "1.26.52.3"),
+):
     monkeypatch.setattr(server, "DATA", tmp_path)
     monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
     monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    monkeypatch.setattr(server, "SETTINGS", tmp_path / "settings.json")
     installed: list[str] = []
     monkeypatch.setattr(server.install, "resolve", lambda want: ("1.26.60.4", "u"))
-    monkeypatch.setattr(server.install, "ensure", lambda d, v: installed.append(v))
+
+    def ensure(_d: Path, v: str) -> str:
+        # Like the real one: a version that can't be fetched leaves what was there.
+        if v in downloads:
+            installed.append(v)
+            return v
+        return installed[-1] if installed else "1.26.52.3"
+
+    monkeypatch.setattr(server.install, "ensure", ensure)
     monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
     rig = server.Rig(env={})
-    rig.bds = _FakeBds()  # type: ignore[assignment]
+    rig.bds = _FakeBds(starts=starts)  # type: ignore[assignment]
+    restored: list[str] = []
+    monkeypatch.setattr(rig, "restore", restored.append)
+    rig.restored = restored  # type: ignore[attr-defined]
 
     def snap(label: str) -> dict[str, str]:
         if not snapshot_ok:
@@ -449,3 +474,217 @@ def test_the_probe_pack_is_listed_in_the_world_and_removable(
     rig.probe_pack(False)
     assert json.loads((world / "world_behavior_packs.json").read_text()) == []
     assert not (world / "behavior_packs" / "jbrain_probe").exists()
+
+
+def test_a_new_version_that_will_not_start_is_rolled_back_with_the_world(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=True, starts=False)
+    rig.start_update()
+    st = _wait_done(rig)
+    assert st["state"] == "rolled_back"
+    assert installed == ["1.26.60.4", "1.26.52.3"]  # the new one, then the old again
+    assert rig.restored == ["pre-update-1.26.52.3.mcworld"]  # type: ignore[attr-defined]
+    assert rig.bds.calls == ["stop", "start", "stop", "start"]
+
+
+def test_updating_a_stopped_server_leaves_it_stopped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=True)
+    rig.bds.running = False
+    rig.start_update()
+    st = _wait_done(rig)
+    assert st["state"] == "done" and installed == ["1.26.60.4"]
+    assert rig.bds.calls == []  # never started
+
+
+def test_a_start_keeps_the_installed_version_unless_auto_update_is_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "DATA", tmp_path)
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "SETTINGS", tmp_path / "settings.json")
+    (tmp_path / "server").mkdir()
+    rig = server.Rig(env={})
+    assert rig.wanted_version() == "latest"  # nothing installed yet
+    (tmp_path / "server" / install.VERSION_FILE).write_text("1.26.52.3\n")
+    assert rig.wanted_version() == "1.26.52.3"  # default: no silent update
+    rig.set_settings({"auto_update": True})
+    assert rig.wanted_version() == "latest"
+    pinned = server.Rig(env={"MC_BDS_VERSION": "1.26.40.1"})
+    assert pinned.wanted_version() == "1.26.40.1"  # a pin always wins
+
+
+def test_a_stopped_world_is_backed_up_cold_and_restores_aside(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "DATA", tmp_path)
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "SNAPSHOT_DIR", tmp_path / "snapshots")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+    rig.bds.running = False
+    world = tmp_path / "server" / "worlds" / "world"
+    (world / "db").mkdir(parents=True)
+    (world / "level.dat").write_bytes(b"v1")
+    (world / "db" / "1.ldb").write_bytes(b"chunk")
+
+    snap = rig.snapshot("before")
+    (world / "level.dat").write_bytes(b"v2-broken")
+    rig.restore(snap["name"])
+
+    assert (world / "level.dat").read_bytes() == b"v1"
+    assert (world / "db" / "1.ldb").read_bytes() == b"chunk"
+    aside = [p for p in world.parent.iterdir() if p.name.startswith("world.replaced-")]
+    assert len(aside) == 1 and (aside[0] / "level.dat").read_bytes() == b"v2-broken"
+    with pytest.raises(ValueError):
+        rig.restore("../../etc/passwd")
+
+
+def test_stop_keeps_the_wrapper_up_and_is_remembered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "DATA", tmp_path)
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "SETTINGS", tmp_path / "settings.json")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+
+    rig.server_action("stop")
+    assert rig.bds.calls == ["stop"] and rig.settings()["run"] is False
+    rig.server_action("restart")
+    assert rig.bds.calls == ["stop", "stop", "start"] and rig.settings()["run"] is True
+    with pytest.raises(ValueError):
+        rig.server_action("reboot")
+
+
+def test_a_server_action_waits_for_a_running_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "SETTINGS", tmp_path / "settings.json")
+    rig = server.Rig(env={})
+    rig._busy = "updating"
+    with pytest.raises(RuntimeError):
+        rig.server_action("stop")
+
+
+def test_a_failed_download_is_failed_not_done(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # install.ensure keeps the old version when a download fails; that must not read
+    # as "Done — players can rejoin" while the server is still behind.
+    rig, installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=True, downloads=())
+    rig.start_update()
+    st = _wait_done(rig)
+    assert st["state"] == "failed" and "still on 1.26.52.3" in st["error"]
+    assert installed == [] and rig.bds.calls == ["stop", "start"]  # old one back up
+
+
+def test_a_rollback_that_cannot_reinstall_leaves_the_server_stopped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, _installed = _update_rig(
+        monkeypatch, tmp_path, snapshot_ok=True, starts=False, downloads=("1.26.60.4",)
+    )
+    rig.start_update()
+    st = _wait_done(rig)
+    assert st["state"] == "failed" and "could not be reinstalled" in st["error"]
+    assert rig.bds.calls == ["stop", "start", "stop"]  # the broken one isn't restarted
+    assert rig.settings()["run"] is False  # so the watchdog doesn't crash-loop it
+    assert rig.restored == []  # type: ignore[attr-defined]
+
+
+def test_restart_with_auto_update_on_runs_the_backed_up_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=True)
+    rig.set_settings({"auto_update": True})
+    out = rig.server_action("restart")
+    assert out["update"]["to"] == "1.26.60.4"
+    st = _wait_done(rig)
+    assert st["state"] == "done" and st["backup"] and installed == ["1.26.60.4"]
+
+
+def test_start_on_a_stopped_server_with_auto_update_starts_it_after(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, _installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=True)
+    rig.bds.running = False
+    rig.set_settings({"auto_update": True})
+    rig.server_action("start")
+    assert _wait_done(rig)["state"] == "done"
+    assert rig.bds.calls == ["start"]  # then_start: the owner pressed Start
+
+
+def test_an_action_during_first_boot_install_is_deferred_to_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "SETTINGS", tmp_path / "settings.json")
+    rig = server.Rig(env={})
+    rig._life.acquire()
+    rig._busy = "installing"
+    out = rig.server_action("stop")
+    assert out == {"action": "stop", "deferred": True}
+    assert rig.settings()["run"] is False  # first boot will honour it
+
+
+def test_the_watchdog_only_exits_on_a_real_crash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "SETTINGS", tmp_path / "settings.json")
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+    rig.bds.running = False
+    rig.bds.exit_code = 1  # type: ignore[attr-defined]
+    assert server.crashed(rig) is True
+    rig.maintenance = True
+    assert server.crashed(rig) is False  # a wrapper-driven stop
+    rig.maintenance = False
+    rig.set_settings({"run": False})
+    assert server.crashed(rig) is False  # the owner stopped it
+
+
+def test_a_fast_restart_keeps_the_new_process_state(running) -> None:
+    # The old process's reader must not write "stopped" over its replacement.
+    for _ in range(3):
+        running.stop(wait_s=5)
+        running.start()
+        running._wait_for(0, lambda t: "Server started." in t, 10)
+        assert running.wait_running(5)
+    assert running.state == "running" and running.running
+
+
+def test_auto_backups_are_pruned_but_owner_snapshots_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import os
+
+    monkeypatch.setattr(server, "SNAPSHOT_DIR", tmp_path)
+    for i in range(14):
+        p = tmp_path / f"world-2026{i:02d}-pre-update-1.26.{i}.mcworld"
+        p.write_bytes(b"x")
+        os.utime(p, (i, i))
+    (tmp_path / "world-mine.mcworld").write_bytes(b"x")
+    server.prune_automatic()
+    left = sorted(p.name for p in tmp_path.iterdir())
+    assert "world-mine.mcworld" in left
+    assert len([n for n in left if "pre-update" in n]) == server.KEEP_AUTOMATIC
+    assert "world-202600-pre-update-1.26.0.mcworld" not in left  # oldest went first
+
+
+def test_a_restore_refuses_a_zip_member_escaping_the_world(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "SNAPSHOT_DIR", tmp_path / "snapshots")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    (tmp_path / "snapshots").mkdir()
+    (tmp_path / "snapshots" / "evil.mcworld").write_bytes(_zip({"../../escape": b"x"}))
+    rig = server.Rig(env={})
+    with pytest.raises(ValueError):
+        rig.restore("evil.mcworld")
+    assert not (tmp_path / "escape").exists()

@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Minecraft Ops · A — inline card</title>
+<!-- GUI gate mock — docs/mocks/minecraft-ops/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M1.
+     Self-contained and offline. Tokens per docs/reference/DESIGN.md; Ops atoms mirror frontend/src/styles.css. -->
+<style>
+  /* ===== tokens — DESIGN.md "Color tokens" (drawn at 100% text size) ===== */
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66; --surface-composer:#141518;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px; --fs-hero:28px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+    /* Accent TEXT tokens. Dark uses the accents as-is; light deepens each toward --text, the
+       pattern DESIGN.md "Syntax tokens" already sets, because the pastels sit near 2:1 as words
+       on light surfaces. Dots, tints and rules keep the pastel. */
+    --ok-text:var(--green); --warn-text:var(--amber); --danger-text:var(--rose); --steel-text:var(--steel);
+    --frame:#2A2C30; --page:#000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF;
+    --scrim:rgba(247,247,245,.6); --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --ok-text:color-mix(in srgb, var(--green) 46%, var(--text));
+    --warn-text:color-mix(in srgb, var(--amber) 50%, var(--text));
+    --danger-text:color-mix(in srgb, var(--rose) 54%, var(--text));
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --frame:#C9C9C4; --page:#DADAD6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;width:20px;height:20px;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  a{color:var(--steel-text);text-decoration:none;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .num{font-variant-numeric:tabular-nums;}
+  .mono{font-family:var(--font-mono);}
+
+  /* ===== reviewer chrome — OUTSIDE the design ===== */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel-text);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;background:transparent;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);display:flex;justify-content:space-between;}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);width:62px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+
+  /* ===== the phone ===== */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  @media (max-width:430px){
+    body{padding-top:12px;}
+    .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;}
+  }
+  @media (min-width:900px){ .phone{width:560px;} .caption,.sim{max-width:560px;} }
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px 0 4px;border-bottom:1px solid var(--border);flex:none;padding-top:env(safe-area-inset-top);}
+  .bar .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+  .bar .ttl{font-size:var(--fs-screen);font-weight:500;}
+  .vitals{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:11px;}
+  .vitals .cols{display:flex;align-items:flex-end;gap:2px;height:20px;width:48px;}
+  .vitals .cols i{display:block;width:2px;background:var(--text-3);border-radius:1px;}
+  .vitals b{color:var(--text-2);font-weight:500;}
+  .scroll{flex:1;overflow-y:auto;padding:12px 16px 28px;}
+  .ops-header{display:flex;align-items:center;gap:8px;margin:2px 0 12px;}
+  .ops-header h2{font-size:var(--fs-title);font-weight:500;}
+  .ops-actions{margin-left:auto;display:flex;gap:6px;}
+  .ops-actions button{appearance:none;font-size:var(--fs-micro);font-weight:500;border-radius:var(--r-pill);padding:7px 12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);min-height:32px;}
+
+  /* ===== Ops atoms — mirrored from frontend/src/styles.css ===== */
+  .ops-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow-card);}
+  .ops-card-head{width:100%;display:flex;align-items:center;gap:10px;background:transparent;border:0;padding:14px;min-height:48px;text-align:left;}
+  .ops-card-title{font-size:var(--fs-secondary);font-weight:500;display:flex;align-items:center;gap:8px;}
+  .ops-card-right{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;}
+  .ops-card-summary{font-size:var(--fs-micro);color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ops-card-summary.warn{color:var(--warn-text);} .ops-card-summary.bad{color:var(--danger-text);}
+  .ops-card-caret{color:var(--text-3);transition:transform .18s ease-out;flex:none;}
+  .ops-card-head.open .ops-card-caret{transform:rotate(90deg);}
+  .ops-card-body{border-top:1px solid var(--border);}
+  .ops-gcount{font-size:var(--fs-micro);color:var(--text-3);}
+  .ops-gstate{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);white-space:nowrap;}
+  .ops-gdot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .ops-gstate-ok{color:var(--ok-text);} .ops-gstate-ok .ops-gdot{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-gstate-warn{color:var(--warn-text);} .ops-gstate-warn .ops-gdot{background:var(--warn);box-shadow:0 0 0 3px var(--amber-tint);}
+  .ops-gstate-bad{color:var(--danger-text);} .ops-gstate-bad .ops-gdot{background:var(--danger);box-shadow:0 0 0 3px var(--rose-tint);}
+  .ops-gstate-off{color:var(--text-2);} .ops-gstate-off .ops-gdot{background:var(--text-3);}
+  .ops-vrow{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border-top:1px solid var(--border);}
+  .ops-card-body > .ops-vrow:first-child{border-top:0;}
+  .ops-vk{width:74px;flex:none;font-size:var(--fs-secondary);font-weight:500;padding-top:1px;}
+  .ops-vmid{flex:1;min-width:0;}
+  .ops-vv{font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .ops-vsub{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:3px;}
+  .ops-update-bar{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;}
+  .ops-update-dot{width:8px;height:8px;flex:none;border-radius:999px;background:var(--steel);box-shadow:0 0 0 3px var(--steel-tint);}
+  .ops-update-dot.warn{background:var(--warn);box-shadow:0 0 0 3px var(--amber-tint);}
+  .ops-update-dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-update-dot.bad{background:var(--danger);box-shadow:0 0 0 3px var(--rose-tint);}
+  .ops-update-text{font-size:var(--fs-micro);color:var(--text-2);min-width:0;}
+  .ops-update-text b{color:var(--text);font-weight:500;}
+  .ops-update-btn{margin-left:auto;flex:none;font-size:var(--fs-micro);font-weight:500;border-radius:999px;padding:7px 14px;min-height:32px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel-text);position:relative;}
+  .ops-update-btn::after{content:"";position:absolute;inset:-6px;}
+  .ops-update-btn.danger{background:var(--rose-tint);color:var(--danger-text);}
+  .ops-update-btn.warn{background:var(--amber-tint);color:var(--warn-text);}
+  .ops-update-btn:disabled{background:var(--surface-2);color:var(--text-3);border-color:var(--border);cursor:default;}
+  .ops-srow{border-top:1px solid var(--border);}
+  .ops-shead{width:100%;display:flex;align-items:center;gap:11px;background:transparent;border:0;padding:11px 14px;min-height:48px;text-align:left;}
+  .ops-sdot{width:9px;height:9px;flex:none;border-radius:999px;}
+  .ops-sdot-ok{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-sinfo{flex:1;min-width:0;}
+  .ops-snm{font-size:var(--fs-secondary);font-weight:500;}
+  .ops-smeta{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:3px;}
+  .ops-kv{display:flex;justify-content:space-between;gap:12px;font-size:var(--fs-micro);color:var(--text-2);padding:3px 0;}
+  .ops-kv span:first-child{color:var(--text-2);}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-micro);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+  .badge.ok{color:var(--ok-text);background:var(--green-tint);} .badge.warn{color:var(--warn-text);background:var(--amber-tint);}
+  .badge.bad{color:var(--danger-text);background:var(--rose-tint);} .badge.info{color:var(--steel-text);background:var(--steel-tint);}
+  .badge.off{color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);}
+
+  /* buttons (44px floor in px — never scaled) */
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 14px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;}
+  .btn svg{width:18px;height:18px;}
+  .btn.primary{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+  .btn.go{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+  .btn.warn{background:var(--amber-tint);border-color:transparent;color:var(--warn-text);}
+  .btn.danger{background:var(--rose-tint);border-color:transparent;color:var(--danger-text);}
+  .btn:disabled{background:var(--surface-2);border-color:var(--border);color:var(--text-3);cursor:default;}
+  .btn.grow{flex:1;}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;}
+  .link{appearance:none;background:none;border:none;color:var(--steel-text);font-size:inherit;font-weight:500;padding:0;display:inline-flex;align-items:center;gap:4px;min-height:32px;}
+  .link svg{width:14px;height:14px;}
+
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);}
+  .muted{color:var(--text-2);} .faint{color:var(--text-2);}
+  .note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .note b{color:var(--text);font-weight:500;}
+
+  /* meter — DESIGN "Meters" */
+  .meter{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .meter i{display:block;height:100%;background:var(--steel);border-radius:999px;transition:width .3s ease-out;}
+
+  /* notice strips inside a card */
+  .notice{display:flex;gap:9px;align-items:flex-start;border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-micro);line-height:1.45;}
+  .notice svg{width:16px;height:16px;margin-top:1px;}
+  .notice b{font-weight:500;}
+  .notice.warn{background:var(--amber-tint);color:var(--text);} .notice.warn svg{color:var(--warn-text);}
+  .notice.bad{background:var(--rose-tint);color:var(--text);} .notice.bad svg{color:var(--danger-text);}
+  .notice.info{background:var(--steel-tint);color:var(--text);} .notice.info svg{color:var(--steel-text);}
+  .notice.ok{background:var(--green-tint);color:var(--text);} .notice.ok svg{color:var(--ok-text);}
+  .errtext{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);background:var(--surface-composer);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-top:8px;word-break:break-word;}
+
+  /* changelog quote — verbatim lines, so it reads as a quotation, not as our prose */
+  .clog{border-left:2px solid var(--border);padding:2px 0 2px 12px;margin-top:8px;}
+  .clog .src{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;}
+  .clog ul{list-style:none;display:flex;flex-direction:column;gap:5px;}
+  .clog li{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;padding-left:12px;position:relative;}
+  .clog li::before{content:"";position:absolute;left:0;top:7px;width:4px;height:4px;border-radius:999px;background:var(--text-3);}
+
+  /* step list — Backing up → Downloading → Restarting → Done (the Server-update register) */
+  .steps{list-style:none;display:flex;flex-direction:column;gap:2px;margin-top:8px;}
+  .steps li{display:flex;align-items:center;gap:10px;font-size:var(--fs-micro);color:var(--text-2);min-height:26px;}
+  .steps .sd{width:16px;height:16px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;display:flex;align-items:center;justify-content:center;}
+  .steps .sd svg{width:11px;height:11px;stroke-width:2.2;}
+  .steps li.done{color:var(--text-2);} .steps li.done .sd{border-color:var(--ok);background:var(--ok);color:var(--bg);}
+  .steps li.now{color:var(--text);font-weight:500;} .steps li.now .sd{border-color:var(--warn);border-top-color:transparent;animation:spin .9s linear infinite;}
+  .steps li.fail{color:var(--danger-text);} .steps li.fail .sd{border-color:var(--danger);background:var(--danger);color:var(--bg);}
+  .steps .at{margin-left:auto;color:var(--text-2);font-variant-numeric:tabular-nums;font-weight:400;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .spin{animation:spin .9s linear infinite;}
+
+  /* switch row (Ops' settings-switch) */
+  .sw-row{display:flex;align-items:center;gap:10px;}
+  .sw-row .sw-l{font-size:var(--fs-micro);color:var(--text-2);flex:1;min-width:0;}
+  .sw-row .sw-l b{color:var(--text);font-weight:500;}
+  .switch{appearance:none;width:44px;height:26px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);position:relative;flex:none;}
+  .switch::after{content:"";position:absolute;inset:-9px -0px;}
+  .switch .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:var(--text-3);transition:left .15s ease-out,background .15s ease-out;}
+  .switch.on{background:var(--steel-tint);border-color:transparent;} .switch.on .knob{left:21px;background:var(--steel);}
+
+  /* player avatar initial — a neutral disc, no faces/skins */
+  .pav{width:28px;height:28px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--text-2);flex:none;}
+  .pav.on{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+
+  /* stat tiles (lifetime stats) */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .stat{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:8px 10px;min-width:0;}
+  .stat .sv{font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;}
+  .stat .sk{font-size:11px;color:var(--text-2);margin-top:1px;}
+  .stat.ph .sv{color:var(--text-2);}
+  .preview-tag{display:inline-flex;align-self:flex-start;font-size:11px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:2px 9px;}
+
+  /* ===== modal shells — one Dialog, one Sheet (DESIGN "Modal system") ===== */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .16s ease-out;z-index:20;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .dialog{position:absolute;left:24px;right:24px;top:50%;transform:translateY(-46%);opacity:0;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px 18px 14px;z-index:22;transition:opacity .15s ease-out,transform .15s ease-out;}
+  .dialog.show{opacity:1;transform:translateY(-50%);pointer-events:auto;}
+  .dialog h3{font-size:var(--fs-title);font-weight:500;margin-bottom:6px;}
+  .dialog p{font-size:var(--fs-secondary);color:var(--text-2);line-height:1.45;}
+  .dialog .btnrow{margin-top:16px;justify-content:flex-end;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;transform:translateY(100%);transition:transform .18s ease-out;z-index:21;padding:0 16px calc(16px + env(safe-area-inset-bottom));max-height:88%;overflow:auto;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:32px;height:4px;border-radius:999px;background:var(--border);margin:10px auto 14px;}
+  .sheet h3{font-size:var(--fs-title);font-weight:500;}
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(16px);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 16px;font-size:12.5px;color:var(--text);opacity:0;pointer-events:none;transition:.18s ease-out;max-width:88%;z-index:30;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important;}
+  }
+
+  /* ===== revision 2 additions ===== */
+  .link{position:relative;}
+  .link::after{content:"";position:absolute;inset:-6px -4px;}
+  .clog-title{font-size:var(--fs-micro);color:var(--text);margin-bottom:6px;}
+  .note.why{color:var(--text-2);font-style:normal;}
+  .ops-actions button.danger{color:var(--danger-text);}
+  .link[data-act="copyAddr"]{font-size:var(--fs-micro);}
+  .steps .at{white-space:nowrap;}
+
+  /* ===================== variant-specific ===================== */
+  .a-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .a-line .ops-vsub{margin:0;}
+  .ops-vrow.stack{flex-direction:column;align-items:stretch;gap:8px;}
+  .ops-vrow.stack > .a-head{display:flex;align-items:baseline;gap:10px;}
+  .ops-vrow.stack > .a-head .ops-vk{width:auto;}
+  .ops-vrow.stack > .a-head .ops-vsub{margin:0;margin-left:auto;}
+  .a-gap{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+  .a-confirm{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;display:flex;flex-direction:column;gap:10px;}
+  .a-confirm p{font-size:var(--fs-micro);color:var(--text);line-height:1.45;}
+  .a-confirm p.warnline{color:var(--danger-text);}
+  .a-pl{display:flex;align-items:center;gap:10px;min-height:36px;font-size:var(--fs-secondary);}
+  .a-pl b{font-weight:500;}
+  .a-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .a-pl .num{flex:none;}
+  .a-pl .num{color:var(--text-2);font-size:var(--fs-micro);}
+  .a-prow{border-top:1px solid var(--border);}
+  .a-prow:first-child{border-top:0;}
+  .a-phead{appearance:none;width:100%;display:flex;align-items:center;gap:10px;background:none;border:0;min-height:48px;padding:4px 0;text-align:left;}
+  .a-phead .nm{font-size:var(--fs-secondary);font-weight:500;}
+  .a-phead .tot{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);font-variant-numeric:tabular-nums;text-align:right;}
+  .a-phead .ops-card-caret{transition:transform .18s ease-out;}
+  .a-phead[aria-expanded="true"] .ops-card-caret{transform:rotate(90deg);}
+  .a-pbody{padding:0 0 12px 38px;display:flex;flex-direction:column;gap:8px;}
+  .a-pn{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .a-pn .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .a-on{font-size:11px;color:var(--ok-text);}
+  .a-phead .tot{flex:none;}
+  .ops-vrow.stack > .a-head .badge{margin-left:2px;}
+  .a-check{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);}
+  .a-check .link{font-size:var(--fs-micro);}
+  .a-check .link svg{width:13px;height:13px;}
+  .a-sub{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);margin-top:4px;}
+
+</style>
+</head>
+<body>
+  <div class="caption"><span class="tag">GUI gate · Minecraft Ops card · variant A · rev 2</span><br/>
+<b>A — inline card.</b> One more <code>OpsCard</code> in the Ops stack, built from the System card's label rows. It rests <b>collapsed</b>, like every Ops card except System; tap its header to open it. It opens itself when its verdict needs you (an update waiting, a failure). If you close it, it stays closed until that verdict changes. Stop and Restart use Ops' own <b>tap-again</b> confirm, which disarms on blur. Update gets an inline confirm that states the consequence.</div>
+  <div class="sim" id="sim" aria-label="Mock controls"></div>
+  <div class="phone" id="phone">
+    <div id="app" style="display:contents"></div>
+    <div class="scrim" id="scrim" data-act="dismiss"></div>
+    <div class="dialog" id="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-t"></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </div>
+<script>
+/* ===== shared fixture + state machine (identical across A / B / C so they compare like-for-like) ===== */
+
+const IC = {
+  play:'<svg viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
+  stop:'<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  restart:'<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>',
+  download:'<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  ext:'<svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
+  refresh:'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+  back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
+  check:'<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  x:'<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  alert:'<svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+  cube:'<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>',
+  users:'<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  wifi:'<svg viewBox="0 0 24 24"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.86a10 10 0 0 1 14 0"/><path d="M8.5 16.43a5 5 0 0 1 7 0"/></svg>',
+  puzzle:'<svg viewBox="0 0 24 24"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></svg>',
+  clock:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+};
+
+/* The box's own players, keyed by xuid in the real table (a gamertag change never splits one). */
+const PLAYERS = [
+  {xuid:'2535411', tag:'BlockyFox', totalMin:14*60+5, sessions:19, first:'Oct 2', last:['today', '1:58 pm'],
+   stats:{deaths:23, cause:'fell from a high place', mobs:412, mined:18240, placed:9310, km:61.4}},
+  {xuid:'2535412', tag:'Mira_P', totalMin:9*60+40, sessions:12, first:'Oct 2', last:['today', '2:33 pm'],
+   stats:{deaths:11, cause:'Creeper', mobs:188, mined:7420, placed:12980, km:38.2}},
+  {xuid:'2535413', tag:'Steve42', totalMin:3*60+15, sessions:5, first:'Oct 6', last:['yesterday', '8:14 pm'],
+   stats:{deaths:9, cause:'drowned', mobs:57, mined:2110, placed:840, km:12.9}},
+  {xuid:'2535414', tag:'Pebble_J', totalMin:48, sessions:2, first:'Oct 8', last:['Oct 8', '6:40 pm'],
+   stats:{deaths:2, cause:'Zombie', mobs:6, mined:310, placed:95, km:2.1}},
+];
+const ONLINE_FIXTURE = [{tag:'BlockyFox', min:42}, {tag:'Mira_P', min:7}];
+
+const RUNNING = '1.26.52.3', LATEST = '1.26.60.4';
+/* Mojang's article for the newer build, found by its marketing number (BDS 1.26.60.4 → "26.60").
+   The title is shown so a wrong match is visible. The URL is the owner-supplied example article
+   and the four lines are placeholder text in Mojang's style: the real card quotes the article's
+   first bullets verbatim, never a model summary. */
+const NOTES = {
+  title:'Minecraft Bedrock Edition 26.60 – Changelog', posted:'Oct 8',
+  url:'https://feedback.minecraft.net/hc/en-us/articles/49175370527501-Minecraft-Bedrock-Edition-26-52-Hotfix-Changelog',
+  lines:[
+    'Fixed an issue where Copper Golems stopped sorting items after the world was reloaded',
+    'Mobs can no longer push players through closed trapdoors',
+    'Fixed a crash that could occur when joining a server while a Happy Ghast was on a lead',
+    'Improved world loading times on dedicated servers',
+  ],
+};
+const FALLBACK_URL = 'https://aka.ms/MinecraftUpdate';
+const SERVER = {world:'world', mode:'Survival', difficulty:'Normal', allowlist:false, lan:'JBrain', ip:'192.168.1.40', port:19132};
+
+const S = {
+  theme:'dark',
+  server:'running',          // installing | install_failed | starting | running | restarting | stopping | stopped
+  installed:true,            // false until the first download lands — nothing else exists before it
+  fresh:false,               // a brand-new server: no world history, no players
+  uptimeMin:192,
+  online:ONLINE_FIXTURE.map(p=>({...p})),
+  ver:RUNNING, latest:null, notes:true,
+  upd:'idle',                // idle | running | failed | done
+  updFail:null,              // 'download' (nothing installed) | 'rollback' (new build wouldn't start)
+  updFromStopped:false,
+  step:0, stepAt:[], updErr:null,
+  checkedMin:12, checking:false,
+  installPct:38, installErr:null,
+  addon:false, autoUpd:false,
+  pending:null,              // an armed confirm: 'stop' | 'restart' | 'update' | 'all'
+  scenario:'running_players',
+};
+
+/* ---- timers: every scheduled transition is tracked so a scenario switch cancels it ---- */
+let TIMERS = [];
+const later = (ms, fn) => { const id = setTimeout(() => { TIMERS = TIMERS.filter(t => t !== id); fn(); render(); }, ms); TIMERS.push(id); };
+const clearTimers = () => { TIMERS.forEach(clearTimeout); TIMERS = []; };
+
+/* ---- formatting ---- */
+/* Durations a person reads: minutes, then h+m, then whole hours for play totals. */
+const fmtDur = m => m < 60 ? `${m} min` : m < 24 * 60 ? `${Math.floor(m/60)}h ${String(m%60).padStart(2,'0')}m` : `${Math.round(m/60)} h`;
+/* Uptime runs for weeks, so above a day it counts days. */
+const fmtUp = m => m < 24 * 60 ? fmtDur(m) : `${Math.floor(m/1440)} d ${Math.floor((m%1440)/60)} h`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+const nowClock = () => new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'}).toLowerCase();
+const ago = m => m === 0 ? 'just now' : `${m} min ago`;
+const fmtInt = n => n.toLocaleString('en-US');
+const initial = t => t[0].toUpperCase();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const listOf = xs => new Intl.ListFormat('en', {style:'long', type:'conjunction'}).format(xs);
+const isOnline = tag => S.online.some(o => o.tag === tag);
+const sessionOf = tag => (S.online.find(o => o.tag === tag) || {}).min;
+const roster = () => S.fresh ? [] : PLAYERS;
+const totalOf = p => p.totalMin + (isOnline(p.tag) ? sessionOf(p.tag) : 0);
+const sessionsOf = p => p.sessions + (isOnline(p.tag) ? 1 : 0);
+const lastSeen = p => isOnline(p.tag) ? 'on now' : p.last[0] === 'today' || p.last[0] === 'yesterday' ? `${p.last[0]}, ${p.last[1]}` : p.last[0];
+
+/* ---- derived ---- */
+function stateInfo() {
+  switch (S.server) {
+    case 'running':  return {level:'ok',   word:'running',  sub:`up ${fmtUp(S.uptimeMin)}`};
+    case 'starting': return {level:'warn', word:'starting', sub:S.firstBoot ? 'first boot — generating the world…' : 'loading the world…'};
+    case 'restarting': return {level:'warn', word:'restarting', sub:'saving the world, then starting again'};
+    case 'stopping': return {level:'warn', word:'stopping', sub:'saving the world — up to 60 s'};
+    case 'stopped':  return {level:'off',  word:'stopped',  sub:'nobody can join'};
+    case 'installing': return {level:'warn', word:'installing', sub:`first boot — downloading ${RUNNING}`};
+    case 'install_failed': return {level:'bad', word:'install failed', sub:'nothing is installed yet'};
+  }
+}
+const behind = () => !!S.latest && S.upd !== 'done';
+const busy = () => ['starting','stopping','restarting'].includes(S.server);
+const canLifecycle = () => ['running','stopped'].includes(S.server) && S.upd !== 'running';
+const restartUpdates = () => S.autoUpd && behind() && S.upd !== 'running';
+/* Disabled controls say why (DESIGN "Ops Local engine card"). */
+function lifecycleBlocked() {
+  if (S.upd === 'running') return 'Busy updating — Start, Stop and Restart come back when it\'s done.';
+  if (busy()) return `Wait for it to finish ${S.server}.`;
+  return '';
+}
+function updateBlocked() {
+  if (!S.installed) return 'Nothing is installed yet.';
+  if (busy()) return `Available once the server has finished ${S.server}.`;
+  return '';
+}
+function confirmText(kind) {
+  const n = S.online.length, who = listOf(S.online.map(o => o.tag));
+  const bounce = n ? `${plural(n,'player')} — ${who} — will be disconnected` : 'nobody is on';
+  if (kind === 'stop') return `${n ? `${plural(n,'player')} — ${who} — will be disconnected` : 'Nobody is on'}; the world is saved first.`;
+  if (kind === 'restart' && restartUpdates()) return `Auto-update is on, so this restart also installs ${S.latest} after a backup (pre-update-${S.ver}) — ${bounce} for about a minute.`;
+  if (kind === 'restart') return `${plural(n,'player')} — ${who} — will be disconnected for about a minute; the world is saved first.`;
+  if (kind === 'update' && S.server === 'stopped') return `A backup (pre-update-${S.ver}) is taken first, then ${S.latest} is installed — the server stays stopped until you start it.`;
+  if (kind === 'update') return `A backup (pre-update-${S.ver}) is taken first and players stay on while ${S.latest} downloads — then the server restarts and ${n ? `${plural(n,'player')} ${n === 1 ? 'is' : 'are'}` : 'anyone on is'} disconnected for about a minute.`;
+  if (kind === 'all') return `That includes Minecraft — ${plural(n,'player')} (${who}) will be disconnected for about a minute.`;
+}
+/* What the players are going through right now, during an update. */
+function updStatusText() {
+  if (S.upd === 'done') return S.updFromStopped ? `Installed ${S.ver} — the server is still stopped.` : 'Done — players can rejoin.';
+  if (S.updFromStopped) return `Installing while stopped — the server stays stopped afterwards.`;
+  if (S.step < 2) return `Players stay on while it backs up and downloads — they're disconnected at the restart, for about a minute.`;
+  return `Restarting — players are disconnected, back in about a minute.`;
+}
+
+/* ---- actions (shared). Variants add their own UI acts to ACT. ---- */
+const ACT = {
+  start() { S.pending = null; S.server = 'starting'; later(2200, () => { S.server = 'running'; S.uptimeMin = 0; S.online = []; toast('Server running'); }); },
+  stop()  { if (S.online.length && S.pending !== 'stop') { S.pending = 'stop'; return; } doStop(); },
+  /* With players on — or when this restart would also update — Restart confirms. */
+  restart() { if ((S.online.length || restartUpdates()) && S.pending !== 'restart') { S.pending = 'restart'; return; } doRestart(); },
+  update() { S.pending = 'update'; },
+  restartAll() { if (S.online.length && S.server === 'running') { S.pending = 'all'; return; } toast('Restarting every service (mock)'); },
+  confirm() {
+    const k = S.pending; S.pending = null;
+    if (k === 'stop') doStop(); else if (k === 'restart') doRestart(); else if (k === 'update') doUpdate();
+    else if (k === 'all') { toast('Restarting every service (mock)'); doRestart(); }
+  },
+  cancel() { S.pending = null; },
+  dismiss() { if (typeof UI !== 'undefined' && UI.sheet) UI.sheet = null; else S.pending = null; },
+  check() {
+    if (S.checking) return; S.checking = true;
+    later(1300, () => { S.checking = false; S.checkedMin = 0; if (!S.latest) toast(`Up to date — ${S.ver} is the newest`); });
+  },
+  retryInstall() { S.installErr = null; S.server = 'installing'; S.installPct = 0; runInstall(); },
+  dismissUpd() { S.upd = 'idle'; S.updErr = null; S.updFail = null; },
+  autoUpd() { S.autoUpd = !S.autoUpd; toast(S.autoUpd ? 'Restarts will now update first, after a backup' : 'Auto-update off — the server stays on its version until you update it'); },
+  copyAddr() { toast(`Copied ${SERVER.ip}:${SERVER.port}`); },
+};
+function doStop() { S.server = 'stopping'; later(2000, () => { S.server = 'stopped'; S.online = []; toast('Server stopped — world saved'); }); }
+function doRestart() {
+  if (restartUpdates()) return doUpdate();
+  S.server = 'restarting'; later(1600, () => { S.online = []; later(1800, () => { S.server = 'running'; S.uptimeMin = 0; toast('Server restarted'); }); });
+}
+function runInstall() {
+  const tick = () => {
+    if (S.server !== 'installing') return;
+    S.installPct = Math.min(100, S.installPct + 9);
+    if (S.installPct >= 100) { S.installed = true; S.server = 'starting'; S.firstBoot = true; later(2200, () => { S.server = 'running'; S.uptimeMin = 0; S.online = []; S.firstBoot = false; toast('Server ready — the world is generated'); }); }
+    else later(550, tick);
+  };
+  later(550, tick);
+}
+function doUpdate() {
+  S.updFromStopped = S.server === 'stopped';
+  S.upd = 'running'; S.updFail = null; S.step = 0; S.stepAt = [nowClock()]; S.updErr = null;
+  const adv = (i, ms) => later(ms, () => {
+    S.step = i; S.stepAt[i] = nowClock();
+    if (i === 2 && !S.updFromStopped) { S.online = []; S.server = 'restarting'; }
+    if (i === 3) {
+      if (!S.updFromStopped) { S.server = 'running'; S.uptimeMin = 0; }
+      S.ver = S.latest; S.upd = 'done'; S.checkedMin = 0; toast(`Minecraft updated to ${S.ver}`);
+      later(4000, () => { S.latest = null; S.upd = 'idle'; }); return;
+    }
+    adv(i + 1, i === 1 ? 2400 : 1900);
+  });
+  adv(1, 1700);
+}
+
+/* ---- scenarios: the mock-controls strip ---- */
+const SCEN = [
+  ['running_players', 'Running · 2 on'],
+  ['running_empty', 'Running · empty'],
+  ['stopped', 'Stopped'],
+  ['installing', 'Installing'],
+  ['install_failed', 'Install failed'],
+  ['upd_avail', 'Update available'],
+  ['upd_nonotes', 'Update · no notes yet'],
+  ['updating', 'Updating'],
+  ['upd_failed', 'Update failed (download)'],
+  ['upd_rolledback', 'Update rolled back'],
+];
+function scenario(id) {
+  clearTimers();
+  Object.assign(S, {scenario:id, server:'running', installed:true, fresh:false, uptimeMin:192, online:ONLINE_FIXTURE.map(p=>({...p})), ver:RUNNING, latest:null, notes:true,
+    upd:'idle', updFail:null, updFromStopped:false, step:0, stepAt:[], updErr:null, checkedMin:12, checking:false, installPct:38, installErr:null, pending:null, firstBoot:false});
+  if (id === 'running_empty') { S.online = []; S.uptimeMin = 41 * 1440 + 4 * 60 + 12; }
+  if (id === 'stopped') { S.server = 'stopped'; S.online = []; }
+  if (id === 'installing') { S.server = 'installing'; S.installed = false; S.fresh = true; S.online = []; runInstall(); }
+  if (id === 'install_failed') { S.server = 'install_failed'; S.installed = false; S.fresh = true; S.online = []; S.installErr = `bedrock-server-${RUNNING}.zip — download failed: HTTP 503 from www.minecraft.net (3 tries, last at ${nowClock()})`; }
+  if (id === 'upd_avail') { S.latest = LATEST; }
+  if (id === 'upd_nonotes') { S.latest = LATEST; S.notes = false; }
+  if (id === 'updating') { S.latest = LATEST; doUpdate(); }
+  if (id === 'upd_failed') { S.latest = LATEST; S.upd = 'failed'; S.updFail = 'download'; S.step = 1; S.stepAt = ['2:41 pm', '2:41 pm'];
+    S.updErr = `bedrock-server-${LATEST}.zip — checksum mismatch after download; nothing was installed`; }
+  if (id === 'upd_rolledback') { S.latest = LATEST; S.upd = 'failed'; S.updFail = 'rollback'; S.step = 2; S.stepAt = ['2:41 pm', '2:41 pm', '2:43 pm']; S.uptimeMin = 3; S.online = [];
+    S.updErr = `bedrock_server ${LATEST} exited with code 139 within 20 s of starting (twice) — restored pre-update-${RUNNING} and started ${RUNNING}`; }
+  if (typeof onScenario === 'function') onScenario(id);
+  render();
+}
+function renderSim() {
+  const b = (on, act, label) => `<button aria-pressed="${on}" data-sim="${act}">${label}</button>`;
+  document.getElementById('sim').innerHTML = `
+    <div class="stitle"><span>Mock controls — not part of the design</span><span>${VARIANT}</span></div>
+    <div class="srow"><span class="sl">State</span>${SCEN.map(([id, l]) => b(S.scenario === id, 'scen:' + id, l)).join('')}</div>
+    <div class="srow"><span class="sl">Add-on</span>${b(!S.addon, 'addon:0', 'Not installed (today)')}${b(S.addon, 'addon:1', 'Preview: stats arrive')}</div>
+    ${typeof extraSim === 'function' ? extraSim(b) : ''}
+    <div class="srow"><span class="sl">Theme</span>${b(S.theme === 'dark', 'theme:dark', 'Dark')}${b(S.theme === 'light', 'theme:light', 'Light')}</div>`;
+}
+
+/* ---- toast ---- */
+let toastT;
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400); }
+
+/* ---- shared fragments every variant composes ---- */
+function changelogBlock() {
+  if (!S.notes) return `<div class="note" style="margin-top:8px">Release notes not published yet — Mojang hasn't posted the ${LATEST.split('.').slice(1, 3).join('.')} article. <a class="link" href="${FALLBACK_URL}" target="_blank" rel="noopener">Minecraft update page ${IC.ext}</a></div>`;
+  return `<div class="clog"><div class="src">From Mojang's changelog · first ${NOTES.lines.length} lines, verbatim</div>
+    <div class="clog-title">“${esc(NOTES.title)}” · posted ${NOTES.posted}</div>
+    <ul>${NOTES.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>
+    <a class="link" href="${NOTES.url}" target="_blank" rel="noopener">Release notes ${IC.ext}</a>`;
+}
+function stepsBlock() {
+  const failed = S.upd === 'failed', from = S.upd === 'done' ? RUNNING : S.ver, to = S.upd === 'done' ? S.ver : S.latest;
+  const labels = [`Backing up — pre-update-${from}`, `Downloading ${to}`,
+    S.updFromStopped ? 'Installing — server stays stopped' : failed && S.updFail === 'rollback' ? `Restarting — ${to} wouldn't start, rolled back` : 'Restarting — players disconnected', 'Done'];
+  return `<ol class="steps">${labels.map((label, i) => {
+    let cls = '', mark = '';
+    if (failed) { cls = i < S.step ? 'done' : i === S.step ? 'fail' : ''; mark = i < S.step ? IC.check : i === S.step ? IC.x : ''; }
+    else if (S.upd === 'done' || i < S.step) { cls = 'done'; mark = IC.check; }
+    else if (i === S.step) { cls = 'now'; }
+    return `<li class="${cls}"><span class="sd">${mark}</span>${label}<span class="at">${S.stepAt[i] || ''}</span></li>`;
+  }).join('')}</ol>`;
+}
+function updFailedBlock() {
+  const head = S.updFail === 'rollback'
+    ? `<b>${S.latest} wouldn't start — rolled back to ${S.ver}.</b> The server is running again on the old version from the backup <span class="mono">pre-update-${S.ver}</span>, which is kept.`
+    : `<b>Update failed — still on ${S.ver}.</b> Nothing was installed; the backup <span class="mono">pre-update-${S.ver}</span> is kept.`;
+  return `<div class="notice bad">${IC.alert}<div>${head} Players who've updated to ${S.latest} still can't join.<div class="errtext">${esc(S.updErr)}</div></div></div>`;
+}
+function behindNotice() {
+  return `<div class="notice warn">${IC.alert}<div><b>You're behind.</b> Phones and Xbox update themselves, and only a client on exactly ${S.ver} can join — anyone already on ${S.latest} is locked out until Minecraft is updated here.</div></div>`;
+}
+function joinText() {
+  if (!S.installed) return 'Not installed yet — join details appear once the server is up.';
+  return `On your LAN: <b>Friends → LAN Games → ${SERVER.lan}</b><br>Or add a server: <b class="mono">${SERVER.ip}</b> · port <b class="mono">${SERVER.port}</b>`;
+}
+function versionText() { return S.installed ? S.ver : `not installed — will install ${RUNNING}`; }
+function blockedNote(text) { return text ? `<p class="note why">${text}</p>` : ''; }
+function autoUpdRow() {
+  return `<div class="sw-row"><span class="sw-l"><b>Update automatically on restart</b><br>${S.autoUpd ? 'on — each restart installs the newest version, after a backup' : 'off — stays on its version until you update'}</span>
+    <button class="switch ${S.autoUpd ? 'on' : ''}" role="switch" aria-checked="${S.autoUpd}" aria-label="Update automatically on restart" data-act="autoUpd"><span class="knob"></span></button></div>`;
+}
+function checkText() { return S.checking ? 'checking Mojang…' : `last checked ${ago(S.checkedMin)}`; }
+function checkBtn() { return `<button class="link" data-act="check" ${S.checking || S.upd === 'running' ? 'disabled' : ''}>${S.checking ? `<span class="spin" style="display:flex">${IC.refresh}</span>` : IC.refresh}Check for updates</button>`; }
+function statsTiles(p) {
+  const s = S.addon ? p.stats : null;
+  const t = (v, k) => `<div class="stat${s ? '' : ' ph'}"><div class="sv">${s ? v : '—'}</div><div class="sk">${k}</div></div>`;
+  return `<div class="stats">${t(s && fmtInt(s.deaths), 'deaths')}${t(s && fmtInt(s.mobs), 'mobs killed')}${t(s && s.km.toFixed(1) + ' km', 'travelled')}${t(s && fmtInt(s.mined), 'blocks mined')}${t(s && fmtInt(s.placed), 'blocks placed')}${t(s && s.cause, 'top cause of death')}</div>`;
+}
+const ADDON_LINE = 'Arrives with the companion add-on. Bedrock keeps no player statistics, so these are counted in-game by the add-on once it is installed — nothing is counted yet.';
+function addonNote() {
+  return S.addon ? `<span class="preview-tag">Preview · sample numbers</span>` : `<div class="note">${ADDON_LINE}</div>`;
+}
+
+/* ---- one Dialog + one Sheet (DESIGN "Modal system"). Hidden shells are emptied and inert,
+   and focus moves into an opened dialog. ---- */
+let modalWas = null;
+function syncModal(dialogKinds) {
+  const k = S.pending && dialogKinds.includes(S.pending) ? S.pending : null;
+  const sheetOpen = typeof UI !== 'undefined' && !!UI.sheet && !k && typeof sheetHtml === 'function';
+  document.getElementById('scrim').classList.toggle('show', !!k || sheetOpen);
+  const d = document.getElementById('dialog');
+  d.classList.toggle('show', !!k); d.inert = !k; d.innerHTML = k ? dialogHtml(k) : '';
+  const sh = document.getElementById('sheet');
+  sh.classList.toggle('show', sheetOpen); sh.inert = !sheetOpen; if (sheetOpen) sh.innerHTML = sheetHtml(); else if (!sh.classList.contains('show')) setTimeout(() => { if (!sh.classList.contains('show')) sh.innerHTML = ''; }, 200);
+  document.getElementById('app').inert = !!k || sheetOpen;
+  const now = k || (sheetOpen ? 'sheet' : null);
+  if (now && now !== modalWas) (k ? d : sh).querySelector('button')?.focus();
+  modalWas = now;
+}
+function dialogHtml(k) {
+  const n = S.online.length;
+  const title = k === 'stop' ? 'Stop the server?' : k === 'restart' ? (restartUpdates() ? `Restart and update to ${S.latest}?` : 'Restart the server?') : k === 'all' ? 'Restart every service?' : `Update Minecraft to ${S.latest}?`;
+  const go = k === 'stop' ? 'Stop' : k === 'restart' ? 'Restart' : k === 'all' ? 'Restart all' : 'Update';
+  return `<h3 id="dlg-t">${title}</h3><p>${confirmText(k)}</p><div class="btnrow"><button class="btn" data-act="cancel">Cancel</button><button class="btn ${k === 'update' ? 'warn' : 'danger'}" data-act="confirm">${go}</button></div>`;
+}
+
+/* ---- wiring ---- */
+/* Every action re-renders; focus is put back on the same control (or the armed one replacing it)
+   so a keyboard user is never dropped to <body>. */
+function refocus(act) {
+  if (document.getElementById('dialog').classList.contains('show') || document.getElementById('sheet').classList.contains('show')) return;
+  const el = document.querySelector(`#app [data-act="${act}"]:not([disabled])`) || document.querySelector('#app [data-armed]');
+  if (el) el.focus({preventScroll:true});
+}
+document.addEventListener('click', e => {
+  const sim = e.target.closest('[data-sim]');
+  if (sim) {
+    const [k, v] = sim.dataset.sim.split(':');
+    if (k === 'scen') return scenario(v);
+    if (k === 'addon') S.addon = v === '1';
+    if (k === 'theme') { S.theme = v; document.documentElement.dataset.theme = v; }
+    if (typeof onSim === 'function') onSim(k, v);
+    return render();
+  }
+  const a = e.target.closest('[data-act]');
+  if (!a || a.disabled) return;
+  const [name, arg] = a.dataset.act.split(':');
+  if (ACT[name]) { ACT[name](arg, a, e); render(); refocus(a.dataset.act); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (typeof UI !== 'undefined' && UI.sheet) UI.sheet = null; else S.pending = null; render(); } });
+/* Live session clocks: a minute is a minute. */
+setInterval(() => { if (S.server === 'running') { S.uptimeMin++; S.online.forEach(o => o.min++); render(); } }, 60000);
+if (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) { S.theme = 'light'; document.documentElement.dataset.theme = 'light'; }
+
+/* ---- the surrounding Ops stack (static neighbours, so the new card is judged in place) ---- */
+function vitalsMini() {
+  const h = [6,9,7,12,15,11,8,6,10,14,9,7,5,8,11,13,9,6];
+  return `<div class="vitals" aria-label="GPU 14%, synced"><div class="cols">${h.map(x => `<i style="height:${x}px"></i>`).join('')}</div><b class="num">14%</b></div>`;
+}
+function opsBar(title) {
+  return `<div class="bar"><button class="back" aria-label="Back">${IC.back}</button><span class="ttl">${title}</span>${vitalsMini()}</div>`;
+}
+const neighbour = (title, right) => `<section class="ops-card"><button class="ops-card-head" type="button" aria-expanded="false"><span class="ops-card-title">${title}</span><span class="ops-card-right">${right}</span><span class="ops-card-caret">›</span></button></section>`;
+function opsStack(mcHtml) {
+  return `<div class="ops-header"><h2>Ops</h2><div class="ops-actions"><button>Runs</button><button>Refresh</button><button style="color:var(--danger-text)">Restart all</button></div></div>
+    ${neighbour('System', '<span class="ops-card-summary">mem 55% · disk 14% · up 5h 40m</span>')}
+    ${neighbour('Local engine', '<span class="ops-card-summary">Standard</span>')}
+    ${mcHtml}
+    ${neighbour('System memory', '<span class="ops-card-summary">31.2 of 64 GB</span>')}
+    ${neighbour('Panels', '<span class="ops-card-summary">2 panels</span>')}
+    ${neighbour('Host settings', '<span class="ops-card-summary">all good</span>')}
+    ${neighbour('History', '')}
+    ${neighbour('Core', '<span class="ops-gcount">5 services</span><span class="ops-gstate ops-gstate-ok"><span class="ops-gdot"></span>all up</span>')}
+    ${neighbour('AI', '<span class="ops-gcount">3 services</span><span class="ops-gstate ops-gstate-ok"><span class="ops-gdot"></span>all up</span>')}
+    ${neighbour('Infra', '<span class="ops-gcount">4 services</span><span class="ops-gstate ops-gstate-ok"><span class="ops-gdot"></span>all up</span>')}`;
+}
+
+/* ===================== variant-specific ===================== */
+const VARIANT = 'A · inline card';
+/* Collapsed by default, like every Ops card but System. It opens itself when its verdict turns
+   into something that needs the owner (an update waiting, a failure) — and if the owner closes
+   it, it stays closed until that verdict changes again (Host settings' re-key rule). */
+const UI = {open:false, openPlayer:null, verdict:''};
+function verdict() {
+  if (S.server === 'install_failed') return 'install_failed';
+  if (S.upd === 'failed') return 'upd_failed:' + S.updFail;
+  if (S.upd === 'running') return 'updating';
+  if (behind()) return 'behind:' + S.latest;
+  return '';
+}
+function onScenario() { UI.openPlayer = null; UI.verdict = ''; UI.open = false; }
+ACT.card = () => { UI.open = !UI.open; };
+ACT.player = tag => { UI.openPlayer = UI.openPlayer === tag ? null : tag; };
+
+function headerRight() {
+  const si = stateInfo(), n = S.online.length;
+  let sum = '', cls = '';
+  if (S.upd === 'running') { sum = `updating to ${S.latest}…`; cls = 'warn'; }
+  else if (S.upd === 'failed') { sum = S.updFail === 'rollback' ? 'update rolled back' : 'update failed'; cls = 'bad'; }
+  else if (behind()) { sum = `update available · ${S.latest}`; cls = 'warn'; }
+  else if (S.server === 'running') sum = `${S.ver} · ${n ? plural(n, 'player') + ' on' : 'nobody on'}`;
+  else if (S.server === 'installing') sum = `${S.installPct}%`;
+  else if (S.installed) sum = S.ver;
+  return `${UI.open ? '' : `<span class="ops-card-summary ${cls}">${sum}</span>`}<span class="ops-gstate ops-gstate-${si.level}"><span class="ops-gdot"></span>${si.word}</span>`;
+}
+
+const spinner = label => `<span class="spin" style="display:flex">${IC.refresh}</span>${label}`;
+
+function rowServer() {
+  const si = stateInfo(), n = S.online.length;
+  let body = '';
+  if (S.server === 'installing') {
+    body = `<div class="a-gap"><div class="meter"><i style="width:${S.installPct}%"></i></div>
+      <span class="ops-vsub num" style="margin:0">${S.installPct}% of 118 MB · the world is generated next</span></div>`;
+  } else if (S.server === 'install_failed') {
+    body = `<div class="a-gap"><div class="notice bad">${IC.alert}<div><b>Couldn't download the server.</b> Nothing was installed and no world was made.<div class="errtext">${esc(S.installErr)}</div></div></div>
+      <div class="btnrow"><button class="btn primary grow" data-act="retryInstall">${IC.refresh}Retry install</button></div></div>`;
+  } else if (S.pending === 'stop' || S.pending === 'restart') {
+    /* Ops' tap-again idiom: the armed button holds focus and disarms on blur, like Update server. */
+    body = `<div class="a-gap"><div class="btnrow"><button class="btn" data-act="cancel">Cancel</button>
+        <button class="btn danger grow" data-armed data-act="${S.pending}">${S.pending === 'stop' ? IC.stop + 'Tap again to stop' : IC.restart + (restartUpdates() ? 'Tap again to update' : 'Tap again to restart')}</button></div>
+      <p class="note">${confirmText(S.pending)}</p></div>`;
+  } else {
+    const dis = canLifecycle() ? '' : 'disabled';
+    const btns = (S.server === 'stopped' || S.server === 'starting')
+      ? `<button class="btn go grow" data-act="start" ${S.server === 'starting' || S.upd === 'running' ? 'disabled' : ''}>${S.server === 'starting' ? spinner('Starting…') : IC.play + 'Start'}</button>`
+      : `<button class="btn grow" data-act="restart" ${dis}>${S.server === 'restarting' ? spinner('Restarting…') : IC.restart + 'Restart'}</button>
+         <button class="btn grow" data-act="stop" ${dis}>${S.server === 'stopping' ? spinner('Stopping…') : IC.stop + 'Stop'}</button>`;
+    body = `<div class="a-gap"><div class="btnrow">${btns}</div>${blockedNote(S.upd === 'running' ? lifecycleBlocked() : '')}</div>`;
+  }
+  return `<div class="ops-vrow"><span class="ops-vk">Server</span><div class="ops-vmid">
+    <div class="a-line"><span class="badge ${si.level}">${si.word}</span><span class="ops-vsub">${si.sub}</span></div>${body}</div></div>`;
+}
+
+const confirmPanel = () => `<div class="a-confirm"><p>${confirmText('update')}</p><div class="btnrow"><button class="btn" data-armed data-act="cancel">Cancel</button><button class="btn warn grow" data-act="confirm">Back up and update</button></div></div>`;
+
+function rowVersion() {
+  if (!S.installed) return `<div class="ops-vrow"><span class="ops-vk">Version</span><div class="ops-vmid"><span class="ops-vv">—</span><span class="ops-vsub">${versionText()}</span></div></div>`;
+  const why = updateBlocked();
+  let main = '';
+  if (S.upd === 'running' || S.upd === 'done') {
+    main = `<div class="ops-update-bar"><span class="ops-update-dot ${S.upd === 'done' ? 'ok' : 'warn'}"></span><span class="ops-update-text"><b>${S.upd === 'done' ? `Updated to ${S.ver}` : `Updating to ${S.latest}`}</b><br>${updStatusText()}</span></div>${stepsBlock()}`;
+  } else if (S.upd === 'failed') {
+    main = `${updFailedBlock()}${stepsBlock()}${S.pending === 'update' ? confirmPanel() : `<div class="btnrow"><button class="btn" data-act="dismissUpd">Dismiss</button><button class="btn warn grow" data-act="update" ${why ? 'disabled' : ''}>${IC.refresh}Try the update again</button></div>${blockedNote(why)}`}`;
+  } else if (behind()) {
+    main = `<div class="ops-update-bar"><span class="ops-update-dot warn"></span><span class="ops-update-text"><b>Update available: ${S.latest}</b><br>${S.notes ? 'posted ' + NOTES.posted : 'no release notes yet'}</span>
+        ${S.pending === 'update' ? '' : `<button class="ops-update-btn warn" data-act="update" ${why ? 'disabled' : ''}>Update Minecraft</button>`}</div>
+      ${blockedNote(why)}${S.pending === 'update' ? confirmPanel() : ''}
+      ${behindNotice()}<div>${changelogBlock()}</div>`;
+  }
+  const upToDate = !behind() && S.upd === 'idle';
+  return `<div class="ops-vrow stack"><div class="a-head"><span class="ops-vk">Version</span>
+      <span class="ops-vv">${S.ver}</span>${upToDate ? '<span class="badge ok">up to date</span>' : ''}</div>
+    ${main}
+    <div class="a-check">${checkText()} · ${checkBtn()}</div>
+    ${autoUpdRow()}
+  </div>`;
+}
+
+function rowOnline() {
+  let body;
+  if (S.server !== 'running') body = `<span class="ops-vsub" style="margin:0">${S.server === 'stopped' ? 'server is stopped' : '—'}</span>`;
+  else if (!S.online.length) body = `<span class="ops-vsub" style="margin:0">nobody on right now</span>`;
+  else body = S.online.map(o => `<div class="a-pl"><span class="pav on">${initial(o.tag)}</span><b class="a-nm" title="${esc(o.tag)}">${esc(o.tag)}</b><span class="num">${fmtDur(o.min)}</span></div>`).join('');
+  return `<div class="ops-vrow"><span class="ops-vk">Online</span><div class="ops-vmid">${body}</div></div>`;
+}
+
+function rowWorld() {
+  if (!S.installed) return `<div class="ops-vrow"><span class="ops-vk">World</span><div class="ops-vmid"><span class="ops-vv">—</span><span class="ops-vsub">not created yet</span></div></div>
+    <div class="ops-vrow"><span class="ops-vk">Join</span><div class="ops-vmid"><span class="ops-vv">—</span><span class="ops-vsub">not installed</span></div></div>`;
+  return `<div class="ops-vrow"><span class="ops-vk">World</span><div class="ops-vmid"><span class="ops-vv">${SERVER.world}</span>
+    <span class="ops-vsub">${SERVER.mode} · ${SERVER.difficulty} · allowlist ${SERVER.allowlist ? 'on' : 'off — anyone on the network can join'}</span></div></div>
+    <div class="ops-vrow"><span class="ops-vk">Join</span><div class="ops-vmid"><div class="note">${joinText()}</div>
+    <button class="link" data-act="copyAddr">Copy address</button></div></div>`;
+}
+
+function rowPlayers() {
+  const list = roster();
+  if (!list.length) return `<div class="ops-vrow"><span class="ops-vk">Players</span><div class="ops-vmid"><span class="ops-vv">—</span><span class="ops-vsub">no one has played yet</span></div></div>`;
+  const rows = list.map(p => {
+    const open = UI.openPlayer === p.tag, on = isOnline(p.tag);
+    return `<div class="a-prow"><button class="a-phead" data-act="player:${p.tag}" aria-expanded="${open}">
+        <span class="pav ${on ? 'on' : ''}">${initial(p.tag)}</span>
+        <span class="a-pn"><span class="nm" title="${esc(p.tag)}">${esc(p.tag)}</span>${on ? '<span class="a-on">on now</span>' : ''}</span>
+        <span class="tot">${fmtDur(totalOf(p))}<br><span class="faint">${plural(sessionsOf(p), 'session')}</span></span>
+        <span class="ops-card-caret">›</span></button>
+      ${open ? `<div class="a-pbody">
+        <div><div class="ops-kv"><span>Time on server</span><span class="num">${fmtDur(totalOf(p))}</span></div>
+          <div class="ops-kv"><span>Sessions</span><span class="num">${sessionsOf(p)}</span></div>
+          <div class="ops-kv"><span>First seen</span><span>${p.first}</span></div>
+          <div class="ops-kv"><span>Last seen</span><span>${on ? `on now · ${fmtDur(sessionOf(p.tag))} this session` : lastSeen(p)}</span></div></div>
+        ${S.addon ? `<div class="a-sub">Lifetime stats</div>${statsTiles(p)}${addonNote()}` : ''}</div>` : ''}</div>`;
+  }).join('');
+  /* Without the add-on, lifetime stats are one honest line, not rows of dashes. */
+  return `<div class="ops-vrow stack"><div class="a-head"><span class="ops-vk">Players</span><span class="ops-vsub">time on this server</span></div><div>${rows}</div>
+    ${S.addon ? '' : `<div class="note">Lifetime stats (deaths, mobs, blocks, distance) arrive with the companion add-on — Bedrock keeps none, so nothing is counted yet.</div>`}</div>`;
+}
+
+function rowStats() {
+  if (!S.addon || !roster().length) return '';
+  const sum = PLAYERS.reduce((a, p) => ({deaths:a.deaths + p.stats.deaths, mobs:a.mobs + p.stats.mobs, mined:a.mined + p.stats.mined, placed:a.placed + p.stats.placed, km:a.km + p.stats.km, cause:'fell from a high place'}), {deaths:0, mobs:0, mined:0, placed:0, km:0});
+  return `<div class="ops-vrow stack"><div class="a-head"><span class="ops-vk">Lifetime stats</span><span class="ops-vsub">all players</span></div>
+    ${statsTiles({stats:sum})}${addonNote()}</div>`;
+}
+
+function render() {
+  renderSim();
+  const v = verdict();
+  if (v !== UI.verdict) { if (v) UI.open = true; UI.verdict = v; }
+  const card = `<section class="ops-card">
+    <button type="button" class="ops-card-head${UI.open ? ' open' : ''}" aria-expanded="${UI.open}" data-act="card">
+      <span class="ops-card-title">Minecraft</span><span class="ops-card-right">${headerRight()}</span><span class="ops-card-caret">›</span></button>
+    ${UI.open ? `<div class="ops-card-body">${rowServer()}${rowVersion()}${rowOnline()}${rowWorld()}${rowPlayers()}${rowStats()}</div>` : ''}</section>`;
+  const app = document.getElementById('app');
+  const keep = app.querySelector('.scroll')?.scrollTop || 0;
+  app.innerHTML = `${opsBar('Ops')}<div class="scroll">${opsStack(card)}</div>`;
+  app.querySelector('.scroll').scrollTop = keep;
+  syncModal(['all']);
+  const armed = app.querySelector('[data-armed]');
+  if (armed) armed.addEventListener('blur', () => setTimeout(() => {
+    if ((S.pending === 'stop' || S.pending === 'restart') && !document.querySelector('#app [data-armed]:focus')) { S.pending = null; render(); }
+  }, 0));
+}
+
+scenario('running_players');
+</script>
+</body>
+</html>

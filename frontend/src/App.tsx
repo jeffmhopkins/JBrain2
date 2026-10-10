@@ -29,6 +29,7 @@ import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
 import { LocationScreen } from "./screens/LocationScreen";
 import { LoginScreen } from "./screens/LoginScreen";
+import { MinecraftScreen } from "./screens/MinecraftScreen";
 import {
   NoteScreen,
   type NoteViewSource,
@@ -80,6 +81,7 @@ type Card =
   | "jcode"
   | "jlaunch"
   | "jmolt"
+  | "minecraft"
   | "vitals";
 
 // Automations, Tasks, Image, Radio and jcode bring their own full-screen overlay (own
@@ -116,6 +118,7 @@ const SCREEN_TITLES: Record<
   wiki: "Wiki",
   intake: "Intake Links",
   jmolt: "jmolt",
+  minecraft: "Minecraft",
 };
 
 const CARD_EXIT_MS = 150;
@@ -123,6 +126,9 @@ const CARD_EXIT_MS = 150;
 export function App() {
   const [session, setSession] = useState<Session>({ status: "loading" });
   const [card, setCard] = useState<Card | null>(null);
+  // Minecraft is reached from the launcher AND from Ops' shortcut row; opened from Ops, its
+  // back returns to Ops rather than home (the binding mock's "back to where you came from").
+  const [minecraftFromOps, setMinecraftFromOps] = useState(false);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // Which turn's detail level is open on the vitals card. Held here, not inside the
@@ -244,7 +250,23 @@ export function App() {
   function navigate(target: LauncherTarget) {
     // Picking a new card abandons any "return to the session's source card" intent.
     setSessionBackTo(null);
+    setMinecraftFromOps(false);
     setCard(target);
+  }
+
+  function openMinecraftFromOps() {
+    setMinecraftFromOps(true);
+    setCard("minecraft");
+  }
+
+  /** Climb one level from a card: Minecraft opened from Ops goes back to Ops. */
+  function climbFromCard() {
+    if (card === "minecraft" && minecraftFromOps) {
+      setMinecraftFromOps(false);
+      setCard("ops");
+      return;
+    }
+    closeCardToLauncher();
   }
 
   // Automations owns its own full-screen overlay, so it closes straight to the
@@ -450,7 +472,7 @@ export function App() {
     const dx = Math.abs(t.clientX - start.x);
     if (dy > 56 && dy > dx * 2) {
       swipeStart.current = null;
-      closeCardToLauncher();
+      climbFromCard();
     }
   }
 
@@ -512,7 +534,7 @@ export function App() {
     // jpanel (either tab) brings its own full-screen wrap and back bar.
     if (card === "jpanel") return setCard(null);
     if (card === "endpoints") return setCard(null);
-    if (card !== null) return closeCardToLauncher();
+    if (card !== null) return climbFromCard();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
     // The home conversation surface is beneath everything above, so its own layers (an
@@ -607,13 +629,13 @@ export function App() {
           >
             <TopBar
               title={SCREEN_TITLES[card]}
-              onBack={jumpHome}
+              onBack={card === "minecraft" && minecraftFromOps ? climbFromCard : jumpHome}
               syncStatus={notes.syncStatus}
               onOpenVitals={card === "vitals" ? undefined : () => setCard("vitals")}
             />
             {card === "ops" && (
               <main className="screen-body">
-                <OpsScreen />
+                <OpsScreen onOpenMinecraft={openMinecraftFromOps} />
               </main>
             )}
             {card === "vitals" && (
@@ -627,6 +649,7 @@ export function App() {
             )}
             {card === "llm-settings" && <LLMSettingsScreen />}
             {card === "data" && <DataScreen />}
+            {card === "minecraft" && <MinecraftScreen />}
             {card === "search" && (
               <SearchScreen onOpenResult={openNoteFromSearch} onOpenWiki={setWikiArticle} />
             )}
