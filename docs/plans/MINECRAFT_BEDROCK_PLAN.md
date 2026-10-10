@@ -863,13 +863,14 @@ screen's "Maps" section (M8) reuses the same component.
 - **P3 — maps.** M8's renderer, the `minecraft_map` tool, and the map tool-view (GUI
   gate), also embedded on the Minecraft screen.
 
-**Open for the owner:**
-- whether log writes need approval or are free. A log entry is meant to be quick, so
-  free is the suggested default. Memory is decided: self-managed, line-level, with
-  history.
-- which model it runs on (local by default);
-- the owner's own gamertag: entered on the Minecraft screen, and the PWA door's default
-  player.
+**Decided (owner, 2026-10-10):**
+- **No approvals** for goals, log or memory writes, **provided the session has a defined
+  player**. A PWA chat with no gamertag set refuses the writes and asks for one, rather
+  than guessing.
+- Minecraft_Dave runs on the **local model**.
+
+**Pending:** the owner's gamertag. It's entered on the Minecraft screen's settings, so P1
+doesn't need it to be built.
 
 ## 3a. Debug control surface — the assistant as co-operator
 
