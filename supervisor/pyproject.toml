@@ -41,13 +41,13 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-# `../deploy/sdr` and `../deploy/endpoint` are IN the include: the sidecars are
+# `../deploy/sdr`, `../deploy/endpoint` and `../deploy/minecraft` are IN the include: the sidecars are
 # typechecked by nothing else — no
 # ruff config, no pyright config of its own — and the execution environment below was
 # dead configuration until this line existed, describing files pyright never opened.
 # It is this package's job because this package's pytest already loads those files by
 # path (CLAUDE.md #8).
-include = ["src", "tests", "../deploy/sdr", "../deploy/endpoint"]
+include = ["src", "tests", "../deploy/sdr", "../deploy/endpoint", "../deploy/minecraft"]
 typeCheckingMode = "standard"
 pythonVersion = "3.11"
 venvPath = "."
@@ -77,6 +77,13 @@ root = "../deploy/endpoint"
 extraPaths = ["../deploy/endpoint"]
 # python:3.12-slim, not the supervisor's 3.11 floor.
 pythonVersion = "3.12"
+
+# The Minecraft wrapper, same bare-name imports. Stdlib only, on Debian trixie's
+# CPython, so nothing it imports should be unresolved.
+[[tool.pyright.executionEnvironments]]
+root = "../deploy/minecraft"
+extraPaths = ["../deploy/minecraft"]
+pythonVersion = "3.13"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

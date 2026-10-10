@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-10-10
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -110,5 +110,7 @@ promoted to `../plans/` (Scheduled — W1◻️ W2◻️ W3◻️ W4◻️).
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.
 `JMOLT_SITTINGS_PLAN.md` was split out of `CONTEXT_COMPACTION_PLAN.md`, promoted to `../plans/`, and
 is in progress (W1 landed).
+`MINECRAFT_BEDROCK_PLAN.md` was scoped with the owner over one conversation and promoted to
+`../plans/` on 2026-10-10 when M0a (the debug-driven server rig, on by default) was built.
 `SDR_RADIO_PLAN.md` was scoped with the owner (seven decisions, a closed GUI gate for the omnibox
 tuner), promoted to `../plans/`, and is in progress (S0a — the debug USB probe — landed).)_

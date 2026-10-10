@@ -56,7 +56,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _respond(self) -> None:
         status = 422 if "refuse" in self.path else 200
-        if "/disk/cleanup" in self.path:
+        if "/disk/cleanup" in self.path or "/debug/minecraft/" in self.path:
             # Echoes the request body, so a test reads exactly what the CLI sent.
             length = int(self.headers.get("Content-Length") or 0)
             payload: dict[str, object] = {"received": json.loads(self.rfile.read(length))}
@@ -334,3 +334,20 @@ def test_the_browse_benchmark_runs_one_task_and_needs_a_label(box: str) -> None:
         ["bash", str(_BENCH)], capture_output=True, text=True, timeout=30, check=False, env=env
     )
     assert bare.returncode == 2 and "usage" in bare.stderr
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_minecraft_console_sends_the_command_verbatim_with_its_wait(box: str) -> None:
+    # Quotes and spaces are the point: a console command like a `tellraw` JSON must arrive
+    # as one string, not as shell-split words.
+    cmd = 'tellraw @a {"rawtext":[{"text":"hi there"}]}'
+    result = _run(box, "minecraft", "console", cmd, "5")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["received"] == {"command": cmd, "wait_s": 5.0}
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_minecraft_set_prop_null_removes_the_override(box: str) -> None:
+    result = _run(box, "minecraft", "set-prop", "transport", "null")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["received"] == {"set": {"transport": None}}

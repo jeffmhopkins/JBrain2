@@ -79,6 +79,7 @@ from jbrain.api import (
     brain,
     chat_attachments,
     debug,
+    debug_minecraft,
     debug_tokens,
     devices,
     external_llm,
@@ -1761,6 +1762,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(debug_tokens.router, prefix="/api")
     if settings.debug_access_enabled:
         app.include_router(debug.router, prefix="/api")
+        app.include_router(debug_minecraft.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
     app.include_router(engine_api.router, prefix="/api")

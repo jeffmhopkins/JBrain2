@@ -931,6 +931,31 @@ PY
     _call POST "/api/debug/sdr/listen-probe?$q" | _pp
     ;;
 
+  minecraft) # [status|start|stop|restart|logs [N]|console "<cmd>"|snapshot [label]|snapshots|props|set-prop K V]
+    # The Bedrock server (MINECRAFT_BEDROCK_PLAN §3a). Game-scoped: no shell, no world
+    # download; `stop`/`save` are refused on the console — use stop/snapshot here.
+    sub="${1:-status}"; [ "$#" -gt 0 ] && shift
+    case "$sub" in
+      status) _call GET /api/debug/minecraft | _pp ;;
+      start|stop|restart) _call POST "/api/debug/minecraft/$sub" | _pp ;;
+      logs) _call GET "/api/debug/minecraft/logs?tail=${1:-200}" | _pp ;;
+      console)
+        c="${1:?usage: debug-connect.sh minecraft console \"<command>\" [wait_s]}"
+        _call POST /api/debug/minecraft/console \
+          "$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1], "wait_s": float(sys.argv[2])}))' "$c" "${2:-3}")" | _pp ;;
+      snapshot)
+        _call POST /api/debug/minecraft/snapshot \
+          "$(python3 -c 'import json,sys; print(json.dumps({"label": sys.argv[1]}))' "${1:-}")" | _pp ;;
+      snapshots) _call GET /api/debug/minecraft/snapshots | _pp ;;
+      props) _call GET /api/debug/minecraft/properties | _pp ;;
+      set-prop)
+        k="${1:?usage: debug-connect.sh minecraft set-prop <key> <value|null>}"
+        body="$(python3 -c 'import json,sys; v=sys.argv[2]; print(json.dumps({"set": {sys.argv[1]: None if v == "null" else v}}))' "$k" "${2:-null}")"
+        _call PUT /api/debug/minecraft/properties "$body" | _pp ;;
+      *) echo "unknown minecraft subcommand: $sub" >&2; exit 2 ;;
+    esac
+    ;;
+
   raw) # METHOD PATH [JSON_BODY] — escape hatch for anything not wrapped above
     method="${1:?usage: debug-connect.sh raw <METHOD> <path> [body]}"
     path="${2:?usage: debug-connect.sh raw <METHOD> <path> [body]}"

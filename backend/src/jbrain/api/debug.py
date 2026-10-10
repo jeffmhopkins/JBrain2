@@ -219,6 +219,10 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # /endpoint/flash`). Listed for the same reason as the rest: a capability
             # missing from this list reads as one the assistant may not use.
             "endpoint.flash",
+            # The Minecraft server (`/minecraft/*`): status, start/stop/restart, its
+            # console, snapshots and server.properties. Game-scoped — no shell, no file
+            # path, no world download. Listed for the same reason as the rest.
+            "minecraft.control",
         ],
     )
 
