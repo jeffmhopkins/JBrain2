@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-10-10
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -15,6 +15,13 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `MINECRAFT_BEDROCK_PLAN.md` — a **Minecraft Bedrock dedicated server** as an opt-in sidecar
+  (profile `minecraft`): start/stop, import the owner's `.mcworld`, hot snapshots
+  (`save hold/query/resume`) as downloadable `.mcworld` backups on a PWA-set schedule, one-click
+  BDS updates — all PWA-operable. Then an in-game **companion** players ask "where's the
+  nearest pig / woodland mansion": a stable-API behavior pack bridged over the console
+  (`scriptevent` in, log lines out), a snapshot-fed world index, and a read-only, KB-less agent
+  that answers live → index → worldgen (`locate`). Waves M0 (on-box spike) – M7.
 - `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
   owner's gesture, and the research answer that both hard halves already ship: whisper.cpp and
   Kokoro TTS are in production in the `tts-stt` container, and a full voice loop already runs
