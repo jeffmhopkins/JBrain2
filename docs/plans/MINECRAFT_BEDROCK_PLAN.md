@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -685,6 +685,78 @@ biomes.**
 - Tests: render a fixture snapshot to golden PNG hashes per layer, check the overlay
   projection (coordinates → pixels, Nether scale), check that share-link scope and expiry
   are refused outside the link, and check that `slice@Y` is refused when fair play is on.
+
+### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
+
+**Owner request (2026-10-10).** The owner wants a selectable agent persona for Minecraft,
+with:
+- maps rendered in the PWA as one of its tools;
+- the **full Dave toolset**;
+- **web search and fetch**;
+- a **memory / session-log** toolset.
+
+**Why it's a persona, not Dave.** Dave answers *players* in game, so he is deliberately
+narrow: read-only, tier-gated, no web, no memory, no notes, and every word from a player
+is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
+`jbrain.agent.agents`, alongside `curator`, `jerv`, `teacher` and `archivist` (ASSISTANT.md
+§"Agent selection"), and it gets the owner tier of every tool. Both agents share the same
+`mc_*` handlers; only the allowlist and the tier differ.
+
+**The persona** (working id `minecraft`; display name is the owner's call):
+- **System prompt:** a Minecraft-savvy helper for the owner's server and family worlds.
+  World data is the source of truth; game knowledge comes from looked-up data, not
+  recall.
+- **Tool allowlist:** a closed `frozenset` with the shape below, assembled by name like
+  `note_ingest`'s.
+- **KB access: none.** It doesn't read the owner's notes. That is the line against a
+  confused deputy, since world text (signs, book contents, chat, gamertags) is
+  player-authored and untrusted; see "Safety".
+- **Selectable** in the existing agent picker, and openable from the Minecraft screen
+  ("Ask about this world").
+
+**Tools.** Everything in §3b at the **Owner** tier, plus three more groups:
+
+| Group | Tools | Source / status |
+|---|---|---|
+| World, worldgen (works **today**, M0b) | `mc_locate_structure`, `mc_locate_biome`, `mc_world_info` (time, weather, day) | Console `execute positioned … locate`, already proven on the box |
+| Server and play history (works **today**, M1) | `mc_server_status`, `mc_players` (totals, online, sessions), `mc_session_log` (who played when, joins and leaves by day) | `/api/minecraft` and `app.mc_player_sessions` |
+| World index (after **M4**) | `mc_find_container`, `mc_find_villager`, `mc_find_block`, `mc_describe_area`, `mc_biome_at`, `mc_build_changes`, `mc_whats_new` | Snapshot index |
+| Live (after **M5**) | `mc_nearest_entity`, `mc_where_is`, `mc_player_context`, `mc_where_did_i_die`, `mc_inventory` | Behavior-pack bridge |
+| Maps (with **M8**) | `minecraft_map(center, radius, layers, overlays, slot?)`: terrain, biome, height, explored, changes, slice@Y; overlays for players, waypoints, structures, deaths | Renderer in the sidecar; returns an image artifact rendered **inline in the chat** |
+| Admin (owner) | `mc_backup_now`, `mc_set_time`, `mc_set_weather`, `mc_announce` | Console allowlist; staged as Proposals per ASSISTANT.md's write policy, never silent |
+| Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
+| Memory | `mc_memory_read` / `mc_memory_write`: the agent's own notes across sessions ("base is at 120, -340", "Mira prefers creative") | A persona-scoped, owner-only memory table (the archivist's pattern), with an RLS isolation test |
+| Session log | `mc_session_log` (above), plus the agent's own past conversations through the existing session history | `app.mc_player_sessions` and the agent session store |
+
+**Safety.**
+- **Untrusted world text** (sign text, books, gamertags, chat) reaches the model only
+  inside the `briefs.py` untrusted-data fence.
+- **No reach into notes.** With web fetch in the allowlist and no KB access, there is no
+  path from planted world text to the owner's notes.
+- **Writes are staged.** Admin tools and memory writes follow the session's write policy,
+  so a world-changing tool is a Proposal unless the owner allowed it.
+
+**The map tool-view.** It's a new GUI surface, so it goes through the **GUI gate**:
+three mocks and the owner's pick, as a registered component (DESIGN.md "Agent tool
+views"). It shows the PNG with pinch-zoom, a legend for the layers, overlay toggles, and
+tappable markers that show coordinates. Copying "go to X Z" is explicit. The Minecraft
+screen's "Maps" section (M8) reuses the same component.
+
+**Waves:**
+- **P1 — the persona with what works today.** The persona, its prompt, picker entry and
+  launch from the Minecraft screen; worldgen `locate` and world info; server status,
+  players and the session log; web search and fetch; the memory tools and their table;
+  the admin tools as Proposals; persona tests (allowlist closed, no KB, fenced world
+  text).
+- **P2 — grows with M4/M5.** The index and live tools join the allowlist as each wave
+  lands. Each tool is one PR, with tool-step-polish entries.
+- **P3 — maps.** M8's renderer, the `minecraft_map` tool, and the map tool-view (GUI
+  gate), also embedded on the Minecraft screen.
+
+**Open for the owner:**
+- the persona's display name;
+- whether memory writes need approval or are free;
+- which model it runs on (local by default).
 
 ## 3a. Debug control surface — the assistant as co-operator
 
