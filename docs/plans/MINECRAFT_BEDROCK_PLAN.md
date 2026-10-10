@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ M10◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ M10◻️ M11◻️ M12◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -919,6 +919,113 @@ keep-inventory charm, so players choose how to spend them.
 - An unconfirmed `locate` result is refused as unknown.
 - A cross-dimension trip to a dimension never visited is refused.
 - Choosing No on the form costs nothing.
+
+### M11 — Trans-dimensional chests (owner idea, 2026-10-10; details open)
+
+**The idea.** An expanded ender chest. A **trans-dimensional chest** can be **dyed a
+colour**, and all of one player's chests of the same colour share **one inventory**, in
+any dimension. So a red chest at the base and a red chest in the Nether hold the same
+things, and a blue pair is a separate store. This is late-game ("End") content: crafted,
+not handed out.
+
+**The engineering problem, and the proposed answer.**
+- **The problem:** a stable-API script can't copy an item's full data (enchantments,
+  names, durability, shulker contents) into storage and back. Syncing a "shared"
+  inventory between several chests risks losing items or duplicating them, especially
+  when two are open at once.
+- **The answer: one vault per channel, which travels.** Each channel (player + colour)
+  is a single invisible **vault entity** with a `minecraft:inventory` component. Entities
+  with inventories keep their items through any teleport, including across dimensions.
+  - At rest it waits in a fixed **vault room**, a small area kept loaded with a
+    `tickingarea`, out of reach of players.
+  - Opening any chest of that colour **moves the vault entity into that chest**, and the
+    player opens its inventory as they would a chest minecart's.
+  - When the player walks away or closes it, the vault returns to the vault room.
+  - **Items are never copied, only the vault moves**, so nothing can be duplicated or
+    lost. A chest of a channel whose vault is out (open somewhere else) says "In use at
+    the other red chest".
+- **The chest itself** is a custom block, `jbrain:td_chest`, with a `color` state. Its
+  model and colours come in the join-download resource pack (§3c rule 2).
+  - **Dyeing:** use a dye on it (`playerInteractWithBlock`) to set the colour, which
+    switches the chest to that colour's channel. A channel's items stay in its vault, so
+    re-dyeing a chest never moves or loses anything.
+  - Breaking the chest drops only the chest; the contents stay in the vault.
+- **Spike first (an M0-style check, needs a player):**
+  - an entity inventory opens from the Xbox and from Windows;
+  - a vault entity keeps a full inventory (enchanted and named items, a filled shulker
+    box) through a cross-dimension teleport;
+  - the tickingarea vault room survives a server restart;
+  - the interaction events this needs are on stable.
+
+**Open (owner):**
+1. **Whose channel?** It's either **the opener's**, like a vanilla ender chest (everyone
+   sees their own red store in any red chest), or **the placer's**, a shared hub where
+   anyone opening Sam's red chest sees Sam's red store. The first is private and safe;
+   the second allows trading posts.
+2. **Cost.** For example, crafting one chest needs an ender chest plus a Power Pack
+   (nine eyes), and the dye is free. Or the chest is cheap but each **new colour channel**
+   costs a Power Pack the first time it's used.
+3. **How many colours:** the 16 dye colours.
+4. **What happens to a vault if its owner is removed from the allowlist:** it's kept, and
+   the owner can see its contents from the PWA.
+
+### M12 — Wormhole gates: two linked portals (owner idea, 2026-10-10; details open)
+
+**The idea.** Like a Nether portal, but between **two places the players choose**, in any
+dimensions. Gates are **very expensive** to make.
+
+**How a gate comes to be (proposed):**
+1. **Craft a pair of Wormhole Seeds.** One craft makes **two** linked seeds
+   (`jbrain:wormhole_seed`, stack size 1). They share a pair id stored on each seed as an
+   item dynamic property. The tooltip says "Wormhole Seed — pair 7, side A/B".
+2. **Build a frame and plant seed A**, as with a Nether portal.
+   - The player builds the frame first: e.g. a 4×5 ring of **crying obsidian**, which is
+     itself costly.
+   - Using the seed on the frame's base plants it, and the script checks the frame's
+     shape.
+   - The gate **forms but stays dormant**: a dim, still surface with a faint particle
+     shimmer, and a chat line "Waiting for its twin".
+3. **Plant seed B anywhere else**, in any dimension. **Both gates come alive** at the same
+   moment, with an animated wormhole surface and a vanilla sound at both ends. The link
+   is **bi-directional**.
+4. **Stepping in:** the script sees a player inside the gate surface and
+   `tryTeleport`s them to the other gate's exit spot, facing out. A short cooldown stops
+   the player bouncing straight back. Mobs and items don't travel; that's a later option.
+
+**Rules (proposed):**
+- **Breaking any frame block** takes that gate down, and the twin goes dormant again.
+  Rebuilding the frame and re-using the seed restores it. Mining the gate's core returns
+  the seed, so a gate can be moved.
+- **A blocked exit** (built over, or filled with water or lava) refuses the trip rather
+  than putting the player inside blocks.
+- **Logging:** every trip is recorded (who, from, to), and gates show on the M8 map.
+- **A cross-dimension gate** to a dimension a player has never visited is refused, so
+  nobody reaches the End early. This is the same rule as the M10 teleport.
+- **Gates are shared infrastructure.** Anyone can step through, unless the owner makes a
+  gate private to its builder (owner option).
+
+**Built on:**
+- custom items and a custom block for the gate surface (its texture and animation come in
+  the join download);
+- frame detection by block checks;
+- `tryTeleport`;
+- gate records kept by the pack: world dynamic properties for pair id, both ends, state
+  and builder, mirrored to the sidecar for the PWA.
+
+It needs M5's pack install, not Dave, though Dave can answer "where does the blue gate go?"
+
+**Open (owner): how expensive?** Some options:
+1. **A Nether Star at the core:** a seed pair needs a Nether Star (killing a Wither) plus 4
+   Power Packs (36 eyes). This is the true end-game, and only a few gates ever exist.
+2. **Power Packs only:** 8 Power Packs (72 eyes) for a pair. That's heavy grinding, but
+   no boss fight.
+3. **A cheaper seed with an expensive frame:** the frame needs crying obsidian plus a
+   ring of blocks of diamond or netherite. A gate is a visible monument of what it cost.
+
+Also open:
+- whether a gate can be re-linked;
+- whether more than two gates can share a network (a hub);
+- whether mobs and items travel.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
