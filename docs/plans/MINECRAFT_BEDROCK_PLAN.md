@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ M10◻️ M11◻️ M12◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ M10◻️ M11◻️ M12◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -669,6 +669,43 @@ house by typing the address.
   villager named "Dave", made invulnerable by the pack). Which to use is the owner's call. Spawning it
   changes the world, so it is an owner action, never a player's.
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
+
+### T1 — Travel log: per-player trails and fog of war (owner, 2026-10-10)
+
+**Start recording early, draw it later.** History can't be recorded after the fact, so
+the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
+
+- **Sampling (no add-on needed):** while anyone is online, the wrapper runs
+  `querytarget "<name>"` on the console for each online player (names come from the join
+  events) every **10 s**. It's a vanilla command, and BDS answers with JSON: dimension,
+  position and facing.
+  - A sample less than 4 blocks from that player's last kept one is dropped, so standing
+    still costs nothing.
+  - **M0b check:** the reply's exact shape on 1.26, and that it costs the server nothing
+    noticeable.
+- **Storage (owner-only RLS, with an isolation test, like `mc_player_sessions`):**
+  - **`app.mc_player_track`** holds the trails: world folder, xuid, time, dimension,
+    x/y/z. About 4 players × 6 a minute while moving; months of play is a few MB.
+  - **`app.mc_player_explored`** holds the per-person fog of war: world, xuid, dimension,
+    chunk x/z, first seen, last seen. A chunk is revealed when a player comes within **4
+    chunks** of it, which is roughly what they could see.
+  - Both are drained from the wrapper's events with the boot-id and replay-safe pattern
+    of play sessions.
+- **What it gives:**
+  - **M8 map layers:** *explored by* (one player, or everyone, each in their own
+    colour), *trail* (a session's path, or a day's), and *heat* (where time was spent).
+  - **Dave and the agent:** "where was I an hour ago?", "how did I get to that village?",
+    "has anyone been east of the river?" (the M6 `my_track` and `explored_by` tools).
+  - **PWA:** each player's lifetime stats gain distance travelled per dimension.
+- **A world reset or a restore:** a world's track and fog follow its **folder**. A reset
+  or "new seed" clears them, because they describe terrain that no longer exists. A
+  restore keeps them, since some of the trail may now be "in the future" of the restored
+  world, and that's harmless.
+- **Privacy:** family-only and owner-visible, as decided for "where is everyone"
+  (2026-10-10). Players can ask Dave about their own trail. Seeing others' trails follows
+  the same rule as "where is Sam".
+- **Size:** about 120 lines of wrapper, one migration, a drain and tests. It's small, and
+  one PR.
 
 ### M8 — Maps and biomes (after M4; the map tools in §3b)
 
