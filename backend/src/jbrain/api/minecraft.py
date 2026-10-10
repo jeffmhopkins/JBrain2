@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
@@ -416,3 +416,33 @@ async def set_world_rules(
     slot: Annotated[str, Path(pattern=_SLOT)], body: RulesIn, settings: SettingsDep
 ) -> dict[str, Any]:
     return await mc.call(settings, "POST", f"/worlds/{slot}/rules", json=body.model_dump())
+
+
+# --- the map (MINECRAFT_BEDROCK_PLAN.md §M8) ----------------------------------------
+_DIM = r"^(overworld|nether|the_end)$"
+
+
+@router.get("/map/info")
+async def map_info(
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=_DIM)] = "overworld",
+) -> dict[str, Any]:
+    """What a viewer needs before asking for tiles: the generated extent and the tile
+    geometry."""
+    return await mc.call(settings, "GET", "/map/info", params={"slot": slot, "dim": dim})
+
+
+@router.get("/map/tile/{dim}/{zoom}/{tx}/{tz}.png")
+async def map_tile(
+    dim: Annotated[str, Path(pattern=_DIM)],
+    zoom: Annotated[int, Path(ge=0, le=8)],
+    tx: int,
+    tz: int,
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+) -> Response:
+    """One 256×256 tile of the biome map, rendered on the box from the world's own files.
+    Cached briefly: a tile changes only as the world is explored."""
+    png = await mc.image(settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot})
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})

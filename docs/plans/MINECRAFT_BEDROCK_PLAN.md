@@ -777,6 +777,27 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 
 ### M8 — Maps and biomes (after M4; the map tools in §3b)
 
+**Renderer, first layer (shipped 2026-10-10).**
+- **Reader:** `deploy/minecraft/leveldb.py` is a stdlib reader for Mojang's LevelDB
+  (tables with raw-deflate blocks, plus the write-ahead log, newest write winning). It
+  never writes or locks, so it reads a world while BDS runs.
+- **Biome layer:** `mapping.py` renders the **biome atlas** from each chunk's `Data3D`
+  record (heights and biomes, no block parsing), hillshaded, with ungenerated ground
+  transparent (fog).
+- **Tiles:** 256 blocks at 1 px per block; zoom k covers 2^k tiles, up to 3. A
+  per-world chunk index and rendered tiles are both cached until the world's files
+  change.
+- **Routes:** `GET /api/minecraft/map/info` and `/map/tile/{dim}/{z}/{x}/{y}.png`
+  (owner), plus debug twins.
+- **Facts verified on a real 1.26 world** that BDS generated locally:
+  - the height map is indexed `z*16 + x`. Chunk-border smoothness picked the order:
+    0.53 against 3.84 for the transpose;
+  - heights are measured above the floor (−64);
+  - biome stores are bottom-up, one per 16-high section, in x,z,y order.
+- **Next:** the true-colour surface layer (top block from `SubChunk` records), the
+  overlays from the travel log, and the viewer itself (GUI gate:
+  `docs/mocks/minecraft-map/`).
+
 **Owner request (2026-10-10): the assistant should generate 2D maps of areas and know about
 biomes.**
 

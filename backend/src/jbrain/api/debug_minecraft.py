@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -235,3 +235,33 @@ async def minecraft_travel(request: Request, _p: DebugDep) -> dict[str, Any]:
     request.state.debug_detail = "minecraft travel summary"
     maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
     return {"players": await travel.summary(maker)}
+
+
+@router.get("/map/info")
+async def minecraft_map_info(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+) -> dict[str, Any]:
+    request.state.debug_detail = f"minecraft map info {slot} {dim}"
+    return await _sidecar(settings, "GET", "/map/info", params={"slot": slot, "dim": dim})
+
+
+@router.get("/map/tile/{dim}/{zoom}/{tx}/{tz}.png")
+async def minecraft_map_tile(
+    dim: Annotated[str, Path(pattern=r"^(overworld|nether|the_end)$")],
+    zoom: Annotated[int, Path(ge=0, le=8)],
+    tx: int,
+    tz: int,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+) -> Response:
+    """A map tile picture — a rendering, not the world's files, so it doesn't break the
+    no-world-download rule above."""
+    request.state.debug_detail = f"minecraft map tile {slot} {dim} {zoom}/{tx}/{tz}"
+    png = await mc.image(settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot})
+    return Response(png, media_type="image/png")

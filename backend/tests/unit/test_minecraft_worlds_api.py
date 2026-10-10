@@ -169,3 +169,34 @@ def test_world_input_is_checked_before_it_reaches_the_box(client, sidecar) -> No
     ]
     for method, path, body in bad:
         assert getattr(client, method)(path, json=body).status_code == 422, (path, body)
+
+
+def test_map_tiles_pass_through_as_png_and_bad_input_never_reaches_the_box(client, sidecar) -> None:
+    seen, replies = sidecar
+    png = b"\x89PNG\r\n\x1a\nfake"
+    replies["/map/tile/overworld/1/-2/3.png"] = httpx.Response(200, content=png)
+    replies["/map/info"] = httpx.Response(200, json={"extent": None, "tile_blocks": 256})
+    resp = client.get("/api/minecraft/map/tile/overworld/1/-2/3.png?slot=slot2")
+    assert resp.status_code == 200 and resp.content == png
+    assert resp.headers["content-type"] == "image/png"
+    assert seen[-1].url.params["slot"] == "slot2"
+    info = client.get("/api/minecraft/map/info?dim=nether").json()
+    assert info["tile_blocks"] == 256 and seen[-1].url.params["dim"] == "nether"
+    count = len(seen)
+    for bad in (
+        "/api/minecraft/map/tile/aether/0/0/0.png",
+        "/api/minecraft/map/tile/overworld/9/0/0.png",
+        "/api/minecraft/map/tile/overworld/0/0/0.png?slot=../etc",
+        "/api/minecraft/map/info?dim=moon",
+    ):
+        assert client.get(bad).status_code == 422, bad
+    assert len(seen) == count
+
+
+def test_a_refused_tile_is_the_boxs_reason(client, sidecar) -> None:
+    _seen, replies = sidecar
+    replies["/map/tile/overworld/0/0/0.png"] = httpx.Response(
+        400, json={"detail": "slot2 has no world yet"}
+    )
+    resp = client.get("/api/minecraft/map/tile/overworld/0/0/0.png?slot=slot2")
+    assert resp.status_code == 400 and "no world" in resp.json()["detail"]
