@@ -61,6 +61,17 @@ VERSION_TTL_S = 6 * 3600
 START_TIMEOUT_S = 120.0
 # How long players get between the chat warning and the server stopping under them.
 WARN_S = 10.0
+# server.properties keys that only take effect when the server starts, with BDS's own
+# defaults: a key never set is at its default, so setting it to that isn't a change.
+RESTART_KEYS = {
+    "allow-cheats": "false",
+    "allow-list": "false",
+    "difficulty": "easy",
+    "gamemode": "survival",
+    "max-players": "10",
+    "server-name": "Dedicated Server",
+    "view-distance": "32",
+}
 # The probe behavior pack (M0 item 5), bundled in the image — nothing uploaded.
 PROBE_PACK_SRC = Path(__file__).resolve().parent / "probe-pack"
 PROBE_PACK_DIR = "jbrain_probe"
@@ -85,6 +96,9 @@ class Rig:
         # a reload sees the job instead of a server that looks idle.
         self._phase = ""
         self._job_started: float | None = None
+        # server.properties as of the last start: a setting that differs from it is saved
+        # but waiting for a restart, which every device can then show.
+        self._applied: dict[str, str] = {}
         self.slots = worlds.SlotStore(
             SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
         )
@@ -214,6 +228,7 @@ class Rig:
         each time — not only on a Load — and a change saved while stopped lands."""
         self._step("starting")
         self.write_properties()
+        self._applied = dict(self.properties())
         self.bds.start()
         self._apply_rules_when_up(self.active_folder())
 
@@ -264,6 +279,7 @@ class Rig:
             "uptime_s": round(time.time() - started) if started and b.running else None,
             "exit_code": b.exit_code,
             "snapshots": len(self.index.listing()),
+            "pending_restart": self.pending_restart(),
             "job": {
                 "what": self._busy,
                 "phase": self._phase or None,
@@ -273,8 +289,24 @@ class Rig:
             else None,
         }
 
+    def pending_restart(self) -> list[str]:
+        """Restart-bound settings saved since the server last started. Empty before the
+        first start, when there is nothing to compare against."""
+        if not self._applied:
+            return []
+        now = self.properties()
+        return sorted(
+            k
+            for k, default in RESTART_KEYS.items()
+            if now.get(k, default) != self._applied.get(k, default)
+        )
+
     def snapshot(
-        self, label: str, folder: str | None = None, auto: bool | None = None
+        self,
+        label: str,
+        folder: str | None = None,
+        auto: bool | None = None,
+        note: str = "",
     ) -> dict[str, Any]:
         """A backup of one world: hot (save hold/query/resume) when it is the one
         running, a plain copy of its folder otherwise. `auto` marks the safety
@@ -282,12 +314,12 @@ class Rig:
         folder = folder or self.active_folder()
         auto = label.startswith("pre-") if auto is None else auto
         if folder != self.active_folder() or not self.bds.running:
-            return self.cold_snapshot(label, folder, auto)
+            return self.cold_snapshot(label, folder, auto, note)
         data, files = self.bds.snapshot(self.world_dir(folder))
-        return self._keep(label, data, len(files), folder, auto)
+        return self._keep(label, data, len(files), folder, auto, note)
 
     def cold_snapshot(
-        self, label: str, folder: str | None = None, auto: bool = True
+        self, label: str, folder: str | None = None, auto: bool = True, note: str = ""
     ) -> dict[str, Any]:
         folder = folder or self.active_folder()
         world = self.world_dir(folder)
@@ -298,7 +330,7 @@ class Rig:
                 if f.is_file():
                     zf.write(f, f.relative_to(world).as_posix())
                     count += 1
-        return self._keep(label, buf.getvalue(), count, folder, auto)
+        return self._keep(label, buf.getvalue(), count, folder, auto, note)
 
     def snapshot_file(self, name: str) -> Path:
         src = (SNAPSHOT_DIR / name).resolve()
@@ -332,14 +364,14 @@ class Rig:
         shutil.rmtree(aside, ignore_errors=True)
 
     def _keep(
-        self, label: str, data: bytes, files: int, folder: str, auto: bool
+        self, label: str, data: bytes, files: int, folder: str, auto: bool, note: str = ""
     ) -> dict[str, Any]:
         SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
         slug = _LABEL.sub("-", label).strip("-")[:40]
         name = f"{folder}-{stamp}{'-' + slug if slug else ''}.mcworld"
         (SNAPSHOT_DIR / name).write_bytes(data)
-        self.index.record(name, folder, label, auto)
+        self.index.record(name, folder, label, auto, note)
         self.index.prune(folder)
         return {"name": name, "bytes": len(data), "files": files}
 
@@ -587,7 +619,7 @@ class Rig:
         with self._exclusive("loading a world"):
             if self.bds.running:
                 self._step("backing up")
-                self.snapshot("pre-load", auto=True)
+                self.snapshot("pre-load", auto=True, note=f"before loading {rec['name']}")
                 self._stop(f"Switching to the world {rec['name']}")
             if not rec["exists"] and not rec["seed"]:
                 rec = self.slots.update(slot_id, seed=worlds.new_seed(), origin="new")
@@ -625,6 +657,7 @@ class Rig:
         if active and "difficulty" in fields and self.bds.running:
             with contextlib.suppress(bds.ConsoleError):
                 self.bds.command(f"difficulty {rec['difficulty']}")
+                self._applied["difficulty"] = rec["difficulty"]
         if active and set(fields) - {"name"}:
             self.set_overrides(
                 {
@@ -645,7 +678,9 @@ class Rig:
         with self._exclusive("importing a world"):
             if rec["exists"]:
                 self._step("backing up")
-                self.snapshot("pre-import", folder=folder, auto=True)
+                self.snapshot(
+                    "pre-import", folder=folder, auto=True, note="before an import"
+                )
 
             def work() -> None:
                 aside = world.with_name(f"{folder}.replaced-{int(time.time() * 1000)}")
@@ -688,7 +723,7 @@ class Rig:
         with self._exclusive("resetting a world"):
             if rec["exists"]:
                 self._step("backing up")
-                self.snapshot("pre-reset", folder=folder, auto=True)
+                self.snapshot("pre-reset", folder=folder, auto=True, note="before a reset")
 
             def work() -> None:
                 shutil.rmtree(self.world_dir(folder), ignore_errors=True)
@@ -725,7 +760,12 @@ class Rig:
         with self._exclusive("restoring a backup"):
             if rec["exists"]:
                 self._step("backing up")
-                self.snapshot("pre-restore", folder=folder, auto=True)
+                self.snapshot(
+                    "pre-restore",
+                    folder=folder,
+                    auto=True,
+                    note=f"before restoring {self.index.entry(name)['label'] or name}",
+                )
 
             def work() -> None:
                 self.restore(name, folder)

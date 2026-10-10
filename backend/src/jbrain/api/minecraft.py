@@ -56,6 +56,9 @@ def _server_view(raw: dict[str, Any]) -> dict[str, Any]:
         "auto_update": bool(raw.get("auto_update", False)),
         # A world operation in flight (what, phase, started_at), so every device sees it.
         "job": raw.get("job"),
+        # server.properties keys saved since the last start ("gamemode", "allow-list", …):
+        # what a restart will change, the same on every device.
+        "pending_restart": raw.get("pending_restart") or [],
     }
 
 
@@ -357,7 +360,13 @@ class ServerSettingsIn(BaseModel):
 @router.get("/server-settings")
 async def server_settings(settings: SettingsDep) -> dict[str, Any]:
     eff = (await mc.call(settings, "GET", "/properties"))["effective"]
-    return {k: eff.get(v) for k, v in SERVER_KEYS.items()}
+    out: dict[str, Any] = {k: eff.get(v) for k, v in SERVER_KEYS.items()}
+    for key in ("max_players", "view_distance"):  # server.properties holds text
+        try:
+            out[key] = int(out[key]) if out[key] is not None else None
+        except ValueError:
+            out[key] = None
+    return out
 
 
 @router.put("/server-settings")

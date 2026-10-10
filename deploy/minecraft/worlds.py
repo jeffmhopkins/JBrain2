@@ -190,13 +190,16 @@ class SnapshotIndex:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(raw, indent=2, sort_keys=True))
 
-    def record(self, name: str, folder: str, label: str, auto: bool) -> None:
+    def record(
+        self, name: str, folder: str, label: str, auto: bool, note: str = ""
+    ) -> None:
         raw = self._raw()
         raw["snapshots"][name] = {
             "folder": folder,
             "label": label,
             "auto": auto,
             "pinned": False,
+            "note": note,
         }
         self._save(raw)
 
@@ -205,7 +208,7 @@ class SnapshotIndex:
         is the filename prefix, and a `pre-` label marks the automatic ones."""
         rec = self._raw()["snapshots"].get(name)
         if rec:
-            return {"downloaded_at": None, **rec}
+            return {"downloaded_at": None, "note": "", **rec}
         folder = name.split("-2", 1)[0] if "-2" in name else "world"
         return {
             "folder": folder,
@@ -213,6 +216,7 @@ class SnapshotIndex:
             "auto": "-pre-" in name,
             "pinned": False,
             "downloaded_at": None,
+            "note": "",
         }
 
     def set_pinned(self, name: str, pinned: bool) -> None:

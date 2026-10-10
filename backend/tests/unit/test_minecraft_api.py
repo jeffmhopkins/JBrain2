@@ -96,7 +96,7 @@ async def test_the_server_view_matches_the_contract(fake) -> None:
         19132,
     )
     assert s["lan_ip"] == "192.168.1.20" and s["players"][0]["joined_at"] == 100.0
-    assert s["job"] is None
+    assert s["job"] is None and s["pending_restart"] == []
 
 
 async def test_a_running_world_job_is_passed_through(fake) -> None:

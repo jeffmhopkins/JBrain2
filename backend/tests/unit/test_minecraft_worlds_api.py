@@ -132,6 +132,7 @@ def test_server_settings_are_a_fixed_set_on_server_properties(client, sidecar) -
         "/api/minecraft/server-settings", json={"server_name": "Hopkins", "max_players": 6}
     )
     assert resp.status_code == 200
+    assert (resp.json()["max_players"], resp.json()["view_distance"]) == (10, 32)  # numbers
     sent = next(r for r in seen if r.method == "POST" and r.url.path == "/properties")
     assert json.loads(sent.content) == {"set": {"server-name": "Hopkins", "max-players": "6"}}
     assert (

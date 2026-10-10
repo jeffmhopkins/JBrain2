@@ -1110,3 +1110,38 @@ def test_a_download_is_recorded_on_the_backup_and_the_world() -> None:
     assert rig.index.listing()[0]["downloaded_at"] is None
     rig.index.note_download(snap, "world")
     assert rig.index.listing()[0]["downloaded_at"] and rig.index.last_download("world")
+
+
+def test_a_setting_saved_since_the_last_start_reads_as_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=False)
+    assert rig.pending_restart() == []  # never started: nothing to compare against
+    rig.server_action("start")
+    rig.bds.command = lambda c, **k: []  # type: ignore[attr-defined]
+    rig.update_slot("slot1", {"gamemode": "creative", "difficulty": "hard"})
+    rig.set_overrides({"max-players": "8"})
+    # difficulty went live through the console, so only the others wait for a restart
+    assert rig.pending_restart() == ["gamemode", "max-players"]
+    rig.server_action("restart")
+    assert rig.pending_restart() == []
+
+
+def test_an_automatic_backup_says_what_it_was_taken_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=False)
+    rig.create_slot("slot2", {"name": "Creative test"})
+    rig.bds.running = True
+    monkeypatch.setattr(
+        rig,
+        "snapshot",
+        lambda label, **kw: rig.cold_snapshot(label, None, True, kw.get("note", "")),
+    )
+    rig.load_slot("slot2")
+    (snap,) = rig.index.listing("world")
+    assert snap["note"] == "before loading Creative test" and snap["auto"]
