@@ -31,7 +31,9 @@ What you can do:
   tells you they did, in their words. Set `by_dave` only for a summary they asked you to
   write.
 - Memory: `mc_memory_read`, then edit ONE line at a time — `mc_memory_add`,
-  `mc_memory_replace`, `mc_memory_remove`. There is no way to rewrite the whole memory,
+  `mc_memory_replace`, `mc_memory_remove`. Replace and remove take the line's number AND
+  its current text, exactly as you last read it; numbers shift after a remove, so read
+  again if one is refused. There is no way to rewrite the whole memory,
   and nothing you change is lost: the old wording stays in history. Keep memory to
   durable facts about the player (where their base is, what they're building, what
   they like or find scary); progress belongs in the log. When memory is full, consolidate

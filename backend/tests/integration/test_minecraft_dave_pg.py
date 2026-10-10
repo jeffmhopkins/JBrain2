@@ -140,9 +140,17 @@ async def test_memory_is_line_by_line_with_history(maker) -> None:
     tools = _tools(maker, "Steve42")
     await tools["mc_memory_add"]({"text": "Base at 100 64 -20"}, ctx)
     await tools["mc_memory_add"]({"text": "Scared of the Deep Dark"}, ctx)
-    receipt = await tools["mc_memory_replace"]({"line": 1, "text": "Base at 120 70 -15"}, ctx)
-    assert "was “Base at 100 64 -20”" in receipt
-    assert "reads" in await tools["mc_memory_remove"]({"line": 2, "text": "wrong text"}, ctx)
+    stale = await tools["mc_memory_replace"](
+        {"line": 1, "old_text": "Scared of the Deep Dark", "text": "x"}, ctx
+    )
+    assert "Nothing changed" in stale  # a shifted number can't overwrite another line
+    receipt = await tools["mc_memory_replace"](
+        {"line": 1, "old_text": "Base at 100 64 -20", "text": "Base at 120 70 -15"}, ctx
+    )
+    assert "Base at 100 64 -20" in receipt and "Base at 120 70 -15" in receipt
+    assert "Nothing changed" in await tools["mc_memory_remove"](
+        {"line": 2, "text": "wrong text"}, ctx
+    )
     await tools["mc_memory_remove"]({"line": 2, "text": "scared of the deep dark"}, ctx)
     current = await tools["mc_memory_read"]({}, ctx)
     assert "1. Base at 120 70 -15" in current and "Deep Dark" not in current
@@ -226,6 +234,8 @@ async def test_a_non_owner_sees_nothing_and_cannot_write(maker, ctx_name, table)
     await tools["mc_goal_create"]({"title": "Beacon"}, ctx)
     await tools["mc_log"]({"text": "got iron"}, ctx)
     await tools["mc_memory_add"]({"text": "Base"}, ctx)
+    # An unbound chat, so a refused mc_chat_player insert can only be RLS, not the PK.
+    fresh = await _chat(maker, owner)
     other = {"EVERY_SCOPE": EVERY_SCOPE, "UNSCOPED": UNSCOPED}[ctx_name]
     async with scoped_session(maker, other) as s:
         assert (await s.execute(text(f"SELECT count(*) FROM app.{table}"))).scalar() == 0
@@ -236,8 +246,133 @@ async def test_a_non_owner_sees_nothing_and_cannot_write(maker, ctx_name, table)
         "mc_player_memory": "INSERT INTO app.mc_player_memory (xuid, seq, text, source)"
         " VALUES ('x', 1, 't', 'owner')",
         "mc_chat_player": "INSERT INTO app.mc_chat_player (agent_session_id, xuid, gamertag)"
-        f" VALUES ('{ctx.agent_session_id}', 'x', 'x')",
+        f" VALUES ('{fresh.agent_session_id}', 'x', 'x')",
     }
     with pytest.raises((DBAPIError, ProgrammingError)):
         async with scoped_session(maker, other) as s:
             await s.execute(text(inserts[table]))
+
+
+async def _seen(maker, owner, xuid: str, gamertag: str, at: datetime | None = None) -> None:
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.mc_player_sessions"
+                " (xuid, gamertag, boot_id, start_event_id, started_at, last_seen_at)"
+                " VALUES (:x, :g, :b, 1, :t, :t)"
+            ),
+            {"x": xuid, "g": gamertag, "b": str(uuid.uuid4()), "t": at or datetime.now(UTC)},
+        )
+
+
+async def test_a_reused_gamertag_never_swaps_the_player_under_a_chat(maker) -> None:
+    owner = await _owner(maker)
+    await _seen(maker, owner, "111", "Steve")
+    ctx = await _chat(maker, owner)
+    tools = _tools(maker, "Steve")
+    await tools["mc_goal_create"]({"title": "Steve's beacon"}, ctx)
+    # Steve renames; another account takes "Steve" and plays more recently.
+    await _seen(maker, owner, "222", "Steve")
+    assert "Steve's beacon" in await tools["mc_goals"]({}, ctx)
+    async with scoped_session(maker, owner) as s:
+        bound = (await s.execute(text("SELECT xuid FROM app.mc_chat_player"))).scalar()
+    assert bound == "111"
+
+
+async def test_rekeying_into_an_xuid_with_memory_keeps_every_line(maker) -> None:
+    owner = await _owner(maker)
+    await _seen(maker, owner, "333", "Known")
+    known = await _chat(maker, owner)
+    await _tools(maker, "Known")["mc_memory_add"]({"text": "Likes boats"}, known)
+    # Memory written for the name before any session exists under it in this chat's eyes.
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.mc_player_memory (xuid, seq, text, source)"
+                " VALUES ('name:known', 1, 'Builds castles', 'owner')"
+            )
+        )
+    later = await _chat(maker, owner)
+    lines = await _tools(maker, "Known")["mc_memory_read"]({}, later)
+    assert "1. Likes boats" in lines and "2. Builds castles" in lines
+
+
+async def test_reopening_and_renaming_goals_keep_finish_times_honest(maker) -> None:
+    owner = await _owner(maker)
+    ctx = await _chat(maker, owner)
+    tools = _tools(maker, "Steve42")
+    await tools["mc_goal_create"]({"title": "Beacon"}, ctx)
+
+    async def finished() -> Any:
+        async with scoped_session(maker, owner) as s:
+            return (await s.execute(text("SELECT finished_at FROM app.mc_goals"))).scalar()
+
+    await tools["mc_goal_update"]({"goal": 1, "status": "done"}, ctx)
+    first = await finished()
+    assert first is not None
+    await tools["mc_goal_update"]({"goal": 1, "title": "Beacon at the base"}, ctx)
+    await tools["mc_goal_update"]({"goal": 1, "status": "done"}, ctx)  # already done
+    assert await finished() == first
+    await tools["mc_goal_update"]({"goal": 1, "status": "open"}, ctx)
+    assert await finished() is None
+    assert "1. [open] Beacon at the base" in await tools["mc_goals"]({}, ctx)
+
+
+async def test_the_intro_is_a_snapshot_for_the_chat(maker) -> None:
+    owner = await _owner(maker)
+    ctx = await _chat(maker, owner)
+    tools = _tools(maker, "Steve42")
+    await tools["mc_memory_add"]({"text": "Base at 100 64 -20"}, ctx)
+    sid = ctx.agent_session_id
+    assert sid is not None
+    settings = FakeSettings("Steve42")
+    first = await mt.chat_intro(maker, settings, owner, sid)  # type: ignore[arg-type]
+    await tools["mc_memory_add"]({"text": "Scared of the Deep Dark"}, ctx)
+    # Byte-identical, so the local engine's prefix cache survives a memory edit.
+    assert await mt.chat_intro(maker, settings, owner, sid) == first  # type: ignore[arg-type]
+    await tools["mc_player"]({"gamertag": "Mira"}, ctx)
+    switched = await mt.chat_intro(maker, settings, owner, sid)  # type: ignore[arg-type]
+    assert "Mira" in switched and "Base at" not in switched
+
+
+async def test_locate_searches_from_the_last_point_in_the_loaded_world(
+    maker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.minecraft import client as mc
+
+    owner = await _owner(maker)
+    await _seen(maker, owner, "444", "Walker")
+    async with scoped_session(maker, owner) as s:
+        for world, x in (("slot2", 900.0), ("world", 120.0)):
+            await s.execute(
+                text(
+                    "INSERT INTO app.mc_player_track (world, xuid, gamertag, boot_id,"
+                    " sample_id, at, dim, x, y, z) VALUES (:w, '444', 'Walker', :b, 1,"
+                    " now(), 'overworld', :x, 64, -40)"
+                ),
+                {"w": world, "b": str(uuid.uuid4()), "x": x},
+            )
+    sent: list[str] = []
+
+    async def call(_cfg: Any, _m: str, path: str, **kw: Any) -> dict[str, Any]:
+        if path == "/worlds":
+            return {"active": "world", "slots": []}
+        sent.append(kw["json"]["command"])
+        return {"lines": ["[x INFO] The nearest village is at block 300, ~, 10"]}
+
+    monkeypatch.setattr(mc, "call", call)
+    ctx = await _chat(maker, owner)
+    out = await _tools(maker, "Walker")["mc_locate"]({"kind": "structure", "id": "village"}, ctx)
+    assert sent == ["execute positioned 120 64 -40 run locate structure village"]
+    assert "last known position" in out
+
+
+async def test_play_history_lists_this_players_sessions(maker) -> None:
+    owner = await _owner(maker)
+    await _seen(maker, owner, "555", "Player5")
+    ctx = await _chat(maker, owner)
+    out = await _tools(maker, "Player5")["mc_play_history"]({"days": 3}, ctx)
+    assert "last 3 days" in out and out.count(" for 0m") == 1
+    assert "days must be" in await _tools(maker, "Player5")["mc_play_history"](
+        {"days": "lots"}, ctx
+    )

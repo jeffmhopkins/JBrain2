@@ -73,6 +73,10 @@ def upgrade() -> None:
         """
     )
     op.execute("CREATE INDEX mc_goals_xuid_idx ON app.mc_goals (xuid, status)")
+    # mc_locate's "search from where the player last was": one player's newest sample.
+    op.execute(
+        "CREATE INDEX mc_player_track_xuid_idx ON app.mc_player_track (xuid, world, dim, at)"
+    )
     op.execute(
         """
         CREATE TABLE app.mc_goal_log (
@@ -112,7 +116,10 @@ def upgrade() -> None:
                 REFERENCES app.agent_sessions (id) ON DELETE CASCADE,
             xuid text NOT NULL,
             gamertag text NOT NULL,
-            set_at timestamptz NOT NULL DEFAULT now()
+            set_at timestamptz NOT NULL DEFAULT now(),
+            -- The chat's opening memory-and-goals block, kept so the system prompt stays
+            -- byte-stable for the chat's life (the local engine's prefix cache).
+            intro text
         )
         """
     )
@@ -127,6 +134,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DROP INDEX app.mc_player_track_xuid_idx")
     for table in reversed(_TABLES):
         op.execute(f"DROP TABLE app.{table}")
     _set_agent_checks(_AGENT_OLD)

@@ -20,6 +20,7 @@ params:
       description: Search from this Z.
   required: [kind, id]
 ---
-Find the nearest structure or biome of a kind, using the server's own world generator —
-it answers even for places nobody has explored. Gives the coordinates and the distance
-from where it searched.
+Find the nearest structure or biome of a kind in the Overworld, using the server's own
+world generator — it answers even for places nobody has explored. Gives the coordinates
+and the distance from where it searched. Nether and End structures can't be searched
+this way yet.

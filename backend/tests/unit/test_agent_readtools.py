@@ -1785,7 +1785,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "mc_locate.tool": (
             "mc_locate",
             1,
-            "d2606e2274dfe2593c28a307f8df46cfefc425d3a7bff04800bd42e9fa11e153",
+            "2420d9b3089e4de74d17b028a5688c11fc3e337ed72298f77ed820c95872d553",
         ),
         "mc_log.tool": (
             "mc_log",
@@ -1815,7 +1815,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "mc_memory_replace.tool": (
             "mc_memory_replace",
             1,
-            "c5bd1c9475792a5b3b797a58677a7ee15abe7cdca371e9796f7887348665d7fa",
+            "afab3eaa3b352a202606382b719ec6793b8a642e463b270cef92822ba5f0f862",
         ),
         "mc_play_history.tool": (
             "mc_play_history",

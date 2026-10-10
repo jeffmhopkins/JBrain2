@@ -108,6 +108,21 @@ def check_memory_op(current: list[str], op: str, line: int, new_text: str) -> st
     return ""
 
 
+def _reply(lines: list[str]) -> str:
+    """A console reply's text, its log-line prefixes dropped."""
+    return " ".join(line.split("] ", 1)[-1] for line in lines).strip() or "(no answer)"
+
+
+def _int(raw: Any, default: int, low: int, high: int) -> int | None:
+    """A model-supplied count clamped to range; None when it isn't a number at all."""
+    if raw in (None, ""):
+        return default
+    try:
+        return max(low, min(int(raw), high))
+    except (TypeError, ValueError):
+        return None
+
+
 def _when(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -197,11 +212,15 @@ async def player_context(s: AsyncSession, key: str) -> str:
 async def bind_chat(s: AsyncSession, agent_session_id: str | None, player: Player) -> None:
     if not agent_session_id:
         return
+    # Binding to a different player drops the chat's intro snapshot, so the next turn
+    # starts from that player's memory and goals.
     await s.execute(
         text(
             "INSERT INTO app.mc_chat_player (agent_session_id, xuid, gamertag)"
             " VALUES (:sid, :k, :g) ON CONFLICT (agent_session_id) DO UPDATE"
-            " SET xuid = excluded.xuid, gamertag = excluded.gamertag, set_at = now()"
+            " SET xuid = excluded.xuid, gamertag = excluded.gamertag, set_at = now(),"
+            " intro = CASE WHEN app.mc_chat_player.xuid = excluded.xuid"
+            " THEN app.mc_chat_player.intro END"
         ),
         {"sid": agent_session_id, "k": player.key, "g": player.gamertag},
     )
@@ -218,11 +237,16 @@ async def chat_player_for(
     if agent_session_id:
         row = (
             await s.execute(
-                text("SELECT gamertag FROM app.mc_chat_player WHERE agent_session_id = :sid"),
+                text("SELECT xuid, gamertag FROM app.mc_chat_player WHERE agent_session_id = :sid"),
                 {"sid": agent_session_id},
             )
         ).first()
         if row is not None:
+            # A chat bound to an xuid stays with that account: a gamertag can later belong
+            # to someone else, and re-resolving by name would swap players mid-chat. Only
+            # a name-keyed binding (not seen on the server yet) is looked up again.
+            if not row.xuid.startswith("name:"):
+                return Player(row.xuid, row.gamertag)
             return await resolve_player(s, row.gamertag)
     raw = await settings_store.minecraft_gamertag(session_ctx) if settings_store else None
     tag = check_gamertag(raw) if raw else None
@@ -240,7 +264,13 @@ async def chat_intro(
     agent_session_id: str,
 ) -> str:
     """What a Minecraft_Dave turn's system prompt ends with: whose chat it is, and that
-    player's memory and open goals (plan §P1, "read at the start of a chat")."""
+    player's memory and open goals as they were when the chat started (plan §P1, "read at
+    the start of a chat").
+
+    Snapshotted on first use and reused for the chat's life, so the system prompt stays
+    byte-identical turn to turn and the local engine's prefix cache holds. Edits made
+    during the chat reach the model through its own tool results; switching players
+    takes a fresh snapshot."""
     async with scoped_session(maker, session_ctx) as s:
         player = await chat_player_for(s, settings_store, session_ctx, agent_session_id)
         if player is None:
@@ -249,9 +279,22 @@ async def chat_intro(
                 " gamertag. Before writing any goal, log entry or memory, ask who it's for"
                 " and call mc_player."
             )
+        saved = (
+            await s.execute(
+                text("SELECT intro FROM app.mc_chat_player WHERE agent_session_id = :sid"),
+                {"sid": agent_session_id},
+            )
+        ).scalar()
+        if saved:
+            return str(saved)
         context = await player_context(s, player.key)
-    about = f"## This chat\nThis chat is about the player {fence(player.gamertag)}."
-    return f"{about}\n\n{context}" if context else f"{about} Nothing is remembered yet."
+        about = f"## This chat\nThis chat is about the player {fence(player.gamertag)}."
+        intro = f"{about}\n\n{context}" if context else f"{about} Nothing is remembered yet."
+        await s.execute(
+            text("UPDATE app.mc_chat_player SET intro = :i WHERE agent_session_id = :sid"),
+            {"i": intro, "sid": agent_session_id},
+        )
+    return intro
 
 
 def build_minecraft_handlers(
@@ -349,7 +392,7 @@ def build_minecraft_handlers(
             if isinstance(status, dict)
             else {}
         )
-        rows = await mc_sessions.players(maker, online)
+        rows = await mc_sessions.players(maker, online, ctx=ctx.session)
         if not rows:
             return ToolOutput("Nobody has played on this server yet.", result_brief="none yet")
         body = "\n".join(
@@ -361,7 +404,9 @@ def build_minecraft_handlers(
         return ToolOutput(fence(body), result_brief=f"{len(rows)} player(s)")
 
     async def mc_play_history(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        days = max(1, min(int(arguments.get("days") or 14), 90))
+        days = _int(arguments.get("days"), 14, 1, 90)
+        if days is None:
+            return "days must be a number of days."
         async with scoped_session(maker, ctx.session) as s:
             player = await chat_player(s, ctx)
             if player is None:
@@ -405,21 +450,29 @@ def build_minecraft_handlers(
             got = await console(command)
             if isinstance(got, str):
                 return got
-            out.append(f"{label}: {' '.join(line.split('] ', 1)[-1] for line in got).strip()}")
-        return ToolOutput("\n".join(out), result_brief="time + weather")
+            out.append(f"{label}: {_reply(got)}")
+        # The console prints whatever arrives in the wait window — a join line with a
+        # gamertag, an add-on's event line — so the reply is fenced like any player text.
+        return ToolOutput(fence("\n".join(out)), result_brief="time + weather")
 
     async def mc_locate(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         kind = str(arguments.get("kind") or "")
         what = str(arguments.get("id") or "").strip().lower()
         if kind not in ("structure", "biome"):
             return "kind must be structure or biome."
-        if not _GAME_ID.match(what):
+        if not _GAME_ID.fullmatch(what):
             return "That isn't a Bedrock id — e.g. mansion, village, ancient_city, cherry_grove."
         if kind == "biome" and not what.startswith("minecraft:"):
             what = f"minecraft:{what}"  # biomes need the namespace; structures don't (M0b)
         x, z = arguments.get("x"), arguments.get("z")
         origin = "the coordinates given"
+        if (x is None) != (z is None):
+            return "Give both x and z, or neither (to search from the player's last position)."
         if x is None or z is None:
+            # Only a point in the LOADED world means anything to its generator: the trail
+            # also holds every other slot the player has walked.
+            worlds = await sidecar("GET", "/worlds")
+            loaded = worlds.get("active") if isinstance(worlds, dict) else None
             async with scoped_session(maker, ctx.session) as s:
                 player = await chat_player(s, ctx)
                 last = (
@@ -427,12 +480,13 @@ def build_minecraft_handlers(
                         await s.execute(
                             text(
                                 "SELECT x, z FROM app.mc_player_track WHERE xuid = :k"
-                                " AND dim = 'overworld' ORDER BY at DESC LIMIT 1"
+                                " AND world = :w AND dim = 'overworld'"
+                                " ORDER BY at DESC LIMIT 1"
                             ),
-                            {"k": player.key},
+                            {"k": player.key, "w": loaded},
                         )
                     ).first()
-                    if player is not None
+                    if player is not None and loaded
                     else None
                 )
             if last is not None:
@@ -448,8 +502,9 @@ def build_minecraft_handlers(
         got = await console(f"execute positioned {xi} 64 {zi} run locate {kind} {what}")
         if isinstance(got, str):
             return got
-        answer = " ".join(line.split("] ", 1)[-1] for line in got).strip() or "(no answer)"
-        return ToolOutput(f"Searching from {origin} ({xi}, {zi}): {answer}", result_brief=f"{what}")
+        return ToolOutput(
+            f"Searching from {origin} ({xi}, {zi}): {fence(_reply(got))}", result_brief=what
+        )
 
     # --- goals and the progress log ---------------------------------------------------
 
@@ -494,7 +549,7 @@ def build_minecraft_handlers(
             )
             number = len(await _goals(s, player.key))
         return ToolOutput(
-            f"Added goal {number} for {fence(player.gamertag)}: {title}",
+            f"Added goal {number} for {fence(player.gamertag)}: {fence(title)}",
             result_brief=f"goal {number}",
         )
 
@@ -517,14 +572,14 @@ def build_minecraft_handlers(
                 return no_player
             goals = await _goals(s, player.key)
             if not 1 <= number <= len(goals):
-                return f"There is no goal {number} — {player.gamertag} has {len(goals)}."
+                return f"There is no goal {number} — {fence(player.gamertag)} has {len(goals)}."
             goal = goals[number - 1]
             await s.execute(
                 text(
                     "UPDATE app.mc_goals SET title = coalesce(:t, title),"
                     " status = coalesce(:st, status),"
                     " finished_at = CASE WHEN coalesce(:st, status) = 'open' THEN NULL"
-                    "   WHEN :st IS NOT NULL THEN now() ELSE finished_at END"
+                    "   WHEN :st IS NOT NULL AND :st <> status THEN now() ELSE finished_at END"
                     " WHERE id = :id"
                 ),
                 {"t": title or None, "st": status, "id": goal.id},
@@ -534,7 +589,9 @@ def build_minecraft_handlers(
             for x in (f"now {status}" if status else "", f"renamed “{title}”" if title else "")
             if x
         )
-        return ToolOutput(f"Goal {number} ({goal.title}): {change}.", result_brief=f"goal {number}")
+        return ToolOutput(
+            f"Goal {number} ({fence(goal.title)}): {change}.", result_brief=f"goal {number}"
+        )
 
     async def mc_log(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         entry = " ".join(str(arguments.get("text") or "").split())
@@ -553,7 +610,7 @@ def build_minecraft_handlers(
                 except (TypeError, ValueError):
                     return "goal must be a goal number from mc_goals."
                 if not 1 <= number <= len(goals):
-                    return f"There is no goal {number} — {player.gamertag} has {len(goals)}."
+                    return f"There is no goal {number} — {fence(player.gamertag)} has {len(goals)}."
                 goal_id = goals[number - 1].id
             await s.execute(
                 text(
@@ -562,10 +619,14 @@ def build_minecraft_handlers(
                 ),
                 {"k": player.key, "g": player.gamertag, "gid": goal_id, "t": entry, "src": source},
             )
-        return ToolOutput(f"Logged for {fence(player.gamertag)}: {entry}", result_brief="logged")
+        return ToolOutput(
+            f"Logged for {fence(player.gamertag)}: {fence(entry)}", result_brief="logged"
+        )
 
     async def mc_log_read(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        limit = max(1, min(int(arguments.get("limit") or 20), 100))
+        limit = _int(arguments.get("limit"), 20, 1, 100)
+        if limit is None:
+            return "limit must be a number of entries."
         async with scoped_session(maker, ctx.session) as s:
             player = await chat_player(s, ctx)
             if player is None:
@@ -580,7 +641,7 @@ def build_minecraft_handlers(
                 except (TypeError, ValueError):
                     return "goal must be a goal number from mc_goals."
                 if not 1 <= number <= len(goals):
-                    return f"There is no goal {number} — {player.gamertag} has {len(goals)}."
+                    return f"There is no goal {number} — {fence(player.gamertag)} has {len(goals)}."
                 only, params["gid"] = " AND goal_id = :gid", goals[number - 1].id
             rows = (
                 await s.execute(
@@ -625,6 +686,7 @@ def build_minecraft_handlers(
     def memory_edit(op: str) -> Callable[[dict, ToolContext], Awaitable[str | ToolOutput]]:
         async def run(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
             new_text = " ".join(str(arguments.get("text") or "").split())
+            old_text = " ".join(str(arguments.get("old_text") or "").split())
             try:
                 line = int(arguments.get("line") or 0)
             except (TypeError, ValueError):
@@ -635,15 +697,19 @@ def build_minecraft_handlers(
                     return no_player
                 current = await _current_lines(s, player.key)
                 refusal = check_memory_op([t for _, t in current], op, line, new_text)
+                # replace and remove name the line's CURRENT text as well as its number:
+                # numbers shift after a remove, and a stale one must never hit another line.
+                expect = new_text if op == "remove" else old_text
+                if op == "replace" and not old_text and not refusal:
+                    refusal = "old_text is required — the line's current wording, verbatim."
                 if (
-                    op == "remove"
+                    op != "add"
                     and not refusal
-                    and current[line - 1][1].casefold() != (new_text.casefold())
+                    and current[line - 1][1].casefold() != expect.casefold()
                 ):
-                    # The verbatim text, so a stale number can never remove the wrong line.
                     refusal = (
-                        f"line {line} reads “{current[line - 1][1]}”, not what you passed —"
-                        " repeat it verbatim to remove it."
+                        f"line {line} reads {fence(current[line - 1][1])}, not what you passed."
+                        " Read the memory again and use that line's current number and text."
                     )
                 if refusal:
                     return ToolOutput(f"Nothing changed: {refusal}", result_brief="refused")
@@ -671,13 +737,14 @@ def build_minecraft_handlers(
             # The receipt quotes before and after, so the model's account of its own memory
             # stays grounded (the archivist's lesson).
             receipt = {
-                "add": f"Added line {count}: “{new_text}”.",
-                "replace": f"Line {line} was “{before}”, now “{new_text}” (the old text is kept).",
-                "remove": f"Removed line {line}, “{before}” (kept in history; lines after it"
-                " move up one).",
+                "add": f"Added line {count}: {fence(new_text)}.",
+                "replace": f"Line {line} was {fence(before)}, now {fence(new_text)}"
+                " (the old text is kept).",
+                "remove": f"Removed line {line}, {fence(before)} (kept in history; lines after"
+                " it move up one).",
             }[op]
             return ToolOutput(
-                f"{receipt} {player.gamertag}'s memory now has {count} line(s).",
+                f"{receipt} {fence(player.gamertag)}'s memory now has {count} line(s).",
                 result_brief=f"{op} · {count} line(s)",
             )
 
