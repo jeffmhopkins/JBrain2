@@ -727,7 +727,7 @@ is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
 | Admin (owner) | `mc_backup_now`, `mc_set_time`, `mc_set_weather`, `mc_announce` | Console allowlist; staged as Proposals per ASSISTANT.md's write policy, never silent |
 | Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
 | Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
-| Memory, **per player** | `mc_memory_read` / `mc_memory_write`: durable facts about one player ("base is at 120, -340", "likes creative") | `app.mc_player_memory` |
+| Memory, **per player**, self-managed | `mc_memory_read`, plus **line-level edits only**: `mc_memory_add(text)`, `mc_memory_replace(line, text)`, `mc_memory_remove(line)`. There is no whole-document write. | `app.mc_player_memory` (one row per line, with history); see "Memory: self-managed, never overwritten" below |
 
 **Goals and the progress log (owner, 2026-10-10).** The "session log" is a **journal of
 progress toward a player's goals**, and Dave helps that player get there. Everything is
@@ -743,7 +743,38 @@ doesn't lose it.
   - `player`: typed in game, e.g. `/jb:dave log got 12 obsidian`;
   - `dave`: Dave's own summary entry, made only when the player asks;
   - later `auto` (M5): add-on events such as "died in the Nether", "crafted beacon".
-- **Player memory** (`app.mc_player_memory`): short durable facts about one player.
+- **Player memory** (`app.mc_player_memory`): short durable facts about one player. How
+  it is written is below.
+
+**Memory: self-managed, never overwritten (owner, 2026-10-10).** Minecraft_Dave keeps
+its own memory, with no approval card per write, but it can never replace the whole
+document. Two precedents in this repo set the design:
+
+- **The archivist's clobber.** `archivist_memory_write` is a full-replace upsert. The
+  archivist once rewrote its memory and then misreported what it had destroyed, so it
+  now gets a before/after **receipt** (`agent/archivisttools.py`). The receipt only
+  mitigates a full replace; it doesn't prevent one.
+- **ASSISTANT.md's memory rule and `owner_prefs`.** The rule is "delta edits
+  (ADD/UPDATE/REMOVE on individual bullets), never full rewrites — full regeneration
+  rots accumulated self-knowledge". `owner_prefs` implements it: numbered lines, one
+  line per call, and no full-rewrite verb.
+
+So for each player:
+- **Memory is numbered lines.** The only verbs are add, replace one line and remove one
+  line. A single call can't wipe or rewrite the memory, the same guarantee `owner_prefs`
+  gives.
+- **Nothing is deleted outright.** A replaced or removed line keeps its old text with a
+  `superseded_at` timestamp, so the owner can see a line's history in the player sheet
+  and restore it. The agent reads only current lines.
+- **Every write returns a receipt** quoting the line before and after (the archivist's
+  lesson), so the model's account of its own memory stays grounded.
+- **Caps**: 60 lines and 6k characters per player, checked before the write, with a
+  refusal that says to consolidate.
+- **Read at the start of a chat**: that player's memory and open goals are injected into
+  the system prompt. Lines that came from player-typed text are fenced as data, because
+  in-game logging (P2) means memory can carry untrusted words.
+- In P2, **Dave in game can add memory lines for the asker only**, and only when the
+  player asks ("remember my base is here"), which comes through the same verbs.
 
 **How it's used:**
 - **In game, through Dave** (player tier). The asker's identity comes from the
@@ -806,8 +837,9 @@ screen's "Maps" section (M8) reuses the same component.
   gate), also embedded on the Minecraft screen.
 
 **Open for the owner:**
-- whether memory and log writes need approval or are free (a log entry is meant to be
-  quick, so free is the suggested default);
+- whether log writes need approval or are free. A log entry is meant to be quick, so
+  free is the suggested default. Memory is decided: self-managed, line-level, with
+  history.
 - which model it runs on (local by default);
 - the owner's own gamertag, the persona's default player.
 
