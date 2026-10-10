@@ -452,6 +452,98 @@ export interface MinecraftServer {
   players: MinecraftOnlinePlayer[];
   update: MinecraftUpdate;
   auto_update: boolean;
+  /** A world operation in flight. Every device sees it, and a second one is refused (409). */
+  job?: MinecraftJob | null;
+}
+
+export interface MinecraftJob {
+  /** e.g. "loading a world", "importing a world", "restoring a backup", "restart". */
+  what: string;
+  /** "warning players", "backing up", "stopping", "writing", "starting", or null. */
+  phase: string | null;
+  started_at: number | null;
+}
+
+/** One of the five world slots (GET /api/minecraft/worlds). An empty slot has
+ *  `exists: false` and `name: null`; a created-but-never-loaded one has a name and a seed. */
+export interface MinecraftSlot {
+  id: string;
+  folder: string;
+  name: string | null;
+  exists: boolean;
+  active: boolean;
+  /** Null on an existing world means its level.dat couldn't be read. */
+  seed: string | null;
+  gamemode: string;
+  difficulty: string;
+  cheats: boolean;
+  origin: "new" | "imported" | "reset" | "restored" | null;
+  created_at?: number | null;
+  last_loaded?: number | null;
+  bytes: number;
+  last_played: number | null;
+  backups: number;
+  last_backup: number | null;
+  last_download: number | null;
+}
+
+export interface MinecraftWorlds {
+  active: string;
+  keep_per_slot: number;
+  slots: MinecraftSlot[];
+}
+
+/** PATCH /worlds/{slot}: the slot, plus when a change takes effect. */
+export type MinecraftSlotUpdated = MinecraftSlot & { applies?: "next restart" | "next load" };
+
+export type MinecraftRuleValue = boolean | number | string;
+
+/** GET|PUT /worlds/{slot}/rules. `live` is "loaded AND running"; otherwise the values are
+ *  the last seen plus saved changes, and `pending` lists the ones waiting for a start or load. */
+export interface MinecraftRules {
+  slot: string;
+  live: boolean;
+  rules: Record<string, MinecraftRuleValue>;
+  defaults: Record<string, MinecraftRuleValue>;
+  pending: string[];
+}
+
+export interface MinecraftNewWorld {
+  name: string;
+  seed?: string;
+  gamemode: string;
+  difficulty: string;
+  cheats: boolean;
+  rules?: Record<string, MinecraftRuleValue>;
+}
+
+export type MinecraftResetMode = "same_seed" | "new_seed" | "empty";
+
+/** A backup (GET /backups), newest first. `auto` ones carry their `pre-…` reason as label. */
+export interface MinecraftBackup {
+  name: string;
+  bytes: number;
+  created: number;
+  folder: string;
+  label: string;
+  auto: boolean;
+  pinned: boolean;
+  downloaded_at: number | null;
+}
+
+export interface MinecraftAllowlist {
+  enabled: boolean;
+  players: string[];
+  applies?: string;
+}
+
+/** GET /server-settings. The values are server.properties text, so numbers may arrive as
+ *  strings. */
+export interface MinecraftServerSettings {
+  server_name: string | null;
+  max_players: number | string | null;
+  view_distance: number | string | null;
+  applies?: string;
 }
 
 /** GET /api/minecraft. Start/Stop/Restart act on the game server inside the container, so
@@ -2827,6 +2919,27 @@ function engineEffortPath(engine: string, scope: EngineEffortScope, key: string)
   return `/api/settings/llm/engine-effort/${parts}`;
 }
 
+/** A Minecraft backup's download: a plain link, so the browser streams it to disk and the
+ *  box records the download (the only copy that leaves it). */
+export function minecraftBackupFileUrl(name: string): string {
+  return `/api/minecraft/backups/${encodeURIComponent(name)}/file`;
+}
+
+/** dev:mock has no XHR backend, so the upload's progress is paced here and the answer
+ *  comes from the mock transport like any other request. */
+async function mockUpload(
+  path: string,
+  file: Blob,
+  onProgress: (sent: number, total: number) => void,
+): Promise<MinecraftSlot> {
+  for (let i = 1; i <= 10; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    onProgress(Math.round((file.size * i) / 10), file.size);
+  }
+  const response = await request(path, { method: "POST", body: file });
+  return (await response.json()) as MinecraftSlot;
+}
+
 export function attachmentUrl(id: string): string {
   return `/api/attachments/${encodeURIComponent(id)}`;
 }
@@ -4574,6 +4687,178 @@ export const api = {
       throw new ApiError(502, "Unexpected response from the Minecraft player list.");
     }
     return body;
+  },
+
+  // ---- Minecraft worlds and backups (owner-only). A 409 is "busy": an update or another
+  // world operation owns the server; its detail says which.
+
+  async minecraftWorlds(): Promise<MinecraftWorlds> {
+    const response = await request("/api/minecraft/worlds");
+    const body = (await response.json()) as MinecraftWorlds;
+    if (!body || !Array.isArray(body.slots)) {
+      throw new ApiError(502, "Unexpected response from the Minecraft worlds list.");
+    }
+    return body;
+  },
+
+  async minecraftNewSeed(): Promise<string> {
+    const response = await request("/api/minecraft/worlds/new-seed");
+    return ((await response.json()) as { seed: string }).seed;
+  },
+
+  async minecraftLoadWorld(slot: string): Promise<{ loaded: boolean; detail?: string }> {
+    const response = await request(`/api/minecraft/worlds/${slot}/load`, { method: "POST" });
+    return (await response.json()) as { loaded: boolean; detail?: string };
+  },
+
+  async minecraftCreateWorld(slot: string, body: MinecraftNewWorld): Promise<MinecraftSlot> {
+    const response = await request(`/api/minecraft/worlds/${slot}/create`, jsonInit("POST", body));
+    return (await response.json()) as MinecraftSlot;
+  },
+
+  async minecraftUpdateWorld(
+    slot: string,
+    body: Partial<Pick<MinecraftSlot, "gamemode" | "difficulty" | "cheats">> & { name?: string },
+  ): Promise<MinecraftSlotUpdated> {
+    const response = await request(`/api/minecraft/worlds/${slot}`, jsonInit("PATCH", body));
+    return (await response.json()) as MinecraftSlotUpdated;
+  },
+
+  async minecraftResetWorld(
+    slot: string,
+    mode: MinecraftResetMode,
+    seed?: string,
+  ): Promise<MinecraftSlot> {
+    const response = await request(
+      `/api/minecraft/worlds/${slot}/reset`,
+      jsonInit("POST", { mode, seed: seed ?? null }),
+    );
+    return (await response.json()) as MinecraftSlot;
+  },
+
+  /** The raw .mcworld goes up as the body. XHR rather than fetch: only XHR reports upload
+   *  progress, and a world can be hundreds of MB. */
+  minecraftImportWorld(
+    slot: string,
+    file: Blob,
+    name: string,
+    onProgress: (sent: number, total: number) => void,
+  ): Promise<MinecraftSlot> {
+    const path = `/api/minecraft/worlds/${slot}/import?name=${encodeURIComponent(name)}`;
+    if (MOCK_MODE) return mockUpload(path, file, onProgress);
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", path);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.upload.onprogress = (event) => {
+        onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
+      };
+      xhr.onload = () => {
+        let body: unknown = null;
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          // not JSON — the status line speaks for it below
+        }
+        if (xhr.status === 401) {
+          unauthorizedHandler?.();
+          reject(new ApiError(401, "Not authenticated"));
+        } else if (xhr.status < 200 || xhr.status >= 300) {
+          const detail = (body as { detail?: unknown } | null)?.detail;
+          reject(
+            new ApiError(
+              xhr.status,
+              typeof detail === "string" && detail.trim()
+                ? detail
+                : `Request failed: ${xhr.status}`,
+            ),
+          );
+        } else resolve(body as MinecraftSlot);
+      };
+      xhr.onerror = () =>
+        reject(new ApiError(0, "The upload was cut off — the connection dropped."));
+      xhr.send(file);
+    });
+  },
+
+  async minecraftRules(slot: string): Promise<MinecraftRules> {
+    const response = await request(`/api/minecraft/worlds/${slot}/rules`);
+    return (await response.json()) as MinecraftRules;
+  },
+
+  async minecraftSetRules(
+    slot: string,
+    set: Record<string, MinecraftRuleValue>,
+  ): Promise<MinecraftRules> {
+    const response = await request(`/api/minecraft/worlds/${slot}/rules`, jsonInit("PUT", { set }));
+    return (await response.json()) as MinecraftRules;
+  },
+
+  async minecraftBackups(slot?: string): Promise<MinecraftBackup[]> {
+    const query = slot ? `?slot=${encodeURIComponent(slot)}` : "";
+    const response = await request(`/api/minecraft/backups${query}`);
+    const body = (await response.json()) as { snapshots?: MinecraftBackup[] };
+    return Array.isArray(body?.snapshots) ? body.snapshots : [];
+  },
+
+  async minecraftBackUp(
+    slot: string,
+    label: string,
+  ): Promise<{ name: string; bytes: number; files: number }> {
+    const response = await request("/api/minecraft/backups", jsonInit("POST", { label, slot }));
+    return (await response.json()) as { name: string; bytes: number; files: number };
+  },
+
+  async minecraftPinBackup(name: string, pinned: boolean): Promise<void> {
+    await request(
+      `/api/minecraft/backups/${encodeURIComponent(name)}/pin`,
+      jsonInit("POST", { pinned }),
+    );
+  },
+
+  async minecraftDeleteBackup(name: string): Promise<void> {
+    await request(`/api/minecraft/backups/${encodeURIComponent(name)}`, { method: "DELETE" });
+  },
+
+  async minecraftRestoreBackup(name: string, slot: string): Promise<MinecraftSlot> {
+    const response = await request(
+      `/api/minecraft/backups/${encodeURIComponent(name)}/restore`,
+      jsonInit("POST", { slot }),
+    );
+    return (await response.json()) as MinecraftSlot;
+  },
+
+  async minecraftAllowlist(): Promise<MinecraftAllowlist> {
+    const response = await request("/api/minecraft/allowlist");
+    const body = (await response.json()) as MinecraftAllowlist;
+    if (!body || !Array.isArray(body.players)) {
+      throw new ApiError(502, "Unexpected response from the allowlist.");
+    }
+    return body;
+  },
+
+  async minecraftChangeAllowlist(body: {
+    add?: string;
+    remove?: string;
+    enabled?: boolean;
+  }): Promise<MinecraftAllowlist> {
+    const response = await request("/api/minecraft/allowlist", jsonInit("POST", body));
+    return (await response.json()) as MinecraftAllowlist;
+  },
+
+  async minecraftServerSettings(): Promise<MinecraftServerSettings> {
+    const response = await request("/api/minecraft/server-settings");
+    return (await response.json()) as MinecraftServerSettings;
+  },
+
+  async minecraftSaveServerSettings(body: {
+    server_name?: string;
+    max_players?: number;
+    view_distance?: number;
+  }): Promise<MinecraftServerSettings> {
+    const response = await request("/api/minecraft/server-settings", jsonInit("PUT", body));
+    return (await response.json()) as MinecraftServerSettings;
   },
 
   async opsLogs(service: string, tail: number): Promise<string> {
