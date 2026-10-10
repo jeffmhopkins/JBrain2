@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1195,6 +1195,50 @@ download (§3c rule 2). A beam is a **hitscan**: an instant line, not a flying p
 3. **The recipe:** for example a Power Pack + a Beacon? + iron and redstone. It's
    end-game like the gates, or mid-game.
 4. **PvP at all**, even on worlds where `pvp` is on (kids' worlds)?
+
+### M14 — Powered armor: netherite plus a Power Pack (owner idea, 2026-10-10; details open)
+
+**The recipe (owner):** a **netherite armor piece + a Power Pack** gives the **powered**
+piece: powered helmet, chestplate, leggings and boots.
+- **Made at the smithing table, not the crafting table.** Bedrock's
+  `recipe_smithing_transform` (behavior-pack data, stable) is how vanilla upgrades diamond
+  to netherite, and it **keeps the piece's enchantments and damage**. A crafting-table
+  recipe would wipe a player's enchantments.
+- **The slots:** template = netherite upgrade smithing template, base = the netherite
+  piece, addition = a Power Pack. A full set costs 4 Power Packs (36 Eyes of Ender) plus 4
+  templates on top of netherite. That's end-game.
+  - **Option:** make the Power Pack itself the template (tagged
+    `minecraft:transform_templates`), so no netherite template is needed. It's cheaper,
+    and the owner chooses.
+- **The items:** `jbrain:powered_helmet` and the rest. They're custom wearables with
+  netherite-level protection and toughness and fire-proof, plus the powers below. The
+  icons and the worn look (attachables) come in the join download (§3c rule 2).
+
+**Powers (proposed; the owner picks):** a script checks worn armor every second
+(`getComponent("equippable")`, stable) and applies effects (`addEffect`, stable) while a
+piece is worn.
+
+| Piece | Power while worn |
+|---|---|
+| Helmet | Night Vision, and water breathing |
+| Chestplate | Resistance I |
+| Leggings | Speed I |
+| Boots | No fall damage (cancelled from `entityHurt`), and Jump Boost I |
+| **Full set bonus** | **Fire Resistance**, and a faint glow on the HUD: "Powered armor: online" |
+
+**Open (owner):**
+1. **Which powers:** the table above, or others (Strength, Haste, a short dash on
+   double-jump, which needs the spike to check it's possible on stable).
+2. **Charge:** are the powers free once crafted, or do they **draw down a charge** that a
+   Power Pack refills (a meter on the actionbar, so powers fade when it's empty)? Free is
+   simpler; charge keeps Power Packs worth farming.
+3. **The template:** a vanilla netherite template, or the Power Pack as the template.
+4. **Keep on death:** like the tricorder, or dropped like normal armor (the Power Pack
+   charm (M10) already protects it)?
+
+**Spike first:** a smithing-transform recipe with a custom result keeps enchantments and
+damage on Bedrock; a custom wearable with an attachable shows on the Xbox; and the
+effect refresh doesn't flicker.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
