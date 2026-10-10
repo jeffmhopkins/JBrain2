@@ -136,6 +136,19 @@ output is a short findings section added to this doc.
    with `leveldb-mcpe` bindings, or a minimal reader of our own). Record counts and how long
    the parse takes.
 
+7. **Router reachability (owner decision, 2026-10-10: test the router before anything more
+   drastic).**
+   - **CGNAT check, which the owner can do today from a phone with no box involved**: compare
+     the WAN/Internet IP shown in the router's app with what a "what is my IP" site reports.
+     If they match, a port-forward can work. If the router's WAN IP is in `100.64–100.127.x.x`,
+     `10.x`, `172.16–31.x` or `192.168.x`, the connection is behind CGNAT, and only the relay
+     can work.
+   - Note whether the router's app offers **UPnP** and **port forwarding**.
+   - On the box: a throwaway UPnP probe maps UDP 19132, and the outside status-service ping
+     confirms it from the internet.
+   - **Gate**: if this passes, R1 builds path 1 only, and the relay (path 2) is not built
+     unless a later probe fails.
+
 Exit: each item has an answer. Any "no" reshapes the wave it feeds before that wave is
 scheduled.
 
