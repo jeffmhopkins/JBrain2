@@ -128,3 +128,55 @@ async def lifecycle(request: Request, settings: Any, action: str) -> None:
             detail="the minecraft container does not exist yet — run /debug/update",
         )
     resp.raise_for_status()
+
+
+def _auth(settings: Any) -> dict[str, str]:
+    token = str(settings.minecraft_token or "")
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="MINECRAFT_TOKEN is not set for the api — run an update to mint it",
+        )
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def upload(
+    settings: Any, path: str, body: Any, length: int, params: dict[str, str]
+) -> dict[str, Any]:
+    """Stream an upload (a .mcworld) through to the sidecar without holding it: the api
+    stores nothing, so the storage abstraction isn't bypassed — the bytes only pass."""
+    headers = {**_auth(settings), "Content-Length": str(length)}
+    try:
+        async with httpx.AsyncClient(
+            base_url=base(settings), timeout=600.0, transport=_transport
+        ) as client:
+            resp = await client.post(path, content=body, headers=headers, params=params)
+    except httpx.TransportError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Minecraft sidecar unreachable ({type(exc).__name__})"
+        ) from exc
+    if resp.status_code in (400, 404, 409):
+        raise HTTPException(status_code=resp.status_code, detail=detail(resp))
+    resp.raise_for_status()
+    return cast(dict[str, Any], resp.json())
+
+
+async def download(settings: Any, path: str) -> tuple[httpx.AsyncClient, httpx.Response]:
+    """Open a streamed download from the sidecar. The caller streams `resp` and must
+    close both (the route hands them to a StreamingResponse background task)."""
+    client = httpx.AsyncClient(base_url=base(settings), timeout=600.0, transport=_transport)
+    try:
+        req = client.build_request("GET", path, headers=_auth(settings))
+        resp = await client.send(req, stream=True)
+    except httpx.TransportError as exc:
+        await client.aclose()
+        raise HTTPException(
+            status_code=503, detail=f"Minecraft sidecar unreachable ({type(exc).__name__})"
+        ) from exc
+    if resp.status_code != 200:
+        await resp.aread()
+        msg = detail(resp)
+        await resp.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=404 if resp.status_code == 404 else 502, detail=msg)
+    return client, resp

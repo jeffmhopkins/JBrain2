@@ -11,6 +11,7 @@ pipe owned by bds.py.
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import io
 import json
@@ -30,12 +31,16 @@ from typing import Any
 
 import bds
 import install
+import worlds
 
 DATA = Path(os.environ.get("MC_DATA_DIR", "/data"))
 SERVER_DIR = DATA / "server"
 SNAPSHOT_DIR = DATA / "snapshots"
 OVERRIDES = DATA / "properties.json"
 SETTINGS = DATA / "settings.json"
+SLOTS = DATA / "slots.json"
+SNAPSHOT_INDEX = DATA / "snapshot-index.json"
+UPLOAD_DIR = DATA / "uploads"
 PORT = int(os.environ.get("MC_PORT", "8000"))
 # The container runs on the HOST network (NetherNet advertises the server's own
 # address and finds LAN clients by broadcast, neither of which survives a bridge
@@ -74,6 +79,10 @@ class Rig:
         # the probe pack. `_busy` names the holder so a refusal can say why.
         self._life = threading.Lock()
         self._busy = ""
+        self.slots = worlds.SlotStore(
+            SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
+        )
+        self.index = worlds.SnapshotIndex(SNAPSHOT_INDEX, SNAPSHOT_DIR)
 
     def overrides(self) -> dict[str, str]:
         try:
@@ -194,8 +203,11 @@ class Rig:
     def write_properties(self) -> None:
         install.apply_properties(SERVER_DIR / "server.properties", self.properties())
 
-    def world_dir(self) -> Path:
-        return SERVER_DIR / "worlds" / self.properties().get("level-name", "world")
+    def active_folder(self) -> str:
+        return self.properties().get("level-name", "world")
+
+    def world_dir(self, folder: str | None = None) -> Path:
+        return SERVER_DIR / "worlds" / (folder or self.active_folder())
 
     def status(self) -> dict[str, Any]:
         b = self.bds
@@ -223,19 +235,27 @@ class Rig:
             "started_at": started,
             "uptime_s": round(time.time() - started) if started and b.running else None,
             "exit_code": b.exit_code,
-            "snapshots": len(list_snapshots()),
+            "snapshots": len(self.index.listing()),
         }
 
-    def snapshot(self, label: str) -> dict[str, Any]:
-        """A backup of the world: hot (save hold/query/resume) while BDS runs, a plain
-        copy of the folder while it is stopped."""
-        if not self.bds.running:
-            return self.cold_snapshot(label)
-        data, files = self.bds.snapshot(self.world_dir())
-        return self._keep(label, data, len(files))
+    def snapshot(
+        self, label: str, folder: str | None = None, auto: bool | None = None
+    ) -> dict[str, Any]:
+        """A backup of one world: hot (save hold/query/resume) when it is the one
+        running, a plain copy of its folder otherwise. `auto` marks the safety
+        snapshots taken before a risky action; by default a `pre-` label is one."""
+        folder = folder or self.active_folder()
+        auto = label.startswith("pre-") if auto is None else auto
+        if folder != self.active_folder() or not self.bds.running:
+            return self.cold_snapshot(label, folder, auto)
+        data, files = self.bds.snapshot(self.world_dir(folder))
+        return self._keep(label, data, len(files), folder, auto)
 
-    def cold_snapshot(self, label: str) -> dict[str, Any]:
-        world = self.world_dir()
+    def cold_snapshot(
+        self, label: str, folder: str | None = None, auto: bool = True
+    ) -> dict[str, Any]:
+        folder = folder or self.active_folder()
+        world = self.world_dir(folder)
         buf = io.BytesIO()
         count = 0
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -243,36 +263,49 @@ class Rig:
                 if f.is_file():
                     zf.write(f, f.relative_to(world).as_posix())
                     count += 1
-        return self._keep(label, buf.getvalue(), count)
+        return self._keep(label, buf.getvalue(), count, folder, auto)
 
-    def restore(self, name: str) -> None:
-        """Replace the world folder with a snapshot's contents. The folder being
-        replaced is moved aside, never deleted, so a bad restore is itself undoable."""
+    def snapshot_file(self, name: str) -> Path:
         src = (SNAPSHOT_DIR / name).resolve()
         if SNAPSHOT_DIR.resolve() not in src.parents or not src.is_file():
             raise ValueError(f"no such snapshot: {name}")
-        world = self.world_dir()
-        if world.exists():
-            world.rename(world.with_name(f"{world.name}.replaced-{int(time.time())}"))
-        world.mkdir(parents=True)
+        return src
+
+    def restore(self, name: str, folder: str | None = None) -> None:
+        """Replace a world folder with a snapshot's contents. The folder being
+        replaced is moved aside first and removed only once the restore succeeded."""
+        src = self.snapshot_file(name)
+        world = self.world_dir(folder)
         root = world.resolve()
         with zipfile.ZipFile(src) as zf:
             for info in zf.infolist():
                 target = (root / info.filename).resolve()
                 if root not in target.parents:
-                    raise ValueError(
-                        f"snapshot member escapes the world: {info.filename}"
-                    )
-            zf.extractall(world)
+                    raise ValueError(f"snapshot member escapes: {info.filename}")
+        aside = world.with_name(f"{world.name}.replaced-{int(time.time() * 1000)}")
+        if world.exists():
+            world.rename(aside)
+        try:
+            world.mkdir(parents=True)
+            with zipfile.ZipFile(src) as zf:
+                zf.extractall(world)
+        except Exception:
+            shutil.rmtree(world, ignore_errors=True)
+            if aside.exists():
+                aside.rename(world)
+            raise
+        shutil.rmtree(aside, ignore_errors=True)
 
-    def _keep(self, label: str, data: bytes, files: int) -> dict[str, Any]:
+    def _keep(
+        self, label: str, data: bytes, files: int, folder: str, auto: bool
+    ) -> dict[str, Any]:
         SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
         slug = _LABEL.sub("-", label).strip("-")[:40]
-        level = _LABEL.sub("-", self.properties().get("level-name", "world"))
-        name = f"{level}-{stamp}{'-' + slug if slug else ''}.mcworld"
+        name = f"{folder}-{stamp}{'-' + slug if slug else ''}.mcworld"
         (SNAPSHOT_DIR / name).write_bytes(data)
-        prune_automatic()
+        self.index.record(name, folder, label, auto)
+        self.index.prune(folder)
         return {"name": name, "bytes": len(data), "files": files}
 
     def version_info(self, refresh: bool = False) -> dict[str, Any]:
@@ -437,6 +470,235 @@ class Rig:
             self._life.release()
         return {"action": action, "update": self.start_update(then_start=True)}
 
+    @contextlib.contextmanager
+    def _exclusive(self, what: str):
+        """Hold the lifecycle lock for a world operation; refuse (409) when another
+        lifecycle (an install, an update, a start/stop) owns the server."""
+        if not self._life.acquire(blocking=False):
+            raise RuntimeError(f"busy: {self._busy or 'another action'}")
+        self._busy = what
+        self.maintenance = True
+        try:
+            yield
+        finally:
+            self.maintenance = False
+            self._busy = ""
+            self._life.release()
+
+    def worlds_view(self) -> dict[str, Any]:
+        active = self.active_folder()
+        out = []
+        for rec in self.slots.all():
+            folder = rec["folder"]
+            d = self.world_dir(folder)
+            backups = self.index.listing(folder)
+            out.append(
+                {
+                    **rec,
+                    "active": folder == active,
+                    "bytes": worlds.dir_size(d) if rec["exists"] else 0,
+                    "last_played": (d / "level.dat").stat().st_mtime
+                    if (d / "level.dat").is_file()
+                    else None,
+                    "backups": len(backups),
+                    "last_backup": backups[0]["created"] if backups else None,
+                    "last_download": self.index.last_download(folder),
+                }
+            )
+        return {"slots": out, "active": active, "keep_per_slot": worlds.KEEP_PER_SLOT}
+
+    def _apply_slot(self, rec: dict[str, Any]) -> None:
+        """Point server.properties at a slot: its folder, and its per-world settings.
+        The seed only matters the first time a world is generated."""
+        self.set_overrides(
+            {
+                "level-name": rec["folder"],
+                "gamemode": rec["gamemode"],
+                "difficulty": rec["difficulty"],
+                "allow-cheats": "true" if rec["cheats"] else "false",
+                "level-seed": rec["seed"],
+            }
+        )
+        self.write_properties()
+
+    def _restart_around(self, folder: str, work) -> None:
+        """Run `work` with the server stopped if it is running `folder`; start it again
+        after if the owner wants it running."""
+        touching = folder == self.active_folder()
+        was_running = touching and self.bds.running
+        if was_running:
+            self.bds.stop()
+        try:
+            work()
+        finally:
+            if touching and self.settings()["run"] and not self.bds.running:
+                self.write_properties()
+                self.bds.start()
+
+    def load_slot(self, slot_id: str) -> dict[str, Any]:
+        rec = self.slots.get(slot_id)
+        if rec["folder"] == self.active_folder():
+            return {"slot": slot_id, "loaded": False, "detail": "already loaded"}
+        with self._exclusive("loading a world"):
+            if self.bds.running:
+                self.snapshot("pre-load", auto=True)
+                self.bds.stop()
+            if not rec["exists"] and not rec["seed"]:
+                rec = self.slots.update(slot_id, seed=worlds.new_seed(), origin="new")
+            self._apply_slot(rec)
+            if self.settings()["run"]:
+                self.bds.start()
+        self.slots.update(slot_id, last_loaded=time.time())
+        return {"slot": slot_id, "loaded": True}
+
+    def create_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        rec = self.slots.get(slot_id)
+        if rec["exists"]:
+            raise ValueError("that slot already holds a world — reset it first")
+        seed = str(body.get("seed") or "").strip() or worlds.new_seed()
+        return self.slots.update(
+            slot_id,
+            name=body.get("name") or f"World {slot_id[-1]}",
+            seed=seed,
+            gamemode=body.get("gamemode", "survival"),
+            difficulty=body.get("difficulty", "normal"),
+            cheats=bool(body.get("cheats", False)),
+            origin="new",
+            created_at=time.time(),
+        )
+
+    def update_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        fields = {k: body[k] for k in ("name", "gamemode", "difficulty") if k in body}
+        if "cheats" in body:
+            fields["cheats"] = bool(body["cheats"])
+        rec = self.slots.update(slot_id, **fields)
+        active = rec["folder"] == self.active_folder()
+        if active and set(fields) - {"name"}:
+            self.set_overrides(
+                {
+                    "gamemode": rec["gamemode"],
+                    "difficulty": rec["difficulty"],
+                    "allow-cheats": "true" if rec["cheats"] else "false",
+                }
+            )
+        return {**rec, "applies": "next restart" if active else "next load"}
+
+    def import_slot(self, slot_id: str, upload: Path, name: str = "") -> dict[str, Any]:
+        """Put an uploaded .mcworld into a slot. An occupied slot is backed up first,
+        and its folder is only removed once the new world is in place."""
+        rec = self.slots.get(slot_id)
+        prefix = worlds.check_world_zip(upload)
+        folder = rec["folder"]
+        world = self.world_dir(folder)
+        with self._exclusive("importing a world"):
+            if rec["exists"]:
+                self.snapshot("pre-import", folder=folder, auto=True)
+
+            def work() -> None:
+                aside = world.with_name(f"{folder}.replaced-{int(time.time() * 1000)}")
+                if world.exists():
+                    world.rename(aside)
+                try:
+                    worlds.extract_world(upload, prefix, world)
+                except Exception:
+                    shutil.rmtree(world, ignore_errors=True)
+                    if aside.exists():
+                        aside.rename(world)
+                    raise
+                shutil.rmtree(aside, ignore_errors=True)
+
+            self._restart_around(folder, work)
+        return self.slots.update(
+            slot_id,
+            name=name or worlds.level_name(world) or rec["name"] or "Imported world",
+            seed=None,  # an imported world's seed is in level.dat, which we don't parse
+            origin="imported",
+            created_at=time.time(),
+        )
+
+    def reset_slot(self, slot_id: str, mode: str, seed: str = "") -> dict[str, Any]:
+        rec = self.slots.get(slot_id)
+        folder = rec["folder"]
+        active = folder == self.active_folder()
+        if mode not in ("same_seed", "new_seed", "empty"):
+            raise ValueError("reset mode must be same_seed, new_seed or empty")
+        if mode == "empty" and active:
+            raise ValueError("the loaded world can't be emptied — load another first")
+        if mode == "same_seed" and not rec["seed"]:
+            raise ValueError(
+                "this world's seed isn't known, so it can't be regenerated"
+            )
+        with self._exclusive("resetting a world"):
+            if rec["exists"]:
+                self.snapshot("pre-reset", folder=folder, auto=True)
+
+            def work() -> None:
+                shutil.rmtree(self.world_dir(folder), ignore_errors=True)
+                if mode == "empty":
+                    self.slots.clear(slot_id)
+                    return
+                new = (
+                    rec["seed"] if mode == "same_seed" else (seed or worlds.new_seed())
+                )
+                fresh = self.slots.update(
+                    slot_id, seed=new, origin="reset", created_at=time.time()
+                )
+                if active:
+                    self._apply_slot(fresh)
+
+            self._restart_around(folder, work)
+        return self.slots.get(slot_id)
+
+    def restore_snapshot(self, name: str, slot_id: str) -> dict[str, Any]:
+        rec = self.slots.get(slot_id)
+        folder = rec["folder"]
+        self.snapshot_file(name)  # validates before anything is touched
+        with self._exclusive("restoring a backup"):
+            if rec["exists"]:
+                self.snapshot("pre-restore", folder=folder, auto=True)
+            self._restart_around(folder, lambda: self.restore(name, folder))
+        return self.slots.update(slot_id, origin="restored")
+
+    def delete_snapshot(self, name: str) -> None:
+        path = self.snapshot_file(name)
+        if self.index.entry(name)["pinned"]:
+            raise ValueError("that backup is pinned — unpin it first")
+        path.unlink()
+        self.index.forget(name)
+
+    def allowlist(self) -> dict[str, Any]:
+        try:
+            entries = json.loads((SERVER_DIR / "allowlist.json").read_text())
+        except (FileNotFoundError, ValueError):
+            entries = []
+        return {
+            "enabled": self.properties().get("allow-list", "false") == "true",
+            "players": sorted(str(e.get("name", "")) for e in entries if e.get("name")),
+        }
+
+    def change_allowlist(self, body: dict[str, Any]) -> dict[str, Any]:
+        if "enabled" in body:
+            self.set_overrides({"allow-list": "true" if body["enabled"] else "false"})
+        for verb in ("add", "remove"):
+            name = str(body.get(verb, "")).strip()
+            if not name:
+                continue
+            if any(c in name for c in '"\r\n'):
+                raise ValueError("that isn't a gamertag")
+            if self.bds.running:
+                self.bds.command(f'allowlist {verb} "{name}"')
+            else:
+                path = SERVER_DIR / "allowlist.json"
+                try:
+                    entries = json.loads(path.read_text())
+                except (FileNotFoundError, ValueError):
+                    entries = []
+                entries = [e for e in entries if e.get("name") != name]
+                if verb == "add":
+                    entries.append({"ignoresPlayerLimit": False, "name": name})
+                path.write_text(json.dumps(entries, indent=2))
+        return {**self.allowlist(), "applies": "on/off at next restart; names now"}
+
     def probe_pack(self, install_it: bool) -> dict[str, Any]:
         """Install (or remove) the bundled probe behavior pack in the active world and
         restart the server so it loads. M0 item 5: does a stable-API pack load with no
@@ -475,21 +737,6 @@ class Rig:
         self.bds.stop()
 
 
-# Automatic backups (pre-update, pre-auto-update) are kept to this many; the owner's
-# own labelled snapshots are never pruned here (M3 gives them pinning and a count).
-KEEP_AUTOMATIC = 10
-
-
-def prune_automatic() -> None:
-    auto = [
-        p
-        for p in sorted(SNAPSHOT_DIR.glob("*.mcworld"), key=lambda p: p.stat().st_mtime)
-        if "-pre-update-" in p.name or "-pre-auto-update-" in p.name
-    ]
-    for old in auto[:-KEEP_AUTOMATIC]:
-        old.unlink(missing_ok=True)
-
-
 def lan_ip() -> str | None:
     """The box's LAN address, for "how to join". The container is on the host network,
     so the source address the kernel would pick toward the internet is the box's own.
@@ -504,16 +751,6 @@ def lan_ip() -> str | None:
 
 def version_key(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split(".") if p.isdigit())
-
-
-def list_snapshots() -> list[dict[str, Any]]:
-    if not SNAPSHOT_DIR.is_dir():
-        return []
-    out = []
-    for p in sorted(SNAPSHOT_DIR.glob("*.mcworld"), reverse=True):
-        st = p.stat()
-        out.append({"name": p.name, "bytes": st.st_size, "created": st.st_mtime})
-    return out
 
 
 RIG: Rig | None = None
@@ -574,7 +811,15 @@ class Handler(BaseHTTPRequestHandler):
             ]
             self._send(200, {"lines": lines})
         elif url.path == "/snapshots":
-            self._send(200, {"snapshots": list_snapshots()})
+            slot = query.get("slot", [""])[0]
+            folder = rig.slots.get(slot)["folder"] if slot else None
+            self._send(200, {"snapshots": rig.index.listing(folder)})
+        elif m := _SNAP_FILE.match(url.path):
+            self._send_file(rig, urllib.parse.unquote(m.group(1)))
+        elif url.path == "/worlds":
+            self._send(200, rig.worlds_view())
+        elif url.path == "/allowlist":
+            self._send(200, rig.allowlist())
         elif url.path == "/events":
             after = int(query.get("after", ["0"])[0])
             self._send(
@@ -592,9 +837,51 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"detail": "not found"})
 
+    def _send_file(self, rig: Rig, name: str) -> None:
+        """Stream a backup out (the owner's download). Recorded per world, because a
+        download is the only copy of a Minecraft backup that leaves the box."""
+        try:
+            path = rig.snapshot_file(name)
+        except ValueError as exc:
+            self._send(404, {"detail": str(exc)})
+            return
+        size = path.stat().st_size
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.end_headers()
+        with open(path, "rb") as fh:
+            while chunk := fh.read(1 << 20):
+                self.wfile.write(chunk)
+        rig.index.note_download(rig.index.entry(name)["folder"])
+
+    def _receive_upload(self) -> Path:
+        """Stream the request body to a file; an upload never sits in memory (the
+        container is capped at 2 GB and a world can be hundreds of MB)."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0:
+            raise ValueError("empty upload")
+        if n > worlds.MAX_IMPORT_BYTES:
+            raise ValueError("that file is too big to be a Bedrock world (over 1 GB)")
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        path = UPLOAD_DIR / f"upload-{os.getpid()}-{time.time_ns()}.mcworld"
+        left = n
+        with open(path, "wb") as out:
+            while left:
+                chunk = self.rfile.read(min(left, 1 << 20))
+                if not chunk:
+                    raise ValueError("upload ended early")
+                out.write(chunk)
+                left -= len(chunk)
+        return path
+
     def do_POST(self) -> None:
         rig = _rig()
         if not self._authorized():
+            return
+        if m := _WORLD_IMPORT.match(self.path.split("?", 1)[0]):
+            self._import(rig, m.group(1))
             return
         try:
             body = self._body()
@@ -608,7 +895,19 @@ class Handler(BaseHTTPRequestHandler):
                 lines = rig.bds.command(command, wait_s=wait_s)
                 self._send(200, {"command": command, "lines": lines})
             elif self.path == "/snapshot":
-                self._send(200, rig.snapshot(str(body.get("label", ""))))
+                slot = str(body.get("slot") or "")
+                folder = rig.slots.get(slot)["folder"] if slot else None
+                self._send(
+                    200,
+                    rig.snapshot(str(body.get("label", "")), folder=folder, auto=False),
+                )
+            elif m := _WORLD_ACTION.match(self.path):
+                self._send(200, self._world_action(rig, m.group(1), m.group(2), body))
+            elif m := _SNAP_ACTION.match(self.path):
+                name = urllib.parse.unquote(m.group(1))
+                self._send(200, self._snapshot_action(rig, name, m.group(2), body))
+            elif self.path == "/allowlist":
+                self._send(200, rig.change_allowlist(body))
             elif self.path == "/properties":
                 changes = body.get("set", {})
                 if not isinstance(changes, dict):
@@ -632,6 +931,55 @@ class Handler(BaseHTTPRequestHandler):
             self._send(409, {"detail": str(exc)})
         except ValueError as exc:
             self._send(400, {"detail": str(exc)})
+
+    @staticmethod
+    def _world_action(rig: Rig, slot: str, action: str, body: dict[str, Any]) -> Any:
+        if action == "load":
+            return rig.load_slot(slot)
+        if action == "create":
+            return rig.create_slot(slot, body)
+        if action == "update":
+            return rig.update_slot(slot, body)
+        if action == "reset":
+            return rig.reset_slot(
+                slot, str(body.get("mode", "")), str(body.get("seed") or "")
+            )
+        raise ValueError(f"unknown world action: {action}")
+
+    @staticmethod
+    def _snapshot_action(rig: Rig, name: str, action: str, body: dict[str, Any]) -> Any:
+        rig.snapshot_file(name)  # 400 for a name that isn't a backup
+        if action == "pin":
+            rig.index.set_pinned(name, bool(body.get("pinned", True)))
+            return {"name": name, "pinned": bool(body.get("pinned", True))}
+        if action == "delete":
+            rig.delete_snapshot(name)
+            return {"name": name, "deleted": True}
+        if action == "restore":
+            return rig.restore_snapshot(name, str(body.get("slot") or ""))
+        raise ValueError(f"unknown backup action: {action}")
+
+    def _import(self, rig: Rig, slot: str) -> None:
+        upload: Path | None = None
+        try:
+            upload = self._receive_upload()
+            name = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get(
+                "name", [""]
+            )[0]
+            self._send(200, rig.import_slot(slot, upload, name))
+        except RuntimeError as exc:
+            self._send(409, {"detail": str(exc)})
+        except ValueError as exc:
+            self._send(400, {"detail": str(exc)})
+        finally:
+            if upload is not None:
+                upload.unlink(missing_ok=True)
+
+
+_SNAP_FILE = re.compile(r"^/snapshots/([^/]+\.mcworld)/file$")
+_SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
+_WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
+_WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 
 
 def crashed(rig: Rig) -> bool:
