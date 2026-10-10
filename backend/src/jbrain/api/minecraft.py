@@ -54,6 +54,8 @@ def _server_view(raw: dict[str, Any]) -> dict[str, Any]:
         "players": raw.get("players") or [],
         "update": raw.get("update") or {"state": "idle"},
         "auto_update": bool(raw.get("auto_update", False)),
+        # A world operation in flight (what, phase, started_at), so every device sees it.
+        "job": raw.get("job"),
     }
 
 

@@ -382,6 +382,18 @@ such as `doFireTick` (fire spread), `keepInventory`, `mobGriefing`, `doDayLightC
 - The rule list and its types come from the server, so a rule added in a later Bedrock
   version shows up with no code change.
 
+**Safety and honesty, from the mock review (2026-10-10).**
+- **Chat warning before a stop:** an owner action that stops the loaded world with
+  players online (Load, import/reset/restore over it, Stop, Restart, Update) first says
+  so in chat and waits 10 seconds.
+- **Visible jobs:** the running job and its phase are in the status, so every device
+  sees them.
+- **Rules re-apply on every start**, not just on a Load.
+- **Worlds describe themselves:** an imported or restored world takes its seed, game
+  mode, difficulty, cheats and rules from its own `level.dat` (a small little-endian NBT
+  read), never from the world it replaced. The first-boot world learns its seed the same
+  way, so "reset with the same seed" works for it.
+
 **New-world seed: random or entered.** Random is a box-chosen seed, shown and
 re-rollable before creating, so "reset with the same seed" always works. An entered seed
 is any text up to 64 characters, as in Bedrock's own seed box.

@@ -59,6 +59,8 @@ VERSION_TTL_S = 6 * 3600
 # How long a freshly updated server gets to log "Server started." before the update is
 # judged broken and rolled back.
 START_TIMEOUT_S = 120.0
+# How long players get between the chat warning and the server stopping under them.
+WARN_S = 10.0
 # The probe behavior pack (M0 item 5), bundled in the image — nothing uploaded.
 PROBE_PACK_SRC = Path(__file__).resolve().parent / "probe-pack"
 PROBE_PACK_DIR = "jbrain_probe"
@@ -79,6 +81,10 @@ class Rig:
         # the probe pack. `_busy` names the holder so a refusal can say why.
         self._life = threading.Lock()
         self._busy = ""
+        # What a world operation is doing right now, for /status, so a second device or
+        # a reload sees the job instead of a server that looks idle.
+        self._phase = ""
+        self._job_started: float | None = None
         self.slots = worlds.SlotStore(
             SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
         )
@@ -174,8 +180,7 @@ class Rig:
                     return
                 self.write_properties()
                 if self.settings()["run"]:
-                    self.bds.start()
-                    self._apply_rules_when_up(self.active_folder())
+                    self._start()
             finally:
                 self._busy = ""
 
@@ -203,6 +208,28 @@ class Rig:
 
     def write_properties(self) -> None:
         install.apply_properties(SERVER_DIR / "server.properties", self.properties())
+
+    def _start(self) -> None:
+        """Every start goes through here, so the loaded world's saved rules come back
+        each time — not only on a Load — and a change saved while stopped lands."""
+        self._step("starting")
+        self.write_properties()
+        self.bds.start()
+        self._apply_rules_when_up(self.active_folder())
+
+    def _stop(self, why: str) -> None:
+        """Stop the server for an owner action. Anyone playing is told in chat first and
+        given WARN_S to finish what they're doing; the stop itself saves the world."""
+        if self.bds.running and self.bds.players:
+            self._step("warning players")
+            with contextlib.suppress(bds.ConsoleError):
+                self.bds.command(f"say {why} - the server stops in {WARN_S:g} seconds")
+            time.sleep(WARN_S)
+        self._step("stopping")
+        self.bds.stop()
+
+    def _step(self, phase: str) -> None:
+        self._phase = phase
 
     def active_folder(self) -> str:
         return self.properties().get("level-name", "world")
@@ -237,6 +264,13 @@ class Rig:
             "uptime_s": round(time.time() - started) if started and b.running else None,
             "exit_code": b.exit_code,
             "snapshots": len(self.index.listing()),
+            "job": {
+                "what": self._busy,
+                "phase": self._phase or None,
+                "started_at": self._job_started,
+            }
+            if self._busy
+            else None,
         }
 
     def snapshot(
@@ -379,7 +413,7 @@ class Rig:
             st["state"] = "downloading"
             self.maintenance = True
             if was_running:
-                self.bds.stop()
+                self._stop("Updating Minecraft")
             got = ""
             try:
                 got = install.ensure(SERVER_DIR, new)
@@ -389,14 +423,14 @@ class Rig:
                 st["state"] = "failed"
                 st["error"] = st["error"] or f"download of {new} failed; still on {old}"
                 if start_after:
-                    self.bds.start()
+                    self._start()
                 return
             self.write_properties()
             if not start_after:
                 st["state"] = "done"
                 return
             st["state"] = "restarting"
-            self.bds.start()
+            self._start()
             if self.bds.wait_running(START_TIMEOUT_S):
                 st["state"] = "done"
                 return
@@ -414,8 +448,7 @@ class Rig:
                 )
                 return
             self.restore(st["backup"])
-            self.write_properties()
-            self.bds.start()
+            self._start()
             st.update(
                 state="rolled_back",
                 error=f"{new} did not start; back on {old} from the backup",
@@ -423,11 +456,12 @@ class Rig:
         except Exception as exc:
             st.update(state="failed", error=f"{type(exc).__name__}: {exc}")
             if was_running and not self.bds.running and not self.stopping:
-                self.bds.start()
+                self._start()
         finally:
             st["finished_at"] = time.time()
             self.maintenance = False
             self._busy = ""
+            self._phase = ""
             self._life.release()
 
     def server_action(self, action: str) -> dict[str, Any]:
@@ -459,15 +493,17 @@ class Rig:
             if update_info is None:
                 self._busy = action
                 self.maintenance = True
-                if action in ("stop", "restart"):
-                    self.bds.stop()
+                if action == "stop":
+                    self._stop("The server is being stopped")
+                if action == "restart":
+                    self._stop("The server is restarting")
                 if action in ("start", "restart"):
-                    self.write_properties()
-                    self.bds.start()
+                    self._start()
                 return {"action": action, "state": self.bds.state}
         finally:
             self.maintenance = False
             self._busy = ""
+            self._phase = ""
             self._life.release()
         return {"action": action, "update": self.start_update(then_start=True)}
 
@@ -478,12 +514,15 @@ class Rig:
         if not self._life.acquire(blocking=False):
             raise RuntimeError(f"busy: {self._busy or 'another action'}")
         self._busy = what
+        self._job_started = time.time()
         self.maintenance = True
         try:
             yield
         finally:
             self.maintenance = False
             self._busy = ""
+            self._phase = ""
+            self._job_started = None
             self._life.release()
 
     def worlds_view(self) -> dict[str, Any]:
@@ -492,6 +531,12 @@ class Rig:
         for rec in self.slots.all():
             folder = rec["folder"]
             d = self.world_dir(folder)
+            if rec["exists"] and not rec["seed"]:
+                # A world from before the slot records (or from before level.dat was
+                # read) learns its seed from its own header, once.
+                seed = worlds.world_facts(d).get("seed")
+                if seed:
+                    rec = {**rec, **self.slots.update(rec["id"], seed=seed)}
             backups = self.index.listing(folder)
             out.append(
                 {
@@ -522,19 +567,18 @@ class Rig:
         )
         self.write_properties()
 
-    def _restart_around(self, folder: str, work) -> None:
+    def _restart_around(self, folder: str, work, why: str) -> None:
         """Run `work` with the server stopped if it is running `folder`; start it again
         after if the owner wants it running."""
         touching = folder == self.active_folder()
-        was_running = touching and self.bds.running
-        if was_running:
-            self.bds.stop()
+        if touching and self.bds.running:
+            self._stop(why)
         try:
+            self._step("writing")
             work()
         finally:
             if touching and self.settings()["run"] and not self.bds.running:
-                self.write_properties()
-                self.bds.start()
+                self._start()
 
     def load_slot(self, slot_id: str) -> dict[str, Any]:
         rec = self.slots.get(slot_id)
@@ -542,14 +586,15 @@ class Rig:
             return {"slot": slot_id, "loaded": False, "detail": "already loaded"}
         with self._exclusive("loading a world"):
             if self.bds.running:
+                self._step("backing up")
                 self.snapshot("pre-load", auto=True)
-                self.bds.stop()
+                self._stop(f"Switching to the world {rec['name']}")
             if not rec["exists"] and not rec["seed"]:
                 rec = self.slots.update(slot_id, seed=worlds.new_seed(), origin="new")
+            self._step("writing")
             self._apply_slot(rec)
             if self.settings()["run"]:
-                self.bds.start()
-                self._apply_rules_when_up(rec["folder"])
+                self._start()
         self.slots.update(slot_id, last_loaded=time.time())
         return {"slot": slot_id, "loaded": True}
 
@@ -599,6 +644,7 @@ class Rig:
         world = self.world_dir(folder)
         with self._exclusive("importing a world"):
             if rec["exists"]:
+                self._step("backing up")
                 self.snapshot("pre-import", folder=folder, auto=True)
 
             def work() -> None:
@@ -614,14 +660,18 @@ class Rig:
                     raise
                 shutil.rmtree(aside, ignore_errors=True)
 
-            self._restart_around(folder, work)
-        return self.slots.update(
-            slot_id,
-            name=name or worlds.level_name(world) or rec["name"] or "Imported world",
-            seed=None,  # an imported world's seed is in level.dat, which we don't parse
-            origin="imported",
-            created_at=time.time(),
-        )
+                # The world brings its own settings; the overwritten slot's game
+                # mode, rules and seed belonged to the world that is gone.
+                self._adopt(
+                    slot_id,
+                    name=name or worlds.level_name(world) or "Imported world",
+                    origin="imported",
+                    created_at=time.time(),
+                    rules={},
+                )
+
+            self._restart_around(folder, work, "A world is being imported here")
+        return self.slots.get(slot_id)
 
     def reset_slot(self, slot_id: str, mode: str, seed: str = "") -> dict[str, Any]:
         rec = self.slots.get(slot_id)
@@ -637,6 +687,7 @@ class Rig:
             )
         with self._exclusive("resetting a world"):
             if rec["exists"]:
+                self._step("backing up")
                 self.snapshot("pre-reset", folder=folder, auto=True)
 
             def work() -> None:
@@ -653,18 +704,45 @@ class Rig:
                 if active:
                     self._apply_slot(fresh)
 
-            self._restart_around(folder, work)
+            self._restart_around(folder, work, "This world is being reset")
         return self.slots.get(slot_id)
 
     def restore_snapshot(self, name: str, slot_id: str) -> dict[str, Any]:
         rec = self.slots.get(slot_id)
         folder = rec["folder"]
-        self.snapshot_file(name)  # validates before anything is touched
+        path = self.snapshot_file(name)  # validates before anything is touched
+        source = self.index.entry(name)["folder"]
+        src = self.slots.by_folder(source) or {}
+        fields: dict[str, Any] = {"origin": "restored"}
+        if source != folder:
+            # Another world's backup: the slot becomes that world, so its old seed and
+            # settings no longer describe it. Rules come with the source's choices.
+            fields["rules"] = dict(src.get("rules") or {})
+            if not rec["exists"]:
+                when = time.strftime("%b %-d", time.localtime(path.stat().st_mtime))
+                fields["name"] = f"{src.get('name') or source} ({when})"
+                fields["created_at"] = time.time()
         with self._exclusive("restoring a backup"):
             if rec["exists"]:
+                self._step("backing up")
                 self.snapshot("pre-restore", folder=folder, auto=True)
-            self._restart_around(folder, lambda: self.restore(name, folder))
-        return self.slots.update(slot_id, origin="restored")
+
+            def work() -> None:
+                self.restore(name, folder)
+                self._adopt(slot_id, **fields)
+
+            self._restart_around(folder, work, "This world is being restored")
+        return self.slots.get(slot_id)
+
+    def _adopt(self, slot_id: str, **fields: Any) -> None:
+        """Record a world that just landed in a slot from outside (an import, another
+        world's backup): what its level.dat says about itself, plus `fields`. A seed
+        level.dat doesn't hold reads as unknown rather than keeping the old world's."""
+        rec = self.slots.get(slot_id)
+        facts = worlds.world_facts(self.world_dir(rec["folder"]))
+        fresh = self.slots.update(slot_id, **{"seed": None, **facts, **fields})
+        if fresh["folder"] == self.active_folder():
+            self._apply_slot(fresh)
 
     def delete_snapshot(self, name: str) -> None:
         path = self.snapshot_file(name)
@@ -790,10 +868,11 @@ class Rig:
             raise RuntimeError(f"busy: {self._busy or 'another action'}")
         self.maintenance = True
         try:
-            self.bds.stop()
-            self.bds.start()
+            self._stop("Installing a test pack")
+            self._start()
         finally:
             self.maintenance = False
+            self._phase = ""
             self._life.release()
         return {"installed": install_it, "pack_id": pack_id, "restarted": True}
 
@@ -907,7 +986,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"detail": "not found"})
 
     def _send_file(self, rig: Rig, name: str) -> None:
-        """Stream a backup out (the owner's download). Recorded per world, because a
+        """Stream a backup out (the owner's download). Recorded per backup and per world, because a
         download is the only copy of a Minecraft backup that leaves the box."""
         try:
             path = rig.snapshot_file(name)
@@ -923,7 +1002,7 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, "rb") as fh:
             while chunk := fh.read(1 << 20):
                 self.wfile.write(chunk)
-        rig.index.note_download(rig.index.entry(name)["folder"])
+        rig.index.note_download(name, rig.index.entry(name)["folder"])
 
     def _receive_upload(self) -> Path:
         """Stream the request body to a file; an upload never sits in memory (the

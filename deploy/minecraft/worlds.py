@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import struct
 import time
 import zipfile
 from pathlib import Path
@@ -204,9 +205,15 @@ class SnapshotIndex:
         is the filename prefix, and a `pre-` label marks the automatic ones."""
         rec = self._raw()["snapshots"].get(name)
         if rec:
-            return dict(rec)
+            return {"downloaded_at": None, **rec}
         folder = name.split("-2", 1)[0] if "-2" in name else "world"
-        return {"folder": folder, "label": "", "auto": "-pre-" in name, "pinned": False}
+        return {
+            "folder": folder,
+            "label": "",
+            "auto": "-pre-" in name,
+            "pinned": False,
+            "downloaded_at": None,
+        }
 
     def set_pinned(self, name: str, pinned: bool) -> None:
         raw = self._raw()
@@ -219,9 +226,11 @@ class SnapshotIndex:
         raw["snapshots"].pop(name, None)
         self._save(raw)
 
-    def note_download(self, folder: str) -> None:
+    def note_download(self, name: str, folder: str) -> None:
         raw = self._raw()
-        raw["downloads"][folder] = time.time()
+        now = time.time()
+        raw["downloads"][folder] = now
+        raw["snapshots"].setdefault(name, self.entry(name))["downloaded_at"] = now
         self._save(raw)
 
     def last_download(self, folder: str) -> float | None:
@@ -377,3 +386,105 @@ def check_seed(seed: str) -> str:
     if len(seed) > _SEED_MAX or any(c in seed for c in "\r\n"):
         raise ValueError(f"a seed is up to {_SEED_MAX} characters on one line")
     return seed
+
+
+# level.dat is Bedrock's world header: an 8-byte prefix (format version, length), then
+# one little-endian NBT compound. The world's own seed, game mode, difficulty, cheats
+# and rules live here, so an imported or restored world describes itself.
+_LEVEL_DAT_MAX = 1 << 20
+_NBT_FIXED = {1: "<b", 2: "<h", 3: "<i", 4: "<q", 5: "<f", 6: "<d"}
+_NBT_ARRAY = {7: 1, 11: 4, 12: 8}
+_GAMETYPES = {0: "survival", 1: "creative", 2: "adventure"}
+
+
+class _Nbt:
+    def __init__(self, data: bytes) -> None:
+        self.data, self.pos = data, 0
+
+    def take(self, n: int) -> bytes:
+        if n < 0 or self.pos + n > len(self.data):
+            raise ValueError("level.dat is truncated")
+        out = self.data[self.pos : self.pos + n]
+        self.pos += n
+        return out
+
+    def unpack(self, fmt: str) -> Any:
+        return struct.unpack(fmt, self.take(struct.calcsize(fmt)))[0]
+
+    def string(self) -> str:
+        return self.take(self.unpack("<H")).decode("utf-8", "replace")
+
+    def payload(self, tag: int, depth: int) -> Any:
+        """A tag's value. Only the top level's scalars are kept: nested compounds and
+        lists are walked past (depth-limited) and read as None."""
+        if depth > 32:
+            raise ValueError("level.dat nests too deep")
+        if tag in _NBT_FIXED:
+            return self.unpack(_NBT_FIXED[tag])
+        if tag in _NBT_ARRAY:
+            self.take(self.unpack("<i") * _NBT_ARRAY[tag])
+            return None
+        if tag == 8:
+            return self.string()
+        if tag == 9:
+            inner, count = self.unpack("<b"), self.unpack("<i")
+            for _ in range(max(count, 0)):
+                self.payload(inner, depth + 1)
+            return None
+        if tag == 10:
+            while (inner := self.unpack("<b")) != 0:
+                self.string()
+                self.payload(inner, depth + 1)
+            return None
+        raise ValueError(f"level.dat has an unknown tag {tag}")
+
+    def top(self) -> dict[str, Any]:
+        self.take(8)
+        if self.unpack("<b") != 10:
+            raise ValueError("level.dat does not start with a compound")
+        self.string()
+        out: dict[str, Any] = {}
+        while (tag := self.unpack("<b")) != 0:
+            name = self.string()
+            out[name] = self.payload(tag, 1)
+        return out
+
+
+def read_level_dat(world: Path) -> dict[str, Any]:
+    """The top-level values of a world's level.dat; {} when it is missing or not one."""
+    path = world / "level.dat"
+    try:
+        if path.stat().st_size > _LEVEL_DAT_MAX:
+            return {}
+        return _Nbt(path.read_bytes()).top()
+    except (OSError, ValueError, struct.error):
+        return {}
+
+
+def world_facts(world: Path) -> dict[str, Any]:
+    """What a world says about itself, as slot fields: seed, game mode, difficulty,
+    cheats, and the rules it was saved with (level.dat keeps rule names lowercased).
+    Only the fields it actually holds are returned."""
+    top = read_level_dat(world)
+    out: dict[str, Any] = {}
+    if isinstance(top.get("RandomSeed"), int):
+        out["seed"] = str(top["RandomSeed"])
+    if top.get("GameType") in _GAMETYPES:
+        out["gamemode"] = _GAMETYPES[top["GameType"]]
+    if isinstance(top.get("Difficulty"), int) and 0 <= top["Difficulty"] < 4:
+        out["difficulty"] = DIFFICULTIES[top["Difficulty"]]
+    if isinstance(top.get("commandsEnabled"), int):
+        out["cheats"] = bool(top["commandsEnabled"])
+    lowered = {k.lower(): v for k, v in top.items()}
+    rules: dict[str, bool | int | str] = {}
+    for key, default in DEFAULT_RULES.items():
+        value = lowered.get(key.lower())
+        if isinstance(default, bool) and isinstance(value, int):
+            rules[key] = bool(value)
+        elif isinstance(default, int) and isinstance(value, int):
+            rules[key] = value
+        elif isinstance(default, str) and isinstance(value, str) and value:
+            rules[key] = value
+    if rules:
+        out["rules_known"] = {**DEFAULT_RULES, **rules}
+    return out

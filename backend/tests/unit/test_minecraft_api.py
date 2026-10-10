@@ -96,6 +96,14 @@ async def test_the_server_view_matches_the_contract(fake) -> None:
         19132,
     )
     assert s["lan_ip"] == "192.168.1.20" and s["players"][0]["joined_at"] == 100.0
+    assert s["job"] is None
+
+
+async def test_a_running_world_job_is_passed_through(fake) -> None:
+    job = {"what": "loading a world", "phase": "stopping", "started_at": 5.0}
+    fake["replies"]["/status"] = {**STATUS, "job": job}
+    out = await api.minecraft(_request(), SETTINGS)
+    assert out["server"]["job"] == job
 
 
 async def test_a_stopped_container_is_a_state_not_an_error(fake) -> None:
