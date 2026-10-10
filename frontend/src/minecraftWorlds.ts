@@ -194,7 +194,10 @@ export function nextToGo(backups: MinecraftBackup[], keep: number): MinecraftBac
   const unpinned = backups.filter((b) => !b.pinned);
   if (unpinned.length < keep) return null;
   const oldest = (xs: MinecraftBackup[]) =>
-    xs.reduce<MinecraftBackup | null>((a, b) => (a === null || b.created < a.created ? b : a), null);
+    xs.reduce<MinecraftBackup | null>(
+      (a, b) => (a === null || b.created < a.created ? b : a),
+      null,
+    );
   return oldest(unpinned.filter((b) => b.auto)) ?? oldest(unpinned);
 }
 
@@ -358,7 +361,8 @@ export function restoreTargetText(
     return `empty — becomes “${from} (${shortDate(b.created)})” with the backup's seed and settings and ${from}'s rules`;
   }
   const t = slotName(target);
-  if (b.folder === target.folder) return `its own world — rolled back; ${t} is backed up first${restarts}`;
+  if (b.folder === target.folder)
+    return `its own world — rolled back; ${t} is backed up first${restarts}`;
   return `replaces ${t} — the backup's seed and settings come too; ${t} is backed up first${restarts}`;
 }
 
@@ -392,7 +396,7 @@ type Row = [
   string,
   string,
   MinecraftRuleValue,
-  string?,
+  (string | undefined)?,
   { min: number; max: number; step: number; unit?: string }?,
 ];
 

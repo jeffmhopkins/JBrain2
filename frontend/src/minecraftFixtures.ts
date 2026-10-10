@@ -369,7 +369,7 @@ export function mcBackups(): MinecraftBackup[] {
   ];
 }
 
-/** A world at the 20-backup limit: the four above plus sixteen automatic ones. */
+/** A world at the 20-backup limit: the four above (one pinned) plus 17 automatic ones. */
 export function mcBackupsAtLimit(): MinecraftBackup[] {
   const extra = Array.from({ length: 17 }, (_, i) =>
     mcBackup({
