@@ -16,7 +16,7 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 ## Contents
 
 - `MINECRAFT_BEDROCK_PLAN.md` — a **Minecraft Bedrock dedicated server** as an opt-in sidecar
-  (profile `minecraft`): start/stop, import the owner's `.mcworld`, hot snapshots
+  (profile `minecraft`): start/stop, world **slots** (load / import / new / reset, one active), hot snapshots
   (`save hold/query/resume`) as on-demand, downloadable `.mcworld` backups kept apart from the
   box export, one-click BDS updates — all PWA-operable; Windows + Xbox on the LAN, Windows
   brothers over the internet (R1). Then **Dave**, an in-game companion players ask "where's the

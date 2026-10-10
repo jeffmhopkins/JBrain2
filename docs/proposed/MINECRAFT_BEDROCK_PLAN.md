@@ -88,7 +88,10 @@ Wrapper HTTP surface (internal network, bearer token, as for the SDR sidecar):
 | `GET /status` | Server state, BDS version, world name, online players (parsed from the `Player connected/disconnected` log lines), uptime. |
 | `POST /command` | Runs a console command **from a fixed allowlist** (`list`, `say`, `tellraw`, `allowlist …`, `locate …`, `scriptevent jb:…`). There is no free-form console from the PWA in M1. A raw console is an owner-only decision for later. |
 | `POST /snapshot` | Runs `save hold` → polls `save query` → streams a tar of the file list, truncating each file to the length `save query` reports → `save resume`. The result is a consistent copy taken while players stay connected. |
-| `POST /world/import` | Accepts a streamed `.mcworld` or zip. Only allowed while BDS is stopped. |
+| `GET /worlds` | The world slots on the volume: folder, `levelname.txt`, size, and which slot is active. |
+| `POST /worlds/{slot}/import` | Accepts a streamed `.mcworld` or zip into a slot. Refused for the active slot while BDS is running. |
+| `POST /worlds/{slot}/activate` | Points `level-name` at the slot. Done while the server is stopped; the backend runs the stop → snapshot → activate → start sequence. |
+| `POST /worlds/{slot}/reset` | Empties a slot or regenerates it from a seed. Refused for the active slot while BDS is running. |
 | `GET /world/index` | Parses the latest snapshot (never the live DB, which BDS holds locked) and streams JSONL records (M4). |
 | `GET /bridge/events`, `POST /bridge/reply` | The companion bridge (M5). |
 
@@ -156,33 +159,52 @@ scheduled.
   the existing supervisor routes. Disabling queues the reverse, and the world volume is kept.
 - A Minecraft card on `OpsScreen`: state, version, players online, start/stop/restart, logs.
   The same actions go on the debug router.
-- First boot with no imported world creates a fresh world, so the server is playable before M2.
+- First boot with no imported world generates a fresh world in slot 1, so the server is
+  playable before M2.
 - Tests: wrapper unit tests against a fake BDS script (stdin/stdout), the compose logging test,
   ops proxy tests, and a frontend card test.
 
-### M2 — Import the owner's world, and server settings
+### M2 — World slots, importing the owner's world, and server settings
 
-- **Import**: **Ops → Minecraft → Import world** uploads a `.mcworld` (zip). The backend stores
-  it through `BlobStore`, then validates it: it must contain `level.dat`, `levelname.txt` and
-  `db/`, its size must be under the limit, and there must be no path traversal. With the
-  server stopped, the backend streams it to `/world/import`. The wrapper unpacks it into
-  `worlds/<name>` and points `level-name` at it. The previous world is kept, not overwritten,
-  so a bad import is undone by switching back.
+- **World slots (owner request, 2026-10-10).** The server holds several worlds, with **one
+  loaded at a time**. A slot is a folder under `worlds/` plus a row in `app.mc_world_slots`.
+  The row holds a slot id, a display name, its origin (imported, generated with a seed, or
+  empty), the seed if known, created and last-played times, and whether Dave is enabled for
+  it. The default is **5 slots**, a setting that can be raised. Small worlds make that cheap
+  on disk. The table is owner-RLS'd and has an isolation test.
+- **Ops → Minecraft → Worlds** lists the slots, marks which one is active, and shows each
+  one's size and last backup. Per slot:
+  - **Load**: switch the server to this world. If players are online, the server warns them in
+    chat ("switching worlds in 30 s"). Then it stops, takes an automatic snapshot of the
+    world that was active, activates the new slot, and starts. One confirm dialog.
+  - **Import**: upload a `.mcworld` into an empty slot, or over an existing one. Overwriting
+    takes a snapshot of that slot first.
+  - **New world**: fill an empty slot with a freshly generated world. The owner sets the name,
+    an optional seed, the game mode and the difficulty. The world is generated the first time
+    the slot is loaded.
+  - **Reset** lands in M3, because it depends on M3's snapshots (see M3).
+  - **Rename**.
+- **Import validation**: the upload is stored through `BlobStore` and then checked. It must
+  contain `level.dat`, `levelname.txt` and `db/`, stay under the size limit, and contain no
+  path traversal. Then it is streamed to `/worlds/{slot}/import`. A bad import never touches
+  another slot.
 - The owner's world is on **Windows** and is small (about 3 hours of building). Export it from
   **Play → the world's pencil (Edit) → Export World**, which saves a `.mcworld`, then upload
   that file from the PWA on the same PC. The PWA help text shows these steps. Because the
   world is small, a size limit of a few hundred MB is plenty, and the upload doesn't need to
   be resumable. Going the other way, any backup from M3 opens on Windows by double-clicking it.
-- **Settings**: a small editable subset of `server.properties`, covering server name,
-  gamemode, difficulty, allow-cheats, max players, view and tick distance, and online-mode.
-  The settings are written by the wrapper and applied on restart.
+- **Settings**: a small editable subset of `server.properties`. Some are **server-wide**:
+  server name, max players, view and tick distance, and online-mode. Some are **per slot**:
+  gamemode, difficulty, and allow-cheats. The wrapper writes them, and a slot's values are
+  applied whenever that slot is loaded.
 - **Allowlist**: add or remove gamertags from the PWA, through `allowlist add/remove` on the
   console, so it is live without a restart. The allowlist is **on by default**, because the
   port is published.
-- Tests: zip validation (traversal, missing `db/`, oversize), the import state machine, and
-  settings round-trip.
+- Tests: zip validation (traversal, missing `db/`, oversize), the import and load state
+  machines (stop → snapshot → activate → start, and a failed start leaves the previous slot
+  recoverable), the slot RLS isolation test, and settings round-trip.
 
-### M3 — Snapshots, backups, restore, and BDS updates
+### M3 — Snapshots, backups, restore, slot reset, and BDS updates
 
 - **Snapshot** = the wrapper's `/snapshot` stream. The backend writes it as a dated `.mcworld`
   to the backup shelf through the storage abstraction. Every artifact is therefore something
@@ -190,16 +212,31 @@ scheduled.
   understand.
 - **On demand only (owner decision, 2026-10-10).** Backups happen when the owner presses
   **Back up now**, with an optional label such as "before the castle". There is no schedule.
-  The only automatic snapshots are safety nets: one runs before a BDS update, a world import
-  or switch, and a restore. Those are labelled as automatic.
+  The only automatic snapshots are safety nets: one runs before a BDS update, a world import,
+  load or reset, and a restore. Those are labelled as automatic.
 - Retention is by count: keep the newest 20, with automatic ones expiring first. The owner can
   **pin** a backup to keep it forever and can delete any backup. A small world makes each
   snapshot a few MB, so the count is generous. Scheduled backups through the workflow
   scheduler are deferred to M7. Adding them later is a scheduler entry that calls the same
   route, with no redesign.
-- **Restore**: pick a snapshot, and the server stops, the current world is snapshotted, the
-  chosen one is swapped in, and the server starts again. All of this is one PWA action with a
-  confirm dialog.
+- **Backups belong to a slot.** Each snapshot records its slot, the list is filtered by
+  slot, and the 20-per-slot retention counts each slot separately.
+- **Restore**: pick a snapshot, and its slot is snapshotted and then replaced with the chosen
+  one. If that slot is the active one, the server stops and restarts around the swap. A
+  snapshot can also be restored **into a different slot**, for example to try out an old
+  version without losing the current one. All of this is one PWA action with a confirm
+  dialog.
+- **Reset a slot (owner request, 2026-10-10).** A snapshot is always taken first, so a reset
+  can be undone from the backup list. The owner chooses one of:
+  - **Same seed**: regenerate the original terrain fresh, with all building gone. Offered only
+    when the slot's seed is known.
+  - **New seed**: a brand-new world in the slot.
+  - **Empty**: free the slot.
+
+  If the slot is active, the server stops, resets it, and starts again (the empty choice
+  isn't offered for the active slot). Because this destroys the world, the confirm dialog
+  asks the owner to **type the slot's name**. The slot's world index (M4) is cleared with it,
+  so Dave never answers from the old world.
 - **BDS updates**: the card shows "server X.Y / latest X.Z" and offers **Update server**, which
   snapshots and then fetches the new BDS into the volume before restarting. Clients
   auto-update, so a lagging server locks every player out. That makes this the most-used
@@ -246,6 +283,8 @@ card.
 - After each snapshot, the wrapper parses **the snapshot copy** and streams JSONL. The backend
   upserts it into owner-RLS'd tables:
   - `app.mc_snapshots`
+
+  Every row in these tables is keyed by **slot**. Dave answers only about the active slot.
   - `app.mc_chunks` (explored chunks per dimension)
   - `app.mc_entities` (type, position, dimension, name tag, snapshot)
   - `app.mc_block_entities` (chests and their contents, signs, spawners, beds)
@@ -264,7 +303,9 @@ card.
 ### M5 — The companion bridge (in-game ↔ backend)
 
 - A **behavior pack** (`deploy/minecraft/pack/`, TypeScript compiled to the pack's JS) is
-  installed into the active world by the wrapper. It uses only stable APIs, as confirmed in M0.
+  installed by the wrapper into each slot that has Dave enabled, at the moment that slot is
+  loaded. That covers new, imported, and reset worlds without any manual step. It uses only
+  stable APIs, as confirmed in M0.
 - **Inbound (player asks)**: a chat message addressed to the companion by name, such as
   `Dave, where's the nearest pig?` or `@dave …`. This matters for the Xbox players, who would
   struggle to type a slash command on a controller, so it depends on M0 finding a stable chat
@@ -330,7 +371,6 @@ card.
   "remember this spot as *home*" waypoint table.
 - A visible **companion NPC** entity, which would need a resource pack that clients download.
 - A rendered top-down map in the PWA from the index.
-- Multiple worlds (a library, with one active at a time).
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
 
 ## 4. Owner decisions
@@ -348,6 +388,8 @@ card.
 - **Companion**: named **Dave** for now, and changeable later (M5, M6).
 - **Player locations**: Dave may say where other players are.
 - **Box backups**: Minecraft backups stay separate from the whole-box export (M3).
+- **World slots**: several worlds live on the server, one loaded at a time. Each slot can be
+  loaded, imported, created fresh, renamed, and **reset** (M2, M3).
 - **World**: a small world on Windows, about 3 hours of building. It is imported by exporting
   a `.mcworld` (M2).
 - **Backups**: on demand for now, plus automatic safety snapshots before risky actions (M3).
