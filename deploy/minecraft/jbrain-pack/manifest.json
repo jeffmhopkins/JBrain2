@@ -1,0 +1,20 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "JBrain",
+    "description": "The box's own pack: records deaths and respawns for the travel log.",
+    "uuid": "493eb97a-0794-454e-bd80-70aa59a63a8c",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 21, 0]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "e8902796-460a-4d45-a7e4-025958683310",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [{ "module_name": "@minecraft/server", "version": "2.0.0" }]
+}
