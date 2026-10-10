@@ -1696,6 +1696,13 @@ arrange the grid themselves):
   was open, so back is deterministic where the web trap can't be. Same layer logic, one
   source of truth — the native side only routes the button.
 - Tiles for phases not yet built render disabled with their phase label.
+- **Settings is a launcher of its own.** The Settings card opens on the same 3-column
+  tile grid (Appearance, Voice, Capture, Radio, Web, Connections, Access) instead of one
+  long scroll; a tile pushes that category's cards as a stacked layer with its own back
+  bar. Back, the down-swipe at scroll-top and the platform back gesture each climb one
+  level to the grid (the page registers in the shared back-layer stack, like a sheet).
+  A new setting joins the category it belongs to rather than adding a tile; the grid
+  drops to two columns only if titles stop fitting.
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
 

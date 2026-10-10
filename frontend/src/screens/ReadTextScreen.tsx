@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chunkStream, engineForVoice } from "../agent/speakable.js";
 import { api } from "../api/client";
+import { useBackLayer } from "../backLayers";
 import { ChevronLeftIcon } from "../components/icons";
 
 /** The owner's read-aloud voice effects, so a custom-text read matches the real read-aloud. */
@@ -143,6 +144,8 @@ async function deliverWav(blob: Blob, url: string, name: string): Promise<void> 
 }
 
 export function ReadTextScreen({ voice, fx, onClose }: ReadTextScreenProps) {
+  // Opened from the Voice settings page, so Back must close this overlay before that page.
+  useBackLayer(onClose);
   const [text, setText] = useState("");
   const [playing, setPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
