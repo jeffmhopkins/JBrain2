@@ -122,7 +122,10 @@ output is a short findings section added to this doc.
      without turning on any experimental toggle?
    - Does `scriptevent jb:<id> <json>` on stdin reach `system.afterEvents.scriptEventReceive`?
    - Does `console.log` from the script appear on BDS stdout, and at what length limit?
-   - Can a stable **custom slash command** (`/jb:ask <text>`) be registered for all players?
+   - Is there a **stable chat event**, so `Dave, …` typed in plain chat can be caught? This is
+     what decides whether Xbox players can ask from a controller comfortably.
+   - Can a stable **custom slash command** be registered for all players? Commands are
+     namespaced (`jb:dave`), so check whether players can type plain `/dave`.
    - What does adding the pack do to achievements on this world? Record the answer for the
      owner.
 6. **Parser.** On one snapshot, list chunks, actors (entities), block entities, and the
@@ -201,8 +204,11 @@ scheduled.
   snapshots and then fetches the new BDS into the volume before restarting. Clients
   auto-update, so a lagging server locks every player out. That makes this the most-used
   control after start/stop.
-- Decision for the owner: whether Minecraft snapshots also go into the whole-box `jbrain`
-  export. If the volume is added to `backup.sh`, then `restore.sh` must change in step.
+- **Separate from the box backups (owner decision, 2026-10-10).** Minecraft backups do **not**
+  go into the whole-box `jbrain` export or into `backup.sh`, and `jbrain_minecraft` is left
+  out of both, as the jcode volumes are. They live on their own shelf. Because of that, the
+  only copy that leaves the box is one the owner **downloads**, so the card shows when the
+  last download happened.
 - Tests: the snapshot protocol against the fake BDS (hold → query → truncate → resume, and
   resume still runs on error), count retention with pins, and restore ordering.
 
@@ -223,14 +229,12 @@ Tailscale doesn't help here, because an Xbox can't run it.
 
 **Finding the server:**
 
-- **Brothers on Windows** add the address in **Servers → Add Server**, and that's all.
-- **Brothers on Xbox** can't add a server address. The proven route is a **broadcaster**
-  (MCXboxBroadcast-style). It signs in to a spare Microsoft account and advertises the server
-  as a joinable session, so anyone who is that account's Xbox friend sees it in **Friends** and
-  joins with one press. It runs as a third container under the same profile. Its sign-in is a
-  Microsoft **device-code** flow, so the PWA shows the code and link, with no terminal needed.
-  (BedrockConnect, the alternative, needs a DNS change on each brother's console, which is
-  worse.)
+- **The brothers are on Windows (owner decision, 2026-10-10).** They add the address under
+  **Servers → Add Server**, and that's all.
+- **Not built unless needed**: if a remote Xbox player is ever added, an Xbox can't type an
+  address. The route then is a **broadcaster** (MCXboxBroadcast-style) as a third container.
+  It signs in to a spare Microsoft account through a device code that the PWA shows, and the
+  server then appears in that account's friends' **Friends** tab.
 - The **allowlist** (M2) is mandatory once the port is reachable from outside. The brothers'
   gamertags go on it from the PWA.
 
@@ -261,8 +265,12 @@ card.
 
 - A **behavior pack** (`deploy/minecraft/pack/`, TypeScript compiled to the pack's JS) is
   installed into the active world by the wrapper. It uses only stable APIs, as confirmed in M0.
-- **Inbound (player asks)**: `/jb:ask where's the nearest pig` (a custom command). If M0 shows
-  that chat events are stable, a chat prefix such as `@jb …` is offered as well. The script
+- **Inbound (player asks)**: a chat message addressed to the companion by name, such as
+  `Dave, where's the nearest pig?` or `@dave …`. This matters for the Xbox players, who would
+  struggle to type a slash command on a controller, so it depends on M0 finding a stable chat
+  event. `/dave <question>`, a custom command (namespaced as `jb:dave`), is the fallback and is always registered. The
+  name is a **setting**, not a constant: the script reads it from a value the wrapper pushes
+  through `scriptevent`, so renaming needs no pack rebuild. The script
   logs one structured line carrying the asker, the text, and the asker's position, dimension
   and facing. The wrapper parses it and queues a `question` event.
 - **Live queries (backend asks the world)**: the wrapper sends
@@ -276,7 +284,9 @@ card.
 
 ### M6 — The companion agent
 
-- A dedicated persona (the name is the owner's choice) with **only** read-only `mc_*` tools.
+- A dedicated persona named **Dave** (owner decision, 2026-10-10). The name is changeable in
+  Ops → Minecraft, and one setting feeds the persona prompt, the chat trigger, and the reply
+  prefix. Dave has **only** read-only `mc_*` tools.
   It has no notes, wiki, web, or other domains. It runs on the most restrictive scope there
   is. Players are not principals, and a player's message must never reach the owner's
   knowledge base. This is enforced by the tool set and the session scope, not by the prompt.
@@ -286,6 +296,8 @@ card.
   - `mc_locate_biome(biome)`
   - `mc_find_container(item)`
   - `mc_player_context()`, which returns the asker's position, dimension, last death and spawn
+  - `mc_where_is(player)`, which returns another player's position, live if they're online and
+    otherwise their last saved position
   - `mc_world_info()`, which returns time, weather and day count
 - **Answer cascade**: the tools try the freshest source first and always say which one
   answered.
@@ -304,7 +316,8 @@ card.
     enforcement, not the prompt.
   - Per-player rate limits.
   - Bounded reply length.
-  - It does not reveal another player's location unless the owner turns that on.
+  - Other players' locations are **shared** ("they're all friends", owner decision,
+    2026-10-10). A setting can turn sharing off later.
 - Model: local by default (no per-question cost and no data leaves the box), through the
   adapter. Latency must suit chat, so measure it, with a target of a reply in under 5 s.
 - Tests: tool handlers against fixture index rows and a fake bridge, cascade ordering, the
@@ -326,8 +339,15 @@ card.
 
 - **Players**: 1–4 people, mostly on the home network. Brothers may join over the internet,
   which is wave R1.
-- **Devices**: Windows and Xbox Bedrock. The Xbox drives two requirements: LAN discovery has to
-  work (M0 and M1), and remote Xbox players need the broadcaster (R1).
+- **Devices**: Windows and Xbox on the home network. Remote players (the brothers) are on
+  Windows only, so they join by address and no Xbox broadcaster is needed. The home Xbox means
+  LAN discovery has to work (M0 and M1).
+- **Add-on**: yes. The companion is a behavior pack, which is an add-on. A behavior pack with
+  no resource pack shouldn't trigger the "download add-ons" prompt for players, and M0
+  confirms that. Experimental toggles are still never turned on without asking.
+- **Companion**: named **Dave** for now, and changeable later (M5, M6).
+- **Player locations**: Dave may say where other players are.
+- **Box backups**: Minecraft backups stay separate from the whole-box export (M3).
 - **World**: a small world on Windows, about 3 hours of building. It is imported by exporting
   a `.mcworld` (M2).
 - **Backups**: on demand for now, plus automatic safety snapshots before risky actions (M3).
@@ -335,15 +355,10 @@ card.
 
 **Still open:**
 
-1. **Remote play**: are the brothers on Windows or Xbox? And which way do packets reach the
-   box: a router port-forward or a relay (R1)?
-2. **Behavior pack consent**: the companion needs a pack on the world. M0 reports what that
-   does to achievements on this world before the owner decides.
-3. **Companion name and trigger**: `/jb:ask` versus a chat prefix. Typing a slash command on an
-   Xbox controller is clumsy, so a chat prefix is worth a lot here if M0 finds a stable chat
-   event.
-4. **Privacy between players**: may the bot say where other players are? The default is no.
-5. **Whole-box export**: should Minecraft backups also go into the `jbrain` export?
+1. **How remote packets reach the box**: a router port-forward or a relay (R1). This can wait
+   until R1.
+2. **Achievements**: M0 reports what the pack does to achievements on this world, for the
+   record. The owner has already accepted the add-on.
 
 ## 5. Risks
 
@@ -369,7 +384,6 @@ public or unallowlisted servers. Letting the bot build, teleport, or give items.
   profile is created by an in-PWA update. No host step is needed.
 - **Internet play (R1)** needs either a router port-forward or a relay agent. A port-forward
   is a change on the owner's own router, not on the box. A relay agent is claimed through a
-  link the PWA shows. The Xbox broadcaster signs in with a device code that the PWA shows.
-  None of these needs a box terminal.
+  link the PWA shows. Neither needs a box terminal.
 - **Nothing else** in M1–M6 needs host access. If M0 finds a step that does, it gets designed
   out before the wave is scheduled.
