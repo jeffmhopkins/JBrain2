@@ -299,12 +299,26 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   const suppressClick = useRef(false);
 
   // Edit mode is a moment, not a setting: leaving the launcher ends it.
+  // A pending press dies with it too, or its timer would switch edit mode on behind a
+  // launcher that a swipe, ✕ or back just closed.
   useEffect(() => {
     if (!open) {
+      const p = press.current;
+      if (p?.timer) clearTimeout(p.timer);
+      press.current = null;
+      setDragging(null);
       setEditing(false);
       setShowHidden(false);
     }
   }, [open]);
+
+  useEffect(
+    () => () => {
+      const p = press.current;
+      if (p?.timer) clearTimeout(p.timer);
+    },
+    [],
+  );
 
   // React's touch listeners are passive, so only a native one can stop the page
   // scrolling (and the browser cancelling our pointer stream) under a dragged tile.
@@ -601,9 +615,13 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   function onTouchMove(event: TouchEvent) {
     const startY = touchStartY.current;
     const y = event.touches[0]?.clientY;
-    if (editing || press.current) return;
+    // Arranging owns the finger: a held tile or edit mode never reads as a dismiss
+    // (Done, ✕ and back still close). A press still waiting to become a long-press
+    // doesn't block it — a swipe that starts on a tile is a swipe.
+    if (editing || (press.current && press.current.timer === null)) return;
     if (startY !== null && y !== undefined && y - startY > SWIPE_DOWN_PX) {
       touchStartY.current = null;
+      endPress();
       onClose();
     }
   }

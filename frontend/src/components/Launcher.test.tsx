@@ -543,4 +543,54 @@ describe("Launcher arranging", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
   });
+
+  // The launcher's own swipe-down dismiss and the arranging gestures share fingers.
+  describe("against the swipe-down dismiss", () => {
+    const swipeDown = (el: HTMLElement) => {
+      fireEvent.touchStart(el, { touches: [{ clientX: 0, clientY: 0 }] });
+      fireEvent.touchMove(el, { touches: [{ clientX: 0, clientY: 200 }] });
+    };
+
+    it("a swipe that starts on a tile still closes, and never turns on edit mode", () => {
+      const onClose = vi.fn();
+      const { rerender } = render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      fireEvent.pointerDown(tile("Pet"), pt());
+      swipeDown(tile("Pet"));
+      expect(onClose).toHaveBeenCalled();
+
+      rerender(<Launcher open={false} onClose={onClose} onNavigate={() => {}} />);
+      act(() => vi.advanceTimersByTime(1_000));
+      rerender(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+      expect(tile("Pet")).not.toHaveClass("tile-editing");
+    });
+
+    it("closing by ✕ mid-press doesn't reopen in edit mode", () => {
+      const { rerender } = render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+      fireEvent.pointerDown(tile("Pet"), pt());
+      rerender(<Launcher open={false} onClose={() => {}} onNavigate={() => {}} />);
+      act(() => vi.advanceTimersByTime(1_000));
+      rerender(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+      expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    });
+
+    it("dragging a tile downward moves it, not the launcher", () => {
+      const onClose = vi.fn();
+      render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      fireEvent.pointerDown(tile("Pet"), pt());
+      act(() => vi.advanceTimersByTime(500));
+      swipeDown(tile("Pet"));
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("a swipe in edit mode doesn't dismiss; Done and ✕ still work", () => {
+      const onClose = vi.fn();
+      render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      longPress("Pet");
+      swipeDown(screen.getByRole("navigation", { name: "Launcher" }));
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getAllByRole("button", { name: "Close launcher" })[1] as HTMLElement);
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
 });

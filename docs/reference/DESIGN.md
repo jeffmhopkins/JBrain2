@@ -1658,7 +1658,11 @@ arrange the grid themselves):
   a tap still opens one and, in edit mode, a **+** returns it to the slot it
   left. Taps don't navigate in edit mode. Order and hidden set are device-local
   (`jb.launcher.order`, `jb.launcher.hidden`) — a per-phone layout choice, not a
-  box setting; a tile added later appends to the end.
+  box setting; a tile added later appends to the end. Arranging owns the finger: while a
+  tile is held or edit mode is on, a downward drag never reads as the swipe-down
+  dismiss (Done, ✕ and back still close). A swipe that merely *starts* on a tile is
+  still a swipe — it closes the launcher and cancels the pending long-press, so the
+  launcher never reopens in edit mode.
 - **Navigation is a tree, and swiping down climbs it** (settled in Phase 1
   polish): card screen → (swipe down at scroll-top) → launcher → (swipe
   down) → home. Swipe up on the omnibox descends into the launcher. The
