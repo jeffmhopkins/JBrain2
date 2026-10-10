@@ -688,6 +688,33 @@ biomes.**
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
+**One persona, two ways in (owner decision, 2026-10-10).** Minecraft_Dave is a single
+persona. The in-game companion (M5/M6) and the PWA agent are the **same agent**: one
+prompt and one set of goal, log and memory tools, reached through two doors. Each door
+fixes **whose session it is**:
+
+| Door | Who | Session player | Can switch player? | Tool tier |
+|---|---|---|---|---|
+| **PWA** (the agent picker, or "Ask about this world" on the Minecraft screen) | the owner | **the owner's gamertag** by default, a setting on the Minecraft screen | yes: a player picker in the chat, and "switch to Mira" | Owner: everything below |
+| **In game** (`/jb:dave …`) | any player on the server | **that player**, from the xuid the server-side script reports (never typed) | **no** | Player: §3b's Player tier, plus their own goals, log and memory |
+
+- **Each player has their own continuing conversation.** In game, a player's messages go
+  to *their* Minecraft_Dave session, so "and the next one?" follows on. A session rolls
+  over after 6 hours idle, keeping the history and starting a fresh context.
+- **Per-player data follows the session player**, never the speaker's claim. A player's
+  goals, log and memory are theirs, and in game nobody can read or write another
+  player's (sharing between players is the owner's switch).
+- **Why unifying is safe:** the persona has **no KB access**, so the in-game door can't
+  reach the owner's notes whatever a player types. Player text is untrusted data,
+  fenced, on every path.
+- **In game, some owner tools are held back:**
+  - the Admin tools stay with the gamertags on the admin list (§3b);
+  - **web search and fetch are OFF in game by default**, an owner setting. They're for
+    the owner in the PWA. Turned on in game, they'd let any player have the box fetch
+    arbitrary pages and read them back into chat, which matters with children playing.
+- The **in-game name** stays the companion setting (`/jb:dave`, "Dave"), and the persona
+  shows as **Minecraft_Dave** in the PWA.
+
 **Owner request (2026-10-10).** The owner wants a selectable agent persona for Minecraft,
 with:
 - maps rendered in the PWA as one of its tools;
@@ -841,7 +868,8 @@ screen's "Maps" section (M8) reuses the same component.
   free is the suggested default. Memory is decided: self-managed, line-level, with
   history.
 - which model it runs on (local by default);
-- the owner's own gamertag, the persona's default player.
+- the owner's own gamertag: entered on the Minecraft screen, and the PWA door's default
+  player.
 
 ## 3a. Debug control surface — the assistant as co-operator
 
