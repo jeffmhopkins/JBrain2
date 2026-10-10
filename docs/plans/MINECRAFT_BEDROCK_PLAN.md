@@ -213,9 +213,10 @@ change.
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
   LAN Games), `/jb:dave` from a client, the inventory-at-death read, memory under play, the
   parser, map and biome inputs, and the vanilla-client checks.
-  - **Added for M9/M10:** a behavior-pack-only custom item (a test Power Pack) borrowing
-    the vanilla Eye of Ender icon. Does it show its icon and name on the Xbox and on
-    Windows with no download, and does the nine-eye crafting recipe appear?
+  - **Added for M9/M10:** the server-pushed resource pack. On joining from the Xbox and
+    from Windows, the pack downloads automatically with no install step, a test Power
+    Pack shows its icon and name, and the nine-eye recipe works in a crafting table.
+    Also time the join: the extra download should add almost nothing.
 
 **First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
 random seed that `/properties` and `level.dat` record. The known-seed checks can set
@@ -761,21 +762,17 @@ compass that Dave sets.
   - It can still be thrown away, put in a chest, or burnt in lava like any item. Dave
     replaces a lost one on request.
 
-**The item itself, in two steps** (§3c rule 2 says behavior pack only):
-1. **v1, fully vanilla, no download:** an ordinary item renamed **"Tricorder"**, with
-   lore ("Points where Dave says"). The script recognises it by its name tag and lore.
-   Proposed item: a **spyglass**, because it has no needle of its own to contradict the
-   arrow, unlike a compass. It can be lost, dropped or kept in a chest like any item.
-2. **v2, a true custom item** (`jbrain:tricorder`, its own icon, stack size 1, can't be
-   crafted by accident). That needs a **resource pack**, which BDS **pushes to every
-   joining client** (`texturepacks-required=true`). Store clients accept server packs,
-   and Marketplace servers rely on it, but it's a download prompt on join and it breaks
-   §3c rule 2. **Owner decision when we get there**, after M0b checks the join prompt on
-   the Xbox and Windows.
-   - **There may be no download at all:** M10's Power Pack test checks whether a
-     behavior-pack-only custom item can borrow a **vanilla** icon. If it can,
-     `jbrain:tricorder` borrows the spyglass's icon and becomes a true custom item (stack
-     1, its own lore, never confused with a real spyglass) with no resource pack.
+**The item itself: a true custom item, `jbrain:tricorder`** (owner, 2026-10-10: a small
+pack that downloads automatically on join is fine, §3c rule 2).
+- **Its own icon** comes from the server-pushed `jbrain` resource pack (§3c rule 2).
+- Stack size 1. Lore: "Points where Dave says". It can't be crafted by players.
+- The game's own `minecraft:display_name` is "Tricorder". Each copy's name tag is set to
+  **"<Player>'s Tricorder"** when Dave gives it.
+- It's never confused with a real item, because the script recognises the item type.
+  Name and lore are not needed for that.
+- **Fallback if the join download fails on a client in M0b:** a spyglass renamed
+  "<Player>'s Tricorder" with lore, recognised by its lore. It has the same behaviour
+  without its own icon.
 
 **Later, maybe:** Bedrock's **locator bar** (the `locatorbar` rule already exists on this
 server) could show Dave's target as a real waypoint marker on screen. It's only worth
@@ -802,31 +799,24 @@ A **Power Pack** is crafted from **a full crafting table of Eyes of Ender**: nin
 makes it deliberately hard to get, at nine Ender Pearls plus nine Blaze Powder each.
 Plain Eyes of Ender do nothing special; they stay the End-portal key and nothing else.
 
-**How it's made, vanilla first:**
-- A **custom item `jbrain:power_pack`** defined in the **behavior pack only**:
-  - `minecraft:display_name` "Power Pack", plus lore ("Keeps your things, or takes you
-    somewhere").
+**How it's made:**
+- A **custom item `jbrain:power_pack`**:
+  - Name "Power Pack", plus lore ("Keeps your things, or takes you somewhere").
   - Max stack 16.
-  - `minecraft:icon` pointing at the **vanilla Eye of Ender texture key**, so it shows
-    the eye's look with no texture of our own.
+  - **Its own icon**, an Eye of Ender look with a glow so it's told apart at a glance,
+    from the server-pushed `jbrain` resource pack (§3c rule 2).
   - It isn't an ender eye to the game, so it can't be thrown or used to fill an End-portal
     frame by accident.
 - A **shaped recipe** (`recipes/power_pack.json`, crafting table, nine
-  `minecraft:ender_eye` → one `jbrain:power_pack`), also behavior pack only. Recipes are
-  stable data and need no experiment.
-- **The open question (M0b):** a behavior-pack-only custom item whose icon points at a
-  vanilla texture key has to render with the eye's icon and its name on **Xbox and
-  Windows with no download**. The server log also has to show no item errors. The probe
-  pack carries a test Power Pack to answer this.
-- **If it doesn't render without a resource pack**, there are two fallbacks, and the
-  owner chooses:
-  1. A tiny **server-pushed resource pack**. It is the same decision as tricorder v2 (one
-     pack would serve both) and shows a download prompt on join.
-  2. **No download:** Dave "forges" a pack instead of the crafting table. "Dave, make me a
-     Power Pack" takes nine eyes and gives an Eye of Ender named "Power Pack" with lore.
-     The script recognises it by its lore (an anvil can rename an item but can't add
-     lore, so it can't be faked). The caveat is that, being a real eye, it could still be
-     thrown or put in a portal frame.
+  `minecraft:ender_eye` → one `jbrain:power_pack`) in the behavior pack. Recipes are
+  stable data and need no experiment, and it shows in the recipe book like any vanilla
+  recipe.
+- **Checked in M0b:** the item shows with its icon and name, and the recipe works, on the
+  Xbox and on Windows, after the automatic download on join.
+- **Fallback, only if that download fails on a client:** Dave "forges" a pack instead of
+  the crafting table. "Dave, make me a Power Pack" takes nine eyes and gives an Eye of
+  Ender named "Power Pack" with lore. The script recognises it by its lore (an anvil can
+  rename an item but can't add lore, so it can't be faked).
 
 #### Keep your inventory, once per Power Pack
 
@@ -1276,13 +1266,22 @@ console access for players.
 
 **Every player-facing feature must work on an unmodified, store-installed Bedrock client on
 Windows and Xbox.** That rules out client mods, resource packs players install themselves,
-and launcher tricks. The rules that keep it true:
+and launcher tricks. A pack the server sends on join is allowed, because it's
+automatic. The rules that keep it true:
 
 1. **Everything runs on the server.** The behavior pack's script runs inside BDS. The client
    only ever gets standard protocol messages.
-2. **Behavior pack only, no resource pack** for every planned feature. No custom textures,
-   models, sounds or UI files. Anything that would need one (a custom NPC model) is labelled
-   and left to the owner (M7).
+2. **A resource pack only if the server pushes it on join** (owner decision, 2026-10-10).
+   - **Allowed:** a small `jbrain` resource pack that BDS sends to every client as it
+     joins. It downloads automatically, with nothing to install, no third-party tool or
+     site, and it works the same from a computer or an Xbox.
+   - **How:** the wrapper installs it with the behavior pack into each world it loads
+     (`world_resource_packs.json`) and pins `texturepacks-required=true`. A client that
+     declines the pack can't join, rather than joining half-working.
+   - **What it carries:** the icons for the tricorder (M9) and the Power Pack (M10), and
+     any later custom model, such as an NPC (M7).
+   - **Kept small:** a few kilobytes of icons, so the join stays quick on the Xbox.
+   - **Still ruled out:** anything a player would have to install themselves.
 3. **No experimental toggles.** Only stable script APIs. A feature that needs a beta API
    waits, or gets a stable fallback (§5).
 4. **Output uses only vanilla channels.** Those are chat (`tellraw`), the actionbar and title
@@ -1301,17 +1300,17 @@ and launcher tricks. The rules that keep it true:
 | The Dave quick menu (M7, optional) | a server form | ✅ |
 | Replies | `tellraw` chat, private to the asker | ✅ |
 | `guide_me` compass | actionbar text, refreshed by the server | ✅ |
-| Power Pack (M10) | a crafted item with the Eye of Ender's look, if M0b confirms it renders without a download; otherwise the owner chooses a fallback | ⚠️ checked in M0b |
+| Power Pack (M10) | a custom item and crafting recipe; its icon arrives in the automatic join download | ✅ by decision, confirmed on the Xbox and Windows in M0b |
 | Power Pack teleport (M10) | a server form with Yes and No, then a normal teleport with vanilla sound and particles | ✅ |
 | Power Pack charm (M10) | ordinary death and drops; the eye vanishes; a chat line on respawn | ✅ |
-| Tricorder v1 (M9) | a renamed vanilla spyglass; actionbar arrow while held | ✅ |
-| Tricorder v2 (M9, optional) | a custom item; needs a server-pushed resource pack | ⚠️ the owner chooses (download prompt on join) |
+| Tricorder (M9) | a custom item (icon from the join download) with an actionbar arrow while held | ✅ by decision, confirmed in M0b |
+| The `jbrain` resource pack | downloaded automatically on joining; nothing to install | ✅ owner-approved, 2026-10-10 |
 | Waypoint markers in the world (optional) | vanilla particles at a spot, visible only to the asker | ✅ |
 | Reminders and warnings | chat or actionbar, plus a vanilla sound | ✅ |
 | Maps | a short code typed into a browser; nothing is shown in-game | ✅ no in-game image |
 | `my_inventory` / `my_stats` / deaths | read on the server by the script | ✅ |
 | Admin tools (time, weather, backup) | ordinary server commands | ✅ |
-| Companion NPC (M7) | a vanilla mob is fine; a custom model needs a resource pack | ⚠️ the owner chooses |
+| Companion NPC (M7) | a vanilla mob, or a custom model sent in the join download | ✅ |
 | Joining at all | the client must be on the **same version** as BDS | ⚠️ that is why M3's one-click update exists |
 
 **M0 checks this on the real clients** with the fresh world, on the owner's Windows PC and on
