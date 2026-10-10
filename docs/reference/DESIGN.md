@@ -1650,8 +1650,11 @@ arrange the grid themselves):
 - Every overlay surface must have a visible, tappable exit; a gesture is
   never the only way out (settled in Phase 1 polish).
 - **The owner arranges it like a phone home screen.** A long-press enters edit
-  mode (tiles wiggle; a **Done** button joins the head; Escape leaves edit mode
-  before it closes the launcher). Still holding, the finger carries the tile;
+  mode (tiles wiggle; a **Done** button joins the head). Edit mode is its own
+  back layer, as on an Android home screen: back (and Escape) leaves edit mode
+  before a second one closes the launcher. The long-press buzz is best-effort —
+  the owner's Android WebView holds no VIBRATE permission, so there the wiggle is
+  the only cue. Still holding, the finger carries the tile;
   in edit mode any press is a pickup, and the tile under the finger yields its
   slot live. Each tile's **×** hides it; hidden tiles collect behind a **Hidden**
   tile (last in the grid, with the count) that expands them below a rule, where
@@ -1660,7 +1663,7 @@ arrange the grid themselves):
   (`jb.launcher.order`, `jb.launcher.hidden`) — a per-phone layout choice, not a
   box setting; a tile added later appends to the end. Arranging owns the finger: while a
   tile is held or edit mode is on, a downward drag never reads as the swipe-down
-  dismiss (Done, ✕ and back still close). A swipe that merely *starts* on a tile is
+  dismiss (Done and back leave edit mode; ✕ closes). A swipe that merely *starts* on a tile is
   still a swipe — it closes the launcher and cancels the pending long-press, so the
   launcher never reopens in edit mode.
 - **Navigation is a tree, and swiping down climbs it** (settled in Phase 1

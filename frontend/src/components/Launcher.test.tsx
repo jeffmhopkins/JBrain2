@@ -593,4 +593,58 @@ describe("Launcher arranging", () => {
       expect(onClose).toHaveBeenCalled();
     });
   });
+
+  // In the shell, edit mode is a back-gesture layer (Android back leaves it before it
+  // closes the launcher), so the launcher reports it rather than keeping it to itself.
+  it("reports edit mode to an owning shell, which can end it", () => {
+    const onEditingChange = vi.fn();
+    const { rerender } = render(
+      <Launcher
+        open
+        onClose={() => {}}
+        onNavigate={() => {}}
+        editing={false}
+        onEditingChange={onEditingChange}
+      />,
+    );
+    longPress("Pet");
+    expect(onEditingChange).toHaveBeenLastCalledWith(true);
+
+    rerender(
+      <Launcher
+        open
+        onClose={() => {}}
+        onNavigate={() => {}}
+        editing
+        onEditingChange={onEditingChange}
+      />,
+    );
+    expect(tile("Pet")).toHaveClass("tile-editing");
+    fireEvent.click(tile("Done"));
+    expect(onEditingChange).toHaveBeenLastCalledWith(false);
+
+    // The shell's back gesture flips the prop; the grid follows.
+    rerender(
+      <Launcher
+        open
+        onClose={() => {}}
+        onNavigate={() => {}}
+        editing={false}
+        onEditingChange={onEditingChange}
+      />,
+    );
+    expect(tile("Pet")).not.toHaveClass("tile-editing");
+  });
+
+  it("a throwing vibrate (Android WebView without the permission) still enters edit mode", () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      vibrate: () => {
+        throw new Error("SecurityException");
+      },
+    });
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    longPress("Pet");
+    expect(tile("Pet")).toHaveClass("tile-editing");
+  });
 });

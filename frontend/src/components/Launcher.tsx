@@ -244,9 +244,20 @@ interface LauncherProps {
   active?: boolean;
   onClose: () => void;
   onNavigate: (target: LauncherTarget) => void;
+  /** Edit mode, when the shell owns it: it is a back-gesture layer there, so Android back
+   * leaves edit mode before it closes the launcher. Uncontrolled when omitted. */
+  editing?: boolean;
+  onEditingChange?: (editing: boolean) => void;
 }
 
-export function Launcher({ open, active = true, onClose, onNavigate }: LauncherProps) {
+export function Launcher({
+  open,
+  active = true,
+  onClose,
+  onNavigate,
+  editing: editingProp,
+  onEditingChange,
+}: LauncherProps) {
   // Stay mounted through the exit animation, then unmount.
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
@@ -278,7 +289,9 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   const foreground = useForeground();
   const [hidden, setHidden] = useState<Set<LauncherTarget>>(() => new Set(loadTargets(HIDDEN_KEY)));
   const [order, setOrder] = useState<LauncherTarget[]>(loadOrder);
-  const [editing, setEditing] = useState(false);
+  const [ownEditing, setOwnEditing] = useState(false);
+  const editing = editingProp ?? ownEditing;
+  const setEditing = onEditingChange ?? setOwnEditing;
   const [showHidden, setShowHidden] = useState(false);
   const [dragging, setDragging] = useState<LauncherTarget | null>(null);
   const tileEls = useRef(new Map<LauncherTarget, HTMLElement>());
@@ -504,7 +517,14 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
       ...at,
       timer: setTimeout(() => {
         suppressClick.current = true;
-        navigator.vibrate?.(10);
+        // The owner's Android WebView holds no VIBRATE permission, where this is a no-op
+        // at best and has thrown on some WebView builds — a missing buzz must never
+        // swallow the long-press.
+        try {
+          navigator.vibrate?.(10);
+        } catch {
+          // the wiggle is the cue on its own
+        }
         setEditing(true);
         startDrag();
       }, LONG_PRESS_MS),
