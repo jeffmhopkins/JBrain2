@@ -6,7 +6,9 @@ ffmpeg is a system package with its own gate (`jbrain.media.ffmpeg_available`)."
 
 from __future__ import annotations
 
-from jbrain.stream import ytdlp_available
+from pathlib import Path
+
+from jbrain.stream import _js_runtimes, ytdlp_available
 
 
 def test_ytdlp_importable_and_gated() -> None:
@@ -17,3 +19,12 @@ def test_ytdlp_importable_and_gated() -> None:
 
     # The resolution surface the tool uses: build an extractor and call extract_info.
     assert hasattr(yt_dlp, "YoutubeDL")
+
+
+def test_deno_runtime_ships_with_the_env() -> None:
+    # YouTube extraction needs a JS runtime + the EJS solver scripts; both are wheels, so a
+    # synced env must carry them rather than fall back to the client googlevideo 403s.
+    import yt_dlp_ejs  # noqa: F401
+
+    path = _js_runtimes()["deno"].get("path")
+    assert path and Path(path).is_file()

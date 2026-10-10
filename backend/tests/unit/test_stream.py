@@ -152,6 +152,8 @@ def test_resolve_stream_requests_caption_tracks(monkeypatch: pytest.MonkeyPatch)
     assert captured.get("writeautomaticsub") is True
     assert "en" in captured.get("subtitleslangs", [])
     assert r.caption is not None and r.caption.kind == "auto"  # wired through to the stream
+    # Without a JS runtime YouTube serves only a degraded client whose media URLs 403.
+    assert "deno" in captured.get("js_runtimes", {})
 
 
 def test_select_media_captures_http_headers() -> None:
