@@ -240,3 +240,13 @@ async def test_travel_reports_the_log_summary(monkeypatch: pytest.MonkeyPatch) -
     out = await mc.minecraft_travel(req, PRINCIPAL)
     assert out == {"players": [{"world": "world", "samples": 3}]}
     assert req.state.debug_detail == "minecraft travel summary"
+
+
+async def test_the_debug_map_serves_a_picture_not_the_world(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/map/tile/the_end/0/1/1.png"] = httpx.Response(200, content=b"\x89PNG")
+    req = _request(FakeSupervisor([]))
+    resp = await mc.minecraft_map_tile("the_end", 0, 1, 1, req, SETTINGS, PRINCIPAL)
+    assert resp.body == b"\x89PNG" and resp.media_type == "image/png"
+    await mc.minecraft_map_info(req, SETTINGS, PRINCIPAL, slot="slot1", dim="overworld")
+    assert [r.url.path for r in seen] == ["/map/tile/the_end/0/1/1.png", "/map/info"]

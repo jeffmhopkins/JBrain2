@@ -161,6 +161,25 @@ async def upload(
     return cast(dict[str, Any], resp.json())
 
 
+async def image(settings: Any, path: str, params: dict[str, Any] | None = None) -> bytes:
+    """A small binary answer (a map tile PNG): fetched whole, refusals passed through
+    like `call`'s."""
+    try:
+        async with httpx.AsyncClient(
+            base_url=base(settings), timeout=SIDECAR_TIMEOUT_S, transport=_transport
+        ) as client:
+            resp = await client.get(path, params=params, headers=_auth(settings))
+    except httpx.TransportError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Minecraft sidecar unreachable ({type(exc).__name__})"
+        ) from exc
+    if resp.status_code in (400, 404):
+        raise HTTPException(status_code=resp.status_code, detail=detail(resp))
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Minecraft sidecar: {detail(resp)}")
+    return resp.content
+
+
 async def download(settings: Any, path: str) -> tuple[httpx.AsyncClient, httpx.Response]:
     """Open a streamed download from the sidecar. The caller streams `resp` and must
     close both (the route hands them to a StreamingResponse background task)."""

@@ -1378,3 +1378,22 @@ def test_a_reset_or_import_marks_the_old_trail_as_gone(
     real.note_world_replaced("slot3")
     (ev,) = real.events_after(0)
     assert (ev["kind"], ev["world"], real.world) == ("world_replaced", "slot3", "world")
+
+
+def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
+    mapping = sys.modules.get("mapping") or __import__("mapping")
+    _make_world("world")
+    rig = _world_rig()
+    with pytest.raises(ValueError):
+        rig.map_info("slot2", "overworld")  # no world in that slot
+    with pytest.raises(ValueError):
+        rig.map_info("slot1", "aether")
+    with pytest.raises(ValueError):
+        rig.map_tile("slot1", "overworld", mapping.MAX_ZOOM + 1, 0, 0)
+    info = rig.map_info("slot1", "overworld")
+    assert info["extent"] is None and info["tile_blocks"] == 256  # empty db: all fog
+    png = rig.map_tile("slot1", "overworld", 0, 0, 0)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert (
+        rig.map_tile("slot1", "overworld", 0, 0, 0) is png
+    )  # cached until files change

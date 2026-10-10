@@ -34,6 +34,7 @@ from typing import Any
 
 import bds
 import install
+import mapping
 import worlds
 
 DATA = Path(os.environ.get("MC_DATA_DIR", "/data"))
@@ -135,6 +136,11 @@ class Rig:
         self._track_id = 0
         self._last_pos: dict[str, dict[str, Any]] = {}
         self._track_lock = threading.Lock()
+        # Map tiles (§M8): one chunk index per world folder, and the PNGs it rendered,
+        # both dropped when that world's database files change.
+        self._map_lock = threading.Lock()
+        self._map_index: dict[str, mapping.WorldIndex] = {}
+        self._tiles: dict[tuple, bytes] = {}
         self.slots = worlds.SlotStore(
             SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
         )
@@ -1054,6 +1060,55 @@ class Rig:
         with self._track_lock:
             return [dict(t) for t in self._track if t["id"] > after]
 
+    def _map_for(self, slot_id: str) -> tuple[str, mapping.WorldIndex]:
+        rec = self.slots.get(slot_id)
+        if not rec["exists"]:
+            raise ValueError(f"{slot_id} has no world yet")
+        folder = rec["folder"]
+        index = self._map_index.get(folder)
+        if index is None:
+            index = self._map_index[folder] = mapping.WorldIndex(self.world_dir(folder) / "db")
+        before = index._signature
+        index.refresh()
+        if index._signature != before:
+            self._tiles = {k: v for k, v in self._tiles.items() if k[0] != folder}
+        return folder, index
+
+    def map_info(self, slot_id: str, dim: str) -> dict[str, Any]:
+        """What a viewer needs before asking for tiles: the generated extent, and the
+        tile geometry."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        with self._map_lock:
+            _, index = self._map_for(slot_id)
+            area = index.extent(mapping.DIMENSIONS[dim])
+        return {
+            "slot": slot_id,
+            "dimension": dim,
+            "extent": area,
+            "tile_blocks": mapping.TILE,
+            "max_zoom": mapping.MAX_ZOOM,
+            "layers": ["biome"],
+        }
+
+    def map_tile(self, slot_id: str, dim: str, zoom: int, tx: int, tz: int) -> bytes:
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if not 0 <= zoom <= mapping.MAX_ZOOM:
+            raise ValueError(f"zoom is 0 to {mapping.MAX_ZOOM}")
+        if abs(tx) > 200_000 or abs(tz) > 200_000:
+            raise ValueError("that tile is outside the world")
+        with self._map_lock:
+            folder, index = self._map_for(slot_id)
+            key = (folder, dim, zoom, tx, tz)
+            cached = self._tiles.get(key)
+            if cached is None:
+                cached = mapping.tile(index, mapping.DIMENSIONS[dim], zoom, tx, tz)
+                if len(self._tiles) > 512:  # a few MB of PNGs at most
+                    self._tiles.clear()
+                self._tiles[key] = cached
+        return cached
+
     def probe_pack(self, install_it: bool) -> dict[str, Any]:
         """Install (or remove) the bundled probe behavior pack in the active world and
         restart the server so it loads. M0 item 5: does a stable-API pack load with no
@@ -1167,6 +1222,33 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, rig.rules_view(m.group(1)))
         elif url.path == "/allowlist":
             self._send(200, rig.allowlist())
+        elif url.path == "/map/info":
+            try:
+                self._send(
+                    200,
+                    rig.map_info(
+                        query.get("slot", ["slot1"])[0], query.get("dim", ["overworld"])[0]
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+        elif m := _MAP_TILE.match(url.path):
+            try:
+                image = rig.map_tile(
+                    query.get("slot", ["slot1"])[0],
+                    m.group(1),
+                    int(m.group(2)),
+                    int(m.group(3)),
+                    int(m.group(4)),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(image)))
+            self.end_headers()
+            self.wfile.write(image)
         elif url.path == "/track":
             after = int(query.get("after", ["0"])[0])
             self._send(200, {"boot_id": bds.BOOT_ID, "samples": rig.track_after(after)})
@@ -1371,6 +1453,7 @@ _SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
 _WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
 _WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
+_MAP_TILE = re.compile(r"^/map/tile/(overworld|nether|the_end)/(\d)/(-?\d+)/(-?\d+)\.png$")
 
 
 def parse_querytarget(lines: list[str]) -> dict[str, Any] | None:
