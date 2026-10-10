@@ -972,34 +972,41 @@ The private chest is the design below. The cargo chest follows it.
 - **Why it can't share one inventory:** hoppers act on real containers, in many places
   at once, while a travelling vault can be in only one place. So a cargo chest is a real
   container, and its colour makes a **pipe**.
-- **Send or receive:** each cargo chest is set to one of the two, by sneak-using it, and
-  shows an in or out arrow. Items arriving in a red **sender**, by hopper or by hand, are
-  moved to the placer's red **receivers**. They fill in order, and a hopper under a
-  receiver pulls them onward.
+- **One receiver per colour (owner, 2026-10-10):** the **first** red cargo chest a player
+  places is their red **receiver**. Every red cargo chest they place after it is a
+  **sender**. Items arriving in a sender, by hopper or by hand, are moved to that one
+  receiver, and a hopper under the receiver pulls them onward.
+  - There's no switch to flip. Each chest shows an in or out mark, and its name says
+    which it is ("Steve42's red cargo receiver").
+  - **Receiver broken:** that colour has no receiver, and its senders hold their items
+    until one exists. The **next red cargo chest that player places** becomes the
+    receiver. An existing sender is never silently promoted, so items never start
+    piling up somewhere unexpected.
 - **Moves are real `Container.moveItem` calls**, stable, run inside one script tick.
   Items keep all their data and can't be duplicated.
-- **Back-pressure:** when every receiver is full, items simply wait in the sender, just
+- **Back-pressure:** when the receiver is full, items simply wait in the sender, just
   like a full hopper chain. Nothing is dropped or destroyed.
 - **Loading:** the sender is loaded because its hopper is working. A receiver in an
   unloaded area (another dimension, a far base) is kept loaded with a `tickingarea`.
-  - BDS limits how many ticking areas there are, so each player gets a small number of
-    receivers (for example 4).
+  - There's one receiver per player per colour, so one ticking area each. BDS limits how
+    many ticking areas there are, so each player gets a small number of **active
+    colours** (for example 4).
   - That limit is also a natural cost lever.
 - **The container:** a custom block with an inventory, if the M11 spike shows custom
   blocks can hold one on stable and hoppers see it. Otherwise it's a vanilla barrel the
   script registers by position, marked with a coloured particle and a name, which
   hoppers already handle.
 - **Who can use it:** anyone can put items into a sender, which makes it a public drop
-  box. Only the placer can re-colour or flip it, and breaking it drops its contents like
+  box. Only the placer can re-colour it, and breaking it drops its contents like
   a normal chest.
 - **Spike additions:** hopper interaction with the chosen container; `moveItem` keeping
   enchanted, named and shulker items across dimensions; how many ticking areas BDS
   allows.
 
 **Open (owner):**
-1. **Cargo routing:** with several red receivers, fill them in order or share items
-   round-robin? And can a cargo network be shared between players (Sam's red feeds
-   Josh's), or is it only ever the placer's?
+1. **Cargo sharing:** can a cargo network be shared between players (Sam's red sender
+   feeds Josh's receiver), or is it only ever the placer's? Routing is decided: one
+   receiver, the first one placed.
 2. **Cost.** For example, crafting one chest needs an ender chest plus a Power Pack
    (nine eyes), and the dye is free. Or the chest is cheap but each **new colour channel**
    costs a Power Pack the first time it's used.
