@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import struct
+import time
 import zlib
 from pathlib import Path
 
@@ -160,14 +161,24 @@ def decode_data3d(value: bytes) -> Column:
     return Column(heights, biome)
 
 
-class WorldIndex:
-    """Every generated chunk's surface record for one world, read once and re-read only
-    when the database's files change. A tile then costs a dict lookup per chunk instead
-    of a pass over the whole database, which for a big world is hundreds of MB."""
+# A running server appends to its write-ahead log every few seconds, so "the files
+# changed" is nearly always true; re-reading on each change would re-read the whole
+# database and drop every cached tile on almost every request (issue #1608). A map that
+# trails the world by this long is fine.
+REREAD_S = 60.0
 
-    def __init__(self, db: Path) -> None:
+
+class WorldIndex:
+    """Every generated chunk's surface record for one world, read once and re-read when
+    the database's files change, at most every REREAD_S. A tile then costs a dict lookup
+    per chunk instead of a pass over the whole database, which for a big world is
+    hundreds of MB."""
+
+    def __init__(self, db: Path, clock=time.monotonic) -> None:
         self.db = db
+        self._clock = clock
         self._signature: tuple = ()
+        self._read_at: float | None = None
         self._raw: dict[tuple[int, int, int], bytes] = {}
 
     def _current(self) -> tuple:
@@ -179,6 +190,9 @@ class WorldIndex:
             return ()
 
     def refresh(self) -> None:
+        now = self._clock()
+        if self._read_at is not None and now - self._read_at < REREAD_S:
+            return
         signature = self._current()
         if signature == self._signature:
             return
@@ -187,7 +201,7 @@ class WorldIndex:
             cx, cz = struct.unpack_from("<ii", key)
             dim = struct.unpack_from("<i", key, 8)[0] if len(key) == 13 else 0
             raw[(dim, cx, cz)] = value
-        self._raw, self._signature = raw, signature
+        self._raw, self._signature, self._read_at = raw, signature, now
 
     def columns(self, dim: int, cx0: int, cz0: int, n: int) -> dict[tuple[int, int], Column]:
         out = {}
