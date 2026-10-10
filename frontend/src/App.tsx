@@ -131,6 +131,8 @@ export function App() {
   const [minecraftFromOps, setMinecraftFromOps] = useState(false);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // The launcher's arrange mode is its own back layer, as on an Android home screen.
+  const [launcherEditing, setLauncherEditing] = useState(false);
   // Which turn's detail level is open on the vitals card. Held here, not inside the
   // screen, so closeTopLayer and the platform back gesture climb it like every other
   // stacked layer instead of closing the whole card from under it.
@@ -499,6 +501,7 @@ export function App() {
     (runsOpen ? 1 : 0) +
     (card !== null ? 1 : 0) +
     (launcherOpen ? 1 : 0) +
+    (launcherOpen && launcherEditing ? 1 : 0) +
     (sessionBackTo !== null ? 1 : 0);
 
   function closeTopLayer() {
@@ -535,6 +538,8 @@ export function App() {
     if (card === "jpanel") return setCard(null);
     if (card === "endpoints") return setCard(null);
     if (card !== null) return climbFromCard();
+    // Back leaves the launcher's arrange mode before it closes the launcher.
+    if (launcherOpen && launcherEditing) return setLauncherEditing(false);
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
     // The home conversation surface is beneath everything above, so its own layers (an
@@ -607,6 +612,8 @@ export function App() {
         active={card === null}
         onClose={() => setLauncherOpen(false)}
         onNavigate={navigate}
+        editing={launcherEditing}
+        onEditingChange={setLauncherEditing}
       />
 
       {/* Automations is a self-contained full-screen overlay (its own back bar +

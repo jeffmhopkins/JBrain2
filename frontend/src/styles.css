@@ -1207,6 +1207,100 @@ button.chip-ask {
   opacity: 0.55;
 }
 
+/* Long-press arranges the grid, so the OS must not claim the press for a callout or selection. */
+.tile {
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.launcher-grid {
+  margin-top: 16px;
+}
+
+.tile-slot {
+  position: relative;
+  display: flex;
+}
+
+.tile-slot > .tile {
+  flex: 1;
+}
+
+/* Edit mode, phone-home-screen style: tiles wiggle and a press is a pickup. */
+.tile-editing {
+  touch-action: none;
+  animation: tile-wiggle 260ms ease-in-out infinite alternate;
+}
+
+.tile-slot:nth-child(even) > .tile-editing {
+  animation-delay: -130ms;
+}
+
+@keyframes tile-wiggle {
+  from {
+    transform: rotate(-1.2deg);
+  }
+  to {
+    transform: rotate(1.2deg);
+  }
+}
+
+/* The lifted tile follows the finger by an inline transform, which an animation would override. */
+.tile-dragging {
+  animation: none;
+  z-index: 2;
+  opacity: 0.9;
+  border-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-editing {
+    animation: none;
+  }
+}
+
+.tile-edit-btn {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  z-index: 3;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.launcher-done {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  padding: 8px;
+}
+
+.launcher-hidden {
+  margin-top: 20px;
+}
+
+.launcher-hidden-rule {
+  border-top: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.tile-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: -4px;
+}
+
 .tile-icon {
   color: var(--text-2);
   display: inline-flex;

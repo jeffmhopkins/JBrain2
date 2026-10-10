@@ -407,3 +407,244 @@ describe("Launcher Minecraft tile", () => {
     expect(onNavigate).toHaveBeenCalledWith("minecraft");
   });
 });
+
+// The grid arranges like a phone home screen: a long-press enters edit mode, where a
+// tile drags to a new slot and its × hides it; hidden tiles sit behind a "Hidden" tile.
+describe("Launcher arranging", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.clear();
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("no network"))),
+    );
+  });
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  const tile = (name: string) => screen.getByRole("button", { name });
+  const pt = (x = 0, y = 0) => ({ pointerId: 1, button: 0, clientX: x, clientY: y });
+
+  function longPress(name: string) {
+    fireEvent.pointerDown(tile(name), pt());
+    act(() => vi.advanceTimersByTime(500));
+    fireEvent.pointerUp(tile(name), pt());
+    fireEvent.click(tile(name));
+  }
+
+  function rect(el: HTMLElement, left: number, top: number) {
+    el.getBoundingClientRect = () =>
+      ({ left, top, right: left + 100, bottom: top + 100, width: 100, height: 100 }) as DOMRect;
+  }
+
+  it("has no section headers", () => {
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    expect(screen.queryByText("Knowledge")).toBeNull();
+    expect(screen.queryByText("System")).toBeNull();
+  });
+
+  it("enters edit mode on long-press without navigating; taps don't navigate until Done", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    longPress("Pet");
+    expect(tile("Pet")).toHaveClass("tile-editing");
+    fireEvent.click(tile("Ops"));
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    fireEvent.click(tile("Done"));
+    expect(tile("Pet")).not.toHaveClass("tile-editing");
+    fireEvent.click(tile("Ops"));
+    expect(onNavigate).toHaveBeenCalledWith("ops");
+  });
+
+  it("a short tap still navigates", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.pointerDown(tile("Pet"), pt());
+    act(() => vi.advanceTimersByTime(200));
+    fireEvent.pointerUp(tile("Pet"), pt());
+    fireEvent.click(tile("Pet"));
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(onNavigate).toHaveBeenCalledWith("petcontrol");
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+  });
+
+  it("a press that drifts is a scroll, not an edit", () => {
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    fireEvent.pointerDown(tile("Pet"), pt(0, 0));
+    fireEvent.pointerMove(tile("Pet"), pt(0, 40));
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+  });
+
+  it("drags a tile onto another's slot and remembers the order", () => {
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    rect(tile("Search"), 0, 0);
+    rect(tile("Wiki"), 200, 0);
+
+    // Long-press Search and, without lifting, carry it over Wiki.
+    fireEvent.pointerDown(tile("Search"), pt(50, 50));
+    act(() => vi.advanceTimersByTime(500));
+    fireEvent.pointerMove(tile("Search"), pt(250, 50));
+    fireEvent.pointerUp(tile("Search"), pt(250, 50));
+
+    const order = JSON.parse(localStorage.getItem("jb.launcher.order") ?? "[]");
+    expect(order.slice(0, 3)).toEqual(["research", "wiki", "search"]);
+    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(names.indexOf("Search")).toBeGreaterThan(names.indexOf("Wiki"));
+  });
+
+  it("hides with ×, collects behind Hidden, and + restores the tile", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    longPress("Pet");
+    fireEvent.click(tile("Hide Pet"));
+    expect(JSON.parse(localStorage.getItem("jb.launcher.hidden") ?? "[]")).toEqual(["petcontrol"]);
+    // In edit mode the hidden tray is open with a + to restore.
+    expect(tile("Show Pet")).toBeInTheDocument();
+
+    fireEvent.click(tile("Done"));
+    expect(screen.queryByRole("button", { name: "Pet" })).toBeNull();
+    fireEvent.click(tile("Hidden 1"));
+    fireEvent.click(tile("Pet"));
+    expect(onNavigate).toHaveBeenCalledWith("petcontrol");
+
+    longPress("Ops");
+    fireEvent.click(tile("Show Pet"));
+    expect(localStorage.getItem("jb.launcher.hidden")).toBe("[]");
+    fireEvent.click(tile("Done"));
+    expect(screen.queryByRole("button", { name: /Hidden/ })).toBeNull();
+    expect(tile("Pet")).toBeInTheDocument();
+  });
+
+  it("restores a saved order and appends tiles it has never seen", () => {
+    localStorage.setItem("jb.launcher.order", JSON.stringify(["ops", "bogus", "search"]));
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    const tiles = names.filter((n) => n === "Ops" || n === "Search" || n === "Research");
+    expect(tiles).toEqual(["Ops", "Search", "Research"]);
+  });
+
+  it("Escape leaves edit mode before it closes the launcher", () => {
+    const onClose = vi.fn();
+    render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+    longPress("Pet");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  // The launcher's own swipe-down dismiss and the arranging gestures share fingers.
+  describe("against the swipe-down dismiss", () => {
+    const swipeDown = (el: HTMLElement) => {
+      fireEvent.touchStart(el, { touches: [{ clientX: 0, clientY: 0 }] });
+      fireEvent.touchMove(el, { touches: [{ clientX: 0, clientY: 200 }] });
+    };
+
+    it("a swipe that starts on a tile still closes, and never turns on edit mode", () => {
+      const onClose = vi.fn();
+      const { rerender } = render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      fireEvent.pointerDown(tile("Pet"), pt());
+      swipeDown(tile("Pet"));
+      expect(onClose).toHaveBeenCalled();
+
+      rerender(<Launcher open={false} onClose={onClose} onNavigate={() => {}} />);
+      act(() => vi.advanceTimersByTime(1_000));
+      rerender(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+      expect(tile("Pet")).not.toHaveClass("tile-editing");
+    });
+
+    it("closing by ✕ mid-press doesn't reopen in edit mode", () => {
+      const { rerender } = render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+      fireEvent.pointerDown(tile("Pet"), pt());
+      rerender(<Launcher open={false} onClose={() => {}} onNavigate={() => {}} />);
+      act(() => vi.advanceTimersByTime(1_000));
+      rerender(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+      expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    });
+
+    it("dragging a tile downward moves it, not the launcher", () => {
+      const onClose = vi.fn();
+      render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      fireEvent.pointerDown(tile("Pet"), pt());
+      act(() => vi.advanceTimersByTime(500));
+      swipeDown(tile("Pet"));
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("a swipe in edit mode doesn't dismiss; Done and ✕ still work", () => {
+      const onClose = vi.fn();
+      render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
+      longPress("Pet");
+      swipeDown(screen.getByRole("navigation", { name: "Launcher" }));
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getAllByRole("button", { name: "Close launcher" })[1] as HTMLElement);
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  // In the shell, edit mode is a back-gesture layer (Android back leaves it before it
+  // closes the launcher), so the launcher reports it rather than keeping it to itself.
+  it("reports edit mode to an owning shell, which can end it", () => {
+    const onEditingChange = vi.fn();
+    const { rerender } = render(
+      <Launcher
+        open
+        onClose={() => {}}
+        onNavigate={() => {}}
+        editing={false}
+        onEditingChange={onEditingChange}
+      />,
+    );
+    longPress("Pet");
+    expect(onEditingChange).toHaveBeenLastCalledWith(true);
+
+    rerender(
+      <Launcher
+        open
+        onClose={() => {}}
+        onNavigate={() => {}}
+        editing
+        onEditingChange={onEditingChange}
+      />,
+    );
+    expect(tile("Pet")).toHaveClass("tile-editing");
+    fireEvent.click(tile("Done"));
+    expect(onEditingChange).toHaveBeenLastCalledWith(false);
+
+    // The shell's back gesture flips the prop; the grid follows.
+    rerender(
+      <Launcher
+        open
+        onClose={() => {}}
+        onNavigate={() => {}}
+        editing={false}
+        onEditingChange={onEditingChange}
+      />,
+    );
+    expect(tile("Pet")).not.toHaveClass("tile-editing");
+  });
+
+  it("a throwing vibrate (Android WebView without the permission) still enters edit mode", () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      vibrate: () => {
+        throw new Error("SecurityException");
+      },
+    });
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    longPress("Pet");
+    expect(tile("Pet")).toHaveClass("tile-editing");
+  });
+});
