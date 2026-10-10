@@ -2,7 +2,7 @@
 
 > **Status:** Plan · **Last verified:** 2026-10-10
 >
-> Decision: **pending owner choice**. Three variants are below (revision 2, after an independent
+> Decision: **B — the Worlds sub-screen** (owner, 2026-10-10). Three variants are below (revision 2, after an independent
 > review). The chosen one becomes the binding spec for M2 and M3's frontend, and its reasoning
 > lands in `docs/reference/DESIGN.md` ("Minecraft server screen") in the implementing PR.
 > Behaviour source: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M2 and §M3, the owner's game-rules
@@ -361,4 +361,4 @@ about 1.8× as long as B's main screen and splits a world from its backups.
 - **Not covered:** Dave's per-slot switch (M5/M6) and the M4 world-index note on reset. Both
   belong to waves that aren't built.
 
-Decision: pending owner choice
+Decision: **B — the Worlds sub-screen** (owner, 2026-10-10).
