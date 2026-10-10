@@ -186,6 +186,20 @@ def ytdlp_available() -> bool:
     return True
 
 
+def _js_runtimes() -> dict[str, dict[str, str]]:
+    """yt-dlp's JS runtime config: the deno binary the `deno` wheel ships. YouTube gates
+    its normal clients behind a JS challenge; without a runtime yt-dlp falls back to a
+    degraded client whose media URLs googlevideo now answers 403 — the resolve still
+    returns a title, so every analysis failed as "couldn't read anything" (2026-09-26).
+    Pinning the path keeps it working off-PATH (tests, a bare `uv run`)."""
+    try:
+        from deno import find_deno_bin
+
+        return {"deno": {"path": find_deno_bin()}}
+    except Exception:  # noqa: BLE001 - no wheel/binary: yt-dlp's own PATH lookup is the fallback
+        return {"deno": {}}
+
+
 def resolve_stream(
     url: str, *, max_height: int = DEFAULT_MAX_HEIGHT, skip_guard: bool = False
 ) -> ResolvedStream:
@@ -209,6 +223,7 @@ def resolve_stream(
         "retries": 1,
         "extractor_retries": 1,
         "cachedir": False,
+        "js_runtimes": _js_runtimes(),
         # Ask the extractor to surface caption tracks in the info dict (captions-first, #879).
         # We never download subtitle FILES (download=False), but recent yt-dlp only populates
         # `subtitles`/`automatic_captions` when they're requested — without these the info dict
@@ -292,6 +307,7 @@ def list_channel_uploads(
         "retries": 1,
         "extractor_retries": 1,
         "cachedir": False,
+        "js_runtimes": _js_runtimes(),
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -399,6 +415,7 @@ def resolve_channel_video_meta(video_id: str, *, skip_guard: bool = False) -> Vi
         "retries": 1,
         "extractor_retries": 1,
         "cachedir": False,
+        "js_runtimes": _js_runtimes(),
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

@@ -33,7 +33,10 @@ dependencies = [
     "pyyaml>=6.0",
     "aiomqtt>=2.5.1",
     "geonamescache>=3.0.1",
-    "yt-dlp>=2024.8",
+    "yt-dlp>=2026.8.19",
+    # The YouTube JS-challenge solver scripts + a runtime to run them (see stream._js_runtimes).
+    "yt-dlp-ejs>=0.8",
+    "deno>=2.9",
     # Repeat-search TTL+LRU cache in front of SearXNG (jbrain.web.search): the standard
     # in-memory cache primitive, so a deep-research fan's identical re-queries don't
     # re-hit the upstream engines that rate-limit the box.
