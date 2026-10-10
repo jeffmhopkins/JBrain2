@@ -191,7 +191,8 @@ async def worlds(settings: SettingsDep) -> dict[str, Any]:
 
 class WorldIn(BaseModel):
     name: str | None = None
-    seed: str | None = None
+    seed: str | None = Field(default=None, max_length=64)
+    rules: dict[str, bool | int | str] | None = None
     gamemode: str | None = None
     difficulty: str | None = None
     cheats: bool | None = None
@@ -362,3 +363,29 @@ async def put_server_settings(body: ServerSettingsIn, settings: SettingsDep) -> 
     changes = {SERVER_KEYS[k]: str(v) for k, v in body.model_dump(exclude_none=True).items()}
     await mc.call(settings, "POST", "/properties", json={"set": changes})
     return {**(await server_settings(settings)), "applies": "next restart"}
+
+
+@router.get("/worlds/new-seed")
+async def new_seed(settings: SettingsDep) -> dict[str, Any]:
+    """A random seed for the create-world form; re-rollable, shown before creating."""
+    return await mc.call(settings, "GET", "/worlds/new-seed")
+
+
+@router.get("/worlds/{slot}/rules")
+async def world_rules(
+    slot: Annotated[str, Path(pattern=_SLOT)], settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(settings, "GET", f"/worlds/{slot}/rules")
+
+
+class RulesIn(BaseModel):
+    # rule id -> true/false, a number, or a one-word choice; validated by the sidecar
+    # against the server's own rule list.
+    set: dict[str, bool | int | str]
+
+
+@router.put("/worlds/{slot}/rules")
+async def set_world_rules(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: RulesIn, settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(settings, "POST", f"/worlds/{slot}/rules", json=body.model_dump())

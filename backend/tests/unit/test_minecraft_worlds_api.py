@@ -137,3 +137,22 @@ def test_server_settings_are_a_fixed_set_on_server_properties(client, sidecar) -
     assert (
         client.put("/api/minecraft/server-settings", json={"max_players": 500}).status_code == 422
     )
+
+
+def test_rules_and_seed_routes_pass_through(client, sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds/new-seed"] = httpx.Response(200, json={"seed": "123"})
+    assert client.get("/api/minecraft/worlds/new-seed").json() == {"seed": "123"}
+    client.put("/api/minecraft/worlds/slot2/rules", json={"set": {"doFireTick": False}})
+    sent = next(r for r in seen if r.url.path == "/worlds/slot2/rules")
+    assert json.loads(sent.content) == {"set": {"doFireTick": False}}
+    client.post(
+        "/api/minecraft/worlds/slot3/create",
+        json={"name": "Peaceful", "seed": "glacier", "rules": {"keepInventory": True}},
+    )
+    created = next(r for r in seen if r.url.path == "/worlds/slot3/create")
+    assert json.loads(created.content)["rules"] == {"keepInventory": True}
+    assert (
+        client.post("/api/minecraft/worlds/slot3/create", json={"seed": "x" * 65}).status_code
+        == 422
+    )

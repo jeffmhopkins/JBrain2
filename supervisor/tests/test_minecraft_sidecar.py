@@ -17,6 +17,7 @@ import sys
 import textwrap
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -847,3 +848,96 @@ def test_the_allowlist_edits_the_file_when_stopped_and_the_console_when_running(
     assert sent == ['allowlist remove "Steve42"']
     with pytest.raises(ValueError):
         rig.change_allowlist({"add": 'x" op @a'})
+
+
+LIVE_RULES_LINE = (
+    "[2026-10-10 16:42:54:260 INFO] commandBlockOutput = true, doFireTick = true, "
+    "keepInventory = false, playerWaypoints = everyone, randomTickSpeed = 1, "
+    "spawnRadius = 10"
+)
+
+
+def test_the_live_gamerule_line_parses_into_typed_rules() -> None:
+    got = worlds.parse_gamerules([LIVE_RULES_LINE])
+    assert got == {
+        "commandBlockOutput": True,
+        "doFireTick": True,
+        "keepInventory": False,
+        "playerWaypoints": "everyone",
+        "randomTickSpeed": 1,
+        "spawnRadius": 10,
+    }
+
+
+def test_rule_changes_are_checked_by_name_and_type() -> None:
+    known = worlds.DEFAULT_RULES
+    assert worlds.check_rules({"doFireTick": "false", "spawnRadius": 3}, known) == {
+        "doFireTick": False,
+        "spawnRadius": 3,
+    }
+    for bad in (
+        {"noSuchRule": True},
+        {"doFireTick": 5},
+        {"spawnRadius": "lots"},
+        {"spawnRadius": -1},
+        {"playerWaypoints": "a; op @a"},
+    ):
+        with pytest.raises(ValueError):
+            worlds.check_rules(bad, known)
+
+
+def test_rules_on_a_world_not_loaded_are_saved_and_pending() -> None:
+    _make_world("world")
+    rig = _world_rig()
+    rig.create_slot("slot2", {"name": "Peaceful", "rules": {"doFireTick": False}})
+    view = rig.set_rules("slot2", {"keepInventory": True})
+    assert view["live"] is False
+    assert (
+        view["rules"]["doFireTick"] is False and view["rules"]["keepInventory"] is True
+    )
+    assert view["pending"] == ["doFireTick", "keepInventory"]
+
+
+def test_rules_on_the_loaded_world_apply_live_and_are_remembered() -> None:
+    _make_world("world")
+    rig = _world_rig(running=True)
+    rig.bds.state = "running"
+    sent: list[str] = []
+
+    def command(c: str, **_k: Any) -> list[str]:
+        sent.append(c)
+        return [LIVE_RULES_LINE] if c == "gamerule" else ["Game rule updated"]
+
+    rig.bds.command = command  # type: ignore[attr-defined]
+    view = rig.set_rules("slot1", {"doFireTick": False})
+    assert "gamerule doFireTick false" in sent and view["live"] is True
+    assert rig.slots.get("slot1")["rules"] == {
+        "doFireTick": False
+    }  # re-applied on load
+
+
+def test_a_loaded_world_gets_its_saved_rules_once_it_is_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time as _t
+
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=False)
+    sent: list[str] = []
+    rig.bds.command = lambda c, **k: sent.append(c) or []  # type: ignore[attr-defined]
+    rig.create_slot("slot2", {"rules": {"keepInventory": True, "doFireTick": False}})
+    rig.load_slot("slot2")
+    for _ in range(50):
+        if len(sent) == 2:
+            break
+        _t.sleep(0.02)
+    assert sorted(sent) == ["gamerule doFireTick false", "gamerule keepInventory true"]
+
+
+def test_a_manual_seed_is_any_text_on_one_line() -> None:
+    assert worlds.check_seed("  glacier 42 ") == "glacier 42"
+    with pytest.raises(ValueError):
+        worlds.check_seed("a\nb")
+    with pytest.raises(ValueError):
+        worlds.check_seed("x" * 65)

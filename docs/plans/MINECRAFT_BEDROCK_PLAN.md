@@ -370,6 +370,22 @@ also reachable over the debug router (§3a).
 
 ### M2 — World slots, importing the owner's world, and server settings
 
+**Owner additions (2026-10-10).**
+
+**Every world option is switchable, per world.** That covers difficulty, game mode and
+cheats, plus **all of the server's game rules**: 38 on 1.26.52.3, read from `gamerule`,
+such as `doFireTick` (fire spread), `keepInventory`, `mobGriefing`, `doDayLightCycle`,
+`pvp`, `showCoordinates`, `spawnRadius` and `playersSleepingPercentage`.
+- On the loaded world a change applies **live** through the console.
+- On any other world it's saved and applied **when that world loads**.
+- Every world's saved rules are re-applied on each load, so the world stays as set.
+- The rule list and its types come from the server, so a rule added in a later Bedrock
+  version shows up with no code change.
+
+**New-world seed: random or entered.** Random is a box-chosen seed, shown and
+re-rollable before creating, so "reset with the same seed" always works. An entered seed
+is any text up to 64 characters, as in Bedrock's own seed box.
+
 - **World slots (owner request, 2026-10-10).** The server holds several worlds, with **one
   loaded at a time**. A slot is a folder under `worlds/` plus a row in `app.mc_world_slots`.
   The row holds a slot id, a display name, its origin (imported, generated with a seed, or

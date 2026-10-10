@@ -175,6 +175,7 @@ class Rig:
                 self.write_properties()
                 if self.settings()["run"]:
                     self.bds.start()
+                    self._apply_rules_when_up(self.active_folder())
             finally:
                 self._busy = ""
 
@@ -548,6 +549,7 @@ class Rig:
             self._apply_slot(rec)
             if self.settings()["run"]:
                 self.bds.start()
+                self._apply_rules_when_up(rec["folder"])
         self.slots.update(slot_id, last_loaded=time.time())
         return {"slot": slot_id, "loaded": True}
 
@@ -555,7 +557,8 @@ class Rig:
         rec = self.slots.get(slot_id)
         if rec["exists"]:
             raise ValueError("that slot already holds a world — reset it first")
-        seed = str(body.get("seed") or "").strip() or worlds.new_seed()
+        seed = worlds.check_seed(str(body.get("seed") or "")) or worlds.new_seed()
+        rules = worlds.check_rules(dict(body.get("rules") or {}), worlds.DEFAULT_RULES)
         return self.slots.update(
             slot_id,
             name=body.get("name") or f"World {slot_id[-1]}",
@@ -563,6 +566,7 @@ class Rig:
             gamemode=body.get("gamemode", "survival"),
             difficulty=body.get("difficulty", "normal"),
             cheats=bool(body.get("cheats", False)),
+            rules=rules,
             origin="new",
             created_at=time.time(),
         )
@@ -573,6 +577,9 @@ class Rig:
             fields["cheats"] = bool(body["cheats"])
         rec = self.slots.update(slot_id, **fields)
         active = rec["folder"] == self.active_folder()
+        if active and "difficulty" in fields and self.bds.running:
+            with contextlib.suppress(bds.ConsoleError):
+                self.bds.command(f"difficulty {rec['difficulty']}")
         if active and set(fields) - {"name"}:
             self.set_overrides(
                 {
@@ -699,6 +706,64 @@ class Rig:
                 path.write_text(json.dumps(entries, indent=2))
         return {**self.allowlist(), "applies": "on/off at next restart; names now"}
 
+    def rules_view(self, slot_id: str) -> dict[str, Any]:
+        """A world's rules. The loaded, running world is read live from the console
+        (and remembered); any other world shows what it had when last loaded, with
+        the owner's saved changes on top, marked pending until it's loaded."""
+        rec = self.slots.get(slot_id)
+        live = rec["folder"] == self.active_folder() and self.bds.state == "running"
+        known = dict(rec.get("rules_known") or worlds.DEFAULT_RULES)
+        if live:
+            parsed = worlds.parse_gamerules(self.bds.command("gamerule", wait_s=3.0))
+            if parsed:
+                known = parsed
+                self.slots.update(slot_id, rules_known=parsed)
+        desired = dict(rec.get("rules") or {})
+        pending = (
+            [] if live else sorted(k for k, v in desired.items() if known.get(k) != v)
+        )
+        return {
+            "slot": slot_id,
+            "live": live,
+            "rules": {**known, **desired} if not live else known,
+            "defaults": worlds.DEFAULT_RULES,
+            "pending": pending,
+        }
+
+    def set_rules(self, slot_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        """Change world rules: instantly on the loaded world (console `gamerule`), and
+        always saved on the slot, so they're re-applied whenever it's loaded."""
+        rec = self.slots.get(slot_id)
+        known = dict(rec.get("rules_known") or worlds.DEFAULT_RULES)
+        clean = worlds.check_rules(changes, known)
+        self.slots.update(slot_id, rules={**dict(rec.get("rules") or {}), **clean})
+        live = rec["folder"] == self.active_folder() and self.bds.state == "running"
+        if live:
+            for key, value in clean.items():
+                reply = " ".join(self.bds.command(worlds.rule_command(key, value)))
+                if "error" in reply.lower() or "unknown" in reply.lower():
+                    raise ValueError(f"the server refused {key}: {reply.strip()}")
+        return self.rules_view(slot_id)
+
+    def _apply_rules_when_up(self, folder: str) -> None:
+        """After a world loads, re-apply its saved rules once the server reports
+        "Server started." — in the background, so a load doesn't wait on it."""
+        rec = self.slots.by_folder(folder)
+        rules = dict((rec or {}).get("rules") or {})
+        if not rules:
+            return
+
+        def apply() -> None:
+            if not self.bds.wait_running(START_TIMEOUT_S):
+                return
+            for key, value in rules.items():
+                try:
+                    self.bds.command(worlds.rule_command(key, value), wait_s=1.0)
+                except bds.ConsoleError:
+                    return
+
+        threading.Thread(target=apply, daemon=True).start()
+
     def probe_pack(self, install_it: bool) -> dict[str, Any]:
         """Install (or remove) the bundled probe behavior pack in the active world and
         restart the server so it loads. M0 item 5: does a stable-API pack load with no
@@ -818,6 +883,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(rig, urllib.parse.unquote(m.group(1)))
         elif url.path == "/worlds":
             self._send(200, rig.worlds_view())
+        elif url.path == "/worlds/new-seed":
+            self._send(200, {"seed": worlds.new_seed()})
+        elif m := _WORLD_RULES.match(url.path):
+            self._send(200, rig.rules_view(m.group(1)))
         elif url.path == "/allowlist":
             self._send(200, rig.allowlist())
         elif url.path == "/events":
@@ -901,6 +970,11 @@ class Handler(BaseHTTPRequestHandler):
                     200,
                     rig.snapshot(str(body.get("label", "")), folder=folder, auto=False),
                 )
+            elif m := _WORLD_RULES.match(self.path):
+                changes = body.get("set", {})
+                if not isinstance(changes, dict):
+                    raise ValueError("`set` must be an object")
+                self._send(200, rig.set_rules(m.group(1), changes))
             elif m := _WORLD_ACTION.match(self.path):
                 self._send(200, self._world_action(rig, m.group(1), m.group(2), body))
             elif m := _SNAP_ACTION.match(self.path):
@@ -979,6 +1053,7 @@ class Handler(BaseHTTPRequestHandler):
 _SNAP_FILE = re.compile(r"^/snapshots/([^/]+\.mcworld)/file$")
 _SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
 _WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
+_WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 
 

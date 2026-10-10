@@ -14,6 +14,7 @@ apart from the box backups, so a download is the only off-box copy).
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 import zipfile
@@ -26,6 +27,52 @@ KEEP_PER_SLOT = 20
 # An imported .mcworld is a zip of a world; bigger than this is not a family world.
 MAX_IMPORT_BYTES = 1024 * 1024 * 1024
 GAMEMODES = ("survival", "creative", "adventure")
+# The world rules this BDS version reports (`gamerule` on 1.26.52.3), with its defaults.
+# Used to validate a change for a world that isn't loaded; a loaded world's live list
+# (parsed from the console) supersedes it, so a new rule in a later version just works.
+DEFAULT_RULES: dict[str, bool | int | str] = {
+    "commandBlockOutput": True,
+    "doDayLightCycle": True,
+    "doEntityDrops": True,
+    "doFireTick": True,
+    "recipesUnlock": True,
+    "doLimitedCrafting": False,
+    "doMobLoot": True,
+    "doMobSpawning": True,
+    "doTileDrops": True,
+    "doWeatherCycle": True,
+    "drowningDamage": True,
+    "fallDamage": True,
+    "fireDamage": True,
+    "keepInventory": False,
+    "mobGriefing": True,
+    "pvp": True,
+    "showCoordinates": False,
+    "playerWaypoints": "everyone",
+    "locatorbar": True,
+    "showDaysPlayed": False,
+    "naturalRegeneration": True,
+    "tntExplodes": True,
+    "sendCommandFeedback": True,
+    "maxCommandChainLength": 65535,
+    "doInsomnia": True,
+    "commandBlocksEnabled": True,
+    "randomTickSpeed": 1,
+    "doImmediateRespawn": False,
+    "showDeathMessages": True,
+    "functionCommandLimit": 10000,
+    "spawnRadius": 10,
+    "showTags": True,
+    "freezeDamage": True,
+    "respawnBlocksExplode": True,
+    "showBorderEffect": True,
+    "showRecipeMessages": True,
+    "playersSleepingPercentage": 100,
+    "projectilesCanBreakBlocks": True,
+    "tntExplosionDropDecay": False,
+}
+_RULE_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
+_SEED_MAX = 64
 DIFFICULTIES = ("peaceful", "easy", "normal", "hard")
 
 
@@ -269,3 +316,64 @@ def level_name(world: Path) -> str | None:
         ] or None
     except (FileNotFoundError, UnicodeDecodeError):
         return None
+
+
+def parse_gamerules(lines: list[str]) -> dict[str, bool | int | str]:
+    """`gamerule` with no arguments prints every rule on one line:
+    "doFireTick = true, randomTickSpeed = 1, playerWaypoints = everyone, …"."""
+    out: dict[str, bool | int | str] = {}
+    for line in lines:
+        body = line.split("]", 1)[1] if line.startswith("[") else line
+        for part in body.split(","):
+            if "=" not in part:
+                continue
+            key, value = (x.strip() for x in part.split("=", 1))
+            if not _RULE_TOKEN.match(key):
+                continue
+            out[key] = coerce_rule(value)
+    return out
+
+
+def coerce_rule(value: Any) -> bool | int | str:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip()
+    if text in ("true", "false"):
+        return text == "true"
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
+def check_rules(
+    changes: dict[str, Any], known: dict[str, bool | int | str]
+) -> dict[str, bool | int | str]:
+    """Validate a change set against the known rules: the name must exist and the value
+    must have the rule's type (a choice rule takes a single lowercase word)."""
+    out: dict[str, bool | int | str] = {}
+    for key, raw in changes.items():
+        if key not in known:
+            raise ValueError(f"unknown world rule: {key}")
+        current, value = known[key], coerce_rule(raw)
+        if type(value) is not type(current):
+            raise ValueError(f"{key} takes a {type(current).__name__}")
+        if isinstance(value, int) and not isinstance(value, bool) and value < 0:
+            raise ValueError(f"{key} can't be negative")
+        if isinstance(value, str) and not re.fullmatch(r"[a-z_]{1,32}", value):
+            raise ValueError(f"{key}: not a valid choice")
+        out[key] = value
+    return out
+
+
+def rule_command(key: str, value: bool | int | str) -> str:
+    shown = ("true" if value else "false") if isinstance(value, bool) else str(value)
+    return f"gamerule {key} {shown}"
+
+
+def check_seed(seed: str) -> str:
+    """Bedrock's create-world box takes any text as a seed; BDS hashes non-numbers."""
+    seed = seed.strip()
+    if len(seed) > _SEED_MAX or any(c in seed for c in "\r\n"):
+        raise ValueError(f"a seed is up to {_SEED_MAX} characters on one line")
+    return seed
