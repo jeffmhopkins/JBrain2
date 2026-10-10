@@ -157,3 +157,15 @@ def test_rules_and_seed_routes_pass_through(client, sidecar) -> None:
         client.post("/api/minecraft/worlds/slot3/create", json={"seed": "x" * 65}).status_code
         == 422
     )
+
+
+def test_world_input_is_checked_before_it_reaches_the_box(client, sidecar) -> None:
+    bad = [
+        ("post", "/api/minecraft/worlds/slot2/reset", {"mode": "new_seed", "seed": "x" * 65}),
+        ("post", "/api/minecraft/worlds/slot2/reset", {"mode": "wipe"}),
+        ("post", "/api/minecraft/worlds/slot2/create", {"gamemode": "spectator"}),
+        ("post", "/api/minecraft/worlds/slot2/create", {"name": "n" * 41}),
+        ("patch", "/api/minecraft/worlds/slot2", {"difficulty": "nightmare"}),
+    ]
+    for method, path, body in bad:
+        assert getattr(client, method)(path, json=body).status_code == 422, (path, body)

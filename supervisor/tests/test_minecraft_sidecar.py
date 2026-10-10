@@ -1145,3 +1145,67 @@ def test_an_automatic_backup_says_what_it_was_taken_before(
     rig.load_slot("slot2")
     (snap,) = rig.index.listing("world")
     assert snap["note"] == "before loading Creative test" and snap["auto"]
+
+
+def test_a_long_world_operation_answers_202_and_reports_its_end() -> None:
+    import threading
+
+    rig = _world_rig()
+    gate = threading.Event()
+    code, body = rig.run_job("loading a world", lambda: gate.wait(5), wait_s=0.05)
+    assert (code, body["accepted"]) == (202, True)
+    gate.set()
+    for _ in range(100):
+        if rig.last_job:
+            break
+        threading.Event().wait(0.01)
+    assert rig.last_job["what"] == "loading a world" and rig.last_job["ok"] is True
+    assert rig.run_job("quick", lambda: {"done": 1}) == (200, {"done": 1})
+
+    def refuse() -> None:
+        raise RuntimeError("busy: updating")
+
+    with pytest.raises(RuntimeError):  # a refusal is immediate, so it stays a 409
+        rig.run_job("loading a world", refuse)
+    assert rig.last_job["ok"] is False and "busy" in rig.last_job["detail"]
+
+
+def test_an_import_to_a_busy_server_is_refused_before_the_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import urllib.error
+    import urllib.request
+
+    httpd, _get = _serve(monkeypatch, "t")
+    try:
+        rig = server.RIG
+        rig._life.acquire()
+        rig._busy = "updating"
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{httpd.server_port}/worlds/slot2/import",
+            data=b"x" * 1024,
+            method="POST",
+            headers={"Authorization": "Bearer t"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(req, timeout=5)
+        assert err.value.code == 409
+        assert not any(server.UPLOAD_DIR.glob("*"))  # nothing was read or kept
+    finally:
+        httpd.shutdown()
+
+
+def test_quick_edits_wait_their_turn_and_seeds_stay_on_one_line() -> None:
+    _make_world("world")
+    _make_world("slot2")
+    rig = _world_rig()
+    rig._life.acquire()
+    rig._busy = "importing a world"
+    with pytest.raises(RuntimeError):
+        rig.update_slot("slot2", {"name": "Mine"})  # an import may be rewriting it
+    with pytest.raises(RuntimeError):
+        rig.set_rules("slot2", {"pvp": False})
+    rig._life.release()
+    rig._busy = ""
+    with pytest.raises(ValueError):
+        rig.reset_slot("slot2", "new_seed", "1\nallow-cheats=true")

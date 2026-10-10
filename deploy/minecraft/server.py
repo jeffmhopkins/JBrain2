@@ -27,6 +27,7 @@ import urllib.parse
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import bds
@@ -61,6 +62,10 @@ VERSION_TTL_S = 6 * 3600
 START_TIMEOUT_S = 120.0
 # How long players get between the chat warning and the server stopping under them.
 WARN_S = 10.0
+# A world operation answers within this long, or as 202 and carries on in the background:
+# Cloudflare's tunnel cuts a request at about 100 s, and a load or restore of a big world
+# (warning, backup, stop, write, start) can take longer than that.
+JOB_WAIT_S = 20.0
 # server.properties keys that only take effect when the server starts, with BDS's own
 # defaults: a key never set is at its default, so setting it to that isn't a change.
 RESTART_KEYS = {
@@ -99,6 +104,8 @@ class Rig:
         # server.properties as of the last start: a setting that differs from it is saved
         # but waiting for a restart, which every device can then show.
         self._applied: dict[str, str] = {}
+        # How the most recent world operation ended, for a client that got a 202.
+        self.last_job: dict[str, Any] | None = None
         self.slots = worlds.SlotStore(
             SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
         )
@@ -280,6 +287,7 @@ class Rig:
             "exit_code": b.exit_code,
             "snapshots": len(self.index.listing()),
             "pending_restart": self.pending_restart(),
+            "last_job": self.last_job,
             "job": {
                 "what": self._busy,
                 "phase": self._phase or None,
@@ -539,6 +547,48 @@ class Rig:
             self._life.release()
         return {"action": action, "update": self.start_update(then_start=True)}
 
+    def run_job(
+        self, what: str, fn: Callable[[], Any], wait_s: float | None = None
+    ) -> tuple[int, Any]:
+        """Run a world operation in a thread. One that finishes (or fails — a refusal
+        is immediate) within `wait_s` answers as usual; a longer one answers 202 and
+        the client follows `job` in /status, then reads `last_job` for the outcome."""
+        done = threading.Event()
+        box: dict[str, Any] = {}
+
+        def go() -> None:
+            try:
+                box["result"] = fn()
+            except Exception as exc:
+                box["error"] = exc
+            finally:
+                err = box.get("error")
+                self.last_job = {
+                    "what": what,
+                    "ok": err is None,
+                    "detail": str(err) if err is not None else None,
+                    "finished_at": time.time(),
+                }
+                done.set()
+
+        threading.Thread(target=go, daemon=True).start()
+        if done.wait(JOB_WAIT_S if wait_s is None else wait_s):
+            if "error" in box:
+                raise box["error"]
+            return 200, box["result"]
+        return 202, {"accepted": True, "what": what}
+
+    @contextlib.contextmanager
+    def _locked(self):
+        """The lifecycle lock for a quick edit (a rename, a setting, a rule) so it can't
+        interleave with a world operation rewriting the same slot; no job is shown."""
+        if not self._life.acquire(blocking=False):
+            raise RuntimeError(f"busy: {self._busy or 'another action'}")
+        try:
+            yield
+        finally:
+            self._life.release()
+
     @contextlib.contextmanager
     def _exclusive(self, what: str):
         """Hold the lifecycle lock for a world operation; refuse (409) when another
@@ -614,9 +664,9 @@ class Rig:
 
     def load_slot(self, slot_id: str) -> dict[str, Any]:
         rec = self.slots.get(slot_id)
-        if rec["folder"] == self.active_folder():
-            return {"slot": slot_id, "loaded": False, "detail": "already loaded"}
         with self._exclusive("loading a world"):
+            if rec["folder"] == self.active_folder():
+                return {"slot": slot_id, "loaded": False, "detail": "already loaded"}
             if self.bds.running:
                 self._step("backing up")
                 self.snapshot("pre-load", auto=True, note=f"before loading {rec['name']}")
@@ -649,6 +699,10 @@ class Rig:
         )
 
     def update_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        with self._locked():
+            return self._update_slot(slot_id, body)
+
+    def _update_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:
         fields = {k: body[k] for k in ("name", "gamemode", "difficulty") if k in body}
         if "cheats" in body:
             fields["cheats"] = bool(body["cheats"])
@@ -716,6 +770,7 @@ class Rig:
             raise ValueError("reset mode must be same_seed, new_seed or empty")
         if mode == "empty" and active:
             raise ValueError("the loaded world can't be emptied — load another first")
+        seed = worlds.check_seed(seed)
         if mode == "same_seed" and not rec["seed"]:
             raise ValueError(
                 "this world's seed isn't known, so it can't be regenerated"
@@ -851,6 +906,11 @@ class Rig:
     def set_rules(self, slot_id: str, changes: dict[str, Any]) -> dict[str, Any]:
         """Change world rules: instantly on the loaded world (console `gamerule`), and
         always saved on the slot, so they're re-applied whenever it's loaded."""
+        with self._locked():
+            self._set_rules(slot_id, changes)
+        return self.rules_view(slot_id)
+
+    def _set_rules(self, slot_id: str, changes: dict[str, Any]) -> None:
         rec = self.slots.get(slot_id)
         known = dict(rec.get("rules_known") or worlds.DEFAULT_RULES)
         clean = worlds.check_rules(changes, known)
@@ -861,7 +921,6 @@ class Rig:
                 reply = " ".join(self.bds.command(worlds.rule_command(key, value)))
                 if "error" in reply.lower() or "unknown" in reply.lower():
                     raise ValueError(f"the server refused {key}: {reply.strip()}")
-        return self.rules_view(slot_id)
 
     def _apply_rules_when_up(self, folder: str) -> None:
         """After a world loads, re-apply its saved rules once the server reports
@@ -1055,13 +1114,18 @@ class Handler(BaseHTTPRequestHandler):
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         path = UPLOAD_DIR / f"upload-{os.getpid()}-{time.time_ns()}.mcworld"
         left = n
-        with open(path, "wb") as out:
-            while left:
-                chunk = self.rfile.read(min(left, 1 << 20))
-                if not chunk:
-                    raise ValueError("upload ended early")
-                out.write(chunk)
-                left -= len(chunk)
+        try:
+            with open(path, "wb") as out:
+                while left:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk:
+                        raise ValueError("upload ended early")
+                    out.write(chunk)
+                    left -= len(chunk)
+        except (OSError, ValueError) as exc:
+            # A phone that lost signal mid-upload leaves no half-world on the volume.
+            path.unlink(missing_ok=True)
+            raise ValueError(f"upload ended early: {exc}") from exc
         return path
 
     def do_POST(self) -> None:
@@ -1095,10 +1159,27 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("`set` must be an object")
                 self._send(200, rig.set_rules(m.group(1), changes))
             elif m := _WORLD_ACTION.match(self.path):
-                self._send(200, self._world_action(rig, m.group(1), m.group(2), body))
+                slot, action = m.group(1), m.group(2)
+                if action in ("load", "reset"):
+                    what = "loading a world" if action == "load" else "resetting a world"
+                    self._send(
+                        *rig.run_job(
+                            what, lambda: self._world_action(rig, slot, action, body)
+                        )
+                    )
+                else:
+                    self._send(200, self._world_action(rig, slot, action, body))
             elif m := _SNAP_ACTION.match(self.path):
                 name = urllib.parse.unquote(m.group(1))
-                self._send(200, self._snapshot_action(rig, name, m.group(2), body))
+                if m.group(2) == "restore":
+                    self._send(
+                        *rig.run_job(
+                            "restoring a backup",
+                            lambda: self._snapshot_action(rig, name, "restore", body),
+                        )
+                    )
+                else:
+                    self._send(200, self._snapshot_action(rig, name, m.group(2), body))
             elif self.path == "/allowlist":
                 self._send(200, rig.change_allowlist(body))
             elif self.path == "/properties":
@@ -1153,13 +1234,26 @@ class Handler(BaseHTTPRequestHandler):
         raise ValueError(f"unknown backup action: {action}")
 
     def _import(self, rig: Rig, slot: str) -> None:
+        """Refuse a busy server before reading a byte (a 409 after hundreds of MB is no
+        use), and hold the lock while the body arrives so no other device starts a load
+        or reset meanwhile; the import itself then runs as a job."""
         upload: Path | None = None
         try:
-            upload = self._receive_upload()
+            with rig._exclusive("receiving a world upload"):
+                upload = self._receive_upload()
             name = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get(
                 "name", [""]
             )[0]
-            self._send(200, rig.import_slot(slot, upload, name))
+            received = upload
+
+            def work() -> dict[str, Any]:
+                try:
+                    return rig.import_slot(slot, received, name)
+                finally:
+                    received.unlink(missing_ok=True)
+
+            upload = None  # the job owns the file now
+            self._send(*rig.run_job("importing a world", work))
         except RuntimeError as exc:
             self._send(409, {"detail": str(exc)})
         except ValueError as exc:

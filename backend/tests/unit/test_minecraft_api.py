@@ -104,6 +104,9 @@ async def test_a_running_world_job_is_passed_through(fake) -> None:
     fake["replies"]["/status"] = {**STATUS, "job": job}
     out = await api.minecraft(_request(), SETTINGS)
     assert out["server"]["job"] == job
+    ended = {"what": "loading a world", "ok": False, "detail": "x", "finished_at": 9.0}
+    fake["replies"]["/status"] = {**STATUS, "last_job": ended}
+    assert (await api.minecraft(_request(), SETTINGS))["server"]["last_job"] == ended
 
 
 async def test_a_stopped_container_is_a_state_not_an_error(fake) -> None:

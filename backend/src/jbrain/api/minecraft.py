@@ -14,7 +14,7 @@ only the screen knows what the owner has already been told.
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
@@ -59,6 +59,9 @@ def _server_view(raw: dict[str, Any]) -> dict[str, Any]:
         # server.properties keys saved since the last start ("gamemode", "allow-list", …):
         # what a restart will change, the same on every device.
         "pending_restart": raw.get("pending_restart") or [],
+        # How the last world operation ended: a load, reset, restore or import that ran
+        # past the sidecar's wait answers {"accepted": true}, and this is its outcome.
+        "last_job": raw.get("last_job"),
     }
 
 
@@ -194,18 +197,23 @@ async def worlds(settings: SettingsDep) -> dict[str, Any]:
     return await mc.call(settings, "GET", "/worlds")
 
 
+# The sidecar answers a world operation within ~20 s, as 202 if it is still running, so
+# no request nears Cloudflare's ~100 s cut-off; this only bounds a wedged sidecar.
+WORLD_JOB_TIMEOUT_S = 60.0
+
+
 class WorldIn(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=40)
     seed: str | None = Field(default=None, max_length=64)
     rules: dict[str, bool | int | str] | None = None
-    gamemode: str | None = None
-    difficulty: str | None = None
+    gamemode: Literal["survival", "creative", "adventure"] | None = None
+    difficulty: Literal["peaceful", "easy", "normal", "hard"] | None = None
     cheats: bool | None = None
 
 
 @router.post("/worlds/{slot}/load")
 async def load_world(slot: Annotated[str, Path(pattern=_SLOT)], settings: SettingsDep):
-    return await mc.call(settings, "POST", f"/worlds/{slot}/load", timeout_s=180.0)
+    return await mc.call(settings, "POST", f"/worlds/{slot}/load", timeout_s=WORLD_JOB_TIMEOUT_S)
 
 
 @router.post("/worlds/{slot}/create")
@@ -227,8 +235,8 @@ async def update_world(
 
 
 class ResetIn(BaseModel):
-    mode: str
-    seed: str | None = None
+    mode: Literal["same_seed", "new_seed", "empty"]
+    seed: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/worlds/{slot}/reset")
@@ -236,7 +244,11 @@ async def reset_world(
     slot: Annotated[str, Path(pattern=_SLOT)], body: ResetIn, settings: SettingsDep
 ) -> dict[str, Any]:
     return await mc.call(
-        settings, "POST", f"/worlds/{slot}/reset", json=body.model_dump(), timeout_s=180.0
+        settings,
+        "POST",
+        f"/worlds/{slot}/reset",
+        json=body.model_dump(),
+        timeout_s=WORLD_JOB_TIMEOUT_S,
     )
 
 
@@ -300,7 +312,11 @@ async def restore_backup(
     name: Annotated[str, Path(pattern=_BACKUP)], body: RestoreIn, settings: SettingsDep
 ) -> dict[str, Any]:
     return await mc.call(
-        settings, "POST", f"/snapshots/{name}/restore", json=body.model_dump(), timeout_s=180.0
+        settings,
+        "POST",
+        f"/snapshots/{name}/restore",
+        json=body.model_dump(),
+        timeout_s=WORLD_JOB_TIMEOUT_S,
     )
 
 
