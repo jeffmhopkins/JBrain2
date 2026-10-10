@@ -103,6 +103,10 @@ mid-save.
 
 ### M0 — On-box spike (throwaway, decides the unknowns)
 
+**Home network only (owner decision, 2026-10-10).** Nothing in M0 touches the router or the
+internet path. Every test runs from the owner's Windows PC and Xbox on the LAN. Router
+reachability is the first step of R1.
+
 These are run once on the real box with the owner's actual world. No product code merges. The
 output is a short findings section added to this doc.
 
@@ -135,19 +139,6 @@ output is a short findings section added to this doc.
    per-chunk hardcoded spawn areas, using a Python LevelDB-for-Bedrock reader (`amulet-core`
    with `leveldb-mcpe` bindings, or a minimal reader of our own). Record counts and how long
    the parse takes.
-
-7. **Router reachability (owner decision, 2026-10-10: test the router before anything more
-   drastic).**
-   - **CGNAT check, which the owner can do today from a phone with no box involved**: compare
-     the WAN/Internet IP shown in the router's app with what a "what is my IP" site reports.
-     If they match, a port-forward can work. If the router's WAN IP is in `100.64–100.127.x.x`,
-     `10.x`, `172.16–31.x` or `192.168.x`, the connection is behind CGNAT, and only the relay
-     can work.
-   - Note whether the router's app offers **UPnP** and **port forwarding**.
-   - On the box: a throwaway UPnP probe maps UDP 19132, and the outside status-service ping
-     confirms it from the internet.
-   - **Gate**: if this passes, R1 builds path 1 only, and the relay (path 2) is not built
-     unless a later probe fails.
 
 Exit: each item has an answer. Any "no" reshapes the wave it feeds before that wave is
 scheduled.
@@ -273,6 +264,19 @@ feature. So the box itself has to be reachable from the internet on UDP. The `mi
 container must already reach the internet **outbound** anyway: BDS checks each player's Xbox
 Live sign-in (`online-mode`) and downloads its own updates. So its network can't be
 `internal: true`.
+
+**Step 0 — router reachability probe, done first, when R1 is picked up (moved out of M0
+by owner decision, 2026-10-10).** Test the router before anything more drastic.
+
+- **CGNAT check, which the owner can do from a phone with no box involved**: compare the
+  WAN/Internet IP shown in the router's app with what a "what is my IP" site reports. If they
+  match, a port-forward can work. If the router's WAN IP is in `100.64–100.127.x.x`, `10.x`,
+  `172.16–31.x` or `192.168.x`, the connection is behind CGNAT, and only the relay can work.
+- Note whether the router's app offers **UPnP** and **port forwarding**.
+- On the box: a throwaway UPnP probe maps UDP 19132, and the outside status-service ping
+  confirms it from the internet.
+- **Gate**: if this passes, build path 1 only. The relay (path 2) is not built unless a
+  probe fails.
 
 **Cloudflare-native routes were checked (2026-10-10), and none of them fits.**
 
