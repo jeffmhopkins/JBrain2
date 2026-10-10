@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "JBrain probe resources",
+    "description": "Home-test icons: the server pushes this pack on join (no install).",
+    "uuid": "26d6c250-8ead-4bb8-9dd0-d3805e61d61e",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 21, 0]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "5e6c5900-5abc-49b2-b7e6-4c67f8c14aea",
+      "version": [1, 0, 0]
+    }
+  ]
+}

@@ -6,6 +6,11 @@
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus } from "@minecraft/server";
 
+// Home-test kit (docs/runbooks/MINECRAFT_HOME_TEST.md): the custom items and recipe from
+// this pack, with icons from the server-pushed probe resource pack. Each finding is a
+// `[jbrain-probe]` line, logged once per player, so the owner just plays and the
+// assistant reads the answers off the server log.
+
 const say = (msg) => console.log(`[jbrain-probe] ${msg}`);
 
 say("loaded");
@@ -52,3 +57,44 @@ world.afterEvents.entityDie.subscribe((ev) => {
     say(`player died: ${dead.name}; inventory unreadable: ${e}`);
   }
 });
+
+// Who has had each test item, so each finding is logged once rather than every tick.
+const seen = new Set();
+const once = (key, msg) => {
+  if (seen.has(key)) return;
+  seen.add(key);
+  say(msg);
+};
+
+// The arrow the tricorder (M9) will draw, aimed at world spawn for the test: the bearing to
+// the target minus where the player faces, in eight steps.
+const ARROWS = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"];
+const arrowTo = (player, tx, tz) => {
+  const { x, z } = player.location;
+  const view = player.getViewDirection();
+  const target = Math.atan2(tx - x, -(tz - z));
+  const facing = Math.atan2(view.x, -view.z);
+  const turn = (((target - facing) * 180) / Math.PI + 720) % 360;
+  return { arrow: ARROWS[Math.round(turn / 45) % 8], blocks: Math.round(Math.hypot(tx - x, tz - z)) };
+};
+
+system.runInterval(() => {
+  for (const player of world.getAllPlayers()) {
+    const inv = player.getComponent("minecraft:inventory")?.container;
+    if (!inv) continue;
+    for (let i = 0; i < inv.size; i++) {
+      const item = inv.getItem(i);
+      if (item?.typeId === "jbrain:power_pack") {
+        once(`pp:${player.name}`, `power_pack in inventory: ${player.name} (x${item.amount})`);
+      } else if (item?.typeId === "jbrain:tricorder") {
+        once(`tc:${player.name}`, `tricorder in inventory: ${player.name}`);
+      }
+    }
+    const held = inv.getItem(player.selectedSlotIndex);
+    if (held?.typeId === "jbrain:tricorder") {
+      once(`hold:${player.name}`, `tricorder held: ${player.name} (actionbar arrow on)`);
+      const { arrow, blocks } = arrowTo(player, 0, 0);
+      player.onScreenDisplay.setActionBar(`${arrow} World spawn · ${blocks} blocks`);
+    }
+  }
+}, 5);

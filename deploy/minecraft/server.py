@@ -82,6 +82,16 @@ RESTART_KEYS = {
 # The probe behavior pack (M0 item 5), bundled in the image — nothing uploaded.
 PROBE_PACK_SRC = Path(__file__).resolve().parent / "probe-pack"
 PROBE_PACK_DIR = "jbrain_probe"
+# Its resource pack (the home-test kit: custom-item icons), which BDS pushes to every
+# client on join — so the test also proves a pack needs no install on Xbox or Windows.
+PROBE_RP_SRC = Path(__file__).resolve().parent / "probe-rp"
+# While the kit is installed: clients must take the pack (a client that declines can't
+# join half-working), and BDS prints content errors (a bad item or recipe file) to the
+# console, so a broken item shows up in the log rather than as a silently missing item.
+PROBE_PROPERTIES = {
+    "texturepacks-required": "true",
+    "content-log-console-output-enabled": "true",
+}
 # The box's own behavior pack, installed into whichever world loads (§T1: deaths and
 # respawns, which BDS never prints).
 JBRAIN_PACK_SRC = Path(__file__).resolve().parent / "jbrain-pack"
@@ -968,17 +978,20 @@ class Rig:
 
         threading.Thread(target=apply, daemon=True).start()
 
-    def install_pack(self, src: Path, dir_name: str, install_it: bool) -> str:
-        """Put a bundled behavior pack into the loaded world (or take it out) and list
-        it in world_behavior_packs.json. Re-installing replaces the copy, so a world
-        always runs the pack version this image ships."""
+    def install_pack(
+        self, src: Path, dir_name: str, install_it: bool, kind: str = "behavior"
+    ) -> str:
+        """Put a bundled behavior or resource pack into the loaded world (or take it
+        out) and list it in world_behavior_packs.json / world_resource_packs.json.
+        Re-installing replaces the copy, so a world always runs the version this image
+        ships."""
         manifest = json.loads((src / "manifest.json").read_text())
         pack_id = manifest["header"]["uuid"]
         world = self.world_dir()
         if not world.is_dir():
             return pack_id  # a world BDS hasn't generated yet: next start installs it
-        dest = world / "behavior_packs" / dir_name
-        listing = world / "world_behavior_packs.json"
+        dest = world / f"{kind}_packs" / dir_name
+        listing = world / f"world_{kind}_packs.json"
         try:
             packs = json.loads(listing.read_text())
         except (FileNotFoundError, ValueError):
@@ -1046,6 +1059,10 @@ class Rig:
         restart the server so it loads. M0 item 5: does a stable-API pack load with no
         experiments, and does its `console.log` reach this console?"""
         pack_id = self.install_pack(PROBE_PACK_SRC, PROBE_PACK_DIR, install_it)
+        self.install_pack(PROBE_RP_SRC, PROBE_PACK_DIR, install_it, kind="resource")
+        self.set_overrides(
+            {k: (v if install_it else None) for k, v in PROBE_PROPERTIES.items()}
+        )
         if not self._life.acquire(blocking=False):
             raise RuntimeError(f"busy: {self._busy or 'another action'}")
         self.maintenance = True

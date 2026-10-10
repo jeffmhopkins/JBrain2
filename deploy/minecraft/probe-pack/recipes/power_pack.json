@@ -1,0 +1,11 @@
+{
+  "format_version": "1.20.10",
+  "minecraft:recipe_shaped": {
+    "description": { "identifier": "jbrain:power_pack" },
+    "tags": ["crafting_table"],
+    "pattern": ["EEE", "EEE", "EEE"],
+    "key": { "E": { "item": "minecraft:ender_eye" } },
+    "unlock": [{ "item": "minecraft:ender_eye" }],
+    "result": { "item": "jbrain:power_pack", "count": 1 }
+  }
+}

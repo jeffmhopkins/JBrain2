@@ -213,6 +213,9 @@ change.
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
   LAN Games), `/jb:dave` from a client, the inventory-at-death read, memory under play, the
   parser, map and biome inputs, and the vanilla-client checks.
+  - **The home-test kit is ready** (`../runbooks/MINECRAFT_HOME_TEST.md`): the probe
+    packs now carry the custom items, the recipe and a server-pushed resource pack, and
+    the runbook lists the eight checks in one sitting.
   - **Added for M9/M10:** the server-pushed resource pack. On joining from the Xbox and
     from Windows, the pack downloads automatically with no install step, a test Power
     Pack shows its icon and name, and the nine-eye recipe works in a crafting table.

@@ -50,6 +50,32 @@ JBRAIN_PACK_ID = json.loads(
 )["header"]["uuid"]
 
 
+PROBE_RP_ID = json.loads((DEPLOY / "minecraft/probe-rp/manifest.json").read_text())[
+    "header"
+]["uuid"]
+
+
+def test_the_home_test_items_point_at_icons_the_pack_ships() -> None:
+    """A custom item names an icon key; the probe resource pack must define it, and the
+    texture file must exist, or the item shows as a missing-texture square tonight."""
+    mc_dir = DEPLOY / "minecraft"
+    atlas = json.loads((mc_dir / "probe-rp/textures/item_texture.json").read_text())
+    for item in ("power_pack", "tricorder"):
+        spec = json.loads((mc_dir / f"probe-pack/items/{item}.json").read_text())
+        icon = spec["minecraft:item"]["components"]["minecraft:icon"]
+        path = atlas["texture_data"][icon]["textures"]
+        assert (mc_dir / "probe-rp" / f"{path}.png").read_bytes()[
+            :8
+        ] == b"\x89PNG\r\n\x1a\n"
+    recipe = json.loads((mc_dir / "probe-pack/recipes/power_pack.json").read_text())
+    shaped = recipe["minecraft:recipe_shaped"]
+    assert shaped["pattern"] == ["EEE", "EEE", "EEE"]
+    assert shaped["key"]["E"]["item"] == "minecraft:ender_eye"
+    assert shaped["result"]["item"] == "jbrain:power_pack"
+    deps = json.loads((mc_dir / "probe-pack/manifest.json").read_text())["dependencies"]
+    assert {"uuid": PROBE_RP_ID, "version": [1, 0, 0]} in deps
+
+
 @pytest.fixture(autouse=True)
 def _data_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Every wrapper path under a temp dir, for every test. A test that forgot one
@@ -503,10 +529,22 @@ def test_the_probe_pack_is_listed_in_the_world_and_removable(
     assert (world / "behavior_packs" / "jbrain_probe" / "scripts" / "main.js").exists()
     assert rig.bds.calls == ["stop", "start"]
 
+    # The home-test kit: its resource pack is listed for the server to push, clients
+    # must take it, and content errors reach the console — only while it's installed.
+    rp = json.loads((world / "world_resource_packs.json").read_text())
+    assert [p["pack_id"] for p in rp] == [PROBE_RP_ID]
+    assert (
+        world / "resource_packs" / "jbrain_probe" / "textures" / "item_texture.json"
+    ).exists()
+    assert rig.overrides()["texturepacks-required"] == "true"
+    assert rig.overrides()["content-log-console-output-enabled"] == "true"
+
     rig.probe_pack(False)
     listed = json.loads((world / "world_behavior_packs.json").read_text())
     assert [p["pack_id"] for p in listed] == [JBRAIN_PACK_ID]
     assert not (world / "behavior_packs" / "jbrain_probe").exists()
+    assert json.loads((world / "world_resource_packs.json").read_text()) == []
+    assert "texturepacks-required" not in rig.overrides()
 
 
 def test_a_new_version_that_will_not_start_is_rolled_back_with_the_world(
