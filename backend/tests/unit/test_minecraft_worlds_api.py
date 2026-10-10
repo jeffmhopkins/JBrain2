@@ -185,7 +185,7 @@ def test_map_tiles_pass_through_as_png_and_bad_input_never_reaches_the_box(clien
     count = len(seen)
     for bad in (
         "/api/minecraft/map/tile/aether/0/0/0.png",
-        "/api/minecraft/map/tile/overworld/9/0/0.png",
+        "/api/minecraft/map/tile/overworld/5/0/0.png",
         "/api/minecraft/map/tile/overworld/0/0/0.png?slot=../etc",
         "/api/minecraft/map/info?dim=moon",
     ):

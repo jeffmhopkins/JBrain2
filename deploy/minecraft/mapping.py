@@ -5,8 +5,9 @@ chunk stores a `Data3D` record holding its height map and its biome per 4×4×4 
 is everything a hillshaded biome map needs, and is read straight off the world's LevelDB
 (`leveldb.py`). Ungenerated ground is left transparent, which is the fog the viewer draws.
 
-A tile is 256×256 blocks (16×16 chunks) at one pixel per block. Zoomed-out tiles are the
-same render downsampled, so any zoom costs at most one read of the chunks it covers.
+A tile is 256×256 pixels. At zoom 0 it is 256×256 blocks, one pixel per block; each zoom
+out doubles the blocks per pixel, down to one pixel per chunk. Zoomed-out pixels each
+read only the one column they show, so even the widest tile is cheap.
 
 What the record looks like on 1.26 (checked against a real world, plan §M8 notes):
 - key: chunk x, chunk z (int32 LE), [dimension int32 when not the overworld], tag 43;
@@ -26,9 +27,10 @@ import leveldb
 
 DATA3D = 43
 TILE = 256  # blocks per tile side at zoom 0
-# Zoom k covers 2^k × 256 blocks per side. Rendering decodes every chunk under the tile, so
-# zoom 3 (128×128 chunks) is the ceiling until a cheaper overview exists.
-MAX_ZOOM = 3
+# Zoom k covers 2^k × 256 blocks per side, one pixel per 2^k blocks. The furthest zoom out
+# is one pixel per chunk (owner, 2026-10-10). Zoomed-out tiles sample only the columns
+# their pixels show, so a 4096-block overview costs 65k cheap lookups, not 65k decodes.
+MAX_ZOOM = 4
 CHUNKS_PER_TILE = TILE // 16
 DIMENSIONS = {"overworld": 0, "nether": 1, "the_end": 2}
 _FLOOR = {0: -64, 1: 0, 2: 0}
@@ -94,6 +96,44 @@ def _palette_store(buf: bytes, pos: int) -> tuple[list[int] | None, int]:
         for i in range(per_word):
             out.append(palette[(word >> (i * bits)) & mask])
     return out[:4096], pos
+
+
+def _store_end(buf: bytes, pos: int) -> int:
+    """Where the palettized store at `pos` ends, without decoding it."""
+    bits = buf[pos] >> 1
+    if buf[pos] == 0xFF:
+        return pos + 1
+    if bits == 0:
+        return pos + 5
+    words = -(-4096 // (32 // bits))
+    pos += 1 + 4 * words
+    (size,) = struct.unpack_from("<i", buf, pos)
+    return pos + 4 + 4 * size
+
+
+def surface_sample(value: bytes, x: int = 8, z: int = 8) -> tuple[int, int]:
+    """(height, biome) of ONE column, reading only the store that holds its surface —
+    the overview's per-chunk pixel, microseconds instead of a full decode."""
+    (height,) = struct.unpack_from("<h", value, (z * 16 + x) * 2)
+    y = max(height - 1, 0)
+    section, pos, last_real = y // 16, 512, 512
+    for _ in range(section):
+        if pos >= len(value):
+            break
+        if value[pos] != 0xFF:
+            last_real = pos
+        pos = _store_end(value, pos)
+    if pos >= len(value) or value[pos] == 0xFF:
+        pos = last_real  # "same as below": the last real store
+    bits = value[pos] >> 1
+    if bits == 0:
+        return height, struct.unpack_from("<i", value, pos + 1)[0]
+    per_word = 32 // bits
+    idx = (x << 8) | (z << 4) | (y % 16)
+    words = -(-4096 // per_word)
+    (word,) = struct.unpack_from("<I", value, pos + 1 + 4 * (idx // per_word))
+    slot = (word >> ((idx % per_word) * bits)) & ((1 << bits) - 1)
+    return height, struct.unpack_from("<i", value, pos + 1 + 4 * words + 4 + 4 * slot)[0]
 
 
 class Column:
@@ -162,6 +202,26 @@ class WorldIndex:
                     continue  # one corrupt chunk is a hole in the map, not a failed tile
         return out
 
+    def samples(
+        self, dim: int, cx0: int, cz0: int, n: int, step: int
+    ) -> dict[tuple[int, int], tuple[int, int]]:
+        """(height, biome) at every `step`-th column of an n×n chunk square, keyed by
+        block position — what a zoomed-out tile's pixels show."""
+        out: dict[tuple[int, int], tuple[int, int]] = {}
+        offsets = range(step // 2, 16, step) if step < 16 else range(8, 9)
+        for cx in range(cx0, cx0 + n):
+            for cz in range(cz0, cz0 + n):
+                value = self._raw.get((dim, cx, cz))
+                if value is None:
+                    continue
+                try:
+                    for lx in offsets:
+                        for lz in offsets:
+                            out[(cx * 16 + lx, cz * 16 + lz)] = surface_sample(value, lx, lz)
+                except (struct.error, IndexError):
+                    continue  # one corrupt chunk is a hole in the map
+        return out
+
     def extent(self, dim: int) -> dict[str, int] | None:
         """The block rectangle the world has generated in a dimension, or None."""
         cells = [(cx, cz) for (d, cx, cz) in self._raw if d == dim]
@@ -209,17 +269,6 @@ def render_biome(columns: dict[tuple[int, int], Column], cx0: int, cz0: int, n: 
     return rows
 
 
-def downsample(rows: list[bytearray], factor: int) -> list[bytearray]:
-    """Nearest-neighbour shrink for zoomed-out tiles: blocky like the game, and cheap."""
-    if factor == 1:
-        return rows
-    out = []
-    for z in range(0, len(rows), factor):
-        src = rows[z]
-        out.append(bytearray(b"".join(src[x * 4 : x * 4 + 4] for x in range(0, len(src) // 4, factor))))
-    return out
-
-
 def png(rows: list[bytearray]) -> bytes:
     """An RGBA PNG, stdlib only."""
     height, width = len(rows), len(rows[0]) // 4
@@ -237,13 +286,36 @@ def png(rows: list[bytearray]) -> bytes:
     )
 
 
+def render_sampled(
+    samples: dict[tuple[int, int], tuple[int, int]], x0: int, z0: int, size: int, step: int
+) -> list[bytearray]:
+    """A size×size tile, one pixel per `step` blocks: each pixel's sampled biome, shaded
+    against the samples to its west and north. Unsampled ground stays transparent."""
+    rows = [bytearray(size * 4) for _ in range(size)]
+    gain = 0.06 / step  # the same slope reads about the same at every zoom
+    for (bx, bz), (h, biome) in samples.items():
+        west = samples.get((bx - step, bz), (h, 0))[0]
+        north = samples.get((bx, bz - step), (h, 0))[0]
+        shade = 1.0 + max(-0.35, min(0.35, ((h - west) + (h - north)) * gain))
+        r, g, b = BIOME_COLORS.get(biome, _UNKNOWN)
+        px, pz = (bx - x0) // step, (bz - z0) // step
+        o = px * 4
+        rows[pz][o : o + 4] = bytes(
+            (min(255, int(r * shade)), min(255, int(g * shade)), min(255, int(b * shade)), 255)
+        )
+    return rows
+
+
 def tile(index: WorldIndex, dim: int, zoom: int, tx: int, tz: int) -> bytes:
-    """One 256×256 PNG tile. Zoom 0 is one pixel per block; zoom k covers 2^k × 256
-    blocks per side. Tile (0, 0) at any zoom starts at block (0, 0)."""
+    """One 256×256 PNG tile. Zoom 0 is one pixel per block; zoom k is one pixel per 2^k
+    blocks, down to one pixel per chunk. Tile (0, 0) at any zoom starts at block (0, 0)."""
     span = CHUNKS_PER_TILE << zoom
     cx0, cz0 = tx * span, tz * span
-    columns = index.columns(dim, cx0, cz0, span)
-    return png(downsample(render_biome(columns, cx0, cz0, span), 1 << zoom))
+    if zoom:
+        step = 1 << zoom
+        samples = index.samples(dim, cx0, cz0, span, step)
+        return png(render_sampled(samples, cx0 * 16, cz0 * 16, TILE, step))
+    return png(render_biome(index.columns(dim, cx0, cz0, span), cx0, cz0, span))
 
 
 def floor_of(dim: int) -> int:

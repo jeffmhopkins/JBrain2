@@ -252,7 +252,7 @@ async def minecraft_map_info(
 @router.get("/map/tile/{dim}/{zoom}/{tx}/{tz}.png")
 async def minecraft_map_tile(
     dim: Annotated[str, Path(pattern=r"^(overworld|nether|the_end)$")],
-    zoom: Annotated[int, Path(ge=0, le=8)],
+    zoom: Annotated[int, Path(ge=0, le=4)],
     tx: int,
     tz: int,
     request: Request,

@@ -784,7 +784,9 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 - **Biome layer:** `mapping.py` renders the **biome atlas** from each chunk's `Data3D`
   record (heights and biomes, no block parsing), hillshaded, with ungenerated ground
   transparent (fog).
-- **Tiles:** 256 blocks at 1 px per block; zoom k covers 2^k tiles, up to 3. A
+- **Tiles:** 256×256 px. Zoom 0 is 1 px per block; zoom k is 1 px per 2^k blocks, up
+  to zoom 4 = **1 px per chunk** (owner, 2026-10-10), a 4096-block tile. Zoomed-out
+  pixels read only the one column they show, so every zoom renders in milliseconds. A
   per-world chunk index and rendered tiles are both cached until the world's files
   change.
 - **Routes:** `GET /api/minecraft/map/info` and `/map/tile/{dim}/{z}/{x}/{y}.png`

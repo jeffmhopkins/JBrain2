@@ -159,8 +159,26 @@ def test_a_tile_renders_generated_chunks_and_leaves_the_rest_clear(
     assert tuple(plains) == (*mapping.BIOME_COLORS[1], 255)  # flat: no hillshade
     assert sea[3] == 255 and sea[2] > sea[0]  # blue water
     assert fog[3] == 0  # never generated: transparent
-    small = mapping.downsample(rows, 2)
-    assert len(small) == 128 and len(small[0]) == 128 * 4
+
+
+def test_zoomed_out_tiles_sample_the_columns_they_show(tmp_path: Path) -> None:
+    hill = data3d(lambda x, z: 70 + x + z, biome=1, top_biome=35)
+    write_table(
+        tmp_path / "000005.ldb", [(mapping.chunk_key(0, 0, 0, mapping.DATA3D), 1, hill)]
+    )
+    index = mapping.WorldIndex(tmp_path)
+    index.refresh()
+    col = mapping.decode_data3d(hill)
+    for lx, lz in ((0, 0), (8, 8), (15, 3)):
+        i = lz * 16 + lx
+        assert mapping.surface_sample(hill, lx, lz) == (col.height[i], col.biome[i])
+    # The furthest zoom out is one pixel per chunk: the chunk at (0, 0) is pixel (0, 0).
+    overview = index.samples(0, 0, 0, 16 << mapping.MAX_ZOOM, 1 << mapping.MAX_ZOOM)
+    assert list(overview) == [(8, 8)]
+    rows = mapping.render_sampled(overview, 0, 0, mapping.TILE, 1 << mapping.MAX_ZOOM)
+    assert rows[0][3] == 255 and rows[0][7] == 0 and rows[1][3] == 0
+    assert mapping.tile(index, 0, mapping.MAX_ZOOM, 0, 0)[:8] == b"\x89PNG\r\n\x1a\n"
+    assert len(index.samples(0, 0, 0, 1, 2)) == 64  # zoom 1: every other column
 
 
 def test_the_index_rereads_only_when_the_files_change(tmp_path: Path) -> None:

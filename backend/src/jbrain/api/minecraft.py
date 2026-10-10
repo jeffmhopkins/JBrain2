@@ -436,7 +436,7 @@ async def map_info(
 @router.get("/map/tile/{dim}/{zoom}/{tx}/{tz}.png")
 async def map_tile(
     dim: Annotated[str, Path(pattern=_DIM)],
-    zoom: Annotated[int, Path(ge=0, le=8)],
+    zoom: Annotated[int, Path(ge=0, le=4)],
     tx: int,
     tz: int,
     settings: SettingsDep,
