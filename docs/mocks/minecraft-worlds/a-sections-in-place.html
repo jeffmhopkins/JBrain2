@@ -1,0 +1,1557 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Minecraft Worlds · A — sections in place</title>
+<!-- GUI gate mock — docs/mocks/minecraft-worlds/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M2 + §M3.
+     Lives on the binding Minecraft screen (docs/mocks/minecraft-ops/b-dedicated-screen.html). Self-contained and offline;
+     tokens per docs/reference/DESIGN.md. -->
+<style>
+  /* ===== tokens — DESIGN.md "Color tokens" (drawn at 100% text size) ===== */
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66; --surface-composer:#141518;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px; --fs-hero:28px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+    /* Accent TEXT tokens. Dark uses the accents as-is; light deepens each toward --text, the
+       pattern DESIGN.md "Syntax tokens" already sets, because the pastels sit near 2:1 as words
+       on light surfaces. Dots, tints and rules keep the pastel. */
+    --ok-text:var(--green); --warn-text:var(--amber); --danger-text:var(--rose); --steel-text:var(--steel);
+    --frame:#2A2C30; --page:#000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF;
+    --scrim:rgba(247,247,245,.6); --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --ok-text:color-mix(in srgb, var(--green) 46%, var(--text));
+    --warn-text:color-mix(in srgb, var(--amber) 50%, var(--text));
+    --danger-text:color-mix(in srgb, var(--rose) 54%, var(--text));
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --frame:#C9C9C4; --page:#DADAD6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;width:20px;height:20px;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  a{color:var(--steel-text);text-decoration:none;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .num{font-variant-numeric:tabular-nums;}
+  .mono{font-family:var(--font-mono);}
+
+  /* ===== reviewer chrome — OUTSIDE the design ===== */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel-text);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;background:transparent;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);display:flex;justify-content:space-between;}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);width:62px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+
+  /* ===== the phone ===== */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  @media (max-width:430px){
+    body{padding-top:12px;}
+    .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;}
+  }
+  @media (min-width:900px){ .phone{width:560px;} .caption,.sim{max-width:560px;} }
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px 0 4px;border-bottom:1px solid var(--border);flex:none;padding-top:env(safe-area-inset-top);}
+  .bar .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+  .bar .ttl{font-size:var(--fs-screen);font-weight:500;}
+  .vitals{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:11px;}
+  .vitals .cols{display:flex;align-items:flex-end;gap:2px;height:20px;width:48px;}
+  .vitals .cols i{display:block;width:2px;background:var(--text-3);border-radius:1px;}
+  .vitals b{color:var(--text-2);font-weight:500;}
+  .scroll{flex:1;overflow-y:auto;padding:12px 16px 28px;}
+  .ops-header{display:flex;align-items:center;gap:8px;margin:2px 0 12px;}
+  .ops-header h2{font-size:var(--fs-title);font-weight:500;}
+  .ops-actions{margin-left:auto;display:flex;gap:6px;}
+  .ops-actions button{appearance:none;font-size:var(--fs-micro);font-weight:500;border-radius:var(--r-pill);padding:7px 12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);min-height:32px;}
+
+  /* ===== Ops atoms — mirrored from frontend/src/styles.css ===== */
+  .ops-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow-card);}
+  .ops-card-head{width:100%;display:flex;align-items:center;gap:10px;background:transparent;border:0;padding:14px;min-height:48px;text-align:left;}
+  .ops-card-title{font-size:var(--fs-secondary);font-weight:500;display:flex;align-items:center;gap:8px;}
+  .ops-card-right{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;}
+  .ops-card-summary{font-size:var(--fs-micro);color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ops-card-summary.warn{color:var(--warn-text);} .ops-card-summary.bad{color:var(--danger-text);}
+  .ops-card-caret{color:var(--text-3);transition:transform .18s ease-out;flex:none;}
+  .ops-card-head.open .ops-card-caret{transform:rotate(90deg);}
+  .ops-card-body{border-top:1px solid var(--border);}
+  .ops-gcount{font-size:var(--fs-micro);color:var(--text-3);}
+  .ops-gstate{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);white-space:nowrap;}
+  .ops-gdot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .ops-gstate-ok{color:var(--ok-text);} .ops-gstate-ok .ops-gdot{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-gstate-warn{color:var(--warn-text);} .ops-gstate-warn .ops-gdot{background:var(--warn);box-shadow:0 0 0 3px var(--amber-tint);}
+  .ops-gstate-bad{color:var(--danger-text);} .ops-gstate-bad .ops-gdot{background:var(--danger);box-shadow:0 0 0 3px var(--rose-tint);}
+  .ops-gstate-off{color:var(--text-2);} .ops-gstate-off .ops-gdot{background:var(--text-3);}
+  .ops-vrow{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border-top:1px solid var(--border);}
+  .ops-card-body > .ops-vrow:first-child{border-top:0;}
+  .ops-vk{width:74px;flex:none;font-size:var(--fs-secondary);font-weight:500;padding-top:1px;}
+  .ops-vmid{flex:1;min-width:0;}
+  .ops-vv{font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .ops-vsub{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:3px;}
+  .ops-update-bar{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;}
+  .ops-update-dot{width:8px;height:8px;flex:none;border-radius:999px;background:var(--steel);box-shadow:0 0 0 3px var(--steel-tint);}
+  .ops-update-dot.warn{background:var(--warn);box-shadow:0 0 0 3px var(--amber-tint);}
+  .ops-update-dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-update-dot.bad{background:var(--danger);box-shadow:0 0 0 3px var(--rose-tint);}
+  .ops-update-text{font-size:var(--fs-micro);color:var(--text-2);min-width:0;}
+  .ops-update-text b{color:var(--text);font-weight:500;}
+  .ops-update-btn{margin-left:auto;flex:none;font-size:var(--fs-micro);font-weight:500;border-radius:999px;padding:7px 14px;min-height:32px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel-text);position:relative;}
+  .ops-update-btn::after{content:"";position:absolute;inset:-6px;}
+  .ops-update-btn.danger{background:var(--rose-tint);color:var(--danger-text);}
+  .ops-update-btn.warn{background:var(--amber-tint);color:var(--warn-text);}
+  .ops-update-btn:disabled{background:var(--surface-2);color:var(--text-3);border-color:var(--border);cursor:default;}
+  .ops-srow{border-top:1px solid var(--border);}
+  .ops-shead{width:100%;display:flex;align-items:center;gap:11px;background:transparent;border:0;padding:11px 14px;min-height:48px;text-align:left;}
+  .ops-sdot{width:9px;height:9px;flex:none;border-radius:999px;}
+  .ops-sdot-ok{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-sinfo{flex:1;min-width:0;}
+  .ops-snm{font-size:var(--fs-secondary);font-weight:500;}
+  .ops-smeta{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:3px;}
+  .ops-kv{display:flex;justify-content:space-between;gap:12px;font-size:var(--fs-micro);color:var(--text-2);padding:3px 0;}
+  .ops-kv span:first-child{color:var(--text-2);}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-micro);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+  .badge.ok{color:var(--ok-text);background:var(--green-tint);} .badge.warn{color:var(--warn-text);background:var(--amber-tint);}
+  .badge.bad{color:var(--danger-text);background:var(--rose-tint);} .badge.info{color:var(--steel-text);background:var(--steel-tint);}
+  .badge.off{color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);}
+
+  /* buttons (44px floor in px — never scaled) */
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 14px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;}
+  .btn svg{width:18px;height:18px;}
+  .btn.primary{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+  .btn.go{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+  .btn.warn{background:var(--amber-tint);border-color:transparent;color:var(--warn-text);}
+  .btn.danger{background:var(--rose-tint);border-color:transparent;color:var(--danger-text);}
+  .btn:disabled{background:var(--surface-2);border-color:var(--border);color:var(--text-3);cursor:default;}
+  .btn.grow{flex:1;}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;}
+  .link{appearance:none;background:none;border:none;color:var(--steel-text);font-size:inherit;font-weight:500;padding:0;display:inline-flex;align-items:center;gap:4px;min-height:32px;}
+  .link svg{width:14px;height:14px;}
+
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);}
+  .muted{color:var(--text-2);} .faint{color:var(--text-2);}
+  .note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .note b{color:var(--text);font-weight:500;}
+
+  /* meter — DESIGN "Meters" */
+  .meter{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .meter i{display:block;height:100%;background:var(--steel);border-radius:999px;transition:width .3s ease-out;}
+
+  /* notice strips inside a card */
+  .notice{display:flex;gap:9px;align-items:flex-start;border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-micro);line-height:1.45;}
+  .notice svg{width:16px;height:16px;margin-top:1px;}
+  .notice b{font-weight:500;}
+  .notice.warn{background:var(--amber-tint);color:var(--text);} .notice.warn svg{color:var(--warn-text);}
+  .notice.bad{background:var(--rose-tint);color:var(--text);} .notice.bad svg{color:var(--danger-text);}
+  .notice.info{background:var(--steel-tint);color:var(--text);} .notice.info svg{color:var(--steel-text);}
+  .notice.ok{background:var(--green-tint);color:var(--text);} .notice.ok svg{color:var(--ok-text);}
+  .errtext{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);background:var(--surface-composer);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-top:8px;word-break:break-word;}
+
+  /* changelog quote — verbatim lines, so it reads as a quotation, not as our prose */
+  .clog{border-left:2px solid var(--border);padding:2px 0 2px 12px;margin-top:8px;}
+  .clog .src{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;}
+  .clog ul{list-style:none;display:flex;flex-direction:column;gap:5px;}
+  .clog li{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;padding-left:12px;position:relative;}
+  .clog li::before{content:"";position:absolute;left:0;top:7px;width:4px;height:4px;border-radius:999px;background:var(--text-3);}
+
+  /* step list — Backing up → Downloading → Restarting → Done (the Server-update register) */
+  .steps{list-style:none;display:flex;flex-direction:column;gap:2px;margin-top:8px;}
+  .steps li{display:flex;align-items:center;gap:10px;font-size:var(--fs-micro);color:var(--text-2);min-height:26px;}
+  .steps .sd{width:16px;height:16px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;display:flex;align-items:center;justify-content:center;}
+  .steps .sd svg{width:11px;height:11px;stroke-width:2.2;}
+  .steps li.done{color:var(--text-2);} .steps li.done .sd{border-color:var(--ok);background:var(--ok);color:var(--bg);}
+  .steps li.now{color:var(--text);font-weight:500;} .steps li.now .sd{border-color:var(--warn);border-top-color:transparent;animation:spin .9s linear infinite;}
+  .steps li.fail{color:var(--danger-text);} .steps li.fail .sd{border-color:var(--danger);background:var(--danger);color:var(--bg);}
+  .steps .at{margin-left:auto;color:var(--text-2);font-variant-numeric:tabular-nums;font-weight:400;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .spin{animation:spin .9s linear infinite;}
+
+  /* switch row (Ops' settings-switch) */
+  .sw-row{display:flex;align-items:center;gap:10px;}
+  .sw-row .sw-l{font-size:var(--fs-micro);color:var(--text-2);flex:1;min-width:0;}
+  .sw-row .sw-l b{color:var(--text);font-weight:500;}
+  .switch{appearance:none;width:44px;height:26px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);position:relative;flex:none;}
+  .switch::after{content:"";position:absolute;inset:-9px -0px;}
+  .switch .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:var(--text-3);transition:left .15s ease-out,background .15s ease-out;}
+  .switch.on{background:var(--steel-tint);border-color:transparent;} .switch.on .knob{left:21px;background:var(--steel);}
+
+  /* player avatar initial — a neutral disc, no faces/skins */
+  .pav{width:28px;height:28px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--text-2);flex:none;}
+  .pav.on{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+
+  /* stat tiles (lifetime stats) */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .stat{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:8px 10px;min-width:0;}
+  .stat .sv{font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;}
+  .stat .sk{font-size:11px;color:var(--text-2);margin-top:1px;}
+  .stat.ph .sv{color:var(--text-2);}
+  .preview-tag{display:inline-flex;align-self:flex-start;font-size:11px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:2px 9px;}
+
+  /* ===== modal shells — one Dialog, one Sheet (DESIGN "Modal system") ===== */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .16s ease-out;z-index:20;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .dialog{position:absolute;left:24px;right:24px;top:50%;transform:translateY(-46%);opacity:0;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px 18px 14px;z-index:22;transition:opacity .15s ease-out,transform .15s ease-out;}
+  .dialog.show{opacity:1;transform:translateY(-50%);pointer-events:auto;}
+  .dialog h3{font-size:var(--fs-title);font-weight:500;margin-bottom:6px;}
+  .dialog p{font-size:var(--fs-secondary);color:var(--text-2);line-height:1.45;}
+  .dialog .btnrow{margin-top:16px;justify-content:flex-end;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;transform:translateY(100%);transition:transform .18s ease-out;z-index:21;padding:0 16px calc(16px + env(safe-area-inset-bottom));max-height:88%;overflow:auto;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:32px;height:4px;border-radius:999px;background:var(--border);margin:10px auto 14px;}
+  .sheet h3{font-size:var(--fs-title);font-weight:500;}
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(16px);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 16px;font-size:12.5px;color:var(--text);opacity:0;pointer-events:none;transition:.18s ease-out;max-width:88%;z-index:30;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important;}
+  }
+
+  /* ===== revision 2 additions ===== */
+  .link{position:relative;}
+  .link::after{content:"";position:absolute;inset:-6px -4px;}
+  .clog-title{font-size:var(--fs-micro);color:var(--text);margin-bottom:6px;}
+  .note.why{color:var(--text-2);font-style:normal;}
+  .ops-actions button.danger{color:var(--danger-text);}
+  .link[data-act="copyAddr"]{font-size:var(--fs-micro);}
+  .steps .at{white-space:nowrap;}
+
+  /* ===================== variant-specific ===================== */
+  .b-navrow{appearance:none;width:100%;display:flex;align-items:center;gap:12px;background:none;border:0;padding:12px 14px;min-height:56px;text-align:left;}
+  .b-navrow > svg{color:var(--text-3);width:18px;height:18px;}
+  .b-navtx{min-width:0;flex:1;}
+  .b-ico{width:36px;height:36px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;}
+  .b-ico svg{width:20px;height:20px;}
+  .b-entry .meta{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;font-weight:400;}
+  .b-entry .meta.warn{color:var(--warn-text);} .b-entry .meta.bad{color:var(--danger-text);}
+  .b-banner{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:var(--fs-micro);line-height:1.4;border-bottom:1px solid var(--border);}
+  .b-banner.warn{background:var(--amber-tint);color:var(--text);} .b-banner.warn svg{color:var(--warn-text);}
+  .b-banner.bad{background:var(--rose-tint);} .b-banner.bad svg{color:var(--danger-text);}
+  .b-banner svg{width:16px;height:16px;}
+  .b-banner .link{margin-left:auto;flex:none;font-size:var(--fs-micro);}
+  .b-hero{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:16px;margin-bottom:20px;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-card);}
+  .b-state{display:flex;align-items:center;gap:10px;}
+  .b-state .ops-sdot{width:10px;height:10px;}
+  .b-state .w{font-size:var(--fs-title);font-weight:500;}
+  .b-state .sub{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-align:right;}
+  .b-facts{display:flex;gap:8px;}
+  .b-fact{flex:1;background:var(--surface-2);border-radius:10px;padding:8px 10px;min-width:0;}
+  .b-fact .v{font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+  .b-fact .k{font-size:11px;color:var(--text-2);}
+  .b-sect{display:flex;align-items:baseline;gap:8px;margin:0 2px 8px;}
+  .b-sect .r{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-transform:none;letter-spacing:0;}
+  .b-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:20px;overflow:hidden;box-shadow:var(--shadow-card);}
+  .b-pad{padding:14px;display:flex;flex-direction:column;gap:10px;}
+  .b-row{appearance:none;width:100%;display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:56px;background:none;border:0;border-top:1px solid var(--border);text-align:left;}
+  .b-row:first-child{border-top:0;}
+  .b-row .nm{font-size:var(--fs-body);font-weight:500;}
+  .b-row .sm{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:1px;}
+  .b-row .rt{margin-left:auto;text-align:right;font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .b-row .rt .sm{margin:0;}
+  .b-row > svg{color:var(--text-3);width:18px;height:18px;}
+  .b-empty{padding:16px 14px;font-size:var(--fs-secondary);color:var(--text-2);}
+  .b-ver{display:flex;align-items:baseline;gap:10px;}
+  .b-ver .big{font-size:var(--fs-title);font-weight:500;font-variant-numeric:tabular-nums;}
+  .b-ver .arrow{color:var(--text-2);}
+  .b-ver .nw{font-size:var(--fs-title);font-weight:500;color:var(--warn-text);font-variant-numeric:tabular-nums;}
+  .b-foot{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);border-top:1px solid var(--border);padding:4px 14px;}
+  .b-foot .link{margin-left:auto;font-size:var(--fs-micro);}
+  .b-lead{display:flex;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid var(--border);min-height:48px;}
+  .b-lead:first-child{border-top:0;}
+  .b-lead .k{font-size:var(--fs-secondary);flex:1;}
+  .b-lead .who{font-size:var(--fs-micro);color:var(--text-2);}
+  .b-lead .v{font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;min-width:56px;text-align:right;}
+  .b-lead.ph .v,.b-lead.ph .who{color:var(--text-2);}
+  .b-addon{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);}
+  .b-addon svg{color:var(--violet);width:18px;height:18px;margin-top:1px;}
+  .b-kv{display:flex;justify-content:space-between;padding:10px 14px;border-top:1px solid var(--border);font-size:var(--fs-secondary);gap:12px;}
+  .b-kv:first-child{border-top:0;}
+  .b-kv span:first-child{color:var(--text-2);}
+  .b-sheet-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+  .b-sheet-head .pav{width:40px;height:40px;font-size:16px;}
+  .b-sheet-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;}
+
+  .b-rn{min-width:0;flex:1;}
+  .b-rn .nm,.b-rn h3{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .b-row .rt{flex:none;}
+  .b-on{color:var(--ok-text);}
+  .b-ver .nw.ok{color:var(--ok-text);}
+  .b-label{font-size:var(--fs-micro);color:var(--text-2);font-weight:500;}
+  .b-sheet-head .btn{margin-left:auto;padding:0;width:44px;flex:none;}
+  .b-launch{padding:4px 0 24px;}
+  .b-lhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+  .b-lhead .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+  .b-lsect{margin:14px 2px 8px;}
+  .b-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  .b-tile{appearance:none;position:relative;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);min-height:96px;padding:12px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:var(--fs-micro);color:var(--text);}
+  .b-tile:disabled{color:var(--text-2);cursor:default;}
+  .b-tico svg{width:24px;height:24px;color:var(--text-2);}
+  .b-tsub{font-size:11px;color:var(--text-2);}
+  .b-tdot{position:absolute;top:10px;right:10px;width:8px;height:8px;border-radius:999px;}
+  .b-tdot.ok{background:var(--ok);} .b-tdot.warn{background:var(--warn);} .b-tdot.bad{background:var(--danger);} .b-tdot.off{background:var(--text-3);}
+
+
+  /* ===================== M2/M3 additions — shared by A, B and C ===================== */
+  .sim .srow + .srow{margin-top:0;}
+  .b-sect h3{font:inherit;}
+
+  /* inputs — DESIGN "Inputs" (16px text, 12px radius, 44px floor) */
+  .fld{display:flex;flex-direction:column;gap:6px;}
+  .fld > label,.fld > .fl{font-size:var(--fs-micro);color:var(--text-2);font-weight:500;}
+  .inp{width:100%;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:0 12px;font:inherit;font-size:var(--fs-body);color:var(--text);}
+  .inp::placeholder{color:var(--text-2);}
+  .inp.mono{font-family:var(--font-mono);font-size:15px;}
+  .inp-row{display:flex;gap:8px;}
+  .inp-row .inp{flex:1;min-width:0;}
+  .hint{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .hint.bad{color:var(--danger-text);}
+
+  /* segmented control — DESIGN "Segmented control"; a real 44px per segment */
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;gap:2px;}
+  .seg button{appearance:none;flex:1;min-width:0;min-height:44px;border:0;border-radius:9px;background:transparent;color:var(--text-2);font-size:13px;font-weight:500;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .seg button[aria-checked="true"],.seg button[aria-selected="true"]{background:var(--steel-tint);color:var(--text);}
+  .seg button:disabled{color:var(--text-3);cursor:default;}
+  .seg .cnt{display:inline-block;margin-left:5px;font-size:11px;color:var(--text-2);font-variant-numeric:tabular-nums;}
+
+  /* option cards (radio list) */
+  .opts{display:flex;flex-direction:column;gap:8px;}
+  .opt{appearance:none;width:100%;display:flex;align-items:flex-start;gap:12px;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:11px 12px;min-height:52px;}
+  .opt .rad{width:18px;height:18px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;margin-top:1px;position:relative;}
+  .opt[aria-checked="true"]{border-color:var(--steel);background:var(--steel-tint);}
+  .opt[aria-checked="true"] .rad{border-color:var(--steel);}
+  .opt[aria-checked="true"] .rad::after{content:"";position:absolute;inset:3px;border-radius:999px;background:var(--steel);}
+  .opt .ot{display:block;font-size:var(--fs-secondary);font-weight:500;color:var(--text);}
+  .opt .os{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;line-height:1.4;}
+  .opt.danger[aria-checked="true"]{border-color:var(--rose);background:var(--rose-tint);}
+  .opt.danger[aria-checked="true"] .rad{border-color:var(--rose);} .opt.danger[aria-checked="true"] .rad::after{background:var(--rose);}
+  .opt:disabled{cursor:default;background:transparent;}
+  .opt:disabled .ot{color:var(--text-2);}
+  .opt:disabled .rad{border-style:dashed;}
+  .opt .omin{min-width:0;flex:1;}
+
+  /* a world slot row */
+  .w-row{appearance:none;width:100%;display:flex;align-items:flex-start;gap:12px;padding:12px 14px;min-height:64px;background:none;border:0;border-top:1px solid var(--border);text-align:left;color:var(--text);}
+  .w-row:first-child,.w-first{border-top:0;}
+  .w-disc{width:36px;height:36px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;}
+  .w-disc svg{width:18px;height:18px;}
+  .w-disc.on{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+  .w-disc.empty{background:transparent;border-style:dashed;}
+  .w-tx{flex:1;min-width:0;}
+  .w-nm{display:flex;align-items:center;gap:8px;min-width:0;}
+  .w-nm .t{font-size:var(--fs-body);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  .w-nm .t.dim{color:var(--text-2);font-weight:400;}
+  .w-nm .badge{flex:none;}
+  .w-meta{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;line-height:1.45;}
+  .w-meta .sep{padding:0 4px;}
+  .w-row > svg{color:var(--text-3);width:18px;height:18px;margin-top:9px;flex:none;transition:transform .15s ease-out;}
+  .w-row[aria-expanded="true"] > svg{transform:rotate(90deg);}
+  .w-body{padding:2px 14px 14px 62px;display:flex;flex-direction:column;gap:12px;}
+  @media (max-width:360px){ .w-body{padding-left:14px;} }
+  .w-facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:var(--fs-micro);}
+  .w-facts dt{color:var(--text-2);} .w-facts dd{color:var(--text);min-width:0;overflow-wrap:anywhere;}
+  .w-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .w-actions .btn{padding:0 8px;}
+  .w-actions .full{grid-column:1 / -1;}
+
+  /* a backup row */
+  .k-row{appearance:none;width:100%;display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:60px;background:none;border:0;border-top:1px solid var(--border);text-align:left;color:var(--text);}
+  .k-first{border-top:0;}
+  .k-ico{width:28px;height:28px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);}
+  .k-ico svg{width:14px;height:14px;}
+  .k-ico.mine{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+  .k-tx{flex:1;min-width:0;}
+  .k-l{display:block;font-size:var(--fs-secondary);font-weight:500;overflow-wrap:anywhere;}
+  .k-l.auto{font-weight:400;color:var(--text);}
+  .k-s{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:1px;}
+  .k-rt{flex:none;display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);}
+  .k-pin{display:inline-flex;align-items:center;gap:3px;color:var(--steel-text);font-size:11px;}
+  .k-pin svg{width:13px;height:13px;}
+  .k-row > svg{color:var(--text-3);width:18px;height:18px;flex:none;transition:transform .15s ease-out;}
+  .k-row[aria-expanded="true"] > svg{transform:rotate(90deg);}
+  .k-row.pending .k-l{color:var(--text-2);}
+  .k-body{padding:0 14px 14px 54px;display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  @media (max-width:360px){ .k-body{padding-left:14px;} }
+  .k-body .btn{padding:0 8px;}
+
+  /* off-box + retention lines */
+  .offbox{display:flex;gap:9px;align-items:flex-start;font-size:var(--fs-micro);line-height:1.45;color:var(--text-2);}
+  .offbox svg{width:16px;height:16px;margin-top:1px;flex:none;}
+  .offbox b{color:var(--text);font-weight:500;}
+  .offbox.warn svg{color:var(--warn-text);}
+  .offbox.ok svg{color:var(--ok-text);}
+  .retain{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .retain b{color:var(--text);font-weight:500;}
+  .retain .meter{margin:6px 0 4px;}
+  .retain .meter i{background:var(--steel);}
+
+  /* job card: an import / load / reset / restore in flight */
+  .job{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:14px;margin-bottom:20px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--shadow-card);}
+  .job.inset{margin:0;border-radius:var(--r-input);background:var(--surface-2);}
+  .job-h{display:flex;align-items:center;gap:8px;font-size:var(--fs-secondary);font-weight:500;}
+  .job-h .spin{display:flex;color:var(--warn-text);}
+  .job-h .spin svg{width:16px;height:16px;}
+  .job .steps{margin-top:2px;}
+  .job .meter i{background:var(--steel);}
+  .file{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-secondary);min-width:0;}
+  .file svg{color:var(--text-2);width:18px;height:18px;}
+  .file .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .file .fs{font-size:var(--fs-micro);color:var(--text-2);flex:none;}
+
+  /* allowlist */
+  .al-row{display:flex;align-items:center;gap:12px;padding:6px 6px 6px 14px;min-height:52px;border-top:1px solid var(--border);}
+  .al-row .nm{flex:1;min-width:0;font-size:var(--fs-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .al-row .sm{display:block;font-size:var(--fs-micro);color:var(--text-2);}
+  .icon-btn{appearance:none;width:44px;height:44px;flex:none;display:flex;align-items:center;justify-content:center;border:0;background:none;color:var(--text-2);border-radius:var(--r-input);}
+  .icon-btn svg{width:18px;height:18px;}
+  .switch{min-width:44px;}
+  .switch::after{inset:-9px 0;}
+
+  /* settings rows */
+  .set{display:flex;flex-direction:column;gap:6px;}
+  .set-l{font-size:var(--fs-micro);color:var(--text-2);font-weight:500;display:flex;justify-content:space-between;gap:8px;}
+  .set-l span:last-child{font-weight:400;}
+  .stepper{display:flex;align-items:center;gap:8px;}
+  .stepper .btn{width:44px;padding:0;flex:none;}
+  .stepper .sv{flex:1;text-align:center;font-size:var(--fs-body);font-weight:500;font-variant-numeric:tabular-nums;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);min-height:44px;display:flex;align-items:center;justify-content:center;}
+  .help{background:var(--surface-2);border-radius:var(--r-input);padding:10px 12px;}
+  .help summary{font-size:var(--fs-micro);font-weight:500;color:var(--steel-text);min-height:32px;display:flex;align-items:center;cursor:pointer;list-style:none;position:relative;}
+  .help summary::after{content:"";position:absolute;inset:-6px -12px;}
+  .help summary::-webkit-details-marker{display:none;}
+  .help ol{margin:6px 0 2px 18px;font-size:var(--fs-micro);color:var(--text-2);line-height:1.5;}
+  .help ol b{color:var(--text);font-weight:500;}
+
+  .sheet .sh-body{display:flex;flex-direction:column;gap:14px;}
+  .sheet .sh-head{display:flex;align-items:center;gap:12px;margin-bottom:4px;}
+  .sheet .sh-head .b-rn{min-width:0;flex:1;}
+  .sheet .sh-head .btn{margin-left:auto;padding:0;width:44px;flex:none;}
+  .sheet .sh-sub{font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;}
+  .sheet .sh-foot{display:flex;gap:8px;padding-top:2px;}
+  .sheet .sh-foot .btn{flex:1;}
+  .dialog .fld{margin-top:12px;}
+  .dialog .btnrow .btn{min-width:92px;}
+
+  .err-line{display:flex;gap:9px;align-items:flex-start;background:var(--rose-tint);border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-micro);line-height:1.45;margin-bottom:12px;}
+  .err-line svg{width:16px;height:16px;color:var(--danger-text);margin-top:1px;flex:none;}
+  .err-line .x{margin-left:auto;margin-top:-12px;margin-right:-10px;}
+
+  /* game rules editor */
+  .pend,.chg{display:inline-flex;align-items:center;font-size:11px;border-radius:999px;padding:1px 7px;font-weight:500;white-space:nowrap;}
+  .pend{color:var(--warn-text);background:var(--amber-tint);}
+  .chg{color:var(--steel-text);background:var(--steel-tint);font-weight:400;}
+  .pend-t{color:var(--warn-text);} .chg-t{color:var(--steel-text);}
+  .hint.live{color:var(--ok-text);}
+  .rules{display:flex;flex-direction:column;gap:10px;}
+  .rsearch .inp{appearance:none;}
+  .rgroups{display:flex;flex-direction:column;gap:8px;}
+  .rgrp{border:1px solid var(--border);border-radius:var(--r-input);background:var(--surface);overflow:hidden;}
+  .rgrp > summary{list-style:none;display:flex;align-items:center;gap:8px;min-height:48px;padding:6px 12px;cursor:pointer;}
+  .rgrp > summary::-webkit-details-marker{display:none;}
+  .rgrp > summary .gt{font-size:var(--fs-secondary);font-weight:500;}
+  .rgrp > summary .gm{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-align:right;}
+  .rgrp > summary svg{width:16px;height:16px;color:var(--text-3);transition:transform .15s ease-out;}
+  .rgrp[open] > summary svg{transform:rotate(90deg);}
+  .rbody{border-top:1px solid var(--border);}
+  .rule{display:flex;align-items:center;gap:12px;padding:10px 12px;border-top:1px solid var(--border);min-height:56px;}
+  .rbody > .rule:first-child{border-top:0;}
+  .rule .rl{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .rule .rt{font-size:var(--fs-secondary);color:var(--text);}
+  .rule .rs{font-size:var(--fs-micro);color:var(--text-2);}
+  .rule .rid{font-size:11px;color:var(--text-2);overflow-wrap:anywhere;}
+  .rule .rtags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;}
+  .rule.num,.rule.choice{flex-wrap:wrap;}
+  .rule.num .rl,.rule.choice .rl{flex-basis:100%;}
+  .rule.num .stepper,.rule.choice .sel{flex:1;}
+  .inp-num{font:inherit;font-size:var(--fs-body);color:var(--text);min-width:0;width:100%;padding:0 8px;}
+  .sel{appearance:auto;}
+  .rreset{margin:4px 12px 8px;}
+  .rfoot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .rfoot .hint{flex:1;min-width:140px;}
+  details.rules-new{border:1px solid var(--border);border-radius:var(--r-input);}
+  details.rules-new > summary{list-style:none;display:flex;align-items:center;gap:8px;min-height:48px;padding:6px 12px;cursor:pointer;font-size:var(--fs-secondary);font-weight:500;}
+  details.rules-new > summary::-webkit-details-marker{display:none;}
+  details.rules-new > summary .hint{margin-left:auto;font-weight:400;}
+  details.rules-new > summary svg{width:16px;height:16px;color:var(--text-3);transition:transform .15s ease-out;}
+  details.rules-new[open] > summary svg{transform:rotate(90deg);}
+  .rules-in{padding:0 10px 10px;}
+  .seedbox{display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;}
+  .rules-entry{border-top:1px solid var(--border);}
+
+  /* world chips (A's backup filter, C's switcher) */
+  .chips{display:flex;gap:8px;overflow-x:auto;margin:0 -16px 12px;padding:2px 16px;scrollbar-width:none;}
+  .chips::-webkit-scrollbar{display:none;}
+  .chip{appearance:none;min-height:44px;flex:none;padding:0 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:7px;max-width:200px;}
+  .chip span.n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chip[aria-pressed="true"],.chip[aria-selected="true"]{background:var(--steel-tint);color:var(--text);border-color:var(--steel);}
+  .chip .dot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .chip .dot.ok{background:var(--ok);} .chip .dot.warn{background:var(--warn);} .chip .dot.off{border:1.5px dashed var(--text-3);width:9px;height:9px;}
+  .chip.empty{border-style:dashed;}
+
+  /* C */
+  .c-switch{position:sticky;top:-12px;z-index:2;background:var(--bg);margin:-12px -16px 8px;padding:12px 16px 0;border-bottom:1px solid var(--border);}
+  .c-switch .chips{margin-bottom:10px;}
+  .c-tabs{margin-bottom:14px;}
+  .c-scope{display:flex;gap:8px;align-items:flex-start;margin:0 2px 14px;}
+  .c-scope svg{width:16px;height:16px;flex:none;margin-top:1px;color:var(--steel-text);}
+  .c-busy{display:flex;gap:8px;align-items:center;margin:0 2px 12px;}
+  .c-busy svg{width:16px;height:16px;flex:none;}
+  .w-facts .link::after{inset:-6px -8px;}
+
+</style>
+</head>
+<body>
+  <div class="caption"><span class="tag">GUI gate · Minecraft worlds &amp; backups (M2 + M3) · variant A</span><br/>
+<b>A — sections in place.</b> Screen B grows two sections in its scroll: <b>Worlds</b> (every slot as a row that expands in place to its facts, settings, game rules and actions) and <b>Backups</b> (one world at a time, picked with chips). Server settings and the allowlist follow. Destructive acts confirm in the centre <b>Dialog</b>; forms open in a bottom <b>Sheet</b>.</div>
+  <div class="sim" id="sim" aria-label="Mock controls"></div>
+  <div class="phone" id="phone">
+    <div id="app" style="display:contents"></div>
+    <div class="scrim" id="scrim" data-act="dismiss"></div>
+    <div class="dialog" id="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-t"></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </div>
+<script>
+/* ===== shared fixture + state machine (identical across A / B / C so they compare like-for-like) =====
+   Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M2 (slots, import, settings, allowlist) and §M3
+   (snapshots, backups, restore, reset). The screen around the new sections is the built M1 screen
+   (docs/mocks/minecraft-ops/b-dedicated-screen.html → frontend/src/screens/MinecraftScreen.tsx). */
+
+const IC = {
+  play:'<svg viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
+  stop:'<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  restart:'<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>',
+  download:'<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  upload:'<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+  refresh:'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+  back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
+  check:'<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  x:'<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  alert:'<svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+  cube:'<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>',
+  plus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
+  minus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
+  pin:'<svg viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>',
+  trash:'<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  pencil:'<svg viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></svg>',
+  undo:'<svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>',
+  archive:'<svg viewBox="0 0 24 24"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>',
+  auto:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  user:'<svg viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  file:'<svg viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+  shield:'<svg viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>',
+  sliders:'<svg viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>',
+  layers:'<svg viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>',
+};
+
+/* ---- the box's worlds. Five slots by default (owner decision). A seed is known when the owner
+   chose it (Random or typed) or the wrapper generated the first-boot world with one; an imported
+   world's seed is "unknown" (owner, 2026-10-10). r = game-rule overrides of the defaults;
+   p = settings changed on a world that isn't loaded, waiting for its next load. ---- */
+const SLOTS0 = [
+  {id:1, name:'world',         origin:'first',    seed:'-2794311108712645813', mode:'Survival', diff:'Normal',   cheats:false, mb:3.1,  played:'Oct 4, 7:55 pm', made:'Oct 2', gen:true, r:{}, p:{}},
+  {id:2, name:'Castle Hill',   origin:'imported', seed:null,      mode:'Survival', diff:'Normal',   cheats:false, mb:7.8,  played:'today, 2:33 pm', made:'Oct 4', gen:true, r:{}, p:{}},
+  {id:3, name:'Creative test', origin:'seeded',   seed:'8675309', mode:'Creative', diff:'Peaceful', cheats:true,  mb:5.2,  played:'Oct 7, 6:20 pm', made:'Oct 7', gen:true, r:{doDayLightCycle:false, doWeatherCycle:false, doMobSpawning:false}, p:{}},
+  {id:4, name:'Skyblock run',  origin:'seeded',   seed:'5127438807419962211', mode:'Survival', diff:'Hard', cheats:false, mb:null, played:null, made:'Oct 9', gen:false, r:{keepInventory:true}, p:{keepInventory:1, diff:1}},
+  {id:5, name:null, origin:'empty'},
+];
+const ACTIVE0 = 2;
+/* Backups by slot, newest first. "auto" carries the safety net's reason; a label is the owner's. */
+const BACKUPS0 = [
+  {id:'b9', slot:2, label:'before the castle roof', auto:null, at:'Oct 9, 7:12 pm', mb:7.6, pinned:true},
+  {id:'b8', slot:3, label:null, auto:'before loading Castle Hill', at:'Oct 7, 6:21 pm', mb:5.2, pinned:false},
+  {id:'b7', slot:2, label:null, auto:'before loading Creative test', at:'Oct 7, 4:02 pm', mb:7.3, pinned:false},
+  {id:'b6', slot:2, label:null, auto:'before update to 1.26.52.3', at:'Oct 6, 9:30 am', mb:7.1, pinned:false},
+  {id:'b5', slot:2, label:'first night', auto:null, at:'Oct 4, 8:15 pm', mb:6.4, pinned:false},
+  {id:'b4', slot:1, label:null, auto:'before loading Castle Hill', at:'Oct 4, 7:58 pm', mb:3.1, pinned:false},
+];
+const DOWNLOADS0 = {2:{at:'Oct 4, 8:20 pm', id:'b5'}};
+const ONLINE_FIXTURE = [{tag:'BlockyFox', min:42}, {tag:'Mira_P', min:7}];
+const PLAYERS = [
+  {tag:'BlockyFox', totalMin:14*60+5, sessions:19, first:'Oct 2', last:'today'},
+  {tag:'Mira_P', totalMin:9*60+40, sessions:12, first:'Oct 2', last:'today'},
+  {tag:'Steve42', totalMin:3*60+15, sessions:5, first:'Oct 6', last:'yesterday'},
+  {tag:'Pebble_J', totalMin:48, sessions:2, first:'Oct 8', last:'Oct 8'},
+];
+const RUNNING = '1.26.52.3', LATEST = '1.26.60.4';
+const KEEP = 20, MAX_MB = 500;
+/* What the mock's "Choose file" hands back — flipped in the mock controls. */
+const FILES = {
+  good:{name:'Hilltop Village.mcworld', mb:9.4, level:'Hilltop Village'},
+  bad:{name:'Hilltop Village.zip', mb:14.2, level:null},
+  big:{name:'Map pack — Skyblock XL.mcworld', mb:812, level:'Skyblock XL'},
+};
+const randSeed = () => { const n = BigInt.asIntN(64, BigInt(Math.floor(Math.random() * 2 ** 32)) << 32n | BigInt(Math.floor(Math.random() * 2 ** 32))); return n.toString(); };
+const clone = x => JSON.parse(JSON.stringify(x));
+
+const S = {
+  theme:'dark', scenario:'default',
+  server:'running', uptimeMin:192, online:ONLINE_FIXTURE.map(p => ({...p})),
+  upd:'idle',
+  slots:clone(SLOTS0), active:ACTIVE0, backups:clone(BACKUPS0), downloads:clone(DOWNLOADS0),
+  srv:{name:'JBrain', maxPlayers:10, view:32, tick:4, slotCount:5},
+  srvDraft:null,
+  allow:{on:true, tags:['BlockyFox', 'Mira_P', 'Steve42', 'Pebble_J']},
+  job:null, pendingBackup:null, err:null,
+  fileKind:'good',
+  bseq:20,
+};
+/* Per-variant UI state lives in UI (modals, expansion, navigation). */
+const UI = {sheet:null, dialog:null, form:{}, rev:0, open:{}, top:false};
+
+/* ---- timers: a scenario switch cancels every scheduled transition ---- */
+let TIMERS = [];
+const later = (ms, fn) => { const id = setTimeout(() => { TIMERS = TIMERS.filter(t => t !== id); fn(); render(); }, ms); TIMERS.push(id); };
+const clearTimers = () => { TIMERS.forEach(clearTimeout); TIMERS = []; };
+
+/* ---- formatting ---- */
+const fmtDur = m => m < 60 ? `${m} min` : m < 24 * 60 ? `${Math.floor(m/60)}h ${String(m%60).padStart(2,'0')}m` : `${Math.round(m/60)} h`;
+const fmtUp = m => m < 24 * 60 ? fmtDur(m) : `${Math.floor(m/1440)} d ${Math.floor((m%1440)/60)} h`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+const nowClock = () => new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'}).toLowerCase();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const listOf = xs => new Intl.ListFormat('en', {style:'long', type:'conjunction'}).format(xs);
+const mb = v => v == null ? '—' : v >= 100 ? `${Math.round(v)} MB` : `${v.toFixed(1)} MB`;
+const initial = t => t[0].toUpperCase();
+
+/* ---- derived ---- */
+const slot = id => S.slots.find(s => s.id === +id);
+const isEmpty = s => s.origin === 'empty';
+const activeSlot = () => slot(S.active);
+const slotName = s => isEmpty(s) ? `Slot ${s.id}` : s.name;
+const backupsOf = id => S.backups.filter(b => b.slot === +id);
+const backup = id => S.backups.find(b => b.id === id);
+const bLabel = b => b.label ? `“${b.label}”` : `automatic — ${b.auto}`;
+const bShort = b => b.label ? `“${b.label}”` : `the ${b.at.split(',')[0]} automatic backup`;
+const firstEmpty = () => S.slots.find(isEmpty);
+const running = () => S.server === 'running';
+const unpinned = id => backupsOf(id).filter(b => !b.pinned);
+function originText(s) {
+  if (s.origin === 'first') return `made on first boot, ${s.made}`;
+  if (s.origin === 'imported') return `imported ${s.made} from a .mcworld`;
+  if (s.origin === 'restored') return `restored ${s.made} from a backup of ${esc(s.from)}`;
+  return `new world, ${s.made}`;
+}
+function playedText(s) {
+  if (!s.gen) return 'not generated yet — made the first time it loads';
+  if (s.id === S.active && running() && S.online.length) return 'playing now';
+  if (s.id === S.active && running()) return 'loaded · nobody on';
+  return s.played ? `last played ${s.played}` : 'never played';
+}
+function lastBackupText(id) {
+  const b = backupsOf(id)[0];
+  if (S.pendingBackup && S.pendingBackup.slot === +id) return 'backing up now…';
+  return b ? `last backup ${b.at}${b.auto ? ' (automatic)' : ''}` : 'no backups yet';
+}
+/* Every world action shares the server's one lifecycle lock (M1), so a refusal is said, not hidden. */
+function worldBlocked() {
+  if (S.upd === 'running') return 'Busy updating Minecraft — loading, importing, resetting, restoring and backing up come back when it’s done.';
+  if (S.job && !S.job.err) return `Wait for the ${S.job.noun} to finish.`;
+  if (['starting','stopping','restarting'].includes(S.server)) return `Wait for the server to finish ${S.server}.`;
+  return '';
+}
+
+function stateInfo() {
+  if (S.job && S.job.hero && !S.job.err) return {level:'warn', word:S.job.hero, sub:S.job.steps[S.job.i].label.split(' — ')[0]};
+  switch (S.server) {
+    case 'running':  return {level:'ok',   word:'running',  sub:`up ${fmtUp(S.uptimeMin)}`};
+    case 'starting': return {level:'warn', word:'starting', sub:'loading the world…'};
+    case 'restarting': return {level:'warn', word:'restarting', sub:'saving the world, then starting again'};
+    case 'stopping': return {level:'warn', word:'stopping', sub:'saving the world — up to 60 s'};
+    case 'stopped':  return {level:'off',  word:'stopped',  sub:'nobody can join'};
+  }
+}
+const dotVar = l => l === 'off' ? 'text-3' : l === 'bad' ? 'danger' : l;
+
+/* ---- retention: newest 20 per world; automatic ones go first; pinned ones are kept, outside the 20 ---- */
+function retain(id) {
+  const list = unpinned(id);
+  if (list.length <= KEEP) return null;
+  const autos = list.filter(b => b.auto);
+  const drop = (autos.length ? autos : list)[(autos.length ? autos : list).length - 1];
+  S.backups = S.backups.filter(b => b !== drop);
+  return drop;
+}
+function nextToGo(id) {
+  const list = unpinned(id); if (list.length < KEEP) return null;
+  const autos = list.filter(b => b.auto); const pool = autos.length ? autos : list;
+  return pool[pool.length - 1];
+}
+function addBackup(id, label, auto) {
+  const s = slot(id);
+  const b = {id:'b' + (++S.bseq), slot:+id, label:label || null, auto:auto || null, at:`today, ${nowClock()}`, mb:s.mb || 1.2, pinned:false};
+  S.backups.unshift(b);
+  return retain(id);
+}
+
+/* ---- jobs: load / import / reset / restore. One at a time; steps advance on timers. ---- */
+function step(label, ms, enter) { return {label, ms, enter}; }
+function runJob(job) {
+  S.job = Object.assign({i:0, at:[], err:null}, job);
+  const go = i => {
+    if (!S.job || S.job !== job0) return;
+    if (i >= S.job.steps.length) { const done = S.job.done; S.job = null; done && done(); return; }
+    S.job.i = i; S.job.at[i] = nowClock();
+    const st = S.job.steps[i];
+    st.enter && st.enter();
+    if (S.job.err) return;
+    if (st.upload) return uploadTick(i);
+    later(st.ms || 1600, () => go(i + 1));
+  };
+  const uploadTick = i => {
+    later(260, () => {
+      if (!S.job || S.job !== job0) return;
+      S.job.sent = Math.min(S.job.file.mb, +(S.job.sent + S.job.file.mb / 9).toFixed(1));
+      if (S.job.sent >= S.job.file.mb) go(i + 1); else uploadTick(i);
+    });
+  };
+  const job0 = S.job;
+  go(0);
+}
+/* The server-touching middle of a sequence, when the slot is loaded and the server is up. */
+function bounceSteps(slotName_, verb, word) {
+  return {
+    stop: step(`Stopping — saving ${slotName_}`, 1700, () => { S.server = 'stopping'; S.online = []; }),
+    start: step(`Starting ${verb}`, 1900, () => { S.server = 'starting'; }),
+    word,
+  };
+}
+function finishStart() { S.server = 'running'; S.uptimeMin = 0; }
+
+function doLoad(id) {
+  const to = slot(id), from = activeSlot(), wasRunning = running(), players = S.online.length;
+  const steps = [];
+  if (wasRunning && players) steps.push(step('Warning players in chat — switching worlds in 30 s', 2600));
+  if (wasRunning) steps.push(step(`Stopping — saving ${from.name}`, 1700, () => { S.server = 'stopping'; S.online = []; }));
+  steps.push(step(`Backing up ${from.name}`, 1500, () => { if (wasRunning) S.server = 'stopped'; addBackup(from.id, null, `before loading ${to.name}`); }));
+  steps.push(step(`Switching to ${to.name}`, 1200, () => { from.played = `today, ${nowClock()}`; S.active = to.id; to.p = {}; }));
+  if (wasRunning) steps.push(step(to.gen ? `Starting ${to.name}` : `Starting — generating ${to.name}`, 2200, () => { S.server = 'starting'; }));
+  runJob({kind:'load', noun:'world switch', hero:wasRunning ? 'switching worlds' : null, title:`Loading ${to.name}`, slot:to.id, steps,
+    done:() => { if (wasRunning) { finishStart(); to.gen = true; to.mb = to.mb || 1.2; toast(`${to.name} is loaded — players can join`); }
+      else toast(`${to.name} is loaded — start the server to play it`); }});
+}
+function doImport(id, file) {
+  const t = slot(id), occupied = !isEmpty(t) && t.gen, active = t.id === S.active, bounce = active && running();
+  const steps = [];
+  const up = step(`Uploading ${file.name}`, 0); up.upload = true; steps.push(up);
+  steps.push(step('Checking it — level.dat, levelname.txt and db/', 1500, () => {
+    if (!file.level) S.job.err = `${file.name} has no level.dat or db/ inside, so it isn't a Bedrock world (a Java world won't import). Nothing was written to any slot, and the upload was thrown away.`;
+  }));
+  if (occupied) steps.push(step(`Backing up ${t.name} first`, 1400, () => addBackup(t.id, null, `before importing ${file.level || 'a world'}`)));
+  if (bounce) steps.push(step(`Stopping — saving ${t.name}`, 1600, () => { S.server = 'stopping'; S.online = []; }));
+  steps.push(step(`Writing ${file.level || 'the world'} to slot ${t.id}`, 1400, () => { if (bounce) S.server = 'stopped';
+    Object.assign(t, {name:file.level, origin:'imported', seed:null, mode:t.mode || 'Survival', diff:t.diff || 'Normal', cheats:false, mb:+(file.mb * 1.6).toFixed(1), played:null, made:'Oct 10', gen:true, r:{}, p:{}}); }));
+  if (bounce) steps.push(step(`Starting ${file.level}`, 1900, () => { S.server = 'starting'; }));
+  runJob({kind:'import', noun:'import', hero:bounce ? 'importing' : null, title:`Importing into slot ${t.id}${occupied ? ` — over ${t.name}` : ''}`, slot:t.id, file, sent:0, steps,
+    done:() => { if (bounce) finishStart(); toast(`${file.level} imported into slot ${t.id}`); }});
+}
+function doReset(id, how) {
+  const t = slot(id), bounce = t.id === S.active && running(), name = t.name;
+  const steps = [];
+  if (t.gen) steps.push(step(`Backing up ${name} first`, 1400, () => addBackup(t.id, null, `before reset (${how === 'same' ? 'same seed' : how === 'new' ? 'new seed' : 'emptied'})`)));
+  if (bounce) steps.push(step(`Stopping — saving ${name}`, 1600, () => { S.server = 'stopping'; S.online = []; }));
+  steps.push(step(how === 'empty' ? `Emptying slot ${t.id}` : how === 'same' ? `Resetting ${name} — same seed, fresh terrain` : `Resetting ${name} — new seed`, 1600, () => {
+    if (bounce) S.server = 'stopped';
+    if (how === 'empty') { Object.keys(t).forEach(k => { if (k !== 'id') delete t[k]; }); t.origin = 'empty'; }
+    else Object.assign(t, {gen:false, mb:null, played:null, seed:how === 'same' ? t.seed : randSeed(), origin:t.origin === 'imported' || t.origin === 'first' ? 'seeded' : t.origin, made:'Oct 10'});
+  }));
+  if (bounce) steps.push(step(`Starting — generating ${name}`, 2000, () => { S.server = 'starting'; }));
+  runJob({kind:'reset', noun:'reset', hero:bounce ? 'resetting' : null, title:how === 'empty' ? `Emptying slot ${t.id}` : `Resetting ${name}`, slot:t.id, steps,
+    done:() => { if (bounce) { finishStart(); t.gen = true; t.mb = 1.2; }
+      toast(how === 'empty' ? `Slot ${t.id} is empty — its backups are kept` : `${name} is reset — undo it from its backups`); }});
+}
+function doRestore(bid, toId) {
+  const b = backup(bid), from = slot(b.slot), t = slot(toId), bounce = t.id === S.active && running();
+  const into = isEmpty(t) ? `${from.name} (${b.at.split(',')[0]})` : t.name;
+  const steps = [];
+  if (!isEmpty(t) && t.gen) steps.push(step(`Backing up ${t.name} first`, 1400, () => addBackup(t.id, null, `before restoring ${b.label ? '“' + b.label + '”' : 'a backup'}`)));
+  if (bounce) steps.push(step(`Stopping — saving ${t.name}`, 1600, () => { S.server = 'stopping'; S.online = []; }));
+  steps.push(step(`Restoring ${bShort(b)} into ${isEmpty(t) ? `slot ${t.id}` : t.name}`, 1800, () => {
+    if (bounce) S.server = 'stopped';
+    if (isEmpty(t)) Object.assign(t, {name:into, origin:'restored', from:from.name, seed:from.seed || null, mode:from.mode, diff:from.diff, cheats:from.cheats, played:null, made:'Oct 10', r:{...(from.r || {})}, p:{}});
+    Object.assign(t, {mb:b.mb, gen:true});
+  }));
+  if (bounce) steps.push(step(`Starting ${t.name}`, 1900, () => { S.server = 'starting'; }));
+  runJob({kind:'restore', noun:'restore', hero:bounce ? 'restoring' : null, title:`Restoring into ${isEmpty(t) ? `slot ${t.id}` : t.name}`, slot:t.id, steps,
+    done:() => { if (bounce) finishStart(); toast(`Restored — ${into} is back to ${b.at}`); }});
+}
+
+/* ---- actions (shared). Variants add their own UI acts to ACT. ---- */
+const openSheet = (kind, extra = {}) => { UI.dialog = null; UI.sheet = Object.assign({kind}, extra); UI.form = Object.assign({}, extra.form || {}); UI.rev++; };
+const openDialog = (kind, extra = {}) => { UI.sheet = null; UI.dialog = Object.assign({kind}, extra); UI.rev++; };
+const closeModal = () => { UI.sheet = null; UI.dialog = null; UI.rev++; };
+
+const ACT = {
+  start() { S.server = 'starting'; later(2000, () => { S.server = 'running'; S.uptimeMin = 0; toast(`Server running — ${activeSlot().name}`); }); },
+  stop() { if (S.online.length) return openDialog('stop'); S.server = 'stopping'; later(1600, () => { S.server = 'stopped'; toast('Server stopped — world saved'); }); },
+  restart() { toast('Restart works as on the built screen (not part of this gate)'); },
+  close() { closeModal(); },
+  dismiss() { closeModal(); },
+  dismissErr() { S.err = null; },
+  dismissJob() { S.job = null; },
+
+  /* worlds */
+  load(id) { openDialog('load', {slot:+id}); },
+  newWorld(id) { const t = id ? slot(id) : firstEmpty(); if (!t) return; openSheet('newWorld', {slot:t.id, form:{name:'', seedMode:'random', seedRand:randSeed(), seedText:'', mode:'Survival', diff:'Normal', rules:{}}}); },
+  importTo(id) { const t = id ? slot(id) : (firstEmpty() || null); openSheet('import', {slot:t ? t.id : null, fixed:!!id, form:{file:null}}); },
+  rename(id) { openSheet('rename', {slot:+id, form:{name:slot(id).name}}); },
+  reset(id) { const t = slot(id); openSheet('reset', {slot:+id, form:{how:t.seed ? 'same' : 'new'}}); },
+  set(arg) { const [id, k, v] = arg.split('|'); const t = slot(id); t[k] = k === 'cheats' ? !t.cheats : v;
+    if (t.id !== S.active) { t.p[k] = 1; return toast(`Saved — applies when ${t.name} next loads`); }
+    if (k === 'cheats') return toast(`Saved — cheats ${t.cheats ? 'on' : 'off'} at the next restart`);
+    toast(running() ? `Applied live — ${k === 'mode' ? 'game mode' : 'difficulty'} is ${v.toLowerCase()} now` : `Saved — applies when the server starts`); },
+  copySeed(id) { toast(`Copied seed ${slot(id).seed}`); },
+
+  /* form bits inside sheets — they re-render the open modal, not the page */
+  f(arg) { const [k, v] = arg.split('|'); UI.form[k] = v; UI.rev++; },
+  reroll() { UI.form.seedRand = randSeed(); UI.rev++; },
+  pickFile() { UI.form.file = S.fileKind; UI.rev++; },
+  createWorld() {
+    const t = slot(UI.sheet.slot), f = UI.form, name = (f.name || '').trim();
+    if (!name) return;
+    const seed = f.seedMode === 'enter' ? (f.seedText || '').trim() : f.seedRand;
+    if (!seed) return;
+    Object.assign(t, {name, origin:'seeded', seed, mode:f.mode, diff:f.diff, cheats:false, mb:null, played:null, made:'Oct 10', gen:false, r:{...(f.rules || {})}, p:{}});
+    closeModal(); toast(`${name} is in slot ${t.id} — it’s generated the first time you load it`);
+  },
+  startImport() {
+    const f = FILES[UI.form.file], id = UI.sheet.slot; if (!f || !id || f.mb > MAX_MB) return;
+    closeModal(); doImport(id, f);
+  },
+  saveName() { const t = slot(UI.sheet.slot), n = (UI.form.name || '').trim(); if (!n) return; const old = t.name; t.name = n; closeModal(); toast(`Renamed ${old} to ${n}`); },
+  resetNext() { openDialog('reset', {slot:UI.sheet.slot, how:UI.form.how}); UI.form.typed = ''; },
+  confirm() {
+    const d = UI.dialog; closeModal();
+    if (d.kind === 'load') doLoad(d.slot);
+    else if (d.kind === 'reset') doReset(d.slot, d.how);
+    else if (d.kind === 'restore') doRestore(d.backup, d.to);
+    else if (d.kind === 'delete') { const b = backup(d.backup); S.backups = S.backups.filter(x => x !== b); toast(`Deleted ${bShort(b)}`); }
+    else if (d.kind === 'allowOff') { S.allow.on = false; toast('Allowlist off — anyone on your network can join'); }
+    else if (d.kind === 'stop') { S.server = 'stopping'; S.online = []; later(1600, () => { S.server = 'stopped'; toast('Server stopped — world saved'); }); }
+  },
+
+  /* backups */
+  backupNow(id) { openSheet('backupNow', {slot:+id, form:{label:''}}); },
+  takeBackup() {
+    const id = UI.sheet.slot, label = (UI.form.label || '').trim(); closeModal();
+    S.pendingBackup = {slot:id, label};
+    later(1500, () => { S.pendingBackup = null; const dropped = addBackup(id, label, null);
+      toast(`Backed up ${slot(id).name}${label ? ` — “${label}”` : ''}${dropped ? ` · removed ${bShort(dropped)} (over 20)` : ''}`); });
+  },
+  pin(bid) { const b = backup(bid); b.pinned = !b.pinned; if (!b.pinned) { const d = retain(b.slot); if (d) toast(`Unpinned — over 20, so ${bShort(d)} was removed`); else toast('Unpinned — it counts toward the 20 again'); }
+    else toast('Pinned — kept for good, outside the 20'); if (UI.sheet) UI.rev++; },
+  del(bid) { openDialog('delete', {backup:bid}); },
+  download(bid) { const b = backup(bid), s = slot(b.slot); S.downloads[b.slot] = {at:`today, ${nowClock()}`, id:bid};
+    toast(`Downloading ${slotName(s)} — ${b.label || b.at}.mcworld (${mb(b.mb)})`); if (UI.sheet) UI.rev++; },
+  restore(bid) { const b = backup(bid); openSheet('restore', {backup:bid, form:{to:String(b.slot)}}); },
+  restoreNext() { openDialog('restore', {backup:UI.sheet.backup, to:+UI.form.to}); },
+  backupSheet(bid) { openSheet('backup', {backup:bid}); },
+
+  /* server-wide settings + allowlist */
+  srvStep(arg) { const [k, d] = arg.split('|'); S.srvDraft = S.srvDraft || {...S.srv};
+    const lim = {maxPlayers:[1, 30], view:[5, 64], tick:[4, 12], slotCount:[usedHigh(), 12]}[k];
+    S.srvDraft[k] = Math.max(lim[0], Math.min(lim[1], S.srvDraft[k] + +d)); },
+  srvSave() { const d = S.srvDraft; if (!d) return; const grew = d.slotCount - S.srv.slotCount;
+    S.srv = {...d}; S.srvDraft = null; syncSlotCount();
+    toast(grew ? `Saved — ${plural(Math.abs(grew), 'slot')} ${grew > 0 ? 'added' : 'removed'}; the rest applies at the next restart` : `Saved — applies at the next restart`); },
+  srvCancel() { S.srvDraft = null; },
+  allowToggle() { if (S.allow.on) return openDialog('allowOff'); S.allow.on = true; toast(`Allowlist on — only the ${plural(S.allow.tags.length, 'listed gamertag')} can join`); },
+  addTag() { const t = (UI.form.tag || '').trim(); if (!t) return; if (S.allow.tags.some(x => x.toLowerCase() === t.toLowerCase())) { toast(`${t} is already on the list`); return; }
+    S.allow.tags.push(t); UI.form.tag = ''; toast(running() ? `${t} can join now — no restart needed` : `${t} added — applied when the server starts`); },
+  removeTag(t) { S.allow.tags = S.allow.tags.filter(x => x !== t);
+    toast(S.online.some(o => o.tag === t) ? `${t} removed — they stay on until they leave` : `${t} removed`); },
+  copyAddr() { toast('Copied 192.168.1.40:19132'); },
+};
+const usedHigh = () => Math.max(...S.slots.filter(s => !isEmpty(s)).map(s => s.id), 1);
+function syncSlotCount() {
+  while (S.slots.length < S.srv.slotCount) S.slots.push({id:S.slots.length + 1, name:null, origin:'empty'});
+  while (S.slots.length > S.srv.slotCount && isEmpty(S.slots[S.slots.length - 1])) S.slots.pop();
+}
+
+/* ---- scenarios: the mock-controls strip ---- */
+const SCEN = [
+  ['default', 'Running · 2 on'],
+  ['stopped', 'Server stopped'],
+  ['fresh', 'Fresh box · empty slots'],
+  ['importing', 'Importing'],
+  ['import_bad', 'Import · not Bedrock'],
+  ['import_big', 'Import · too big'],
+  ['loading', 'Loading a world'],
+  ['resetting', 'Reset in progress'],
+  ['restoring', 'Restore in progress'],
+  ['updating', 'Update running'],
+  ['refused', 'Refused · update started'],
+  ['limit', 'At 20 backups'],
+];
+function scenario(id) {
+  clearTimers();
+  Object.assign(S, {scenario:id, server:'running', uptimeMin:192, online:ONLINE_FIXTURE.map(p => ({...p})), upd:'idle',
+    slots:clone(SLOTS0), active:ACTIVE0, backups:clone(BACKUPS0), downloads:clone(DOWNLOADS0),
+    srv:{name:'JBrain', maxPlayers:10, view:32, tick:4, slotCount:5}, srvDraft:null,
+    allow:{on:true, tags:['BlockyFox', 'Mira_P', 'Steve42', 'Pebble_J']}, job:null, pendingBackup:null, err:null});
+  UI.sheet = null; UI.dialog = null; UI.form = {}; UI.rev++; UI.top = true;
+  if (id === 'stopped') { S.server = 'stopped'; S.online = []; }
+  if (id === 'fresh') {
+    /* The day M2 lands: only the first-boot world, nothing backed up, nothing downloaded. */
+    S.slots = [{...SLOTS0[0], played:'today, 2:33 pm'}, ...[2,3,4,5].map(n => ({id:n, name:null, origin:'empty'}))];
+    S.active = 1; S.backups = []; S.downloads = {}; S.online = [{tag:'BlockyFox', min:12}];
+  }
+  if (id === 'importing') { S.fileKind = 'good'; doImport(3, FILES.good); }
+  if (id === 'import_bad') { S.fileKind = 'bad'; doImport(5, FILES.bad); S.job.sent = FILES.bad.mb; S.job.i = 1; S.job.at[1] = nowClock(); S.job.steps[1].enter(); clearTimers(); }
+  if (id === 'import_big') { S.fileKind = 'big'; }
+  if (id === 'loading') doLoad(3);
+  if (id === 'resetting') doReset(3, 'new');
+  if (id === 'restoring') doRestore('b5', 2);
+  if (id === 'updating') S.upd = 'running';
+  if (id === 'refused') { S.upd = 'running'; S.err = `Couldn’t load Creative test — Minecraft started updating (auto-update, 2:41 pm) before the switch went through. Nothing changed; Castle Hill is still loaded. Try again when the update is done.`; }
+  if (id === 'limit') {
+    const extra = [];
+    for (let i = 0; i < 17; i++) extra.push({id:'L' + i, slot:2, label:i % 4 === 0 ? `checkpoint ${17 - i}` : null, auto:i % 4 === 0 ? null : i % 2 ? 'before loading Creative test' : 'before loading world', at:`Sep ${28 - i}, 6:${String(10 + i).padStart(2,'0')} pm`, mb:6.1, pinned:false});
+    S.backups = [...clone(BACKUPS0), ...extra];
+  }
+  if (typeof onScenario === 'function') onScenario(id);
+  if (id === 'import_big') ACT.importTo(null), UI.form.file = 'big';
+  render();
+}
+function renderSim() {
+  const b = (on, act, label) => `<button aria-pressed="${on}" data-sim="${act}">${label}</button>`;
+  document.getElementById('sim').innerHTML = `
+    <div class="stitle"><span>Mock controls — not part of the design</span><span>${VARIANT}</span></div>
+    <div class="srow"><span class="sl">State</span>${SCEN.map(([id, l]) => b(S.scenario === id, 'scen:' + id, l)).join('')}</div>
+    <div class="srow"><span class="sl">File</span>${b(S.fileKind === 'good', 'file:good', '.mcworld · 9.4 MB')}${b(S.fileKind === 'bad', 'file:bad', 'Not Bedrock (.zip)')}${b(S.fileKind === 'big', 'file:big', 'Too big · 812 MB')}</div>
+    ${typeof extraSim === 'function' ? extraSim(b) : ''}
+    <div class="srow"><span class="sl">Theme</span>${b(S.theme === 'dark', 'theme:dark', 'Dark')}${b(S.theme === 'light', 'theme:light', 'Light')}</div>`;
+}
+
+let toastT;
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3200); }
+
+/* ===================== shared fragments every variant composes ===================== */
+const spinner = label => `<span class="spin" style="display:flex">${IC.refresh}</span>${label}`;
+const why = text => text ? `<p class="note why">${text}</p>` : '';
+const badgeActive = () => `<span class="badge ok">loaded</span>`;
+
+function topBar(title, backAct) {
+  const h = [6,9,7,12,15,11,8,6,10,14,9,7,5,8,11,13,9,6];
+  return `<div class="bar"><button class="back" aria-label="Back" ${backAct ? `data-act="${backAct}"` : ''}>${IC.back}</button><span class="ttl">${esc(title)}</span>
+    <div class="vitals" aria-label="GPU 14%, synced"><div class="cols">${h.map(x => `<i style="height:${x}px"></i>`).join('')}</div><b class="num">14%</b></div></div>`;
+}
+
+/* The built screen's status block, now naming the loaded world. */
+function hero(extra = '') {
+  const si = stateInfo(), n = S.online.length, a = activeSlot();
+  const facts = `<div class="b-facts"><div class="b-fact"><div class="v">${running() ? n : '—'}</div><div class="k">online now</div></div>
+    <div class="b-fact"><div class="v" title="${esc(a.name)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.name)}</div><div class="k">world loaded</div></div>
+    <div class="b-fact"><div class="v">${RUNNING}</div><div class="k">version</div></div></div>`;
+  const jobBusy = !!(S.job && S.job.hero && !S.job.err);
+  const dis = (S.upd === 'running' || jobBusy || !['running','stopped'].includes(S.server)) ? 'disabled' : '';
+  const btns = S.server === 'stopped' || S.server === 'starting'
+    ? `<button class="btn go grow" data-act="start" ${S.server === 'starting' || dis ? 'disabled' : ''}>${S.server === 'starting' ? spinner('Starting…') : IC.play + 'Start server'}</button>`
+    : `<button class="btn grow" data-act="restart" ${dis}>${IC.restart}Restart</button><button class="btn grow" data-act="stop" ${dis}>${S.server === 'stopping' ? spinner('Stopping…') : IC.stop + 'Stop'}</button>`;
+  return `<div class="b-hero"><div class="b-state"><span class="ops-sdot" style="background:var(--${dotVar(si.level)})"></span><span class="w">${si.word}</span><span class="sub">${esc(si.sub)}</span></div>
+    ${facts}<div class="btnrow">${btns}</div>${S.upd === 'running' ? why('Busy updating — Start, Stop and Restart come back when it’s done.') : jobBusy ? why(`Busy with the ${S.job.noun} — the server is handled for you.`) : ''}${extra}</div>`;
+}
+function banner() {
+  if (S.upd === 'running') return `<div class="b-banner warn">${IC.refresh}<span><b style="font-weight:500">Updating Minecraft to ${LATEST}.</b> World actions wait until it’s done.</span></div>`;
+  return '';
+}
+/* Built screen sections, drawn compactly so the new ones are judged in place. */
+function updateSection(id = 'b-upd') {
+  let inner;
+  if (S.upd === 'running') inner = `<div class="b-ver"><span class="big">${RUNNING}</span><span class="arrow">→</span><span class="nw">${LATEST}</span></div>
+      <div class="note">Players stay on while it backs up and downloads — they’re disconnected at the restart, for about a minute.</div>
+      <ol class="steps"><li class="done"><span class="sd">${IC.check}</span>Backing up — pre-update-${RUNNING}<span class="at">2:41 pm</span></li><li class="now"><span class="sd"></span>Downloading ${LATEST}<span class="at">2:41 pm</span></li><li><span class="sd"></span>Restarting — players disconnected<span class="at"></span></li><li><span class="sd"></span>Done<span class="at"></span></li></ol>`;
+  else inner = `<div class="b-ver"><span class="big">${RUNNING}</span><span class="badge ok">up to date</span></div>`;
+  return `<h3 class="b-sect sect" id="${id}">Update<span class="r">running ${RUNNING}</span></h3>
+    <div class="b-card"><div class="b-pad">${inner}</div><div class="b-foot">last checked 12 min ago<button class="link" data-act="restart">${IC.refresh}Check for updates</button></div></div>`;
+}
+function onlineSection() {
+  let rows;
+  if (!running()) rows = `<div class="b-empty">${S.server === 'stopped' ? 'The server is stopped.' : 'Not running right now.'}</div>`;
+  else if (!S.online.length) rows = `<div class="b-empty">Nobody on right now.</div>`;
+  else rows = S.online.map(o => `<div class="b-row"><span class="pav on">${initial(o.tag)}</span><span class="b-rn"><span class="nm">${esc(o.tag)}</span><span class="sm">this session · ${esc(activeSlot().name)}</span></span><span class="rt">${fmtDur(o.min)}</span></div>`).join('');
+  return `<h3 class="b-sect sect">Online now<span class="r">${running() && S.online.length ? `${S.online.length} on now` : ''}</span></h3><div class="b-card">${rows}</div>`;
+}
+function playersSection() {
+  const rows = PLAYERS.map(p => { const on = S.online.some(o => o.tag === p.tag);
+    return `<div class="b-row"><span class="pav ${on ? 'on' : ''}">${initial(p.tag)}</span><span class="b-rn"><span class="nm">${esc(p.tag)}</span><span class="sm">since ${p.first}</span></span>
+      <span class="rt">${fmtDur(p.totalMin)}<span class="sm">${on ? '<span class="b-on">on now</span>' : p.last}</span></span></div>`; }).join('');
+  return `<h3 class="b-sect sect">Players<span class="r">time on this server</span></h3><div class="b-card">${rows}</div>
+    <h3 class="b-sect sect">Lifetime stats<span class="r">not available yet</span></h3><div class="b-card"><div class="b-pad"><div class="note">Arrives with the companion add-on — nothing is counted yet.</div></div></div>`;
+}
+function joinCard() {
+  return `<div class="b-pad"><div class="b-label">How to join</div><div class="note">On your LAN: <b>Friends → LAN Games → ${esc(S.srv.name)}</b><br>Or add a server: <b class="mono">192.168.1.40</b> · port <b class="mono">19132</b></div>
+    <button class="link" data-act="copyAddr">Copy address</button></div>`;
+}
+
+/* ---- one world: facts, per-slot settings, actions ---- */
+function slotFacts(s) {
+  if (isEmpty(s)) return '';
+  const seedRow = s.seed ? `<span class="mono">${esc(s.seed)}</span> <button class="link" data-act="copySeed:${s.id}" aria-label="Copy seed of ${esc(s.name)}">Copy</button>`
+    : `unknown <span class="faint">— ${s.origin === 'imported' ? 'imported worlds don’t carry it here' : 'not recorded'}</span>`;
+  return `<dl class="w-facts"><dt>Origin</dt><dd>${originText(s)}</dd><dt>Seed</dt><dd>${seedRow}</dd><dt>Size</dt><dd class="num">${s.gen ? mb(s.mb) : '— (not generated)'}</dd>
+    <dt>Played</dt><dd>${playedText(s)}</dd><dt>Backups</dt><dd>${backupsOf(s.id).length ? `${backupsOf(s.id).length} · ${lastBackupText(s.id)}` : 'none yet'}</dd></dl>`;
+}
+function seg(name, opts, cur, actFor, label) {
+  return `<div class="seg" role="radiogroup" aria-label="${label}">${opts.map(o => `<button role="radio" aria-checked="${o === cur}" data-act="${actFor(o)}">${o}</button>`).join('')}</div>`;
+}
+function slotSettings(s) {
+  if (isEmpty(s)) return '';
+  const when = s.id !== S.active ? `Not loaded — a change is saved and applied when ${esc(s.name)} next loads.` : 'Loaded — game mode and difficulty change live, at once; cheats at the next restart.';
+  const pend = k => s.p && s.p[k] ? '<span class="pend">pending</span>' : '';
+  return `<p class="hint ${s.id === S.active ? 'live' : ''}">${when}</p>
+    <div class="set"><div class="set-l"><span>Game mode ${pend('mode')}</span></div>${seg('mode', ['Survival','Creative','Adventure'], s.mode, o => `set:${s.id}|mode|${o}`, 'Game mode')}</div>
+    <div class="set"><div class="set-l"><span>Difficulty ${pend('diff')}</span></div>${seg('diff', ['Peaceful','Easy','Normal','Hard'], s.diff, o => `set:${s.id}|diff|${o}`, 'Difficulty')}</div>
+    <div class="sw-row"><span class="sw-l"><b>Cheats</b> ${pend('cheats')}<br>${s.cheats ? 'on — operators can run commands' : 'off — no commands in game'}</span>
+      <button class="switch ${s.cheats ? 'on' : ''}" role="switch" aria-checked="${s.cheats}" aria-label="Cheats in ${esc(s.name)}" data-act="set:${s.id}|cheats|x"><span class="knob"></span></button></div>`;
+}
+/* Load / Rename / Import over / Reset, with the reason when they can't run. */
+function slotActions(s, {withLoad = true} = {}) {
+  const block = worldBlocked(), dis = block ? 'disabled' : '';
+  if (isEmpty(s)) {
+    const kept = backupsOf(s.id).length;
+    return `<div class="w-actions"><button class="btn primary" data-act="newWorld:${s.id}" ${dis}>${IC.plus}New world</button><button class="btn" data-act="importTo:${s.id}" ${dis}>${IC.upload}Import</button></div>
+      ${kept ? `<p class="hint">${plural(kept, 'backup')} from this slot’s last world ${kept === 1 ? 'is' : 'are'} kept — restore one here to bring it back.</p>` : ''}${why(block)}`;
+  }
+  const isActive = s.id === S.active;
+  const load = !withLoad ? '' : isActive
+    ? `<button class="btn full" disabled>${IC.check}Loaded${running() ? ' and running' : ''}</button>`
+    : `<button class="btn primary full" data-act="load:${s.id}" ${dis}>${IC.play}Load ${esc(s.name)}</button>`;
+  return `<div class="w-actions">${load}<button class="btn" data-act="rename:${s.id}">${IC.pencil}Rename</button>
+      <button class="btn" data-act="importTo:${s.id}" ${dis}>${IC.upload}Import over</button>
+      <button class="btn danger full" data-act="reset:${s.id}" ${dis}>${IC.undo}Reset…</button></div>${why(block)}`;
+}
+
+/* ---- backups for one world ---- */
+function offboxLine(id) {
+  const d = S.downloads[id];
+  if (d) { const b = backup(d.id); return `<div class="offbox ok">${IC.download}<span><b>Last copy off the box: ${d.at}</b>${b ? ` — ${esc(bShort(b))}` : ''}. Minecraft backups aren’t in the box backup, so a download is the only copy kept elsewhere.</span></div>`; }
+  return `<div class="offbox warn">${IC.alert}<span><b>No copy has left the box yet.</b> Minecraft backups aren’t in the box backup — download one to keep a copy somewhere else.</span></div>`;
+}
+function retainLine(id) {
+  const n = unpinned(id).length, pins = backupsOf(id).length - n, nxt = nextToGo(id);
+  return `<div class="retain"><b class="num">${n} of ${KEEP}</b> kept${pins ? ` · ${pins} pinned` : ''}<div class="meter" aria-hidden="true"><i style="width:${Math.min(100, n / KEEP * 100)}%"></i></div>
+    Each world keeps its newest ${KEEP}. Automatic ones go first; pinned ones are kept for good, outside the ${KEEP}.${nxt ? ` <b>The next backup removes ${esc(bShort(nxt))}.</b>` : ''}</div>`;
+}
+function backupRowInner(b) {
+  return `<span class="k-ico ${b.label ? 'mine' : ''}" aria-hidden="true">${b.label ? IC.user : IC.auto}</span>
+    <span class="k-tx"><span class="k-l ${b.label ? '' : 'auto'}">${esc(b.label ? b.label : b.auto[0].toUpperCase() + b.auto.slice(1))}</span><span class="k-s">${b.at} · ${mb(b.mb)} · ${b.label ? 'yours' : 'automatic'}</span></span>
+    <span class="k-rt">${b.pinned ? `<span class="k-pin">${IC.pin}pinned</span>` : ''}</span>`;
+}
+function pendingRow(id) {
+  if (!S.pendingBackup || S.pendingBackup.slot !== +id) return '';
+  return `<div class="k-row pending k-first"><span class="k-ico"><span class="spin" style="display:flex">${IC.refresh}</span></span><span class="k-tx"><span class="k-l">${S.pendingBackup.label ? esc(S.pendingBackup.label) : 'Backing up…'}</span><span class="k-s">${running() ? 'copying live — players stay on' : 'copying the stopped world'}</span></span></div>`;
+}
+/* mode 'expand' = inline row expansion (A); 'sheet' = a row opens a Sheet (B, C). */
+function backupList(id, mode, limit) {
+  const list = backupsOf(id), shown = limit ? list.slice(0, limit) : list;
+  if (!list.length && !S.pendingBackup) return `<div class="b-empty">${slot(id).gen === false ? 'Not generated yet — nothing to back up.' : 'No backups yet. Back up now before anything risky.'}</div>`;
+  const block = worldBlocked();
+  const rows = shown.map((b, i) => {
+    const first = i === 0 && !(S.pendingBackup && S.pendingBackup.slot === +id) ? 'k-first' : '';
+    if (mode === 'sheet') return `<button class="k-row ${first}" data-act="backupSheet:${b.id}" aria-label="${esc(bLabel(b))}, ${b.at}">${backupRowInner(b)}${IC.chev}</button>`;
+    const open = UI.open['k' + b.id];
+    return `<button class="k-row ${first}" data-act="toggle:k${b.id}" aria-expanded="${!!open}">${backupRowInner(b)}${IC.chev}</button>
+      ${open ? `<div class="k-body"><button class="btn primary" data-act="restore:${b.id}" ${block ? 'disabled' : ''}>${IC.undo}Restore…</button><button class="btn" data-act="download:${b.id}">${IC.download}Download</button>
+        <button class="btn" data-act="pin:${b.id}" aria-pressed="${b.pinned}">${IC.pin}${b.pinned ? 'Unpin' : 'Pin'}</button><button class="btn danger" data-act="del:${b.id}">${IC.trash}Delete</button>
+        ${block ? `<p class="note why" style="grid-column:1/-1">${block}</p>` : ''}</div>` : ''}`;
+  }).join('');
+  const more = limit && list.length > limit ? `<button class="b-row" data-act="more:${id}" style="min-height:48px"><span class="b-rn"><span class="nm" style="font-size:var(--fs-secondary)">Show all ${list.length}</span></span>${IC.chev}</button>` : '';
+  return pendingRow(id) + rows + more;
+}
+function backupHead(id) {
+  const s = slot(id), block = worldBlocked(), can = !isEmpty(s) && s.gen;
+  return `<div class="b-pad"><button class="btn primary" data-act="backupNow:${id}" ${block || !can || S.pendingBackup ? 'disabled' : ''}>${IC.archive}Back up ${esc(slotName(s))} now</button>
+    ${why(block)}${can || backupsOf(id).length ? offboxLine(id) + retainLine(id) : '<p class="hint">Not generated yet — there’s nothing to back up until it first loads.</p>'}</div>`;
+}
+
+/* ---- a job in flight (or its failure) ---- */
+function jobCard(cls = '') {
+  const j = S.job; if (!j) return '';
+  const steps = `<ol class="steps">${j.steps.map((st, i) => {
+    let c = '', mark = '';
+    if (j.err && i === j.i) { c = 'fail'; mark = IC.x; } else if (i < j.i) { c = 'done'; mark = IC.check; } else if (i === j.i) c = 'now';
+    const lbl = st.upload && i === j.i && !j.err ? `${esc(st.label)} — <span class="num">${j.sent.toFixed(1)} of ${j.file.mb} MB</span>` : esc(st.label);
+    return `<li class="${c}"><span class="sd">${mark}</span><span style="min-width:0">${lbl}</span><span class="at">${j.at[i] || ''}</span></li>`; }).join('')}</ol>`;
+  const meter = j.kind === 'import' && j.i === 0 && !j.err ? `<div class="meter" role="progressbar" aria-label="Upload" aria-valuenow="${Math.round(j.sent / j.file.mb * 100)}"><i style="width:${j.sent / j.file.mb * 100}%"></i></div>` : '';
+  if (j.err) return `<div class="job ${cls}" role="alert"><div class="notice bad">${IC.alert}<div><b>Not a Bedrock world — nothing was imported.</b><div class="errtext">${esc(j.err)}</div></div></div>${steps}
+    <div class="btnrow"><button class="btn" data-act="dismissJob">Dismiss</button><button class="btn primary grow" data-act="retryImport:${j.slot}">${IC.upload}Choose another file</button></div></div>`;
+  const note = j.kind === 'load' && j.i === 0 && S.online.length ? `<div class="note">Players see “switching worlds in 30 s” in chat; the server then stops, saves and backs up before switching.</div>`
+    : j.kind === 'import' && j.i === 0 ? `<div class="note">Keep this screen open until the upload finishes — it isn’t resumable. Small worlds take seconds.</div>` : '';
+  return `<div class="job ${cls}" role="status"><div class="job-h"><span class="spin">${IC.refresh}</span>${esc(j.title)}</div>${meter}${note}${steps}</div>`;
+}
+ACT.retryImport = id => { S.job = null; ACT.importTo(id); };
+
+/* ---- server-wide settings + allowlist ---- */
+function serverSettingsBody() {
+  const d = S.srvDraft || S.srv, dirty = !!S.srvDraft && JSON.stringify(S.srvDraft) !== JSON.stringify(S.srv);
+  const stepper = (k, label, sub, unit = '') => `<div class="set"><div class="set-l"><span>${label}</span><span>${sub}</span></div><div class="stepper">
+    <button class="btn" data-act="srvStep:${k}|-1" aria-label="Fewer — ${label}">${IC.minus}</button><span class="sv" aria-live="polite">${d[k]}${unit}</span><button class="btn" data-act="srvStep:${k}|1" aria-label="More — ${label}">${IC.plus}</button></div></div>`;
+  return `<div class="b-pad" style="gap:14px">
+    <div class="fld"><label for="srv-name">Server name</label><input class="inp" id="srv-name" data-field="srvname" value="${esc(d.name)}" autocomplete="off" /><span class="hint">Shown in Friends → LAN Games.</span></div>
+    ${stepper('maxPlayers', 'Max players', 'at once')}
+    ${stepper('view', 'View distance', 'chunks')}
+    ${stepper('tick', 'Tick distance', 'chunks kept active')}
+    ${stepper('slotCount', 'World slots', `${S.slots.filter(s => !isEmpty(s)).length} in use`)}
+    <div class="sw-row"><span class="sw-l"><b>Xbox sign-in required</b><br>always on — every player is a signed-in Xbox account</span><span class="badge off">on</span></div>
+    <p class="hint">Slots apply at once; the rest at the next restart${running() && S.online.length ? ' — nobody is disconnected by saving' : ''}.</p>
+    <div class="btnrow"><button class="btn" data-act="srvCancel" ${dirty ? '' : 'disabled'}>Cancel</button><button class="btn primary grow" data-act="srvSave" ${dirty ? '' : 'disabled'}>Save settings</button></div></div>`;
+}
+function allowlistBody() {
+  const a = S.allow;
+  const rows = a.tags.map(t => `<div class="al-row"><span class="pav ${S.online.some(o => o.tag === t) ? 'on' : ''}">${initial(t)}</span><span class="nm">${esc(t)}<span class="sm">${S.online.some(o => o.tag === t) ? 'on now' : PLAYERS.some(p => p.tag === t) ? 'has played here' : 'hasn’t joined yet'}</span></span>
+    <button class="icon-btn" data-act="removeTag:${esc(t)}" aria-label="Remove ${esc(t)} from the allowlist">${IC.x}</button></div>`).join('');
+  return `<div class="b-pad"><div class="sw-row"><span class="sw-l"><b>Allowlist ${a.on ? 'on' : 'off'}</b><br>${a.on ? 'only these gamertags can join' : 'anyone on your network can join'}</span>
+      <button class="switch ${a.on ? 'on' : ''}" role="switch" aria-checked="${a.on}" aria-label="Allowlist" data-act="allowToggle"><span class="knob"></span></button></div>
+    <div class="offbox ${a.on ? '' : 'warn'}">${IC.shield}<span><b>Required for internet play.</b> ${a.on ? 'Internet play (coming later) only switches on with the list on.' : 'Internet play (coming later) won’t switch on while it’s off.'}</span></div></div>
+    ${rows}
+    <div class="b-pad" style="border-top:1px solid var(--border)"><div class="fld"><label for="al-add">Add a gamertag</label><div class="inp-row"><input class="inp" id="al-add" data-field="tag" placeholder="Gamertag" value="${esc(UI.form.tag || '')}" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <button class="btn primary" data-act="addTag">${IC.plus}Add</button></div><span class="hint">Live at once — no restart.${a.on ? '' : ' Kept for when the list is on.'}</span></div></div>`;
+}
+function errLine() {
+  return S.err ? `<div class="err-line" role="alert">${IC.alert}<span>${esc(S.err)}</span><button class="icon-btn x" data-act="dismissErr" aria-label="Dismiss">${IC.x}</button></div>` : '';
+}
+
+/* ===================== modals: one Sheet, one Dialog (DESIGN "Modal system") ===================== */
+function sheetHead(title, sub) {
+  return `<div class="grip"></div><div class="sh-head"><div class="b-rn"><h3 id="sh-t">${title}</h3>${sub ? `<div class="sh-sub">${sub}</div>` : ''}</div><button class="btn" data-act="close" aria-label="Close">${IC.x}</button></div>`;
+}
+function sheetHtml() {
+  const sh = UI.sheet, f = UI.form;
+  if (sh.kind === 'newWorld') {
+    const t = slot(sh.slot);
+    return `${sheetHead('New world', `Goes into slot ${t.id} · generated the first time it loads`)}<div class="sh-body">
+      <div class="fld"><label for="nw-name">Name</label><input class="inp" id="nw-name" data-field="name" value="${esc(f.name || '')}" placeholder="e.g. Skyblock run" autocomplete="off" /></div>
+      <div class="set"><div class="set-l"><span>Seed</span></div>${seg('', ['Random','Enter a seed'], f.seedMode === 'enter' ? 'Enter a seed' : 'Random', o => `f:seedMode|${o === 'Random' ? 'random' : 'enter'}`, 'Seed')}
+        ${f.seedMode === 'enter'
+          ? `<input class="inp mono" id="nw-seed" aria-label="Seed" data-field="seedText" data-count="64" value="${esc(f.seedText || '')}" placeholder="any text or number" maxlength="64" autocomplete="off" spellcheck="false" /><span class="hint"><span data-counter="seedText" class="num">${(f.seedText || '').length}</span> of 64 — the same as Minecraft’s own seed box. Text is turned into a number the way the game does it.</span>`
+          : `<div class="inp-row"><span class="inp mono seedbox" aria-live="polite">${esc(f.seedRand)}</span><button class="btn" data-act="reroll" aria-label="Roll a new random seed">${IC.refresh}Re-roll</button></div><span class="hint">Recorded with the world, so Reset can rebuild this exact terrain later.</span>`}</div>
+      <div class="set"><div class="set-l"><span>Game mode</span></div>${seg('', ['Survival','Creative','Adventure'], f.mode, o => `f:mode|${o}`, 'Game mode')}</div>
+      <div class="set"><div class="set-l"><span>Difficulty</span></div>${seg('', ['Peaceful','Easy','Normal','Hard'], f.diff, o => `f:diff|${o}`, 'Difficulty')}</div>
+      <details class="rules-new" ${UI.open.newRules ? 'open' : ''} data-open="newRules"><summary><span>World rules</span><span class="hint">${Object.keys(f.rules || {}).length ? plural(Object.keys(f.rules).length, 'rule') + ' changed' : 'defaults'}</span>${IC.chev}</summary>
+        <div class="rules-in">${rulesEditor('new')}</div></details>
+      <div class="sh-foot"><button class="btn primary" data-act="createWorld" data-needs="name" ${(f.name || '').trim() ? '' : 'disabled'}>${IC.plus}Create world</button></div></div>`;
+  }
+  if (sh.kind === 'import') {
+    const file = f.file ? FILES[f.file] : null, t = sh.slot ? slot(sh.slot) : null;
+    const big = file && file.mb > MAX_MB;
+    const targets = sh.fixed ? '' : `<div class="set"><div class="set-l"><span>Into</span></div><div class="opts" role="radiogroup" aria-label="Slot">${S.slots.map(s => {
+      const act = s.id === S.active, sub = isEmpty(s) ? 'empty slot' : `replaces ${esc(s.name)} — ${s.gen ? 'backed up first' : 'not generated, nothing to lose'}${act ? running() ? '; the server restarts around it' : '' : ''}`;
+      return `<button class="opt" role="radio" aria-checked="${sh.slot === s.id}" data-act="pickSlot:${s.id}"><span class="rad"></span><span class="omin"><span class="ot">${isEmpty(s) ? `Slot ${s.id}` : esc(s.name)}${act ? ' · loaded' : ''}</span><span class="os">${sub}</span></span></button>`; }).join('')}</div></div>`;
+    const over = t && !isEmpty(t) && t.gen ? `<div class="notice info">${IC.info}<div><b>Overwriting takes a backup first.</b> ${esc(t.name)} is backed up before the import, so you can bring it back from its backups.${t.id === S.active && running() ? ` It’s loaded, so the server stops and starts again around it${S.online.length ? ` — ${listOf(S.online.map(o => o.tag))} are disconnected for about a minute` : ''}.` : ''}</div></div>` : '';
+    return `${sheetHead('Import a world', sh.fixed && t ? `Into ${isEmpty(t) ? `slot ${t.id} (empty)` : esc(t.name)}` : 'A .mcworld exported from Minecraft')}<div class="sh-body">
+      <details class="help"><summary>How to export from Windows</summary><ol><li>In Minecraft: <b>Play</b>, then the <b>pencil</b> (Edit) next to the world.</li><li>Scroll to the bottom: <b>Export World</b>. It saves a <b>.mcworld</b> file.</li><li>On the same PC, open JBrain and choose that file here.</li></ol></details>
+      ${file ? `<div class="file">${IC.file}<span class="fn" title="${esc(file.name)}">${esc(file.name)}</span><span class="fs num">${mb(file.mb)}</span></div>` : ''}
+      ${big ? `<div class="notice bad">${IC.alert}<div><b>Too big to import.</b> ${esc(file.name)} is ${mb(file.mb)}; the limit is ${MAX_MB} MB. Nothing was uploaded.</div></div>` : ''}
+      <button class="btn" data-act="pickFile">${IC.file}${file ? 'Choose a different file' : 'Choose .mcworld file'}</button>
+      ${targets}${over}
+      <p class="hint">Checked before anything is written: it must hold level.dat, levelname.txt and db/, and be under ${MAX_MB} MB. A bad file never touches a slot.</p>
+      <div class="sh-foot"><button class="btn primary" data-act="startImport" ${file && !big && t ? '' : 'disabled'}>${IC.upload}Import${t ? ` into ${isEmpty(t) ? `slot ${t.id}` : esc(t.name)}` : ''}</button></div></div>`;
+  }
+  if (sh.kind === 'rename') {
+    const t = slot(sh.slot);
+    return `${sheetHead('Rename world', `Slot ${t.id} · only the name changes`)}<div class="sh-body">
+      <div class="fld"><label for="rn-name">Name</label><input class="inp" id="rn-name" data-field="name" value="${esc(f.name || '')}" autocomplete="off" /></div>
+      <div class="sh-foot"><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="saveName" data-needs="name">Save name</button></div></div>`;
+  }
+  if (sh.kind === 'reset') {
+    const t = slot(sh.slot), act = t.id === S.active;
+    const o = (k, title, sub, dis) => `<button class="opt ${k === 'empty' ? 'danger' : ''}" role="radio" aria-checked="${f.how === k}" data-act="f:how|${k}" ${dis ? 'disabled' : ''}><span class="rad"></span><span class="omin"><span class="ot">${title}</span><span class="os">${sub}</span></span></button>`;
+    return `${sheetHead(`Reset ${esc(t.name)}`, `${t.gen ? 'Backed up first — undo it from the backups' : 'Not generated yet — nothing to back up'}`)}<div class="sh-body">
+      <div class="opts" role="radiogroup" aria-label="Reset to">
+        ${o('same', 'Same seed', t.seed ? `The original terrain, fresh — everything built is gone. Seed <span class="mono">${esc(t.seed)}</span>.` : `Not offered — ${t.origin === 'imported' ? 'an imported world’s seed is unknown' : 'this world’s seed is unknown'}.`, !t.seed)}
+        ${o('new', 'New seed', 'A brand-new world in this slot, same name and settings.')}
+        ${o('empty', 'Empty', act ? 'Not offered — it’s the loaded world. Load another first.' : 'Frees the slot. Its backups stay.', act)}
+      </div>
+      ${act && running() ? `<div class="note">It’s loaded, so the server stops, resets it and starts again${S.online.length ? ` — ${listOf(S.online.map(o => o.tag))} are disconnected for about a minute` : ''}.</div>` : ''}
+      <div class="sh-foot"><button class="btn" data-act="close">Cancel</button><button class="btn danger" data-act="resetNext" ${f.how ? '' : 'disabled'}>Continue</button></div></div>`;
+  }
+  if (sh.kind === 'backupNow') {
+    const t = slot(sh.slot);
+    return `${sheetHead(`Back up ${esc(t.name)}`, running() && t.id === S.active ? 'Copied live — players stay on' : 'A straight copy — nothing else changes')}<div class="sh-body">
+      <div class="fld"><label for="bk-label">Label <span style="font-weight:400">(optional)</span></label><input class="inp" id="bk-label" data-field="label" value="${esc(f.label || '')}" placeholder="e.g. before the castle" autocomplete="off" maxlength="60" /></div>
+      ${(() => { const n = nextToGo(t.id); return n ? `<div class="notice warn">${IC.alert}<div>${esc(t.name)} already keeps ${KEEP}, so this removes <b>${esc(bShort(n))}</b>. Pin it first to keep it.</div></div>` : ''; })()}
+      <div class="sh-foot"><button class="btn primary" data-act="takeBackup">${IC.archive}Back up now</button></div></div>`;
+  }
+  if (sh.kind === 'backup') {
+    const b = backup(sh.backup); if (!b) return '';
+    const s = slot(b.slot), block = worldBlocked(), d = S.downloads[b.slot];
+    return `${sheetHead(esc(b.label ? b.label : 'Automatic backup'), `${esc(slotName(s))} · ${b.at}`)}<div class="sh-body">
+      <dl class="w-facts"><dt>Kind</dt><dd>${b.label ? 'yours' : `automatic — ${esc(b.auto)}`}</dd><dt>Size</dt><dd class="num">${mb(b.mb)}</dd><dt>Kept</dt><dd>${b.pinned ? 'pinned — kept for good' : `one of the newest ${KEEP}${b.label ? '' : ' (automatic ones go first)'}`}</dd>
+        <dt>Off the box</dt><dd>${d && d.id === b.id ? `downloaded ${d.at}` : 'not downloaded'}</dd></dl>
+      <button class="btn primary" data-act="restore:${b.id}" ${block ? 'disabled' : ''}>${IC.undo}Restore…</button>${why(block)}
+      <div class="w-actions"><button class="btn" data-act="download:${b.id}">${IC.download}Download</button><button class="btn" data-act="pin:${b.id}" aria-pressed="${b.pinned}">${IC.pin}${b.pinned ? 'Unpin' : 'Pin'}</button>
+        <button class="btn danger full" data-act="del:${b.id}">${IC.trash}Delete</button></div>
+      <p class="hint">A download is a .mcworld — double-click it on Windows to open it in Minecraft.</p></div>`;
+  }
+  if (sh.kind === 'restore') {
+    const b = backup(sh.backup), from = slot(b.slot);
+    return `${sheetHead('Restore a backup', `${esc(bLabel(b))} · ${b.at}`)}<div class="sh-body">
+      <div class="set"><div class="set-l"><span>Restore into</span></div><div class="opts" role="radiogroup" aria-label="Restore into">${S.slots.map(s => {
+        const act = s.id === S.active, same = s.id === b.slot;
+        const sub = isEmpty(s) ? `empty — becomes “${esc(from.name)} (${b.at.split(',')[0]})”, nothing else changes`
+          : `${same ? 'its own world — ' : ''}${esc(s.name)} is backed up first${act && running() ? ', and the server restarts around it' : ''}`;
+        return `<button class="opt" role="radio" aria-checked="${f.to === String(s.id)}" data-act="f:to|${s.id}"><span class="rad"></span><span class="omin"><span class="ot">${isEmpty(s) ? `Slot ${s.id}` : esc(s.name)}${same ? ' · same world' : ''}${act ? ' · loaded' : ''}</span><span class="os">${sub}</span></span></button>`; }).join('')}</div></div>
+      <div class="sh-foot"><button class="btn" data-act="close">Cancel</button><button class="btn warn" data-act="restoreNext">Continue</button></div></div>`;
+  }
+  return '';
+}
+ACT.pickSlot = id => { UI.sheet.slot = +id; UI.rev++; };
+
+function dialogHtml() {
+  const d = UI.dialog, n = S.online.length, who = listOf(S.online.map(o => o.tag));
+  let title, body, go, tone = 'danger', extra = '';
+  if (d.kind === 'load') {
+    const t = slot(d.slot), from = activeSlot();
+    title = `Load ${esc(t.name)}?`;
+    body = !running() ? `${esc(from.name)} is backed up, then ${esc(t.name)} becomes the loaded world — the server stays stopped until you start it.`
+      : n ? `${who} get a 30-second warning in chat and are disconnected; ${esc(from.name)} is backed up first, then ${esc(t.name)} starts${t.gen ? '' : ' and is generated'}.`
+      : `The server stops, ${esc(from.name)} is backed up, then ${esc(t.name)} starts${t.gen ? '' : ' and is generated'} — nobody is on.`;
+    go = 'Load'; tone = running() && n ? 'danger' : 'primary';
+  } else if (d.kind === 'reset') {
+    const t = slot(d.slot);
+    const what = d.how === 'empty' ? 'emptied' : d.how === 'same' ? 'rebuilt from the same seed' : 'replaced by a new world';
+    title = `Reset ${esc(t.name)}?`;
+    body = `${t.gen ? `${esc(t.name)} is backed up first, then ${what}` : `${esc(t.name)} is ${what}`} — everything built there leaves the slot${t.id === S.active && running() && n ? `, and ${who} are disconnected` : ''}.`;
+    extra = `<div class="fld"><label for="rs-typed">Type <b>${esc(t.name)}</b> to confirm</label><input class="inp" id="rs-typed" data-field="typed" data-match="${esc(t.name)}" autocomplete="off" autocapitalize="off" spellcheck="false" /></div>`;
+    go = d.how === 'empty' ? 'Empty slot' : 'Reset';
+  } else if (d.kind === 'restore') {
+    const b = backup(d.backup), t = slot(d.to);
+    title = isEmpty(t) ? `Restore into slot ${t.id}?` : `Restore into ${esc(t.name)}?`;
+    body = isEmpty(t) ? `${esc(bShort(b))} becomes a new world in the empty slot ${t.id}; nothing else changes.`
+      : `${esc(t.name)} is backed up first, then replaced with ${esc(bShort(b))} from ${b.at}${t.id === S.active && running() ? ` — the server restarts${n ? ` and ${who} are disconnected for about a minute` : ''}` : ''}.`;
+    go = 'Restore'; tone = t.id === S.active && running() && n ? 'danger' : 'warn';
+  } else if (d.kind === 'delete') {
+    const b = backup(d.backup);
+    title = `Delete ${b.label ? '“' + esc(b.label) + '”' : 'this backup'}?`;
+    body = `It’s removed from the box for good${b.pinned ? ', even though it’s pinned' : ''}${S.downloads[b.slot] && S.downloads[b.slot].id === b.id ? ' — your downloaded copy is unaffected' : ''}.`;
+    go = 'Delete';
+  } else if (d.kind === 'allowOff') {
+    title = 'Turn the allowlist off?'; body = 'Anyone who can reach the server on your network can join, and internet play stays off until it’s back on.'; go = 'Turn off'; tone = 'warn';
+  } else if (d.kind === 'stop') {
+    title = 'Stop the server?'; body = `${plural(n, 'player')} — ${who} — will be disconnected; the world is saved first.`; go = 'Stop';
+  }
+  return `<h3 id="dlg-t">${title}</h3><p>${body}</p>${extra}<div class="btnrow"><button class="btn" data-act="cancelDlg">Cancel</button><button class="btn ${tone}" data-act="confirm" ${d.kind === 'reset' ? 'disabled data-gate="typed"' : ''}>${go}</button></div>`;
+}
+ACT.cancelDlg = () => { closeModal(); };
+
+/* Rebuild a modal only when its content changed (rev), so typing keeps focus. */
+let modalRev = -1, modalWas = null;
+function syncModal() {
+  const dOpen = !!UI.dialog, sOpen = !!UI.sheet && !dOpen;
+  document.getElementById('scrim').classList.toggle('show', dOpen || sOpen);
+  const d = document.getElementById('dialog'), sh = document.getElementById('sheet');
+  const changed = modalRev !== UI.rev; modalRev = UI.rev;
+  d.classList.toggle('show', dOpen); d.inert = !dOpen;
+  if (changed) d.innerHTML = dOpen ? dialogHtml() : '';
+  sh.classList.toggle('show', sOpen); sh.inert = !sOpen;
+  if (changed) { if (sOpen) sh.innerHTML = sheetHtml(); else setTimeout(() => { if (!sh.classList.contains('show')) sh.innerHTML = ''; }, 200); }
+  sh.setAttribute('aria-labelledby', 'sh-t');
+  document.getElementById('app').inert = dOpen || sOpen;
+  const now = dOpen ? 'd' + UI.dialog.kind : sOpen ? 's' + UI.sheet.kind : null;
+  if (now && now !== modalWas) { const host = dOpen ? d : sh; (host.querySelector('input') || host.querySelector('.btn:not([disabled])'))?.focus({preventScroll:true}); }
+  modalWas = now;
+}
+
+/* ---- wiring ---- */
+function refocus(act) {
+  const host = UI.dialog ? '#dialog' : UI.sheet ? '#sheet' : '#app';
+  const el = document.querySelector(`${host} [data-act="${CSS.escape(act)}"]:not([disabled])`);
+  if (el) el.focus({preventScroll:true});
+}
+document.addEventListener('click', e => {
+  const sim = e.target.closest('[data-sim]');
+  if (sim) {
+    const [k, v] = sim.dataset.sim.split(':');
+    if (k === 'scen') return scenario(v);
+    if (k === 'theme') { S.theme = v; document.documentElement.dataset.theme = v; }
+    if (k === 'file') { S.fileKind = v; }
+    if (typeof onSim === 'function') onSim(k, v);
+    return render();
+  }
+  const a = e.target.closest('[data-act]');
+  if (!a || a.disabled) return;
+  const raw = a.dataset.act, i = raw.indexOf(':'), name = i < 0 ? raw : raw.slice(0, i), arg = i < 0 ? undefined : raw.slice(i + 1);
+  if (ACT[name]) { ACT[name](arg, a, e); render(); refocus(raw); }
+});
+/* Typing updates the draft without re-rendering, and gates its button directly. */
+document.addEventListener('input', e => {
+  const el = e.target, k = el.dataset && el.dataset.field; if (!k) return;
+  if (k === 'srvname') { S.srvDraft = S.srvDraft || {...S.srv}; S.srvDraft.name = el.value; const dirty = JSON.stringify(S.srvDraft) !== JSON.stringify(S.srv);
+    document.querySelectorAll('[data-act="srvSave"],[data-act="srvCancel"]').forEach(b => b.disabled = !dirty); return; }
+  UI.form[k] = el.value;
+  const host = el.closest('.sheet,.dialog') || document;
+  host.querySelectorAll(`[data-needs="${k}"]`).forEach(b => b.disabled = !el.value.trim());
+  if (el.dataset.match !== undefined) host.querySelectorAll('[data-gate="typed"]').forEach(b => b.disabled = el.value.trim() !== el.dataset.match);
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && (UI.sheet || UI.dialog)) { closeModal(); render(); }
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.field === 'tag') { ACT.addTag(); render(); document.getElementById('al-add')?.focus(); }
+});
+setInterval(() => { if (S.server === 'running') { S.uptimeMin++; S.online.forEach(o => o.min++); render(); } }, 60000);
+if (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) { S.theme = 'light'; document.documentElement.dataset.theme = 'light'; }
+
+/* ===================== game rules (owner addition, 2026-10-10) =====================
+   Every rule the owner's live server reports (Bedrock 1.26.52.3), at its default. On the loaded
+   world a change goes out live (/gamerule on the console); on any other world it is saved and
+   applied when that world next loads, and is marked pending until then. */
+const RULE_GROUPS = [
+  ['world', 'World', [
+    ['doFireTick', 'Fire spreads', true],
+    ['tntExplodes', 'TNT explodes', true],
+    ['mobGriefing', 'Mobs can change blocks', true, 'creepers blow holes, endermen move blocks'],
+    ['projectilesCanBreakBlocks', 'Arrows and tridents can break blocks', true],
+    ['respawnBlocksExplode', 'Beds and respawn anchors can explode', true, 'used in the wrong dimension'],
+    ['tntExplosionDropDecay', 'Some blocks blown up by TNT don’t drop', false],
+    ['randomTickSpeed', 'Random tick speed', 1, 'how fast crops grow and leaves decay', {min:0, max:4096, step:1}],
+  ]],
+  ['time', 'Time & weather', [
+    ['doDayLightCycle', 'Day and night cycle', true],
+    ['doWeatherCycle', 'Weather changes', true],
+    ['doInsomnia', 'Phantoms come when nobody sleeps', true],
+    ['playersSleepingPercentage', 'Sleepers needed to skip the night', 100, 'percent of players', {min:0, max:100, step:5, unit:'%'}],
+  ]],
+  ['players', 'Players', [
+    ['keepInventory', 'Keep inventory on death', false],
+    ['naturalRegeneration', 'Health comes back on its own', true],
+    ['pvp', 'Players can hurt each other', true],
+    ['fallDamage', 'Fall damage', true],
+    ['fireDamage', 'Fire damage', true],
+    ['drowningDamage', 'Drowning damage', true],
+    ['freezeDamage', 'Freezing damage', true, 'powder snow'],
+    ['doImmediateRespawn', 'Respawn without the death screen', false],
+    ['spawnRadius', 'Spawn radius', 10, 'blocks around world spawn', {min:0, max:128, step:1}],
+    ['showCoordinates', 'Show coordinates', false],
+    ['showDaysPlayed', 'Show days played', false],
+    ['showDeathMessages', 'Death messages in chat', true],
+    ['showTags', 'Show item tags', true, '“can place on” and “can destroy” lines'],
+    ['locatorbar', 'Locator bar', true],
+    ['playerWaypoints', 'Players shown on the locator bar', 'everyone', null, {choices:['everyone', 'off']}],
+  ]],
+  ['mobs', 'Mobs & drops', [
+    ['doMobSpawning', 'Mobs spawn naturally', true],
+    ['doMobLoot', 'Mobs drop loot', true],
+    ['doEntityDrops', 'Boats, minecarts and frames drop as items', true],
+    ['doTileDrops', 'Broken blocks drop items', true],
+  ]],
+  ['crafting', 'Crafting', [
+    ['recipesUnlock', 'Recipes unlock as you play', true],
+    ['doLimitedCrafting', 'Only unlocked recipes can be crafted', false],
+    ['showRecipeMessages', '“Recipe unlocked” messages', true],
+  ]],
+  ['commands', 'Commands', [
+    ['commandBlocksEnabled', 'Command blocks work', true],
+    ['commandBlockOutput', 'Command blocks report in chat', true],
+    ['sendCommandFeedback', 'Commands reply in chat', true],
+    ['maxCommandChainLength', 'Longest command chain', 65535, null, {min:0, max:2147483647, step:1000}],
+    ['functionCommandLimit', 'Most commands per function', 10000, null, {min:0, max:2147483647, step:1000}],
+  ]],
+  ['display', 'Display', [
+    ['showBorderEffect', 'World border effect', true],
+  ]],
+];
+const RULES = {};
+RULE_GROUPS.forEach(([g, , rows]) => rows.forEach(([id, label, def, sub, o]) => { RULES[id] = {id, label, def, sub, g, ...(o || {})}; }));
+const fmtNum = v => typeof v === 'number' ? v.toLocaleString('en-US') : v;
+const ruleWord = (r, v) => typeof v === 'boolean' ? (v ? 'on' : 'off') : `${fmtNum(v)}${r.unit || ''}`;
+
+/* scope: a slot id, or 'new' for the New-world sheet's draft */
+function ruleStore(scope) {
+  if (scope === 'new') return {ov:(UI.form.rules = UI.form.rules || {}), p:null, live:false, s:null};
+  const s = slot(scope); s.r = s.r || {}; s.p = s.p || {};
+  return {ov:s.r, p:s.id === S.active ? null : s.p, live:s.id === S.active, s};
+}
+const ruleVal = (scope, id) => { const o = ruleStore(scope).ov; return id in o ? o[id] : RULES[id].def; };
+function setRule(scope, id, v) {
+  const st = ruleStore(scope), r = RULES[id];
+  if (v === r.def) delete st.ov[id]; else st.ov[id] = v;
+  if (st.p) st.p[id] = 1;
+  if (UI.sheet) UI.rev++;
+  if (scope === 'new') return;
+  toast(st.live ? `Applied live — ${r.label.toLowerCase()}: ${ruleWord(r, v)}` : `Saved — ${r.label.toLowerCase()} changes when ${st.s.name} next loads`);
+}
+ACT.rule = arg => {
+  const [scope, id, op] = arg.split('|'), r = RULES[id], v = ruleVal(scope, id);
+  if (op === 't') return setRule(scope, id, !v);
+  const n = Math.max(r.min, Math.min(r.max, v + (op === '+' ? r.step : -r.step)));
+  setRule(scope, id, n);
+};
+function resetRules(scope, group) {
+  const st = ruleStore(scope);
+  const ids = Object.keys(st.ov).filter(id => !group || RULES[id].g === group);
+  ids.forEach(id => { delete st.ov[id]; if (st.p) st.p[id] = 1; });
+  if (UI.sheet) UI.rev++;
+  if (scope !== 'new') toast(`${plural(ids.length, 'rule')} back to default${st.live ? ' — applied live' : ` — applied when ${st.s.name} next loads`}`);
+}
+ACT.ruleGroupReset = arg => { const [scope, g] = arg.split('|'); resetRules(scope, g); };
+ACT.ruleAllReset = scope => resetRules(scope, null);
+const changedCount = scope => Object.keys(ruleStore(scope).ov).length;
+const pendingRules = scope => { const p = ruleStore(scope).p; return p ? Object.keys(p).filter(k => RULES[k]).length : 0; };
+
+function ruleControl(scope, r) {
+  const v = ruleVal(scope, r.id), key = `${scope}|${r.id}`;
+  if (typeof r.def === 'boolean')
+    return `<button class="switch ${v ? 'on' : ''}" role="switch" aria-checked="${v}" aria-label="${esc(r.label)}" data-act="rule:${key}|t"><span class="knob"></span></button>`;
+  if (r.choices)
+    return `<select class="inp sel" data-rsel="${key}" aria-label="${esc(r.label)}">${r.choices.map(c => `<option ${c === v ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
+  return `<div class="stepper"><button class="btn" data-act="rule:${key}|-" aria-label="Lower — ${esc(r.label)}" ${v <= r.min ? 'disabled' : ''}>${IC.minus}</button>
+    <input class="sv inp-num" inputmode="numeric" data-rnum="${key}" value="${v}" aria-label="${esc(r.label)}${r.unit ? ' (' + r.unit + ')' : ''}" /><button class="btn" data-act="rule:${key}|+" aria-label="Raise — ${esc(r.label)}" ${v >= r.max ? 'disabled' : ''}>${IC.plus}</button></div>`;
+}
+function ruleRow(scope, r) {
+  const st = ruleStore(scope), changed = r.id in st.ov, pend = st.p && st.p[r.id];
+  const tags = `${pend ? '<span class="pend">pending</span>' : ''}${changed ? `<span class="chg">changed · default ${ruleWord(r, r.def)}</span>` : ''}`;
+  const kind = typeof r.def === 'boolean' ? 'bool' : r.choices ? 'choice' : 'num';
+  return `<div class="rule ${kind}" data-q="${esc((r.label + ' ' + r.id + ' ' + (r.sub || '')).toLowerCase())}">
+    <span class="rl"><span class="rt">${esc(r.label)}</span>${r.sub ? `<span class="rs">${esc(r.sub)}</span>` : ''}<span class="rid mono">${r.id}</span>${tags ? `<span class="rtags">${tags}</span>` : ''}</span>
+    ${ruleControl(scope, r)}</div>`;
+}
+/* The editor: a scope note, search, then one collapsible group per family of rules. */
+function rulesEditor(scope) {
+  const st = ruleStore(scope), q = (UI.rq && UI.rq[scope]) || '';
+  const note = scope === 'new' ? `<p class="hint">Set before the world is generated. Leave them and it starts with the defaults below.</p>`
+    : st.live ? `<div class="offbox ok">${IC.check}<span><b>Loaded — changes apply live, at once.</b> Players see them straight away; nothing restarts.</span></div>`
+    : `<div class="offbox">${IC.info}<span><b>Not loaded — changes are saved and applied when ${esc(st.s.name)} next loads.</b> Until then they’re marked pending.</span></div>`;
+  const groups = RULE_GROUPS.map(([g, title, rows]) => {
+    const ids = rows.map(r => r[0]), ch = ids.filter(id => id in st.ov).length, pe = st.p ? ids.filter(id => st.p[id]).length : 0;
+    const key = `g:${scope}:${g}`, open = UI.open[key];
+    return `<details class="rgrp" data-open="${key}" data-g="${g}" ${open ? 'open' : ''}><summary><span class="gt">${title}</span>
+        <span class="gm">${plural(rows.length, 'rule')}${ch ? ` · <span class="chg-t">${ch} changed</span>` : ''}${pe ? ` · <span class="pend-t">${pe} pending</span>` : ''}</span>${IC.chev}</summary>
+      <div class="rbody">${rows.map(r => ruleRow(scope, RULES[r[0]])).join('')}
+        ${ch ? `<button class="link rreset" data-act="ruleGroupReset:${scope}|${g}">Reset ${title.toLowerCase()} to defaults</button>` : ''}</div></details>`;
+  }).join('');
+  const total = changedCount(scope);
+  return `<div class="rules" data-scope="${scope}">${note}
+    <div class="rsearch"><input class="inp" type="search" data-rq="${scope}" value="${esc(q)}" placeholder="Find a rule — e.g. phantoms" aria-label="Find a game rule" autocomplete="off" spellcheck="false" /></div>
+    <p class="hint rnone" hidden>No rule matches.</p>
+    <div class="rgroups">${groups}</div>
+    <div class="rfoot"><span class="hint">${total ? `${plural(total, 'rule')} ${total === 1 ? 'differs' : 'differ'} from the defaults` : 'All rules at their defaults'}</span>${total ? `<button class="btn" data-act="ruleAllReset:${scope}">${IC.undo}Reset all</button>` : ''}</div></div>`;
+}
+/* Summary line used by entry rows (“Game rules · 3 changed · 1 pending”). */
+function rulesSummary(id) {
+  const c = changedCount(id), p = pendingRules(id);
+  return `${c ? `${c} changed from default` : 'all at defaults'}${p ? ` · <span class="pend-t">${p} pending</span>` : ''}`;
+}
+
+/* Filter in place while typing — no re-render, so the field keeps focus. */
+function applyRuleFilter() {
+  document.querySelectorAll('.rules').forEach(ed => {
+    const scope = ed.dataset.scope, q = ((UI.rq && UI.rq[scope]) || '').trim().toLowerCase();
+    let any = false;
+    ed.querySelectorAll('.rgrp').forEach(g => {
+      let n = 0;
+      g.querySelectorAll('.rule').forEach(r => { const hit = !q || r.dataset.q.includes(q); r.hidden = !hit; if (hit) n++; });
+      g.hidden = !!q && !n; if (n) any = true;
+      g.open = q ? n > 0 : !!UI.open[g.dataset.open];
+    });
+    const none = ed.querySelector('.rnone'); if (none) none.hidden = any;
+  });
+}
+document.addEventListener('input', e => {
+  const s = e.target.dataset && e.target.dataset.rq; if (s === undefined) return;
+  UI.rq = UI.rq || {}; UI.rq[s] = e.target.value; applyRuleFilter();
+});
+document.addEventListener('change', e => {
+  const d = e.target.dataset || {};
+  if (d.rnum) { const [scope, id] = d.rnum.split('|'), r = RULES[id], n = parseInt(String(e.target.value).replace(/[^\d-]/g, ''), 10);
+    if (Number.isNaN(n)) { e.target.value = ruleVal(scope, id); return; }
+    setRule(scope, id, Math.max(r.min, Math.min(r.max, n))); render(); }
+  if (d.rsel) { const [scope, id] = d.rsel.split('|'); setRule(scope, id, e.target.value); render(); }
+});
+/* <details> remembers its own state across re-renders. */
+document.addEventListener('toggle', e => {
+  const k = e.target.dataset && e.target.dataset.open; if (!k) return;
+  const q = UI.rq && Object.values(UI.rq).some(v => v && v.trim());
+  if (!q) UI.open[k] = e.target.open;
+}, true);
+/* A rule edit inside an open Sheet rebuilds it — keep its scroll. */
+const _syncModal = syncModal;
+syncModal = function () {
+  const sh = document.getElementById('sheet'), top = sh.scrollTop;
+  _syncModal(); applyRuleFilter(); if (UI.sheet) sh.scrollTop = top;
+};
+const _sheetHtml = sheetHtml;
+sheetHtml = function () {
+  if (UI.sheet && UI.sheet.kind === 'rules') { const s = slot(UI.sheet.slot);
+    return `${sheetHead(`Game rules · ${esc(s.name)}`, s.id === S.active ? 'Loaded — live' : 'Not loaded — applied on next load')}<div class="sh-body">${rulesEditor(s.id)}</div>`; }
+  return _sheetHtml();
+};
+ACT.rules = id => openSheet('rules', {slot:+id});
+const _create = ACT.createWorld;
+ACT.createWorld = () => { if (UI.form.seedMode === 'enter' && !(UI.form.seedText || '').trim()) { toast('Enter a seed, or switch to Random'); return; } _create(); };
+/* Seed counter, live. */
+document.addEventListener('input', e => { const k = e.target.dataset && e.target.dataset.count && e.target.dataset.field; if (!k) return;
+  document.querySelectorAll(`[data-counter="${k}"]`).forEach(c => c.textContent = e.target.value.length); });
+/* The entry point every variant shows under a world's settings. */
+function rulesEntry(s, act) {
+  return `<button class="b-row rules-entry" data-act="${act}"><span class="b-ico" aria-hidden="true">${IC.sliders}</span><span class="b-rn"><span class="nm" style="font-size:var(--fs-secondary)">Game rules</span><span class="sm">${plural(Object.keys(RULES).length, 'rule')} · ${rulesSummary(s.id)}</span></span>${IC.chev}</button>`;
+}
+
+/* ===================== A — sections in place ===================== */
+const VARIANT = 'A · sections in place';
+UI.bslot = ACTIVE0;
+function onScenario(id) { UI.open = {}; UI.bslot = S.active; if (S.job && S.job.slot) UI.open['w' + S.job.slot] = false; }
+ACT.toggle = k => { UI.open[k] = !UI.open[k]; };
+ACT.bsel = id => { UI.bslot = +id; };
+ACT.seeBackups = id => { UI.bslot = +id; setTimeout(() => document.getElementById('a-backups')?.scrollIntoView({behavior:'smooth', block:'start'}), 0); };
+ACT.more = () => {};
+
+function slotRow(s) {
+  const open = !!UI.open['w' + s.id], act = s.id === S.active, busy = S.job && S.job.slot === s.id && !S.job.err;
+  if (isEmpty(s)) return `<div class="w-row" style="cursor:default"><span class="w-disc empty" aria-hidden="true">${IC.plus}</span><span class="w-tx"><span class="w-nm"><span class="t dim">Slot ${s.id} — empty</span></span>
+      <span class="w-meta">${backupsOf(s.id).length ? `${plural(backupsOf(s.id).length, 'backup')} kept from its last world` : 'Make a new world here, or import one'}</span></span></div>
+    <div class="w-body" style="padding-top:0">${slotActions(s)}</div>`;
+  const pend = Object.keys(s.p || {}).length;
+  return `<button class="w-row" data-act="toggle:w${s.id}" aria-expanded="${open}"><span class="w-disc ${act ? 'on' : ''}" aria-hidden="true">${IC.cube}</span>
+      <span class="w-tx"><span class="w-nm"><span class="t" title="${esc(s.name)}">${esc(s.name)}</span>${act ? badgeActive() : ''}${busy ? '<span class="badge warn">busy</span>' : ''}${pend ? `<span class="pend">${pend} pending</span>` : ''}</span>
+      <span class="w-meta">${s.mode} · ${s.diff}${s.cheats ? ' · cheats' : ''} · <span class="num">${s.gen ? mb(s.mb) : 'not generated'}</span></span>
+      <span class="w-meta">${playedText(s)}</span><span class="w-meta">${lastBackupText(s.id)}</span></span>${IC.chev}</button>
+    ${open ? `<div class="w-body">${slotFacts(s)}${slotSettings(s)}<div class="b-card" style="margin:0">${rulesEntry(s, 'rules:' + s.id).replace('rules-entry', 'rules-entry w-first')}</div>
+      ${slotActions(s)}<button class="link" data-act="seeBackups:${s.id}">${IC.archive}See its ${plural(backupsOf(s.id).length, 'backup')}</button></div>` : ''}`;
+}
+function worldsSection() {
+  const used = S.slots.filter(s => !isEmpty(s)).length, free = firstEmpty(), block = worldBlocked();
+  return `<h3 class="b-sect sect" id="a-worlds">Worlds<span class="r">${used} of ${S.slots.length} slots used</span></h3>
+    ${jobCard()}
+    <div class="b-card">${S.slots.map(slotRow).join('')}</div>
+    ${free ? '' : `<div class="btnrow" style="margin:-8px 0 4px"><button class="btn grow" data-act="importTo" ${block ? 'disabled' : ''}>${IC.upload}Import .mcworld over a world</button></div>
+      <p class="note why" style="margin-bottom:20px">All ${S.slots.length} slots are in use — reset one to Empty or add a slot in Server settings to make a new world.</p>`}`;
+}
+function backupsSection() {
+  const withB = S.slots.filter(s => !isEmpty(s) || backupsOf(s.id).length);
+  if (!withB.some(s => s.id === UI.bslot)) UI.bslot = S.active;
+  const id = UI.bslot, total = S.backups.length;
+  const chips = `<div class="chips" role="group" aria-label="Show backups of">${withB.map(s => `<button class="chip" aria-pressed="${s.id === id}" data-act="bsel:${s.id}">${s.id === S.active ? '<span class="dot ok" aria-hidden="true"></span>' : ''}<span class="n">${esc(slotName(s))}</span><span class="cnt num">${backupsOf(s.id).length}</span></button>`).join('')}</div>`;
+  return `<h3 class="b-sect sect" id="a-backups">Backups<span class="r">${plural(total, 'backup')} on the box</span></h3>${chips}
+    <div class="b-card">${backupHead(id)}<div style="border-top:1px solid var(--border)">${backupList(id, 'expand')}</div></div>`;
+}
+function render() {
+  renderSim();
+  const app = document.getElementById('app');
+  const keep = UI.top ? 0 : (app.querySelector('.scroll')?.scrollTop || 0); UI.top = false;
+  app.innerHTML = `${topBar('Minecraft')}${banner()}<div class="scroll">${hero()}${errLine()}${updateSection()}${onlineSection()}
+    ${worldsSection()}${backupsSection()}${playersSection()}
+    <h3 class="b-sect sect">Server settings<span class="r">every world</span></h3><div class="b-card">${serverSettingsBody()}</div>
+    <h3 class="b-sect sect">Allowlist<span class="r">${S.allow.on ? plural(S.allow.tags.length, 'gamertag') : 'off'}</span></h3><div class="b-card">${allowlistBody()}</div>
+    <h3 class="b-sect sect">Join</h3><div class="b-card">${joinCard()}</div></div>`;
+  const sc = app.querySelector('.scroll'); if (sc) sc.scrollTop = keep;
+  syncModal();
+}
+
+scenario('default');
+</script>
+</body>
+</html>
