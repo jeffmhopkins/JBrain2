@@ -174,9 +174,31 @@ change.
   needs TCP 19132 for signaling plus a UDP range pinned with `server-udp-ports`, and its
   advertised mapping (`[public-ip:]external:internal`) has to name the public address.
   R1's step 0 accounts for this.
+- **`locate` works from the console, with no player online (item 4 ✅).** `execute
+  positioned X Y Z run locate structure <id>` prints its answer on stdout, which the
+  wrapper captures. From 0,0 on the fresh world:
+  - `village` at 200, 152 (251 blocks);
+  - `mansion` at 8120, 8104 (11,472 blocks; `y?` because the structure isn't generated yet,
+    which is exactly the worldgen fallback the cascade needs);
+  - `locate biome minecraft:cherry_grove` at -1632, 86, -96 (1,634 blocks).
+
+  **Biome ids need the `minecraft:` namespace** (a bare `cherry_grove` is a syntax error),
+  and structure ids don't. Dave's tools pass the full id.
+- **Memory**: about 280 MB RSS idle with no players. It is re-measured under play.
+- **The script bridge (item 5) can't be probed through the console.** Installing a test
+  behavior pack means writing into the world folder, and the debug surface deliberately
+  has no file write. So the wrapper gained `POST /probe-pack`, which installs the
+  **bundled** probe pack (`deploy/minecraft/probe-pack/`, nothing uploaded) into the active
+  world and restarts. The pack logs `[jbrain-probe]` lines for: loaded, chat event
+  available, the `jb:dave` custom command registered, `scriptevent` echoes, and whether a
+  dead player's inventory is readable (the keep-inventory question).
+- **Also shipped for M1's backend**: join/leave events with a per-boot id (`GET /events`),
+  including synthetic leaves when the server stops; `GET /version` (cached Mojang lookup);
+  and `POST /update` (snapshot first, a failed snapshot installs nothing, then install
+  and restart). All are on the debug router too.
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
-  LAN Games), memory under play, `locate` capture, the script bridge, the parser, map and
-  biome inputs, and the vanilla-client checks.
+  LAN Games), memory under play, the script bridge, the parser, map and biome inputs, and
+  the vanilla-client checks.
 
 **First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
 random seed that `/properties` and `level.dat` record. The known-seed checks can set

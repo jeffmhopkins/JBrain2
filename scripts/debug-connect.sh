@@ -931,7 +931,7 @@ PY
     _call POST "/api/debug/sdr/listen-probe?$q" | _pp
     ;;
 
-  minecraft) # [status|start|stop|restart|logs [N]|console "<cmd>"|snapshot [label]|snapshots|props|set-prop K V]
+  minecraft) # [status|start|stop|restart|logs [N]|console "<cmd>"|snapshot [label]|snapshots|props|set-prop K V|version [true]|update|probe-pack [remove]]
     # The Bedrock server (MINECRAFT_BEDROCK_PLAN §3a). Game-scoped: no shell, no world
     # download; `stop`/`save` are refused on the console — use stop/snapshot here.
     sub="${1:-status}"; [ "$#" -gt 0 ] && shift
@@ -948,6 +948,11 @@ PY
           "$(python3 -c 'import json,sys; print(json.dumps({"label": sys.argv[1]}))' "${1:-}")" | _pp ;;
       snapshots) _call GET /api/debug/minecraft/snapshots | _pp ;;
       props) _call GET /api/debug/minecraft/properties | _pp ;;
+      version) _call GET "/api/debug/minecraft/version?refresh=${1:-false}" | _pp ;;
+      update) _call POST /api/debug/minecraft/update | _pp ;;  # backup, install latest, restart
+      probe-pack) # [install|remove] — the bundled M0 probe pack; restarts the server
+        if [ "${1:-install}" = remove ]; then b='{"install": false}'; else b='{"install": true}'; fi
+        _call POST /api/debug/minecraft/probe-pack "$b" | _pp ;;
       set-prop)
         k="${1:?usage: debug-connect.sh minecraft set-prop <key> <value|null>}"
         body="$(python3 -c 'import json,sys; v=sys.argv[2]; print(json.dumps({"set": {sys.argv[1]: None if v == "null" else v}}))' "$k" "${2:-null}")"

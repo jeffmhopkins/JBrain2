@@ -57,12 +57,21 @@ async def _sidecar(
 
     An unreachable sidecar is a 503 naming the likely cause, because "connection
     refused" on a stopped container reads like a bug when it is a state."""
+    token = str(settings.minecraft_token or "")
+    if not token:
+        # Sending "Bearer " with nothing after it is a malformed header that httpx
+        # rejects before any request — the cryptic LocalProtocolError the first deploy
+        # hit. Say what is actually missing.
+        raise HTTPException(
+            status_code=503,
+            detail="MINECRAFT_TOKEN is not set for the api — run an update to mint it",
+        )
     try:
         async with httpx.AsyncClient(
             base_url=_base(settings),
             timeout=timeout_s,
             transport=_transport,
-            headers={"Authorization": f"Bearer {settings.minecraft_token}"},
+            headers={"Authorization": f"Bearer {token}"},
         ) as client:
             resp = await client.request(method, path, json=json, params=params)
     except httpx.TransportError as exc:
@@ -245,3 +254,42 @@ async def minecraft_set_properties(
     Takes effect at the next `/restart`."""
     request.state.debug_detail = f"minecraft properties {sorted(body.set)}"
     return await _sidecar(settings, "POST", "/properties", json={"set": body.set})
+
+
+@router.get("/version")
+async def minecraft_version(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Running BDS version against Mojang's latest (cached for hours by the wrapper;
+    `refresh=true` asks Mojang now)."""
+    request.state.debug_detail = f"minecraft version (refresh={refresh})"
+    return await _sidecar(settings, "GET", "/version", params={"refresh": int(refresh)})
+
+
+@router.post("/update", status_code=202)
+async def minecraft_update(request: Request, settings: SettingsDep, _p: DebugDep) -> dict[str, Any]:
+    """Back up, install the latest BDS, restart — the card's Update server. Runs in the
+    background; poll `GET /minecraft` (its `server.update`). A failed backup installs
+    nothing. 409 while one is already running."""
+    request.state.debug_detail = "minecraft update server"
+    return await _sidecar(settings, "POST", "/update")
+
+
+class ProbePackIn(BaseModel):
+    install: bool = True
+
+
+@router.post("/probe-pack")
+async def minecraft_probe_pack(
+    body: ProbePackIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, Any]:
+    """Install (or remove) the bundled M0 probe behavior pack in the active world and
+    restart the server so it loads. Its findings are `[jbrain-probe]` lines in
+    `GET /minecraft/logs`. The pack is shipped in the image; nothing is uploaded."""
+    request.state.debug_detail = f"minecraft probe pack install={body.install}"
+    return await _sidecar(
+        settings, "POST", "/probe-pack", json={"install": body.install}, timeout_s=120
+    )

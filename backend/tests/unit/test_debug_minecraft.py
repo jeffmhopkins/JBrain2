@@ -172,3 +172,25 @@ async def test_a_sidecar_auth_refusal_is_a_deploy_fault_not_a_state(sidecar) -> 
     with pytest.raises(HTTPException) as exc:
         await mc.minecraft_snapshots(_request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL)
     assert exc.value.status_code == 502
+
+
+async def test_a_missing_token_is_named_instead_of_a_malformed_header() -> None:
+    settings: Any = SimpleNamespace(
+        minecraft_url="http://host.docker.internal:19180",
+        minecraft_token="",
+        supervisor_token="t",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_snapshots(_request(FakeSupervisor(RUNNING)), settings, PRINCIPAL)
+    assert exc.value.status_code == 503
+    assert "MINECRAFT_TOKEN" in str(exc.value.detail)
+
+
+async def test_update_and_probe_pack_reach_their_sidecar_routes(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/update"] = httpx.Response(202, json={"state": "backing_up"})
+    req = _request(FakeSupervisor(RUNNING))
+    assert (await mc.minecraft_update(req, SETTINGS, PRINCIPAL))["state"] == "backing_up"
+    await mc.minecraft_probe_pack(mc.ProbePackIn(install=False), req, SETTINGS, PRINCIPAL)
+    assert [r.url.path for r in seen] == ["/update", "/probe-pack"]
+    assert json.loads(seen[1].content) == {"install": False}
