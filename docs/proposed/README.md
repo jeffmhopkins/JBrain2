@@ -19,8 +19,8 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   (profile `minecraft`): start/stop, world **slots** (load / import / new / reset, one active), hot snapshots
   (`save hold/query/resume`) as on-demand, downloadable `.mcworld` backups kept apart from the
   box export, one-click BDS updates — all PWA-operable; Windows + Xbox on the LAN, Windows
-  brothers over the internet through the existing Cloudflare tunnel via WARP private routing
-  (R1). Then **Dave**, an in-game companion players ask "where's the
+  brothers over the internet with nothing to install — UPnP forward + DNS-only record, or a UDP
+  relay behind CGNAT (R1). Then **Dave**, an in-game companion players ask "where's the
   nearest pig / woodland mansion / my brother": a stable-API behavior pack bridged over the
   console (`scriptevent` in, log lines out), a snapshot-fed world index, and a read-only,
   KB-less agent that answers live → index → worldgen (`locate`). Waves M0 (on-box spike) – M7, R1.
