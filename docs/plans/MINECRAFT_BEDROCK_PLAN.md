@@ -788,7 +788,14 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
   to zoom 4 = **1 px per chunk** (owner, 2026-10-10), a 4096-block tile. Zoomed-out
   pixels read only the one column they show, so every zoom renders in milliseconds. A
   per-world chunk index and rendered tiles are both cached until the world's files
-  change.
+  change, re-read at most once a minute: a running server's log moves every few
+  seconds, so the map trails a live world by up to a minute (issue #1608).
+- **No holes where players have been** (owner, 2026-10-10: "darker pixels are fine,
+  missing is not"). Transparent means never generated, nothing else. A chunk last saved
+  before 1.18 has only the older `Data2D` record (heights from y=0, one-byte biomes), so
+  the renderer reads that too, lifted onto the 1.18 floor so it meets its neighbours
+  without a seam; a re-saved chunk's `Data3D` wins. Not yet checked against a real
+  pre-1.18 world: the layout is the documented one, which `Data3D` shares.
 - **Routes:** `GET /api/minecraft/map/info` and `/map/tile/{dim}/{z}/{x}/{y}.png`
   (owner), plus debug twins.
 - **Facts verified on a real 1.26 world** that BDS generated locally:
