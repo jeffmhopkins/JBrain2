@@ -786,7 +786,9 @@ also keep it from pointing at them.
 - A renamed item that isn't a tricorder (wrong lore) does nothing.
 - Another player's target never shows on someone else's tricorder.
 
-### M10 — The Eye of Ender charm: keep your inventory, once per eye (owner, 2026-10-10)
+### M10 — Eyes of Ender as currency: keep your inventory, or teleport (owner, 2026-10-10)
+
+#### Keep your inventory, once per eye
 
 **The rule.** A player who dies with an **Eye of Ender** anywhere in their inventory keeps
 everything, and **one eye is used up**. Without one, the death is a normal Survival death:
@@ -836,6 +838,58 @@ choice.
 - An eye in the off-hand or a shulker box: the off-hand counts; inside a shulker box it
   does not (the rule is "in your inventory").
 - Pack disabled: everyone keeps (fail-safe).
+
+#### Teleport to a known place, one eye per trip (owner, 2026-10-10)
+
+**The rule.** A player who has settled a place with Dave can ask to be **teleported there**.
+It costs **one Eye of Ender** from their inventory. With no eye, Dave says so, and offers
+the tricorder (M9) instead.
+
+**"Known" means a coordinate that has been pinned down, not a guess.** These count:
+- **Saved places:** `waypoint_save` ("Dave, remember this as *home*"), set while standing
+  there or confirmed in conversation with Dave ("the village at 410, -1220 — save it as
+  *market*").
+- **Places a player has stood:** their bed or spawn, and the waypoints others have shared
+  with them.
+- **A located structure or biome** (`locate`) counts only after Dave has stated the
+  coordinate and the player has confirmed it ("yes, that one"). That is the "solidify"
+  step. Until then it's tricorder-only.
+
+**The flow (in game):**
+1. "Dave, take me to *market*." Dave names the place, the distance and dimension, and the
+   cost: `Market — 1,240 blocks, Overworld. Use 1 Eye of Ender? (you have 3)`.
+2. The player confirms on a **server form** with Yes and No buttons (`@minecraft/server-ui`,
+   vanilla), so a misheard place never costs an eye.
+3. The pack checks the eye is still there, then calls `player.tryTeleport(spot,
+   {dimension, checkForBlocks: true})` (stable). **Only if the teleport succeeds** is one
+   eye removed. A blocked or failed teleport costs nothing, and Dave says why.
+4. It plays the vanilla enderman-teleport sound and portal particles at both ends.
+
+**Safety:**
+- **Landing spot:** the saved Y is used, and the two blocks above it must be free
+  (`checkForBlocks`). A spot that has since been built over is refused, not glitched into.
+- A place in **unexplored (ungenerated) terrain** has no safe Y yet, so it stays
+  tricorder-only until someone has walked there.
+- **Cross-dimension** trips are allowed only to places in a dimension the player has
+  already visited, so nobody gets into the End early.
+- **Never to another player** by default. "Take me to Sam" would need Sam to accept on a
+  form, and that is left as an owner option for later.
+- Every trip is logged (who, from, to, eye spent) in the session log the owner sees.
+
+**Per world, owner-only switch:** "Eye of Ender teleport" (on by default, alongside the
+keep-inventory charm). With it off, Dave says teleporting isn't allowed in this world.
+
+**Why it stays fair:** each trip costs a crafted eye (an Ender Pearl plus Blaze Powder), and
+the same eyes are the keep-inventory charm and the End-portal key. Players choose how to
+spend them.
+
+**Tests:**
+- No eye: refused, nothing changes.
+- Blocked landing: refused, and the eye is kept.
+- Success: exactly one eye removed and the player is at the spot.
+- An unconfirmed `locate` result is refused as unknown.
+- A cross-dimension trip to a dimension never visited is refused.
+- Choosing No on the form costs nothing.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
@@ -1171,7 +1225,11 @@ a data file is the point of these tools.
 `minecraft_map` (M8) tools, so the owner can ask jerv "show me the map of the Minecraft world"
 from the PWA.
 
-**Deliberately not tools**: giving items, teleporting, building, or editing blocks; reading
+**Deliberately not tools**: giving items, teleporting, building, or editing blocks. There
+are two owner-approved, narrow exceptions (2026-10-10): Dave hands a player **their own
+tricorder** (M9), and **teleports a player to a known place for one Eye of Ender**, after
+they confirm on a form (M10). Beyond those, nothing is given or teleported, and there is
+no cross-player teleport. Also not tools: reading
 anything outside the active slot; anything that touches JBrain notes or the wiki; free-form
 console access for players.
 
@@ -1204,6 +1262,7 @@ and launcher tricks. The rules that keep it true:
 | The Dave quick menu (M7, optional) | a server form | ✅ |
 | Replies | `tellraw` chat, private to the asker | ✅ |
 | `guide_me` compass | actionbar text, refreshed by the server | ✅ |
+| Eye of Ender teleport (M10) | a server form with Yes and No, then a normal teleport with vanilla sound and particles | ✅ |
 | Eye of Ender charm (M10) | ordinary death and drops; the eye vanishes; a chat line on respawn | ✅ |
 | Tricorder v1 (M9) | a renamed vanilla spyglass; actionbar arrow while held | ✅ |
 | Tricorder v2 (M9, optional) | a custom item; needs a server-pushed resource pack | ⚠️ the owner chooses (download prompt on join) |
@@ -1299,7 +1358,8 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
 ## 6. Out of scope
 
 Java Edition (a different server, different protocol, and RCON). Mods, Realms hosting, and
-public or unallowlisted servers. Letting the bot build, teleport, or give items.
+public or unallowlisted servers. Letting the bot build, teleport, or give items, beyond M9's tricorder and M10's eye-paid
+teleport to a known place.
 
 ## 7. Terminal-dependency gaps (non-negotiable #10)
 
