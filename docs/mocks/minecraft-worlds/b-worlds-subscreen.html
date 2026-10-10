@@ -515,7 +515,7 @@
   @media (max-width:360px){ .seg.four{display:grid;grid-template-columns:1fr 1fr;} }
   .rules-note{position:sticky;top:0;z-index:1;background:var(--bg);padding:10px 2px;border-bottom:1px solid var(--border);margin:0 -2px;}
   .sheet .rules-note,.rules-in .rules-note{background:var(--surface);}
-  .c-panel .rules-note{top:59px;}
+  .c-panel .rules-note{top:var(--c-sw, 59px);}
   .rstatic{flex:1;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:6px 12px;min-height:44px;font-size:var(--fs-secondary);}
   .rstatic .hint{font-size:11px;}
   .job-h .job-t{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);font-weight:400;}
@@ -529,6 +529,7 @@
   .file .fn{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;}
   .seedbox{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;font-size:13px;line-height:1.3;padding-top:6px;padding-bottom:6px;}
   @media (max-width:360px){ .c-tabs button{display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15;text-overflow:clip;} .c-tabs .cnt{margin-left:0;font-size:10.5px;} }
+  .sheet .rules .rfoot{padding-bottom:150px;}
 
 </style>
 </head>
@@ -1114,7 +1115,7 @@ function backupList(id, mode, limit) {
     return `<button class="k-row ${first}" data-act="toggle:k${b.id}" aria-expanded="${!!open}">${backupRowInner(b)}${IC.chev}</button>
       ${open ? `<div class="k-body"><button class="btn primary" data-act="restore:${b.id}" ${block ? 'disabled' : ''}>${IC.undo}Restore…</button><button class="btn" data-act="download:${b.id}">${IC.download}Download</button>
         <button class="btn" data-act="pin:${b.id}" aria-pressed="${b.pinned}">${IC.pin}${b.pinned ? 'Unpin' : 'Pin'}</button><button class="btn danger" data-act="del:${b.id}" ${b.pinned ? 'disabled' : ''}>${IC.trash}Delete</button>
-        ${b.pinned ? `<p class="note why" style="grid-column:1/-1">Delete — unpin it first.</p>` : ''}${block ? `<p class="note why" style="grid-column:1/-1">${block}</p>` : ''}</div>` : ''}`;
+        ${b.pinned ? `<p class="note why" style="grid-column:1/-1">Unpin it first — a pinned backup can’t be deleted.</p>` : ''}${block ? `<p class="note why" style="grid-column:1/-1">${block}</p>` : ''}</div>` : ''}`;
   }).join('');
   const more = limit && list.length > limit ? `<button class="b-row" data-act="more:${id}" style="min-height:48px"><span class="b-rn"><span class="nm" style="font-size:var(--fs-secondary)">Show all ${list.length}</span></span>${IC.chev}</button>` : '';
   return pendingRow(id) + rows + more;
@@ -1256,7 +1257,7 @@ function sheetHtml() {
       <button class="btn primary" data-act="restore:${b.id}" ${block ? 'disabled' : ''}>${IC.undo}Restore…</button>${why(block)}
       <div class="w-actions"><button class="btn" data-act="download:${b.id}">${IC.download}Download</button><button class="btn" data-act="pin:${b.id}" aria-pressed="${b.pinned}">${IC.pin}${b.pinned ? 'Unpin' : 'Pin'}</button>
         <button class="btn danger full" data-act="del:${b.id}" ${b.pinned ? 'disabled' : ''}>${IC.trash}Delete</button></div>
-      ${b.pinned ? '<p class="note why">Delete — unpin it first.</p>' : ''}
+      ${b.pinned ? '<p class="note why">Unpin it first — a pinned backup can’t be deleted.</p>' : ''}
       <p class="hint">A download is a .mcworld — double-click it on Windows to open it in Minecraft.</p></div>`;
   }
   if (sh.kind === 'restore') {

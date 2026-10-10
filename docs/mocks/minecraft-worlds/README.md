@@ -2,11 +2,12 @@
 
 > **Status:** Plan · **Last verified:** 2026-10-10
 >
-> Decision: **pending owner choice**. Three variants are below. The chosen one becomes the
-> binding spec for M2 and M3's frontend, and its reasoning lands in `docs/reference/DESIGN.md`
-> ("Minecraft server screen") in the implementing PR. Behaviour source:
-> `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M2 and §M3, plus the owner's game-rules and seed
-> additions (2026-10-10).
+> Decision: **pending owner choice**. Three variants are below (revision 2, after an independent
+> review). The chosen one becomes the binding spec for M2 and M3's frontend, and its reasoning
+> lands in `docs/reference/DESIGN.md` ("Minecraft server screen") in the implementing PR.
+> Behaviour source: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M2 and §M3, the owner's game-rules
+> and seed additions (2026-10-10), and the backend behaviour fixed after the review
+> ("Verified facts" below).
 
 These are three interactive mocks of the **Worlds** and **Backups** management. They are added
 to the binding Minecraft screen (`../minecraft-ops/b-dedicated-screen.html`, built as
@@ -37,128 +38,172 @@ also jumps between screen levels, and C between tabs.
 
 | Slot | World | Origin · seed | Settings | State |
 |---|---|---|---|---|
-| 1 | `world` | made on first boot · `-2794311108712645813` | Survival · Normal | 3.1 MB, last played Oct 4 |
-| 2 | **Castle Hill** (loaded) | imported .mcworld · seed **unknown** | Survival · Normal, rules at the defaults | 7.8 MB, playing now |
+| 1 | **World** | made on first boot · `-2794311108712645813` | Survival · Normal | 3.1 MB, last played Oct 4 |
+| 2 | **Castle Hill** (loaded) | imported .mcworld · `-6104328617705162911` (from its level.dat) | Survival · Normal, rules at the defaults | 7.8 MB, playing now |
 | 3 | Creative test | new world · `8675309` | Creative · Peaceful · cheats; day cycle, weather and mob spawning off | 5.2 MB |
 | 4 | Skyblock run | new world · `5127438807419962211` | Survival · Hard (pending); keepInventory on (pending) | not generated yet |
 | 5 | — | empty | | |
 
 Backups: Castle Hill has 4. They are *before the castle roof* (yours, pinned), two automatic ones
-(before loading Creative test, and before the update to 1.26.52.3) and *first night* (yours). That
-last one is the only one ever downloaded, on Oct 4. `world` and Creative test have one automatic
-backup each. The server runs 1.26.52.3 with BlockyFox and Mira_P on. The allowlist is on, with
-the four known players.
+(before loading Creative test, and before the update to 1.26.52.3) and *first night* (yours,
+downloaded Oct 4, 8:20 pm, the world's last download). World and Creative test have one
+automatic backup each. Each backup carries its world's seed and settings, as its level.dat
+would. The server runs 1.26.52.3 with BlockyFox and Mira_P on. The allowlist is on, with the
+four known players.
+
+The import files the mock offers are:
+
+| File | Result |
+|---|---|
+| `Hilltop Village.mcworld`, 9.4 MB | Imports normally. |
+| `Hilltop Village.zip` | No `level.dat`, so it isn't a Bedrock world. |
+| `Big build — Hilltop City.mcworld`, 300 MB | Warned: *Over 100 MB only uploads at home on the Wi-Fi.* |
+| `Map pack — Skyblock XL.mcworld`, 1.3 GB | Refused: the limit is 1 GB. |
+
+The good files bring their own settings: Survival · Easy, no cheats, seed
+`3141592653589793238`, keepInventory and showCoordinates on.
 
 | State (mock controls) | What it shows |
 |---|---|
 | Running · 2 on | The default. |
-| Server stopped | **Load** says the server stays stopped. **Back up now** is a straight copy. Allowlist edits apply when the server starts. |
-| Fresh box · empty slots | The day M2 lands: only the first-boot world, four empty slots, no backups, *No copy has left the box yet*. |
-| Importing | `Hilltop Village.mcworld` (9.4 MB) is imported over Creative test. The steps are upload with real bytes, check, **Back up Creative test first**, then write. It animates. |
-| Import · not Bedrock | A `.zip` without `level.dat`/`db/` fails at the check step: nothing written, upload discarded, **Choose another file**. |
-| Import · too big | An 812 MB file is refused in the sheet before anything uploads (limit 500 MB). |
-| Loading a world | Switching to Creative test with players on: 30 s chat warning → stop → back up Castle Hill → switch → start. It animates. The status block reads *switching worlds*. |
+| Server stopped | **Load** says the world becomes the loaded one and the server stays stopped (no backup clause, since none is taken). Settings and rules on the loaded world are *pending — applied when the server starts*. Allowlist names apply when it starts. |
+| Fresh box · empty slots | The day M2 lands: only the first-boot World, four empty slots, no backups, *No copy has left the box yet*. |
+| Importing | `Hilltop Village.mcworld` over Creative test. First **Uploading** with this device's real bytes, then the job's phases (*backing up*, *writing*) with elapsed time. It animates. |
+| Import · not Bedrock | The `.zip` has no `level.dat`. Nothing is written, the upload is discarded, and **Choose another file** is offered. |
+| Import · 300 MB | The sheet warns *Over 100 MB only uploads at home on the Wi-Fi* (it fails over the Cloudflare tunnel), but still allows it. |
+| Import · 1.3 GB | Refused in the sheet before anything uploads (*the limit is 1 GB*). |
+| Seed unreadable | Castle Hill's level.dat couldn't be read. Its seed reads *unknown — not recorded*, and Reset withholds **Same seed**. |
+| Loading a world | Switching to Creative test with players on: *warning players* (10 s) → *stopping* → *backing up* → *writing* → *starting*, one phase at a time with elapsed time. The status block reads *switching worlds*. |
 | Reset in progress | Creative test reset to a new seed (not loaded, so the server isn't touched). |
-| Restore in progress | *first night* restored into the loaded Castle Hill: back up → stop → restore → start. |
-| Update running | Every world action is disabled, with the reason said: *Busy updating Minecraft — loading, importing, resetting, restoring and backing up come back when it's done.* Rename, settings, rules, downloads, pins and the allowlist stay live. |
+| Restore in progress | *first night* restored into the loaded Castle Hill, with a 10 s warning and a restart. |
+| Update running | Every world action is disabled, with the reason: *Busy updating Minecraft — loading, importing, resetting, restoring and backing up come back when it's done.* Rename, settings, rules, downloads, pins and the allowlist stay live. |
 | Refused · update started | The API refused a Load because auto-update began first. A rose line says nothing changed and Castle Hill is still loaded. |
 | At 20 backups | Castle Hill at 20 of 20. The retention line and the Back-up-now sheet both name the backup the next one removes. |
 
 ## Behaviour common to all three
 
-- **One world is loaded at a time**, and it is marked *loaded* everywhere: a green disc or chip
-  dot, and a **world loaded** tile in the status block. The tile is new to the built hero.
-- **Load confirms in the centre Dialog**, in one sentence. With players on it is the destructive
-  variant: *"BlockyFox and Mira_P get a 30-second warning in chat and are disconnected; Castle
-  Hill is backed up first, then Creative test starts."* With nobody on, or the server stopped
-  (*"…the server stays stopped until you start it"*), it is a plain primary button.
-- **New world** is a Sheet with these fields:
-  - **Name**.
-  - **Seed**: **Random** shows the 64-bit number it rolled, with **Re-roll**. **Enter a seed**
-    takes any text up to 64 characters, with a live counter, the same as Bedrock's own seed box.
-  - **Game mode** and **Difficulty**.
-  - **World rules**, a collapsed step that holds the full editor at the defaults.
+- **One world is loaded at a time.** It is marked *loaded* with a green disc or chip dot, and a
+  full-width **world loaded** tile heads the status block above the online and version tiles. The
+  tile is its own row, so a long name wraps instead of truncating at 320 px.
+- **Live means loaded and running.** Each world's settings say so in a line:
+  - **Difficulty** changes live on the loaded, running world.
+  - **Game mode** is the default for new players and new characters, applied at the next
+    restart. Anyone who has played keeps their own mode.
+  - **Cheats** apply at the next restart.
+  - On the loaded world with the server stopped, every change is *pending — applied when the
+    server starts*.
+  - On a world that isn't loaded, every change is *pending — applied when it next loads*.
 
-  The world is generated the first time it loads, and every view says *not generated yet*.
-- **Import** is a Sheet with these parts:
-  - Windows export help (*Play → pencil → Export World*).
-  - The chosen file and its size.
-  - A slot picker, when opened from outside a slot. Each slot in it says *empty*, or *replaces X
-    — backed up first*.
-  - An info notice when overwriting: **"Overwriting takes a backup first."**
-  - When the target is the loaded world, the notice also names who gets disconnected.
-
-  *Too big* is caught in the sheet. *Not a Bedrock world* is caught at the check step, and a bad
-  file never touches a slot.
-- **Reset** is a Sheet with three options, then the Dialog:
-  - **Same seed**: offered only when the seed is known, otherwise *Not offered — an imported
-    world's seed is unknown*.
-  - **New seed**.
-  - **Empty**: not offered for the loaded world (*Load another first*).
-
-  The Dialog asks the owner to **type the slot's name**. Its button stays disabled until the
-  name matches. An emptied slot keeps its backups, and says so.
-- **Rename** is a Sheet with one field. Only the name changes.
-- **Per-world settings** are game mode, difficulty, cheats and every game rule. Each says how it
-  applies:
-  - **On the loaded world, a change applies live, at once** (green line). Cheats is the
-    exception: it is a `server.properties` key, so it applies at the next restart.
-  - **On any other world, it is saved and applied when that world next loads**. Every changed
-    setting and rule carries an amber **pending** tag until then, and the world's row counts
-    them.
-- **The game-rules editor** (owner addition) covers all 39 rules the live server reports, at
-  their defaults:
+  An amber **pending** tag marks each waiting setting and rule, and a world's row counts them.
+  Saved settings and rules are re-applied on **every** start, not only on a load.
+- **The game-rules editor** covers all 39 rules the owner's server reports, at their defaults:
   - The rules are in seven collapsible groups: World, Time & weather, Players, Mobs & drops,
     Crafting, Commands, Display.
-  - Each rule has a plain-English label, the rule id in small mono text, and a *changed ·
-    default X* tag when it differs.
-  - Booleans are switches. Numbers are steppers with a typeable value (step 1, 5 for the sleep
-    percentage, 1,000 for the command limits). `playerWaypoints` is a select.
+  - Each rule has a plain-English label, the rule id in small mono text, and a *changed · default
+    X* tag when it differs.
+  - Booleans are switches. Numbers are steppers with a typeable value, **debounced**: the value
+    moves at once, and one save goes out when tapping or typing settles (700 ms). Four taps make
+    one save and one toast.
+  - `playerWaypoints` offers the current value plus *everyone* only. On this server both are
+    *everyone*, so it reads as a fixed value, *the only value this server reports*.
   - A search box filters in place.
   - There is **Reset {group} to defaults** per group and **Reset all**.
+  - The live/pending note at the top is **sticky** while you scroll the rules (in C, it sits just
+    under the sticky world strip).
+  - Reset all has room beneath it, so a toast never covers it. This is measured in all three
+    variants at 390 and 320 px.
+- **Load** confirms in the centre Dialog, in one sentence:
+  - With players on, it is the destructive variant: *"BlockyFox and Mira_P get a 10-second
+    warning in chat and are disconnected; Castle Hill is backed up first, then Creative test
+    starts."*
+  - With nobody on, it is a plain primary button.
+  - With the server stopped: *"Creative test becomes the loaded world — the server stays stopped
+    until you start it."*
+- **The 10-second chat warning** is named wherever an action stops the loaded world with players
+  online: Load; import, reset or restore of the loaded world; Stop; Restart.
+- **New world** is a Sheet with these fields:
+  - **Name**, up to 40 characters.
+  - **Seed**: **Random** shows the 64-bit number it rolled, with **Re-roll**. **Enter a seed**
+    takes any text up to 64 characters, with a counter, matching Bedrock's own seed box.
+  - **Game mode**, **Difficulty** and a **Cheats** switch.
+  - **World rules**, a collapsed step that holds the full editor at the defaults.
+
+  The world is generated the first time it loads.
+- **Import** is a Sheet with these parts:
+  - Windows export help (*Play → pencil → Export World*).
+  - The chosen file and its size. A file over 100 MB gets the home-Wi-Fi warning, and one over
+    1 GB is refused before uploading.
+  - A slot picker, when opened from outside a slot.
+  - **"Settings come from the world file"**: its game mode, difficulty, cheats, seed and rules.
+    The overwritten slot's settings aren't kept.
+  - *"Overwriting takes a backup first."*
+  - A hint that the file is checked for a `level.dat` and the 1 GB limit before anything is
+    written.
+
+  Importing over an occupied slot then confirms in the **Dialog**: *"Creative test is backed up
+  first, then replaced by Hilltop Village with the file's own settings."* It is warn-toned, or
+  danger-toned with the 10-second warning when it is the loaded world with players on.
+- **Reset** is a Sheet with three options, then the Dialog:
+  - **Same seed**: offered only when the seed is known.
+  - **New seed**: with the same Random/Enter seed choice as New world.
+  - **Empty**: not offered for the loaded world.
+
+  The Dialog asks the owner to type the world's name, and its button stays disabled until the
+  name matches. An emptied slot keeps its backups.
+- **Rename** is a Sheet with one field, capped at 40 characters, with a counter.
 - **Backups belong to a world.** Each list shows:
-  - the label, or the automatic reason (*Before loading Creative test*);
-  - *yours* or *automatic* (also as a person or clock glyph);
+  - the label, or the automatic reason;
+  - *yours* or *automatic*;
   - the size, the date and *pinned*.
 
-  **Back up now** opens a Sheet with an optional label. It says *copied live — players stay
-  on*, or *a straight copy*. A backing-up row shows in the list while it runs.
-- **Restore** goes Sheet → Dialog. The Sheet picks the target slot. That can be its own world,
-  another world (*backed up first*), or an empty slot (*becomes "Castle Hill (Oct 4)",
-  nothing else changes*). The Dialog's one sentence says the target is backed up first. When the
-  target is the loaded world, it adds that the server restarts and who is disconnected.
-- **Pin** keeps a backup for good, outside the 20. **Delete** confirms in the Dialog, and the
-  Dialog says so when the backup is pinned or downloaded.
-- **Download .mcworld** records the time. Each world shows **Last copy off the box: {when} —
-  {which}**, or the amber **No copy has left the box yet**. Both say that Minecraft backups
-  aren't in the box backup, so a download is the only copy kept elsewhere.
-- **Retention is explained where it acts**: *3 of 20 kept · 1 pinned*, with a meter, and *Each
-  world keeps its newest 20. Automatic ones go first; pinned ones are kept for good, outside the
-  20.* At the limit, it names the backup the next one removes.
+  **Back up now** takes an optional label.
+- **Restore** goes Sheet → Dialog. The Sheet picks the target, and says what comes with it:
+  - **Its own world**: rolled back, backed up first.
+  - **Another occupied world**: replaced. The backup's seed and settings come too, and that world
+    is backed up first.
+  - **An empty slot**: it becomes *"Castle Hill (Oct 4)"*, with the backup's seed and settings
+    and the source world's rules.
+
+  The Dialog's one sentence repeats the backup-first, plus the restart and 10-second warning when
+  the target is loaded.
+- **Pin** keeps a backup for good, outside the 20. **Delete** is **disabled on a pinned backup**,
+  with *Unpin it first — a pinned backup can't be deleted.* An unpinned delete confirms in the
+  Dialog.
+- **Download .mcworld** records per-backup *downloaded {when}*, shown in the backup sheet. It
+  also records the world's last download: **Last copy off the box: Oct 4, 8:20 pm — "first
+  night"**, or the amber **No copy has left the box yet**, which says Minecraft backups aren't in
+  the box backup.
+- **Retention is explained where it acts**: *3 of 20 kept · 1 pinned*, a meter, and *Each world
+  keeps its newest 20. Automatic ones go first; pinned ones are kept for good, outside the 20.*
+  At the limit, it names the backup the next one removes.
 - **Server-wide settings** are:
   - server name;
-  - max players;
-  - view distance and tick distance;
-  - **world slots** (5 by default, raisable; it can only drop down to the highest slot in use);
-  - *Xbox sign-in required*, read-only and always on.
+  - max players (1–30);
+  - view distance (5–32);
+  - **5 world slots**, fixed and read-only;
+  - *Xbox sign-in required*, always on.
 
-  Changes save with an explicit button. Slots apply at once, and the rest at the next restart.
+  They apply at the next restart, or when the server starts if it is stopped. With every slot in
+  use: *All 5 slots in use — reset or empty one first.*
 - **Allowlist**:
-  - An on/off switch. Turning it off confirms in the Dialog.
+  - Turning the list **on or off applies at the next restart**. It shows *pending* until then,
+    and turning it off confirms in the Dialog.
+  - **Adding or removing a gamertag** is live while the server runs, otherwise *applied when the
+    server starts*.
   - **Required for internet play** (*coming later*, since R1 isn't built).
-  - The gamertags, each with a 44 px remove button and *on now / has played here / hasn't
-    joined yet*. Removing someone who is on says *they stay on until they leave*.
-  - An Add field. Adding is live with no restart, or *applied when the server starts* while
-    the server is stopped.
-- **One job at a time.** Load, import, reset, restore and back-up share the server's lifecycle
-  lock with updates (M1). While one runs, the others are disabled and say what they are waiting
-  for. A job that touches the loaded world drives the status block (*switching worlds*,
-  *restoring*, *resetting*, *importing*), and Start/Stop/Restart read *Busy with the restore —
-  the server is handled for you.*
-- **Honest data.** Sizes, seeds, last played and last backup show only where they exist. A
-  never-loaded world reads *not generated yet* with no size. An imported world's seed reads
-  *unknown*. Upload progress shows real bytes, and the other steps are phase text with
-  timestamps, never a fake bar.
+- **Jobs show what `/status` reports, nothing more.** The job card shows:
+  - the job's *what* (e.g. *Importing a world*);
+  - its current **phase** (*warning players*, *backing up*, *stopping*, *writing*, *starting*),
+    with a one-line explanation;
+  - the elapsed time since `started_at`, ticking;
+  - *Started 5:53 pm. It carries on if you leave — any device opening this screen sees it.*
+
+  The only extra on the device that started an import is the upload's real bytes and meter.
+  There are no per-step timestamps, no finished-step history, and no per-world "busy" marker,
+  since the job doesn't name its world. The card sits where each variant shows world state: the
+  Worlds section in A, the Worlds and world pages plus the main-screen row in B, and above the
+  tabs in C. One job runs at a time: while it does, the other world actions are disabled and
+  say *Wait — the server is {what}.*
 
 ## The three variants
 
@@ -179,129 +224,141 @@ Screen B keeps its order. **Worlds** follows Online now:
   Rename, Import over and Reset, and *See its N backups*.
 - Empty slots carry **New world** and **Import** directly.
 
-**Backups** follows, one world at a time, picked by a chip row (the loaded world first, with a
-count each). Its card holds **Back up {world} now**, the off-box line and retention, then the
-rows. A row also expands in place to Restore…, Download, Pin and Delete. Server settings, the
-allowlist and Join close the scroll.
+**Backups** follows, one world at a time, picked by a chip row. Its card holds **Back up {world}
+now**, the off-box line and retention, then rows that expand in place to Restore…, Download, Pin
+and Delete. Server settings, the allowlist and Join close the scroll.
 
 - **For:** the cheapest to build and the most native. Everything is one scroll, with no new
   routes. The slot list compares worlds side by side.
-- **Against:** the screen gets long: about 4,300 px with one world and one backup open, against
-  about 2,450 px for B's main screen. The backups for a world sit away from the world itself, so the chip and *See its
-  backups* stitch them together. Game rules have to go into a tall Sheet.
+- **Against:** the screen gets long: about 4,350 px with one world and one backup open, against
+  about 2,400 px for B's main screen. A world's backups sit away from the world itself, and the
+  game rules go into a tall Sheet.
 
 ### B — Worlds sub-screen
 
-Screen B gains one row under the status block, **Worlds & backups**. It shows *Castle Hill
-loaded · 4 of 5 slots used* and *last copy off the box Oct 4* (amber when nothing has ever left).
-While a job runs, the row shows that job and its step. Server settings, the allowlist and Join
-stay on screen B, because they are the same for every world.
+Screen B gains one row under the status block, **Worlds & backups**. It shows *Castle Hill loaded
+· 4 of 5 slots used* and *last copy off the box Oct 4* (amber when nothing has ever left), or the
+running job's *what — phase*. Server settings, the allowlist and Join stay on screen B.
 
-- **Worlds** groups the slots as *Loaded*, *Other worlds* and *Empty slots*. Rows show the
-  download state too, and the job card sits on top.
+- **Worlds** groups the slots as *Loaded*, *Other worlds* and *Empty slots*, with the job card on
+  top.
 - **A world's page** has a status block (*loaded* / *not loaded · Castle Hill is loaded*) with
   facts and **Load**. Below it are **Settings** with a **Game rules** row, **Backups** for this
   world, and **Manage** (Rename, Import over, Reset).
-- **Game rules** is its own pushed page, not a Sheet, so it has the whole height.
-- A backup row opens a **Sheet** with its facts (kind, size, kept, off the box), Restore…,
-  Download, Pin and Delete.
+- **Game rules** is its own pushed page, with the sticky live/pending note at the top.
+- A backup row opens a **Sheet** with its facts, Restore…, Download, Pin and Delete.
 
 - **For:** it matches the plan's own wording (*Ops → Minecraft → Worlds*) and the Data screen's
-  precedent. Each world's backups live with the world, as the plan says (*backups belong to a
-  slot*). Screen B stays short and about the server. It is the roomiest for the 39 rules, and
-  later per-world features (Dave on or off per world, M4 index, M8 maps) have an obvious home.
+  precedent. Each world's backups live with the world (*backups belong to a slot*). Screen B
+  stays short and about the server. The 39 rules get a full page.
 - **Against:** depth. A restore from the main screen is Worlds → world → backup Sheet → restore
   Sheet → Dialog. Comparing worlds' backups means going back and forth. It adds two routes.
 
 ### C — world switcher
 
-A sticky **chip strip** under the top bar lists every slot. The loaded world has a green dot, a
-world mid-job an amber dot, and empty slots a dashed outline. Picking a chip scopes the screen:
+A sticky **chip strip** under the top bar lists every slot. The loaded world has a green dot
+(amber while a job is bouncing the server), and empty slots a dashed outline. Picking a chip
+scopes the screen:
 
 - **The status block becomes that world's.** For the loaded world it is the built hero. For
   another world it reads *not loaded · Castle Hill is loaded · 2 players on*, with mode, size and
-  backup tiles and **Load {world}**. For an empty slot it offers **New world** and **Import**
-  there and then.
-- **Tabs (World · Rules · Backups · Server)** with tab semantics and arrow keys:
+  backup tiles and **Load {world}**. For an empty slot it offers **New world** and **Import**.
+- **Tabs (World · Rules · Backups · Server)** have tab semantics and arrow keys. At 320 px a tab's
+  count stacks under its label, so nothing truncates.
   - **World**: facts with the seed, Settings, Online now (loaded world only), Manage.
-  - **Rules**: the editor inline.
-  - **Backups**: this world's list, with the count on the tab.
-  - **Server**: introduced by *Same for every world*. It holds Update, Online, Players, server
-    settings, the allowlist and Join.
-- A job on another world shows as a one-line *Restoring into … — show* link.
+  - **Rules**: the editor inline, its note sticky under the strip.
+  - **Backups**: this world's list.
+  - **Server**: *Same for every world*. It holds Update, Online, Players, server settings, the
+    allowlist and Join.
 
-- **For:** the most direct for "work on this one world": one tap to switch, nothing pushed. Rules
-  get an inline tab. Load sits where Start/Stop sits for the loaded world, which teaches the model
-  (one world runs).
-- **Against:** the built screen's server sections move behind a **Server** tab, so Update, Online
-  and Players are a tap further than today. The chip strip scrolls sideways past about three
-  worlds at 390 px. Tabs plus a switcher are two levels of selection on one screen. The scope is
-  invisible for things that can't be scoped (players, updates), which is why the Server tab has
-  to say so.
+- **For:** the most direct for "work on this one world": one tap to switch, nothing pushed. Load
+  sits where Start/Stop sits for the loaded world.
+- **Against:** the built screen's server sections move behind a **Server** tab. The chip strip
+  scrolls sideways past about three worlds. Tabs plus a switcher are two levels of selection on
+  one screen.
 
-## Render check (2026-10-10)
+## Render check (revision 2, 2026-10-10)
 
-The check ran in headless Chromium (Playwright) for each variant at **390×844 and 320×844**,
-in both themes. It covered all 12 states, plus each variant's deep views (expanded rows, the
-world page, the rules editor, every tab) and every modal (new world with a typed seed and rules
-open, import, reset sheet and typed-name dialog, load dialog, restore sheet into another slot and
-its dialog, back up now, the backup sheet). The audit script was first proven to catch an
-injected 1.9:1 text and a 20 px button.
+The check ran in headless Chromium (Playwright) for each variant at **390×844 and 320×844**, in
+both themes. It covered:
 
-- **Contrast:** every text in the phone clears **4.5:1** in both themes. Two exclusions are by
-  the earlier round's rules: disabled button labels, and DESIGN's `.sect` section headers
-  (`--text-3`).
-- **Tap targets:** every control is ≥ 44 px, including text links (overlays), switches and
-  the remove buttons. The only exceptions are the copied top bar's vitals readout and the mock
-  controls.
-- **Overflow:** nothing runs past the phone at 390 or 320 px, and nothing scrolls sideways
-  except the intended chip strips.
+- all 14 states;
+- each variant's deep views: expanded rows, the world page, the rules page or tab, every tab;
+- every modal: new world with a typed seed and rules open, the import sheet and the import-over
+  Dialog, the reset sheet and typed-name Dialog, the load Dialog, the restore sheet into another
+  slot and its Dialog, back up now, and the backup sheet.
+
+The audit script was first proven to catch an injected 1.9:1 text and a 20 px button.
+
+- **Contrast:** every text in the phone clears **4.5:1** in both themes. The exclusions are as in
+  the earlier round: disabled button labels, and DESIGN's `.sect` section headers (`--text-3`).
+- **Tap targets:** every control is ≥ 44 px.
+- **Overflow and truncation:** nothing runs past the phone, and nothing scrolls sideways except
+  the chip strips. A new **ellipsis check** finds no truncated text at either width. That covers
+  the hero's world tile, the difficulty segments (2×2 at ≤ 360 px) and C's tabs, plus the long
+  file names and the seed box, which now wrap.
+- **Toast vs. Reset all:** measured in all three variants at both widths, with no overlap.
+- **Behaviour spot-checks:**
+  - four stepper taps produce one save and one toast;
+  - Load while stopped has no backup clause;
+  - C's sticky rules note sits flush under the world strip (both at 124 px).
 - **Console:** no errors.
 
-Screenshots of the key states were taken and inspected. Fixes made from them: automatic backup
-reasons now wrap instead of truncating, duplicate New world/Import buttons were removed, *1 rule
-differs*, a failed import no longer reads *Writing null*, and the refusal's time matches the
-update's.
+Screenshots of the key states were taken and inspected in both themes.
 
 ## Recommendation
 
-**B.** The plan already names this surface *Ops → Minecraft → Worlds*. Backups are per slot by
-the owner's decision, and B is the only variant where a world's backups, settings, rules and
-destructive actions sit together on one page about that world. That is also where the owner is
-most careful. The 39-rule editor needs room, and in B it gets a full page rather than a tall
-Sheet (A) or a tab under two selectors (C). Screen B, which was chosen *because* later waves would
-land on it, stays a short server page with one glanceable row that also carries the
-off-box-copy warning. Every later per-world feature (Dave per world, the M4 index, M8 maps) has
-an obvious home on the world page.
+**B, still.** The review changed contracts, not the shape of the choice:
 
-If the owner prefers fewer taps, choose **C** over A. C keeps worlds one tap apart, at the cost
-of moving the server sections behind a tab. A is the cheapest, but it makes screen B about 1.75×
-as long as B's main screen and splits a world from its backups.
+- B is the only variant that puts a world's backups, settings, rules and destructive actions
+  together on one page about that world. That matches *backups belong to a slot*.
+- It gives the 39-rule editor a full page, where the sticky live/pending note reads best.
+- It keeps screen B a short server page, with one glanceable row that also carries the job's
+  phase and the off-box-copy warning.
 
-## Assumptions made where the spec was open
+If the owner prefers fewer taps, choose **C** over A. A is the cheapest, but it makes the screen
+about 1.8× as long as B's main screen and splits a world from its backups.
 
-- **Seeds.** The owner said imported worlds read *unknown*. The first-boot world shows a seed on
-  the assumption that M2's wrapper records the seed it generated with (or reads it once on
-  migration). If it can't, that world reads *unknown* too, and Same seed is withheld for it.
-- **Import over the loaded world** is allowed and runs stop → back up → write → start, like
-  reset and restore. The plan's wrapper refuses a live import, so the backend orchestrates it,
-  as it does for Load.
-- **Import size limit** is shown as 500 MB (the plan says "a few hundred MB").
-- **Pinned backups sit outside the 20.** Otherwise 20 pins would block every new backup. The
-  plan says pins are kept forever but doesn't say whether they count.
-- **Live versus next-load.** Game rules, difficulty and game mode on the loaded world are applied
-  over the console (`/gamerule`, `/difficulty`, `/defaultgamemode`), which works with cheats off.
-  `allow-cheats` is a `server.properties` key, so it applies at the next restart. The other
-  server-wide settings apply at the next restart too.
-- **`playerWaypoints` choices** are shown as *everyone* and *off*. The real option list should
-  be read from the server, which only reported the current value.
+## Verified facts (backend behaviour these mocks are built to)
+
+1. **Import**: the hard limit is 1 GB. Over 100 MB it only uploads at home on the Wi-Fi (the
+   Cloudflare tunnel refuses it). The check requires only a `level.dat`.
+2. **Settings**: difficulty applies live on the loaded, running world. Game mode is the default
+   for new players and new characters, at the next restart, and existing players keep theirs.
+   Cheats apply at the next restart.
+3. **Seeds** are read from each world's own `level.dat` (imports, the first-boot world,
+   restores). They read *unknown — not recorded*, with Same seed withheld, only when that file
+   can't be read. The first-boot world is named **World**.
+4. **An imported world** brings its own game mode, difficulty, cheats, seed and rules. The
+   overwritten slot's settings are not inherited.
+5. **`playerWaypoints`** offers the current value plus *everyone*.
+6. **Live means loaded and running.** Otherwise a change waits, and saved rules are re-applied on
+   every start.
+7. **A pinned backup can't be deleted** until it is unpinned.
+8. **Jobs**: `/status` gains `job: {what, phase, started_at} | null`. The phases are *warning
+   players*, *backing up*, *stopping*, *writing* and *starting*. Every device sees it.
+9. **The chat warning is 10 seconds**, before any stop of the loaded world with players on.
+10. **Downloads**: a per-backup `downloaded_at` sits alongside the per-world `last_download`.
+11. **Server settings**: view distance 5–32, max players 1–30, and **5 fixed slots**. There is
+    no tick distance or slot count.
+12. **Allowlist**: on/off applies at the next restart. Names are live while the server runs,
+    otherwise applied when it starts.
+13. **Import over an occupied slot** confirms in the Dialog, like restore.
+14. **Load while stopped** takes no backup.
+15. **Restore into an empty slot** is named *"<source> (<backup date>)"*. It takes its seed and
+    settings from the backup's `level.dat`, and its rules from the source world. Into another
+    occupied slot, the backup's seed and settings replace that slot's.
+16. **Reset → New seed** takes an optional typed seed. New world has a Cheats switch. Names cap
+    at 40 characters.
+
+## Assumptions still open
+
+- **Pinned backups sit outside the 20.** Otherwise 20 pins would block every new backup.
 - **Rule steps and bounds** (e.g. `randomTickSpeed` 0–4,096, `spawnRadius` 0–128) are sensible
   UI limits, not Bedrock's own.
 - **One job at a time** follows M1's single lifecycle lock. Downloads, pins, rename, settings,
   rules and the allowlist stay live during a job or an update.
-- **The new *world loaded* tile** joins the built hero's two tiles. It is a three-tile row that
-  holds at 320 px.
-- **Not covered:** Dave's per-slot switch (M5/M6), and the M4 world-index note on reset. Both
+- **Not covered:** Dave's per-slot switch (M5/M6) and the M4 world-index note on reset. Both
   belong to waves that aren't built.
 
 Decision: pending owner choice
