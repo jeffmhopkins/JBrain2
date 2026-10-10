@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ M10◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -746,6 +746,17 @@ compass that Dave sets.
 - **Getting one:** Dave hands it over (`give` from the pack) the first time he sets a
   target for a player who has none. Optionally there is a crafting recipe too (owner's
   call).
+- **It's personal (owner, 2026-10-10).** It is named **"<Player>'s Tricorder"** (e.g.
+  "Steve42's Tricorder") and points to **its owner's** target, whoever holds it, so a
+  sibling can carry it to lead the way. The owner's id is an item dynamic property (the
+  item doesn't stack, so it can hold one).
+  - Each player has one at a time. A replacement from Dave retires the old one, which
+    then reads "This tricorder is retired".
+- **Never dropped on death (owner, 2026-10-10).** The item is created with
+  `ItemStack.keepOnDeath = true` (stable API), so it stays in the inventory through a
+  death even when everything else drops. M10's drop path skips it too.
+  - It can still be thrown away, put in a chest, or burnt in lava like any item. Dave
+    replaces a lost one on request.
 
 **The item itself, in two steps** (§3c rule 2 says behavior pack only):
 1. **v1, fully vanilla, no download:** an ordinary item renamed **"Tricorder"**, with
@@ -774,6 +785,57 @@ also keep it from pointing at them.
 - The target survives a restart (dynamic property).
 - A renamed item that isn't a tricorder (wrong lore) does nothing.
 - Another player's target never shows on someone else's tricorder.
+
+### M10 — The Eye of Ender charm: keep your inventory, once per eye (owner, 2026-10-10)
+
+**The rule.** A player who dies with an **Eye of Ender** anywhere in their inventory keeps
+everything, and **one eye is used up**. Without one, the death is a normal Survival death:
+items and XP drop at the spot. The tricorder (M9) is kept either way.
+
+**This decides "Per-player keep inventory" (§4).** It uses the fail-safe direction worked
+out there:
+- **The world's `keepInventory` rule is ON**, and the pack **drops** the inventory of a
+  player who had no eye.
+- If the pack fails or is turned off, everyone keeps their things. Nobody ever loses
+  items to a script fault, and there is no duplication around disconnects or restarts.
+  The other way round (rule off, restore on respawn) risks both.
+
+**On `world.afterEvents.entityDie` for a player** (stable API):
+- **Eye present:** remove one `minecraft:ender_eye`, taken from the smallest stack first.
+  Keep the rest, which the `keepInventory` rule already does.
+  - On respawn they get a private chat line and a vanilla sound: `Your Eye of Ender
+    shattered — you kept your things. 2 eyes left.`
+- **No eye:** for the inventory, armor and off-hand, `spawnItem` each stack at the death
+  spot and clear the slot. Skip anything with `keepOnDeath` (the tricorder). Destroy
+  **Curse of Vanishing** items.
+  - Then reset their XP and drop roughly the vanilla amount as orbs. That matches a
+    normal death, which only the eye avoids.
+- **Died in the void:** a drop would fall out of the world, so the drop goes to the
+  player's last safe position instead. This is a deliberate kindness, and settable later.
+
+**Per world, owner-only.** A switch on each world's page: **"Eye of Ender keeps
+inventory"**.
+- Turning it on sets that world's `keepInventory` rule on and installs the pack's charm.
+- In the rules editor, `keepInventory` then shows **"managed by the Eye of Ender charm"**
+  rather than a free switch, so the two can't contradict each other.
+- With the switch off, the world behaves exactly like vanilla.
+
+**Why an Eye of Ender:** it costs an Ender Pearl plus Blaze Powder, so it's earned. Eyes
+are also needed to find and fill the End portal, so spending them on safety is a real
+choice.
+
+**Checks first (M0b, needs a player):**
+- With `keepInventory` on, the inventory is readable and writable at `entityDie`.
+- `spawnItem` keeps enchantments, names and durability.
+- XP can be read and reset there.
+
+**Tests:**
+- Eye present: one consumed, everything else kept, the tricorder kept.
+- No eye: everything dropped at the spot except the tricorder, vanishing items gone.
+- Two deaths with one eye: the first keeps, the second drops.
+- An eye in the off-hand or a shulker box: the off-hand counts; inside a shulker box it
+  does not (the rule is "in your inventory").
+- Pack disabled: everyone keeps (fail-safe).
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
@@ -1142,6 +1204,7 @@ and launcher tricks. The rules that keep it true:
 | The Dave quick menu (M7, optional) | a server form | ✅ |
 | Replies | `tellraw` chat, private to the asker | ✅ |
 | `guide_me` compass | actionbar text, refreshed by the server | ✅ |
+| Eye of Ender charm (M10) | ordinary death and drops; the eye vanishes; a chat line on respawn | ✅ |
 | Tricorder v1 (M9) | a renamed vanilla spyglass; actionbar arrow while held | ✅ |
 | Tricorder v2 (M9, optional) | a custom item; needs a server-pushed resource pack | ⚠️ the owner chooses (download prompt on join) |
 | Waypoint markers in the world (optional) | vanilla particles at a spot, visible only to the asker | ✅ |
@@ -1202,7 +1265,10 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
 
 1. **Achievements**: M0 reports what the pack does to achievements on this world, for the
    record. The owner has already accepted the add-on.
-2. **Per-player keep inventory: undecided (owner, 2026-10-10).** Bedrock's `keepInventory`
+2. **Per-player keep inventory: DECIDED → the Eye of Ender charm (M10, owner,
+   2026-10-10).** A player keeps their inventory on death if they carry an Eye of Ender,
+   and one eye is used up. The tricorder is always kept. The approach below is the one
+   M10 uses. Bedrock's `keepInventory`
    is a world-wide game rule, so a per-player version needs the M5 add-on. The approach
    worked out, recorded for if it's chosen:
    - Turn `keepInventory` on for the whole world. When a player who is **not** on the keep
