@@ -261,6 +261,21 @@ container must already reach the internet **outbound** anyway: BDS checks each p
 Live sign-in (`online-mode`) and downloads its own updates. So its network can't be
 `internal: true`.
 
+**Cloudflare-native routes were checked (2026-10-10), and none of them fits.**
+
+| Route | Why it doesn't fit |
+|---|---|
+| Tunnel public hostname | Carries HTTP/HTTPS only. TCP needs `cloudflared` on the client, and UDP isn't offered. |
+| Tunnel + WARP private routing | Carries UDP, but every player has to run the WARP app. The owner rejected that. |
+| Spectrum | Not on the Free plan. Pro and Business get one "Minecraft" app, which is the Java/TCP protocol. Generic UDP, which Bedrock needs, is an **Enterprise paid add-on**. Spectrum also proxies *to* the origin's public IP, so the box would still need an inbound path. It doesn't remove the forward or the relay. |
+| Proxied (orange-cloud) DNS | Only HTTP ports are proxied. |
+| SRV record (to hide the port) | Bedrock ignores SRV records; only Java Edition reads them. |
+
+So Cloudflare's role is **the name**: `mc.hopkinsbrain.com`. It is either a DNS-only record
+pointing at the home IP (path 1), or a CNAME to the relay's hostname (path 2). Either way the
+brothers type `mc.hopkinsbrain.com` and never see an IP. With the relay, they also type the
+port the relay assigns.
+
 Inbound reachability is set up by a **reachability helper** in the wrapper. It is driven from
 **Ops → Minecraft → Internet play**, and it picks the first path that works:
 
@@ -272,10 +287,10 @@ Inbound reachability is set up by a **reachability helper** in the wrapper. It i
    address an outside echo reports, then a forward can't work and it goes straight to the
    relay. UPnP discovery is multicast on the LAN, so it needs the same host-network reach as
    LAN discovery (M0 item 3).
-   - **Address**: the box keeps a **DNS-only** (grey-cloud) record such as `mc.<domain>`
+   - **Address**: the box keeps a **DNS-only** (grey-cloud) record such as `mc.hopkinsbrain.com`
      pointed at the home IP, through the Cloudflare API, with a scoped token entered in the
      PWA. The record is updated whenever the IP changes. The brothers type
-     `mc.<domain>`, port `19132`.
+     `mc.hopkinsbrain.com`, port `19132`.
    - If UPnP is off on the router, the card says so. The owner can either turn on UPnP in the
      router's own app or add one manual forward rule. Both are router steps, not box steps.
      Or the owner can choose the relay.
