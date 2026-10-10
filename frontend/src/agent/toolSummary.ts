@@ -202,6 +202,22 @@ const STEP_LABELS: Record<string, string> = {
   moltbook_social: "Managed Moltbook follows",
   moltbook_profile_update: "Updated its Moltbook profile",
   jmolt_observe: "Observed jmolt",
+  // Minecraft_Dave — the family Bedrock server and one player's goals, log and memory
+  mc_player: "Checked the chat's player",
+  mc_server_status: "Checked the server",
+  mc_players: "Listed the players",
+  mc_play_history: "Checked play history",
+  mc_world_info: "Checked the world",
+  mc_locate: "Searched for the nearest",
+  mc_goals: "Read the goals",
+  mc_goal_create: "Added a goal",
+  mc_goal_update: "Updated a goal",
+  mc_log: "Logged progress",
+  mc_log_read: "Read the progress log",
+  mc_memory_read: "Read memory",
+  mc_memory_add: "Remembered a fact",
+  mc_memory_replace: "Corrected a memory",
+  mc_memory_remove: "Forgot a memory",
 };
 
 export function stepLabel(name: string): string {
@@ -328,6 +344,16 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   moltbook_social: ["action", "name"],
   moltbook_profile_update: ["bio"],
   jmolt_observe: ["action", "filename"],
+  mc_player: ["gamertag"],
+  // The Bedrock id ("mansion", "cherry_grove") is what "the nearest one" was.
+  mc_locate: ["id"],
+  mc_goals: ["status"],
+  mc_goal_create: ["title"],
+  mc_goal_update: ["status", "title"],
+  mc_log: ["text"],
+  mc_memory_add: ["text"],
+  mc_memory_replace: ["text"],
+  mc_memory_remove: ["text"],
 };
 
 // Tools with nothing legible to put on the row — every argument is an opaque id,
@@ -374,6 +400,13 @@ const NO_INLINE: ReadonlySet<string> = new Set([
   "moltbook_vote",
   "spawn_subagent",
   "decompose_research",
+  // Minecraft reads with no argument, or only a number (days, a limit, a goal number)
+  "mc_server_status",
+  "mc_players",
+  "mc_play_history",
+  "mc_world_info",
+  "mc_log_read",
+  "mc_memory_read",
 ]);
 
 // A tool not registered above (a future addition that missed the roster gate, or

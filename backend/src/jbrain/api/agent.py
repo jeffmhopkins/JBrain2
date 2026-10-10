@@ -33,6 +33,7 @@ from jbrain.agent import history_replay
 from jbrain.agent.agents import (
     CITES_COMPUTATIONS,
     DEEP_RESEARCH_TOOL,
+    MINECRAFT_DAVE_AGENT,
     SPAWN_TOOL,
     AgentProfile,
     agent_for_owner_reply,
@@ -68,6 +69,7 @@ from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
+from jbrain.agent.minecrafttools import chat_intro as minecraft_chat_intro
 from jbrain.agent.plantools import format_plan_results
 from jbrain.agent.prefstools import with_standing_instructions
 from jbrain.agent.readtools import (
@@ -272,6 +274,24 @@ class ChatRequest(BaseModel):
         reply path asks it before appending anything to the owner's note as source text.
         """
         return not (self.proposal_outcome or self.deferred_outcome)
+
+
+MINECRAFT_INTRO_FALLBACK = "## This chat\nCall mc_player to see whose chat this is."
+
+
+async def _minecraft_intro(request: Request, owner_ctx: SessionContext, session_id: str) -> str:
+    """Minecraft_Dave's chat intro, or a line pointing at `mc_player` if it can't be read —
+    never a failed turn, since the tools read the same data on demand."""
+    try:
+        return await minecraft_chat_intro(
+            request.app.state.session_maker,
+            get_settings_store(request),
+            owner_ctx,
+            session_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — see above: degrade, don't fail the turn
+        log.warning("minecraft_dave.intro_failed", error=repr(exc))
+        return MINECRAFT_INTRO_FALLBACK
 
 
 async def _standing_instructions(request: Request, owner_ctx: SessionContext) -> list[str]:
@@ -1071,6 +1091,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     profile = agent_for_owner_reply(session.agent)
     read_scopes = session.domain_scopes if profile.reads_knowledge_base else ()
 
+    # Minecraft_Dave starts every turn knowing whose chat it is, and that player's memory
+    # and open goals as the chat began (MINECRAFT_BEDROCK_PLAN.md §P1; snapshotted, so the
+    # system prompt stays byte-stable for the prefix cache). Best-effort, unlike the note
+    # persona's standing instructions below: the tools read the same things on demand, so
+    # a failed read degrades to "call mc_player" rather than a 503.
+    if session.agent == MINECRAFT_DAVE_AGENT:
+        intro = await _minecraft_intro(request, owner_ctx, str(session.id))
+        profile = replace(profile, prompt=f"{profile.prompt}\n\n{intro}")
     # D15: the owner's standing instructions go into EVERY note conversation's system
     # prompt, ahead of the note. `analysis/converse.py` does it for the unattended pass,
     # and this is the other half — which was missing, with a sharp consequence: the

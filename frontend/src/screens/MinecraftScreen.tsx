@@ -48,6 +48,7 @@ import {
   updateRunning,
 } from "../minecraft";
 import { useForeground } from "../visibility";
+import { DaveSection } from "./MinecraftDave";
 import { AllowlistSection, ServerSettingsSection } from "./MinecraftServerSettings";
 import { WorldModals } from "./MinecraftWorldSheets";
 import {
@@ -91,7 +92,12 @@ function errorMessage(err: unknown): string {
 
 const initial = (tag: string) => (tag[0] ?? "?").toUpperCase();
 
-export function MinecraftScreen() {
+export function MinecraftScreen({
+  onOpenSession,
+}: {
+  /** Opens a chat the screen just started (Ask Minecraft_Dave) on the chat surface. */
+  onOpenSession?: (sessionId: string, agent: string) => void;
+} = {}) {
   const foreground = useForeground();
   const [status, setStatus] = useState<MinecraftStatus | null>(null);
   const [statusSeq, setStatusSeq] = useState(0);
@@ -448,6 +454,8 @@ export function MinecraftScreen() {
               nowMs={now}
               onOpen={setSheetXuid}
             />
+
+            <DaveSection onOpenSession={onOpenSession} />
 
             <StatsSection available={players?.stats_available ?? false} />
 

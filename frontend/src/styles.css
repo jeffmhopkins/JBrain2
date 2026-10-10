@@ -12949,6 +12949,16 @@ button.small {
   background: var(--green-tint);
   color: var(--green);
 }
+/* Minecraft_Dave takes the Minecraft screen's go-green (grass), with its text token. */
+.sheet .agent-opt.minecraft_dave.on {
+  border-color: var(--green);
+  background: var(--green-tint);
+}
+.sheet .agent-opt.minecraft_dave.on .agent-opt-ico,
+.sheet .agent-opt.minecraft_dave.on .agent-opt-check {
+  background: var(--green-tint);
+  color: var(--ok-text);
+}
 .sheet .reads-summary.agent-nodata {
   margin-top: calc(12px * var(--font-scale));
   padding: calc(12px * var(--font-scale));
@@ -31155,6 +31165,15 @@ button.wf-sigpill {
 }
 
 .mc-navmeta.bad {
+  color: var(--danger-text);
+}
+
+/* Minecraft_Dave's card: the Ask row over the gamertag field, one rule between. */
+.mc-dave-tag {
+  border-top: 1px solid var(--border);
+}
+
+.mc-note.mc-bad {
   color: var(--danger-text);
 }
 

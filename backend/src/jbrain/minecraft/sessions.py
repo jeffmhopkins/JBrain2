@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,6 +32,16 @@ log = structlog.get_logger(__name__)
 
 POLL_SECONDS = 5.0
 _OWNER = SessionContext(principal_kind="owner")
+
+
+# Xbox gamertags: letters, digits and spaces, with the modern `#1234` suffix.
+_GAMERTAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ]{0,15}(#\d{1,4})?$")
+
+
+def check_gamertag(raw: str) -> str | None:
+    """A gamertag with its spacing normalized, or None when it can't be one."""
+    tag = " ".join(str(raw).split())
+    return tag if _GAMERTAG.match(tag) else None
 
 
 def player_key(xuid: str, name: str) -> str:
@@ -214,11 +225,14 @@ PLAYERS_SQL = text(
 
 
 async def players(
-    maker: async_sessionmaker[AsyncSession], online: dict[str, float]
+    maker: async_sessionmaker[AsyncSession],
+    online: dict[str, float],
+    *,
+    ctx: SessionContext = _OWNER,
 ) -> list[dict[str, Any]]:
     """Per-player totals. `online` maps xuid → join time from the live server, which
     is the authority on who is on right now; the table is the authority on history."""
-    async with scoped_session(maker, _OWNER) as s:
+    async with scoped_session(maker, ctx) as s:
         rows = (await s.execute(PLAYERS_SQL, {"online": list(online)})).mappings().all()
     now = datetime.now(UTC).timestamp()
     out = []

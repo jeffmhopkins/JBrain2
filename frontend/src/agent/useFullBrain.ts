@@ -107,7 +107,7 @@ export type ConvMode = "research" | "fullbrain" | "entry";
  * `analysis/converse.py`, AGENT_INGEST_CONVERSATION_PLAN.md W2) and a person never
  * starts one by hand. */
 const MODE_AGENTS: Record<ConvMode, readonly string[]> = {
-  research: ["jerv", "teacher", "archivist", "jmolt_observer"],
+  research: ["jerv", "teacher", "archivist", "jmolt_observer", "minecraft_dave"],
   fullbrain: ["curator"],
   entry: ["note_ingest"],
 };
@@ -146,7 +146,7 @@ export function readsNotes(agent: string | undefined): boolean {
  * backend refuses it as well (`agents.ENGINE_ONLY_PERSONAS`), so offering it here
  * would only be a button that 422s. */
 const NEW_AGENT_OPTIONS: Record<ConvMode, readonly string[]> = {
-  research: ["jerv", "teacher", "archivist", "jmolt_observer"],
+  research: ["jerv", "teacher", "archivist", "jmolt_observer", "minecraft_dave"],
   fullbrain: ["curator"],
   // Entry's conversations are the ingest engine's; there is nothing to start here.
   entry: [],

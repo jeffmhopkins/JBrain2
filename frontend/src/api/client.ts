@@ -791,6 +791,9 @@ export interface AppSettings {
    * "my traffic" mean anything in an APRS log that is mostly other people. A filter,
    * never an identity — a callsign is plain bytes on the air and forges trivially. */
   owner_callsign: string | null;
+  /** The owner's own Minecraft gamertag, or null when unset. A new Minecraft_Dave chat
+   * starts out about this player; the chat can still switch to anyone else. */
+  minecraft_gamertag: string | null;
   // Stream real prompt/answer text to the on-box wall display (:8800). OFF by
   // default — it puts owner text on the unauthenticated display, so only turn it on
   // for a display bound to the box's own monitor / localhost.

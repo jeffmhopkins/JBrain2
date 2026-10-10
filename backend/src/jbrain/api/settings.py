@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from jbrain.api.deps import PrincipalDep
 from jbrain.api.notes import ctx_for
 from jbrain.llm import local_catalog
+from jbrain.minecraft.sessions import check_gamertag
 from jbrain.settings_store import (
     BRAIN_ANSWER_CHORUS_DEFAULT,
     BRAIN_ANSWER_CHORUS_KEY,
@@ -42,6 +43,7 @@ from jbrain.settings_store import (
     LOCAL_LLM_AUTO_UPDATE_KEY,
     LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT,
     LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY,
+    MINECRAFT_GAMERTAG_KEY,
     OWNER_CALLSIGN_KEY,
     OWNER_TIMEZONE_KEY,
     SqlSettingsStore,
@@ -63,6 +65,7 @@ class SettingsOut(BaseModel):
     # The owner's IANA display timezone, or null when unset (server times = UTC).
     owner_timezone: str | None = None
     owner_callsign: str | None = None
+    minecraft_gamertag: str | None = None
     # Stream real prompt/answer text to the on-box wall display (:8800). OFF by
     # default — see BRAIN_LLM_STREAM_KEY: it puts owner text on the unauthenticated
     # display, so only enable it for a localhost-bound / box-monitor-only display.
@@ -137,6 +140,7 @@ class SettingsPatch(BaseModel):
     image_analysis_mode: Literal["full", "ocr"] | None = None
     owner_timezone: str | None = None
     owner_callsign: str | None = None
+    minecraft_gamertag: str | None = None
     brain_llm_stream: bool | None = None
     brain_read_aloud: bool | None = None
     # A voice id from the live installed picker; bounded so a junk value can't bloat the
@@ -190,6 +194,7 @@ async def _read(ctx, store: SqlSettingsStore, kv_prefix: object = None) -> Setti
         image_analysis_mode=await store.image_analysis_mode(ctx),
         owner_timezone=await store.owner_timezone(ctx),
         owner_callsign=await store.owner_callsign(ctx),
+        minecraft_gamertag=await store.minecraft_gamertag(ctx),
         brain_llm_stream=await store.brain_llm_stream(ctx),
         brain_read_aloud=await store.brain_read_aloud(ctx),
         brain_answer_voice=await store.brain_answer_voice(ctx),
@@ -233,6 +238,13 @@ async def update_settings(
         # radio rather than as a typo. Empty clears it, which is a real state — "my
         # traffic" is then uncomputable and the radio screen says so.
         await store.upsert(ctx, OWNER_CALLSIGN_KEY, _clean_callsign(body.owner_callsign) or "")
+    if body.minecraft_gamertag is not None:
+        # Refused rather than cleaned, like the callsign: a quietly altered gamertag would
+        # bind every new Minecraft_Dave chat to a player who doesn't exist. Empty clears it.
+        tag = " ".join(body.minecraft_gamertag.split())
+        if tag and check_gamertag(tag) is None:
+            raise HTTPException(status_code=422, detail="that is not a gamertag")
+        await store.upsert(ctx, MINECRAFT_GAMERTAG_KEY, tag)
     if body.brain_llm_stream is not None:
         await store.upsert(ctx, BRAIN_LLM_STREAM_KEY, body.brain_llm_stream)
     if body.browse_loop is not None:

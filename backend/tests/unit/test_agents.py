@@ -42,7 +42,7 @@ from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import NEVER_DEFAULT, RegisteredTool, ToolRegistry
 
 
-def test_eighteen_agents_are_defined() -> None:
+def test_nineteen_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -64,6 +64,7 @@ def test_eighteen_agents_are_defined() -> None:
                 "jmolt",
                 "jmolt_observer",
                 "note_ingest",
+                "minecraft_dave",
             }
         )
         == AGENT_NAMES
@@ -945,6 +946,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "agent-jmolt-observer-v1",
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
+        "minecraft_dave": (
+            "agent-minecraft-dave-v1",
+            "46aced48866148eb0a468d829cff23fabab229172e5d79e8cfc14218780ad5cc",
+        ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —
         # "only what he said that became the note's text" — has a different, much larger
@@ -1033,3 +1038,22 @@ def test_cites_computations_matches_the_prompts() -> None:
         if "Cite a figure from this result" in profile.prompt
     }
     assert defines_marker == CITES_COMPUTATIONS
+
+
+def test_minecraft_dave_is_closed_kb_less_and_has_its_tools_and_the_web() -> None:
+    """Minecraft_Dave (MINECRAFT_BEDROCK_PLAN.md §P1): world text is player-authored and
+    it holds web_fetch, so it must never read the owner's notes — a closed allowlist
+    with no knowledge tool, and no KB."""
+    from jbrain.agent.agents import MINECRAFT_DAVE_TOOLS
+    from jbrain.agent.readtools import OPTIONAL_MINECRAFT_TOOLS
+
+    dave = AGENTS["minecraft_dave"]
+    assert dave.reads_knowledge_base is False
+    assert dave.tools == MINECRAFT_DAVE_TOOLS
+    assert {"web_search", "web_fetch"} <= MINECRAFT_DAVE_TOOLS
+    assert OPTIONAL_MINECRAFT_TOOLS <= MINECRAFT_DAVE_TOOLS
+    assert not MINECRAFT_DAVE_TOOLS & {"search_notes", "get_note", "spawn_subagent"}
+    # Every mc_* tool is web-classed, so curator's wildcard can never absorb one.
+    for name in OPTIONAL_MINECRAFT_TOOLS:
+        assert load_tool(TOOLS_DIR / f"{name}.tool").spec.permission == "web", name
+    assert "untrusted_external_data" in dave.prompt

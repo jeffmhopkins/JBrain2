@@ -451,6 +451,10 @@ class FakeSettingsStore:
         call = self.values.get("owner_callsign")
         return call.strip().upper() if isinstance(call, str) and call.strip() else None
 
+    async def minecraft_gamertag(self, ctx: object) -> str | None:
+        tag = self.values.get("minecraft_gamertag")
+        return tag.strip() if isinstance(tag, str) and tag.strip() else None
+
     async def image_analysis_mode(self, ctx: object) -> str:
         mode = self.values.get("image_analysis_mode", "full")
         return mode if mode in ("full", "ocr") else "full"

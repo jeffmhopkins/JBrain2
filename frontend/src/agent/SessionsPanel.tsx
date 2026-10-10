@@ -91,6 +91,14 @@ const AGENTS: AgentChoice[] = [
     note: "Reads only jmolt's own record and can act on nothing. No access to your notes or other data.",
     hint: "watches jmolt, changes nothing",
   },
+  {
+    id: "minecraft_dave",
+    label: "Minecraft_Dave",
+    desc: "Your helper on the family Minecraft server — who's on, each player's goals, progress and memory, and web lookups.",
+    readsKb: false,
+    note: "Reads the Minecraft server and its own player records. No access to your notes or other data.",
+    hint: "the Minecraft server, not your notes",
+  },
 ];
 const agentById = (id: string): AgentChoice => AGENTS.find((a) => a.id === id) ?? CURATOR_AGENT;
 

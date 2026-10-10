@@ -308,6 +308,42 @@ describe("SessionsPanel", () => {
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(created));
   });
 
+  it("offers Minecraft_Dave in Research as a no-data agent", async () => {
+    const created = session({ id: "d", title: "", domain_scopes: [], agent: "minecraft_dave" });
+    const onCreate = vi.fn(async (_body: SessionCreate) => created);
+    render(
+      <SessionsPanel
+        sessions={[]}
+        agentOptions={["jerv", "teacher", "archivist", "jmolt_observer", "minecraft_dave"]}
+        onOpen={vi.fn()}
+        onCreate={onCreate}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("＋ New chat"));
+    const dave = screen.getByRole("button", { name: /Minecraft_Dave/ });
+    expect(dave).toHaveTextContent(/family Minecraft server/);
+    fireEvent.click(dave);
+    expect(dave).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Everything" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start/ })).toHaveTextContent(
+      "the Minecraft server, not your notes",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Start/ }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({
+        domain_scopes: [],
+        title: "",
+        agent: "minecraft_dave",
+      }),
+    );
+  });
+
   it("a single-agent tab (Full Brain → Curator) shows the scope dial and no picker", () => {
     render(
       <SessionsPanel
