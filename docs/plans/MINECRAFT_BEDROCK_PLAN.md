@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1158,6 +1158,43 @@ Also open:
 - whether a gate can be re-linked;
 - whether more than two gates can share a network (a hub);
 - whether mobs and items travel.
+
+### M13 — The laser cannon: a beam weapon (owner idea, 2026-10-10; details open)
+
+**Yes, it's doable on stable APIs, with nothing for players to install** beyond the join
+download (§3c rule 2). A beam is a **hitscan**: an instant line, not a flying projectile.
+- **The item:** `jbrain:laser_cannon`, a custom item with its own icon from the join
+  download. It's held like a tool, with a cooldown so it can't machine-gun.
+- **Firing** (`world.afterEvents.itemUse`):
+  - The script traces the player's aim with `getEntitiesFromViewDirection` and
+    `getBlockFromViewDirection` (both stable, up to e.g. 48 blocks).
+  - It hits the **first** mob in the line, unless a block is nearer, which stops the
+    beam.
+  - Damage is applied with `entity.applyDamage(n, {cause, damagingEntity: player})`, so
+    kills count as the player's and mobs drop loot as normal.
+- **The beam:** a line of particles from the muzzle to the hit, drawn in the same tick
+  with `dimension.spawnParticle`. It uses a red beam particle and a zap sound from the
+  join download, with vanilla particles as the fallback. There's a small spark burst at
+  the hit.
+- **Charge shot (optional):** `itemStartUse` and `itemReleaseUse` (stable). Holding
+  charges the shot (shown on the actionbar), and letting go fires a stronger, wider beam.
+- **Rules it obeys:**
+  - **Players** are only hit when the world's `pvp` rule is on. Otherwise the beam passes
+    through them.
+  - **Blocks are never broken** by default. An owner option allows lighting fires or
+    breaking soft blocks, and it obeys `mobGriefing`.
+  - **No hits through walls:** the block trace stops the beam.
+- **Spike first:** the hit and particle timing on Xbox, that `applyDamage` credits kills
+  and loot, and the cost of drawing the particle line with 4 players firing.
+
+**Open (owner):**
+1. **Ammo or energy:** Power Packs (M10, for example one pack = 20 shots, on a charge
+   meter), or Redstone, or no ammo but a long cooldown.
+2. **How strong:** roughly a diamond sword (7 damage) per shot, or a bow-and-arrow-ish 4,
+   with the charge shot up to double.
+3. **The recipe:** for example a Power Pack + a Beacon? + iron and redstone. It's
+   end-game like the gates, or mid-game.
+4. **PvP at all**, even on worlds where `pvp` is on (kids' worlds)?
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
