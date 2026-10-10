@@ -13,13 +13,15 @@ token — snapshots are listed, not downloaded, the same rule as `/debug/backup`
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api.deps import DebugDep, SettingsDep
 from jbrain.minecraft import client as mc
+from jbrain.minecraft import travel
 
 router = APIRouter(prefix="/debug/minecraft")
 
@@ -202,3 +204,34 @@ async def minecraft_probe_pack(
     return await _sidecar(
         settings, "POST", "/probe-pack", json={"install": body.install}, timeout_s=120
     )
+
+
+# Read-only views of the world slots and the travel log (§3a, M2/M3, T1), so setting up
+# and debugging them doesn't need the owner's phone. Changing worlds stays owner-only.
+_SLOT = r"^slot\d+$"
+
+
+@router.get("/worlds")
+async def minecraft_worlds(request: Request, settings: SettingsDep, _p: DebugDep) -> dict[str, Any]:
+    request.state.debug_detail = "minecraft worlds"
+    return await _sidecar(settings, "GET", "/worlds")
+
+
+@router.get("/worlds/{slot}/rules")
+async def minecraft_world_rules(
+    slot: Annotated[str, Path(pattern=_SLOT)],
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+) -> dict[str, Any]:
+    request.state.debug_detail = f"minecraft rules {slot}"
+    return await _sidecar(settings, "GET", f"/worlds/{slot}/rules")
+
+
+@router.get("/travel")
+async def minecraft_travel(request: Request, _p: DebugDep) -> dict[str, Any]:
+    """Counts per world and player — samples, chunks explored, deaths, first and last
+    sample — enough to see the travel log recording, without handing out trails."""
+    request.state.debug_detail = "minecraft travel summary"
+    maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
+    return {"players": await travel.summary(maker)}

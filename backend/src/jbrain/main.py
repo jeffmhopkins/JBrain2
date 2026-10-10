@@ -198,6 +198,7 @@ from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.media import ffmpeg_available
 from jbrain.minecraft.changelog import Changelog as MinecraftChangelog
 from jbrain.minecraft.sessions import SessionDrain, run_session_drain
+from jbrain.minecraft.travel import TrackDrain, run_track_drain
 from jbrain.models.images import GeneratedImageRepo
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.notes.repo import SqlNotesRepo
@@ -1517,6 +1518,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # join/leave events into app.mc_player_sessions, so play time is recorded
         # whether or not the screen is open. A stopped server is a quiet no-op.
         minecraft_drain_task = asyncio.create_task(run_session_drain(SessionDrain(maker, settings)))
+        # The travel log (§T1): position samples into trails and per-player fog of war,
+        # recorded from now so the maps (M8) and timeline (M8a) have history to draw.
+        minecraft_track_task = asyncio.create_task(run_track_drain(TrackDrain(maker, settings)))
         # jmolt's integrity watch (W4): the tamper watch diffing the public profile against
         # the outbox ledger (M21) and account-state surfacing with auto-pause on suspension
         # (M22). A slow loop under a non-jmolt owner context; engages the kill (M6) + reverts
@@ -1669,6 +1673,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         aprs_log_loop_task.cancel()
         aprs_backfill_task.cancel()
         minecraft_drain_task.cancel()
+        minecraft_track_task.cancel()
         jmolt_integrity_loop_task.cancel()
         await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()

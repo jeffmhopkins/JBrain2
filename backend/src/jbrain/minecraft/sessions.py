@@ -15,6 +15,7 @@ start_event_id)` and a leave closes only sessions that began before it.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -95,6 +96,7 @@ class SessionDrain:
     async def apply(s: AsyncSession, boot: str, e: dict[str, Any]) -> None:
         at = _ts(float(e["at"]))
         kind = e.get("kind")
+        await _timeline(s, boot, e, at)
         if kind == "join":
             key = player_key(str(e.get("xuid", "")), str(e.get("name", "")))
             # A join with no leave before it (a dropped connection BDS never logged)
@@ -139,6 +141,59 @@ class SessionDrain:
                 ),
                 {"boot": boot, "at": at},
             )
+
+
+# What the travel log's timeline marks (§T1). Events from a sidecar older than T1 carry
+# no `world`; they are the original world's, which is slot 1's folder.
+TIMELINE_KINDS = ("join", "leave", "death", "respawn")
+_DETAIL_KEYS = ("cause", "killer")
+
+
+async def _timeline(s: AsyncSession, boot: str, e: dict[str, Any], at: datetime) -> None:
+    kind = e.get("kind")
+    world = str(e.get("world") or "world")
+    if kind == "world_replaced":
+        # Its terrain is gone, so is the history that walked it. The marker itself is
+        # kept: it stops samples of the old terrain that drain late from returning.
+        for table in ("mc_player_track", "mc_player_explored"):
+            column = "last_seen" if table == "mc_player_explored" else "at"
+            await s.execute(
+                text(f"DELETE FROM app.{table} WHERE world = :w AND {column} <= :at"),
+                {"w": world, "at": at},
+            )
+        await s.execute(
+            text(
+                "DELETE FROM app.mc_player_events"
+                " WHERE world = :w AND at <= :at AND kind <> 'world_replaced'"
+            ),
+            {"w": world, "at": at},
+        )
+    elif kind not in TIMELINE_KINDS:
+        return
+    coords = {k: float(e[k]) if isinstance(e.get(k), (int, float)) else None for k in "xyz"}
+    await s.execute(
+        text(
+            "INSERT INTO app.mc_player_events"
+            " (world, xuid, gamertag, boot_id, event_id, at, kind, dim, x, y, z, detail)"
+            " VALUES (:world, :key, :name, :boot, :eid, :at, :kind, :dim, :x, :y, :z,"
+            " CAST(:detail AS jsonb))"
+            " ON CONFLICT (boot_id, event_id) DO NOTHING"
+        ),
+        {
+            "world": world,
+            "key": player_key(str(e.get("xuid", "")), str(e.get("name", "")))
+            if kind != "world_replaced"
+            else "",
+            "name": str(e.get("name", "")),
+            "boot": boot,
+            "eid": int(e["id"]),
+            "at": at,
+            "kind": kind,
+            "dim": e.get("dim") if isinstance(e.get("dim"), str) else None,
+            **coords,
+            "detail": json.dumps({k: e[k] for k in _DETAIL_KEYS if isinstance(e.get(k), str)}),
+        },
+    )
 
 
 PLAYERS_SQL = text(

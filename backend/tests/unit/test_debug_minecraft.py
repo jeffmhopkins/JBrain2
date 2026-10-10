@@ -209,3 +209,34 @@ async def test_a_supervisor_transport_error_becomes_a_503() -> None:
     with pytest.raises(HTTPException) as exc:
         await mc_client.container(req, SETTINGS)
     assert exc.value.status_code == 503 and "supervisor unreachable" in str(exc.value.detail)
+
+
+async def test_worlds_and_rules_are_read_only_views_of_the_sidecar(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = httpx.Response(200, json={"slots": [{"id": "slot1"}]})
+    req = _request(FakeSupervisor([]))
+    assert (await mc.minecraft_worlds(req, SETTINGS, PRINCIPAL))["slots"][0]["id"] == "slot1"
+    await mc.minecraft_world_rules("slot2", req, SETTINGS, PRINCIPAL)
+    assert [(r.method, r.url.path) for r in seen] == [
+        ("GET", "/worlds"),
+        ("GET", "/worlds/slot2/rules"),
+    ]
+    # Read-only by construction: the debug router has no world-changing routes.
+    paths = {
+        (m, getattr(r, "path", "")) for r in mc.router.routes for m in getattr(r, "methods", ())
+    }
+    assert not any("/worlds" in p and m != "GET" for m, p in paths)
+
+
+async def test_travel_reports_the_log_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def summary(_maker: Any) -> list[dict[str, Any]]:
+        return [{"world": "world", "samples": 3}]
+
+    monkeypatch.setattr(mc.travel, "summary", summary)
+    req: Any = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=object())),
+        state=SimpleNamespace(),
+    )
+    out = await mc.minecraft_travel(req, PRINCIPAL)
+    assert out == {"players": [{"world": "world", "samples": 3}]}
+    assert req.state.debug_detail == "minecraft travel summary"
