@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -196,9 +196,23 @@ change.
   including synthetic leaves when the server stops; `GET /version` (cached Mojang lookup);
   and `POST /update` (snapshot first, a failed snapshot installs nothing, then install
   and restart). All are on the debug router too.
+- **The script bridge works (item 5 ✅, `6384ddb`, 2026-10-10).** With the probe pack
+  installed through `/probe-pack`:
+  - The pack loaded with **no experiments**. BDS logged `Pack Stack - [00] JBrain probe`
+    on stable `@minecraft/server` 2.0.0.
+  - `console.log` reaches the server console as `[Scripting] [jbrain-probe] …`, which is
+    the return channel.
+  - `scriptevent jb:q {"id":1,"ask":"nearest pig"}` sent on stdin was echoed by the script
+    **in about 1 ms with the JSON intact**, which is the inbound channel.
+  - The **`jb:dave` custom command registered** for all players.
+  - **`world.afterEvents.chatSend` is NOT available on stable**, so plain-chat "Dave, …"
+    can't be caught without the Beta APIs experiment. **`/jb:dave <question>` is the way
+    to ask** (a decision for M5; everyone types, so it costs little).
+  - Still needing a player: running `/jb:dave` from a client, and whether a dead player's
+    inventory is readable at `entityDie` (the keep-inventory question).
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
-  LAN Games), memory under play, the script bridge, the parser, map and biome inputs, and
-  the vanilla-client checks.
+  LAN Games), `/jb:dave` from a client, the inventory-at-death read, memory under play, the
+  parser, map and biome inputs, and the vanilla-client checks.
 
 **First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
 random seed that `/properties` and `level.dat` record. The known-seed checks can set
@@ -268,7 +282,42 @@ scheduled.
 - **On by default (owner decision, 2026-10-10, built in M0a)**: the service has no profile,
   so the first **Ops → Update** after merge creates and starts it. Start and stop are the
   existing supervisor routes, which Ops already shows for every container.
-**What M1 adds: a Minecraft card in Ops** (owner requests, 2026-10-10). Everything on it is
+**M1 is built (2026-10-10).** The GUI gate chose **variant B**, with C's player table
+(binding mock `../mocks/minecraft-ops/b-dedicated-screen.html`; three variants, an
+independent rendered review, and a revision before the owner chose). What shipped:
+
+- **The Minecraft screen.** A card-launcher tile under SYSTEM, plus an Ops shortcut row
+  that doubles as the glance: who's on, or "update available · X — newer clients can't
+  join".
+- **The owner API** (`/api/minecraft`): status, version with release notes,
+  start/stop/restart, update, settings, players, retry-install.
+- **Start/Stop/Restart act on the game server inside the container**, so status, server
+  facts and updates keep working while it is stopped, and a stop is remembered across
+  reboots.
+- **Update Minecraft**: backup first, then install, restart, and a real **rollback**.
+  If the new version doesn't log "Server started." within 2 minutes, the old version is
+  reinstalled and the world restored from the backup. A stopped server stays stopped.
+- **Auto-update**: a setting, off by default. With it on and Mojang having something
+  newer, the screen's Start and Restart run the same backed-up update, as their confirm
+  says, and a container boot backs the world up cold before installing. With it off, a
+  start keeps the installed version. Automatic backups are pruned to the newest 10; the
+  owner's own snapshots are never pruned.
+- **One lifecycle at a time.** First-boot install, Start/Stop/Restart, an update and the
+  probe pack share one lock. A Start that arrives mid-install is recorded and acted on
+  by the install, and a stopped server's status stays readable throughout.
+- **Every install is verified.** A download that fails reads as `failed` ("still on
+  X"), never as `done`. If the old version can't be reinstalled during a rollback, the
+  server is left **stopped** (`run` off) rather than crash-looping the broken one.
+- **Release notes** matched to Mojang's changelog article. The first 4 bullets are quoted
+  verbatim, under the article's title.
+- **Play history** in `app.mc_player_sessions` (owner-only RLS), drained from the
+  sidecar's join/leave events. Replay-safe, closed at the last heartbeat on a crash, and
+  keyed by xuid.
+- **Warnings on every path that stops the server.** The service-list Stop/Restart for
+  `minecraft` and Ops' "Restart all" warn when players are online.
+
+**What M1 adds: a Minecraft card in Ops** (owner requests, 2026-10-10; the spec as
+designed). Everything on it is
 also reachable over the debug router (§3a).
 
 - **Lifecycle**: the state (`installing` / `running` / `stopped` / `install_failed` with its
@@ -521,14 +570,12 @@ house by typing the address.
   installed by the wrapper into each slot that has Dave enabled, at the moment that slot is
   loaded. That covers new, imported, and reset worlds without any manual step. It uses only
   stable APIs, as confirmed in M0.
-- **Inbound (player asks)**: a chat message addressed to the companion by name, such as
-  `Dave, where's the nearest pig?` or `@dave …`, if M0 finds a stable chat event.
-  `/dave <question>`, a custom command namespaced as `jb:dave`, is always registered and is
-  enough on its own. Every player types, the family's Xboxes included, since they have
-  keyboards (owner, 2026-10-10). The
-  name is a **setting**, not a constant: the script reads it from a value the wrapper pushes
-  through `scriptevent`, so renaming needs no pack rebuild. The script
-  logs one structured line carrying the asker, the text, and the asker's position, dimension
+- **Inbound (player asks)**: `/jb:dave <question>` (M0b: there is no stable chat event, so
+  plain-chat `Dave, …` would need the Beta APIs experiment, which is refused). Every player
+  types, the family's Xboxes included, since they have keyboards (owner, 2026-10-10). The
+  companion's name is a **setting**. Custom commands are registered once, at server
+  startup, so the wrapper writes the name into the pack's config before starting BDS.
+  Renaming is a restart, not a pack rebuild. The script logs one structured line carrying the asker, the text, and the asker's position, dimension
   and facing. The wrapper parses it and queues a `question` event.
 - **Live queries (backend asks the world)**: the wrapper sends
   `scriptevent jb:q <id> <json>`. The script runs it against **loaded** chunks (for example

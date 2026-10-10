@@ -17,6 +17,7 @@ import pytest
 from fastapi import HTTPException
 
 from jbrain.api import debug_minecraft as mc
+from jbrain.minecraft import client as mc_client
 
 SETTINGS: Any = SimpleNamespace(
     minecraft_url="http://host.docker.internal:19180",
@@ -36,6 +37,9 @@ class FakeSupervisor:
         self.calls.append(("GET", path))
         req = httpx.Request("GET", f"http://supervisor{path}")
         return httpx.Response(200, json={"containers": self.containers}, request=req)
+
+    async def request(self, method: str, path: str, **kw: Any) -> httpx.Response:
+        return await (self.get(path, **kw) if method == "GET" else self.post(path, **kw))
 
     async def post(self, path: str, **kw: Any) -> httpx.Response:
         self.calls.append(("POST", path))
@@ -61,7 +65,7 @@ def sidecar(monkeypatch: pytest.MonkeyPatch):
         seen.append(request)
         return replies.get(request.url.path, httpx.Response(200, json={"ok": True}))
 
-    monkeypatch.setattr(mc, "_transport", httpx.MockTransport(handler))
+    monkeypatch.setattr(mc_client, "_transport", httpx.MockTransport(handler))
     return seen, replies
 
 
@@ -97,7 +101,7 @@ async def test_an_unreachable_sidecar_is_named_in_the_status_not_raised(
     def refuse(_r: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(mc, "_transport", httpx.MockTransport(refuse))
+    monkeypatch.setattr(mc_client, "_transport", httpx.MockTransport(refuse))
     out = await mc.minecraft_status(_request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL)
     assert out["server"] is None
     assert "unreachable" in (out["server_error"] or "")
@@ -194,3 +198,14 @@ async def test_update_and_probe_pack_reach_their_sidecar_routes(sidecar) -> None
     await mc.minecraft_probe_pack(mc.ProbePackIn(install=False), req, SETTINGS, PRINCIPAL)
     assert [r.url.path for r in seen] == ["/update", "/probe-pack"]
     assert json.loads(seen[1].content) == {"install": False}
+
+
+async def test_a_supervisor_transport_error_becomes_a_503() -> None:
+    class Down:
+        async def request(self, *_a: Any, **_k: Any) -> httpx.Response:
+            raise httpx.ConnectError("refused")
+
+    req: Any = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(supervisor_client=Down())))
+    with pytest.raises(HTTPException) as exc:
+        await mc_client.container(req, SETTINGS)
+    assert exc.value.status_code == 503 and "supervisor unreachable" in str(exc.value.detail)

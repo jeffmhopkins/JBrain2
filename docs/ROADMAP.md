@@ -695,8 +695,18 @@ P1 + P1.5 landed; P2 (scope-model unlocks) deferred until a comparison mode need
 in-game companion that answers from the world's real data ("where's the nearest pig / woodland
 mansion"), plus 2D maps. M0a ✅ — the `minecraft` sidecar on by default (a stdlib wrapper owning
 the BDS console: auto-download/update, hot `.mcworld` snapshots, graceful stop) and
-`/api/debug/minecraft/*`, so setup and debugging run through a debug token. M0b ◻️ is the
-on-box probe pass on a fresh world, home network only.
+`/api/debug/minecraft/*`, so setup and debugging run through a debug token. M1 ✅: the
+Minecraft screen (GUI gate: variant B), with:
+- server updates showing Mojang's notes quoted, a backup first, and rollback;
+- play-time history;
+- start/stop of the game server inside its container.
+
+M0b is partly done:
+- the server runs on NetherNet with host networking;
+- the console, `locate` and hot snapshots work;
+- the stable-API script bridge works, with `/jb:dave` as the way to ask.
+
+Still open: client joins, including Xbox LAN discovery.
 
 **In progress:** SDR radio (build plan: `docs/plans/SDR_RADIO_PLAN.md`) — a USB software-defined
 radio as a new sensor feeding pipelines that already exist: a Radio launcher (waterfall + listening),

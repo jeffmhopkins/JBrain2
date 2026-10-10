@@ -372,3 +372,38 @@ describe("Launcher tasks badge (unviewed count)", () => {
     expect(screen.queryByText(/^\d+$/)).toBeNull();
   });
 });
+
+// Minecraft is a SYSTEM destination; its tile carries the state word and flags an update.
+describe("Launcher Minecraft tile", () => {
+  beforeEach(() => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("routes to the Minecraft screen and flags a waiting update", async () => {
+    const { mcBehind, mcStatus } = await import("../minecraftFixtures");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        const body =
+          path === "/api/minecraft"
+            ? mcStatus()
+            : path.startsWith("/api/minecraft/version")
+              ? mcBehind()
+              : null;
+        return body
+          ? new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
+          : new Response(null, { status: 404 });
+      }),
+    );
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+    const tile = screen.getByRole("button", { name: /Minecraft/ });
+    await waitFor(() => expect(tile).toHaveTextContent("update"));
+    fireEvent.click(tile);
+    expect(onNavigate).toHaveBeenCalledWith("minecraft");
+  });
+});

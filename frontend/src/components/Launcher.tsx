@@ -3,7 +3,8 @@
 // slides up 150ms ease-out, and dismisses on swipe-down or Escape.
 
 import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { type MinecraftStatus, type MinecraftVersion, api } from "../api/client";
+import { tileOf } from "../minecraft";
 import { countUnviewed, loadViewed } from "../tasks/viewed";
 import { useForeground } from "../visibility";
 import {
@@ -13,6 +14,7 @@ import {
   ChatIcon,
   CheckSquareIcon,
   CodeIcon,
+  CubeIcon,
   DatabaseIcon,
   FlaskIcon,
   GaugeIcon,
@@ -55,7 +57,8 @@ export type LauncherTarget =
   | "endpoints"
   | "jcode"
   | "jlaunch"
-  | "jmolt";
+  | "jmolt"
+  | "minecraft";
 
 interface Tile {
   title: string;
@@ -115,6 +118,9 @@ const SECTIONS: Section[] = [
       { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
       { title: "Tasks", icon: <CheckSquareIcon size={24} />, target: "tasks" },
       { title: "Data", icon: <DatabaseIcon size={24} />, target: "data" },
+      // The family's Bedrock server, lifted off Ops into its own screen the way Data was:
+      // the waves after M1 (world slots, backups, remote play) all land there.
+      { title: "Minecraft", icon: <CubeIcon size={24} />, target: "minecraft" },
       { title: "Settings", icon: <SettingsIcon size={24} />, target: "settings" },
       { title: "LLM", icon: <BotIcon size={24} />, target: "llm-settings" },
       { title: "jmolt", icon: <MessageIcon size={24} />, target: "jmolt" },
@@ -225,6 +231,11 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   // (the same device-local "unviewed" state that drives each card's NEW band), not
   // merely runs since Tasks was last opened — opening the screen no longer clears it.
   const [taskCount, setTaskCount] = useState<number | null>(null);
+  // The Minecraft tile's dot and word. Unknown (no dot) until read, and on any failure.
+  const [mc, setMc] = useState<{
+    status: MinecraftStatus | null;
+    version: MinecraftVersion | null;
+  }>({ status: null, version: null });
   // Config gate for the Image tile. Hydrated synchronously from the last-known
   // device-local value so the tile set is stable from the first paint (no N→N+1
   // count jump on open); null only on a device that has never resolved it, where
@@ -281,8 +292,20 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
         })
         .catch(() => {});
     };
+    const refreshMc = () =>
+      Promise.all([api.minecraftStatus(), api.minecraftVersion(false).catch(() => null)])
+        .then(([status, version]) => {
+          if (!stale) setMc({ status, version });
+        })
+        .catch(() => {
+          if (!stale) setMc({ status: null, version: null });
+        });
     refresh();
-    const interval = setInterval(refresh, REVIEW_POLL_MS);
+    void refreshMc();
+    const interval = setInterval(() => {
+      refresh();
+      void refreshMc();
+    }, REVIEW_POLL_MS);
     return () => {
       stale = true;
       clearInterval(interval);
@@ -304,9 +327,15 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
     return () => clearTimeout(t);
   }, [open]);
 
+  // Focus moves in when the launcher OPENS, once. App passes an inline onClose, so keying
+  // this on it re-ran the focus on every App render and pulled focus out of whatever sat on
+  // top — a card's confirm Dialog included.
+  useEffect(() => {
+    if (open) panelRef.current?.focus();
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
-    panelRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -315,6 +344,8 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   }, [open, onClose]);
 
   if (!open && !closing) return null;
+
+  const mcTile = tileOf(mc.status, mc.version);
 
   function onTouchStart(event: TouchEvent) {
     // Owner-settled: a down-swipe anywhere on the launcher dismisses it,
@@ -389,6 +420,12 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
                   )}
                   {tile.target === "tasks" && taskCount !== null && taskCount > 0 && (
                     <span className="tile-badge">{taskCount}</span>
+                  )}
+                  {tile.target === "minecraft" && mcTile && (
+                    <>
+                      <span className={`mc-tile-dot ${mcTile.level}`} aria-hidden="true" />
+                      <span className="mc-tile-sub">{mcTile.word}</span>
+                    </>
                   )}
                 </button>
               ))}

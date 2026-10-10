@@ -97,6 +97,10 @@ class Bds:
         default_factory=lambda: collections.deque(maxlen=EVENTS_KEPT)
     )
     _event_id: int = 0
+    # Bumped on every start: the output reader of an earlier process must not write
+    # "stopped" over the state of the process that replaced it (a fast restart).
+    _gen: int = 0
+    _reader: threading.Thread | None = None
 
     def _default_spawn(self, server_dir: Path) -> subprocess.Popen[str]:
         return subprocess.Popen(
@@ -111,24 +115,32 @@ class Bds:
         )
 
     def start(self) -> None:
-        if self._proc is not None and self._proc.poll() is None:
-            return
-        self.players.clear()
-        self.exit_code = None
-        self.version = ""  # re-read from the banner: an update changes it
-        self.state = "starting"
-        spawn = self.spawn or self._default_spawn
-        self._proc = spawn(self.server_dir)
-        self.started_at = time.time()
-        threading.Thread(target=self._pump, daemon=True).start()
+        with self._cv:
+            if self._proc is not None and self._proc.poll() is None:
+                return
+            self.players.clear()
+            self.exit_code = None
+            self.version = ""  # re-read from the banner: an update changes it
+            self.state = "starting"
+            self._gen += 1
+            gen = self._gen
+            spawn = self.spawn or self._default_spawn
+            self._proc = spawn(self.server_dir)
+            self.started_at = time.time()
+            proc = self._proc
+        self._reader = threading.Thread(
+            target=self._pump, args=(proc, gen), daemon=True
+        )
+        self._reader.start()
 
-    def _pump(self) -> None:
-        proc = self._proc
-        assert proc is not None and proc.stdout is not None
+    def _pump(self, proc: subprocess.Popen[str], gen: int) -> None:
+        assert proc.stdout is not None
         for raw in proc.stdout:
             self._record(raw.rstrip("\n"))
         code = proc.wait()
         with self._cv:
+            if gen != self._gen:
+                return  # a newer process owns the state now
             # A stopping server logs no disconnects, so the sessions it ends are closed
             # here — otherwise play time would run on through the downtime.
             for name, p in self.players.items():
@@ -175,6 +187,19 @@ class Bds:
     def events_after(self, after: int) -> list[dict[str, Any]]:
         with self._cv:
             return [dict(e) for e in self._events if e["id"] > after]
+
+    def wait_running(self, timeout_s: float) -> bool:
+        """Block until the server logs "Server started." or exits; True if started."""
+        deadline = time.monotonic() + timeout_s
+        with self._cv:
+            while self.state != "running":
+                left = deadline - time.monotonic()
+                if left <= 0 or (
+                    self._proc is not None and self._proc.poll() is not None
+                ):
+                    return False
+                self._cv.wait(timeout=min(left, 1.0))
+            return True
 
     @property
     def running(self) -> bool:
@@ -282,6 +307,10 @@ class Bds:
         except (ConsoleError, OSError, subprocess.TimeoutExpired):
             proc.kill()
             proc.wait(timeout=10)
+        # The reader writes the closing leave/server_stop events after the exit; let it
+        # finish before anyone starts the next process.
+        if self._reader is not None:
+            self._reader.join(timeout=10)
 
 
 def _is_file_list(text: str) -> bool:

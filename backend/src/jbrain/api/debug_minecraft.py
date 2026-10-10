@@ -13,113 +13,22 @@ token — snapshots are listed, not downloaded, the same rule as `/debug/backup`
 
 from __future__ import annotations
 
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
-import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from jbrain.api.deps import DebugDep, SettingsDep
+from jbrain.minecraft import client as mc
 
 router = APIRouter(prefix="/debug/minecraft")
 
-SERVICE = "minecraft"
-# A snapshot copies the whole world under `save hold`; a small world takes seconds, but
-# the first one after a long session can be slow, and a timeout here would only hide
-# whether the hold was released.
-SNAPSHOT_TIMEOUT_S = 180.0
-SIDECAR_TIMEOUT_S = 30.0
-# Tests swap in an httpx.MockTransport; None is the real network.
-_transport: httpx.AsyncBaseTransport | None = None
-
-
-def _supervisor(request: Request) -> httpx.AsyncClient:
-    return cast(httpx.AsyncClient, request.app.state.supervisor_client)
-
-
-def _base(settings: Any) -> str:
-    base = str(settings.minecraft_url or "").strip().rstrip("/")
-    if not base:
-        raise HTTPException(status_code=503, detail="No Minecraft server on this box.")
-    return base
-
-
-async def _sidecar(
-    settings: Any,
-    method: str,
-    path: str,
-    *,
-    json: dict[str, Any] | None = None,
-    params: dict[str, Any] | None = None,
-    timeout_s: float = SIDECAR_TIMEOUT_S,
-) -> dict[str, Any]:
-    """One call to the wrapper, with its refusals passed through as what they are.
-
-    An unreachable sidecar is a 503 naming the likely cause, because "connection
-    refused" on a stopped container reads like a bug when it is a state."""
-    token = str(settings.minecraft_token or "")
-    if not token:
-        # Sending "Bearer " with nothing after it is a malformed header that httpx
-        # rejects before any request — the cryptic LocalProtocolError the first deploy
-        # hit. Say what is actually missing.
-        raise HTTPException(
-            status_code=503,
-            detail="MINECRAFT_TOKEN is not set for the api — run an update to mint it",
-        )
-    try:
-        async with httpx.AsyncClient(
-            base_url=_base(settings),
-            timeout=timeout_s,
-            transport=_transport,
-            headers={"Authorization": f"Bearer {token}"},
-        ) as client:
-            resp = await client.request(method, path, json=json, params=params)
-    except httpx.TransportError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Minecraft sidecar unreachable ({type(exc).__name__}) — is it stopped?",
-        ) from exc
-    if resp.status_code in (401, 503):
-        # The sidecar's own auth refusal — a token mismatch is a deploy fault, not a state.
-        raise HTTPException(
-            status_code=502, detail=f"Minecraft sidecar refused the api: {_detail(resp)}"
-        )
-    if resp.status_code in (400, 404, 409):
-        raise HTTPException(status_code=resp.status_code, detail=_detail(resp))
-    resp.raise_for_status()
-    return cast(dict[str, Any], resp.json())
-
-
-def _detail(resp: httpx.Response) -> str:
-    try:
-        return str(resp.json().get("detail", resp.text))
-    except ValueError:
-        return resp.text
-
-
-async def _container(request: Request, settings: Any) -> dict[str, Any] | None:
-    resp = await _supervisor(request).get(
-        "/status", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
-    )
-    resp.raise_for_status()
-    for c in resp.json().get("containers", []):
-        if c.get("service") == SERVICE:
-            return cast(dict[str, Any], c)
-    return None
-
-
-async def _lifecycle(request: Request, settings: Any, action: str) -> None:
-    resp = await _supervisor(request).post(
-        f"/{action}",
-        json={"service": SERVICE},
-        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
-    )
-    if resp.status_code == 404:
-        raise HTTPException(
-            status_code=404,
-            detail="the minecraft container does not exist yet — run /debug/update",
-        )
-    resp.raise_for_status()
+SERVICE = mc.SERVICE
+SIDECAR_TIMEOUT_S = mc.SIDECAR_TIMEOUT_S
+SNAPSHOT_TIMEOUT_S = mc.SNAPSHOT_TIMEOUT_S
+_sidecar = mc.call
+_container = mc.container
+_lifecycle = mc.lifecycle
 
 
 @router.get("")

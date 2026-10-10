@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-08
+> **Status:** Living · **Last verified:** 2026-10-10
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -108,6 +108,12 @@ type-axis use, not a domain one — the two axes are independent). The inline
 location tool-views (`location_map`/`place_card`) and their Leaflet trail/fence/
 start markers ride this token (the steel `loc-lf-*` classes on the full-screen
 map are unchanged unless separately re-decided).
+
+**Accent text tokens** — `--ok-text`, `--warn-text`, `--danger-text`, `--steel-text` — are
+for accent-coloured *words* (button labels, badges, links, state words). Dark reads the
+pastel as-is; light mixes it 46–54% toward `--text` so the words clear 4.5:1 (the Syntax
+tokens' pattern). Dots, tints and rules keep the pastel. Added with the Minecraft screen;
+new surfaces use them for accent text.
 
 **Mode/domain coding rule** (settled in the Phase 1 omnibox review):
 green=entry/save, amber=research/read-only, steel=full-brain/agent,
@@ -3257,6 +3263,53 @@ than only create or delete it:
 5. **The saving is stated, not implied.** "Discards 1:05 of dead air — frees 509 kB",
    computed and shown live as the handles move, because the whole reason the feature
    exists is disk.
+
+## Minecraft server screen (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-ops/b-dedicated-screen.html`)
+
+The family's Bedrock server: lifecycle, version and updates, and who plays. The owner chose
+**B — a dedicated screen**, with variant C's per-player time table in its Players section,
+over A (an inline Ops card) and C (a tabbed Ops card); the round's record is
+`docs/mocks/minecraft-ops/README.md`. B won because the later waves (world slots, backups,
+remote play, the companion add-on) all land on this surface, it is the only variant whose
+confirm weight matches disconnecting players mid-game, and it holds up best at 320 px. It
+follows the Data screen's precedent of being lifted off Ops.
+
+- **Two entry points, one screen.** A **Minecraft** launcher tile under SYSTEM carries a
+  state dot and word, and flags *update*, *update failed* or *install failed* instead. An
+  **Ops shortcut row** (a plain list row with a trailing chevron, not an `OpsCard` caret,
+  since it navigates) sits under Local engine and glances the state, version and who's on,
+  or the amber *update available · {version} — newer clients can't join*. Opened from Ops,
+  the back chevron and swipe-down return to Ops.
+- **Top to bottom:** an amber "you're behind" banner while an update waits (rose after a
+  failure, keeping the lockout line); a status block (state, online-now and version tiles,
+  Start or Restart/Stop); **Update** (running → latest, the matched article's title and date,
+  up to four lines quoted verbatim and labelled *From Mojang's changelog*, **Release notes**,
+  or *Release notes not published yet* with Mojang's update page; **Update Minecraft**; the
+  step list; *Check for updates* with *last checked*; the auto-update switch, default off);
+  **Online now** with live session timers; **Players** as C's table (player and first seen,
+  total and sessions, last seen with the day), a row opening a bottom `<Sheet>` with that
+  player's totals; **Lifetime stats**; **Server** (world, mode, allowlist, how to join).
+  Stop and Start act on the game server inside the container, so a stopped server keeps its
+  facts, auto-update and any update readable. A Restart reads as *restarting* through the
+  server's own stopping → stopped → starting, not as *stopping*. An update failure has two
+  headlines, both keeping the lockout line: *Update failed — still on {from}* (the download
+  or install failed) and *{to} wouldn't start — rolled back to {from}; world restored from
+  the backup (kept)*.
+- **Confirms use the shared center `<Dialog>`** (`components/Dialog.tsx`, built with this
+  screen as the Modal system's Dialog shell): one sentence naming who is disconnected.
+  Stop and Restart confirm only when someone is on; **Update always confirms** and names the
+  `pre-update-<version>` backup; with auto-update on and an update waiting, Restart always
+  confirms and its title says it updates. **Every other path to the container uses the same
+  words**: the Ops service row's Stop/Restart for `minecraft` route through this confirm and
+  the Minecraft API, and **Restart all** confirms in the Dialog whenever players are on.
+- **Honest data.** Before the first install nothing is claimed: installing and install-failed
+  show only the state, an indeterminate download bar or the error verbatim, and **Retry
+  install** (its own route, not a restart); version, world and join read **—**; the Update section, check and auto-update
+  are hidden. No progress figure is drawn that the API doesn't report. Lifetime stats are
+  the *Arrives with the companion add-on* placeholder until the API says the add-on is
+  counting. Durations read like a person wrote them (`42 min`, `14h 05m`, `812 h`; uptime
+  `41 d 4 h`).
+- Accent words use the accent text tokens (see "Color tokens").
 
 ## Implementation rules
 

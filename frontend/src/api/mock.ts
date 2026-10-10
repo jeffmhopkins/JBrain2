@@ -3799,6 +3799,22 @@ export const mockFetch: typeof fetch = async (input, init) => {
   const path = url.pathname;
   const method = (init?.method ?? "GET").toUpperCase();
 
+  // --- Minecraft: the reviewed fixture. Default is running, two on, an update waiting;
+  // `?mc=<scenario>` on the page URL picks another (see minecraftScenario).
+  if (path.startsWith("/api/minecraft")) {
+    const mc = await import("../minecraftFixtures");
+    const scenario = mc.minecraftScenario(
+      new URLSearchParams(globalThis.location?.search ?? "").get("mc"),
+    );
+    if (path === "/api/minecraft") return json(scenario.status);
+    if (path === "/api/minecraft/version") return json(scenario.version);
+    if (path === "/api/minecraft/players") return json(scenario.players);
+    if (path === "/api/minecraft/settings" && method === "PUT") {
+      return json(JSON.parse(String(init?.body ?? "{}")));
+    }
+    if (method === "POST") return json({ action: path.split("/").pop() }, 202);
+  }
+
   // --- the radio's recordings. Exact /recordings wins before the /recordings/{id}
   // prefixes, and /record (the switch) is a different route from /recordings (the list).
   if (path === "/api/sdr/status" && method === "GET") {
