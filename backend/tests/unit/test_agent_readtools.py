@@ -1766,6 +1766,82 @@ def test_sidecars_pinned_to_their_versions() -> None:
             5,
             "9c4f4d5fc993e5c31dd048c0c1cf03250fb8e03898d1a8b0d5fec69e5b582380",
         ),
+        # Minecraft_Dave's tools (MINECRAFT_BEDROCK_PLAN.md §P1).
+        "mc_goal_create.tool": (
+            "mc_goal_create",
+            1,
+            "9aee8a3e0d825c67ad5dddda9f17513f9eb0efd33d6be9102601701a8530973b",
+        ),
+        "mc_goal_update.tool": (
+            "mc_goal_update",
+            1,
+            "c22563fc12d61589cccc3f6aa033380a3aa5367c2ed97f3d7565236141a4b42b",
+        ),
+        "mc_goals.tool": (
+            "mc_goals",
+            1,
+            "363a6a9fcc0a832b00a82f9aa5aa44747f814d44cc12c9d19dabb0290f8b4ab6",
+        ),
+        "mc_locate.tool": (
+            "mc_locate",
+            1,
+            "d2606e2274dfe2593c28a307f8df46cfefc425d3a7bff04800bd42e9fa11e153",
+        ),
+        "mc_log.tool": (
+            "mc_log",
+            1,
+            "6b1f4e9a06836b20d6b3ca8d502b2e1a82791ec06d5b54dbc93f59e4a715ee8b",
+        ),
+        "mc_log_read.tool": (
+            "mc_log_read",
+            1,
+            "4fb484d19d760a1dea2a4d071e2d2b38f98f459d2ad893147c98e198758dd6ac",
+        ),
+        "mc_memory_add.tool": (
+            "mc_memory_add",
+            1,
+            "e5dd7028e0751dd55ca3bc7d268a55cd7bcba74331749a06042b01ea58be4915",
+        ),
+        "mc_memory_read.tool": (
+            "mc_memory_read",
+            1,
+            "2c5775e5e7a4606a6c0d402cf8ee1f3e108d4642dd4e44c78a14c9786e6f4863",
+        ),
+        "mc_memory_remove.tool": (
+            "mc_memory_remove",
+            1,
+            "c0271dfffda472f68d156848aef68f60a3edcde1c876d46ce606839e10bf323b",
+        ),
+        "mc_memory_replace.tool": (
+            "mc_memory_replace",
+            1,
+            "c5bd1c9475792a5b3b797a58677a7ee15abe7cdca371e9796f7887348665d7fa",
+        ),
+        "mc_play_history.tool": (
+            "mc_play_history",
+            1,
+            "d6897a6139ca1b618bda47f336e5fa7534a7fa6bb2411ac9b2fdee0939da3a82",
+        ),
+        "mc_player.tool": (
+            "mc_player",
+            1,
+            "83ce7efb2dcfdf47bf70c5fffd2d9ef0321eead76995fd5f3ce0a35ac67bf678",
+        ),
+        "mc_players.tool": (
+            "mc_players",
+            1,
+            "d489a66f8ba6fd3acee764982d0aff716989bce0962b7ee566f38a90d34d4a65",
+        ),
+        "mc_server_status.tool": (
+            "mc_server_status",
+            1,
+            "1f703a40f648bbeb6393be63954e1e05fc348c2636ceebf233dfc626e4139f36",
+        ),
+        "mc_world_info.tool": (
+            "mc_world_info",
+            1,
+            "3af19114c57fe17ee593c67f3a673c683189870ef75b8918729bd3882a6d6c5f",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).

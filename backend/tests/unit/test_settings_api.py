@@ -54,6 +54,7 @@ def test_get_settings_defaults_to_full_analysis(
         "image_analysis_mode": "full",
         "owner_timezone": None,
         "owner_callsign": None,
+        "minecraft_gamertag": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -80,6 +81,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
         "owner_callsign": None,
+        "minecraft_gamertag": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -101,6 +103,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
         "owner_callsign": None,
+        "minecraft_gamertag": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -122,6 +125,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "image_analysis_mode": "full",
         "owner_timezone": None,
         "owner_callsign": None,
+        "minecraft_gamertag": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -150,6 +154,7 @@ def test_put_settings_round_trips_the_timezone(
         "image_analysis_mode": "full",
         "owner_timezone": "America/New_York",
         "owner_callsign": None,
+        "minecraft_gamertag": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -370,6 +375,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
         "owner_callsign": None,
+        "minecraft_gamertag": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
@@ -504,3 +510,16 @@ def test_put_settings_round_trips_the_browse_loop(
     assert store.values["browse_loop"] == "b1"
     assert c.put("/api/settings", json={"browse_loop": "turbo"}).status_code == 422
     assert c.put("/api/settings", json={"browse_loop": "fast"}).json()["browse_loop"] == "fast"
+
+
+def test_the_minecraft_gamertag_is_stored_cleared_and_checked(client) -> None:
+    """The owner's gamertag starts every Minecraft_Dave chat (MINECRAFT_BEDROCK_PLAN.md
+    §P1), so a value that can't be a gamertag is refused, not quietly altered."""
+    c, _store = client
+    out = c.put("/api/settings", json={"minecraft_gamertag": "  Steve  42 "})
+    assert out.status_code == 200 and out.json()["minecraft_gamertag"] == "Steve 42"
+    assert c.put("/api/settings", json={"minecraft_gamertag": "x; drop"}).status_code == 422
+    assert c.get("/api/settings").json()["minecraft_gamertag"] == "Steve 42"
+    assert (
+        c.put("/api/settings", json={"minecraft_gamertag": ""}).json()["minecraft_gamertag"] is None
+    )
