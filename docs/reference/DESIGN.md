@@ -1648,6 +1648,12 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   the whole screen.
 - Every overlay surface must have a visible, tappable exit; a gesture is
   never the only way out (settled in Phase 1 polish).
+- **Long-press hides a tile.** The tile greys out and drops from the grid 5s
+  later; a second long-press inside that window keeps it. Hidden tiles collect
+  behind a **Hidden** tile (last in SYSTEM, shown only when something is hidden,
+  with the count) that expands them in a section below, where a tap still opens
+  one and a long-press restores it. The hidden set is device-local
+  (`jb.launcher.hidden`) — a per-phone layout choice, not a box setting.
 - **Navigation is a tree, and swiping down climbs it** (settled in Phase 1
   polish): card screen → (swipe down at scroll-top) → launcher → (swipe
   down) → home. Swipe up on the omnibox descends into the launcher. The

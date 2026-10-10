@@ -1207,6 +1207,26 @@ button.chip-ask {
   opacity: 0.55;
 }
 
+/* Long-press hides a tile, so the OS must not claim the press for a callout or selection. */
+.tile {
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Greyed for the grace window before a long-pressed tile drops out of the grid. */
+.tile-pending {
+  opacity: 0.35;
+  filter: grayscale(1);
+  transition: opacity 150ms ease-out;
+}
+
+.tile-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: -4px;
+}
+
 .tile-icon {
   color: var(--text-2);
   display: inline-flex;

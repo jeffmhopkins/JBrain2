@@ -2,7 +2,14 @@
 // launcher"). A navigation surface, not a modal: it owns the whole screen,
 // slides up 150ms ease-out, and dismisses on swipe-down or Escape.
 
-import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
+import {
+  type PointerEvent,
+  type ReactNode,
+  type TouchEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { type MinecraftStatus, type MinecraftVersion, api } from "../api/client";
 import { tileOf } from "../minecraft";
 import { countUnviewed, loadViewed } from "../tasks/viewed";
@@ -16,6 +23,7 @@ import {
   CodeIcon,
   CubeIcon,
   DatabaseIcon,
+  EyeOffIcon,
   FlaskIcon,
   GaugeIcon,
   GlobeIcon,
@@ -203,6 +211,34 @@ function fetchJlaunchEnabled(): Promise<boolean> {
     .catch(() => false);
   return jlaunchEnabledPromise;
 }
+// Owner-hidden tiles. The grid outgrew one screen, so a long-press greys a tile and
+// it drops out 5s later; a second long-press inside that window keeps it. Hidden
+// tiles collect behind a "Hidden" tile that expands them in place, where a long-press
+// restores one. Device-local like the gates above: it's a per-phone layout choice.
+const HIDDEN_KEY = "jb.launcher.hidden";
+const LONG_PRESS_MS = 500;
+const HIDE_GRACE_MS = 5_000;
+// A finger that drifts this far is scrolling or swiping, not pressing.
+const LONG_PRESS_SLOP_PX = 10;
+
+function loadHidden(): Set<LauncherTarget> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_KEY);
+    const parsed: unknown = raw === null ? [] : JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? (parsed as LauncherTarget[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHidden(hidden: Set<LauncherTarget>): void {
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden]));
+  } catch {
+    // best-effort; a dropped write just brings the tile back on the next load
+  }
+}
+
 // The Review badge polls while the launcher is open so it reads live — new
 // holds tick up, resolved ones clear — without reopening the menu. Human/
 // analysis pace, so a light interval; the launcher is only mounted while open.
@@ -247,6 +283,34 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   // card. Returning to either re-runs this effect — an immediate refetch, then
   // re-arm — so the badge is current the moment the menu is back on screen.
   const foreground = useForeground();
+  const [hidden, setHidden] = useState<Set<LauncherTarget>>(loadHidden);
+  // Tiles greyed by a long-press, each with the timer that will hide it.
+  const [pending, setPending] = useState<Set<LauncherTarget>>(() => new Set());
+  const pendingTimers = useRef(new Map<LauncherTarget, ReturnType<typeof setTimeout>>());
+  const [showHidden, setShowHidden] = useState(false);
+  const press = useRef<{
+    timer: ReturnType<typeof setTimeout>;
+    x: number;
+    y: number;
+  } | null>(null);
+  // Set when a press fires, so the click that follows the release doesn't navigate.
+  const longPressed = useRef(false);
+
+  // Closing the launcher inside the grace window still honours the hide: the owner
+  // asked for it and didn't take it back.
+  useEffect(() => {
+    const timers = pendingTimers.current;
+    return () => {
+      if (timers.size === 0) return;
+      const next = loadHidden();
+      for (const [target, timer] of timers) {
+        clearTimeout(timer);
+        next.add(target);
+      }
+      timers.clear();
+      saveHidden(next);
+    };
+  }, []);
 
   // Resolve image-hosting enablement when the launcher is the surface on screen.
   // The fetch is cached at module scope, so this fires at most once per session
@@ -347,6 +411,124 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
 
   const mcTile = tileOf(mc.status, mc.version);
 
+  // Configuration gates (not owner choices): Image and Math only exist where enabled.
+  const gated = (tile: Tile) =>
+    (tile.target !== "image" || imageEnabled === true) &&
+    (tile.target !== "jlaunch" || jlaunchEnabled === true);
+  const hiddenTiles = SECTIONS.flatMap((s) => s.tiles).filter(
+    (tile) => gated(tile) && tile.target !== undefined && hidden.has(tile.target),
+  );
+  const hiddenOpen = showHidden && hiddenTiles.length > 0;
+
+  function setHiddenAndSave(update: (next: Set<LauncherTarget>) => void) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      update(next);
+      saveHidden(next);
+      return next;
+    });
+  }
+
+  function dropPending(target: LauncherTarget) {
+    clearTimeout(pendingTimers.current.get(target));
+    pendingTimers.current.delete(target);
+    setPending((prev) => {
+      const next = new Set(prev);
+      next.delete(target);
+      return next;
+    });
+  }
+
+  function onLongPress(target: LauncherTarget) {
+    if (hidden.has(target)) {
+      setHiddenAndSave((next) => next.delete(target));
+    } else if (pendingTimers.current.has(target)) {
+      dropPending(target);
+    } else {
+      setPending((prev) => new Set(prev).add(target));
+      pendingTimers.current.set(
+        target,
+        setTimeout(() => {
+          dropPending(target);
+          setHiddenAndSave((next) => next.add(target));
+        }, HIDE_GRACE_MS),
+      );
+    }
+  }
+
+  function cancelPress() {
+    if (press.current) clearTimeout(press.current.timer);
+    press.current = null;
+  }
+
+  function onPressStart(event: PointerEvent, target: LauncherTarget) {
+    cancelPress();
+    longPressed.current = false;
+    press.current = {
+      x: event.clientX,
+      y: event.clientY,
+      timer: setTimeout(() => {
+        press.current = null;
+        longPressed.current = true;
+        navigator.vibrate?.(10);
+        onLongPress(target);
+      }, LONG_PRESS_MS),
+    };
+  }
+
+  function onPressMove(event: PointerEvent) {
+    const p = press.current;
+    if (p && Math.hypot(event.clientX - p.x, event.clientY - p.y) > LONG_PRESS_SLOP_PX) {
+      cancelPress();
+    }
+  }
+
+  function renderTile(tile: Tile) {
+    const target = tile.target;
+    return (
+      <button
+        key={tile.title}
+        type="button"
+        className={`tile${target && pending.has(target) ? " tile-pending" : ""}`}
+        disabled={tile.phase !== undefined}
+        onPointerDown={target ? (e) => onPressStart(e, target) : undefined}
+        onPointerMove={onPressMove}
+        onPointerUp={cancelPress}
+        onPointerCancel={cancelPress}
+        onPointerLeave={cancelPress}
+        // The long-press is ours: no OS context menu / callout on top of it.
+        onContextMenu={(e) => e.preventDefault()}
+        onClick={() => {
+          if (longPressed.current) {
+            longPressed.current = false;
+            return;
+          }
+          if (target) {
+            // Stay open beneath the card: the card slides up over
+            // the launcher, and dismissing it reveals us again.
+            onNavigate(target);
+          }
+        }}
+      >
+        <span className="tile-icon">{tile.icon}</span>
+        <span className="tile-title">{tile.title}</span>
+        {tile.phase && <span className="phase-badge">{tile.phase}</span>}
+        {target === "review" && reviewCount !== null && reviewCount > 0 && (
+          <span className="tile-badge">{reviewCount}</span>
+        )}
+        {target === "tasks" && taskCount !== null && taskCount > 0 && (
+          <span className="tile-badge">{taskCount}</span>
+        )}
+        {target === "minecraft" && mcTile && (
+          <>
+            <span className={`mc-tile-dot ${mcTile.level}`} aria-hidden="true" />
+            <span className="mc-tile-sub">{mcTile.word}</span>
+          </>
+        )}
+      </button>
+    );
+  }
+
   function onTouchStart(event: TouchEvent) {
     // Owner-settled: a down-swipe anywhere on the launcher dismisses it,
     // regardless of scroll position (pull-to-refresh is suppressed in CSS
@@ -388,50 +570,36 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
           <XIcon size={22} />
         </button>
       </div>
-      {SECTIONS.map((section) => (
+      {SECTIONS.map((section, i) => (
         <section key={section.header} className="launcher-section">
           <h2 className="section-header">{section.header}</h2>
           <div className="tile-grid">
             {section.tiles
-              // Omit the Image tile entirely until hosting is confirmed enabled —
-              // configuration-gated, not an unbuilt phase (so no disabled badge). The Math
-              // (jlaunch) tile is gated the same way (hidden unless the launcher is enabled).
-              .filter((tile) => tile.target !== "image" || imageEnabled === true)
-              .filter((tile) => tile.target !== "jlaunch" || jlaunchEnabled === true)
-              .map((tile) => (
-                <button
-                  key={tile.title}
-                  type="button"
-                  className="tile"
-                  disabled={tile.phase !== undefined}
-                  onClick={() => {
-                    if (tile.target) {
-                      // Stay open beneath the card: the card slides up over
-                      // the launcher, and dismissing it reveals us again.
-                      onNavigate(tile.target);
-                    }
-                  }}
-                >
-                  <span className="tile-icon">{tile.icon}</span>
-                  <span className="tile-title">{tile.title}</span>
-                  {tile.phase && <span className="phase-badge">{tile.phase}</span>}
-                  {tile.target === "review" && reviewCount !== null && reviewCount > 0 && (
-                    <span className="tile-badge">{reviewCount}</span>
-                  )}
-                  {tile.target === "tasks" && taskCount !== null && taskCount > 0 && (
-                    <span className="tile-badge">{taskCount}</span>
-                  )}
-                  {tile.target === "minecraft" && mcTile && (
-                    <>
-                      <span className={`mc-tile-dot ${mcTile.level}`} aria-hidden="true" />
-                      <span className="mc-tile-sub">{mcTile.word}</span>
-                    </>
-                  )}
-                </button>
-              ))}
+              .filter((tile) => gated(tile) && !(tile.target && hidden.has(tile.target)))
+              .map(renderTile)}
+            {i === SECTIONS.length - 1 && hiddenTiles.length > 0 && (
+              <button
+                type="button"
+                className="tile"
+                aria-expanded={hiddenOpen}
+                onClick={() => setShowHidden((v) => !v)}
+              >
+                <span className="tile-icon">
+                  <EyeOffIcon size={24} />
+                </span>
+                <span className="tile-title">Hidden</span>
+                <span className="tile-sub">{hiddenTiles.length}</span>
+              </button>
+            )}
           </div>
         </section>
       ))}
+      {hiddenOpen && (
+        <section className="launcher-section">
+          <h2 className="section-header">Hidden · long-press to restore</h2>
+          <div className="tile-grid">{hiddenTiles.map(renderTile)}</div>
+        </section>
+      )}
     </nav>
   );
 }

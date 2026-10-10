@@ -407,3 +407,91 @@ describe("Launcher Minecraft tile", () => {
     expect(onNavigate).toHaveBeenCalledWith("minecraft");
   });
 });
+
+// Long-press greys a tile, and it drops out 5s later unless pressed again; hidden tiles
+// collect behind a "Hidden" tile that expands them, where a long-press restores one.
+describe("Launcher long-press hide", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.clear();
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("no network"))),
+    );
+  });
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  function longPress(name: string) {
+    const tile = screen.getByRole("button", { name });
+    fireEvent.pointerDown(tile);
+    act(() => vi.advanceTimersByTime(500));
+    fireEvent.pointerUp(tile);
+    fireEvent.click(tile);
+  }
+
+  it("greys the tile, hides it after the grace window, and doesn't navigate", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    longPress("Pet");
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Pet" })).toHaveClass("tile-pending");
+
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(screen.queryByRole("button", { name: "Pet" })).toBeNull();
+    expect(JSON.parse(localStorage.getItem("jb.launcher.hidden") ?? "[]")).toEqual(["petcontrol"]);
+  });
+
+  it("keeps the tile when long-pressed again inside the grace window", () => {
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+
+    longPress("Pet");
+    act(() => vi.advanceTimersByTime(2_000));
+    longPress("Pet");
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.getByRole("button", { name: "Pet" })).not.toHaveClass("tile-pending");
+  });
+
+  it("a short tap still navigates", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    const tile = screen.getByRole("button", { name: "Pet" });
+    fireEvent.pointerDown(tile);
+    act(() => vi.advanceTimersByTime(200));
+    fireEvent.pointerUp(tile);
+    fireEvent.click(tile);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(onNavigate).toHaveBeenCalledWith("petcontrol");
+    expect(tile).not.toHaveClass("tile-pending");
+  });
+
+  it("expands hidden tiles behind the Hidden tile and restores one on long-press", () => {
+    localStorage.setItem("jb.launcher.hidden", JSON.stringify(["petcontrol"]));
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    expect(screen.queryByRole("button", { name: "Pet" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Hidden/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Pet" }));
+    expect(onNavigate).toHaveBeenCalledWith("petcontrol");
+
+    longPress("Pet");
+    expect(screen.queryByRole("button", { name: /Hidden/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Pet" })).toBeInTheDocument();
+    expect(localStorage.getItem("jb.launcher.hidden")).toBe("[]");
+  });
+
+  it("closing inside the grace window still hides the tile", () => {
+    const { unmount } = render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    longPress("Pet");
+    unmount();
+    expect(JSON.parse(localStorage.getItem("jb.launcher.hidden") ?? "[]")).toEqual(["petcontrol"]);
+  });
+});
