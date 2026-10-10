@@ -102,7 +102,7 @@ class Rig:
                 if any(c in text for c in "\r\n"):
                     raise ValueError(f"{key}: value may not contain a line break")
                 current[key] = text
-        DATA.mkdir(parents=True, exist_ok=True)
+        OVERRIDES.parent.mkdir(parents=True, exist_ok=True)
         OVERRIDES.write_text(json.dumps(current, indent=2, sort_keys=True))
         return current
 
@@ -124,7 +124,7 @@ class Rig:
         for key in ("auto_update", "run"):
             if key in changes:
                 current[key] = bool(changes[key])
-        DATA.mkdir(parents=True, exist_ok=True)
+        SETTINGS.parent.mkdir(parents=True, exist_ok=True)
         SETTINGS.write_text(json.dumps(current))
         return current
 
