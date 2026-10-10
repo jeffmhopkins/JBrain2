@@ -510,6 +510,22 @@
   .c-busy svg{width:16px;height:16px;flex:none;}
   .w-facts .link::after{inset:-6px -8px;}
 
+  /* revision 2 (review) */
+  .b-world .v{font-size:var(--fs-body);}
+  @media (max-width:360px){ .seg.four{display:grid;grid-template-columns:1fr 1fr;} }
+  .rules-note{position:sticky;top:0;z-index:1;background:var(--bg);padding:10px 2px;border-bottom:1px solid var(--border);margin:0 -2px;}
+  .sheet .rules-note,.rules-in .rules-note{background:var(--surface);}
+  .c-panel .rules-note{top:59px;}
+  .rstatic{flex:1;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:6px 12px;min-height:44px;font-size:var(--fs-secondary);}
+  .rstatic .hint{font-size:11px;}
+  .job-h .job-t{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);font-weight:400;}
+  .job-ph{font-size:var(--fs-secondary);color:var(--text-2);}
+  .job-ph b{color:var(--text);font-weight:500;}
+  .hint .hb{color:var(--text);font-weight:500;}
+  #toast.lift{bottom:auto;top:66px;transform:translateX(-50%) translateY(-12px);}
+  #toast.lift.show{transform:translateX(-50%) translateY(0);}
+  @media (max-width:360px){ .c-tabs button{font-size:12px;padding:0 2px;} .c-tabs .cnt{margin-left:3px;} }
+
 </style>
 </head>
 <body>
@@ -563,8 +579,8 @@ const IC = {
    world's seed is "unknown" (owner, 2026-10-10). r = game-rule overrides of the defaults;
    p = settings changed on a world that isn't loaded, waiting for its next load. ---- */
 const SLOTS0 = [
-  {id:1, name:'world',         origin:'first',    seed:'-2794311108712645813', mode:'Survival', diff:'Normal',   cheats:false, mb:3.1,  played:'Oct 4, 7:55 pm', made:'Oct 2', gen:true, r:{}, p:{}},
-  {id:2, name:'Castle Hill',   origin:'imported', seed:null,      mode:'Survival', diff:'Normal',   cheats:false, mb:7.8,  played:'today, 2:33 pm', made:'Oct 4', gen:true, r:{}, p:{}},
+  {id:1, name:'World',         origin:'first',    seed:'-2794311108712645813', mode:'Survival', diff:'Normal',   cheats:false, mb:3.1,  played:'Oct 4, 7:55 pm', made:'Oct 2', gen:true, r:{}, p:{}},
+  {id:2, name:'Castle Hill',   origin:'imported', seed:'-6104328617705162911',      mode:'Survival', diff:'Normal',   cheats:false, mb:7.8,  played:'today, 2:33 pm', made:'Oct 4', gen:true, r:{}, p:{}},
   {id:3, name:'Creative test', origin:'seeded',   seed:'8675309', mode:'Creative', diff:'Peaceful', cheats:true,  mb:5.2,  played:'Oct 7, 6:20 pm', made:'Oct 7', gen:true, r:{doDayLightCycle:false, doWeatherCycle:false, doMobSpawning:false}, p:{}},
   {id:4, name:'Skyblock run',  origin:'seeded',   seed:'5127438807419962211', mode:'Survival', diff:'Hard', cheats:false, mb:null, played:null, made:'Oct 9', gen:false, r:{keepInventory:true}, p:{keepInventory:1, diff:1}},
   {id:5, name:null, origin:'empty'},
@@ -576,7 +592,7 @@ const BACKUPS0 = [
   {id:'b8', slot:3, label:null, auto:'before loading Castle Hill', at:'Oct 7, 6:21 pm', mb:5.2, pinned:false},
   {id:'b7', slot:2, label:null, auto:'before loading Creative test', at:'Oct 7, 4:02 pm', mb:7.3, pinned:false},
   {id:'b6', slot:2, label:null, auto:'before update to 1.26.52.3', at:'Oct 6, 9:30 am', mb:7.1, pinned:false},
-  {id:'b5', slot:2, label:'first night', auto:null, at:'Oct 4, 8:15 pm', mb:6.4, pinned:false},
+  {id:'b5', slot:2, label:'first night', auto:null, at:'Oct 4, 8:15 pm', mb:6.4, pinned:false, downloaded:'Oct 4, 8:20 pm'},
   {id:'b4', slot:1, label:null, auto:'before loading Castle Hill', at:'Oct 4, 7:58 pm', mb:3.1, pinned:false},
 ];
 const DOWNLOADS0 = {2:{at:'Oct 4, 8:20 pm', id:'b5'}};
@@ -588,12 +604,15 @@ const PLAYERS = [
   {tag:'Pebble_J', totalMin:48, sessions:2, first:'Oct 8', last:'Oct 8'},
 ];
 const RUNNING = '1.26.52.3', LATEST = '1.26.60.4';
-const KEEP = 20, MAX_MB = 500;
-/* What the mock's "Choose file" hands back — flipped in the mock controls. */
+const KEEP = 20, MAX_MB = 1024, TUNNEL_MB = 100;
+/* What the mock's "Choose file" hands back — flipped in the mock controls. A world file carries its
+   own game mode, difficulty, cheats, seed and rules (read from its level.dat). */
+const FILEWORLD = {mode:'Survival', diff:'Easy', cheats:false, seed:'3141592653589793238', rules:{keepInventory:true, showCoordinates:true}};
 const FILES = {
-  good:{name:'Hilltop Village.mcworld', mb:9.4, level:'Hilltop Village'},
+  good:{name:'Hilltop Village.mcworld', mb:9.4, level:'Hilltop Village', ...FILEWORLD},
   bad:{name:'Hilltop Village.zip', mb:14.2, level:null},
-  big:{name:'Map pack — Skyblock XL.mcworld', mb:812, level:'Skyblock XL'},
+  mid:{name:'Big build — Hilltop City.mcworld', mb:300, level:'Hilltop City', ...FILEWORLD},
+  big:{name:'Map pack — Skyblock XL.mcworld', mb:1331, level:'Skyblock XL', ...FILEWORLD},
 };
 const randSeed = () => { const n = BigInt.asIntN(64, BigInt(Math.floor(Math.random() * 2 ** 32)) << 32n | BigInt(Math.floor(Math.random() * 2 ** 32))); return n.toString(); };
 const clone = x => JSON.parse(JSON.stringify(x));
@@ -603,9 +622,9 @@ const S = {
   server:'running', uptimeMin:192, online:ONLINE_FIXTURE.map(p => ({...p})),
   upd:'idle',
   slots:clone(SLOTS0), active:ACTIVE0, backups:clone(BACKUPS0), downloads:clone(DOWNLOADS0),
-  srv:{name:'JBrain', maxPlayers:10, view:32, tick:4, slotCount:5},
+  srv:{name:'JBrain', maxPlayers:10, view:32},
   srvDraft:null,
-  allow:{on:true, tags:['BlockyFox', 'Mira_P', 'Steve42', 'Pebble_J']},
+  allow:{on:true, live:true, tags:['BlockyFox', 'Mira_P', 'Steve42', 'Pebble_J']},
   job:null, pendingBackup:null, err:null,
   fileKind:'good',
   bseq:20,
@@ -642,7 +661,7 @@ const running = () => S.server === 'running';
 const unpinned = id => backupsOf(id).filter(b => !b.pinned);
 function originText(s) {
   if (s.origin === 'first') return `made on first boot, ${s.made}`;
-  if (s.origin === 'imported') return `imported ${s.made} from a .mcworld`;
+  if (s.origin === 'imported') return `imported ${s.made} from a .mcworld — settings came from the file`;
   if (s.origin === 'restored') return `restored ${s.made} from a backup of ${esc(s.from)}`;
   return `new world, ${s.made}`;
 }
@@ -660,13 +679,13 @@ function lastBackupText(id) {
 /* Every world action shares the server's one lifecycle lock (M1), so a refusal is said, not hidden. */
 function worldBlocked() {
   if (S.upd === 'running') return 'Busy updating Minecraft — loading, importing, resetting, restoring and backing up come back when it’s done.';
-  if (S.job && !S.job.err) return `Wait for the ${S.job.noun} to finish.`;
+  if (S.job && !S.job.err) return `Wait — the server is ${S.job.what}.`;
   if (['starting','stopping','restarting'].includes(S.server)) return `Wait for the server to finish ${S.server}.`;
   return '';
 }
 
 function stateInfo() {
-  if (S.job && S.job.hero && !S.job.err) return {level:'warn', word:S.job.hero, sub:S.job.steps[S.job.i].label.split(' — ')[0]};
+  if (S.job && S.job.hero && !S.job.err) return {level:'warn', word:S.job.hero, sub:S.job.phase};
   switch (S.server) {
     case 'running':  return {level:'ok',   word:'running',  sub:`up ${fmtUp(S.uptimeMin)}`};
     case 'starting': return {level:'warn', word:'starting', sub:'loading the world…'};
@@ -675,6 +694,9 @@ function stateInfo() {
     case 'stopped':  return {level:'off',  word:'stopped',  sub:'nobody can join'};
   }
 }
+/* Live means loaded AND running; anything else waits for the next start or load. */
+const liveNow = s => s.id === S.active && running();
+const pendWhen = s => s.id !== S.active ? `when ${s.name} next loads` : running() ? 'at the next restart' : 'when the server starts';
 const dotVar = l => l === 'off' ? 'text-3' : l === 'bad' ? 'danger' : l;
 
 /* ---- retention: newest 20 per world; automatic ones go first; pinned ones are kept, outside the 20 ---- */
@@ -693,101 +715,106 @@ function nextToGo(id) {
 }
 function addBackup(id, label, auto) {
   const s = slot(id);
-  const b = {id:'b' + (++S.bseq), slot:+id, label:label || null, auto:auto || null, at:`today, ${nowClock()}`, mb:s.mb || 1.2, pinned:false};
+  const b = {id:'b' + (++S.bseq), slot:+id, label:label || null, auto:auto || null, at:`today, ${nowClock()}`, mb:s.mb || 1.2, pinned:false, seed:s.seed, mode:s.mode, diff:s.diff, cheats:s.cheats};
   S.backups.unshift(b);
   return retain(id);
 }
 
-/* ---- jobs: load / import / reset / restore. One at a time; steps advance on timers. ---- */
-function step(label, ms, enter) { return {label, ms, enter}; }
-function runJob(job) {
-  S.job = Object.assign({i:0, at:[], err:null}, job);
+/* ---- jobs: load / import / reset / restore. One at a time. The backend reports only
+   job: {what, phase, started_at} on /status, so that is all the card shows — the current phase and
+   the time since it started — and a second device sees exactly the same. The one thing only the
+   uploading device knows is the upload's real byte count. ---- */
+const PHASES = {
+  'uploading':'sending the file from this device',
+  'warning players':'players got a 10-second warning in chat',
+  'backing up':'taking a safety backup first',
+  'stopping':'saving the world and stopping',
+  'writing':'writing the world into its slot',
+  'starting':'starting the server again',
+};
+function phase(name, ms, enter) { return {name, ms, enter}; }
+function runJob(job, seq) {
+  S.job = Object.assign({phase:null, started:null, startedClock:null, err:null}, job);
+  const j0 = S.job;
   const go = i => {
-    if (!S.job || S.job !== job0) return;
-    if (i >= S.job.steps.length) { const done = S.job.done; S.job = null; done && done(); return; }
-    S.job.i = i; S.job.at[i] = nowClock();
-    const st = S.job.steps[i];
-    st.enter && st.enter();
-    if (S.job.err) return;
-    if (st.upload) return uploadTick(i);
-    later(st.ms || 1600, () => go(i + 1));
+    if (S.job !== j0) return;
+    if (i >= seq.length) { const done = j0.done; S.job = null; done && done(); return; }
+    const ph = seq[i];
+    if (ph.name !== 'uploading' && !j0.started) { j0.started = Date.now(); j0.startedClock = nowClock(); }
+    j0.phase = ph.name; ph.enter && ph.enter();
+    if (j0.err) return;
+    if (ph.name === 'uploading') return tick(i);
+    later(ph.ms || 1600, () => go(i + 1));
   };
-  const uploadTick = i => {
-    later(260, () => {
-      if (!S.job || S.job !== job0) return;
-      S.job.sent = Math.min(S.job.file.mb, +(S.job.sent + S.job.file.mb / 9).toFixed(1));
-      if (S.job.sent >= S.job.file.mb) go(i + 1); else uploadTick(i);
-    });
-  };
-  const job0 = S.job;
+  const tick = i => later(260, () => {
+    if (S.job !== j0) return;
+    j0.sent = Math.min(j0.file.mb, +(j0.sent + j0.file.mb / 9).toFixed(1));
+    if (j0.sent < j0.file.mb) return tick(i);
+    if (!j0.file.level) { j0.err = `${j0.file.name} has no level.dat inside, so it isn’t a Bedrock world (a Java world won’t import). Nothing was written to any slot, and the upload was thrown away.`; return; }
+    go(i + 1);
+  });
   go(0);
 }
-/* The server-touching middle of a sequence, when the slot is loaded and the server is up. */
-function bounceSteps(slotName_, verb, word) {
-  return {
-    stop: step(`Stopping — saving ${slotName_}`, 1700, () => { S.server = 'stopping'; S.online = []; }),
-    start: step(`Starting ${verb}`, 1900, () => { S.server = 'starting'; }),
-    word,
-  };
-}
-function finishStart() { S.server = 'running'; S.uptimeMin = 0; }
+const warnStop = () => [phase('warning players', 2600), phase('stopping', 1700, () => { S.server = 'stopping'; S.online = []; })];
+/* The server-touching part when the world is loaded and running: a 10 s chat warning first if anyone is on. */
+function bounce() { return running() ? (S.online.length ? warnStop() : [phase('stopping', 1700, () => { S.server = 'stopping'; })]) : []; }
+function finishStart() { S.server = 'running'; S.uptimeMin = 0; const a = activeSlot(); if (a) a.p = {}; }
 
 function doLoad(id) {
-  const to = slot(id), from = activeSlot(), wasRunning = running(), players = S.online.length;
-  const steps = [];
-  if (wasRunning && players) steps.push(step('Warning players in chat — switching worlds in 30 s', 2600));
-  if (wasRunning) steps.push(step(`Stopping — saving ${from.name}`, 1700, () => { S.server = 'stopping'; S.online = []; }));
-  steps.push(step(`Backing up ${from.name}`, 1500, () => { if (wasRunning) S.server = 'stopped'; addBackup(from.id, null, `before loading ${to.name}`); }));
-  steps.push(step(`Switching to ${to.name}`, 1200, () => { from.played = `today, ${nowClock()}`; S.active = to.id; to.p = {}; }));
-  if (wasRunning) steps.push(step(to.gen ? `Starting ${to.name}` : `Starting — generating ${to.name}`, 2200, () => { S.server = 'starting'; }));
-  runJob({kind:'load', noun:'world switch', hero:wasRunning ? 'switching worlds' : null, title:`Loading ${to.name}`, slot:to.id, steps,
+  const to = slot(id), from = activeSlot(), wasRunning = running();
+  const seq = wasRunning
+    ? [...bounce(), phase('backing up', 1500, () => { S.server = 'stopped'; addBackup(from.id, null, `before loading ${to.name}`); }),
+       phase('writing', 1200, () => { from.played = `today, ${nowClock()}`; S.active = to.id; }), phase('starting', 2200, () => { S.server = 'starting'; })]
+    : [phase('writing', 1200, () => { S.active = to.id; })];
+  runJob({kind:'load', what:'loading a world', hero:wasRunning ? 'switching worlds' : null,
     done:() => { if (wasRunning) { finishStart(); to.gen = true; to.mb = to.mb || 1.2; toast(`${to.name} is loaded — players can join`); }
-      else toast(`${to.name} is loaded — start the server to play it`); }});
+      else toast(`${to.name} is loaded — start the server to play it`); }}, seq);
 }
 function doImport(id, file) {
-  const t = slot(id), occupied = !isEmpty(t) && t.gen, active = t.id === S.active, bounce = active && running();
-  const steps = [];
-  const up = step(`Uploading ${file.name}`, 0); up.upload = true; steps.push(up);
-  steps.push(step('Checking it — level.dat, levelname.txt and db/', 1500, () => {
-    if (!file.level) S.job.err = `${file.name} has no level.dat or db/ inside, so it isn't a Bedrock world (a Java world won't import). Nothing was written to any slot, and the upload was thrown away.`;
-  }));
-  if (occupied) steps.push(step(`Backing up ${t.name} first`, 1400, () => addBackup(t.id, null, `before importing ${file.level || 'a world'}`)));
-  if (bounce) steps.push(step(`Stopping — saving ${t.name}`, 1600, () => { S.server = 'stopping'; S.online = []; }));
-  steps.push(step(`Writing ${file.level || 'the world'} to slot ${t.id}`, 1400, () => { if (bounce) S.server = 'stopped';
-    Object.assign(t, {name:file.level, origin:'imported', seed:null, mode:t.mode || 'Survival', diff:t.diff || 'Normal', cheats:false, mb:+(file.mb * 1.6).toFixed(1), played:null, made:'Oct 10', gen:true, r:{}, p:{}}); }));
-  if (bounce) steps.push(step(`Starting ${file.level}`, 1900, () => { S.server = 'starting'; }));
-  runJob({kind:'import', noun:'import', hero:bounce ? 'importing' : null, title:`Importing into slot ${t.id}${occupied ? ` — over ${t.name}` : ''}`, slot:t.id, file, sent:0, steps,
-    done:() => { if (bounce) finishStart(); toast(`${file.level} imported into slot ${t.id}`); }});
+  const t = slot(id), occupied = !isEmpty(t) && t.gen, loaded = t.id === S.active && running();
+  const seq = [phase('uploading')];
+  if (occupied) seq.push(phase('backing up', 1400, () => addBackup(t.id, null, `before importing ${file.level}`)));
+  if (loaded) seq.push(...bounce());
+  /* The world file brings its own settings, seed and rules — the slot's old ones are not kept. */
+  seq.push(phase('writing', 1400, () => { if (loaded) S.server = 'stopped';
+    Object.assign(t, {name:file.level, origin:'imported', seed:file.seed, mode:file.mode, diff:file.diff, cheats:file.cheats, mb:+(file.mb * 1.6).toFixed(1), played:null, made:'Oct 10', gen:true, r:{...file.rules}, p:{}}); }));
+  if (loaded) seq.push(phase('starting', 1900, () => { S.server = 'starting'; }));
+  runJob({kind:'import', what:'importing a world', hero:loaded ? 'importing' : null, slot:t.id, file, sent:0,
+    done:() => { if (loaded) finishStart(); toast(`${file.level} imported into slot ${t.id}`); }}, seq);
 }
-function doReset(id, how) {
-  const t = slot(id), bounce = t.id === S.active && running(), name = t.name;
-  const steps = [];
-  if (t.gen) steps.push(step(`Backing up ${name} first`, 1400, () => addBackup(t.id, null, `before reset (${how === 'same' ? 'same seed' : how === 'new' ? 'new seed' : 'emptied'})`)));
-  if (bounce) steps.push(step(`Stopping — saving ${name}`, 1600, () => { S.server = 'stopping'; S.online = []; }));
-  steps.push(step(how === 'empty' ? `Emptying slot ${t.id}` : how === 'same' ? `Resetting ${name} — same seed, fresh terrain` : `Resetting ${name} — new seed`, 1600, () => {
-    if (bounce) S.server = 'stopped';
+function doReset(id, how, seed) {
+  const t = slot(id), loaded = t.id === S.active && running(), name = t.name;
+  const seq = [];
+  if (t.gen) seq.push(phase('backing up', 1400, () => addBackup(t.id, null, `before reset (${how === 'same' ? 'same seed' : how === 'new' ? 'new seed' : 'emptied'})`)));
+  if (loaded) seq.push(...bounce());
+  seq.push(phase('writing', 1600, () => {
+    if (loaded) S.server = 'stopped';
     if (how === 'empty') { Object.keys(t).forEach(k => { if (k !== 'id') delete t[k]; }); t.origin = 'empty'; }
-    else Object.assign(t, {gen:false, mb:null, played:null, seed:how === 'same' ? t.seed : randSeed(), origin:t.origin === 'imported' || t.origin === 'first' ? 'seeded' : t.origin, made:'Oct 10'});
+    else Object.assign(t, {gen:false, mb:null, played:null, seed:how === 'same' ? t.seed : (seed || randSeed()), origin:t.origin === 'imported' || t.origin === 'first' ? 'seeded' : t.origin, made:'Oct 10'});
   }));
-  if (bounce) steps.push(step(`Starting — generating ${name}`, 2000, () => { S.server = 'starting'; }));
-  runJob({kind:'reset', noun:'reset', hero:bounce ? 'resetting' : null, title:how === 'empty' ? `Emptying slot ${t.id}` : `Resetting ${name}`, slot:t.id, steps,
-    done:() => { if (bounce) { finishStart(); t.gen = true; t.mb = 1.2; }
-      toast(how === 'empty' ? `Slot ${t.id} is empty — its backups are kept` : `${name} is reset — undo it from its backups`); }});
+  if (loaded) seq.push(phase('starting', 2000, () => { S.server = 'starting'; }));
+  runJob({kind:'reset', what:'resetting a world', hero:loaded ? 'resetting' : null, slot:t.id,
+    done:() => { if (loaded) { finishStart(); t.gen = true; t.mb = 1.2; }
+      toast(how === 'empty' ? `Slot ${t.id} is empty — its backups are kept` : `${name} is reset — undo it from its backups`); }}, seq);
 }
+/* A restore takes the backup's own seed and settings (from its level.dat); into an empty slot it is
+   named "<source> (<backup date>)" and keeps the source world's rules. */
 function doRestore(bid, toId) {
-  const b = backup(bid), from = slot(b.slot), t = slot(toId), bounce = t.id === S.active && running();
+  const b = backup(bid), from = slot(b.slot), t = slot(toId), loaded = t.id === S.active && running();
   const into = isEmpty(t) ? `${from.name} (${b.at.split(',')[0]})` : t.name;
-  const steps = [];
-  if (!isEmpty(t) && t.gen) steps.push(step(`Backing up ${t.name} first`, 1400, () => addBackup(t.id, null, `before restoring ${b.label ? '“' + b.label + '”' : 'a backup'}`)));
-  if (bounce) steps.push(step(`Stopping — saving ${t.name}`, 1600, () => { S.server = 'stopping'; S.online = []; }));
-  steps.push(step(`Restoring ${bShort(b)} into ${isEmpty(t) ? `slot ${t.id}` : t.name}`, 1800, () => {
-    if (bounce) S.server = 'stopped';
-    if (isEmpty(t)) Object.assign(t, {name:into, origin:'restored', from:from.name, seed:from.seed || null, mode:from.mode, diff:from.diff, cheats:from.cheats, played:null, made:'Oct 10', r:{...(from.r || {})}, p:{}});
+  const seq = [];
+  if (!isEmpty(t) && t.gen) seq.push(phase('backing up', 1400, () => addBackup(t.id, null, `before restoring ${b.label ? '“' + b.label + '”' : 'a backup'}`)));
+  if (loaded) seq.push(...bounce());
+  seq.push(phase('writing', 1800, () => {
+    if (loaded) S.server = 'stopped';
+    const fromB = {seed:b.seed, mode:b.mode, diff:b.diff, cheats:b.cheats};
+    if (isEmpty(t)) Object.assign(t, {name:into, origin:'restored', from:from.name, played:null, made:'Oct 10', r:{...(from.r || {})}, p:{}}, fromB);
+    else Object.assign(t, fromB);
     Object.assign(t, {mb:b.mb, gen:true});
   }));
-  if (bounce) steps.push(step(`Starting ${t.name}`, 1900, () => { S.server = 'starting'; }));
-  runJob({kind:'restore', noun:'restore', hero:bounce ? 'restoring' : null, title:`Restoring into ${isEmpty(t) ? `slot ${t.id}` : t.name}`, slot:t.id, steps,
-    done:() => { if (bounce) finishStart(); toast(`Restored — ${into} is back to ${b.at}`); }});
+  if (loaded) seq.push(phase('starting', 1900, () => { S.server = 'starting'; }));
+  runJob({kind:'restore', what:'restoring a backup', hero:loaded ? 'restoring' : null, slot:t.id,
+    done:() => { if (loaded) finishStart(); toast(`Restored — ${into} is back to ${b.at}`); }}, seq);
 }
 
 /* ---- actions (shared). Variants add their own UI acts to ACT. ---- */
@@ -796,9 +823,9 @@ const openDialog = (kind, extra = {}) => { UI.sheet = null; UI.dialog = Object.a
 const closeModal = () => { UI.sheet = null; UI.dialog = null; UI.rev++; };
 
 const ACT = {
-  start() { S.server = 'starting'; later(2000, () => { S.server = 'running'; S.uptimeMin = 0; toast(`Server running — ${activeSlot().name}`); }); },
-  stop() { if (S.online.length) return openDialog('stop'); S.server = 'stopping'; later(1600, () => { S.server = 'stopped'; toast('Server stopped — world saved'); }); },
-  restart() { toast('Restart works as on the built screen (not part of this gate)'); },
+  start() { S.server = 'starting'; later(2000, () => { finishStart(); S.allow.live = S.allow.on; toast(`Server running — ${activeSlot().name}; saved settings and rules applied`); }); },
+  stop() { if (S.online.length) return openDialog('stop'); doStop(); },
+  restart() { if (S.online.length) return openDialog('restart'); doRestart(); },
   close() { closeModal(); },
   dismiss() { closeModal(); },
   dismissErr() { S.err = null; },
@@ -806,14 +833,17 @@ const ACT = {
 
   /* worlds */
   load(id) { openDialog('load', {slot:+id}); },
-  newWorld(id) { const t = id ? slot(id) : firstEmpty(); if (!t) return; openSheet('newWorld', {slot:t.id, form:{name:'', seedMode:'random', seedRand:randSeed(), seedText:'', mode:'Survival', diff:'Normal', rules:{}}}); },
+  newWorld(id) { const t = id ? slot(id) : firstEmpty(); if (!t) return; openSheet('newWorld', {slot:t.id, form:{name:'', seedMode:'random', seedRand:randSeed(), seedText:'', mode:'Survival', diff:'Normal', cheats:false, rules:{}}}); },
   importTo(id) { const t = id ? slot(id) : (firstEmpty() || null); openSheet('import', {slot:t ? t.id : null, fixed:!!id, form:{file:null}}); },
   rename(id) { openSheet('rename', {slot:+id, form:{name:slot(id).name}}); },
-  reset(id) { const t = slot(id); openSheet('reset', {slot:+id, form:{how:t.seed ? 'same' : 'new'}}); },
+  reset(id) { const t = slot(id); openSheet('reset', {slot:+id, form:{how:t.seed ? 'same' : 'new', seedMode:'random', seedRand:randSeed(), seedText:''}}); },
+  fCheats() { UI.form.cheats = !UI.form.cheats; UI.rev++; },
   set(arg) { const [id, k, v] = arg.split('|'); const t = slot(id); t[k] = k === 'cheats' ? !t.cheats : v;
-    if (t.id !== S.active) { t.p[k] = 1; return toast(`Saved — applies when ${t.name} next loads`); }
-    if (k === 'cheats') return toast(`Saved — cheats ${t.cheats ? 'on' : 'off'} at the next restart`);
-    toast(running() ? `Applied live — ${k === 'mode' ? 'game mode' : 'difficulty'} is ${v.toLowerCase()} now` : `Saved — applies when the server starts`); },
+    if (k === 'diff' && liveNow(t)) return toast(`Applied live — difficulty is ${v.toLowerCase()} now`);
+    t.p[k] = 1;
+    if (k === 'mode') return toast(`Saved — ${v.toLowerCase()} is the default for new players ${pendWhen(t)}; existing players keep theirs`);
+    if (k === 'cheats') return toast(`Saved — cheats ${t.cheats ? 'on' : 'off'} ${pendWhen(t)}`);
+    toast(`Saved — difficulty changes ${pendWhen(t)}`); },
   copySeed(id) { toast(`Copied seed ${slot(id).seed}`); },
 
   /* form bits inside sheets — they re-render the open modal, not the page */
@@ -825,23 +855,29 @@ const ACT = {
     if (!name) return;
     const seed = f.seedMode === 'enter' ? (f.seedText || '').trim() : f.seedRand;
     if (!seed) return;
-    Object.assign(t, {name, origin:'seeded', seed, mode:f.mode, diff:f.diff, cheats:false, mb:null, played:null, made:'Oct 10', gen:false, r:{...(f.rules || {})}, p:{}});
+    Object.assign(t, {name, origin:'seeded', seed, mode:f.mode, diff:f.diff, cheats:!!f.cheats, mb:null, played:null, made:'Oct 10', gen:false, r:{...(f.rules || {})}, p:{}});
     closeModal(); toast(`${name} is in slot ${t.id} — it’s generated the first time you load it`);
   },
   startImport() {
     const f = FILES[UI.form.file], id = UI.sheet.slot; if (!f || !id || f.mb > MAX_MB) return;
+    const t = slot(id);
+    if (!isEmpty(t) && t.gen) return openDialog('import', {slot:id, file:UI.form.file});
     closeModal(); doImport(id, f);
   },
-  saveName() { const t = slot(UI.sheet.slot), n = (UI.form.name || '').trim(); if (!n) return; const old = t.name; t.name = n; closeModal(); toast(`Renamed ${old} to ${n}`); },
-  resetNext() { openDialog('reset', {slot:UI.sheet.slot, how:UI.form.how}); UI.form.typed = ''; },
+  saveName() { const t = slot(UI.sheet.slot), n = (UI.form.name || '').trim().slice(0, 40); if (!n) return; const old = t.name; t.name = n; closeModal(); toast(`Renamed ${old} to ${n}`); },
+  resetNext() { const f = UI.form, seed = f.how !== 'new' ? null : f.seedMode === 'enter' ? (f.seedText || '').trim() : f.seedRand;
+    if (f.how === 'new' && !seed) { toast('Enter a seed, or switch to Random'); return; }
+    openDialog('reset', {slot:UI.sheet.slot, how:f.how, seed}); UI.form.typed = ''; },
   confirm() {
     const d = UI.dialog; closeModal();
     if (d.kind === 'load') doLoad(d.slot);
-    else if (d.kind === 'reset') doReset(d.slot, d.how);
+    else if (d.kind === 'reset') doReset(d.slot, d.how, d.seed);
+    else if (d.kind === 'import') doImport(d.slot, FILES[d.file]);
+    else if (d.kind === 'restart') doRestart();
     else if (d.kind === 'restore') doRestore(d.backup, d.to);
     else if (d.kind === 'delete') { const b = backup(d.backup); S.backups = S.backups.filter(x => x !== b); toast(`Deleted ${bShort(b)}`); }
-    else if (d.kind === 'allowOff') { S.allow.on = false; toast('Allowlist off — anyone on your network can join'); }
-    else if (d.kind === 'stop') { S.server = 'stopping'; S.online = []; later(1600, () => { S.server = 'stopped'; toast('Server stopped — world saved'); }); }
+    else if (d.kind === 'allowOff') { S.allow.on = false; toast(running() ? 'Allowlist off from the next restart' : 'Allowlist off when the server starts'); }
+    else if (d.kind === 'stop') doStop();
   },
 
   /* backups */
@@ -854,8 +890,8 @@ const ACT = {
   },
   pin(bid) { const b = backup(bid); b.pinned = !b.pinned; if (!b.pinned) { const d = retain(b.slot); if (d) toast(`Unpinned — over 20, so ${bShort(d)} was removed`); else toast('Unpinned — it counts toward the 20 again'); }
     else toast('Pinned — kept for good, outside the 20'); if (UI.sheet) UI.rev++; },
-  del(bid) { openDialog('delete', {backup:bid}); },
-  download(bid) { const b = backup(bid), s = slot(b.slot); S.downloads[b.slot] = {at:`today, ${nowClock()}`, id:bid};
+  del(bid) { if (backup(bid).pinned) return; openDialog('delete', {backup:bid}); },
+  download(bid) { const b = backup(bid), s = slot(b.slot); const at = `today, ${nowClock()}`; S.downloads[b.slot] = {at, id:bid}; b.downloaded = at;
     toast(`Downloading ${slotName(s)} — ${b.label || b.at}.mcworld (${mb(b.mb)})`); if (UI.sheet) UI.rev++; },
   restore(bid) { const b = backup(bid); openSheet('restore', {backup:bid, form:{to:String(b.slot)}}); },
   restoreNext() { openDialog('restore', {backup:UI.sheet.backup, to:+UI.form.to}); },
@@ -863,24 +899,22 @@ const ACT = {
 
   /* server-wide settings + allowlist */
   srvStep(arg) { const [k, d] = arg.split('|'); S.srvDraft = S.srvDraft || {...S.srv};
-    const lim = {maxPlayers:[1, 30], view:[5, 64], tick:[4, 12], slotCount:[usedHigh(), 12]}[k];
+    const lim = {maxPlayers:[1, 30], view:[5, 32]}[k];
     S.srvDraft[k] = Math.max(lim[0], Math.min(lim[1], S.srvDraft[k] + +d)); },
-  srvSave() { const d = S.srvDraft; if (!d) return; const grew = d.slotCount - S.srv.slotCount;
-    S.srv = {...d}; S.srvDraft = null; syncSlotCount();
-    toast(grew ? `Saved — ${plural(Math.abs(grew), 'slot')} ${grew > 0 ? 'added' : 'removed'}; the rest applies at the next restart` : `Saved — applies at the next restart`); },
+  srvSave() { if (!S.srvDraft) return; S.srv = {...S.srvDraft}; S.srvDraft = null;
+    toast(running() ? 'Saved — applies at the next restart' : 'Saved — applies when the server starts'); },
   srvCancel() { S.srvDraft = null; },
-  allowToggle() { if (S.allow.on) return openDialog('allowOff'); S.allow.on = true; toast(`Allowlist on — only the ${plural(S.allow.tags.length, 'listed gamertag')} can join`); },
+  allowToggle() { if (S.allow.on) return openDialog('allowOff'); S.allow.on = true; toast(`Allowlist on ${running() ? 'from the next restart' : 'when the server starts'}`); },
   addTag() { const t = (UI.form.tag || '').trim(); if (!t) return; if (S.allow.tags.some(x => x.toLowerCase() === t.toLowerCase())) { toast(`${t} is already on the list`); return; }
     S.allow.tags.push(t); UI.form.tag = ''; toast(running() ? `${t} can join now — no restart needed` : `${t} added — applied when the server starts`); },
   removeTag(t) { S.allow.tags = S.allow.tags.filter(x => x !== t);
     toast(S.online.some(o => o.tag === t) ? `${t} removed — they stay on until they leave` : `${t} removed`); },
   copyAddr() { toast('Copied 192.168.1.40:19132'); },
 };
-const usedHigh = () => Math.max(...S.slots.filter(s => !isEmpty(s)).map(s => s.id), 1);
-function syncSlotCount() {
-  while (S.slots.length < S.srv.slotCount) S.slots.push({id:S.slots.length + 1, name:null, origin:'empty'});
-  while (S.slots.length > S.srv.slotCount && isEmpty(S.slots[S.slots.length - 1])) S.slots.pop();
-}
+function doStop() { S.server = 'stopping'; S.online = []; later(1600, () => { S.server = 'stopped'; toast('Server stopped — world saved'); }); }
+function doRestart() { S.server = 'restarting'; S.online = []; later(2400, () => { finishStart(); S.allow.live = S.allow.on; toast('Server restarted — saved settings and rules applied'); }); }
+/* Fixture backups carry their world's seed and settings, as a backup's level.dat would. */
+function hydrateBackups() { S.backups.forEach(b => { if (b.mode) return; const s = slot(b.slot); Object.assign(b, {seed:s.seed, mode:s.mode, diff:s.diff, cheats:s.cheats}); }); }
 
 /* ---- scenarios: the mock-controls strip ---- */
 const SCEN = [
@@ -889,7 +923,9 @@ const SCEN = [
   ['fresh', 'Fresh box · empty slots'],
   ['importing', 'Importing'],
   ['import_bad', 'Import · not Bedrock'],
-  ['import_big', 'Import · too big'],
+  ['import_warn', 'Import · 300 MB'],
+  ['import_big', 'Import · 1.3 GB'],
+  ['seed_unknown', 'Seed unreadable'],
   ['loading', 'Loading a world'],
   ['resetting', 'Reset in progress'],
   ['restoring', 'Restore in progress'],
@@ -901,18 +937,21 @@ function scenario(id) {
   clearTimers();
   Object.assign(S, {scenario:id, server:'running', uptimeMin:192, online:ONLINE_FIXTURE.map(p => ({...p})), upd:'idle',
     slots:clone(SLOTS0), active:ACTIVE0, backups:clone(BACKUPS0), downloads:clone(DOWNLOADS0),
-    srv:{name:'JBrain', maxPlayers:10, view:32, tick:4, slotCount:5}, srvDraft:null,
-    allow:{on:true, tags:['BlockyFox', 'Mira_P', 'Steve42', 'Pebble_J']}, job:null, pendingBackup:null, err:null});
+    srv:{name:'JBrain', maxPlayers:10, view:32}, srvDraft:null,
+    allow:{on:true, live:true, tags:['BlockyFox', 'Mira_P', 'Steve42', 'Pebble_J']}, job:null, pendingBackup:null, err:null});
   UI.sheet = null; UI.dialog = null; UI.form = {}; UI.rev++; UI.top = true;
   if (id === 'stopped') { S.server = 'stopped'; S.online = []; }
   if (id === 'fresh') {
     /* The day M2 lands: only the first-boot world, nothing backed up, nothing downloaded. */
-    S.slots = [{...SLOTS0[0], played:'today, 2:33 pm'}, ...[2,3,4,5].map(n => ({id:n, name:null, origin:'empty'}))];
+    S.slots = [{...clone(SLOTS0[0]), played:'today, 2:33 pm'}, ...[2,3,4,5].map(n => ({id:n, name:null, origin:'empty'}))];
     S.active = 1; S.backups = []; S.downloads = {}; S.online = [{tag:'BlockyFox', min:12}];
   }
   if (id === 'importing') { S.fileKind = 'good'; doImport(3, FILES.good); }
-  if (id === 'import_bad') { S.fileKind = 'bad'; doImport(5, FILES.bad); S.job.sent = FILES.bad.mb; S.job.i = 1; S.job.at[1] = nowClock(); S.job.steps[1].enter(); clearTimers(); }
-  if (id === 'import_big') { S.fileKind = 'big'; }
+  if (id === 'import_bad') { S.fileKind = 'bad'; doImport(5, FILES.bad); clearTimers(); S.job.sent = FILES.bad.mb;
+    S.job.err = `${FILES.bad.name} has no level.dat inside, so it isn’t a Bedrock world (a Java world won’t import). Nothing was written to any slot, and the upload was thrown away.`; }
+  if (id === 'import_big') S.fileKind = 'big';
+  if (id === 'import_warn') S.fileKind = 'mid';
+  if (id === 'seed_unknown') { slot(2).seed = null; }
   if (id === 'loading') doLoad(3);
   if (id === 'resetting') doReset(3, 'new');
   if (id === 'restoring') doRestore('b5', 2);
@@ -923,8 +962,9 @@ function scenario(id) {
     for (let i = 0; i < 17; i++) extra.push({id:'L' + i, slot:2, label:i % 4 === 0 ? `checkpoint ${17 - i}` : null, auto:i % 4 === 0 ? null : i % 2 ? 'before loading Creative test' : 'before loading world', at:`Sep ${28 - i}, 6:${String(10 + i).padStart(2,'0')} pm`, mb:6.1, pinned:false});
     S.backups = [...clone(BACKUPS0), ...extra];
   }
+  hydrateBackups();
   if (typeof onScenario === 'function') onScenario(id);
-  if (id === 'import_big') ACT.importTo(null), UI.form.file = 'big';
+  if (id === 'import_big' || id === 'import_warn') { ACT.importTo(null); UI.form.file = S.fileKind; }
   render();
 }
 function renderSim() {
@@ -932,7 +972,7 @@ function renderSim() {
   document.getElementById('sim').innerHTML = `
     <div class="stitle"><span>Mock controls — not part of the design</span><span>${VARIANT}</span></div>
     <div class="srow"><span class="sl">State</span>${SCEN.map(([id, l]) => b(S.scenario === id, 'scen:' + id, l)).join('')}</div>
-    <div class="srow"><span class="sl">File</span>${b(S.fileKind === 'good', 'file:good', '.mcworld · 9.4 MB')}${b(S.fileKind === 'bad', 'file:bad', 'Not Bedrock (.zip)')}${b(S.fileKind === 'big', 'file:big', 'Too big · 812 MB')}</div>
+    <div class="srow"><span class="sl">File</span>${b(S.fileKind === 'good', 'file:good', '.mcworld · 9.4 MB')}${b(S.fileKind === 'bad', 'file:bad', 'Not Bedrock (.zip)')}${b(S.fileKind === 'mid', 'file:mid', '300 MB · home only')}${b(S.fileKind === 'big', 'file:big', '1.3 GB · refused')}</div>
     ${typeof extraSim === 'function' ? extraSim(b) : ''}
     <div class="srow"><span class="sl">Theme</span>${b(S.theme === 'dark', 'theme:dark', 'Dark')}${b(S.theme === 'light', 'theme:light', 'Light')}</div>`;
 }
@@ -954,8 +994,8 @@ function topBar(title, backAct) {
 /* The built screen's status block, now naming the loaded world. */
 function hero(extra = '') {
   const si = stateInfo(), n = S.online.length, a = activeSlot();
-  const facts = `<div class="b-facts"><div class="b-fact"><div class="v">${running() ? n : '—'}</div><div class="k">online now</div></div>
-    <div class="b-fact"><div class="v" title="${esc(a.name)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.name)}</div><div class="k">world loaded</div></div>
+  const facts = `<div class="b-fact b-world"><div class="v">${esc(a.name)}</div><div class="k">world loaded</div></div>
+    <div class="b-facts"><div class="b-fact"><div class="v">${running() ? n : '—'}</div><div class="k">online now</div></div>
     <div class="b-fact"><div class="v">${RUNNING}</div><div class="k">version</div></div></div>`;
   const jobBusy = !!(S.job && S.job.hero && !S.job.err);
   const dis = (S.upd === 'running' || jobBusy || !['running','stopped'].includes(S.server)) ? 'disabled' : '';
@@ -963,7 +1003,7 @@ function hero(extra = '') {
     ? `<button class="btn go grow" data-act="start" ${S.server === 'starting' || dis ? 'disabled' : ''}>${S.server === 'starting' ? spinner('Starting…') : IC.play + 'Start server'}</button>`
     : `<button class="btn grow" data-act="restart" ${dis}>${IC.restart}Restart</button><button class="btn grow" data-act="stop" ${dis}>${S.server === 'stopping' ? spinner('Stopping…') : IC.stop + 'Stop'}</button>`;
   return `<div class="b-hero"><div class="b-state"><span class="ops-sdot" style="background:var(--${dotVar(si.level)})"></span><span class="w">${si.word}</span><span class="sub">${esc(si.sub)}</span></div>
-    ${facts}<div class="btnrow">${btns}</div>${S.upd === 'running' ? why('Busy updating — Start, Stop and Restart come back when it’s done.') : jobBusy ? why(`Busy with the ${S.job.noun} — the server is handled for you.`) : ''}${extra}</div>`;
+    ${facts}<div class="btnrow">${btns}</div>${S.upd === 'running' ? why('Busy updating — Start, Stop and Restart come back when it’s done.') : jobBusy ? why(`Busy ${S.job.what} — the server is handled for you.`) : ''}${extra}</div>`;
 }
 function banner() {
   if (S.upd === 'running') return `<div class="b-banner warn">${IC.refresh}<span><b style="font-weight:500">Updating Minecraft to ${LATEST}.</b> World actions wait until it’s done.</span></div>`;
@@ -1002,19 +1042,21 @@ function joinCard() {
 function slotFacts(s) {
   if (isEmpty(s)) return '';
   const seedRow = s.seed ? `<span class="mono">${esc(s.seed)}</span> <button class="link" data-act="copySeed:${s.id}" aria-label="Copy seed of ${esc(s.name)}">Copy</button>`
-    : `unknown <span class="faint">— ${s.origin === 'imported' ? 'imported worlds don’t carry it here' : 'not recorded'}</span>`;
+    : `unknown <span class="faint">— not recorded (its level.dat couldn’t be read)</span>`;
   return `<dl class="w-facts"><dt>Origin</dt><dd>${originText(s)}</dd><dt>Seed</dt><dd>${seedRow}</dd><dt>Size</dt><dd class="num">${s.gen ? mb(s.mb) : '— (not generated)'}</dd>
     <dt>Played</dt><dd>${playedText(s)}</dd><dt>Backups</dt><dd>${backupsOf(s.id).length ? `${backupsOf(s.id).length} · ${lastBackupText(s.id)}` : 'none yet'}</dd></dl>`;
 }
 function seg(name, opts, cur, actFor, label) {
-  return `<div class="seg" role="radiogroup" aria-label="${label}">${opts.map(o => `<button role="radio" aria-checked="${o === cur}" data-act="${actFor(o)}">${o}</button>`).join('')}</div>`;
+  return `<div class="seg${opts.length > 3 ? ' four' : ''}" role="radiogroup" aria-label="${label}">${opts.map(o => `<button role="radio" aria-checked="${o === cur}" data-act="${actFor(o)}">${o}</button>`).join('')}</div>`;
 }
 function slotSettings(s) {
   if (isEmpty(s)) return '';
-  const when = s.id !== S.active ? `Not loaded — a change is saved and applied when ${esc(s.name)} next loads.` : 'Loaded — game mode and difficulty change live, at once; cheats at the next restart.';
+  const when = s.id !== S.active ? `Not loaded — a change is saved and applied when ${esc(s.name)} next loads.`
+    : !running() ? 'Loaded, server stopped — a change is applied when the server starts.'
+    : 'Loaded and running — difficulty changes live. Cheats, and game mode, apply at the next restart.';
   const pend = k => s.p && s.p[k] ? '<span class="pend">pending</span>' : '';
-  return `<p class="hint ${s.id === S.active ? 'live' : ''}">${when}</p>
-    <div class="set"><div class="set-l"><span>Game mode ${pend('mode')}</span></div>${seg('mode', ['Survival','Creative','Adventure'], s.mode, o => `set:${s.id}|mode|${o}`, 'Game mode')}</div>
+  return `<p class="hint ${liveNow(s) ? 'live' : ''}">${when}</p>
+    <div class="set"><div class="set-l"><span>Game mode ${pend('mode')}</span></div>${seg('mode', ['Survival','Creative','Adventure'], s.mode, o => `set:${s.id}|mode|${o}`, 'Game mode')}<span class="hint">The default for new players and new characters — anyone who has played keeps their own mode.</span></div>
     <div class="set"><div class="set-l"><span>Difficulty ${pend('diff')}</span></div>${seg('diff', ['Peaceful','Easy','Normal','Hard'], s.diff, o => `set:${s.id}|diff|${o}`, 'Difficulty')}</div>
     <div class="sw-row"><span class="sw-l"><b>Cheats</b> ${pend('cheats')}<br>${s.cheats ? 'on — operators can run commands' : 'off — no commands in game'}</span>
       <button class="switch ${s.cheats ? 'on' : ''}" role="switch" aria-checked="${s.cheats}" aria-label="Cheats in ${esc(s.name)}" data-act="set:${s.id}|cheats|x"><span class="knob"></span></button></div>`;
@@ -1067,8 +1109,8 @@ function backupList(id, mode, limit) {
     const open = UI.open['k' + b.id];
     return `<button class="k-row ${first}" data-act="toggle:k${b.id}" aria-expanded="${!!open}">${backupRowInner(b)}${IC.chev}</button>
       ${open ? `<div class="k-body"><button class="btn primary" data-act="restore:${b.id}" ${block ? 'disabled' : ''}>${IC.undo}Restore…</button><button class="btn" data-act="download:${b.id}">${IC.download}Download</button>
-        <button class="btn" data-act="pin:${b.id}" aria-pressed="${b.pinned}">${IC.pin}${b.pinned ? 'Unpin' : 'Pin'}</button><button class="btn danger" data-act="del:${b.id}">${IC.trash}Delete</button>
-        ${block ? `<p class="note why" style="grid-column:1/-1">${block}</p>` : ''}</div>` : ''}`;
+        <button class="btn" data-act="pin:${b.id}" aria-pressed="${b.pinned}">${IC.pin}${b.pinned ? 'Unpin' : 'Pin'}</button><button class="btn danger" data-act="del:${b.id}" ${b.pinned ? 'disabled' : ''}>${IC.trash}Delete</button>
+        ${b.pinned ? `<p class="note why" style="grid-column:1/-1">Delete — unpin it first.</p>` : ''}${block ? `<p class="note why" style="grid-column:1/-1">${block}</p>` : ''}</div>` : ''}`;
   }).join('');
   const more = limit && list.length > limit ? `<button class="b-row" data-act="more:${id}" style="min-height:48px"><span class="b-rn"><span class="nm" style="font-size:var(--fs-secondary)">Show all ${list.length}</span></span>${IC.chev}</button>` : '';
   return pendingRow(id) + rows + more;
@@ -1079,21 +1121,22 @@ function backupHead(id) {
     ${why(block)}${can || backupsOf(id).length ? offboxLine(id) + retainLine(id) : '<p class="hint">Not generated yet — there’s nothing to back up until it first loads.</p>'}</div>`;
 }
 
-/* ---- a job in flight (or its failure) ---- */
+/* ---- a job in flight (or its failure): the phase /status reports, and time since it started ---- */
+const elapsed = j => { const t = Math.max(0, Math.round((Date.now() - j.started) / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 function jobCard(cls = '') {
   const j = S.job; if (!j) return '';
-  const steps = `<ol class="steps">${j.steps.map((st, i) => {
-    let c = '', mark = '';
-    if (j.err && i === j.i) { c = 'fail'; mark = IC.x; } else if (i < j.i) { c = 'done'; mark = IC.check; } else if (i === j.i) c = 'now';
-    const lbl = st.upload && i === j.i && !j.err ? `${esc(st.label)} — <span class="num">${j.sent.toFixed(1)} of ${j.file.mb} MB</span>` : esc(st.label);
-    return `<li class="${c}"><span class="sd">${mark}</span><span style="min-width:0">${lbl}</span><span class="at">${j.at[i] || ''}</span></li>`; }).join('')}</ol>`;
-  const meter = j.kind === 'import' && j.i === 0 && !j.err ? `<div class="meter" role="progressbar" aria-label="Upload" aria-valuenow="${Math.round(j.sent / j.file.mb * 100)}"><i style="width:${j.sent / j.file.mb * 100}%"></i></div>` : '';
-  if (j.err) return `<div class="job ${cls}" role="alert"><div class="notice bad">${IC.alert}<div><b>Not a Bedrock world — nothing was imported.</b><div class="errtext">${esc(j.err)}</div></div></div>${steps}
+  if (j.err) return `<div class="job ${cls}" role="alert"><div class="notice bad">${IC.alert}<div><b>Not a Bedrock world — nothing was imported.</b><div class="errtext">${esc(j.err)}</div></div></div>
     <div class="btnrow"><button class="btn" data-act="dismissJob">Dismiss</button><button class="btn primary grow" data-act="retryImport:${j.slot}">${IC.upload}Choose another file</button></div></div>`;
-  const note = j.kind === 'load' && j.i === 0 && S.online.length ? `<div class="note">Players see “switching worlds in 30 s” in chat; the server then stops, saves and backs up before switching.</div>`
-    : j.kind === 'import' && j.i === 0 ? `<div class="note">Keep this screen open until the upload finishes — it isn’t resumable. Small worlds take seconds.</div>` : '';
-  return `<div class="job ${cls}" role="status"><div class="job-h"><span class="spin">${IC.refresh}</span>${esc(j.title)}</div>${meter}${note}${steps}</div>`;
+  const what = j.what[0].toUpperCase() + j.what.slice(1);
+  if (j.phase === 'uploading') return `<div class="job ${cls}" role="status"><div class="job-h"><span class="spin">${IC.refresh}</span>${esc(what)}</div>
+    <div class="job-ph"><b>Uploading</b> — <span class="num">${j.sent.toFixed(1)} of ${mb(j.file.mb)}</span> from this device</div>
+    <div class="meter" role="progressbar" aria-label="Upload" aria-valuenow="${Math.round(j.sent / j.file.mb * 100)}"><i style="width:${j.sent / j.file.mb * 100}%"></i></div>
+    <div class="note">Keep this screen open until it finishes — the upload isn’t resumable. The file is checked for level.dat before anything is written.</div></div>`;
+  return `<div class="job ${cls}" role="status"><div class="job-h"><span class="spin">${IC.refresh}</span>${esc(what)}<span class="job-t num" data-elapsed>${elapsed(j)}</span></div>
+    <div class="job-ph"><b>${esc(j.phase[0].toUpperCase() + j.phase.slice(1))}</b> — ${PHASES[j.phase]}</div>
+    <div class="note">Started ${j.startedClock}. It carries on if you leave — any device opening this screen sees it.</div></div>`;
 }
+setInterval(() => { if (S.job && S.job.started) document.querySelectorAll('[data-elapsed]').forEach(e => e.textContent = elapsed(S.job)); }, 1000);
 ACT.retryImport = id => { S.job = null; ACT.importTo(id); };
 
 /* ---- server-wide settings + allowlist ---- */
@@ -1103,24 +1146,26 @@ function serverSettingsBody() {
     <button class="btn" data-act="srvStep:${k}|-1" aria-label="Fewer — ${label}">${IC.minus}</button><span class="sv" aria-live="polite">${d[k]}${unit}</span><button class="btn" data-act="srvStep:${k}|1" aria-label="More — ${label}">${IC.plus}</button></div></div>`;
   return `<div class="b-pad" style="gap:14px">
     <div class="fld"><label for="srv-name">Server name</label><input class="inp" id="srv-name" data-field="srvname" value="${esc(d.name)}" autocomplete="off" /><span class="hint">Shown in Friends → LAN Games.</span></div>
-    ${stepper('maxPlayers', 'Max players', 'at once')}
-    ${stepper('view', 'View distance', 'chunks')}
-    ${stepper('tick', 'Tick distance', 'chunks kept active')}
-    ${stepper('slotCount', 'World slots', `${S.slots.filter(s => !isEmpty(s)).length} in use`)}
+    ${stepper('maxPlayers', 'Max players', 'at once, 1–30')}
+    ${stepper('view', 'View distance', 'chunks, 5–32')}
+    <div class="sw-row"><span class="sw-l"><b>World slots</b><br>${S.slots.length} — one world loaded at a time</span><span class="badge off">${S.slots.length}</span></div>
     <div class="sw-row"><span class="sw-l"><b>Xbox sign-in required</b><br>always on — every player is a signed-in Xbox account</span><span class="badge off">on</span></div>
-    <p class="hint">Slots apply at once; the rest at the next restart${running() && S.online.length ? ' — nobody is disconnected by saving' : ''}.</p>
+    <p class="hint">${running() ? `Applies at the next restart${S.online.length ? ' — nobody is disconnected by saving' : ''}` : 'Applies when the server starts'}.</p>
     <div class="btnrow"><button class="btn" data-act="srvCancel" ${dirty ? '' : 'disabled'}>Cancel</button><button class="btn primary grow" data-act="srvSave" ${dirty ? '' : 'disabled'}>Save settings</button></div></div>`;
 }
 function allowlistBody() {
   const a = S.allow;
   const rows = a.tags.map(t => `<div class="al-row"><span class="pav ${S.online.some(o => o.tag === t) ? 'on' : ''}">${initial(t)}</span><span class="nm">${esc(t)}<span class="sm">${S.online.some(o => o.tag === t) ? 'on now' : PLAYERS.some(p => p.tag === t) ? 'has played here' : 'hasn’t joined yet'}</span></span>
     <button class="icon-btn" data-act="removeTag:${esc(t)}" aria-label="Remove ${esc(t)} from the allowlist">${IC.x}</button></div>`).join('');
-  return `<div class="b-pad"><div class="sw-row"><span class="sw-l"><b>Allowlist ${a.on ? 'on' : 'off'}</b><br>${a.on ? 'only these gamertags can join' : 'anyone on your network can join'}</span>
+  const pendA = a.on !== a.live ? ` <span class="pend">pending</span>` : '';
+  const state = a.on !== a.live ? `${a.on ? 'on' : 'off'} ${running() ? 'from the next restart' : 'when the server starts'} — ${a.live ? 'only these gamertags can join until then' : 'anyone on your network can join until then'}`
+    : a.on ? 'only these gamertags can join' : 'anyone on your network can join';
+  return `<div class="b-pad"><div class="sw-row"><span class="sw-l"><b>Allowlist ${a.on ? 'on' : 'off'}</b>${pendA}<br>${state}</span>
       <button class="switch ${a.on ? 'on' : ''}" role="switch" aria-checked="${a.on}" aria-label="Allowlist" data-act="allowToggle"><span class="knob"></span></button></div>
     <div class="offbox ${a.on ? '' : 'warn'}">${IC.shield}<span><b>Required for internet play.</b> ${a.on ? 'Internet play (coming later) only switches on with the list on.' : 'Internet play (coming later) won’t switch on while it’s off.'}</span></div></div>
     ${rows}
     <div class="b-pad" style="border-top:1px solid var(--border)"><div class="fld"><label for="al-add">Add a gamertag</label><div class="inp-row"><input class="inp" id="al-add" data-field="tag" placeholder="Gamertag" value="${esc(UI.form.tag || '')}" autocomplete="off" autocapitalize="off" spellcheck="false" />
-      <button class="btn primary" data-act="addTag">${IC.plus}Add</button></div><span class="hint">Live at once — no restart.${a.on ? '' : ' Kept for when the list is on.'}</span></div></div>`;
+      <button class="btn primary" data-act="addTag">${IC.plus}Add</button></div><span class="hint">${running() ? 'Adding or removing a name is live at once — no restart.' : 'Server stopped — added and removed names apply when it starts.'}${a.on ? '' : ' Kept for when the list is on.'}</span></div></div>`;
 }
 function errLine() {
   return S.err ? `<div class="err-line" role="alert">${IC.alert}<span>${esc(S.err)}</span><button class="icon-btn x" data-act="dismissErr" aria-label="Dismiss">${IC.x}</button></div>` : '';
@@ -1130,42 +1175,52 @@ function errLine() {
 function sheetHead(title, sub) {
   return `<div class="grip"></div><div class="sh-head"><div class="b-rn"><h3 id="sh-t">${title}</h3>${sub ? `<div class="sh-sub">${sub}</div>` : ''}</div><button class="btn" data-act="close" aria-label="Close">${IC.x}</button></div>`;
 }
+/* Random (rolled, re-rollable, shown) or typed, like Bedrock's own seed box. */
+function seedFields(f, hint) {
+  return `<div class="set"><div class="set-l"><span>Seed</span></div>${seg('', ['Random','Enter a seed'], f.seedMode === 'enter' ? 'Enter a seed' : 'Random', o => `f:seedMode|${o === 'Random' ? 'random' : 'enter'}`, 'Seed')}
+    ${f.seedMode === 'enter'
+      ? `<input class="inp mono" id="nw-seed" aria-label="Seed" data-field="seedText" data-count="64" value="${esc(f.seedText || '')}" placeholder="any text or number" maxlength="64" autocomplete="off" spellcheck="false" /><span class="hint"><span data-counter="seedText" class="num">${(f.seedText || '').length}</span> of 64 — the same as Minecraft’s own seed box. Text is turned into a number the way the game does it.</span>`
+      : `<div class="inp-row"><span class="inp mono seedbox" aria-live="polite">${esc(f.seedRand)}</span><button class="btn" data-act="reroll" aria-label="Roll a new random seed">${IC.refresh}Re-roll</button></div><span class="hint">${hint}</span>`}</div>`;
+}
+const disconnects = () => S.online.length ? `${listOf(S.online.map(o => o.tag))} get a 10-second warning in chat and are disconnected for about a minute` : '';
 function sheetHtml() {
   const sh = UI.sheet, f = UI.form;
   if (sh.kind === 'newWorld') {
     const t = slot(sh.slot);
     return `${sheetHead('New world', `Goes into slot ${t.id} · generated the first time it loads`)}<div class="sh-body">
-      <div class="fld"><label for="nw-name">Name</label><input class="inp" id="nw-name" data-field="name" value="${esc(f.name || '')}" placeholder="e.g. Skyblock run" autocomplete="off" /></div>
-      <div class="set"><div class="set-l"><span>Seed</span></div>${seg('', ['Random','Enter a seed'], f.seedMode === 'enter' ? 'Enter a seed' : 'Random', o => `f:seedMode|${o === 'Random' ? 'random' : 'enter'}`, 'Seed')}
-        ${f.seedMode === 'enter'
-          ? `<input class="inp mono" id="nw-seed" aria-label="Seed" data-field="seedText" data-count="64" value="${esc(f.seedText || '')}" placeholder="any text or number" maxlength="64" autocomplete="off" spellcheck="false" /><span class="hint"><span data-counter="seedText" class="num">${(f.seedText || '').length}</span> of 64 — the same as Minecraft’s own seed box. Text is turned into a number the way the game does it.</span>`
-          : `<div class="inp-row"><span class="inp mono seedbox" aria-live="polite">${esc(f.seedRand)}</span><button class="btn" data-act="reroll" aria-label="Roll a new random seed">${IC.refresh}Re-roll</button></div><span class="hint">Recorded with the world, so Reset can rebuild this exact terrain later.</span>`}</div>
+      <div class="fld"><label for="nw-name">Name</label><input class="inp" id="nw-name" data-field="name" data-count="40" value="${esc(f.name || '')}" placeholder="e.g. Skyblock run" maxlength="40" autocomplete="off" /></div>
+      ${seedFields(f, 'Recorded with the world, so Reset can rebuild this exact terrain later.')}
       <div class="set"><div class="set-l"><span>Game mode</span></div>${seg('', ['Survival','Creative','Adventure'], f.mode, o => `f:mode|${o}`, 'Game mode')}</div>
       <div class="set"><div class="set-l"><span>Difficulty</span></div>${seg('', ['Peaceful','Easy','Normal','Hard'], f.diff, o => `f:diff|${o}`, 'Difficulty')}</div>
+      <div class="sw-row"><span class="sw-l"><b>Cheats</b><br>${f.cheats ? 'on — operators can run commands' : 'off — no commands in game'}</span>
+        <button class="switch ${f.cheats ? 'on' : ''}" role="switch" aria-checked="${!!f.cheats}" aria-label="Cheats" data-act="fCheats"><span class="knob"></span></button></div>
       <details class="rules-new" ${UI.open.newRules ? 'open' : ''} data-open="newRules"><summary><span>World rules</span><span class="hint">${Object.keys(f.rules || {}).length ? plural(Object.keys(f.rules).length, 'rule') + ' changed' : 'defaults'}</span>${IC.chev}</summary>
         <div class="rules-in">${rulesEditor('new')}</div></details>
       <div class="sh-foot"><button class="btn primary" data-act="createWorld" data-needs="name" ${(f.name || '').trim() ? '' : 'disabled'}>${IC.plus}Create world</button></div></div>`;
   }
   if (sh.kind === 'import') {
     const file = f.file ? FILES[f.file] : null, t = sh.slot ? slot(sh.slot) : null;
-    const big = file && file.mb > MAX_MB;
+    const big = file && file.mb > MAX_MB, mid = file && !big && file.mb > TUNNEL_MB;
     const targets = sh.fixed ? '' : `<div class="set"><div class="set-l"><span>Into</span></div><div class="opts" role="radiogroup" aria-label="Slot">${S.slots.map(s => {
-      const act = s.id === S.active, sub = isEmpty(s) ? 'empty slot' : `replaces ${esc(s.name)} — ${s.gen ? 'backed up first' : 'not generated, nothing to lose'}${act ? running() ? '; the server restarts around it' : '' : ''}`;
+      const act = s.id === S.active, sub = isEmpty(s) ? 'empty slot' : `replaces ${esc(s.name)} — ${s.gen ? 'backed up first' : 'not generated, nothing to lose'}${act && running() ? '; the server restarts around it' : ''}`;
       return `<button class="opt" role="radio" aria-checked="${sh.slot === s.id}" data-act="pickSlot:${s.id}"><span class="rad"></span><span class="omin"><span class="ot">${isEmpty(s) ? `Slot ${s.id}` : esc(s.name)}${act ? ' · loaded' : ''}</span><span class="os">${sub}</span></span></button>`; }).join('')}</div></div>`;
-    const over = t && !isEmpty(t) && t.gen ? `<div class="notice info">${IC.info}<div><b>Overwriting takes a backup first.</b> ${esc(t.name)} is backed up before the import, so you can bring it back from its backups.${t.id === S.active && running() ? ` It’s loaded, so the server stops and starts again around it${S.online.length ? ` — ${listOf(S.online.map(o => o.tag))} are disconnected for about a minute` : ''}.` : ''}</div></div>` : '';
+    const over = t && !isEmpty(t) && t.gen ? `<div class="notice info">${IC.info}<div><b>Overwriting takes a backup first.</b> ${esc(t.name)} is backed up before the import, so you can bring it back from its backups.</div></div>` : '';
     return `${sheetHead('Import a world', sh.fixed && t ? `Into ${isEmpty(t) ? `slot ${t.id} (empty)` : esc(t.name)}` : 'A .mcworld exported from Minecraft')}<div class="sh-body">
       <details class="help"><summary>How to export from Windows</summary><ol><li>In Minecraft: <b>Play</b>, then the <b>pencil</b> (Edit) next to the world.</li><li>Scroll to the bottom: <b>Export World</b>. It saves a <b>.mcworld</b> file.</li><li>On the same PC, open JBrain and choose that file here.</li></ol></details>
       ${file ? `<div class="file">${IC.file}<span class="fn" title="${esc(file.name)}">${esc(file.name)}</span><span class="fs num">${mb(file.mb)}</span></div>` : ''}
-      ${big ? `<div class="notice bad">${IC.alert}<div><b>Too big to import.</b> ${esc(file.name)} is ${mb(file.mb)}; the limit is ${MAX_MB} MB. Nothing was uploaded.</div></div>` : ''}
+      ${big ? `<div class="notice bad">${IC.alert}<div><b>Too big to import.</b> ${esc(file.name)} is ${(file.mb / 1024).toFixed(1)} GB; the limit is 1 GB. Nothing was uploaded.</div></div>` : ''}
+      ${mid ? `<div class="notice warn">${IC.alert}<div><b>Over 100 MB only uploads at home on the Wi-Fi.</b> Away from home it goes over the Cloudflare tunnel, which turns down files this big, so the upload fails there.</div></div>` : ''}
       <button class="btn" data-act="pickFile">${IC.file}${file ? 'Choose a different file' : 'Choose .mcworld file'}</button>
       ${targets}${over}
-      <p class="hint">Checked before anything is written: it must hold level.dat, levelname.txt and db/, and be under ${MAX_MB} MB. A bad file never touches a slot.</p>
+      <p class="hint"><b class="hb">Settings come from the world file</b> — its game mode, difficulty, cheats, seed and rules.${t && !isEmpty(t) ? ` ${esc(t.name)}’s current settings aren’t kept.` : ''}</p>
+      <p class="hint">Checked before anything is written: it must hold a level.dat and be under 1 GB. A bad file never touches a slot.</p>
       <div class="sh-foot"><button class="btn primary" data-act="startImport" ${file && !big && t ? '' : 'disabled'}>${IC.upload}Import${t ? ` into ${isEmpty(t) ? `slot ${t.id}` : esc(t.name)}` : ''}</button></div></div>`;
   }
   if (sh.kind === 'rename') {
     const t = slot(sh.slot);
     return `${sheetHead('Rename world', `Slot ${t.id} · only the name changes`)}<div class="sh-body">
-      <div class="fld"><label for="rn-name">Name</label><input class="inp" id="rn-name" data-field="name" value="${esc(f.name || '')}" autocomplete="off" /></div>
+      <div class="fld"><label for="rn-name">Name</label><input class="inp" id="rn-name" data-field="name" data-count="40" maxlength="40" value="${esc(f.name || '')}" autocomplete="off" />
+        <span class="hint"><span data-counter="name" class="num">${(f.name || '').length}</span> of 40</span></div>
       <div class="sh-foot"><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="saveName" data-needs="name">Save name</button></div></div>`;
   }
   if (sh.kind === 'reset') {
@@ -1173,11 +1228,12 @@ function sheetHtml() {
     const o = (k, title, sub, dis) => `<button class="opt ${k === 'empty' ? 'danger' : ''}" role="radio" aria-checked="${f.how === k}" data-act="f:how|${k}" ${dis ? 'disabled' : ''}><span class="rad"></span><span class="omin"><span class="ot">${title}</span><span class="os">${sub}</span></span></button>`;
     return `${sheetHead(`Reset ${esc(t.name)}`, `${t.gen ? 'Backed up first — undo it from the backups' : 'Not generated yet — nothing to back up'}`)}<div class="sh-body">
       <div class="opts" role="radiogroup" aria-label="Reset to">
-        ${o('same', 'Same seed', t.seed ? `The original terrain, fresh — everything built is gone. Seed <span class="mono">${esc(t.seed)}</span>.` : `Not offered — ${t.origin === 'imported' ? 'an imported world’s seed is unknown' : 'this world’s seed is unknown'}.`, !t.seed)}
+        ${o('same', 'Same seed', t.seed ? `The original terrain, fresh — everything built is gone. Seed <span class="mono">${esc(t.seed)}</span>.` : 'Not offered — this world’s seed is unknown (its level.dat couldn’t be read).', !t.seed)}
         ${o('new', 'New seed', 'A brand-new world in this slot, same name and settings.')}
         ${o('empty', 'Empty', act ? 'Not offered — it’s the loaded world. Load another first.' : 'Frees the slot. Its backups stay.', act)}
       </div>
-      ${act && running() ? `<div class="note">It’s loaded, so the server stops, resets it and starts again${S.online.length ? ` — ${listOf(S.online.map(o => o.tag))} are disconnected for about a minute` : ''}.</div>` : ''}
+      ${f.how === 'new' ? seedFields(f, 'Or enter one — leave it to chance and this number is used.') : ''}
+      ${act && running() ? `<div class="note">It’s loaded, so the server stops, resets it and starts again${S.online.length ? ` — ${disconnects()}` : ''}.</div>` : ''}
       <div class="sh-foot"><button class="btn" data-act="close">Cancel</button><button class="btn danger" data-act="resetNext" ${f.how ? '' : 'disabled'}>Continue</button></div></div>`;
   }
   if (sh.kind === 'backupNow') {
@@ -1189,13 +1245,14 @@ function sheetHtml() {
   }
   if (sh.kind === 'backup') {
     const b = backup(sh.backup); if (!b) return '';
-    const s = slot(b.slot), block = worldBlocked(), d = S.downloads[b.slot];
+    const s = slot(b.slot), block = worldBlocked();
     return `${sheetHead(esc(b.label ? b.label : 'Automatic backup'), `${esc(slotName(s))} · ${b.at}`)}<div class="sh-body">
       <dl class="w-facts"><dt>Kind</dt><dd>${b.label ? 'yours' : `automatic — ${esc(b.auto)}`}</dd><dt>Size</dt><dd class="num">${mb(b.mb)}</dd><dt>Kept</dt><dd>${b.pinned ? 'pinned — kept for good' : `one of the newest ${KEEP}${b.label ? '' : ' (automatic ones go first)'}`}</dd>
-        <dt>Off the box</dt><dd>${d && d.id === b.id ? `downloaded ${d.at}` : 'not downloaded'}</dd></dl>
+        <dt>Off the box</dt><dd>${b.downloaded ? `downloaded ${b.downloaded}` : 'not downloaded'}</dd></dl>
       <button class="btn primary" data-act="restore:${b.id}" ${block ? 'disabled' : ''}>${IC.undo}Restore…</button>${why(block)}
       <div class="w-actions"><button class="btn" data-act="download:${b.id}">${IC.download}Download</button><button class="btn" data-act="pin:${b.id}" aria-pressed="${b.pinned}">${IC.pin}${b.pinned ? 'Unpin' : 'Pin'}</button>
-        <button class="btn danger full" data-act="del:${b.id}">${IC.trash}Delete</button></div>
+        <button class="btn danger full" data-act="del:${b.id}" ${b.pinned ? 'disabled' : ''}>${IC.trash}Delete</button></div>
+      ${b.pinned ? '<p class="note why">Delete — unpin it first.</p>' : ''}
       <p class="hint">A download is a .mcworld — double-click it on Windows to open it in Minecraft.</p></div>`;
   }
   if (sh.kind === 'restore') {
@@ -1203,8 +1260,9 @@ function sheetHtml() {
     return `${sheetHead('Restore a backup', `${esc(bLabel(b))} · ${b.at}`)}<div class="sh-body">
       <div class="set"><div class="set-l"><span>Restore into</span></div><div class="opts" role="radiogroup" aria-label="Restore into">${S.slots.map(s => {
         const act = s.id === S.active, same = s.id === b.slot;
-        const sub = isEmpty(s) ? `empty — becomes “${esc(from.name)} (${b.at.split(',')[0]})”, nothing else changes`
-          : `${same ? 'its own world — ' : ''}${esc(s.name)} is backed up first${act && running() ? ', and the server restarts around it' : ''}`;
+        const sub = isEmpty(s) ? `empty — becomes “${esc(from.name)} (${b.at.split(',')[0]})” with the backup’s seed and settings and ${esc(from.name)}’s rules`
+          : same ? `its own world — rolled back; ${esc(s.name)} is backed up first${act && running() ? ', and the server restarts around it' : ''}`
+          : `replaces ${esc(s.name)} — the backup’s seed and settings come too; ${esc(s.name)} is backed up first${act && running() ? ', and the server restarts around it' : ''}`;
         return `<button class="opt" role="radio" aria-checked="${f.to === String(s.id)}" data-act="f:to|${s.id}"><span class="rad"></span><span class="omin"><span class="ot">${isEmpty(s) ? `Slot ${s.id}` : esc(s.name)}${same ? ' · same world' : ''}${act ? ' · loaded' : ''}</span><span class="os">${sub}</span></span></button>`; }).join('')}</div></div>
       <div class="sh-foot"><button class="btn" data-act="close">Cancel</button><button class="btn warn" data-act="restoreNext">Continue</button></div></div>`;
   }
@@ -1214,36 +1272,44 @@ ACT.pickSlot = id => { UI.sheet.slot = +id; UI.rev++; };
 
 function dialogHtml() {
   const d = UI.dialog, n = S.online.length, who = listOf(S.online.map(o => o.tag));
+  const bounceTxt = t => t.id === S.active && running() ? (n ? ` — ${who} get a 10-second warning in chat and are disconnected for about a minute` : ' — the server restarts around it') : '';
   let title, body, go, tone = 'danger', extra = '';
   if (d.kind === 'load') {
     const t = slot(d.slot), from = activeSlot();
     title = `Load ${esc(t.name)}?`;
-    body = !running() ? `${esc(from.name)} is backed up, then ${esc(t.name)} becomes the loaded world — the server stays stopped until you start it.`
-      : n ? `${who} get a 30-second warning in chat and are disconnected; ${esc(from.name)} is backed up first, then ${esc(t.name)} starts${t.gen ? '' : ' and is generated'}.`
+    body = !running() ? `${esc(t.name)} becomes the loaded world — the server stays stopped until you start it.`
+      : n ? `${who} get a 10-second warning in chat and are disconnected; ${esc(from.name)} is backed up first, then ${esc(t.name)} starts${t.gen ? '' : ' and is generated'}.`
       : `The server stops, ${esc(from.name)} is backed up, then ${esc(t.name)} starts${t.gen ? '' : ' and is generated'} — nobody is on.`;
     go = 'Load'; tone = running() && n ? 'danger' : 'primary';
+  } else if (d.kind === 'import') {
+    const t = slot(d.slot), file = FILES[d.file];
+    title = `Import over ${esc(t.name)}?`;
+    body = `${esc(t.name)} is backed up first, then replaced by ${esc(file.level)} with the file’s own settings${bounceTxt(t)}.`;
+    go = 'Import'; tone = t.id === S.active && running() && n ? 'danger' : 'warn';
   } else if (d.kind === 'reset') {
     const t = slot(d.slot);
     const what = d.how === 'empty' ? 'emptied' : d.how === 'same' ? 'rebuilt from the same seed' : 'replaced by a new world';
     title = `Reset ${esc(t.name)}?`;
-    body = `${t.gen ? `${esc(t.name)} is backed up first, then ${what}` : `${esc(t.name)} is ${what}`} — everything built there leaves the slot${t.id === S.active && running() && n ? `, and ${who} are disconnected` : ''}.`;
+    body = `${t.gen ? `${esc(t.name)} is backed up first, then ${what}` : `${esc(t.name)} is ${what}`} — everything built there leaves the slot${t.id === S.active && running() && n ? `, and ${who} get a 10-second warning in chat and are disconnected` : ''}.`;
     extra = `<div class="fld"><label for="rs-typed">Type <b>${esc(t.name)}</b> to confirm</label><input class="inp" id="rs-typed" data-field="typed" data-match="${esc(t.name)}" autocomplete="off" autocapitalize="off" spellcheck="false" /></div>`;
     go = d.how === 'empty' ? 'Empty slot' : 'Reset';
   } else if (d.kind === 'restore') {
-    const b = backup(d.backup), t = slot(d.to);
+    const b = backup(d.backup), t = slot(d.to), same = t.id === b.slot;
     title = isEmpty(t) ? `Restore into slot ${t.id}?` : `Restore into ${esc(t.name)}?`;
     body = isEmpty(t) ? `${esc(bShort(b))} becomes a new world in the empty slot ${t.id}; nothing else changes.`
-      : `${esc(t.name)} is backed up first, then replaced with ${esc(bShort(b))} from ${b.at}${t.id === S.active && running() ? ` — the server restarts${n ? ` and ${who} are disconnected for about a minute` : ''}` : ''}.`;
+      : `${esc(t.name)} is backed up first, then replaced with ${esc(bShort(b))} from ${b.at}${same ? '' : ', its seed and settings included'}${bounceTxt(t)}.`;
     go = 'Restore'; tone = t.id === S.active && running() && n ? 'danger' : 'warn';
   } else if (d.kind === 'delete') {
     const b = backup(d.backup);
     title = `Delete ${b.label ? '“' + esc(b.label) + '”' : 'this backup'}?`;
-    body = `It’s removed from the box for good${b.pinned ? ', even though it’s pinned' : ''}${S.downloads[b.slot] && S.downloads[b.slot].id === b.id ? ' — your downloaded copy is unaffected' : ''}.`;
+    body = `It’s removed from the box for good${b.downloaded ? ' — your downloaded copy is unaffected' : ''}.`;
     go = 'Delete';
   } else if (d.kind === 'allowOff') {
-    title = 'Turn the allowlist off?'; body = 'Anyone who can reach the server on your network can join, and internet play stays off until it’s back on.'; go = 'Turn off'; tone = 'warn';
+    title = 'Turn the allowlist off?'; body = `From the ${running() ? 'next restart' : 'next start'}, anyone who can reach the server on your network can join, and internet play stays off until it’s back on.`; go = 'Turn off'; tone = 'warn';
   } else if (d.kind === 'stop') {
-    title = 'Stop the server?'; body = `${plural(n, 'player')} — ${who} — will be disconnected; the world is saved first.`; go = 'Stop';
+    title = 'Stop the server?'; body = `${who} get a 10-second warning in chat, then are disconnected; the world is saved first.`; go = 'Stop';
+  } else if (d.kind === 'restart') {
+    title = 'Restart the server?'; body = `${who} get a 10-second warning in chat and are disconnected for about a minute; saved settings and rules are applied as it starts.`; go = 'Restart';
   }
   return `<h3 id="dlg-t">${title}</h3><p>${body}</p>${extra}<div class="btnrow"><button class="btn" data-act="cancelDlg">Cancel</button><button class="btn ${tone}" data-act="confirm" ${d.kind === 'reset' ? 'disabled data-gate="typed"' : ''}>${go}</button></div>`;
 }
@@ -1340,7 +1406,7 @@ const RULE_GROUPS = [
     ['showDeathMessages', 'Death messages in chat', true],
     ['showTags', 'Show item tags', true, '“can place on” and “can destroy” lines'],
     ['locatorbar', 'Locator bar', true],
-    ['playerWaypoints', 'Players shown on the locator bar', 'everyone', null, {choices:['everyone', 'off']}],
+    ['playerWaypoints', 'Players shown on the locator bar', 'everyone', null, {choice:true}],
   ]],
   ['mobs', 'Mobs & drops', [
     ['doMobSpawning', 'Mobs spawn naturally', true],
@@ -1365,6 +1431,9 @@ const RULE_GROUPS = [
   ]],
 ];
 const RULES = {};
+/* A rules edit's toast lifts clear of the editor's Reset-all footer. */
+const _toast = toast;
+toast = msg => { _toast(msg); const t = document.getElementById('toast'); t.classList.toggle('lift', !!document.querySelector('.rules')); };
 RULE_GROUPS.forEach(([g, , rows]) => rows.forEach(([id, label, def, sub, o]) => { RULES[id] = {id, label, def, sub, g, ...(o || {})}; }));
 const fmtNum = v => typeof v === 'number' ? v.toLocaleString('en-US') : v;
 const ruleWord = (r, v) => typeof v === 'boolean' ? (v ? 'on' : 'off') : `${fmtNum(v)}${r.unit || ''}`;
@@ -1373,7 +1442,8 @@ const ruleWord = (r, v) => typeof v === 'boolean' ? (v ? 'on' : 'off') : `${fmtN
 function ruleStore(scope) {
   if (scope === 'new') return {ov:(UI.form.rules = UI.form.rules || {}), p:null, live:false, s:null};
   const s = slot(scope); s.r = s.r || {}; s.p = s.p || {};
-  return {ov:s.r, p:s.id === S.active ? null : s.p, live:s.id === S.active, s};
+  const live = liveNow(s);
+  return {ov:s.r, p:live ? null : s.p, live, s};
 }
 const ruleVal = (scope, id) => { const o = ruleStore(scope).ov; return id in o ? o[id] : RULES[id].def; };
 function setRule(scope, id, v) {
@@ -1382,13 +1452,22 @@ function setRule(scope, id, v) {
   if (st.p) st.p[id] = 1;
   if (UI.sheet) UI.rev++;
   if (scope === 'new') return;
-  toast(st.live ? `Applied live — ${r.label.toLowerCase()}: ${ruleWord(r, v)}` : `Saved — ${r.label.toLowerCase()} changes when ${st.s.name} next loads`);
+  toast(st.live ? `Applied live — ${r.label.toLowerCase()}: ${ruleWord(r, v)}` : `Saved — ${r.label.toLowerCase()} changes ${pendWhen(st.s)}`);
+}
+/* Steppers are debounced: the value moves at once, and one save goes out when tapping or
+   typing settles (700 ms), so ten taps make one /gamerule, not ten. */
+const DEBOUNCE = {};
+function settle(scope, id, n) {
+  const st = ruleStore(scope), r = RULES[id], key = scope + '|' + id;
+  if (n === r.def) delete st.ov[id]; else st.ov[id] = n;
+  clearTimeout(DEBOUNCE[key]);
+  DEBOUNCE[key] = setTimeout(() => { delete DEBOUNCE[key]; setRule(scope, id, ruleVal(scope, id)); render(); }, 700);
+  if (UI.sheet) UI.rev++;
 }
 ACT.rule = arg => {
   const [scope, id, op] = arg.split('|'), r = RULES[id], v = ruleVal(scope, id);
   if (op === 't') return setRule(scope, id, !v);
-  const n = Math.max(r.min, Math.min(r.max, v + (op === '+' ? r.step : -r.step)));
-  setRule(scope, id, n);
+  settle(scope, id, Math.max(r.min, Math.min(r.max, v + (op === '+' ? r.step : -r.step))));
 };
 function resetRules(scope, group) {
   const st = ruleStore(scope);
@@ -1406,15 +1485,19 @@ function ruleControl(scope, r) {
   const v = ruleVal(scope, r.id), key = `${scope}|${r.id}`;
   if (typeof r.def === 'boolean')
     return `<button class="switch ${v ? 'on' : ''}" role="switch" aria-checked="${v}" aria-label="${esc(r.label)}" data-act="rule:${key}|t"><span class="knob"></span></button>`;
-  if (r.choices)
-    return `<select class="inp sel" data-rsel="${key}" aria-label="${esc(r.label)}">${r.choices.map(c => `<option ${c === v ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
+  if (r.choice) {
+    /* Only the value the server reports, plus "everyone" — no guessed options. */
+    const opts = [...new Set([v, 'everyone'])];
+    if (opts.length === 1) return `<span class="sv rstatic">${esc(v)}<span class="hint">the only value this server reports</span></span>`;
+    return `<select class="inp sel" data-rsel="${key}" aria-label="${esc(r.label)}">${opts.map(c => `<option ${c === v ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
+  }
   return `<div class="stepper"><button class="btn" data-act="rule:${key}|-" aria-label="Lower — ${esc(r.label)}" ${v <= r.min ? 'disabled' : ''}>${IC.minus}</button>
     <input class="sv inp-num" inputmode="numeric" data-rnum="${key}" value="${v}" aria-label="${esc(r.label)}${r.unit ? ' (' + r.unit + ')' : ''}" /><button class="btn" data-act="rule:${key}|+" aria-label="Raise — ${esc(r.label)}" ${v >= r.max ? 'disabled' : ''}>${IC.plus}</button></div>`;
 }
 function ruleRow(scope, r) {
   const st = ruleStore(scope), changed = r.id in st.ov, pend = st.p && st.p[r.id];
   const tags = `${pend ? '<span class="pend">pending</span>' : ''}${changed ? `<span class="chg">changed · default ${ruleWord(r, r.def)}</span>` : ''}`;
-  const kind = typeof r.def === 'boolean' ? 'bool' : r.choices ? 'choice' : 'num';
+  const kind = typeof r.def === 'boolean' ? 'bool' : r.choice ? 'choice' : 'num';
   return `<div class="rule ${kind}" data-q="${esc((r.label + ' ' + r.id + ' ' + (r.sub || '')).toLowerCase())}">
     <span class="rl"><span class="rt">${esc(r.label)}</span>${r.sub ? `<span class="rs">${esc(r.sub)}</span>` : ''}<span class="rid mono">${r.id}</span>${tags ? `<span class="rtags">${tags}</span>` : ''}</span>
     ${ruleControl(scope, r)}</div>`;
@@ -1423,8 +1506,9 @@ function ruleRow(scope, r) {
 function rulesEditor(scope) {
   const st = ruleStore(scope), q = (UI.rq && UI.rq[scope]) || '';
   const note = scope === 'new' ? `<p class="hint">Set before the world is generated. Leave them and it starts with the defaults below.</p>`
-    : st.live ? `<div class="offbox ok">${IC.check}<span><b>Loaded — changes apply live, at once.</b> Players see them straight away; nothing restarts.</span></div>`
-    : `<div class="offbox">${IC.info}<span><b>Not loaded — changes are saved and applied when ${esc(st.s.name)} next loads.</b> Until then they’re marked pending.</span></div>`;
+    : st.live ? `<div class="offbox ok rules-note">${IC.check}<span><b>Loaded and running — changes apply live, at once.</b> Saved rules are also re-applied every time the server starts.</span></div>`
+    : st.s.id === S.active ? `<div class="offbox rules-note">${IC.info}<span><b>Server stopped — changes are applied when it starts.</b> Until then they’re marked pending. Saved rules are re-applied on every start.</span></div>`
+    : `<div class="offbox rules-note">${IC.info}<span><b>Not loaded — changes are saved and applied when ${esc(st.s.name)} next loads.</b> Until then they’re marked pending.</span></div>`;
   const groups = RULE_GROUPS.map(([g, title, rows]) => {
     const ids = rows.map(r => r[0]), ch = ids.filter(id => id in st.ov).length, pe = st.p ? ids.filter(id => st.p[id]).length : 0;
     const key = `g:${scope}:${g}`, open = UI.open[key];
@@ -1438,7 +1522,7 @@ function rulesEditor(scope) {
     <div class="rsearch"><input class="inp" type="search" data-rq="${scope}" value="${esc(q)}" placeholder="Find a rule — e.g. phantoms" aria-label="Find a game rule" autocomplete="off" spellcheck="false" /></div>
     <p class="hint rnone" hidden>No rule matches.</p>
     <div class="rgroups">${groups}</div>
-    <div class="rfoot"><span class="hint">${total ? `${plural(total, 'rule')} ${total === 1 ? 'differs' : 'differ'} from the defaults` : 'All rules at their defaults'}</span>${total ? `<button class="btn" data-act="ruleAllReset:${scope}">${IC.undo}Reset all</button>` : ''}</div></div>`;
+    <div class="rfoot" data-rfoot><span class="hint">${total ? `${plural(total, 'rule')} ${total === 1 ? 'differs' : 'differ'} from the defaults` : 'All rules at their defaults'}</span>${total ? `<button class="btn" data-act="ruleAllReset:${scope}">${IC.undo}Reset all</button>` : ''}</div></div>`;
 }
 /* Summary line used by entry rows (“Game rules · 3 changed · 1 pending”). */
 function rulesSummary(id) {
@@ -1468,7 +1552,7 @@ document.addEventListener('change', e => {
   const d = e.target.dataset || {};
   if (d.rnum) { const [scope, id] = d.rnum.split('|'), r = RULES[id], n = parseInt(String(e.target.value).replace(/[^\d-]/g, ''), 10);
     if (Number.isNaN(n)) { e.target.value = ruleVal(scope, id); return; }
-    setRule(scope, id, Math.max(r.min, Math.min(r.max, n))); render(); }
+    settle(scope, id, Math.max(r.min, Math.min(r.max, n))); render(); }
   if (d.rsel) { const [scope, id] = d.rsel.split('|'); setRule(scope, id, e.target.value); render(); }
 });
 /* <details> remembers its own state across re-renders. */
@@ -1499,6 +1583,10 @@ document.addEventListener('input', e => { const k = e.target.dataset && e.target
 function rulesEntry(s, act) {
   return `<button class="b-row rules-entry" data-act="${act}"><span class="b-ico" aria-hidden="true">${IC.sliders}</span><span class="b-rn"><span class="nm" style="font-size:var(--fs-secondary)">Game rules</span><span class="sm">${plural(Object.keys(RULES).length, 'rule')} · ${rulesSummary(s.id)}</span></span>${IC.chev}</button>`;
 }
+/* Typing a number settles the same way as tapping: one save once it stops. */
+document.addEventListener('input', e => { const d = e.target.dataset || {}; if (!d.rnum) return;
+  const [scope, id] = d.rnum.split('|'), r = RULES[id], n = parseInt(String(e.target.value).replace(/[^\d-]/g, ''), 10);
+  if (!Number.isNaN(n)) settle(scope, id, Math.max(r.min, Math.min(r.max, n))); });
 
 /* ===================== B — a Worlds sub-screen, each world's backups inside it ===================== */
 const VARIANT = 'B · Worlds sub-screen';
@@ -1517,7 +1605,7 @@ ACT.more = () => {};
 function worldsEntry() {
   const a = activeSlot(), used = S.slots.filter(s => !isEmpty(s)).length, j = S.job;
   const anyDl = Object.keys(S.downloads).length, last = Object.values(S.downloads).map(d => d.at).sort().pop();
-  const meta = j ? (j.err ? `<span class="meta bad">import failed — open to see why</span>` : `<span class="meta warn">${esc(j.title)} — ${esc(j.steps[j.i].label.split(' — ')[0].toLowerCase())}…</span>`)
+  const meta = j ? (j.err ? `<span class="meta bad">import failed — open to see why</span>` : `<span class="meta warn">${esc(j.what[0].toUpperCase() + j.what.slice(1))} — ${esc(j.phase)}…</span>`)
     : `<span class="meta">${esc(a.name)} loaded · ${used} of ${S.slots.length} slots used</span>`;
   const meta2 = anyDl ? `<span class="meta">last copy off the box ${last}</span>` : `<span class="meta warn">no world has a copy off the box yet</span>`;
   return `<section class="b-card b-entry"><button type="button" class="b-navrow" data-act="go:worlds"><span class="b-ico">${IC.layers}</span>
@@ -1530,9 +1618,9 @@ function mainScreen() {
     <h3 class="b-sect sect">Join</h3><div class="b-card">${joinCard()}</div></div>`;
 }
 function navRow(s) {
-  const act = s.id === S.active, busy = S.job && S.job.slot === s.id && !S.job.err, pend = Object.keys(s.p || {}).length;
+  const act = s.id === S.active, pend = Object.keys(s.p || {}).length;
   return `<button class="w-row" data-act="go:world|${s.id}"><span class="w-disc ${act ? 'on' : ''}" aria-hidden="true">${IC.cube}</span>
-    <span class="w-tx"><span class="w-nm"><span class="t" title="${esc(s.name)}">${esc(s.name)}</span>${act ? badgeActive() : ''}${busy ? '<span class="badge warn">busy</span>' : ''}${pend ? `<span class="pend">${pend} pending</span>` : ''}</span>
+    <span class="w-tx"><span class="w-nm"><span class="t" title="${esc(s.name)}">${esc(s.name)}</span>${act ? badgeActive() : ''}${pend ? `<span class="pend">${pend} pending</span>` : ''}</span>
     <span class="w-meta">${s.mode} · ${s.diff} · <span class="num">${s.gen ? mb(s.mb) : 'not generated'}</span></span><span class="w-meta">${playedText(s)}</span>
     <span class="w-meta">${lastBackupText(s.id)} · ${S.downloads[s.id] ? `downloaded ${S.downloads[s.id].at}` : 'never downloaded'}</span></span>${IC.chev}</button>`;
 }
@@ -1550,17 +1638,17 @@ function worldsScreen() {
     ${others.length ? `<h3 class="b-sect sect">Other worlds<span class="r">tap one to load, back up or change it</span></h3><div class="b-card">${others.map(navRow).join('')}</div>` : ''}
     ${empties.length ? `<h3 class="b-sect sect">Empty slots</h3><div class="b-card">${empties.map(emptyRow).join('')}</div>` : ''}
     ${free ? '' : `<div class="btnrow" style="margin:-8px 0 8px"><button class="btn grow" data-act="importTo" ${block ? 'disabled' : ''}>${IC.upload}Import .mcworld over a world</button></div>`}
-    <p class="note" style="margin:0 2px 20px">${S.slots.length} slots${free ? '' : ' — all in use'}. One world is loaded at a time; each keeps its own settings, rules and backups. Add slots in Server settings.</p></div>`;
+    <p class="note" style="margin:0 2px 20px">${free ? `${S.slots.length} slots. ` : `All ${S.slots.length} slots in use — reset or empty one first. `}One world is loaded at a time; each keeps its own settings, rules and backups.</p></div>`;
 }
 function worldScreen() {
   const s = slot(UI.wid);
   if (!s) return worldsScreen();
-  if (isEmpty(s)) return `${topBar(`Slot ${s.id}`, 'go:worlds')}<div class="scroll">${errLine()}${S.job && S.job.slot === s.id ? jobCard() : ''}
+  if (isEmpty(s)) return `${topBar(`Slot ${s.id}`, 'go:worlds')}<div class="scroll">${errLine()}${jobCard()}
     <div class="b-card"><div class="b-pad"><div class="note">Empty. Make a new world here, import one, or restore one of the backups kept from its last world.</div>${slotActions(s)}</div></div>
     <h3 class="b-sect sect">Backups<span class="r">kept from its last world</span></h3><div class="b-card">${backupList(s.id, 'sheet')}</div></div>`;
   const act = s.id === S.active, block = worldBlocked();
   const load = act ? '' : `<button class="btn ${running() && S.online.length ? 'primary' : 'primary'}" data-act="load:${s.id}" ${block ? 'disabled' : ''}>${IC.play}Load ${esc(s.name)}</button>${why(block)}`;
-  return `${topBar(s.name, 'go:worlds')}${banner()}<div class="scroll">${errLine()}${S.job && S.job.slot === s.id ? jobCard() : ''}
+  return `${topBar(s.name, 'go:worlds')}${banner()}<div class="scroll">${errLine()}${jobCard()}
     <div class="b-hero"><div class="b-state"><span class="ops-sdot" style="background:var(--${act ? 'ok' : 'text-3'})"></span><span class="w">${act ? 'loaded' : 'not loaded'}</span><span class="sub">${act ? (running() ? `${plural(S.online.length, 'player')} on` : 'server stopped') : `${esc(activeSlot().name)} is loaded`}</span></div>
       ${slotFacts(s)}${load}</div>
     <h3 class="b-sect sect">Settings<span class="r">this world only</span></h3><div class="b-card"><div class="b-pad">${slotSettings(s)}</div>${rulesEntry(s, 'go:rules|' + s.id)}</div>
