@@ -181,23 +181,31 @@ def test_zoomed_out_tiles_sample_the_columns_they_show(tmp_path: Path) -> None:
     assert len(index.samples(0, 0, 0, 1, 2)) == 64  # zoom 1: every other column
 
 
-def test_the_index_rereads_only_when_the_files_change(tmp_path: Path) -> None:
+def test_the_index_rereads_on_change_but_not_more_often_than_a_minute(
+    tmp_path: Path,
+) -> None:
     write_table(
         tmp_path / "000005.ldb",
         [(mapping.chunk_key(0, 0, 0, mapping.DATA3D), 1, data3d(lambda x, z: 80, 1))],
     )
-    index = mapping.WorldIndex(tmp_path)
+    now = [1000.0]
+    index = mapping.WorldIndex(tmp_path, clock=lambda: now[0])
     index.refresh()
-    first = index._signature
-    index.refresh()
-    assert index._signature is first  # nothing changed: no re-read
     write_log(
         tmp_path / "000006.log",
         5,
         [(mapping.chunk_key(3, 0, 0, mapping.DATA3D), data3d(lambda x, z: 90, 4))],
     )
+    now[0] += 5
+    index.refresh()  # a running server's log moves every few seconds: not yet
+    assert index.extent(0)["chunks"] == 1
+    now[0] += mapping.REREAD_S
     index.refresh()
     assert index.extent(0)["chunks"] == 2
+    first = index._signature
+    now[0] += mapping.REREAD_S
+    index.refresh()
+    assert index._signature is first  # nothing changed: no re-read
 
 
 @pytest.mark.parametrize("bits", [1, 2, 4, 8])
