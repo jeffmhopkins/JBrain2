@@ -3335,13 +3335,17 @@ Sheet → Dialog.
   **Game rules** row; its **Backups**; and **Manage** (Rename, Import over, Reset). **Game
   rules** is a third page. Each pushed page brings its own back bar, registers in the
   back-layer stack like a Sheet (so the platform Back gesture and a down-swipe climb one
-  level, not out of Minecraft), and leaves the page beneath it inert.
+  level, not out of Minecraft), and leaves the page beneath it inert. A pushed page takes
+  focus at its back button; popping it returns focus to the row that opened it.
 - **Live means loaded and running**, and every surface says which. Difficulty applies live on
   the loaded, running world; game mode (the default for new players — anyone who has played
   keeps theirs) and cheats apply at the next restart; on the loaded world with the server
   stopped a change waits for the start; on any other world it waits for its next load. The
   rules page's sticky note follows the API's `live`, and its amber **pending** tags follow the
-  API's `pending`. Saved rules are re-applied on every start.
+  API's `pending`. Saved rules are re-applied on every start. Restart-bound **pending** tags
+  (the loaded world's game mode and cheats, the allowlist switch, the server settings) come
+  from the box's `pending_restart`, the same on every device; only a change to a world that
+  isn't loaded is remembered by the device that made it, until that world loads.
 - **The rules editor** keeps the seven groups (World, Time & weather, Players, Mobs & drops,
   Crafting, Commands, Display) with plain-English labels, the rule id in mono and a *changed ·
   default X* tag; a rule a later server adds lands in an **Other** group under its own id
@@ -3356,14 +3360,17 @@ Sheet → Dialog.
   rules** step. Import: the Windows export help, the file and its size, refused over 1 GB
   before anything uploads, warned over 100 MB (*only uploads at home on the Wi-Fi*), a slot
   picker when opened from outside a slot, and *Settings come from the world file*; over an
-  occupied world it confirms in the Dialog. The upload is the raw file with real XHR
-  progress. Reset offers **Same seed** only when the seed is known and never offers **Empty**
+  occupied world it confirms in the Dialog, promising the world in the file rather than a
+  name (the box names it from the world's own levelname.txt). The upload is the raw file with
+  real XHR progress and a **Cancel upload** button; the tunnel's 413 reads *Over 100 MB only
+  uploads at home on the Wi-Fi.* Reset offers **Same seed** only when the seed is known and never offers **Empty**
   for the loaded world, then the Dialog asks for the world's name typed out. Load's Dialog is
   one sentence: the 10-second chat warning and backup with players on (destructive), a plain
   primary with nobody on, and no backup clause when the server is stopped. Restore picks the
   target and says what comes with it (another world's backup brings its seed and settings).
   The Dialog shell grew a **primary** tone and an optional gate under its sentence for this.
-- **Backups belong to a world.** Each lists label or automatic reason, *yours* or
+- **Backups belong to a world.** Each lists label or automatic reason (the box's `note`, e.g.
+  *before loading Creative test*), *yours* or
   *automatic*, size, date, *pinned* and any download; a row opens a Sheet with Restore…,
   **Download** (a plain `<a download>` link, so the box records it), Pin and Delete. **Delete
   is disabled on a pinned backup** with *Unpin it first — a pinned backup can't be deleted.*
@@ -3372,16 +3379,20 @@ Sheet → Dialog.
   one removes.
 - **Jobs show what `/status` reports, nothing more**: the job's *what*, its phase with a
   one-line explanation, and the time since `started_at`, polled every 2 s while it runs. The
-  only extra is on the device uploading a world: the upload's real bytes and meter. While a
-  job, an update or an upload owns the server, every world action is disabled with the reason
-  (*Wait — the server is {what}.*), and Start/Stop/Restart wait too. A refusal (409) shows
-  its detail in a dismissable rose line and says nothing changed.
+  only extra is on the device uploading a world: the upload's real bytes and meter. Load,
+  reset, restore and import may answer *accepted* when they outlast the box's wait; the
+  screen then follows `server.job` and reports the newer `server.last_job` (its `ok` and
+  `detail`). While a job, an update, this device's upload or its own request in flight owns
+  the server, every world action is disabled with the reason (*Wait — the server is
+  {what}.*), and Start/Stop/Restart wait too. A **refusal** (400, 409, 413) shows its detail
+  in a dismissable rose line and says *nothing changed*; any other failure (503, a dropped
+  connection, a gateway timeout) never says that — it says the server may still be working
+  and to watch for its job card. Rename, settings and rules refused while a job holds the
+  world (409) show the reason and put the control back.
 - **Server settings and the allowlist stay on the main screen**: server name, max players
   (1–30), view distance (5–32), the five fixed slots and Xbox sign-in, applying at the next
   restart; the allowlist's on/off applies at the next restart (turning it off confirms), names
-  are live while it runs. The API reports only saved values, so a *pending* tag on a world
-  setting, the allowlist switch or the server settings is this device's own knowledge, cleared
-  when it sees the server start.
+  are live while it runs. Their *pending* tags come from `pending_restart`.
 
 ## Implementation rules
 

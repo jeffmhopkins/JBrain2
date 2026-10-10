@@ -44,7 +44,6 @@ import {
   importOverConfirm,
   isEmptySlot,
   loadConfirm,
-  nameFromFile,
   nextToGo,
   resetConfirm,
   resetOptions,
@@ -86,6 +85,7 @@ function SeedFields({
   mode,
   onMode,
   rolled,
+  rollFailed,
   onReroll,
   typed,
   onTyped,
@@ -94,6 +94,7 @@ function SeedFields({
   mode: SeedMode;
   onMode: (m: SeedMode) => void;
   rolled: string | null;
+  rollFailed: boolean;
   onReroll: () => void;
   typed: string;
   onTyped: (t: string) => void;
@@ -137,7 +138,7 @@ function SeedFields({
         <>
           <div className="mc-inp-row">
             <span className="mc-inp mc-mono mc-seedbox" aria-live="polite">
-              {rolled ?? "rolling…"}
+              {rolled ?? (rollFailed ? "The box will pick one" : "rolling…")}
             </span>
             <button
               type="button"
@@ -156,17 +157,21 @@ function SeedFields({
   );
 }
 
-function useRolledSeed(): [string | null, () => void] {
+/** The box's roll. If it can't be had, the form sends no seed and the box picks one when
+ *  it creates the world, so the seed is still known. */
+function useRolledSeed(): [string | null, () => void, boolean] {
   const [seed, setSeed] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const roll = () => {
     setSeed(null);
+    setFailed(false);
     api
       .minecraftNewSeed()
       .then(setSeed)
-      .catch(() => setSeed(null));
+      .catch(() => setFailed(true));
   };
   useEffect(roll, []);
-  return [seed, roll];
+  return [seed, roll, failed];
 }
 
 // ---- new world ----
@@ -175,7 +180,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
   const w = useW();
   const [name, setName] = useState("");
   const [mode, setMode] = useState<SeedMode>("random");
-  const [rolled, reroll] = useRolledSeed();
+  const [rolled, reroll, rollFailed] = useRolledSeed();
   const [typed, setTyped] = useState("");
   const [gamemode, setGamemode] = useState<string>("survival");
   const [difficulty, setDifficulty] = useState<string>("normal");
@@ -214,6 +219,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
           mode={mode}
           onMode={setMode}
           rolled={rolled}
+          rollFailed={rollFailed}
           onReroll={reroll}
           typed={typed}
           onTyped={setTyped}
@@ -513,7 +519,7 @@ function ResetSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
   const s = w.slotOf(slot);
   const [how, setHow] = useState<MinecraftResetMode>(s ? defaultResetMode(s) : "new_seed");
   const [mode, setMode] = useState<SeedMode>("random");
-  const [rolled, reroll] = useRolledSeed();
+  const [rolled, reroll, rollFailed] = useRolledSeed();
   const [typed, setTyped] = useState("");
   if (!s) return null;
   const seed = how === "new_seed" ? seedFor(mode, rolled, typed) : null;
@@ -551,6 +557,7 @@ function ResetSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
             mode={mode}
             onMode={setMode}
             rolled={rolled}
+            rollFailed={rollFailed}
             onReroll={reroll}
             typed={typed}
             onTyped={setTyped}
@@ -561,7 +568,7 @@ function ResetSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
           <p className="mc-note">
             It&apos;s loaded, so the server stops, resets it and starts again
             {w.online.length
-              ? ` — ${listOf(w.online)} get a 10-second warning in chat and are disconnected for about a minute`
+              ? ` — ${listOf(w.online)} get a 10-second warning in chat and are disconnected until it's back up`
               : ""}
             .
           </p>
@@ -890,7 +897,7 @@ export function WorldModals() {
   } else if (m.kind === "importOver") {
     const t = w.slotOf(m.slot);
     if (t) {
-      spec = importOverConfirm(t, nameFromFile(m.file.name), ctx);
+      spec = importOverConfirm(t, m.file.name, ctx);
       act = () => void w.actions.importWorld(m.slot, m.file);
     }
   } else if (m.kind === "restoreConfirm") {

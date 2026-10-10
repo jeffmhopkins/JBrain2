@@ -22,6 +22,7 @@ import {
   ApiError,
   type MinecraftBackup,
   type MinecraftJob,
+  type MinecraftLastJob,
   type MinecraftNewWorld,
   type MinecraftResetMode,
   type MinecraftRuleValue,
@@ -29,6 +30,7 @@ import {
   type MinecraftSlot,
   type MinecraftWorlds,
   api,
+  isAccepted,
 } from "../api/client";
 import { useBackLayer } from "../backLayers";
 import {
@@ -58,6 +60,7 @@ import {
   DIFFICULTIES,
   GAMEMODES,
   PHASE_TEXT,
+  RESTART_KEY,
   RULES,
   type RuleDef,
   backupShort,
@@ -70,6 +73,7 @@ import {
   fmtBytes,
   groupsFor,
   isEmptySlot,
+  isRefusal,
   jobLine,
   nextToGo,
   notGenerated,
@@ -119,9 +123,29 @@ export interface Upload {
 
 type SettingKey = "gamemode" | "difficulty" | "cheats";
 
+/** A reason as a clause, so it can sit mid-sentence. */
+const clause = (text: string) => text.trim().replace(/[.\s]+$/, "");
+
 function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
+  return clause(err instanceof ApiError ? err.message : "the request failed");
 }
+
+const isAbort = (err: unknown) => err instanceof DOMException && err.name === "AbortError";
+
+/** A long operation this device is waiting on: its outcome arrives as a newer
+ *  `server.last_job` once `server.job` clears. `since` is the last outcome seen before it was
+ *  sent — newer means this one, and comparing the box's own stamps sidesteps clock skew. */
+interface Follow {
+  since: number;
+  /** Not confirmed accepted (the request failed in transit): drop it if no job shows. */
+  soft: boolean;
+  misses: number;
+  ok: () => void;
+  fail: (detail: string) => void;
+}
+
+/** Status polls with neither a job nor a new outcome before an accepted job is given up on. */
+const FOLLOW_MISSES = 5;
 
 /** Everything the Worlds pages and their modals share, owned by the Minecraft screen. */
 export function useWorlds({
@@ -129,6 +153,9 @@ export function useWorlds({
   running,
   online,
   job,
+  lastJob,
+  pendingRestart,
+  statusSeq,
   updating,
   state,
   nowMs,
@@ -139,6 +166,10 @@ export function useWorlds({
   running: boolean;
   online: string[];
   job: MinecraftJob | null;
+  lastJob: MinecraftLastJob | null;
+  pendingRestart: string[];
+  /** Bumped on every status read, so a followed job is checked once per poll. */
+  statusSeq: number;
   updating: boolean;
   state: string;
   nowMs: number;
@@ -146,6 +177,7 @@ export function useWorlds({
   refreshStatus: () => void;
 }) {
   const [worlds, setWorlds] = useState<MinecraftWorlds | null>(null);
+  const [worldsFailed, setWorldsFailed] = useState<string | null>(null);
   const [backups, setBackups] = useState<Record<string, MinecraftBackup[]>>({});
   const [pages, setPages] = useState<Page[]>([]);
   const [modal, setModal] = useState<WorldModal | null>(null);
@@ -153,16 +185,27 @@ export function useWorlds({
   const [upload, setUpload] = useState<Upload | null>(null);
   const [uploadFailed, setUploadFailed] = useState<{ slot: string; detail: string } | null>(null);
   const [backingUp, setBackingUp] = useState<{ slot: string; label: string } | null>(null);
-  // Settings saved this session that the server hasn't applied yet. The API reports pending
-  // only for rules, so these are this device's knowledge, cleared when a start applies them.
-  const [pendingSettings, setPendingSettings] = useState<Record<string, SettingKey[]>>({});
+  // A long operation this device sent and hasn't seen settle: the other world actions wait,
+  // closing the gap before the box's job shows in a status poll.
+  const [inFlight, setInFlight] = useState<string | null>(null);
+  // Changes saved to a world that isn't loaded wait for its next load. The box records
+  // nothing for those, so this device remembers its own; restart-bound ones come from
+  // `pendingRestart`, which every device shares.
+  const [nextLoad, setNextLoad] = useState<Record<string, SettingKey[]>>({});
   const [rev, setRev] = useState(0);
+  const follow = useRef<Follow | null>(null);
+  const lastJobRef = useRef(lastJob);
+  lastJobRef.current = lastJob;
+  const uploadAbort = useRef<AbortController | null>(null);
+  const openers = useRef<(HTMLElement | null)[]>([]);
+  const refocus = useRef<HTMLElement | null>(null);
 
   const reload = useCallback(async () => {
     try {
       setWorlds(await api.minecraftWorlds());
-    } catch {
-      // The row and pages keep the last list; the status block already says why.
+      setWorldsFailed(null);
+    } catch (err) {
+      setWorldsFailed(message(err));
     }
     setRev((r) => r + 1);
   }, []);
@@ -182,28 +225,69 @@ export function useWorlds({
 
   // A job's every step can change a slot (a backup taken, a world written), so re-read.
   const jobKey = job ? `${job.what}|${job.phase ?? ""}` : "";
-  const lastJob = useRef(jobKey);
+  const lastJobKey = useRef(jobKey);
   useEffect(() => {
-    if (lastJob.current !== jobKey) void reload();
-    lastJob.current = jobKey;
+    if (lastJobKey.current !== jobKey) void reload();
+    lastJobKey.current = jobKey;
   }, [jobKey, reload]);
 
-  // A start applies the loaded world's saved settings.
-  const wasRunning = useRef(running);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: checked once per status read.
   useEffect(() => {
-    const active = worlds?.slots.find((s) => s.active)?.id;
-    if (running && !wasRunning.current && active) {
-      setPendingSettings((p) => ({ ...p, [active]: [] }));
+    const f = follow.current;
+    if (!f) return;
+    if (job) {
+      f.misses = 0;
+      f.soft = false;
+      return;
     }
-    wasRunning.current = running;
-  }, [running, worlds]);
+    if (lastJob && lastJob.finished_at > f.since) {
+      follow.current = null;
+      setInFlight(null);
+      if (lastJob.ok) f.ok();
+      else f.fail(lastJob.detail || "it failed");
+      void reload();
+      return;
+    }
+    f.misses += 1;
+    if (f.misses >= (f.soft ? 1 : FOLLOW_MISSES)) {
+      follow.current = null;
+      setInFlight(null);
+      void reload();
+    }
+  }, [statusSeq]);
+
+  // Loading a world applies its waiting changes; from then on the box reports them.
+  const activeId = worlds?.slots.find((s) => s.active)?.id;
+  useEffect(() => {
+    if (activeId) setNextLoad((p) => (p[activeId]?.length ? { ...p, [activeId]: [] } : p));
+  }, [activeId]);
+
+  // Focus goes back to the row that pushed a page once that page is popped (and the page
+  // beneath stops being inert).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs after each push or pop.
+  useEffect(() => {
+    const el = refocus.current;
+    refocus.current = null;
+    if (!el) return;
+    // After this commit's other effects, which lift `inert` from the screen beneath.
+    const t = setTimeout(() => el.isConnected && el.focus({ preventScroll: true }), 0);
+    return () => clearTimeout(t);
+  }, [pages.length]);
 
   const slots = worlds?.slots ?? [];
   const slotOf = (id: string) => slots.find((s) => s.id === id) ?? null;
   const active = slots.find((s) => s.active) ?? null;
   const blocked =
     worldBlocked(job, updating, state) ||
-    (upload ? "Wait — a world is uploading from this device." : "");
+    (upload ? "Wait — a world is uploading from this device." : "") ||
+    (inFlight ? `Wait — the server is ${inFlight}.` : "");
+
+  function pendingFor(s: MinecraftSlot): SettingKey[] {
+    if (!s.active) return nextLoad[s.id] ?? [];
+    return (Object.keys(RESTART_KEY) as SettingKey[]).filter((k) =>
+      pendingRestart.includes(RESTART_KEY[k]),
+    );
+  }
 
   async function run(verb: string, fn: () => Promise<void>): Promise<boolean> {
     setError(null);
@@ -211,8 +295,60 @@ export function useWorlds({
       await fn();
       return true;
     } catch (err) {
-      setError(`Couldn't ${verb} — ${message(err)}`);
+      setError(`Couldn't ${verb} — ${message(err)}.`);
       return false;
+    } finally {
+      void reload();
+      refreshStatus();
+    }
+  }
+
+  function startFollow(since: number, soft: boolean, verb: string, ok: () => void) {
+    follow.current = {
+      since,
+      soft,
+      misses: 0,
+      ok,
+      fail: (detail) => setError(`Couldn't ${verb} — ${clause(detail)}.`),
+    };
+  }
+
+  /** A load, reset or restore: sent at once, answered with its result, a refusal, or
+   *  `accepted` — then followed through the status poll to its outcome. */
+  async function longOp(o: {
+    what: string;
+    verb: string;
+    send: () => Promise<unknown>;
+    done: (res: unknown) => void;
+    /** Added to "Nothing changed" on a refusal, e.g. which world is still loaded. */
+    still?: string | undefined;
+  }) {
+    setError(null);
+    setInFlight(o.what);
+    const since = lastJobRef.current?.finished_at ?? 0;
+    const sent = o.send();
+    refreshStatus();
+    try {
+      const res = await sent;
+      if (isAccepted(res)) {
+        startFollow(since, false, o.verb, () => o.done(null));
+        return;
+      }
+      setInFlight(null);
+      o.done(res);
+    } catch (err) {
+      if (err instanceof ApiError && isRefusal(err.status)) {
+        setInFlight(null);
+        setError(
+          `Couldn't ${o.verb} — ${clause(err.message)}. Nothing changed${o.still ? `; ${o.still}` : ""}.`,
+        );
+      } else {
+        // The answer was lost, not the work: the box may well be carrying on.
+        setError(
+          `Couldn't confirm that — ${message(err)}. The server may still be ${o.what}; watch for its card here.`,
+        );
+        startFollow(since, true, o.verb, () => o.done(null));
+      }
     } finally {
       void reload();
       refreshStatus();
@@ -223,14 +359,23 @@ export function useWorlds({
     async load(slot: string) {
       const t = slotOf(slot);
       if (!t) return;
-      const was = active ? slotName(active) : null;
-      const ok = await run(`load ${slotName(t)}`, async () => {
-        const res = await api.minecraftLoadWorld(slot);
-        if (!res.loaded) toast(`${slotName(t)} is already loaded`);
-        else if (running) toast(`${slotName(t)} is loaded — players can join`);
-        else toast(`${slotName(t)} is loaded — start the server to play it`);
+      const name = slotName(t);
+      await longOp({
+        what: "loading a world",
+        verb: `load ${name}`,
+        still: active ? `${slotName(active)} is still loaded` : undefined,
+        send: () => api.minecraftLoadWorld(slot),
+        done: (res) => {
+          if (res && (res as { loaded?: boolean }).loaded === false) {
+            toast(`${name} is already loaded`);
+          } else
+            toast(
+              running
+                ? `${name} is loaded — players can join`
+                : `${name} is loaded — start the server to play it`,
+            );
+        },
       });
-      if (!ok && was) setError((e) => `${e}. Nothing changed; ${was} is still loaded.`);
     },
     async create(slot: string, body: MinecraftNewWorld) {
       if (
@@ -256,23 +401,28 @@ export function useWorlds({
     async setting(slot: string, key: SettingKey, value: string | boolean) {
       const t = slotOf(slot);
       if (!t) return;
-      // Optimistic: the segment moves at once; the reload after the PATCH settles it.
-      setWorlds((w) =>
-        w ? { ...w, slots: w.slots.map((s) => (s.id === slot ? { ...s, [key]: value } : s)) } : w,
-      );
+      const was = t[key];
+      const put = (v: string | boolean) =>
+        setWorlds((w) =>
+          w ? { ...w, slots: w.slots.map((s) => (s.id === slot ? { ...s, [key]: v } : s)) } : w,
+        );
+      // Optimistic: the segment moves at once, and moves back if the box refuses (409 while
+      // a job holds the world).
+      put(value);
       const ok = await run("save the setting", async () => {
         await api.minecraftUpdateWorld(slot, { [key]: value });
       });
-      if (!ok) return;
-      const live = t.active && running;
-      if (key === "difficulty" && live) {
+      if (!ok) {
+        put(was);
+        return;
+      }
+      if (key === "difficulty" && t.active && running) {
         toast(`Applied live — difficulty is ${value} now`);
         return;
       }
-      setPendingSettings((p) => ({
-        ...p,
-        [slot]: [...new Set([...(p[slot] ?? []), key])],
-      }));
+      if (!t.active) {
+        setNextLoad((p) => ({ ...p, [slot]: [...new Set([...(p[slot] ?? []), key])] }));
+      }
       const when = pendWhen(t, running);
       if (key === "gamemode") {
         toast(
@@ -284,40 +434,67 @@ export function useWorlds({
     async reset(slot: string, mode: MinecraftResetMode, seed?: string) {
       const t = slotOf(slot);
       const name = t ? slotName(t) : "It";
-      if (
-        await run(`reset ${name}`, async () => {
-          await api.minecraftResetWorld(slot, mode, seed);
-        })
-      ) {
-        toast(
-          mode === "empty"
-            ? `Slot ${slotNumber(slot)} is empty — its backups are kept`
-            : `${name} is reset — undo it from its backups`,
-        );
-        void loadBackups(slot);
-      }
+      await longOp({
+        what: "resetting a world",
+        verb: `reset ${name}`,
+        send: () => api.minecraftResetWorld(slot, mode, seed),
+        done: () => {
+          toast(
+            mode === "empty"
+              ? `Slot ${slotNumber(slot)} is empty — its backups are kept`
+              : `${name} is reset — undo it from its backups`,
+          );
+          void loadBackups(slot);
+        },
+      });
     },
     async importWorld(slot: string, file: File) {
       setError(null);
       setUploadFailed(null);
       setUpload({ slot, file: file.name, sent: 0, total: file.size });
+      const abort = new AbortController();
+      uploadAbort.current = abort;
+      const since = lastJobRef.current?.finished_at ?? 0;
+      const landed = (name?: string | null) =>
+        toast(`${name ?? "The world"} imported into slot ${slotNumber(slot)}`);
+      const sent = api.minecraftImportWorld(
+        slot,
+        file,
+        "",
+        (done, total) => setUpload({ slot, file: file.name, sent: done, total }),
+        abort.signal,
+      );
       refreshStatus();
       try {
-        const landed = await api.minecraftImportWorld(slot, file, "", (sent, total) =>
-          setUpload({ slot, file: file.name, sent, total }),
-        );
-        toast(`${landed?.name ?? "The world"} imported into slot ${slotNumber(slot)}`);
+        const res = await sent;
+        if (isAccepted(res)) {
+          setInFlight("importing a world");
+          startFollow(since, false, `import ${file.name}`, () => landed());
+        } else landed(res?.name);
       } catch (err) {
-        // A file the box refused (400) is the card's own failure; a 409 is a busy server.
-        if (err instanceof ApiError && err.status === 400) {
+        if (isAbort(err)) toast("Upload cancelled — nothing was imported");
+        else if (err instanceof ApiError && err.status === 400) {
+          // The box refused the file itself: the card says why, with another try.
           setUploadFailed({ slot, detail: err.message });
-        } else setError(`Couldn't import ${file.name} — ${message(err)}`);
+        } else if (err instanceof ApiError && isRefusal(err.status)) {
+          setError(`Couldn't import ${file.name} — ${clause(err.message)}. Nothing changed.`);
+        } else {
+          setError(
+            `Couldn't confirm the import — ${message(err)}. The server may still be importing; watch for its card here.`,
+          );
+          setInFlight("importing a world");
+          startFollow(since, true, `import ${file.name}`, () => landed());
+        }
       } finally {
+        uploadAbort.current = null;
         setUpload(null);
         void reload();
         void loadBackups(slot);
         refreshStatus();
       }
+    },
+    cancelUpload() {
+      uploadAbort.current?.abort();
     },
     async backUp(slot: string, label: string) {
       const t = slotOf(slot);
@@ -365,30 +542,37 @@ export function useWorlds({
     },
     async restore(b: MinecraftBackup, to: string) {
       const t = slotOf(to);
-      if (
-        await run("restore it", async () => {
-          const landed = await api.minecraftRestoreBackup(b.name, to);
-          const into = landed?.name ?? (t ? slotName(t) : "The world");
-          toast(`Restored — ${into} is back to ${whenOf(b.created, nowMs)}`);
-        })
-      ) {
-        void loadBackups(to);
-      }
+      const source = slots.find((s) => s.folder === b.folder) ?? null;
+      const when = whenOf(b.created, nowMs);
+      await longOp({
+        what: "restoring a backup",
+        verb: "restore it",
+        send: () => api.minecraftRestoreBackup(b.name, to),
+        done: () => {
+          if (t && b.folder === t.folder) toast(`Restored — ${slotName(t)} is back to ${when}`);
+          else {
+            toast(`Slot ${slotNumber(to)} now holds ${source?.name ?? b.folder} from ${when}`);
+          }
+          void loadBackups(to);
+        },
+      });
     },
     downloaded(b: MinecraftBackup, slot: string) {
       toast(`Downloading ${backupTitle(b)} (${fmtBytes(b.bytes)})`);
-      // The box stamps the download as it streams, so read it back once it's under way.
-      setTimeout(() => {
-        void loadBackups(slot);
-        void reload();
-      }, 3000);
+      // The box stamps the download once the whole file has gone out, which for a big
+      // world takes a while: read it back early, and again later.
+      for (const ms of [3000, 10_000]) {
+        setTimeout(() => {
+          void loadBackups(slot);
+          void reload();
+        }, ms);
+      }
     },
   };
 
-  const pop = useCallback(() => setPages((p) => p.slice(0, -1)), []);
-
   return {
     worlds,
+    worldsFailed,
     slots,
     active,
     slotOf,
@@ -397,9 +581,15 @@ export function useWorlds({
     pages,
     push: (p: Page) => {
       if (p.kind === "worlds") void reload();
+      openers.current.push(
+        document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      );
       setPages((s) => [...s, p]);
     },
-    pop,
+    pop: () => {
+      refocus.current = openers.current.pop() ?? null;
+      setPages((p) => p.slice(0, -1));
+    },
     modal,
     setModal,
     error,
@@ -408,7 +598,9 @@ export function useWorlds({
     uploadFailed,
     dismissUploadFailed: () => setUploadFailed(null),
     backingUp,
-    pendingSettings,
+    inFlight,
+    pendingFor,
+    pendingRestart,
     blocked,
     rev,
     reload,
@@ -473,7 +665,12 @@ function Layer({
   const root = useRef<HTMLDivElement>(null);
   const covered = useCovered(w, root);
   const body = useRef<HTMLElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
+  // A pushed page takes focus at its back button, so a keyboard or screen reader lands on it.
+  useEffect(() => {
+    back.current?.focus({ preventScroll: true });
+  }, []);
   // The card's own swipe-down would close all of Minecraft; a layer climbs one level.
   function onTouchStart(e: TouchEvent) {
     e.stopPropagation();
@@ -501,7 +698,7 @@ function Layer({
       onTouchMove={onTouchMove}
     >
       <header className="top-bar">
-        <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
+        <button type="button" className="back-btn" onClick={onBack} aria-label="Back" ref={back}>
           <ChevronLeftIcon size={22} />
           <span className="screen-title">{title}</span>
         </button>
@@ -566,7 +763,9 @@ export function JobCard() {
     );
   }
   const job = w.job;
-  if (!job && w.upload) {
+  // The bytes first: the box's own job ("receiving a world upload") says less than this
+  // device knows until the last byte has gone.
+  if (w.upload && (!job || w.upload.sent < w.upload.total)) {
     const u = w.upload;
     const pct = u.total ? Math.round((u.sent / u.total) * 100) : 0;
     return (
@@ -598,6 +797,10 @@ export function JobCard() {
           Keep this screen open until it finishes — the upload isn&apos;t resumable. The file is
           checked for level.dat before anything is written.
         </p>
+        <button type="button" className="mc-btn" onClick={w.actions.cancelUpload}>
+          <XIcon size={18} />
+          Cancel upload
+        </button>
       </div>
     );
   }
@@ -626,9 +829,24 @@ export function JobCard() {
 
 // ---- the main screen's row ----
 
+/** The worlds list couldn't be read: say so, with a way to try again. */
+function WorldsFailed() {
+  const w = useW();
+  if (!w.worldsFailed) return null;
+  return (
+    <div className="mc-errline" role="alert">
+      <AlertTriangleIcon size={16} />
+      <span>Couldn&apos;t read the worlds — {w.worldsFailed}.</span>
+      <button type="button" className="mc-link mc-retry" onClick={() => void w.reload()}>
+        Retry
+      </button>
+    </div>
+  );
+}
+
 export function WorldsEntry() {
   const w = useW();
-  if (!w.worlds) return null;
+  if (!w.worlds) return <WorldsFailed />;
   const used = w.slots.filter((s) => !isEmptySlot(s)).length;
   const last = Math.max(0, ...w.slots.map((s) => s.last_download ?? 0));
   let meta: ReactNode;
@@ -671,7 +889,7 @@ export function WorldsEntry() {
 // ---- Worlds ----
 
 function pendingCount(w: Worlds, s: MinecraftSlot): number {
-  return (w.pendingSettings[s.id] ?? []).length;
+  return w.pendingFor(s).length;
 }
 
 function WorldRow({ s }: { s: MinecraftSlot }) {
@@ -741,7 +959,7 @@ export function WorldsLayer() {
     <Layer title="Worlds" onBack={w.pop}>
       <ErrLine />
       <JobCard />
-      {!w.worlds && <p className="mc-note">Loading…</p>}
+      {!w.worlds && (w.worldsFailed ? <WorldsFailed /> : <p className="mc-note">Loading…</p>)}
       {w.active && (
         <>
           <h3 className="mc-sect">Loaded</h3>
@@ -864,7 +1082,7 @@ const Pend = ({ on }: { on: boolean }) => (on ? <span className="mc-pend">pendin
 
 function Settings({ s }: { s: MinecraftSlot }) {
   const w = useW();
-  const pend = w.pendingSettings[s.id] ?? [];
+  const pend = w.pendingFor(s);
   const live = s.active && w.running;
   return (
     <div className="mc-pad">
@@ -935,13 +1153,14 @@ function useRules(slot: string | null, rev: number) {
 }
 
 function OffBox({ s, list }: { s: MinecraftSlot; list: MinecraftBackup[] }) {
+  const w = useW();
   if (s.last_download) {
     const b = list.find((x) => x.downloaded_at === s.last_download);
     return (
       <div className="mc-offbox ok">
         <DownloadIcon size={16} />
         <span>
-          <b>Last copy off the box: {whenOf(s.last_download, Date.now())}</b>
+          <b>Last copy off the box: {whenOf(s.last_download, w.nowMs)}</b>
           {b ? ` — ${backupShort(b)}` : ""}. Minecraft backups aren&apos;t in the box backup, so a
           download is the only copy kept elsewhere.
         </span>
@@ -1282,9 +1501,12 @@ export function RulesEditor({
   // A stepper's shown value while its save waits for the taps to settle.
   const [draft, setDraft] = useState<Record<string, number>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const waiting = useRef<Record<string, () => void>>({});
+  // Leaving the page mid-tap still saves the settled value, rather than dropping it.
   useEffect(
     () => () => {
       for (const t of Object.values(timers.current)) clearTimeout(t);
+      for (const save of Object.values(waiting.current)) save();
     },
     [],
   );
@@ -1299,13 +1521,19 @@ export function RulesEditor({
     const v = clampRule(r, n);
     setDraft((d) => ({ ...d, [r.id]: v }));
     clearTimeout(timers.current[r.id]);
-    timers.current[r.id] = setTimeout(() => {
+    const was = values[r.id];
+    const save = () => {
       delete timers.current[r.id];
+      delete waiting.current[r.id];
+      if (v !== was) onSet(r.id, v);
+    };
+    waiting.current[r.id] = save;
+    timers.current[r.id] = setTimeout(() => {
       setDraft((d) => {
         const { [r.id]: _, ...rest } = d;
         return rest;
       });
-      if (v !== values[r.id]) onSet(r.id, v);
+      save();
     }, debounceMs);
   }
 
@@ -1532,7 +1760,9 @@ export function RulesLayer({ slot }: { slot: string }) {
       setView(next);
       done(next);
     } catch (err) {
-      w.setError(`Couldn't save the rule — ${message(err)}`);
+      // Refused (409 while a job holds the world): the switch or stepper goes back.
+      setView(view);
+      w.setError(`Couldn't save the rule — ${message(err)}.`);
       setView(await api.minecraftRules(slot).catch(() => view));
     }
   }

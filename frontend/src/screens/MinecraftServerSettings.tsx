@@ -2,10 +2,10 @@
 // backups"): the settings every world shares, and the allowlist. Both stay on the main
 // screen; what a world owns lives on its own page.
 //
-// On/off and the settings apply at the next restart, but the API reports only the saved
-// value, so "pending" here is what this device saved since the server last started.
+// On/off and the settings apply at the next restart; the box's `pending_restart` lists the
+// keys saved since the last start, so every device shows the same "pending".
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
   type MinecraftAllowlist,
@@ -43,33 +43,27 @@ function toDraft(s: MinecraftServerSettings): Draft {
   };
 }
 
-/** Clears this device's "pending" once the server is seen starting again. */
-function useAppliedOnStart(running: boolean): [boolean, (on: boolean) => void] {
-  const [pending, setPending] = useState(false);
-  const was = useRef(running);
-  useEffect(() => {
-    if (running && !was.current) setPending(false);
-    was.current = running;
-  }, [running]);
-  return [pending, setPending];
-}
-
 export function ServerSettingsSection({
   running,
   online,
   toast,
   onError,
+  pendingRestart,
+  refreshStatus,
 }: {
   running: boolean;
   online: number;
   toast: (msg: string) => void;
   onError: (msg: string) => void;
+  pendingRestart: string[];
+  refreshStatus: () => void;
 }) {
   const [saved, setSaved] = useState<Draft | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [failed, setFailed] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [pending, setPending] = useAppliedOnStart(running);
+  const Pend = ({ k }: { k: string }) =>
+    pendingRestart.includes(k) ? <span className="mc-pend">pending</span> : null;
 
   useEffect(() => {
     api
@@ -95,7 +89,7 @@ export function ServerSettingsSection({
       });
       setSaved(toDraft(next));
       setDraft(null);
-      setPending(true);
+      refreshStatus();
       toast(
         running ? "Saved — applies at the next restart" : "Saved — applies when the server starts",
       );
@@ -114,7 +108,9 @@ export function ServerSettingsSection({
   ) => (
     <div className="mc-set">
       <div className="mc-set-l">
-        <span>{label}</span>
+        <span>
+          {label} <Pend k={k === "max_players" ? "max-players" : "view-distance"} />
+        </span>
         <span className="mc-set-sub">{sub}</span>
       </div>
       <div className="mc-stepper">
@@ -155,7 +151,7 @@ export function ServerSettingsSection({
           <div className="mc-pad mc-pad-roomy">
             <div className="mc-fld">
               <label htmlFor="mc-srv-name">
-                Server name {pending && <span className="mc-pend">pending</span>}
+                Server name <Pend k="server-name" />
               </label>
               <input
                 id="mc-srv-name"
@@ -222,6 +218,8 @@ export function AllowlistSection({
   known,
   toast,
   onError,
+  pendingRestart,
+  refreshStatus,
 }: {
   running: boolean;
   online: string[];
@@ -229,12 +227,14 @@ export function AllowlistSection({
   known: string[];
   toast: (msg: string) => void;
   onError: (msg: string) => void;
+  pendingRestart: string[];
+  refreshStatus: () => void;
 }) {
   const [list, setList] = useState<MinecraftAllowlist | null>(null);
   const [failed, setFailed] = useState(false);
   const [tag, setTag] = useState("");
   const [confirmOff, setConfirmOff] = useState(false);
-  const [pending, setPending] = useAppliedOnStart(running);
+  const pending = pendingRestart.includes("allow-list");
 
   const load = useCallback(() => {
     api
@@ -257,7 +257,7 @@ export function AllowlistSection({
   async function setEnabled(on: boolean) {
     setConfirmOff(false);
     if (await change({ enabled: on })) {
-      setPending(!pending);
+      refreshStatus();
       const when = running ? "from the next restart" : "when the server starts";
       toast(`Allowlist ${on ? "on" : "off"} ${when}`);
     }

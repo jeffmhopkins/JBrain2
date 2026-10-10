@@ -11,6 +11,7 @@ import {
   mcStopped,
   mcUpdate,
   mcVersion,
+  mcWorlds,
 } from "../minecraftFixtures";
 import { MinecraftScreen } from "./MinecraftScreen";
 
@@ -50,6 +51,8 @@ describe("MinecraftScreen", () => {
         return json(typeof routes.status === "function" ? routes.status() : routes.status);
       }
       if (path.startsWith("/api/minecraft/version")) return json(routes.version ?? mcVersion());
+      // The worlds list is MinecraftWorlds.test.tsx's; here it only has to answer.
+      if (path === "/api/minecraft/worlds") return json(mcWorlds());
       if (path === "/api/minecraft/players") {
         return json(
           typeof routes.players === "function" ? routes.players() : (routes.players ?? mcPlayers()),

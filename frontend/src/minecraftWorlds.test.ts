@@ -24,6 +24,7 @@ import {
   groupsFor,
   importCheck,
   importOverConfirm,
+  isRefusal,
   jobLine,
   loadConfirm,
   nextToGo,
@@ -31,6 +32,7 @@ import {
   resetOptions,
   restoreConfirm,
   restoreTargetText,
+  restoredName,
   rulesNote,
   seedFor,
   settingsLine,
@@ -195,12 +197,13 @@ describe("load", () => {
 
 describe("import over and restore", () => {
   it("import over the loaded world with players on warns them", () => {
-    const spec = importOverConfirm(castle, "Hilltop Village", running);
+    const spec = importOverConfirm(castle, "Hilltop Village.mcworld", running);
     expect(spec.tone).toBe("danger");
+    // The box names the world from the file's levelname.txt, so no name is promised.
     expect(spec.body).toBe(
-      "Castle Hill is backed up first, then replaced by Hilltop Village with the file's own settings — BlockyFox and Mira_P get a 10-second warning in chat and are disconnected for about a minute.",
+      "Castle Hill is backed up first, then replaced by the world in Hilltop Village.mcworld, with the file's own name and settings — BlockyFox and Mira_P get a 10-second warning in chat and are disconnected until it's back up.",
     );
-    expect(importOverConfirm(creative, "Hilltop Village", running).tone).toBe("warn");
+    expect(importOverConfirm(creative, "x.mcworld", running).tone).toBe("warn");
   });
 
   it("restoring another world's backup brings its seed and settings", () => {
@@ -220,6 +223,32 @@ describe("import over and restore", () => {
   });
 });
 
+describe("restore and errors", () => {
+  it("says a world is backed up first only when it exists", () => {
+    const b = mcBackup();
+    expect(restoreTargetText(b, skyblock, castle, running)).toBe(
+      "replaces Skyblock run — the backup's seed and settings come too",
+    );
+    expect(restoreConfirm(b, skyblock, running, Date.now()).body).toMatch(
+      /^Skyblock run is replaced with “before the castle roof”/,
+    );
+    expect(restoreConfirm(b, creative, running, Date.now()).body).toMatch(
+      /^Creative test is backed up first, then replaced with/,
+    );
+  });
+
+  it("an empty slot is named as the box names it, by folder when the source has none", () => {
+    const b = mcBackup();
+    expect(restoredName(b, castle)).toMatch(/^Castle Hill \(\w+ \d+\)$/);
+    expect(restoredName({ ...b, folder: "slot7" }, null)).toMatch(/^slot7 \(\w+ \d+\)$/);
+  });
+
+  it("only a refusal means nothing changed", () => {
+    for (const code of [400, 409, 413, 422]) expect(isRefusal(code)).toBe(true);
+    for (const code of [0, 500, 502, 503, 524]) expect(isRefusal(code)).toBe(false);
+  });
+});
+
 describe("backups", () => {
   it("a pinned backup can't be deleted", () => {
     expect(canDeleteBackup(mcBackup({ pinned: true }))).toBe(false);
@@ -232,6 +261,12 @@ describe("backups", () => {
     expect(autoReason("pre-load")).toBe("before loading another world");
     expect(backupTitle(mcBackup({ label: "pre-reset", auto: true }))).toBe("Before a reset");
     expect(backupTitle(mcBackup({ label: "", auto: false }))).toBe("Your backup");
+    // The box's own note wins when it has one.
+    expect(
+      backupTitle(
+        mcBackup({ label: "pre-load", auto: true, note: "before loading Creative test" }),
+      ),
+    ).toBe("Before loading Creative test");
   });
 
   it("at the limit, the next backup removes the oldest automatic one; pinned never go", () => {

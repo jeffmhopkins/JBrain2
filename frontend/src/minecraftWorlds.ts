@@ -106,14 +106,6 @@ export function importCheck(size: number): ImportCheck {
   return "ok";
 }
 
-/** A world's name from its file: `Hilltop Village.mcworld` → `Hilltop Village`. */
-export function nameFromFile(fileName: string): string {
-  return fileName
-    .replace(/\.(mcworld|zip)$/i, "")
-    .trim()
-    .slice(0, NAME_MAX);
-}
-
 // ---- reset ----
 
 export interface ResetOption {
@@ -178,7 +170,7 @@ export function autoReason(label: string): string {
 }
 
 export function backupTitle(b: MinecraftBackup): string {
-  if (b.auto) return cap(autoReason(b.label));
+  if (b.auto) return cap(b.note || autoReason(b.label));
   return b.label || "Your backup";
 }
 
@@ -200,6 +192,24 @@ export function nextToGo(backups: MinecraftBackup[], keep: number): MinecraftBac
     );
   return oldest(unpinned.filter((b) => b.auto)) ?? oldest(unpinned);
 }
+
+// ---- errors ----
+
+/** A refusal (invalid, busy, too big for the tunnel, rejected input) means the box changed
+ *  nothing. Anything else — 503, a dropped connection, a gateway timeout — leaves it unknown
+ *  whether the box carried on. */
+export function isRefusal(status: number): boolean {
+  return status === 400 || status === 409 || status === 413 || status === 422;
+}
+
+// ---- restart-bound settings ----
+
+/** The server.properties key behind each world setting, as `pending_restart` names it. */
+export const RESTART_KEY: Record<"gamemode" | "difficulty" | "cheats", string> = {
+  gamemode: "gamemode",
+  difficulty: "difficulty",
+  cheats: "allow-cheats",
+};
 
 // ---- jobs ----
 
@@ -255,7 +265,7 @@ const warned = (online: string[]) =>
 function bounce(target: MinecraftSlot, ctx: ServerCtx): string {
   if (!target.active || !ctx.running) return "";
   return ctx.online.length
-    ? ` — ${warned(ctx.online)} for about a minute`
+    ? ` — ${warned(ctx.online)} until it's back up`
     : " — the server restarts around it";
 }
 
@@ -287,15 +297,18 @@ export function loadConfirm(
   };
 }
 
+/** The box names an imported world from the file's own levelname.txt, so the sentence
+ *  promises the world in the file, not a name. */
 export function importOverConfirm(
   target: MinecraftSlot,
-  worldName: string,
+  fileName: string,
   ctx: ServerCtx,
 ): WorldConfirm {
   const t = slotName(target);
+  const first = target.exists ? `${t} is backed up first, then replaced` : `${t} is replaced`;
   return {
     title: `Import over ${t}?`,
-    body: `${t} is backed up first, then replaced by ${worldName} with the file's own settings${bounce(target, ctx)}.`,
+    body: `${first} by the world in ${fileName}, with the file's own name and settings${bounce(target, ctx)}.`,
     confirmLabel: "Import",
     tone: dangerIfPlayers(target, ctx, "warn"),
   };
@@ -340,9 +353,10 @@ export function restoreConfirm(
     };
   }
   const t = slotName(target);
+  const first = target.exists ? `${t} is backed up first, then replaced` : `${t} is replaced`;
   return {
     title: `Restore into ${t}?`,
-    body: `${t} is backed up first, then replaced with ${backupShort(b)} from ${whenOf(b.created, nowMs)}${same ? "" : ", its seed and settings included"}${bounce(target, ctx)}.`,
+    body: `${first} with ${backupShort(b)} from ${whenOf(b.created, nowMs)}${same ? "" : ", its seed and settings included"}${bounce(target, ctx)}.`,
     confirmLabel: "Restore",
     tone: dangerIfPlayers(target, ctx, "warn"),
   };
@@ -357,13 +371,19 @@ export function restoreTargetText(
 ): string {
   const restarts = target.active && ctx.running ? ", and the server restarts around it" : "";
   if (isEmptySlot(target)) {
-    const from = source ? slotName(source) : b.folder;
-    return `empty — becomes “${from} (${shortDate(b.created)})” with the backup's seed and settings and ${from}'s rules`;
+    const from = restoredName(b, source);
+    return `empty — becomes “${from}” with the backup's seed and settings and ${source?.name ?? b.folder}'s rules`;
   }
   const t = slotName(target);
-  if (b.folder === target.folder)
-    return `its own world — rolled back; ${t} is backed up first${restarts}`;
-  return `replaces ${t} — the backup's seed and settings come too; ${t} is backed up first${restarts}`;
+  const first = target.exists ? `; ${t} is backed up first` : "";
+  if (b.folder === target.folder) return `its own world — rolled back${first}${restarts}`;
+  return `replaces ${t} — the backup's seed and settings come too${first}${restarts}`;
+}
+
+/** What the box calls another world's backup restored into an empty slot: the source
+ *  world's name (its folder when it has none) and the backup's date. */
+export function restoredName(b: MinecraftBackup, source: MinecraftSlot | null): string {
+  return `${source?.name ?? b.folder} (${shortDate(b.created)})`;
 }
 
 export function deleteConfirm(b: MinecraftBackup): WorldConfirm {

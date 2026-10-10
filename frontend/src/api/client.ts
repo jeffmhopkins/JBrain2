@@ -454,6 +454,30 @@ export interface MinecraftServer {
   auto_update: boolean;
   /** A world operation in flight. Every device sees it, and a second one is refused (409). */
   job?: MinecraftJob | null;
+  /** server.properties keys saved since the last start ("gamemode", "allow-cheats",
+   *  "allow-list", "difficulty", "max-players", "server-name", "view-distance"): what the
+   *  next restart changes. The same on every device. */
+  pending_restart?: string[];
+  /** How the last world operation ended — the outcome of one that answered `accepted`. */
+  last_job?: MinecraftLastJob | null;
+}
+
+export interface MinecraftLastJob {
+  what: string;
+  ok: boolean;
+  detail: string | null;
+  finished_at: number;
+}
+
+/** A load, reset, restore or import still running after the box's ~20 s wait: follow
+ *  `server.job`, then read `server.last_job`. */
+export interface MinecraftAccepted {
+  accepted: true;
+  what: string;
+}
+
+export function isAccepted(body: unknown): body is MinecraftAccepted {
+  return !!body && typeof body === "object" && (body as { accepted?: unknown }).accepted === true;
 }
 
 export interface MinecraftJob {
@@ -529,6 +553,8 @@ export interface MinecraftBackup {
   auto: boolean;
   pinned: boolean;
   downloaded_at: number | null;
+  /** An automatic backup's reason in words ("before loading Creative test"); "" otherwise. */
+  note?: string;
 }
 
 export interface MinecraftAllowlist {
@@ -2931,13 +2957,15 @@ async function mockUpload(
   path: string,
   file: Blob,
   onProgress: (sent: number, total: number) => void,
-): Promise<MinecraftSlot> {
+  signal?: AbortSignal,
+): Promise<MinecraftSlot | MinecraftAccepted> {
   for (let i = 1; i <= 10; i++) {
     await new Promise((r) => setTimeout(r, 250));
+    if (signal?.aborted) throw new DOMException("The upload was cancelled.", "AbortError");
     onProgress(Math.round((file.size * i) / 10), file.size);
   }
   const response = await request(path, { method: "POST", body: file });
-  return (await response.json()) as MinecraftSlot;
+  return (await response.json()) as MinecraftSlot | MinecraftAccepted;
 }
 
 export function attachmentUrl(id: string): string {
@@ -4706,9 +4734,11 @@ export const api = {
     return ((await response.json()) as { seed: string }).seed;
   },
 
-  async minecraftLoadWorld(slot: string): Promise<{ loaded: boolean; detail?: string }> {
+  async minecraftLoadWorld(
+    slot: string,
+  ): Promise<{ loaded: boolean; detail?: string } | MinecraftAccepted> {
     const response = await request(`/api/minecraft/worlds/${slot}/load`, { method: "POST" });
-    return (await response.json()) as { loaded: boolean; detail?: string };
+    return (await response.json()) as { loaded: boolean; detail?: string } | MinecraftAccepted;
   },
 
   async minecraftCreateWorld(slot: string, body: MinecraftNewWorld): Promise<MinecraftSlot> {
@@ -4728,26 +4758,35 @@ export const api = {
     slot: string,
     mode: MinecraftResetMode,
     seed?: string,
-  ): Promise<MinecraftSlot> {
+  ): Promise<MinecraftSlot | MinecraftAccepted> {
     const response = await request(
       `/api/minecraft/worlds/${slot}/reset`,
       jsonInit("POST", { mode, seed: seed ?? null }),
     );
-    return (await response.json()) as MinecraftSlot;
+    return (await response.json()) as MinecraftSlot | MinecraftAccepted;
   },
 
   /** The raw .mcworld goes up as the body. XHR rather than fetch: only XHR reports upload
-   *  progress, and a world can be hundreds of MB. */
+   *  progress, and a world can be hundreds of MB. It always settles — answered, refused,
+   *  cut off, timed out or cancelled through `signal` — so a caller's upload state can't
+   *  stick. A cancel rejects with an AbortError. */
   minecraftImportWorld(
     slot: string,
     file: Blob,
     name: string,
     onProgress: (sent: number, total: number) => void,
-  ): Promise<MinecraftSlot> {
+    signal?: AbortSignal,
+  ): Promise<MinecraftSlot | MinecraftAccepted> {
     const path = `/api/minecraft/worlds/${slot}/import?name=${encodeURIComponent(name)}`;
-    if (MOCK_MODE) return mockUpload(path, file, onProgress);
+    if (MOCK_MODE) return mockUpload(path, file, onProgress, signal);
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      let settled = false;
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
       xhr.open("POST", path);
       xhr.withCredentials = true;
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
@@ -4761,12 +4800,15 @@ export const api = {
         } catch {
           // not JSON — the status line speaks for it below
         }
+        const detail = (body as { detail?: unknown } | null)?.detail;
         if (xhr.status === 401) {
           unauthorizedHandler?.();
-          reject(new ApiError(401, "Not authenticated"));
+          fail(new ApiError(401, "Not authenticated"));
+        } else if (xhr.status === 413) {
+          // Cloudflare's tunnel turns down bodies over 100 MB before the box sees them.
+          fail(new ApiError(413, "Over 100 MB only uploads at home on the Wi-Fi."));
         } else if (xhr.status < 200 || xhr.status >= 300) {
-          const detail = (body as { detail?: unknown } | null)?.detail;
-          reject(
+          fail(
             new ApiError(
               xhr.status,
               typeof detail === "string" && detail.trim()
@@ -4774,10 +4816,21 @@ export const api = {
                 : `Request failed: ${xhr.status}`,
             ),
           );
-        } else resolve(body as MinecraftSlot);
+        } else if (!settled) {
+          settled = true;
+          resolve(body as MinecraftSlot | MinecraftAccepted);
+        }
       };
-      xhr.onerror = () =>
-        reject(new ApiError(0, "The upload was cut off — the connection dropped."));
+      xhr.onerror = () => fail(new ApiError(0, "the connection dropped during the upload"));
+      xhr.ontimeout = () => fail(new ApiError(0, "the upload timed out"));
+      xhr.onabort = () => fail(new DOMException("The upload was cancelled.", "AbortError"));
+      // Whatever ended it, the promise has settled by now.
+      xhr.onloadend = () => fail(new ApiError(0, "the upload ended without an answer"));
+      if (signal?.aborted) {
+        fail(new DOMException("The upload was cancelled.", "AbortError"));
+        return;
+      }
+      signal?.addEventListener("abort", () => xhr.abort());
       xhr.send(file);
     });
   },
@@ -4821,12 +4874,15 @@ export const api = {
     await request(`/api/minecraft/backups/${encodeURIComponent(name)}`, { method: "DELETE" });
   },
 
-  async minecraftRestoreBackup(name: string, slot: string): Promise<MinecraftSlot> {
+  async minecraftRestoreBackup(
+    name: string,
+    slot: string,
+  ): Promise<MinecraftSlot | MinecraftAccepted> {
     const response = await request(
       `/api/minecraft/backups/${encodeURIComponent(name)}/restore`,
       jsonInit("POST", { slot }),
     );
-    return (await response.json()) as MinecraftSlot;
+    return (await response.json()) as MinecraftSlot | MinecraftAccepted;
   },
 
   async minecraftAllowlist(): Promise<MinecraftAllowlist> {

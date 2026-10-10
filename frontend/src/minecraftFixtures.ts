@@ -337,6 +337,7 @@ export function mcBackup(overrides: Partial<MinecraftBackup> = {}): MinecraftBac
     auto: false,
     pinned: false,
     downloaded_at: null,
+    note: "",
     ...overrides,
   };
 }
@@ -348,6 +349,7 @@ export function mcBackups(): MinecraftBackup[] {
     mcBackup({
       name: "slot2-20261007-160200-pre-load.mcworld",
       label: "pre-load",
+      note: "before loading Creative test",
       auto: true,
       created: daysAgo(3, 2),
       bytes: 7.3 * MB,
@@ -410,9 +412,9 @@ export function mcAllowlist(overrides: Partial<MinecraftAllowlist> = {}): Minecr
   };
 }
 
-/** Raw server.properties text, as the route returns it. */
+/** Numbers since the backend's fix; the screen still tolerates the old text form. */
 export function mcServerSettings(): MinecraftServerSettings {
-  return { server_name: "JBrain", max_players: "10", view_distance: "32" };
+  return { server_name: "JBrain", max_players: 10, view_distance: 32 };
 }
 
 /** The `dev:mock` worlds states, picked with `?mcw=` on the page URL: default, fresh,

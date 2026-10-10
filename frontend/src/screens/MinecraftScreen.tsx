@@ -94,6 +94,7 @@ const initial = (tag: string) => (tag[0] ?? "?").toUpperCase();
 export function MinecraftScreen() {
   const foreground = useForeground();
   const [status, setStatus] = useState<MinecraftStatus | null>(null);
+  const [statusSeq, setStatusSeq] = useState(0);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [version, setVersion] = useState<MinecraftVersion | null>(null);
   const [checking, setChecking] = useState(false);
@@ -124,6 +125,7 @@ export function MinecraftScreen() {
     try {
       const next = await api.minecraftStatus();
       setStatus(next);
+      setStatusSeq((n) => n + 1);
       setStatusError(null);
     } catch (err) {
       setStatusError(errorMessage(err));
@@ -154,8 +156,9 @@ export function MinecraftScreen() {
 
   const server = status?.server ?? null;
   const job = server?.job ?? null;
-  const [uploading, setUploading] = useState(false);
-  const fast = job !== null || uploading;
+  // This device's own upload or long request: poll fast so its job shows at once.
+  const [localBusy, setLocalBusy] = useState(false);
+  const fast = job !== null || localBusy;
 
   // The screen's heartbeat: status every few seconds while it can be seen, and the clock
   // that keeps session timers honest between polls. A job's elapsed time ticks by the second.
@@ -249,18 +252,21 @@ export function MinecraftScreen() {
     running: state === "running",
     online: state === "running" ? (server?.players ?? []).map((p) => p.name) : [],
     job,
+    lastJob: server?.last_job ?? null,
+    pendingRestart: server?.pending_restart ?? [],
+    statusSeq,
     updating,
     state,
     nowMs: now,
     toast: setToast,
     refreshStatus: () => void loadStatus(),
   });
-  const uploadNow = worlds.upload !== null;
+  const busyNow = worlds.upload !== null || worlds.inFlight !== null;
   const mainRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (mainRef.current) mainRef.current.inert = worlds.pages.length > 0;
   }, [worlds.pages.length]);
-  useEffect(() => setUploading(uploadNow), [uploadNow]);
+  useEffect(() => setLocalBusy(busyNow), [busyNow]);
 
   function ask(kind: ConfirmKind) {
     setActionError(null);
@@ -402,7 +408,7 @@ export function MinecraftScreen() {
               restartInFlight={restartInFlight}
               waiting={inFlight !== null}
               worldName={worlds.active ? (worlds.active.name ?? null) : null}
-              jobWhat={job?.what ?? null}
+              jobWhat={job?.what ?? (worlds.upload ? "uploading a world" : worlds.inFlight)}
               onStart={() => void act("start")}
               onStop={() => ask("stop")}
               onRestart={() => ask("restart")}
@@ -452,6 +458,8 @@ export function MinecraftScreen() {
                   online={server.players.length}
                   toast={setToast}
                   onError={setActionError}
+                  pendingRestart={server.pending_restart ?? []}
+                  refreshStatus={() => void loadStatus()}
                 />
                 <AllowlistSection
                   running={state === "running"}
@@ -459,6 +467,8 @@ export function MinecraftScreen() {
                   known={(players?.players ?? []).map((p) => p.gamertag)}
                   toast={setToast}
                   onError={setActionError}
+                  pendingRestart={server.pending_restart ?? []}
+                  refreshStatus={() => void loadStatus()}
                 />
               </>
             )}
