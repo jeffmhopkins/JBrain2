@@ -1,0 +1,45 @@
+# The `minecraft` sidecar: Bedrock Dedicated Server behind a small control wrapper
+# (docs/plans/MINECRAFT_BEDROCK_PLAN.md, M0a).
+#
+# The image holds ONLY the wrapper. Mojang's server is downloaded at container start
+# into the data volume (deploy/minecraft/install.py), because Bedrock clients only join
+# a server on their exact version and auto-update: following them has to be a restart,
+# not an image rebuild. BDS is x86_64-only, which the box is.
+#
+# `debian:trixie-slim` for a glibc BDS links against (it needs nothing beyond libc,
+# libm, libgcc_s and friends — checked with readelf on 1.26.52.3) and Debian's own
+# python3. STDLIB ONLY, no pip: the wrapper is http.server, subprocess and zipfile.
+#
+# NOT egress-free, unlike sdr/endpoint: BDS verifies every player's Xbox Live sign-in
+# (`online-mode`) and the wrapper downloads server updates, so its network has a gateway.
+# What isolation remains is topology — only `api` shares the network that reaches the
+# control port — and an unprivileged user.
+FROM debian:trixie-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# A fixed uid so the volume's ownership survives image rebuilds. /data is created and
+# owned here so a fresh named volume inherits that ownership on first mount.
+RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin mc \
+    && mkdir -p /data && chown mc:mc /data
+
+WORKDIR /app
+COPY deploy/minecraft/install.py ./install.py
+COPY deploy/minecraft/bds.py ./bds.py
+COPY deploy/minecraft/server.py ./server.py
+
+RUN python3 -c "import server, bds, install"
+
+USER mc
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8000 19132/udp 19133/udp
+VOLUME ["/data"]
+
+# Health is the WRAPPER's, not the game's: during a first-boot download the game is not
+# up yet, and a failing check would only add a restart to a slow install.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["python3", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+
+CMD ["python3", "server.py"]

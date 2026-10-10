@@ -294,6 +294,11 @@ class Settings(BaseSettings):
     # through the PWA, which is the terminal dependency CLAUDE.md #10 exists to remove.
     # Empty still disables it, and Ops says so rather than failing obscurely.
     endpoint_url: str = "http://endpoint:8000"
+    # The Minecraft sidecar's control surface (deploy/minecraft), reached over the
+    # `minecraft` network. Part of the stock stack like `endpoint_url`, and for the same
+    # reason: on by default, so turning it on is never a host .env edit. Empty disables
+    # the debug routes, which then say so.
+    minecraft_url: str = "http://minecraft:8000"
     # Read-only mount of this repo's `firmware/` directory, off the checkout the box
     # already keeps current (deploy/update-inner.sh). The panel firmware IS that checkout:
     # `version.txt` plus the built images in `dist/`, so a flash needs no network and no

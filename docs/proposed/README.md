@@ -15,17 +15,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
-- `MINECRAFT_BEDROCK_PLAN.md` — a **Minecraft Bedrock dedicated server** as an opt-in sidecar
-  (profile `minecraft`): start/stop, world **slots** (load / import / new / reset, one active), hot snapshots
-  (`save hold/query/resume`) as on-demand, downloadable `.mcworld` backups kept apart from the
-  box export, one-click BDS updates — all PWA-operable; Windows + Xbox on the LAN, Windows
-  brothers over the internet with nothing to install — UPnP forward + DNS-only record, or a UDP
-  relay behind CGNAT (R1). Then **Dave**, an in-game companion players ask "where's the
-  nearest pig / woodland mansion / my brother": a stable-API behavior pack bridged over the
-  console (`scriptevent` in, log lines out), a snapshot-fed world index, and a read-only,
-  KB-less agent that answers live → index → worldgen (`locate`), from a tiered tool catalog
-  (player / fair-play / admin / owner), plus 2D maps (terrain, biome, explored, changes) and
-  biome answers beyond the explored edge (M8). M0 is a debug-API rig the assistant drives. Waves M0 (on-box spike) – M7, R1.
 - `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
   owner's gesture, and the research answer that both hard halves already ship: whisper.cpp and
   Kokoro TTS are in production in the `tts-stt` container, and a full voice loop already runs
@@ -121,5 +110,7 @@ promoted to `../plans/` (Scheduled — W1◻️ W2◻️ W3◻️ W4◻️).
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.
 `JMOLT_SITTINGS_PLAN.md` was split out of `CONTEXT_COMPACTION_PLAN.md`, promoted to `../plans/`, and
 is in progress (W1 landed).
+`MINECRAFT_BEDROCK_PLAN.md` was scoped with the owner over one conversation and promoted to
+`../plans/` on 2026-10-10 when M0a (the debug-driven server rig, on by default) was built.
 `SDR_RADIO_PLAN.md` was scoped with the owner (seven decisions, a closed GUI gate for the omnibox
 tuner), promoted to `../plans/`, and is in progress (S0a — the debug USB probe — landed).)_

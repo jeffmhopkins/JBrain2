@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** Proposed · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -8,7 +8,9 @@ that, they want a **chat companion** that players talk to from inside the game a
 answers from the world's real data: "where's the nearest pig?", "where's the nearest woodland
 mansion?", "where did I die?".
 
-This doc records the idea in phases. Nothing is built. The phases are ordered so that each one
+This doc records the plan in phases. **M0a (the debug-driven rig) is built**; everything
+else is not. Promoted out of `../proposed/` on 2026-10-10, when the owner asked for M0a
+with the server **on by default**. The phases are ordered so that each one
 is useful by itself. M1–M3 give a server the owner runs and backs up from the PWA, with no
 companion at all. The companion (M4–M6) is built on top of the snapshot and console seams
 those phases create.
@@ -114,17 +116,44 @@ mid-save.
   below is run through `/api/debug/minecraft/*` (§3a). The owner's only jobs are handing over
   the token and joining from the Windows PC and the Xbox when a probe needs a real client.
 
-**M0a — what merges:**
+**M0a — built (2026-10-10).** What merged:
 
-- The wrapper (`deploy/minecraft/`, a subset of the §2 surface: status, allowlisted console,
-  snapshot, logs).
-- `Dockerfile.minecraft`.
-- The `minecraft` profile.
-- The debug route family in §3a.
-- The PWA enable toggle, which M1 builds out.
+- `deploy/minecraft/` — a stdlib-only wrapper:
+  - `install.py` downloads BDS into the volume from Mojang's download index, following
+    `MC_BDS_VERSION` (default `latest`). An update never overwrites `server.properties`,
+    the allowlist, the permissions file, or `worlds/`.
+  - `bds.py` owns the console. It collects each command's reply, tracks players from the
+    log, refuses `stop` and `save …` (each has its own route), takes hot `.mcworld`
+    snapshots through `save hold`/`query`/`resume`, and stops gracefully.
+  - `server.py` serves the HTTP surface on the `minecraft` network: `/status`, `/logs`,
+    `/command`, `/snapshot`, `/snapshots`, and `/properties` (owner overrides layered on the
+    compose defaults, applied at the next start, with the ports pinned).
+- `deploy/Dockerfile.minecraft`, and the `minecraft` compose service: **in the stock stack,
+  with no profile**, at the owner's request. It sits on its own `minecraft` network (shared
+  only with `api`, not `internal`), with a 2 GB `mem_limit`, a 60 s stop grace, UDP
+  19132/19133 published, and the `minecraft` volume kept out of the box backups. The
+  wrapper's HTTP port is unauthenticated and reachable only over that network, the
+  `endpoint` precedent.
+- **Defaults chosen for the LAN-only test**:
+  - `transport=raknet`. BDS 1.26 defaults to `nethernet`, which can allocate client UDP
+    ports beyond the one published.
+  - `allow-list=false`. Nothing is forwarded from the router, and an empty allowlist would
+    lock the family out.
+  - `content-log-console-output-enabled=true`, so script output reaches the console for
+    M5.
+- `/api/debug/minecraft/*` (§3a) and the `debug-connect.sh minecraft` verb.
 
-The first boot generates slot 1 from a **known seed** that the owner or the assistant picks.
-With a known seed, `locate` answers can be checked against an independent seed map.
+**Pre-merge check (2026-10-10)**: the image builds, and the wrapper installed and launched
+Mojang's real 1.26.52.3 binary, which created the seeded world and printed the version
+line the wrapper parses. The binding step failed only because that sandbox kernel has no
+IPv6 at all, and RakNet aborts when it cannot open its IPv6 socket. Docker containers on
+the box have the IPv6 address family even without IPv6 routing, but **M0b's first status
+read confirms the server binds**. If it doesn't, the fix is a compose sysctl, not a code
+change.
+
+**First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
+random seed that `/properties` and `level.dat` record. The known-seed checks can set
+`level-seed` before the world is regenerated.
 
 **M0b — the probes**, run on the real box over the debug API. The findings are written up as a
 short section added to this doc.
@@ -137,9 +166,8 @@ short section added to this doc.
    `mem_limit` can be set.
 3. **LAN discovery from the Xbox.** Does the server appear under **Friends → LAN Games** on
    the owner's Xbox when the port is published from a bridge network? If not, does it appear
-   with `network_mode: host`? This decides M1's networking. The networking mode is a setting
-   carried by the enable intent, so switching it takes `/debug/minecraft/enable` plus
-   `/debug/update`, with no host step.
+   with `network_mode: host`? This decides M1's networking. Switching to host networking is
+   a compose change, so it ships as a PR plus `/debug/update`, with no host step.
 4. **Console seams.**
    - Does `save hold/query/resume` behave as documented?
    - Does `execute as <player> at @s run locate structure mansion`, sent through stdin, print
@@ -181,7 +209,9 @@ scheduled.
   the SDR sidecar, with
   `mem_limit: ${MC_MEM_LIMIT:-2g}` (1–4 players on a small world; M0 confirms the figure). The
   volume is `jbrain_minecraft`. Port `${MC_BIND:-0.0.0.0}:19132:19132/udp` (plus 19133 for
-  IPv6 if wanted). The EULA is accepted by an explicit owner toggle, never by a default.
+  IPv6 if wanted). BDS has no EULA file; running it is acceptance of Mojang's EULA and
+  privacy policy. The owner chose on-by-default knowing that (2026-10-10), and the
+  Dockerfile header says so.
 - **LAN discovery is a requirement, not a nicety.** An Xbox can't type in a server address, so
   on the home network it joins through **Friends → LAN Games**. That list is filled by a
   broadcast ping on UDP 19132, which the server has to answer. Docker's bridge networking
@@ -189,10 +219,9 @@ scheduled.
   fails, the fallback is `network_mode: host` for this one container. That gives up the
   isolated `minecraft` network, and the backend reaches the wrapper through the host gateway
   with its bearer token. Windows can use either the LAN list or the box's address.
-- **Enabling without a terminal**: a PWA toggle (**Ops → Minecraft → Enable**) queues the
-  intent in the settings store. The next **Ops → Update** reads it, as `local-models-sync.sh`
-  does, adds `--profile minecraft`, and creates the container. After that, start and stop are
-  the existing supervisor routes. Disabling queues the reverse, and the world volume is kept.
+- **On by default (owner decision, 2026-10-10, built in M0a)**: the service has no profile,
+  so the first **Ops → Update** after merge creates and starts it. Start and stop are the
+  existing supervisor routes, which Ops already shows for every container.
 - A Minecraft card on `OpsScreen`: state, version, players online, start/stop/restart, logs.
   Everything on it is also on the debug router (§3a), which M0 already shipped.
 - First boot with no imported world generates a fresh world in slot 1, so the server is
@@ -541,21 +570,27 @@ here for this one service only.
 
 | Route | Does |
 |---|---|
-| `GET /minecraft` | One-shot health: whether the profile is enabled, the container's state, BDS version, active slot, players online, `mem_limit` against RSS, last snapshot, and (once R1 exists) public reachability. |
-| `POST /minecraft/enable` `{on}` | The same intent the PWA toggle queues. It takes effect at the next `/debug/update`. |
-| `POST /minecraft/{start,stop,restart}` | Supervisor lifecycle, for the `minecraft` container only. |
-| `GET /minecraft/logs` | The BDS console plus the wrapper's log, interleaved and labelled. |
-| `POST /minecraft/console` `{command}` | Runs a console command and returns what BDS printed in reply. **Game-scoped, not host-scoped**: `gamerule`, `time`, `weather`, `locate`, `list`, `say`, `tellraw`, `allowlist`, `scriptevent`, `save …`, `reload` and similar. Never `stop`, which goes through the lifecycle route instead. There is no shell. |
-| `GET/POST /minecraft/worlds…` | List, create (name and seed), load, and reset slots, the same as the PWA (M2/M3). |
-| `POST /minecraft/snapshot`, `POST /minecraft/restore` | Back up and restore. There is no download route: a world copy never leaves the box over the debug token, the same rule as `/debug/backup`. |
-| `GET/PUT /minecraft/settings` | The `server.properties` subset and the allowlist. |
-| `POST /minecraft/probe` `{name}` | Named M0 probes whose results the console can't easily show otherwise, such as a parse of the latest snapshot or the bridge round-trip. |
+**Built in M0a:**
+
+| Route | Does |
+|---|---|
+| `GET /minecraft` | The container as docker sees it, next to the game server as the wrapper sees it: state, BDS version, players, effective properties and snapshot count. |
+| `POST /minecraft/{start,stop,restart}` | Supervisor lifecycle, for the `minecraft` container only. Restart is stop-then-start, because docker's own restart passes a fixed 10 s timeout that can kill the server mid-save. |
+| `GET /minecraft/logs` | The BDS console as the wrapper recorded it, with sequence numbers. For a container that won't start, use `/debug/logs/minecraft` instead. |
+| `POST /minecraft/console` `{command, wait_s}` | Runs one console command and returns what BDS printed in reply. **Game-scoped, not host-scoped.** Everything is allowed except `stop` and `save …`, which have the lifecycle and snapshot routes. There is no shell. |
+| `POST /minecraft/snapshot`, `GET /minecraft/snapshots` | A hot `.mcworld` backup kept on the box. There is no download route: a world copy never leaves the box over the debug token, the same rule as `/debug/backup`. |
+| `GET/PUT /minecraft/properties` | `server.properties` overrides, applied at the next restart. The ports are pinned. |
+
+**Added by later waves:** worlds and slots (M2), restore (M3), and named probes such as a
+snapshot parse or the bridge round-trip (M4, M5).
 
 **Guards:**
 
-- **A token scope.** A new `minecraft.control` scope gates every write. A token minted for
-  prompt work doesn't silently gain game-server control. The owner ticks the scope when
-  minting.
+- **Scope.** `minecraft.control` is listed in `/whoami`. As with every other debug scope,
+  the list is informational: `DebugDep` is uniform, so any live token reaches these routes.
+  The protection is the same as for the rest of the surface: tokens are time-boxed,
+  revocable, and listed for the owner. (An earlier draft proposed a scope ticked at mint
+  time; the debug surface has no per-token scopes, and adding them is its own change.)
 - **Never host access.** The routes reach the supervisor's fixed command set and the wrapper's
   HTTP surface, never `docker exec` or a shell. "Full control" means full control of the game
   server, not of the box.

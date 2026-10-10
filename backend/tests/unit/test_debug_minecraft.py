@@ -1,0 +1,156 @@
+"""The debug console's handle on the Minecraft sidecar (MINECRAFT_BEDROCK_PLAN §3a).
+
+The routes are thin proxies; what is pinned here is the behaviour an assistant relies
+on with no terminal behind it: a stopped server reads as a state rather than a crash,
+the sidecar's refusals arrive as refusals, and a restart is a stop-then-start that
+honours the grace period rather than docker's 10-second restart.
+"""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from typing import Any, cast
+
+import httpx
+import pytest
+from fastapi import HTTPException
+
+from jbrain.api import debug_minecraft as mc
+
+SETTINGS: Any = SimpleNamespace(minecraft_url="http://minecraft:8000", supervisor_token="t")
+PRINCIPAL: Any = SimpleNamespace(id="x", label="l", kind="capability_token")
+
+
+class FakeSupervisor:
+    def __init__(self, containers: list[dict[str, Any]], *, missing: bool = False) -> None:
+        self.containers = containers
+        self.missing = missing
+        self.calls: list[tuple[str, Any]] = []
+
+    async def get(self, path: str, **_kw: Any) -> httpx.Response:
+        self.calls.append(("GET", path))
+        req = httpx.Request("GET", f"http://supervisor{path}")
+        return httpx.Response(200, json={"containers": self.containers}, request=req)
+
+    async def post(self, path: str, **kw: Any) -> httpx.Response:
+        self.calls.append(("POST", path))
+        req = httpx.Request("POST", f"http://supervisor{path}")
+        if self.missing:
+            return httpx.Response(404, json={"detail": "unknown"}, request=req)
+        return httpx.Response(202, json={"service": kw["json"]["service"]}, request=req)
+
+
+def _request(sup: FakeSupervisor) -> Any:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(supervisor_client=sup)),
+        state=SimpleNamespace(),
+    )
+
+
+@pytest.fixture
+def sidecar(monkeypatch: pytest.MonkeyPatch):
+    seen: list[httpx.Request] = []
+    replies: dict[str, httpx.Response] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return replies.get(request.url.path, httpx.Response(200, json={"ok": True}))
+
+    monkeypatch.setattr(mc, "_transport", httpx.MockTransport(handler))
+    return seen, replies
+
+
+RUNNING = [{"service": "minecraft", "state": "running", "health": "healthy"}]
+
+
+async def test_status_returns_the_container_and_the_server_side_by_side(sidecar) -> None:
+    _, replies = sidecar
+    replies["/status"] = httpx.Response(200, json={"state": "running", "version": "1.26"})
+    out = await mc.minecraft_status(_request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL)
+    assert out["container"]["state"] == "running"
+    assert out["server"] == {"state": "running", "version": "1.26"}
+    assert out["server_error"] is None
+
+
+async def test_a_stopped_container_is_not_asked_for_server_status(sidecar) -> None:
+    seen, _ = sidecar
+    stopped = [{"service": "minecraft", "state": "exited"}]
+    out = await mc.minecraft_status(_request(FakeSupervisor(stopped)), SETTINGS, PRINCIPAL)
+    assert out["container"]["state"] == "exited"
+    assert out["server"] is None
+    assert seen == []
+
+
+async def test_a_container_that_was_never_created_reads_as_none(sidecar) -> None:
+    out = await mc.minecraft_status(_request(FakeSupervisor([])), SETTINGS, PRINCIPAL)
+    assert out == {"container": None, "server": None, "server_error": None}
+
+
+async def test_an_unreachable_sidecar_is_named_in_the_status_not_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(_r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(mc, "_transport", httpx.MockTransport(refuse))
+    out = await mc.minecraft_status(_request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL)
+    assert out["server"] is None
+    assert "unreachable" in (out["server_error"] or "")
+
+
+async def test_restart_is_a_stop_then_a_start_never_a_docker_restart() -> None:
+    sup = FakeSupervisor(RUNNING)
+    await mc.minecraft_restart(_request(sup), SETTINGS, PRINCIPAL)
+    assert sup.calls == [("POST", "/stop"), ("POST", "/start")]
+
+
+async def test_lifecycle_on_a_missing_container_says_to_deploy() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_start(_request(FakeSupervisor([], missing=True)), SETTINGS, PRINCIPAL)
+    assert exc.value.status_code == 404
+    assert "/debug/update" in str(exc.value.detail)
+
+
+async def test_console_forwards_the_command_and_its_wait(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/command"] = httpx.Response(200, json={"command": "list", "lines": ["x"]})
+    body = mc.ConsoleIn(command="list", wait_s=5)
+    out = await mc.minecraft_console(body, _request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL)
+    assert out["lines"] == ["x"]
+    assert json.loads(seen[0].content) == {"command": "list", "wait_s": 5.0}
+
+
+async def test_a_sidecar_refusal_arrives_as_a_refusal(sidecar) -> None:
+    _, replies = sidecar
+    replies["/command"] = httpx.Response(400, json={"detail": "`stop` is refused"})
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_console(
+            mc.ConsoleIn(command="stop"),
+            _request(FakeSupervisor(RUNNING)),
+            SETTINGS,
+            PRINCIPAL,
+        )
+    assert exc.value.status_code == 400
+    assert "refused" in str(exc.value.detail)
+
+
+async def test_properties_put_passes_nulls_through_as_removals(sidecar) -> None:
+    seen, _ = sidecar
+    await mc.minecraft_set_properties(
+        mc.PropertiesIn(set={"transport": "nethernet", "allow-list": None}),
+        _request(FakeSupervisor(RUNNING)),
+        SETTINGS,
+        PRINCIPAL,
+    )
+    assert json.loads(seen[0].content) == {"set": {"transport": "nethernet", "allow-list": None}}
+
+
+async def test_no_minecraft_url_is_a_503_naming_the_absence() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_snapshots(
+            _request(FakeSupervisor(RUNNING)),
+            cast(Any, SimpleNamespace(minecraft_url="", supervisor_token="t")),
+            PRINCIPAL,
+        )
+    assert exc.value.status_code == 503

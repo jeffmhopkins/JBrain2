@@ -117,6 +117,10 @@ jobs:
               # Dockerfile is the owner's Ops -> Update, on a box with no terminal.
               - 'deploy/Dockerfile.sdr'
               - 'deploy/docker-compose.yml'
+              # The Minecraft wrapper, for the sdr reason: tested here by path
+              # (test_minecraft_sidecar.py), and its image is built on the box.
+              - 'deploy/minecraft/**'
+              - 'deploy/Dockerfile.minecraft'
               # THE PANEL'S SHIPPED STATE, for the same reason again — and this one had
               # already gone wrong before it was added. `test_deploy_scripts.py` asserts
               # that `firmware/dist/SHA256SUMS` names exactly the images the box flashes,
@@ -387,6 +391,11 @@ jobs:
       - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         working-directory: .
         run: docker build -f deploy/Dockerfile.sdr .
+      # The Minecraft wrapper's image, for the same reason: built on the box, and its
+      # build asserts `import server, bds, install`.
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
+        working-directory: .
+        run: docker build -f deploy/Dockerfile.minecraft .
 
   # The jcode control server (opt-in code mode) — a Python service tested like the
   # supervisor: its unit tests run against fakes (no SDK, no model, no network), so

@@ -249,7 +249,7 @@ services:
     # fenced network the headless browser sits on (BROWSER_AGENT_PLAN.md §2): the api drives
     # it over MCP, and `test_browser_compose.py` asserts nothing else but the egress proxy
     # joins it.
-    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel, browser]
+    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel, browser, minecraft]
     depends_on:
       db:
         condition: service_healthy
@@ -1059,6 +1059,47 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     networks: [radio]
 
+  # The Minecraft Bedrock server (docs/plans/MINECRAFT_BEDROCK_PLAN.md, M0a). PART OF THE
+  # STOCK STACK, like `endpoint`: the owner asked for it on by default, and a profile would
+  # make turning it on a .env edit — the terminal step CLAUDE.md #10 forbids. Stop it from
+  # Ops when nobody is playing; the world is in the `minecraft` volume either way.
+  #
+  # The image is only a wrapper (deploy/minecraft/); Mojang's server is downloaded into the
+  # volume at start and follows `MC_BDS_VERSION` (default: latest, because clients
+  # auto-update and only join their exact version).
+  #
+  # NOT egress-free: BDS checks every player's Xbox Live sign-in and the wrapper fetches
+  # server updates. The control port (8000) is reachable only over the `minecraft`
+  # network, which only `api` shares; players reach the published UDP ports.
+  # `stop_grace_period` covers the console `stop` that flushes the world before exit.
+  minecraft:
+    logging: *logbound
+    image: jbrain2-minecraft:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.minecraft
+    restart: unless-stopped
+    mem_limit: ${MC_MEM_LIMIT:-2g}
+    stop_grace_period: 60s
+    environment:
+      MC_PORT: 8000
+      MC_BDS_VERSION: ${MC_BDS_VERSION:-latest}
+      MC_SERVER_NAME: ${MC_SERVER_NAME:-JBrain}
+      MC_LEVEL_NAME: ${MC_LEVEL_NAME:-world}
+      MC_LEVEL_SEED: ${MC_LEVEL_SEED:-}
+      MC_GAMEMODE: ${MC_GAMEMODE:-survival}
+      MC_DIFFICULTY: ${MC_DIFFICULTY:-normal}
+      # Off for the LAN-only M0 test: the router forwards nothing, and an empty allowlist
+      # would lock the family out. R1 (internet play) refuses to turn on with this off.
+      MC_ALLOW_LIST: ${MC_ALLOW_LIST:-false}
+      MC_TRANSPORT: ${MC_TRANSPORT:-raknet}
+    ports:
+      - "${MC_BIND:-0.0.0.0}:19132:19132/udp"
+      - "${MC_BIND:-0.0.0.0}:19133:19133/udp"
+    volumes:
+      - minecraft:/data
+    networks: [minecraft]
+
   # The panel flasher (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2). PART OF THE STOCK STACK,
   # like `pysandbox` and `htmlrender` and unlike `sdr` — and the difference is the reason
   # `sdr` is opt-in in the first place: most boxes have no RTL-SDR dongle, so running a
@@ -1165,6 +1206,9 @@ networks:
   # without a cable, and it has no business reaching the internet to do it.
   panel:
     internal: true
+  # The Minecraft sidecar's control network: only `minecraft` + `api` join it. Deliberately
+  # NOT `internal` — Bedrock needs the internet for Xbox Live sign-in and server updates.
+  minecraft:
   # EGRESS-FREE by declaration: the headless browser's network (BROWSER_AGENT_PLAN.md §2).
   # Only `browser`, `api` and `egress` join it — the api to drive the browser over MCP, the
   # proxy to be its single way out. With no gateway, the proxy's deny list is the only path to
@@ -1189,3 +1233,6 @@ volumes:
   # scratch/deliverables, kept out of backups.
   jlaunch_work:
   jlaunch_artifacts:
+  # The Minecraft server, its worlds and its snapshots. Kept OUT of the box backups by the
+  # owner's decision — Minecraft backups are their own (.mcworld snapshots, M3).
+  minecraft:

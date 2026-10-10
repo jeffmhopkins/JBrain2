@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-08
+> **Status:** Living · **Last verified:** 2026-10-10
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -689,6 +689,14 @@ runs) and P3 (a compare-and-contrast preset from the library) open.
 **In progress:** Deep-research scratchpad (build plan: `docs/plans/DEEP_RESEARCH_SCRATCHPAD_PLAN.md`)
 — an in-memory, run-scoped findings ledger with an explicit visibility model for `deep_research`.
 P1 + P1.5 landed; P2 (scope-model unlocks) deferred until a comparison mode needs it.
+
+**In progress:** Minecraft Bedrock server (build plan: `docs/plans/MINECRAFT_BEDROCK_PLAN.md`)
+— a Bedrock dedicated server for the family, run and backed up from the PWA, then **Dave**, an
+in-game companion that answers from the world's real data ("where's the nearest pig / woodland
+mansion"), plus 2D maps. M0a ✅ — the `minecraft` sidecar on by default (a stdlib wrapper owning
+the BDS console: auto-download/update, hot `.mcworld` snapshots, graceful stop) and
+`/api/debug/minecraft/*`, so setup and debugging run through a debug token. M0b ◻️ is the
+on-box probe pass on a fresh world, home network only.
 
 **In progress:** SDR radio (build plan: `docs/plans/SDR_RADIO_PLAN.md`) — a USB software-defined
 radio as a new sensor feeding pipelines that already exist: a Radio launcher (waterfall + listening),
