@@ -719,14 +719,57 @@ is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
 | Group | Tools | Source / status |
 |---|---|---|
 | World, worldgen (works **today**, M0b) | `mc_locate_structure`, `mc_locate_biome`, `mc_world_info` (time, weather, day) | Console `execute positioned … locate`, already proven on the box |
-| Server and play history (works **today**, M1) | `mc_server_status`, `mc_players` (totals, online, sessions), `mc_session_log` (who played when, joins and leaves by day) | `/api/minecraft` and `app.mc_player_sessions` |
+| Server and play history (works **today**, M1) | `mc_server_status`, `mc_players` (totals, online, sessions), `mc_play_history` (who played when, joins and leaves by day) | `/api/minecraft` and `app.mc_player_sessions` |
 | World index (after **M4**) | `mc_find_container`, `mc_find_villager`, `mc_find_block`, `mc_describe_area`, `mc_biome_at`, `mc_build_changes`, `mc_whats_new` | Snapshot index |
 | Live (after **M5**) | `mc_nearest_entity`, `mc_where_is`, `mc_player_context`, `mc_where_did_i_die`, `mc_inventory` | Behavior-pack bridge |
 | Maps (with **M8**) | `minecraft_map(center, radius, layers, overlays, slot?)`: terrain, biome, height, explored, changes, slice@Y; overlays for players, waypoints, structures, deaths | Renderer in the sidecar; returns an image artifact rendered **inline in the chat** |
 | Admin (owner) | `mc_backup_now`, `mc_set_time`, `mc_set_weather`, `mc_announce` | Console allowlist; staged as Proposals per ASSISTANT.md's write policy, never silent |
 | Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
-| Memory | `mc_memory_read` / `mc_memory_write`: the agent's own notes across sessions ("base is at 120, -340", "Mira prefers creative") | A persona-scoped, owner-only memory table (the archivist's pattern), with an RLS isolation test |
-| Session log | `mc_session_log` (above), plus the agent's own past conversations through the existing session history | `app.mc_player_sessions` and the agent session store |
+| Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
+| Memory, **per player** | `mc_memory_read` / `mc_memory_write`: durable facts about one player ("base is at 120, -340", "likes creative") | `app.mc_player_memory` |
+
+**Goals and the progress log (owner, 2026-10-10).** The "session log" is a **journal of
+progress toward a player's goals**, and Dave helps that player get there. Everything is
+tied to a **Minecraft player**, keyed by xuid like the play history, so a gamertag change
+doesn't lose it.
+
+- **Goals** (`app.mc_goals`): player xuid, world slot, title (for example "Beacon at the
+  base" or "20 obsidian for the portal"), optional target notes, status
+  (open / done / abandoned), created and finished times.
+- **Progress log** (`app.mc_goal_log`): player xuid, optional goal, time, text, and
+  **source**:
+  - `owner`: written from the PWA agent;
+  - `player`: typed in game, e.g. `/jb:dave log got 12 obsidian`;
+  - `dave`: Dave's own summary entry, made only when the player asks;
+  - later `auto` (M5): add-on events such as "died in the Nether", "crafted beacon".
+- **Player memory** (`app.mc_player_memory`): short durable facts about one player.
+
+**How it's used:**
+- **In game, through Dave** (player tier). The asker's identity comes from the
+  **server-side script** (`origin.sourceEntity`), never from what the player types, so a
+  player reads and writes **only their own** goals, log and memory.
+  - `/jb:dave goals` lists them.
+  - `/jb:dave log <text>` adds a progress entry.
+  - `/jb:dave help with <goal>` makes Dave read the goal and recent log and answer with
+    world data. For "20 obsidian": the nearest lava pool from `locate`, whether they own a
+    diamond pickaxe from `mc_inventory`, and what's still needed.
+  - Another player's goals stay private unless the owner turns sharing on, the same
+    switch that governs `where_is`.
+- **In the PWA, through the owner's persona.** A chat is **bound to one player**, chosen
+  when it starts: a player picker, defaulting to the owner's own gamertag, which is a
+  setting on the Minecraft screen. The persona reads and writes that player's goals, log
+  and memory, and can switch players when asked. The owner sees every player's journal.
+- **On the Minecraft screen.** Each player's sheet in Players gains a **Goals** list with
+  the latest log lines. That is a small extension of the binding mock, and goes through
+  the GUI gate only if it grows beyond a list.
+
+**Rules for the data:**
+- Player-typed entries are **untrusted text**. They are stored as data and shown to the
+  model only inside the untrusted-data fence, never as instructions.
+- Entries are capped (500 characters) and in-game writes are rate-limited per player.
+- All three tables are **owner-only RLS**, with isolation tests. Dave's writes go through
+  the api's owner context *on behalf of* the xuid the script vouched for; a player is
+  never a database principal.
 
 **Safety.**
 - **Untrusted world text** (sign text, books, gamertags, chat) reaches the model only
@@ -743,20 +786,30 @@ tappable markers that show coordinates. Copying "go to X Z" is explicit. The Min
 screen's "Maps" section (M8) reuses the same component.
 
 **Waves:**
-- **P1 — the persona with what works today.** The persona, its prompt, picker entry and
-  launch from the Minecraft screen; worldgen `locate` and world info; server status,
-  players and the session log; web search and fetch; the memory tools and their table;
-  the admin tools as Proposals; persona tests (allowlist closed, no KB, fenced world
-  text).
+- **P1 — the persona with what works today.**
+  - The persona: its prompt, the picker entry, and launch from the Minecraft screen,
+    with **the chat bound to one player**.
+  - Worldgen `locate` and world info.
+  - Server status, players and play history.
+  - **Goals, the progress log and player memory**: their tables (with RLS tests), the
+    tools, and the Goals list in the player sheet.
+  - Web search and fetch.
+  - The admin tools as Proposals.
+  - Persona tests: the allowlist is closed, there's no KB access, and world text is
+    fenced.
 - **P2 — grows with M4/M5.** The index and live tools join the allowlist as each wave
-  lands. Each tool is one PR, with tool-step-polish entries.
+  lands, one tool per PR, with tool-step-polish entries. With M5 the same goal, log and
+  memory tools reach **Dave in game** at player tier (`/jb:dave goals|log|help with …`),
+  scoped to the asker's own xuid. `auto` log entries come from add-on events.
 - **P3 — maps.** M8's renderer, the `minecraft_map` tool, and the map tool-view (GUI
   gate), also embedded on the Minecraft screen.
 
 **Open for the owner:**
 - the persona's display name;
-- whether memory writes need approval or are free;
-- which model it runs on (local by default).
+- whether memory and log writes need approval or are free (a log entry is meant to be
+  quick, so free is the suggested default);
+- which model it runs on (local by default);
+- the owner's own gamertag, the persona's default player.
 
 ## 3a. Debug control surface — the assistant as co-operator
 
