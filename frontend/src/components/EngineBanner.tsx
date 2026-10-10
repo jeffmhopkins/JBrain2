@@ -6,7 +6,7 @@
 // owner should never have to open Ops to learn that. Problems and transitions only: amber
 // while something holds the engine (a switch, a fallback, a debug/perplexity job), rose after
 // a rollback until dismissed. Flash-Next serving normally shows nothing — the owner removed
-// that steel strip (2026-10-03); Ops → Local engine says which engine serves. It reads the shared store
+// that steel strip (2026-10-03); Ops → Engine says which engine serves. It reads the shared store
 // only — the shell polls — so rendering a top bar never costs a request.
 
 import {
@@ -54,7 +54,7 @@ export function engineBanners(snap: EngineSnapshot): EngineBannerItem[] {
       key: "no-engine",
       tone: "rose",
       title: "No local engine is up",
-      detail: "local models are unavailable — switch again to start one",
+      detail: "local models are unavailable — start it again from Ops → Engine",
       action: details,
     });
   } else if (

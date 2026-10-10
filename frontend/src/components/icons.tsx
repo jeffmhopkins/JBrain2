@@ -617,3 +617,19 @@ export const LayersIcon = (p: IconProps) => (
     <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
   </Icon>
 );
+
+// A RAM stick: a board with pins along both edges, for the Ops Memory tile.
+export const MemoryIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="7" width="18" height="10" rx="2" />
+    <path d="M7 7V4M12 7V4M17 7V4M7 20v-3M12 20v-3M17 20v-3" />
+  </Icon>
+);
+
+// A screen on a stand, for the Ops Panels tile (the wall panels around the house).
+export const MonitorIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="12" rx="2" />
+    <path d="M8 20h8M12 16v4" />
+  </Icon>
+);

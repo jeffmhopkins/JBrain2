@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-10-10
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Around
@@ -244,7 +244,7 @@ restarted every minute.
 ### Updates
 
 Deployments build from source: `jbrain update` (SSH) and the **Ops screen's
-one-tap "Update server"** both run backup → git pull → image rebuild →
+one-tap "Update"** both run backup → git pull → image rebuild →
 Alembic migrations → restart. The PWA path works by the supervisor spawning
 a **detached one-shot updater container** (docker:cli, project dir mounted
 at its host path) that survives the stack — supervisor included —

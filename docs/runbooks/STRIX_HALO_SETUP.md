@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-10-06
+> **Status:** Living · **Last verified:** 2026-10-10
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -297,9 +297,12 @@ both resides and warms it.
 > script knows each historical wording of the restore path as an alternative anchor; if
 > upstream rewords it again the build fails loudly and the update flow rolls back. The
 > whole stage was validated off-box by running it verbatim (same script, same rolling
-> image, x86_64) before it ever reached the box. **To activate: Ops → "Fast Qwen loads" toggle**, then Ops → Update — the
-> owner runs this box with no terminal (CLAUDE.md #10), so the switch is a PWA setting
-> (`local_llm_patch_restore_checkpoint`), not an `.env` edit. The setting drives the build:
+> image, x86_64) before it ever reached the box. It is **on** for this box and stays on: the Ops
+> "Fast Qwen loads" toggle that turned it on left the PWA on 2026-10-10, when the owner
+> settled on Flash-Next (its stored value holds; Flash-Next's prompt-cache restore gate relies
+> on the patched build's checkpoint sidecar). It is a stored setting
+> (`local_llm_patch_restore_checkpoint`), not an `.env` edit — the owner runs this box with
+> no terminal (CLAUDE.md #10). The setting drives the build:
 > `update-inner.sh` reads it (`jbrain.cli local-llm-patch-restore-checkpoint`) and exports
 > `LOCAL_LLM_PATCH_RESTORE_CHECKPOINT` for the compose build arg, so the toggle alone
 > triggers the rebuild even when auto-update is off (rebuild-needed = auto-update OR patch).
@@ -1384,8 +1387,9 @@ standard gateway, never beside it — both up at once would not fit in 128 GB
    container **created but stopped**. The standard gateway keeps serving. The update log
    says which engine it brought back (`[update] local engine: standard`).
 3. **Switching** is one owner action: `POST /api/settings/llm/engine {"engine": "flash-next"}`
-   (wave F3a — the backend; the **Ops → Local engine** card that calls it ships once its mock
-   is chosen, and until then the debug console's `POST /llm/engine` reaches the same switch).
+   (wave F3a). Since 2026-10-10 the PWA no longer switches engines — the owner settled on
+   Flash-Next, and **Ops → Engine** is a status page whose only actions go back to the chosen
+   engine (*Retry now*, *Start*); switching away is the debug console's `POST /llm/engine`.
    It runs in the background for a few minutes — poll `GET /api/settings/llm/engine` — and
    walks *draining* (local calls pause, in-flight ones get up to 60 s to finish) → *stopping*
    → *starting* → *loading* → *smoke* (a text reply, a tool call, an image read) → *done*. Any

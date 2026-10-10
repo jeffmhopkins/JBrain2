@@ -2,6 +2,10 @@
 
 > **Status:** Plan · **Last verified:** 2026-10-02
 >
+> **Retired 2026-10-10:** the owner settled on Flash-Next, so the segmented switch left Ops;
+> the card became the read-only **Ops → Engine** page (`../ops-launcher/`). A's confirm,
+> progress and notice registers live on there. Kept as the record of the round.
+>
 > **Decided 2026-10-02: A — segmented toggle inside an Ops "Local engine" card** is the
 > binding spec (`a-segmented-toggle.html`); B and C are kept as the rivals. Chosen because it
 > is native to the Ops card stack (everything collapsed except System; the card opens itself

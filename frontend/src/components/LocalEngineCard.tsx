@@ -1,19 +1,18 @@
-// Ops → Local engine: switch the box between Standard (the `local-llm` gateway) and
-// Flash-Next (one model, its own container). Exactly one runs at a time.
+// Ops → Engine: what the box's local inference engine is doing. The owner settled on
+// Flash-Next, so this is a status page, not a switch — the Standard / Flash-Next segmented
+// control is gone. What stays is everything that can still happen to the engine: an update or
+// a failed start falling back, a switch the debug API started, no engine left up. The only
+// actions are the way back to the chosen engine (Start / Retry / Try again), each still behind
+// the inline confirm that states the consequence before anything is sent.
 //
-// Binding mock: docs/mocks/engine-switch/a-segmented-toggle.html (GUI gate settled on A;
-// reasoning in docs/reference/DESIGN.md "Ops Local engine card"). A switch stops every local
-// model for minutes, so the segmented control only ARMS it: the inline confirm states the
-// consequence before anything is sent, and progress is phased text + steps + the notes tail,
-// the same register as Server update. The card opens itself while a switch runs, after a
-// rollback, and while the box serves a different engine than the one chosen.
+// Original binding mock: docs/mocks/engine-switch/a-segmented-toggle.html (the progress, notice
+// and confirm registers are still its); the page layout is docs/mocks/ops-launcher/.
 
 import { useEffect, useRef, useState } from "react";
 import type { EngineId, EngineState, EngineSwitchStatus } from "../api/client";
 import { EngineCancelUnsupported, api } from "../api/client";
 import {
   ENGINE_LABEL,
-  OTHER_ENGINE,
   activeSince,
   armEngineSwitch,
   dismissEngineSwitch,
@@ -23,16 +22,12 @@ import {
   isTerminal,
   kickEnginePoll,
   noEngineUp,
-  openOnBoxModels,
   setEngineState,
   switchInFlight,
   switchSteps,
   useEnginePolling,
   useEngineSnapshot,
 } from "../engineState";
-import { OpsCard } from "./OpsCard";
-
-const ENGINES: EngineId[] = ["standard", "flash-next"];
 const DASH = "—";
 
 function fmtGb(v: number | null | undefined): string {
@@ -164,23 +159,33 @@ function Progress({
   );
 }
 
-function prefersReducedMotion(): boolean {
-  try {
-    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  } catch {
-    return false;
-  }
+/** The engine tile's one-word state and whether it needs a look — the same verdicts the page
+ *  itself shows, so the tile and the page never disagree. */
+export function engineGlance(
+  s: EngineState | null,
+  error: string | null,
+  dismissed: ReadonlySet<string>,
+): { word: string; tone: "" | "warn" | "bad" } {
+  if (s === null) return { word: error ? "unavailable" : "checking…", tone: "" };
+  const sw = s.switch;
+  if (switchInFlight(s)) return { word: "switching", tone: "warn" };
+  if (noEngineUp(s)) return { word: "no engine up", tone: "bad" };
+  if (sw !== null && (sw.stage === "rolled_back" || sw.stage === "failed") && !dismissed.has(sw.id))
+    return { word: "start failed", tone: "bad" };
+  if (s.desired !== s.effective)
+    return { word: `${ENGINE_LABEL[s.effective]} (fallback)`, tone: "warn" };
+  if (!s.consistent) return { word: `${ENGINE_LABEL[s.effective]} · not up`, tone: "warn" };
+  return { word: ENGINE_LABEL[s.effective], tone: "" };
 }
 
-export function LocalEngineCard() {
+export function LocalEngineSection() {
   useEnginePolling();
   const snap = useEngineSnapshot();
   const s = snap.state;
   const armed = snap.armed;
-  const [open, setOpen] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
-  // The switch this card started, so its success is announced here once — an old `done`
+  // The switch this page started, so its success is announced here once — an old `done`
   // from days ago is not news, but an old rollback is (until dismissed).
   const [watched, setWatched] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -189,7 +194,6 @@ export function LocalEngineCard() {
   const [ackedGuard, setAckedGuard] = useState<string | null>(null);
   const [cancelUnsupported, setCancelUnsupported] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   // A double tap must not send two POSTs: state updates land a render too late to stop it.
   const starting = useRef(false);
   const lastEffective = useRef<EngineId | null>(null);
@@ -201,18 +205,6 @@ export function LocalEngineCard() {
     (sw.stage === "rolled_back" || sw.stage === "failed") &&
     !snap.dismissed.has(sw.id);
   const fallback = s !== null && !inFlight && s.desired !== s.effective;
-  const noEngine = noEngineUp(s);
-  const attention = inFlight || failed || fallback || noEngine || armed !== null;
-
-  useEffect(() => {
-    if (!attention) return;
-    setOpen(true);
-    if (armed !== null)
-      ref.current?.scrollIntoView?.({
-        block: "start",
-        behavior: prefersReducedMotion() ? "auto" : "smooth",
-      });
-  }, [attention, armed]);
 
   // A confirm armed against one engine must not survive that engine changing under it: its
   // stated consequence ("Standard stops…") would be describing a box that no longer exists.
@@ -259,7 +251,7 @@ export function LocalEngineCard() {
     setPostError(null);
     try {
       const status = await api.cancelEngineSwitch();
-      // Announce its ending here, as for a switch this card started.
+      // Announce its ending here, as for a switch this page started.
       setWatched(status.id);
       kickEnginePoll();
     } catch (err) {
@@ -273,77 +265,44 @@ export function LocalEngineCard() {
   function arm(e: EngineId) {
     if (s === null || inFlight) return;
     setPostError(null);
-    // Re-choosing the engine that is cleanly serving is a no-op; on a box where it is NOT up
-    // (no engine, or both) choosing it is a real switch and must be armable.
-    const noop = e === s.effective && s.desired === s.effective && s.consistent;
-    armEngineSwitch(noop ? null : e);
-  }
-
-  let summary = "checking…";
-  let summaryCls = "";
-  if (s === null) {
-    if (snap.error) summary = "unavailable";
-  } else if (inFlight && sw) {
-    const steps = switchSteps(sw.previous, sw.target, sw.model);
-    const n = steps.findIndex((x) => x.stage === sw.stage);
-    summary = n < 0 ? "switching · finishing" : `switching · step ${n + 1} of ${steps.length}`;
-    summaryCls = " warn";
-  } else if (noEngine) {
-    summary = "no engine up";
-    summaryCls = " bad";
-  } else if (failed) {
-    summary = `rolled back · ${ENGINE_LABEL[s.effective]}`;
-    summaryCls = " bad";
-  } else if (fallback) {
-    summary = `fallback · ${ENGINE_LABEL[s.effective]}`;
-    summaryCls = " warn";
-  } else {
-    summary = `${ENGINE_LABEL[s.effective]}${s.consistent ? "" : " · not up"}`;
-    if (!s.consistent) summaryCls = " warn";
+    armEngineSwitch(e);
   }
 
   return (
-    <div ref={ref} className="engine-anchor">
-      <OpsCard
-        title="Local engine"
-        open={open}
-        onToggle={setOpen}
-        summaryCollapsed={<span className={`ops-card-summary${summaryCls}`}>{summary}</span>}
-      >
-        {s === null ? (
-          <p className="muted ops-vrow-empty">{snap.error ?? "Reading the engine…"}</p>
-        ) : (
-          <EngineBody
-            s={s}
-            stale={
-              snap.error !== null && snap.lastOk !== null
-                ? (hhmm(new Date(snap.lastOk).toISOString()) ?? DASH)
-                : null
-            }
-            ackedGuard={ackedGuard}
-            onAckGuard={setAckedGuard}
-            cancel={cancelUnsupported ? null : { run: () => void cancelSwitch(), busy: cancelling }}
-            armed={armed}
-            inFlight={inFlight}
-            failed={failed}
-            fallback={fallback}
-            posting={posting}
-            postError={postError}
-            watched={watched}
-            copied={copied}
-            onArm={arm}
-            onDisarm={() => armEngineSwitch(null)}
-            onStart={(e, force) => void start(e, force)}
-            onCopy={(text) => {
-              void navigator.clipboard?.writeText(text).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              });
-            }}
-          />
-        )}
-      </OpsCard>
-    </div>
+    <section className="ops-card engine-anchor">
+      {s === null ? (
+        <p className="muted ops-vrow-empty">{snap.error ?? "Reading the engine…"}</p>
+      ) : (
+        <EngineBody
+          s={s}
+          stale={
+            snap.error !== null && snap.lastOk !== null
+              ? (hhmm(new Date(snap.lastOk).toISOString()) ?? DASH)
+              : null
+          }
+          ackedGuard={ackedGuard}
+          onAckGuard={setAckedGuard}
+          cancel={cancelUnsupported ? null : { run: () => void cancelSwitch(), busy: cancelling }}
+          armed={armed}
+          inFlight={inFlight}
+          failed={failed}
+          fallback={fallback}
+          posting={posting}
+          postError={postError}
+          watched={watched}
+          copied={copied}
+          onArm={arm}
+          onDisarm={() => armEngineSwitch(null)}
+          onStart={(e, force) => void start(e, force)}
+          onCopy={(text) => {
+            void navigator.clipboard?.writeText(text).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            });
+          }}
+        />
+      )}
+    </section>
   );
 }
 
@@ -386,17 +345,9 @@ function EngineBody({
   onCopy: (text: string) => void;
 }) {
   const sw = s.switch;
-  const other = OTHER_ENGINE[s.effective];
-  const blocked = inFlight ? null : blockedReason(s, other);
-
-  function segSub(e: EngineId): string {
-    if (!s.installed[e]) return "not installed";
-    if (inFlight && sw?.target === e) return "starting";
-    if (inFlight && sw?.previous === e) return "stopping";
-    if (!inFlight && s.effective === e) return s.running.includes(e) ? "serving" : "not up";
-    if (s.desired === e && s.desired !== s.effective) return "selected · not serving";
-    return e === "flash-next" ? "one model · own container" : "gateway · several models";
-  }
+  // The engine the owner chose — the only one this page offers to (re)start.
+  const chosen = s.desired;
+  const chosenStartable = blockedReason(s, chosen) === null;
 
   const logs = sw ? logLines(sw) : [];
   const gttPct =
@@ -438,43 +389,6 @@ function EngineBody({
         {stale !== null && (
           <output className="engine-stale">Can't reach the engine · last read {stale}</output>
         )}
-        <fieldset className="engine-seg" aria-label="Local engine">
-          {ENGINES.map((e) => {
-            const isEff = !inFlight && s.effective === e;
-            const isTarget = inFlight && sw?.target === e;
-            const wanted = !inFlight && s.desired === e && s.desired !== s.effective;
-            const segBlocked = e !== s.effective && blockedReason(s, e) !== null;
-            const cls = [
-              armed === e ? "armed" : "",
-              isTarget ? "target" : "",
-              wanted ? "wanted" : "",
-            ]
-              .filter(Boolean)
-              .join(" ");
-            return (
-              <button
-                key={e}
-                type="button"
-                aria-pressed={isEff}
-                className={cls}
-                disabled={inFlight || posting || segBlocked}
-                onClick={() => onArm(e)}
-              >
-                <span className="engine-sn">
-                  {(isEff || isTarget || wanted) && (
-                    <span
-                      className={`engine-dot${isEff ? " on" : " warn"}${isTarget ? " live" : ""}`}
-                      aria-hidden="true"
-                    />
-                  )}
-                  {ENGINE_LABEL[e]}
-                </span>
-                <span className="engine-ss">{segSub(e)}</span>
-              </button>
-            );
-          })}
-        </fieldset>
-
         {armed !== null && !inFlight && (
           <Confirm
             s={s}
@@ -510,19 +424,18 @@ function EngineBody({
           <div className="engine-notice err" role="alert">
             <b>No local engine is up</b>
             {sw.reason ? <span> — {sw.reason}</span> : null}
-            <div className="engine-acts">
-              {ENGINES.filter((e) => blockedReason(s, e) === null).map((e) => (
+            {chosenStartable && (
+              <div className="engine-acts">
                 <button
-                  key={e}
                   type="button"
                   className="engine-btn secondary"
                   disabled={posting}
-                  onClick={() => onArm(e)}
+                  onClick={() => onArm(chosen)}
                 >
-                  Start {ENGINE_LABEL[e]}
+                  Start {ENGINE_LABEL[chosen]}
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -541,7 +454,7 @@ function EngineBody({
             )}
             {sw.reason && <span className="engine-reason">Reason: {sw.reason}</span>}
             <div className="engine-acts">
-              {blockedReason(s, sw.target) === null && sw.target !== s.effective && (
+              {sw.target === chosen && chosenStartable && sw.target !== s.effective && (
                 <button
                   type="button"
                   className="engine-btn secondary"
@@ -573,36 +486,12 @@ function EngineBody({
               <button
                 type="button"
                 className="engine-btn secondary"
-                disabled={posting || blockedReason(s, s.desired) !== null}
-                onClick={() => onArm(s.desired)}
+                disabled={posting || !chosenStartable}
+                onClick={() => onArm(chosen)}
               >
                 Retry now
               </button>
-              {/* Through the confirm like any other change. "Keep" only when nothing would stop
-                  or reload; on a box that is not cleanly on one engine it IS a switch, and is
-                  named and confirmed as one. */}
-              <button
-                type="button"
-                className="engine-btn ghost"
-                disabled={posting || s.oneshot !== null}
-                onClick={() => onArm(s.effective)}
-              >
-                {s.consistent
-                  ? `Keep ${ENGINE_LABEL[s.effective]}`
-                  : `Switch to ${ENGINE_LABEL[s.effective]}`}
-              </button>
             </div>
-          </div>
-        )}
-
-        {blocked && (
-          <div className="engine-notice off">
-            {blocked.text}{" "}
-            {blocked.kind === "install" && (
-              <button type="button" className="engine-link" onClick={openOnBoxModels}>
-                Install in On-box models
-              </button>
-            )}
           </div>
         )}
 
@@ -713,42 +602,24 @@ function Confirm({
   onStart: (e: EngineId, force: boolean) => void;
 }) {
   const eff = s.effective;
-  // Keeping the engine already up alone stops and reloads nothing; anything else is a switch.
-  const keep = to === eff && s.consistent;
   const others = s.running.filter((e) => e !== to).map((e) => ENGINE_LABEL[e]);
   const guard = s.guard;
   return (
     <section className="engine-confirm" aria-label="Confirm engine switch">
-      {keep ? (
-        <>
-          <div className="engine-confirm-title">Keep {ENGINE_LABEL[to]}?</div>
-          <p>
-            {ENGINE_LABEL[to]} is already the only engine up, so <b>nothing stops or reloads</b> —
-            this records {ENGINE_LABEL[to]} as your choice, and the next update stops trying{" "}
-            {ENGINE_LABEL[s.desired]}.
-          </p>
-        </>
-      ) : (
-        <>
-          <div className="engine-confirm-title">Switch to {ENGINE_LABEL[to]}?</div>
-          <p>
-            Local AI pauses for <b>a few minutes</b> — calls in flight finish first (up to a
-            minute), {others.length > 0 ? `${others.join(" and ")} stops` : "nothing else is up"},{" "}
-            {ENGINE_LABEL[to]} loads and is smoke-tested (text · tool call · image).{" "}
-            {to === "flash-next"
-              ? "Every local per-task pick runs on Flash-Next until you switch back."
-              : "Your per-task picks go back to their own models."}{" "}
-            {to !== eff
-              ? `If a check fails it rolls back to ${ENGINE_LABEL[eff]} on its own.`
-              : "If a check fails it is stopped again and the reason shown here."}
-          </p>
-        </>
-      )}
+      <div className="engine-confirm-title">Start {ENGINE_LABEL[to]}?</div>
+      <p>
+        Local AI pauses for <b>a few minutes</b> — calls in flight finish first (up to a minute),{" "}
+        {others.length > 0 ? `${others.join(" and ")} stops` : "nothing else is up"},{" "}
+        {ENGINE_LABEL[to]} loads and is smoke-tested (text · tool call · image).{" "}
+        {to !== eff
+          ? `If a check fails it rolls back to ${ENGINE_LABEL[eff]} on its own.`
+          : "If a check fails it is stopped again and the reason shown here."}
+      </p>
       {guard !== null && (
         <>
           <p className="engine-guard">
-            Not now: {guard}. {keep ? "" : "Switching stops every local model for minutes. "}
-            Going ahead overrides that.
+            Not now: {guard}. Starting stops every local model for minutes. Going ahead overrides
+            that.
           </p>
           <label className="engine-ack">
             <input
@@ -773,9 +644,7 @@ function Confirm({
           disabled={posting || (guard !== null && !acked)}
           onClick={() => onStart(to, guard !== null)}
         >
-          {posting
-            ? "Starting…"
-            : `${keep ? `Keep ${ENGINE_LABEL[to]}` : "Switch"}${guard !== null ? " anyway" : ""}`}
+          {posting ? "Starting…" : `Start ${ENGINE_LABEL[to]}${guard !== null ? " anyway" : ""}`}
         </button>
       </div>
     </section>

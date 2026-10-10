@@ -259,7 +259,7 @@ export interface Glance {
   tone: "" | "warn" | "bad";
 }
 
-/** The Ops shortcut row's one line: who's on, or the lockout when an update waits. */
+/** The Ops Minecraft tile's word: who's on, or the lockout when an update waits. */
 export function glanceOf(
   status: MinecraftStatus | null,
   version: MinecraftVersion | null,

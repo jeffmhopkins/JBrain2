@@ -325,14 +325,14 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   shared by role prefixes and conversation files; the state read's `store.by_engine` is what
   each is held to. It was a module constant whose
   own comment conceded the gap ("changing it is a release, there is no knob"). Stored and
-  applied to the live store at once (the next save prunes to it). The owner's twin is Ops →
+  applied to the live store at once (the next save prunes to it). The owner's twin is Ops → Engine →
   *Prompt cache disk* (`PUT /api/settings` `llm_kv_prefix_budget_gb`).
 - `PUT /api/debug/llm/kv-prefix/conversations?enabled=true|false` — the conversation cache
   (FLASH_NEXT_ENGINE_PLAN F4c): on Flash-Next the interactive slot saves the conversation it
   holds when another conversation (or the keeper's prime) takes the slot, or after 10 min idle,
   and restores a conversation before its next turn when the saved messages still open the new
   prompt. Default ON; applied live. Off stops new saves and restores and deletes every saved
-  conversation file. The owner's twin is Ops → *Keep
+  conversation file. The owner's twin is Ops → Engine → *Keep
   chats on disk* (`PUT /api/settings` `llm_kv_conversation_cache`).
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
   `elapsed_ms`, the measurement instrument for any prefill experiment, plus **`reuse`**
