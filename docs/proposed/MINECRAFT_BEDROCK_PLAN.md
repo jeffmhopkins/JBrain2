@@ -101,26 +101,47 @@ mid-save.
 
 ## 3. The waves
 
-### M0 — On-box spike (throwaway, decides the unknowns)
+### M0 — Spike rig, driven through the debug API (a fresh world first)
 
-**Home network only (owner decision, 2026-10-10).** Nothing in M0 touches the router or the
-internet path. Every test runs from the owner's Windows PC and Xbox on the LAN. Router
-reachability is the first step of R1.
+**Owner decisions (2026-10-10):**
 
-These are run once on the real box with the owner's actual world. No product code merges. The
-output is a short findings section added to this doc.
+- **Home network only.** Nothing in M0 touches the router or the internet path. Router
+  reachability is the first step of R1.
+- **Test on a new, empty world first.** The owner's world is imported only after the rig
+  proves out.
+- **The assistant drives the setup and debugging with a debug token** that the owner hands
+  over. So M0 is **not** a throwaway shell spike. It merges a minimal rig, and every probe
+  below is run through `/api/debug/minecraft/*` (§3a). The owner's only jobs are handing over
+  the token and joining from the Windows PC and the Xbox when a probe needs a real client.
 
-1. **Version match.** Find which game version the owner's world was last saved with, and which
-   BDS version opens it. Bedrock clients only join a server on their **exact** version, and
-   clients auto-update. So BDS updates are a recurring operational need, not a one-time
-   install. M3 builds on this result.
-2. **Memory and CPU** with the owner's world loaded and 1–4 players, so the `mem_limit` can be
-   set.
+**M0a — what merges:**
+
+- The wrapper (`deploy/minecraft/`, a subset of the §2 surface: status, allowlisted console,
+  snapshot, logs).
+- `Dockerfile.minecraft`.
+- The `minecraft` profile.
+- The debug route family in §3a.
+- The PWA enable toggle, which M1 builds out.
+
+The first boot generates slot 1 from a **known seed** that the owner or the assistant picks.
+With a known seed, `locate` answers can be checked against an independent seed map.
+
+**M0b — the probes**, run on the real box over the debug API. The findings are written up as a
+short section added to this doc.
+
+1. **Version match.** Which BDS version runs, and does the owner's Windows client (always
+   auto-updated) join it? Bedrock clients only join a server on their **exact** version, so BDS
+   updates are a recurring need (M3). Afterwards, check the version the owner's own world was
+   last saved with.
+2. **Memory and CPU** with 1–4 players on the fresh world, from `GET /debug/host`, so the
+   `mem_limit` can be set.
 3. **LAN discovery from the Xbox.** Does the server appear under **Friends → LAN Games** on
    the owner's Xbox when the port is published from a bridge network? If not, does it appear
-   with `network_mode: host`? This decides M1's networking.
+   with `network_mode: host`? This decides M1's networking. The networking mode is a setting
+   carried by the enable intent, so switching it takes `/debug/minecraft/enable` plus
+   `/debug/update`, with no host step.
 4. **Console seams.**
-   - Does `save hold/query/resume` behave as documented with this world?
+   - Does `save hold/query/resume` behave as documented?
    - Does `execute as <player> at @s run locate structure mansion`, sent through stdin, print
      its result on stdout so the wrapper can capture it?
    - Same question for `locate biome`.
@@ -133,10 +154,10 @@ output is a short findings section added to this doc.
      what decides whether Xbox players can ask from a controller comfortably.
    - Can a stable **custom slash command** be registered for all players? Commands are
      namespaced (`jb:dave`), so check whether players can type plain `/dave`.
-   - What does adding the pack do to achievements on this world? Record the answer for the
-     owner.
-6. **Parser.** On one snapshot, list chunks, actors (entities), block entities, and the
-   per-chunk hardcoded spawn areas, using a Python LevelDB-for-Bedrock reader (`amulet-core`
+   - What does adding the pack do to achievements? Check on the fresh world, then record the
+     answer for the owner's world before Dave is enabled on it.
+6. **Parser.** On one snapshot of the fresh world, taken after a short play session, list
+   chunks, actors (entities), block entities, and the per-chunk hardcoded spawn areas, using a Python LevelDB-for-Bedrock reader (`amulet-core`
    with `leveldb-mcpe` bindings, or a minimal reader of our own). Record counts and how long
    the parse takes.
 
@@ -164,7 +185,7 @@ scheduled.
   does, adds `--profile minecraft`, and creates the container. After that, start and stop are
   the existing supervisor routes. Disabling queues the reverse, and the world volume is kept.
 - A Minecraft card on `OpsScreen`: state, version, players online, start/stop/restart, logs.
-  The same actions go on the debug router.
+  Everything on it is also on the debug router (§3a), which M0 already shipped.
 - First boot with no imported world generates a fresh world in slot 1, so the server is
   playable before M2.
 - Tests: wrapper unit tests against a fake BDS script (stdin/stdout), the compose logging test,
@@ -436,6 +457,63 @@ house by typing the address.
 - A rendered top-down map in the PWA from the index.
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
 
+## 3a. Debug control surface — the assistant as co-operator
+
+The owner wants to hand the assistant a debug token and have it set up and debug the server,
+with full control **of the game server**. This rides the existing debug console
+(`../runbooks/DEBUG_ACCESS.md`): a capability token minted in **Settings → Debug access**,
+time-boxed and revocable. A new route family follows the SDR precedent (`/debug/sdr/*`
+probes exist because the owner has no terminal).
+
+**What exists today**, before any Minecraft work:
+
+- `POST /debug/update` and `GET /debug/update/status`: deploy `main` (this is what creates the
+  container once the profile is on).
+- `POST /debug/refresh`: rebuild a single service.
+- `GET /debug/logs/{service}`, `GET /debug/host`, `GET /debug/disk`.
+- `GET /debug/version`: confirm what's deployed.
+
+There is **no** generic start/stop for a container on the debug router today. That is added
+here for this one service only.
+
+**New: `/api/debug/minecraft/*`**, proxied to the supervisor (lifecycle) and the wrapper
+(everything else):
+
+| Route | Does |
+|---|---|
+| `GET /minecraft` | One-shot health: whether the profile is enabled, the container's state, BDS version, active slot, players online, `mem_limit` against RSS, last snapshot, and (once R1 exists) public reachability. |
+| `POST /minecraft/enable` `{on}` | The same intent the PWA toggle queues. It takes effect at the next `/debug/update`. |
+| `POST /minecraft/{start,stop,restart}` | Supervisor lifecycle, for the `minecraft` container only. |
+| `GET /minecraft/logs` | The BDS console plus the wrapper's log, interleaved and labelled. |
+| `POST /minecraft/console` `{command}` | Runs a console command and returns what BDS printed in reply. **Game-scoped, not host-scoped**: `gamerule`, `time`, `weather`, `locate`, `list`, `say`, `tellraw`, `allowlist`, `scriptevent`, `save …`, `reload` and similar. Never `stop`, which goes through the lifecycle route instead. There is no shell. |
+| `GET/POST /minecraft/worlds…` | List, create (name and seed), load, and reset slots, the same as the PWA (M2/M3). |
+| `POST /minecraft/snapshot`, `POST /minecraft/restore` | Back up and restore. There is no download route: a world copy never leaves the box over the debug token, the same rule as `/debug/backup`. |
+| `GET/PUT /minecraft/settings` | The `server.properties` subset and the allowlist. |
+| `POST /minecraft/probe` `{name}` | Named M0 probes whose results the console can't easily show otherwise, such as a parse of the latest snapshot or the bridge round-trip. |
+
+**Guards:**
+
+- **A token scope.** A new `minecraft.control` scope gates every write. A token minted for
+  prompt work doesn't silently gain game-server control. The owner ticks the scope when
+  minting.
+- **Never host access.** The routes reach the supervisor's fixed command set and the wrapper's
+  HTTP surface, never `docker exec` or a shell. "Full control" means full control of the game
+  server, not of the box.
+- **Audit.** Every write sets `debug_detail`, as the other debug routes do, so the owner's
+  activity log shows what the assistant did to the server.
+- **A `debug-connect.sh minecraft …` verb**, plus a row in the `DEBUG_ACCESS.md` route table in
+  the same PR.
+
+**Prerequisites and caveats:**
+
+- Debug access must already be enabled on the box. That is a one-time host step
+  (`DEBUG_ACCESS.md`, "Enabling it"), which is a known gap.
+- The assistant reaches the box at the token's public host through the Cloudflare tunnel. A
+  given assistant session's network might not reach it, so the first call is `GET /whoami`.
+- The standing trade in `DEBUG_ACCESS.md` applies: a live token can also read personal data
+  through the existing SQL and log routes. Mint it **short-lived** (1h or 24h) for a setup
+  session, and revoke it after.
+
 ## 4. Owner decisions
 
 **Decided (2026-10-10):**
@@ -455,6 +533,8 @@ house by typing the address.
 - **Companion**: named **Dave** for now, and changeable later (M5, M6).
 - **Player locations**: Dave may say where other players are.
 - **Box backups**: Minecraft backups stay separate from the whole-box export (M3).
+- **Testing**: a fresh, empty world first, on the home network only, with the assistant
+  driving the box through a debug token (M0, §3a).
 - **World slots**: several worlds live on the server, one loaded at a time. Each slot can be
   loaded, imported, created fresh, renamed, and **reset** (M2, M3).
 - **World**: a small world on Windows, about 3 hours of building. It is imported by exporting
