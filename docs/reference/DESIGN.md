@@ -3334,6 +3334,12 @@ follows the Data screen's precedent of being lifted off Ops.
   the *Arrives with the companion add-on* placeholder until the API says the add-on is
   counting. Durations read like a person wrote them (`42 min`, `14h 05m`, `812 h`; uptime
   `41 d 4 h`).
+- **Minecraft_Dave** gets its own card between Players and Lifetime stats: an **Ask
+  Minecraft_Dave** navigation row (it starts a new chat with that persona and hands it to
+  the Research tab, the same handoff a Tasks run uses; back returns here) over a **Your
+  gamertag** field, saved to `minecraft_gamertag` in `/api/settings` with Save and Clear,
+  the server's 422 reason shown verbatim. Its note says Dave's chats start out about that
+  player.
 - Accent words use the accent text tokens (see "Color tokens").
 
 ### Worlds and backups — the Worlds sub-screen (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-worlds/b-worlds-subscreen.html`)

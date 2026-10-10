@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1416,6 +1416,27 @@ views"). It shows the PNG with pinch-zoom, a legend for the layers, overlay togg
 tappable markers that show coordinates. Copying "go to X Z" is explicit. The Minecraft
 screen's "Maps" section (M8) reuses the same component.
 
+**P1 shipped (2026-10-10):**
+- **The persona:** `minecraft_dave`, with its prompt `agent-minecraft-dave-v1`, in the
+  agent picker, and launchable from the Minecraft screen.
+- **Your gamertag:** a `minecraft_gamertag` setting (on the Minecraft screen) that new
+  chats start from.
+- **15 tools:**
+  - `mc_player`
+  - `mc_server_status`, `mc_players`, `mc_play_history`
+  - `mc_world_info`, `mc_locate` (structure or biome, from the player's last trail
+    point)
+  - `mc_goals`, `mc_goal_create`, `mc_goal_update`, `mc_log`, `mc_log_read`
+  - `mc_memory_read`, `mc_memory_add`, `mc_memory_replace`, `mc_memory_remove`
+- **Migration 0226:** `mc_goals`, `mc_goal_log`, `mc_player_memory`, `mc_chat_player`,
+  owner-only, with isolation tests.
+- **Moved to a follow-up PR:**
+  - the player sheet's Goals list, which needs a small owner API over the goal tables;
+  - the admin tools as Proposals (`mc_backup_now`, `mc_set_time`, `mc_set_weather`,
+    `mc_announce`), which need Proposal executors.
+- **Local model:** there is no per-persona route. Minecraft_Dave runs where `agent.turn`
+  does, which on the box is `local:qwen3.8-flash-next` (checked 2026-10-10).
+
 **Waves:**
 - **P1 — the persona with what works today.**
   - The persona: its prompt, the picker entry, and launch from the Minecraft screen,
@@ -1441,8 +1462,8 @@ screen's "Maps" section (M8) reuses the same component.
   than guessing.
 - Minecraft_Dave runs on the **local model**.
 
-**Pending:** the owner's gamertag. It's entered on the Minecraft screen's settings, so P1
-doesn't need it to be built.
+**Pending:** the owner's gamertag, which is entered on the Minecraft screen. Until it's set,
+new Minecraft_Dave chats have no player and ask whose chat it is.
 
 ## 3a. Debug control surface — the assistant as co-operator
 
