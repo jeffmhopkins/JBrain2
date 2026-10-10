@@ -11,9 +11,9 @@
 # python3. STDLIB ONLY, no pip: the wrapper is http.server, subprocess and zipfile.
 #
 # NOT egress-free, unlike sdr/endpoint: BDS verifies every player's Xbox Live sign-in
-# (`online-mode`) and the wrapper downloads server updates, so its network has a gateway.
-# What isolation remains is topology — only `api` shares the network that reaches the
-# control port — and an unprivileged user.
+# (`online-mode`) and the wrapper downloads server updates. It runs on the HOST network
+# (NetherNet needs the box's real address and LAN broadcast), so the control port is
+# guarded by a bearer token rather than by topology, and the process is unprivileged.
 FROM debian:trixie-slim
 
 RUN apt-get update \
@@ -34,12 +34,12 @@ RUN python3 -c "import server, bds, install"
 
 USER mc
 ENV PYTHONUNBUFFERED=1
-EXPOSE 8000 19132/udp 19133/udp
+EXPOSE 19132/tcp 19132/udp
 VOLUME ["/data"]
 
 # Health is the WRAPPER's, not the game's: during a first-boot download the game is not
 # up yet, and a failing check would only add a restart to a slow install.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python3", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+    CMD ["python3", "-c", "import os, sys, urllib.request; port = os.environ.get('MC_PORT', '8000'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=3).status == 200 else 1)"]
 
 CMD ["python3", "server.py"]

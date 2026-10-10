@@ -11,6 +11,7 @@ pipe owned by bds.py.
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import re
@@ -31,6 +32,12 @@ SERVER_DIR = DATA / "server"
 SNAPSHOT_DIR = DATA / "snapshots"
 OVERRIDES = DATA / "properties.json"
 PORT = int(os.environ.get("MC_PORT", "8000"))
+# The container runs on the HOST network (NetherNet advertises the server's own
+# address and finds LAN clients by broadcast, neither of which survives a bridge
+# network), so this control port is reachable from the LAN. Every route but /healthz
+# needs the bearer the api holds; with no token configured they all refuse rather than
+# run open.
+TOKEN = os.environ.get("MC_TOKEN", "")
 INSTALL_RETRY_S = 300
 # Pinned by compose to the published ports; changing them here would silently move the
 # server off the port the LAN and the router know about.
@@ -173,13 +180,26 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("body must be a JSON object")
         return parsed
 
+    def _authorized(self) -> bool:
+        if not TOKEN:
+            self._send(503, {"detail": "no MC_TOKEN configured; control is disabled"})
+            return False
+        got = self.headers.get("Authorization", "")
+        if not hmac.compare_digest(got.encode(), f"Bearer {TOKEN}".encode()):
+            self._send(401, {"detail": "unauthorized"})
+            return False
+        return True
+
     def do_GET(self) -> None:
         url = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(url.query)
         rig = _rig()
         if url.path == "/healthz":
             self._send(200, {"ok": True})
-        elif url.path == "/status":
+            return
+        if not self._authorized():
+            return
+        if url.path == "/status":
             self._send(200, rig.status())
         elif url.path == "/logs":
             tail = max(1, min(int(query.get("tail", ["200"])[0]), bds.LOG_LINES))
@@ -199,6 +219,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         rig = _rig()
+        if not self._authorized():
+            return
         try:
             body = self._body()
         except ValueError as exc:

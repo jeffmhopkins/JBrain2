@@ -118,6 +118,7 @@ APP_DB_PASSWORD=$(openssl rand -hex 32)
 SUPERVISOR_TOKEN=$(openssl rand -hex 32)
 SEARXNG_SECRET=$(openssl rand -hex 32)
 JLAUNCH_TOKEN=$(openssl rand -hex 32)
+MINECRAFT_TOKEN=$(openssl rand -hex 32)
 ANTHROPIC_API_KEY=$ANTHROPIC_KEY
 XAI_API_KEY=$XAI_KEY
 EOF
@@ -136,6 +137,12 @@ else
   if ! grep -q '^JLAUNCH_TOKEN=' .env; then
     say "Adding JLAUNCH_TOKEN for the job launcher"
     printf 'JLAUNCH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
+  fi
+  # The Minecraft sidecar is default-on and host-networked: its control port refuses every
+  # call without this api<->minecraft bearer. Backfill for installs that predate it.
+  if ! grep -q '^MINECRAFT_TOKEN=' .env; then
+    say "Adding MINECRAFT_TOKEN for the Minecraft server"
+    printf 'MINECRAFT_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
   fi
   # Turn LAN access on for installs that predate it (compose also defaults this,
   # but writing it keeps the knob discoverable + editable). Absent only.

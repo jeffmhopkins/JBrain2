@@ -65,7 +65,7 @@ a handful of players; M0 measures the real figure.
                                  │    snapshot (save hold/query/resume), allowlisted console,
                                  │    world import, LevelDB index export, companion bridge
                                  └─ volume jbrain_minecraft (worlds/, config, BDS binary)
-                                        ▲  HTTP on the `minecraft` network (api only)
+                                        ▲  HTTP + bearer, via host.docker.internal (host network)
  api (backend) ─────────────────────────┘
    ├─ /api/minecraft/*   PWA: status, players, import, snapshots, settings, allowlist
    ├─ minecraft drain    chat questions in, companion replies out (aprslog shape)
@@ -125,18 +125,15 @@ mid-save.
   - `bds.py` owns the console. It collects each command's reply, tracks players from the
     log, refuses `stop` and `save …` (each has its own route), takes hot `.mcworld`
     snapshots through `save hold`/`query`/`resume`, and stops gracefully.
-  - `server.py` serves the HTTP surface on the `minecraft` network: `/status`, `/logs`,
+  - `server.py` serves the HTTP control surface (bearer-guarded): `/status`, `/logs`,
     `/command`, `/snapshot`, `/snapshots`, and `/properties` (owner overrides layered on the
     compose defaults, applied at the next start, with the ports pinned).
 - `deploy/Dockerfile.minecraft`, and the `minecraft` compose service: **in the stock stack,
-  with no profile**, at the owner's request. It sits on its own `minecraft` network (shared
-  only with `api`, not `internal`), with a 2 GB `mem_limit`, a 60 s stop grace, UDP
-  19132/19133 published, and the `minecraft` volume kept out of the box backups. The
-  wrapper's HTTP port is unauthenticated and reachable only over that network, the
-  `endpoint` precedent.
+  with no profile**, at the owner's request. It has a 2 GB `mem_limit`, a 60 s stop grace,
+  and the `minecraft` volume, which is kept out of the box backups. M0a shipped it on its
+  own bridge network with UDP published; the M0b finding below moved it to the **host
+  network**, with a bearer on the control port.
 - **Defaults chosen for the LAN-only test**:
-  - `transport=raknet`. BDS 1.26 defaults to `nethernet`, which can allocate client UDP
-    ports beyond the one published.
   - `allow-list=false`. Nothing is forwarded from the router, and an empty allowlist would
     lock the family out.
   - `content-log-console-output-enabled=true`, so script output reaches the console for
@@ -150,6 +147,36 @@ IPv6 at all, and RakNet aborts when it cannot open its IPv6 socket. Docker conta
 the box have the IPv6 address family even without IPv6 routing, but **M0b's first status
 read confirms the server binds**. If it doesn't, the fix is a compose sysctl, not a code
 change.
+
+**M0b findings so far (2026-10-10), on the box with the debug token:**
+
+- **It runs.** `ffb9713` deployed, and the container came up healthy. BDS 1.26.52.3
+  downloaded itself, generated the world, and bound IPv4 and IPv6, so the sandbox's IPv6
+  failure did not recur. The console (`list`, `time query daytime`) and a hot
+  `.mcworld` snapshot both worked against the real server.
+- **RakNet is dead in 1.26.** Started on `transport=raknet`, the server ran and then logged
+  *"NetherNet is the only supported transport type. Players will not be able to connect to
+  your game without NetherNet."* Switched to `nethernet` through the properties override,
+  it started cleanly. Mojang's bundled how-to says NetherNet:
+  - signals over **TCP** on `server-port` (an HTTP handshake);
+  - negotiates gameplay **UDP** ports per client, from the ephemeral range unless
+    `server-udp-ports` pins them;
+  - advertises the server's **own** addresses to the client.
+
+  On a bridge network that address is the container's 172.x and LAN broadcasts never
+  arrive, so **the follow-up PR moves the container to `network_mode: host`**. That was the
+  plan's named fallback (M0 item 3). It also:
+  - makes `nethernet` the default;
+  - puts a bearer token (`MINECRAFT_TOKEN`, minted by `update-inner.sh` and `install.sh`)
+    on the control port, since that port is now on the LAN;
+  - has the api reach the control port through `host.docker.internal:19180`.
+- **Implication for R1 (internet play)**: forwarding UDP 19132 alone won't do. NetherNet
+  needs TCP 19132 for signaling plus a UDP range pinned with `server-udp-ports`, and its
+  advertised mapping (`[public-ip:]external:internal`) has to name the public address.
+  R1's step 0 accounts for this.
+- **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
+  LAN Games), memory under play, `locate` capture, the script bridge, the parser, map and
+  biome inputs, and the vanilla-client checks.
 
 **First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
 random seed that `/properties` and `level.dat` record. The known-seed checks can set
@@ -205,22 +232,17 @@ scheduled.
 
 **Built in M0a**, kept here for the record:
 
-- `deploy/Dockerfile.minecraft` and `deploy/minecraft/` (the wrapper), and a `minecraft`
-  network shared only with `api`. That network is **not** `internal: true`,
-  because BDS needs outbound internet for Xbox Live sign-in and its own updates. Hardened like
-  the SDR sidecar, with
-  `mem_limit: ${MC_MEM_LIMIT:-2g}` (1–4 players on a small world; M0 confirms the figure). The
-  volume is `jbrain_minecraft`. Port `${MC_BIND:-0.0.0.0}:19132:19132/udp` (plus 19133 for
-  IPv6 if wanted). BDS has no EULA file; running it is acceptance of Mojang's EULA and
+- `deploy/Dockerfile.minecraft` and `deploy/minecraft/` (the wrapper), on the **host
+  network** (M0b: NetherNet needs the box's real address and LAN broadcast), with
+  outbound internet for Xbox Live sign-in and its own updates. The control port is guarded
+  by `MINECRAFT_TOKEN`. `mem_limit: ${MC_MEM_LIMIT:-2g}` (1–4 players on a small world).
+  The volume is `jbrain_minecraft`. BDS has no EULA file; running it is acceptance of Mojang's EULA and
   privacy policy. The owner chose on-by-default knowing that (2026-10-10), and the
   Dockerfile header says so.
 - **LAN discovery is a requirement, not a nicety.** An Xbox can't type in a server address, so
   on the home network it joins through **Friends → LAN Games**. That list is filled by a
-  broadcast ping on UDP 19132, which the server has to answer. Docker's bridge networking
-  often doesn't pass broadcasts through to a published port, so M0 tests this. If the test
-  fails, the fallback is `network_mode: host` for this one container. That gives up the
-  isolated `minecraft` network, and the backend reaches the wrapper through the host gateway
-  with its bearer token. Windows can use either the LAN list or the box's address.
+  broadcast the server has to answer. This is why the container is on the host network
+  (M0b). Windows can use either the LAN list or the box's address.
 - **On by default (owner decision, 2026-10-10, built in M0a)**: the service has no profile,
   so the first **Ops → Update** after merge creates and starts it. Start and stop are the
   existing supervisor routes, which Ops already shows for every container.
@@ -379,6 +401,10 @@ by owner decision, 2026-10-10).** Test the router before anything more drastic.
 - Note whether the router's app offers **UPnP** and **port forwarding**.
 - On the box: a throwaway UPnP probe maps UDP 19132, and the outside status-service ping
   confirms it from the internet.
+- **NetherNet changes what gets forwarded** (M0b): TCP 19132 for signaling plus a pinned
+  UDP range (`server-udp-ports`, for example 19140-19149), advertised with the public
+  address (`server-udp-ports=<public-ip>:19140-19149:19140-19149`). The UPnP helper maps
+  all of them, and the DNS updater keeps that advertised IP current.
 - **Gate**: if this passes, build path 1 only. The relay (path 2) is not built unless a
   probe fails.
 

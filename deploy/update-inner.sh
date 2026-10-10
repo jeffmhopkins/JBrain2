@@ -616,6 +616,13 @@ if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
   printf 'JLAUNCH_TOKEN=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
 fi
 
+# Minecraft (default-on, host-networked): the sidecar's control port is on the LAN, so it
+# refuses every call without this api<->minecraft bearer. Backfill it like JLAUNCH_TOKEN.
+if ! grep -q '^MINECRAFT_TOKEN=..*' .env; then
+  echo "[update] minting MINECRAFT_TOKEN (api<->minecraft bearer)"
+  printf 'MINECRAFT_TOKEN=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
+fi
+
 # LAN access (host-only): turn it on for installs that predate it, then re-provision the
 # host mDNS responder + alias from the freshly pulled source. Needs systemd/avahi on the
 # real host, so the containerized caller skips it — the setting persists in .env either

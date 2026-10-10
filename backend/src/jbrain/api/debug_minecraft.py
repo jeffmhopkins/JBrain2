@@ -59,7 +59,10 @@ async def _sidecar(
     refused" on a stopped container reads like a bug when it is a state."""
     try:
         async with httpx.AsyncClient(
-            base_url=_base(settings), timeout=timeout_s, transport=_transport
+            base_url=_base(settings),
+            timeout=timeout_s,
+            transport=_transport,
+            headers={"Authorization": f"Bearer {settings.minecraft_token}"},
         ) as client:
             resp = await client.request(method, path, json=json, params=params)
     except httpx.TransportError as exc:
@@ -67,6 +70,11 @@ async def _sidecar(
             status_code=503,
             detail=f"Minecraft sidecar unreachable ({type(exc).__name__}) — is it stopped?",
         ) from exc
+    if resp.status_code in (401, 503):
+        # The sidecar's own auth refusal — a token mismatch is a deploy fault, not a state.
+        raise HTTPException(
+            status_code=502, detail=f"Minecraft sidecar refused the api: {_detail(resp)}"
+        )
     if resp.status_code in (400, 404, 409):
         raise HTTPException(status_code=resp.status_code, detail=_detail(resp))
     resp.raise_for_status()
