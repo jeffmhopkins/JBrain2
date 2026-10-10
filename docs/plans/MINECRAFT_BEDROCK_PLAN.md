@@ -213,6 +213,9 @@ change.
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
   LAN Games), `/jb:dave` from a client, the inventory-at-death read, memory under play, the
   parser, map and biome inputs, and the vanilla-client checks.
+  - **Added for M9/M10:** a behavior-pack-only custom item (a test Power Pack) borrowing
+    the vanilla Eye of Ender icon. Does it show its icon and name on the Xbox and on
+    Windows with no download, and does the nine-eye crafting recipe appear?
 
 **First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
 random seed that `/properties` and `level.dat` record. The known-seed checks can set
@@ -769,6 +772,10 @@ compass that Dave sets.
    and Marketplace servers rely on it, but it's a download prompt on join and it breaks
    §3c rule 2. **Owner decision when we get there**, after M0b checks the join prompt on
    the Xbox and Windows.
+   - **There may be no download at all:** M10's Power Pack test checks whether a
+     behavior-pack-only custom item can borrow a **vanilla** icon. If it can,
+     `jbrain:tricorder` borrows the spyglass's icon and becomes a true custom item (stack
+     1, its own lore, never confused with a real spyglass) with no resource pack.
 
 **Later, maybe:** Bedrock's **locator bar** (the `locatorbar` rule already exists on this
 server) could show Dave's target as a real waypoint marker on screen. It's only worth
@@ -786,45 +793,77 @@ also keep it from pointing at them.
 - A renamed item that isn't a tricorder (wrong lore) does nothing.
 - Another player's target never shows on someone else's tricorder.
 
-### M10 — Eyes of Ender as currency: keep your inventory, or teleport (owner, 2026-10-10)
+### M10 — Power Packs: keep your inventory, or teleport (owner, 2026-10-10)
 
-#### Keep your inventory, once per eye
+#### The Power Pack (the currency)
 
-**The rule.** A player who dies with an **Eye of Ender** anywhere in their inventory keeps
-everything, and **one eye is used up**. Without one, the death is a normal Survival death:
+A **Power Pack** is crafted from **a full crafting table of Eyes of Ender**: nine eyes in a
+3×3 grid make one pack. It looks like an Eye of Ender but carries its own name. That
+makes it deliberately hard to get, at nine Ender Pearls plus nine Blaze Powder each.
+Plain Eyes of Ender do nothing special; they stay the End-portal key and nothing else.
+
+**How it's made, vanilla first:**
+- A **custom item `jbrain:power_pack`** defined in the **behavior pack only**:
+  - `minecraft:display_name` "Power Pack", plus lore ("Keeps your things, or takes you
+    somewhere").
+  - Max stack 16.
+  - `minecraft:icon` pointing at the **vanilla Eye of Ender texture key**, so it shows
+    the eye's look with no texture of our own.
+  - It isn't an ender eye to the game, so it can't be thrown or used to fill an End-portal
+    frame by accident.
+- A **shaped recipe** (`recipes/power_pack.json`, crafting table, nine
+  `minecraft:ender_eye` → one `jbrain:power_pack`), also behavior pack only. Recipes are
+  stable data and need no experiment.
+- **The open question (M0b):** a behavior-pack-only custom item whose icon points at a
+  vanilla texture key has to render with the eye's icon and its name on **Xbox and
+  Windows with no download**. The server log also has to show no item errors. The probe
+  pack carries a test Power Pack to answer this.
+- **If it doesn't render without a resource pack**, there are two fallbacks, and the
+  owner chooses:
+  1. A tiny **server-pushed resource pack**. It is the same decision as tricorder v2 (one
+     pack would serve both) and shows a download prompt on join.
+  2. **No download:** Dave "forges" a pack instead of the crafting table. "Dave, make me a
+     Power Pack" takes nine eyes and gives an Eye of Ender named "Power Pack" with lore.
+     The script recognises it by its lore (an anvil can rename an item but can't add
+     lore, so it can't be faked). The caveat is that, being a real eye, it could still be
+     thrown or put in a portal frame.
+
+#### Keep your inventory, once per Power Pack
+
+**The rule.** A player who dies with a **Power Pack** anywhere in their inventory keeps
+everything, and **one pack is used up**. Without one, the death is a normal Survival death:
 items and XP drop at the spot. The tricorder (M9) is kept either way.
 
 **This decides "Per-player keep inventory" (§4).** It uses the fail-safe direction worked
 out there:
 - **The world's `keepInventory` rule is ON**, and the pack **drops** the inventory of a
-  player who had no eye.
+  player who had no Power Pack.
 - If the pack fails or is turned off, everyone keeps their things. Nobody ever loses
   items to a script fault, and there is no duplication around disconnects or restarts.
   The other way round (rule off, restore on respawn) risks both.
 
 **On `world.afterEvents.entityDie` for a player** (stable API):
-- **Eye present:** remove one `minecraft:ender_eye`, taken from the smallest stack first.
+- **Pack present:** remove one `jbrain:power_pack`, taken from the smallest stack first.
   Keep the rest, which the `keepInventory` rule already does.
-  - On respawn they get a private chat line and a vanilla sound: `Your Eye of Ender
-    shattered — you kept your things. 2 eyes left.`
-- **No eye:** for the inventory, armor and off-hand, `spawnItem` each stack at the death
+  - On respawn they get a private chat line and a vanilla sound: `Your Power Pack
+    burnt out — you kept your things. 2 packs left.`
+- **No pack:** for the inventory, armor and off-hand, `spawnItem` each stack at the death
   spot and clear the slot. Skip anything with `keepOnDeath` (the tricorder). Destroy
   **Curse of Vanishing** items.
   - Then reset their XP and drop roughly the vanilla amount as orbs. That matches a
-    normal death, which only the eye avoids.
+    normal death, which only a pack avoids.
 - **Died in the void:** a drop would fall out of the world, so the drop goes to the
   player's last safe position instead. This is a deliberate kindness, and settable later.
 
-**Per world, owner-only.** A switch on each world's page: **"Eye of Ender keeps
+**Per world, owner-only.** A switch on each world's page: **"Power Pack keeps
 inventory"**.
 - Turning it on sets that world's `keepInventory` rule on and installs the pack's charm.
-- In the rules editor, `keepInventory` then shows **"managed by the Eye of Ender charm"**
+- In the rules editor, `keepInventory` then shows **"managed by the Power Pack charm"**
   rather than a free switch, so the two can't contradict each other.
 - With the switch off, the world behaves exactly like vanilla.
 
-**Why an Eye of Ender:** it costs an Ender Pearl plus Blaze Powder, so it's earned. Eyes
-are also needed to find and fill the End portal, so spending them on safety is a real
-choice.
+**Why it's costly:** one death saved costs nine eyes, so it's a real decision, not a free
+safety net (owner, 2026-10-10).
 
 **Checks first (M0b, needs a player):**
 - With `keepInventory` on, the inventory is readable and writable at `entityDie`.
@@ -832,17 +871,18 @@ choice.
 - XP can be read and reset there.
 
 **Tests:**
-- Eye present: one consumed, everything else kept, the tricorder kept.
-- No eye: everything dropped at the spot except the tricorder, vanishing items gone.
-- Two deaths with one eye: the first keeps, the second drops.
-- An eye in the off-hand or a shulker box: the off-hand counts; inside a shulker box it
+- Pack present: one consumed, everything else kept, the tricorder kept.
+- No pack: everything dropped at the spot except the tricorder, vanishing items gone.
+- Two deaths with one pack: the first keeps, the second drops.
+- A pack in the off-hand or a shulker box: the off-hand counts; inside a shulker box it
   does not (the rule is "in your inventory").
 - Pack disabled: everyone keeps (fail-safe).
+- Nine eyes in the crafting table make one Power Pack; eight make nothing.
 
-#### Teleport to a known place, one eye per trip (owner, 2026-10-10)
+#### Teleport to a known place, one Power Pack per trip (owner, 2026-10-10)
 
 **The rule.** A player who has settled a place with Dave can ask to be **teleported there**.
-It costs **one Eye of Ender** from their inventory. With no eye, Dave says so, and offers
+It costs **one Power Pack** from their inventory. With none, Dave says so, and offers
 the tricorder (M9) instead.
 
 **"Known" means a coordinate that has been pinned down, not a guess.** These count:
@@ -857,12 +897,12 @@ the tricorder (M9) instead.
 
 **The flow (in game):**
 1. "Dave, take me to *market*." Dave names the place, the distance and dimension, and the
-   cost: `Market — 1,240 blocks, Overworld. Use 1 Eye of Ender? (you have 3)`.
+   cost: `Market — 1,240 blocks, Overworld. Use 1 Power Pack? (you have 3)`.
 2. The player confirms on a **server form** with Yes and No buttons (`@minecraft/server-ui`,
-   vanilla), so a misheard place never costs an eye.
-3. The pack checks the eye is still there, then calls `player.tryTeleport(spot,
+   vanilla), so a misheard place never costs a pack.
+3. The script checks the Power Pack is still there, then calls `player.tryTeleport(spot,
    {dimension, checkForBlocks: true})` (stable). **Only if the teleport succeeds** is one
-   eye removed. A blocked or failed teleport costs nothing, and Dave says why.
+   Power Pack removed. A blocked or failed teleport costs nothing, and Dave says why.
 4. It plays the vanilla enderman-teleport sound and portal particles at both ends.
 
 **Safety:**
@@ -874,19 +914,18 @@ the tricorder (M9) instead.
   already visited, so nobody gets into the End early.
 - **Never to another player** by default. "Take me to Sam" would need Sam to accept on a
   form, and that is left as an owner option for later.
-- Every trip is logged (who, from, to, eye spent) in the session log the owner sees.
+- Every trip is logged (who, from, to, pack spent) in the session log the owner sees.
 
-**Per world, owner-only switch:** "Eye of Ender teleport" (on by default, alongside the
+**Per world, owner-only switch:** "Power Pack teleport" (on by default, alongside the
 keep-inventory charm). With it off, Dave says teleporting isn't allowed in this world.
 
-**Why it stays fair:** each trip costs a crafted eye (an Ender Pearl plus Blaze Powder), and
-the same eyes are the keep-inventory charm and the End-portal key. Players choose how to
-spend them.
+**Why it stays fair:** each trip costs a Power Pack (nine eyes). The same packs are the
+keep-inventory charm, so players choose how to spend them.
 
 **Tests:**
-- No eye: refused, nothing changes.
-- Blocked landing: refused, and the eye is kept.
-- Success: exactly one eye removed and the player is at the spot.
+- No pack: refused, nothing changes.
+- Blocked landing: refused, and the pack is kept.
+- Success: exactly one Power Pack removed and the player is at the spot.
 - An unconfirmed `locate` result is refused as unknown.
 - A cross-dimension trip to a dimension never visited is refused.
 - Choosing No on the form costs nothing.
@@ -1227,7 +1266,7 @@ from the PWA.
 
 **Deliberately not tools**: giving items, teleporting, building, or editing blocks. There
 are two owner-approved, narrow exceptions (2026-10-10): Dave hands a player **their own
-tricorder** (M9), and **teleports a player to a known place for one Eye of Ender**, after
+tricorder** (M9), and **teleports a player to a known place for one Power Pack**, after
 they confirm on a form (M10). Beyond those, nothing is given or teleported, and there is
 no cross-player teleport. Also not tools: reading
 anything outside the active slot; anything that touches JBrain notes or the wiki; free-form
@@ -1262,8 +1301,9 @@ and launcher tricks. The rules that keep it true:
 | The Dave quick menu (M7, optional) | a server form | ✅ |
 | Replies | `tellraw` chat, private to the asker | ✅ |
 | `guide_me` compass | actionbar text, refreshed by the server | ✅ |
-| Eye of Ender teleport (M10) | a server form with Yes and No, then a normal teleport with vanilla sound and particles | ✅ |
-| Eye of Ender charm (M10) | ordinary death and drops; the eye vanishes; a chat line on respawn | ✅ |
+| Power Pack (M10) | a crafted item with the Eye of Ender's look, if M0b confirms it renders without a download; otherwise the owner chooses a fallback | ⚠️ checked in M0b |
+| Power Pack teleport (M10) | a server form with Yes and No, then a normal teleport with vanilla sound and particles | ✅ |
+| Power Pack charm (M10) | ordinary death and drops; the eye vanishes; a chat line on respawn | ✅ |
 | Tricorder v1 (M9) | a renamed vanilla spyglass; actionbar arrow while held | ✅ |
 | Tricorder v2 (M9, optional) | a custom item; needs a server-pushed resource pack | ⚠️ the owner chooses (download prompt on join) |
 | Waypoint markers in the world (optional) | vanilla particles at a spot, visible only to the asker | ✅ |
@@ -1324,9 +1364,9 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
 
 1. **Achievements**: M0 reports what the pack does to achievements on this world, for the
    record. The owner has already accepted the add-on.
-2. **Per-player keep inventory: DECIDED → the Eye of Ender charm (M10, owner,
-   2026-10-10).** A player keeps their inventory on death if they carry an Eye of Ender,
-   and one eye is used up. The tricorder is always kept. The approach below is the one
+2. **Per-player keep inventory: DECIDED → the Power Pack charm (M10, owner,
+   2026-10-10).** A player keeps their inventory on death if they carry a Power Pack
+   (crafted from nine Eyes of Ender), and one pack is used up. The tricorder is always kept. The approach below is the one
    M10 uses. Bedrock's `keepInventory`
    is a world-wide game rule, so a per-player version needs the M5 add-on. The approach
    worked out, recorded for if it's chosen:
@@ -1358,7 +1398,7 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
 ## 6. Out of scope
 
 Java Edition (a different server, different protocol, and RCON). Mods, Realms hosting, and
-public or unallowlisted servers. Letting the bot build, teleport, or give items, beyond M9's tricorder and M10's eye-paid
+public or unallowlisted servers. Letting the bot build, teleport, or give items, beyond M9's tricorder and M10's Power-Pack-paid
 teleport to a known place.
 
 ## 7. Terminal-dependency gaps (non-negotiable #10)
