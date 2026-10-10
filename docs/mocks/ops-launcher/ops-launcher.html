@@ -1,0 +1,452 @@
+<title>Ops Launcher Mock</title>
+<style>
+/* Layout: one phone column. Live vitals + charts stay open on top, then a 3-wide tile
+   grid; a tile pushes a slide-up page, exactly like the Settings grid. Tokens mirror
+   frontend/src/styles/tokens.css (dark default, light override). */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --steel: #7fa7c9; --steel-tint: rgba(127,167,201,.13);
+  --green: #8fbc9a; --green-tint: rgba(143,188,154,.13);
+  --amber: #c9a36a; --amber-tint: rgba(201,163,106,.13);
+  --rose: #cf8a8f; --rose-tint: rgba(207,138,143,.13);
+  --teal: #6fb6b1; --orchid: #c98ab4; --sage: #a8bd7e; --terracotta: #d0917f;
+  --note-bg: #15171a;
+  --r-card: 16px; --r-seg: 14px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee; --border: #e2e2df;
+  --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3; --note-bg: #efefec; color-scheme: light; } }
+:root[data-theme="light"] {
+  --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee; --border: #e2e2df;
+  --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3; --note-bg: #efefec; color-scheme: light; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); margin: 0;
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button { font: inherit; color: inherit; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--steel); outline-offset: 2px; }
+
+.stage { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; align-items: flex-start;
+  padding-block: 24px; padding-inline: 16px; }
+.phone { width: 100%; max-width: 400px; height: 820px; max-height: calc(100vh - 48px);
+  position: relative; overflow: hidden; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 28px; display: flex; flex-direction: column; }
+@media (max-width: 460px) {
+  .stage { padding-inline: 0; padding-block: 0; }
+  .phone { border: 0; border-radius: 0; max-width: none; height: 100vh; max-height: none; }
+}
+
+.top-bar { display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 10px; flex: none; }
+.back-btn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0;
+  padding: 4px 0; cursor: pointer; font-size: 20px; font-weight: 500; }
+.icon-btn { background: none; border: 1px solid var(--border); border-radius: 999px; width: 36px; height: 36px;
+  display: inline-grid; place-items: center; cursor: pointer; color: var(--text-2); }
+.icon-btn.spin svg { animation: spin .8s linear; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.body { flex: 1; overflow-y: auto; padding: 4px 16px 28px; display: flex; flex-direction: column; gap: 12px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 16px; }
+.label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); margin: 0 0 10px; }
+.muted { color: var(--text-2); }
+.small { font-size: 13px; }
+
+/* Vitals: 4 stat cells in a 2x2 grid, current values only. */
+.vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+.vk { font-size: 13px; color: var(--text-2); }
+.vv { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.vv small { font-size: 13px; color: var(--text-2); font-weight: 400; }
+.meter { height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 6px; overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 3px; }
+.vfoot { display: flex; justify-content: space-between; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--border); font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+.attn { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer;
+  background: var(--rose-tint); border: 1px solid color-mix(in srgb, var(--rose) 35%, transparent);
+  border-radius: var(--r-card); padding: 10px 14px; }
+.attn b { color: var(--rose); font-weight: 600; }
+.attn .chev { margin-left: auto; color: var(--text-3); }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
+.dot.ok { background: var(--green); } .dot.warn { background: var(--amber); }
+.dot.bad { background: var(--rose); } .dot.off { background: var(--text-3); }
+
+/* Update: one bar, one button, three states. */
+.update { display: flex; align-items: center; gap: 10px; }
+.update .txt { flex: 1; min-width: 0; font-size: 14px; }
+.update .txt code { font-family: var(--mono); font-size: 13px; }
+.btn { border: 1px solid var(--border); background: var(--surface-2); border-radius: 999px;
+  padding: 8px 16px; cursor: pointer; white-space: nowrap; }
+.btn.primary { background: var(--steel-tint); border-color: transparent; color: var(--steel); font-weight: 600; }
+.btn.danger { background: var(--rose-tint); border-color: transparent; color: var(--rose); font-weight: 600; }
+.log { font-family: var(--mono); font-size: 11.5px; line-height: 1.5; background: var(--note-bg); color: var(--text-2);
+  border-radius: 10px; padding: 10px; margin: 10px 0 0; max-height: 130px; overflow: auto; white-space: pre-wrap; }
+
+/* Charts */
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ranges { display: flex; gap: 4px; }
+.ranges button { border: 0; background: none; padding: 4px 8px; border-radius: 999px; cursor: pointer;
+  color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ranges button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.chart { margin-top: 12px; }
+.chart + .chart { margin-top: 16px; }
+.ch-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; flex-wrap: wrap; gap: 4px 10px; }
+.ch-top .now { font-variant-numeric: tabular-nums; font-weight: 600; }
+.leg { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 13px; }
+.leg i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.leg b { color: var(--text); font-variant-numeric: tabular-nums; }
+.chart svg { display: block; width: 100%; height: 54px; margin-top: 6px; }
+.ch-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* Tile grid — the launcher's tiles. */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tile { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: 16px 6px 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; min-width: 0; }
+.tile:active { background: var(--surface-2); }
+.tile svg { color: var(--text-2); }
+.tile-title { font-weight: 500; }
+.tile-sub { font-size: 12px; color: var(--text-3); margin-top: -2px; text-align: center; }
+.tile-sub.ok { color: var(--green); } .tile-sub.warn { color: var(--amber); } .tile-sub.bad { color: var(--rose); }
+.tile .dot { position: absolute; top: 10px; right: 10px; }
+
+/* Pushed page */
+.layer { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column;
+  animation: up .15s ease-out; z-index: 5; }
+@keyframes up { from { transform: translateY(24px); opacity: .4; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .layer, .icon-btn.spin svg { animation: none; } }
+
+.row { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); }
+.row:first-of-type { border-top: 0; }
+.row .grow { flex: 1; min-width: 0; }
+.row .r { font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 14px; text-align: right; }
+.mono { font-family: var(--mono); font-size: 13px; }
+.grp-h { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.grp-h .grow { flex: 1; min-width: 0; font-weight: 600; }
+.grp-h .r { font-size: 13px; color: var(--text-2); }
+.svc-actions { display: flex; gap: 6px; }
+.svc-actions .btn { padding: 5px 12px; font-size: 13px; }
+.switch { width: 50px; height: 30px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2);
+  position: relative; cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--text-3); transition: left .15s; }
+.switch[aria-checked="true"] { background: var(--steel-tint); border-color: var(--steel); }
+.switch[aria-checked="true"]::after { left: 23px; background: var(--steel); }
+select { font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 10px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 10px; border-radius: 999px; }
+.chip.ok { background: var(--green-tint); color: var(--green); }
+.chip.warn { background: var(--amber-tint); color: var(--amber); }
+.chip.bad { background: var(--rose-tint); color: var(--rose); }
+.chip.off { background: var(--surface-2); color: var(--text-2); }
+.memrow { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+.memrow:first-child { border-top: 0; }
+.memrow .bar { grid-column: 1 / -1; height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
+.memrow .bar i { display: block; height: 100%; background: var(--steel); }
+.placeholder { text-align: center; padding: 40px 16px; color: var(--text-2); }
+
+/* Notes beside the phone */
+.notes { width: 100%; max-width: 380px; font-size: 14px; line-height: 1.55; }
+.notes h1 { font-size: 20px; margin: 4px 0 4px; text-wrap: balance; }
+.notes h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); margin: 22px 0 8px; }
+.notes ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.notes .del { color: var(--rose); }
+.notes .q { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
+@media (max-width: 460px) { .notes { padding-inline: 16px; padding-block: 8px 32px; } }
+</style>
+
+<div class="stage">
+  <div class="phone" id="phone">
+    <header class="top-bar">
+      <button class="back-btn" type="button" aria-label="Back">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        Ops
+      </button>
+      <button class="icon-btn" id="refresh" type="button" aria-label="Refresh">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+      </button>
+    </header>
+    <main class="body" id="home">
+      <section class="card" aria-label="Live vitals">
+        <div class="vitals">
+          <div><div class="vk">GPU</div><div class="vv" id="v-gpu">0%</div><div class="meter"><i id="m-gpu" style="width:0%;background:var(--teal)"></i></div></div>
+          <div><div class="vk">Memory</div><div class="vv">74% <small>89.9 / 121.2 GB</small></div><div class="meter"><i style="width:74%;background:var(--amber)"></i></div></div>
+          <div><div class="vk">Power</div><div class="vv" id="v-pow">24.1 <small>W APU</small></div></div>
+          <div><div class="vk">Disk</div><div class="vv">59% <small>1.1 / 1.9 TB</small></div><div class="meter"><i style="width:59%;background:var(--green)"></i></div></div>
+        </div>
+        <div class="vfoot"><span>load 0.67 · 0.40 · 0.38</span><span>up 5d 22h</span></div>
+      </section>
+
+      <button class="attn" type="button" data-open="services">
+        <span class="dot bad"></span>
+        <span><b>AI - Optional down</b> <span class="muted">· AI degraded</span></span>
+        <span class="chev">›</span>
+      </button>
+
+      <section class="card" id="update" aria-label="Server update"></section>
+
+      <section class="card" aria-label="History">
+        <div class="chart-head">
+          <p class="label" style="margin:0">History</p>
+          <div class="ranges" id="ranges"></div>
+        </div>
+        <div id="charts"></div>
+      </section>
+
+      <div class="grid" id="tiles"></div>
+    </main>
+  </div>
+
+  <aside class="notes">
+    <p class="label" style="margin:0">Mock-up · sample numbers</p>
+    <h1>Ops, reorganised</h1>
+    <p class="muted">Live vitals, one Update button and the history charts stay open at the top. Everything else moves behind launcher tiles, the same pattern as the new Settings grid. Tap the tiles, the red banner and Update to try it.</p>
+
+    <h2>Stays on top</h2>
+    <ul>
+      <li>GPU, memory, power and disk as current numbers with meters, plus load and uptime.</li>
+      <li>A banner that only appears when a service group is degraded or down, and opens Services.</li>
+      <li>One <b>Update</b> bar: tap, confirm, watch the log, reload.</li>
+      <li>History charts (GPU, power, network, disk I/O) with the range picker.</li>
+    </ul>
+
+    <h2>Moves behind tiles</h2>
+    <ul>
+      <li><b>Services</b>: the six groups, per-service restart, stop and logs, and Restart all (no longer a header button).</li>
+      <li><b>Memory</b>: the per-process breakdown.</li>
+      <li><b>Engine</b>: Flash-Next status and the two prompt-cache settings.</li>
+      <li><b>Minecraft</b>, <b>Panels</b>, <b>Host</b> (kernel settings), <b>Runs</b>.</li>
+      <li><b>Storage</b>: database size, notes, files, blobs, swap and fans.</li>
+    </ul>
+
+    <h2>Removed</h2>
+    <ul>
+      <li class="del">"Track newest llama.cpp" toggle.</li>
+      <li class="del">"Fast Qwen loads" experimental rebuild toggle.</li>
+      <li class="del">The Standard / Flash-Next engine switch. Engine becomes a read-only status.</li>
+      <li class="del">Per-service Rebuild buttons, since Update already rebuilds everything.</li>
+    </ul>
+
+    <h2>Open questions</h2>
+    <div class="q">Should services that are switched off on purpose (comfyui, jcode, and local-llm now that Flash-Next runs) show grey "off" instead of red "down"? Today they make AI and AI - Optional look broken.</div>
+    <div class="q">Keep the two prompt-cache settings under Engine, or drop them too and leave them at today's values?</div>
+  </aside>
+</div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const ICONS = {
+  services: '<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1.2"/><circle cx="8" cy="12" r="1.2"/><circle cx="8" cy="18" r="1.2"/>',
+  memory: '<rect x="4" y="7" width="16" height="10" rx="2"/><path d="M8 7V4M12 7V4M16 7V4M8 20v-3M12 20v-3M16 20v-3"/>',
+  engine: '<rect x="5" y="7" width="14" height="11" rx="2"/><path d="M12 3v4M9 12h.01M15 12h.01M9.5 15h5"/>',
+  minecraft: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
+  panels: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  host: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>',
+  runs: '<path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/>',
+  storage: '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v13c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-13M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5"/>',
+};
+const icon = (k, s = 24) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[k]}</svg>`;
+
+const TILES = [
+  { id: "services", title: "Services", sub: "2 need a look", tone: "bad" },
+  { id: "memory", title: "Memory", sub: "74% used", tone: "warn" },
+  { id: "engine", title: "Engine", sub: "Flash-Next", tone: "ok" },
+  { id: "minecraft", title: "Minecraft", sub: "running", tone: "ok" },
+  { id: "panels", title: "Panels", sub: "2 panels" },
+  { id: "host", title: "Host", sub: "1 issue", tone: "bad" },
+  { id: "runs", title: "Runs", sub: "last 4m ago" },
+  { id: "storage", title: "Storage", sub: "DB 614 MB" },
+];
+$("#tiles").innerHTML = TILES.map(t => `
+  <button class="tile" type="button" data-open="${t.id}">
+    ${t.tone && t.tone !== "ok" ? `<span class="dot ${t.tone}"></span>` : ""}
+    ${icon(t.id)}
+    <span class="tile-title">${t.title}</span>
+    <span class="tile-sub ${t.tone || ""}">${t.sub}</span>
+  </button>`).join("");
+
+// ---- History charts (seeded fake series that look like the real spiky box) ----
+const RANGES = ["6h", "24h", "7d", "30d", "1y"];
+let range = "6h";
+function rng(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
+function series(seed, n, base, spikeP, spikeH, noise) {
+  const r = rng(seed); const out = [];
+  for (let i = 0; i < n; i++) out.push(Math.max(0, base + (r() - .5) * noise + (r() < spikeP ? r() * spikeH : 0)));
+  return out;
+}
+function path(vals, max, w, h) {
+  const step = w / (vals.length - 1);
+  return vals.map((v, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)},${(h - 2 - (v / max) * (h - 6)).toFixed(1)}`).join("");
+}
+function chartSvg(lines, max) {
+  const w = 360, h = 54;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" x2="${w}" y1="${h - 2}" y2="${h - 2}" stroke="var(--border)" stroke-width="1"/>
+    ${lines.map(l => `<path d="${path(l.v, max, w, h)}" fill="none" stroke="${l.c}" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`).join("")}
+  </svg>`;
+}
+function renderCharts() {
+  const s = RANGES.indexOf(range) * 101 + 7, n = 180;
+  const buckets = { "6h": "720 30s buckets", "24h": "288 5m buckets", "7d": "336 30m buckets", "30d": "360 2h buckets", "1y": "365 1d buckets" }[range];
+  const gpu = series(s, n, 0.3, .03, 17, .6);
+  const pow = series(s + 1, n, 9, .06, 60, 3);
+  const dn = series(s + 2, n, 2, .25, 480, 4), up = series(s + 3, n, .5, .05, 20, 1);
+  const rd = series(s + 4, n, 0, .025, 1400, 0), wr = series(s + 5, n, 15, .01, 40, 10);
+  const mx = a => Math.max(...a);
+  $("#charts").innerHTML = `
+    <div class="chart"><div class="ch-top"><span>GPU</span><span class="now">0%</span></div>
+      ${chartSvg([{ v: gpu, c: "var(--teal)" }], 100)}
+      <div class="ch-foot"><span>${mx(gpu).toFixed(0)}% peak</span><span>0% low</span></div></div>
+    <div class="chart"><div class="ch-top"><span>APU power</span><span class="now">10.1 W</span></div>
+      ${chartSvg([{ v: pow, c: "var(--green)" }], mx(pow))}
+      <div class="ch-foot"><span>${mx(pow).toFixed(1)} W peak</span><span>7.4 W low</span></div></div>
+    <div class="chart"><div class="ch-top"><span>Network</span><span>
+        <span class="leg"><i style="background:var(--steel)"></i>down <b>13 KB/s</b></span>
+        <span class="leg"><i style="background:var(--orchid)"></i>up <b>1.0 KB/s</b></span></span></div>
+      ${chartSvg([{ v: dn, c: "var(--steel)" }, { v: up, c: "var(--orchid)" }], mx(dn))}
+      <div class="ch-foot"><span>${mx(dn).toFixed(0)} KB/s peak</span><span>418 B/s low</span></div></div>
+    <div class="chart"><div class="ch-top"><span>Disk I/O</span><span>
+        <span class="leg"><i style="background:var(--sage)"></i>read <b>723 KB/s</b></span>
+        <span class="leg"><i style="background:var(--terracotta)"></i>write <b>21 KB/s</b></span></span></div>
+      ${chartSvg([{ v: rd, c: "var(--sage)" }, { v: wr, c: "var(--terracotta)" }], mx(rd))}
+      <div class="ch-foot"><span>${(mx(rd) / 1000).toFixed(1)} GB/s peak</span><span>${buckets}</span></div></div>`;
+  $("#ranges").innerHTML = RANGES.map(r => `<button type="button" aria-pressed="${r === range}" data-range="${r}">${r}</button>`).join("");
+}
+$("#ranges").addEventListener("click", e => { const b = e.target.closest("[data-range]"); if (b) { range = b.dataset.range; renderCharts(); } });
+renderCharts();
+
+// ---- Update: idle → confirm → running → done ----
+let upd = "idle", updTimer = null;
+const LOG = ["[update] fetching origin/main", "[update] 3462612 feat(frontend): settings opens on a launcher-style category grid",
+  "[update] building web", "[update] building api", "[update] migrations: up to date", "[update] restarting stack",
+  "[update] waiting for api health", "[update] api healthy", "[update] done"];
+function renderUpdate() {
+  const el = $("#update");
+  if (upd === "idle") el.innerHTML = `<div class="update"><span class="dot ok"></span><span class="txt"><b>Up to date</b> <span class="muted">· <code>9cb756f</code> · 2h ago</span></span><button class="btn primary" type="button" id="u-go">Update</button></div>`;
+  if (upd === "confirm") el.innerHTML = `<div class="update"><span class="dot warn"></span><span class="txt muted small">Pulls latest main, rebuilds and restarts. The app drops for about a minute.</span><button class="btn danger" type="button" id="u-go">Tap again</button></div>`;
+  if (upd === "running" || upd === "done") {
+    const lines = LOG.slice(0, updStep).join("\n");
+    el.innerHTML = `<div class="update"><span class="dot ${upd === "done" ? "ok" : "warn"}"></span><span class="txt">${upd === "done" ? "<b>Update complete</b>" : "Updating…"}</span>
+      ${upd === "done" ? '<button class="btn primary" type="button" id="u-go">Reload app</button>' : ""}</div><pre class="log">${lines}</pre>`;
+    const log = $(".log", el); log.scrollTop = log.scrollHeight;
+  }
+  const go = $("#u-go");
+  if (go) go.onclick = () => {
+    if (upd === "idle") { upd = "confirm"; renderUpdate(); $("#u-go").focus(); }
+    else if (upd === "confirm") { upd = "running"; updStep = 1; renderUpdate(); updTimer = setInterval(() => { updStep++; if (updStep >= LOG.length) { clearInterval(updTimer); upd = "done"; } renderUpdate(); }, 550); }
+    else if (upd === "done") { upd = "idle"; renderUpdate(); }
+  };
+  if (upd === "confirm") $("#u-go").onblur = () => setTimeout(() => { if (upd === "confirm") { upd = "idle"; renderUpdate(); } }, 150);
+}
+let updStep = 0; renderUpdate();
+
+$("#refresh").onclick = e => { const b = e.currentTarget; b.classList.remove("spin"); void b.offsetWidth; b.classList.add("spin"); };
+
+// ---- Pushed pages ----
+const GROUPS = [
+  { name: "Core", svcs: [["api", "ok", "up 5d"], ["worker", "ok", "up 5d"], ["supervisor", "ok", "up 5d"], ["postgres", "ok", "up 5d"]] },
+  { name: "AI", svcs: [["flash-next", "ok", "up 2h"], ["embed", "ok", "up 5d"], ["local-llm", "warn", "stopped"]] },
+  { name: "AI - Optional", svcs: [["comfyui", "bad", "stopped"], ["jcode", "bad", "stopped"]] },
+  { name: "Infra", svcs: [["proxy", "ok", "up 5d"], ["cloudflared", "ok", "up 5d"], ["reader", "ok", "up 5d"], ["byparr", "ok", "up 5d"], ["searxng", "ok", "up 5d"], ["rapidocr", "ok", "up 5d"], ["mqtt", "ok", "up 5d"]] },
+  { name: "Display", svcs: [["wall", "ok", "up 5d"]] },
+  { name: "Other", svcs: [["tts-stt", "ok", "up 5d"], ["jlaunch", "ok", "up 5d"], ["mqtt-ingest", "ok", "up 5d"], ["minecraft", "ok", "up 3d"], ["sdr", "ok", "up 5d"], ["pet", "ok", "up 5d"], ["migrate", "ok", "exited 0"], ["wipe", "ok", "exited 0"]] },
+];
+const roll = g => g.svcs.some(s => s[1] === "bad") ? "bad" : g.svcs.some(s => s[1] === "warn") ? "warn" : "ok";
+const ROLL_WORD = { ok: "all up", warn: "degraded", bad: "down" };
+let openGroup = "AI - Optional", confirmRestartAll = false;
+
+const PAGES = {
+  services: () => `
+    ${GROUPS.map(g => { const r = roll(g); const open = openGroup === g.name; return `
+      <section class="card">
+        <button class="grp-h" type="button" data-group="${g.name}" aria-expanded="${open}">
+          <span class="grow">${g.name}</span>
+          <span class="r">${g.svcs.length} service${g.svcs.length > 1 ? "s" : ""}</span>
+          <span class="chip ${r}"><span class="dot ${r}"></span>${ROLL_WORD[r]}</span>
+        </button>
+        ${open ? `<div style="margin-top:8px">${g.svcs.map(([n, st, d]) => `
+          <div class="row"><span class="dot ${st}"></span><span class="grow"><span class="mono">${n}</span><br><span class="small muted">${d}</span></span>
+            <span class="svc-actions">${d === "stopped" ? '<button class="btn" type="button">Start</button>' : '<button class="btn" type="button">Restart</button>'}<button class="btn" type="button">Logs</button></span></div>`).join("")}</div>` : ""}
+      </section>`; }).join("")}
+    <section class="card">
+      <div class="update"><span class="txt"><b>Restart all</b><br><span class="small muted">Restarts every running service. The app drops briefly.</span></span>
+        <button class="btn danger" type="button" id="ra">${confirmRestartAll ? "Tap again" : "Restart all"}</button></div>
+    </section>`,
+  memory: () => {
+    const P = [["flash-next", "model", 61.8], ["minecraft", "game server", 6.4], ["postgres", "database", 3.2], ["embed", "embeddings", 2.6], ["tts-stt", "voice", 1.9], ["comfyui", "stopped", 0], ["api + worker", "app", 1.7], ["everything else", "", 3.1], ["kernel + GPU buffers", "", 9.2]];
+    return `<section class="card"><p class="label">89.9 GB of 121.2 GB · swap 661 MB</p>${P.filter(p => p[2] > 0).map(([n, d, gb]) => `
+      <div class="memrow"><span><span class="mono">${n}</span> <span class="small muted">${d}</span></span><span class="r" style="font-variant-numeric:tabular-nums">${gb.toFixed(1)} GB</span>
+      <span class="bar"><i style="width:${(gb / 121.2 * 100).toFixed(1)}%"></i></span></div>`).join("")}</section>`;
+  },
+  engine: () => `
+    <section class="card">
+      <div class="update"><span class="txt"><b>Flash-Next</b><br><span class="small muted">One model in its own container · loaded 2h ago</span></span><span class="chip ok"><span class="dot ok"></span>serving</span></div>
+    </section>
+    <section class="card">
+      <p class="label">Prompt cache</p>
+      <div class="row"><span class="grow">Keep chats on disk<br><span class="small muted">Research chats only. Brain chats never leave the database.</span></span>
+        <button class="switch" type="button" role="switch" aria-checked="false" aria-label="Keep chats on disk"></button></div>
+      <div class="row"><span class="grow">Cache disk<br><span class="small muted">Per engine. The oldest chats go first.</span></span>
+        <select aria-label="Prompt cache disk" id="cache-gb">${[10, 25, 40, 60, 80, 120, 200].map(g => `<option ${g === 40 ? "selected" : ""}>${g} GB</option>`).join("")}</select></div>
+    </section>
+    <p class="small muted" style="margin:0 4px">Switch engines, track newest llama.cpp and Fast Qwen loads are gone.</p>`,
+  minecraft: () => `<div class="placeholder">${icon("minecraft", 40)}<p><b>Minecraft</b> · 1.26.52.3 · nobody on</p><p class="small">This tile opens the existing Minecraft screen, unchanged.</p></div>`,
+  panels: () => `<section class="card">
+      <div class="row"><span class="grow"><b>Elora</b> <span class="mono muted">0.3.38</span><br><span class="small muted">screen dim · up 2h · last boot: power(1)</span></span><span class="small" style="color:var(--rose)">6 days ago</span></div>
+      <div class="row"><span class="grow"><b>Lydian</b> <span class="mono muted">0.3.38</span><br><span class="small muted">screen awake · up 1 min · last restart: ota-park</span><br><span class="small" style="color:var(--rose)">restarted from render stage 9</span></span><span class="small" style="color:var(--rose)">6 days ago</span></div>
+    </section><p class="small muted" style="margin:0 4px">Rename or revoke a panel on the jpanel screen, Panels tab.</p>`,
+  host: () => `<section class="card">
+      <div class="row"><span class="grow"><span class="mono">ttm.pages_limit</span><br><span class="small" style="color:var(--rose)">124 GiB, want under 121 GiB (we set 105)</span><br><span class="small muted">Disabled: the limit is at or above total RAM, so a GPU over-commit becomes a reclaim livelock instead of a clean error. Update fixes it for the current boot; making it survive a reboot needs a one-time host step.</span></span></div>
+      <div class="row"><span class="grow mono">vm.min_free_kbytes</span><span class="r">2097152</span></div>
+      <div class="row"><span class="grow mono">vm.watermark_scale_factor</span><span class="r">200</span></div>
+      <div class="row"><span class="grow mono">vm.swappiness</span><span class="r">10</span></div>
+    </section>`,
+  runs: () => `<section class="card">${[["ingest", "ok", "4m ago · 12s"], ["integration", "ok", "18m ago · 1m 40s"], ["nightly digest", "ok", "7h ago · 3m 2s"], ["research: solar", "bad", "yesterday · failed at fetch"]].map(([n, st, d]) =>
+      `<div class="row"><span class="dot ${st}"></span><span class="grow">${n}<br><span class="small muted">${d}</span></span><span class="muted">›</span></div>`).join("")}</section>
+    <p class="small muted" style="margin:0 4px">Opens the existing Runs screen.</p>`,
+  storage: () => `<section class="card">
+      <div class="row"><span class="grow">Database</span><span class="r">614 MB</span></div>
+      <div class="row"><span class="grow">Notes · files</span><span class="r">7 · 2</span></div>
+      <div class="row"><span class="grow">Blobs</span><span class="r">1.0 GB</span></div>
+      <div class="row"><span class="grow">Disk</span><span class="r">1107.6 / 1875.7 GB</span></div>
+      <div class="row"><span class="grow">Swap</span><span class="r">661 MB</span></div>
+      <div class="row"><span class="grow">Fans</span><span class="r">cpu 1180 rpm</span></div>
+    </section>`,
+};
+const TITLES = Object.fromEntries(TILES.map(t => [t.id, t.title]));
+
+function openPage(id) {
+  closePage();
+  const layer = document.createElement("div");
+  layer.className = "layer"; layer.id = "layer";
+  layer.innerHTML = `<header class="top-bar"><button class="back-btn" type="button" aria-label="Back" id="pg-back">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>${TITLES[id]}</button></header>
+    <main class="body" id="pg-body"></main>`;
+  $("#phone").appendChild(layer);
+  const draw = () => { $("#pg-body", layer).innerHTML = PAGES[id](); };
+  draw();
+  $("#pg-back", layer).onclick = closePage;
+  $("#pg-back", layer).focus();
+  layer.addEventListener("click", e => {
+    const g = e.target.closest("[data-group]");
+    if (g) { openGroup = openGroup === g.dataset.group ? null : g.dataset.group; draw(); return; }
+    if (e.target.id === "ra") { if (confirmRestartAll) { confirmRestartAll = false; e.target.textContent = "Restarting…"; e.target.disabled = true; setTimeout(draw, 1200); } else { confirmRestartAll = true; draw(); } return; }
+    const sw = e.target.closest(".switch");
+    if (sw) sw.setAttribute("aria-checked", String(sw.getAttribute("aria-checked") !== "true"));
+  });
+  let y0 = null;
+  layer.addEventListener("touchstart", e => { y0 = $("#pg-body", layer).scrollTop <= 4 ? e.touches[0].clientY : null; }, { passive: true });
+  layer.addEventListener("touchmove", e => { if (y0 !== null && e.touches[0].clientY - y0 > 56) { y0 = null; closePage(); } }, { passive: true });
+}
+function closePage() { confirmRestartAll = false; $("#layer")?.remove(); }
+document.addEventListener("click", e => { const o = e.target.closest("[data-open]"); if (o && !o.closest(".layer")) openPage(o.dataset.open); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closePage(); });
+
+// Live GPU/power wiggle so the top reads as live.
+setInterval(() => {
+  const g = Math.random() < .15 ? Math.round(Math.random() * 30) : 0;
+  $("#v-gpu").textContent = g + "%"; $("#m-gpu").style.width = g + "%";
+  $("#v-pow").innerHTML = (g ? 30 + g : 22 + Math.random() * 4).toFixed(1) + " <small>W APU</small>";
+}, 2000);
+</script>
