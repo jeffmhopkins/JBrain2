@@ -1,0 +1,15 @@
+{
+  "format_version": "1.21.40",
+  "minecraft:item": {
+    "description": {
+      "identifier": "jbrain:tricorder",
+      "menu_category": { "category": "equipment" }
+    },
+    "components": {
+      "minecraft:icon": "jbrain_tricorder",
+      "minecraft:display_name": { "value": "Tricorder" },
+      "minecraft:max_stack_size": 1,
+      "minecraft:hand_equipped": true
+    }
+  }
+}

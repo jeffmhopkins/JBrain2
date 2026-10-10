@@ -1,6 +1,6 @@
 # Runbooks — how to operate the box
 
-> **Status:** Living · **Last verified:** 2026-09-16
+> **Status:** Living · **Last verified:** 2026-10-10
 
 Operational runbooks: setup, access, and recovery procedures for a running
 JBrain2 box. `Living` docs (per `../DOC_LIFECYCLE.md`) — kept true as the ops
@@ -16,4 +16,5 @@ surface changes.
 | `ENDPOINT_RECOVERY.md` | Recovering a room-endpoint panel, in the order to try it: automatic OTA rollback, the factory app, and the ROM download mode that makes the chip unbrickable by software (BOOT + reset). Also what is *not* recoverable — an NVS erase loses a unit's provisioning and needs the cable. |
 | `DEBUG_ACCESS.md` | The owner debug console: a revocable, time-boxed `capability_token` for external assistant iteration. Off by default. |
 | `DEBUG_ACCESS_SESSION_GUIDE.md` | Assistant-facing runbook for the debug console: requesting a token and driving the box via `scripts/debug-connect.sh`. |
+| `MINECRAFT_HOME_TEST.md` | The at-home Minecraft checks in one sitting: the test kit (custom items, recipe, a resource pack the server pushes on join), the eight checks on Windows and Xbox, and how the assistant reads each answer off the server log. |
 | `EXTERNAL_VIDEO_WATCH.md` | Auto-ingesting a YouTube channel's new videos into the search corpus via a recurring Jerv Task (`check_channel` → `analyze_stream` → `search_external_video`). |

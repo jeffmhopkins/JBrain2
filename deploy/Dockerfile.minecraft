@@ -31,6 +31,7 @@ COPY deploy/minecraft/bds.py ./bds.py
 COPY deploy/minecraft/server.py ./server.py
 COPY deploy/minecraft/worlds.py ./worlds.py
 COPY deploy/minecraft/probe-pack ./probe-pack
+COPY deploy/minecraft/probe-rp ./probe-rp
 COPY deploy/minecraft/jbrain-pack ./jbrain-pack
 
 RUN python3 -c "import server, bds, install, worlds"

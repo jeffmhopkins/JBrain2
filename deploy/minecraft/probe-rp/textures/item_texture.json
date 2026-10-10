@@ -1,0 +1,8 @@
+{
+  "resource_pack_name": "jbrain_probe",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "jbrain_power_pack": { "textures": "textures/items/power_pack" },
+    "jbrain_tricorder": { "textures": "textures/items/tricorder" }
+  }
+}

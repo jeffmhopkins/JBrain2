@@ -2,19 +2,44 @@
   "format_version": 2,
   "header": {
     "name": "JBrain probe",
-    "description": "M0 probe: does a stable-API pack load, and does its output reach the console?",
+    "description": "M0 probe + home-test kit: a stable-API pack, custom items and a recipe, with icons from the server-pushed probe resource pack.",
     "uuid": "0a1983b5-13e8-41ca-b31d-b80e84c6c171",
-    "version": [1, 0, 0],
-    "min_engine_version": [1, 21, 0]
+    "version": [
+      1,
+      1,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
   },
   "modules": [
     {
       "type": "script",
       "language": "javascript",
       "uuid": "f196f14f-8e0e-406a-bfd0-19a35fc71121",
-      "version": [1, 0, 0],
+      "version": [
+        1,
+        1,
+        0
+      ],
       "entry": "scripts/main.js"
     }
   ],
-  "dependencies": [{ "module_name": "@minecraft/server", "version": "2.0.0" }]
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0"
+    },
+    {
+      "uuid": "26d6c250-8ead-4bb8-9dd0-d3805e61d61e",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ]
 }
