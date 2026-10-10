@@ -151,7 +151,8 @@ short section added to this doc.
    - Does `scriptevent jb:<id> <json>` on stdin reach `system.afterEvents.scriptEventReceive`?
    - Does `console.log` from the script appear on BDS stdout, and at what length limit?
    - Is there a **stable chat event**, so `Dave, …` typed in plain chat can be caught? This is
-     what decides whether Xbox players can ask from a controller comfortably.
+     a nicety, not a blocker. The family's Xboxes have keyboards, so `/dave …` is just as
+     easy to type.
    - Can a stable **custom slash command** be registered for all players? Commands are
      namespaced (`jb:dave`), so check whether players can type plain `/dave`.
    - What does adding the pack do to achievements? Check on the fresh world, then record the
@@ -399,9 +400,10 @@ house by typing the address.
   loaded. That covers new, imported, and reset worlds without any manual step. It uses only
   stable APIs, as confirmed in M0.
 - **Inbound (player asks)**: a chat message addressed to the companion by name, such as
-  `Dave, where's the nearest pig?` or `@dave …`. This matters for the Xbox players, who would
-  struggle to type a slash command on a controller, so it depends on M0 finding a stable chat
-  event. `/dave <question>`, a custom command (namespaced as `jb:dave`), is the fallback and is always registered. The
+  `Dave, where's the nearest pig?` or `@dave …`, if M0 finds a stable chat event.
+  `/dave <question>`, a custom command namespaced as `jb:dave`, is always registered and is
+  enough on its own. Every player types, the family's Xboxes included, since they have
+  keyboards (owner, 2026-10-10). The
   name is a **setting**, not a constant: the script reads it from a value the wrapper pushes
   through `scriptevent`, so renaming needs no pack rebuild. The script
   logs one structured line carrying the asker, the text, and the asker's position, dimension
@@ -412,12 +414,8 @@ house by typing the address.
   `<id>`.
 - **Outbound (reply)**: `tellraw <asker> {…}` via the console. Replies are private to the asker
   by default.
-- **A Dave menu for controllers**: typing on an Xbox is slow. `/dave` with no text, or saying
-  just "Dave", opens a **server form** (`@minecraft/server-ui` `ActionFormData`). The form is
-  a list of buttons: *Where am I*, *Nearest…* (with a sub-list of common mobs), *Guide me
-  home*, *My last death*, *Map of here*, *Save this spot*. Forms are drawn by the vanilla
-  client from data the server sends, so there is nothing to install. Picking a button sends
-  the same question as typing it would.
+- **Typing is the primary interface**, because the family's Xboxes have keyboards (owner,
+  2026-10-10). A button menu for the common questions is a later nicety (M7), not part of M5.
 - The drain loop follows the `aprslog` shape. Everything that comes from players is
   **untrusted input**.
 
@@ -460,6 +458,10 @@ house by typing the address.
 ### M7 — Nice-to-haves (each is its own small decision)
 
 - The non-★ tools in §3b, one per PR, in whatever order players actually ask for them.
+- **A Dave quick menu**: `/dave` with no text opens a server form (`@minecraft/server-ui`
+  `ActionFormData`). The form has buttons for *Where am I*, *Nearest…*, *Guide me home*,
+  *My last death*, *Map of here* and *Save this spot*. It is vanilla-safe (§3c), and it is
+  optional since everyone has a keyboard.
 - A visible **companion NPC**. A *custom* entity needs a resource pack. The vanilla client
   downloads that automatically, but it's heavier and breaks the "behavior pack only" rule in
   §3c, so it's the owner's call. The alternative is a **vanilla mob** (an allay or villager
@@ -687,7 +689,7 @@ and launcher tricks. The rules that keep it true:
 | Joining (LAN list, `mc.hopkinsbrain.com`, relay address) | the standard server list | ✅ |
 | Asking in chat (`Dave, …`) | ordinary chat, read by the server script | ✅ if M0 finds a stable chat event. Otherwise `/dave` |
 | `/dave <question>` | a server-registered custom command, which appears in the client's normal command autocomplete | ✅ M0 checks it on Xbox and Windows |
-| The Dave menu (buttons) | a server form | ✅ M0 checks controller use on Xbox |
+| The Dave quick menu (M7, optional) | a server form | ✅ |
 | Replies | `tellraw` chat, private to the asker | ✅ |
 | `guide_me` compass | actionbar text, refreshed by the server | ✅ |
 | Waypoint markers in the world (optional) | vanilla particles at a spot, visible only to the asker | ✅ |
@@ -703,7 +705,6 @@ the Xbox:
 
 - What is shown on joining a server that has the behavior pack.
 - Whether `/dave` shows up in autocomplete.
-- Whether a server form works with a controller.
 - Whether the actionbar compass updates smoothly.
 - Whether `tellraw` reaches only the asker.
 
@@ -728,6 +729,8 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
   Experimental toggles are still never turned on without asking.
 - **Vanilla clients only (owner requirement, 2026-10-10)**: everything must work on an
   unmodified Windows or Xbox Bedrock client (§3c).
+- **Input**: every player types, the Xboxes included, since they have keyboards. `/dave …`
+  is enough, and the button menu is optional (M7).
 - **Companion**: named **Dave** for now, and changeable later (M5, M6).
 - **Player locations**: Dave may say where other players are.
 - **Box backups**: Minecraft backups stay separate from the whole-box export (M3).
