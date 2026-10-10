@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -714,6 +714,67 @@ biomes.**
   projection (coordinates → pixels, Nether scale), check that share-link scope and expiry
   are refused outside the link, and check that `slice@Y` is refused when fair play is on.
 
+### M9 — The tricorder: a held item that points where Dave said (owner, 2026-10-10)
+
+**The idea.** Dave gives a player a target ("the nearest woodland mansion", "your base",
+"where you died"). While that player holds the **tricorder**, their HUD shows which way
+to turn and how far it is. Nobody has to read or type coordinates. It works like a
+compass that Dave sets.
+
+**What the player sees.**
+- Holding the tricorder: actionbar text refreshed about 4 times a second, e.g.
+  `↖ Woodland mansion · 412 blocks`.
+- The arrow is relative to where the player is **facing**: eight arrows, from the bearing
+  to the target minus the player's view direction. Turning re-points it.
+- Within about 8 blocks: `You're here — Woodland mansion`, plus one vanilla chime.
+- **Target in another dimension:** `Woodland mansion is in the Overworld — take a portal`.
+  The Nether pointer can aim at the portal Dave knows from the M4 index.
+- **No target yet:** `Ask Dave where to go: /jb:dave …`.
+- Putting the item away clears the actionbar. Nothing shows for anyone else.
+
+**How it's built** (on M5's bridge, using M6's `guide_me` tool):
+- Dave's `guide_me(player, target)` sends `scriptevent jb:target <xuid> <json>` with
+  the label, dimension and x/y/z. The pack stores it as a **dynamic property on the
+  player**, so it survives logging out and restarts.
+- A `system.runInterval` (every 5 ticks) checks each player's selected hotbar slot for
+  the tricorder and writes the actionbar line. It uses stable `@minecraft/server` only:
+  `getComponent("inventory")`, `selectedSlotIndex`, `getViewDirection`,
+  `onScreenDisplay.setActionBar`.
+- **One target per player.** A new `guide_me` replaces the old one. "Dave, clear my
+  tricorder" removes it. Targets are the player's own: a sibling's tricorder points
+  where *their* Dave said.
+- **Getting one:** Dave hands it over (`give` from the pack) the first time he sets a
+  target for a player who has none. Optionally there is a crafting recipe too (owner's
+  call).
+
+**The item itself, in two steps** (§3c rule 2 says behavior pack only):
+1. **v1, fully vanilla, no download:** an ordinary item renamed **"Tricorder"**, with
+   lore ("Points where Dave says"). The script recognises it by its name tag and lore.
+   Proposed item: a **spyglass**, because it has no needle of its own to contradict the
+   arrow, unlike a compass. It can be lost, dropped or kept in a chest like any item.
+2. **v2, a true custom item** (`jbrain:tricorder`, its own icon, stack size 1, can't be
+   crafted by accident). That needs a **resource pack**, which BDS **pushes to every
+   joining client** (`texturepacks-required=true`). Store clients accept server packs,
+   and Marketplace servers rely on it, but it's a download prompt on join and it breaks
+   §3c rule 2. **Owner decision when we get there**, after M0b checks the join prompt on
+   the Xbox and Windows.
+
+**Later, maybe:** Bedrock's **locator bar** (the `locatorbar` rule already exists on this
+server) could show Dave's target as a real waypoint marker on screen. It's only worth
+switching to once custom waypoints reach the stable script API, which M0b checks. Until
+then the actionbar arrow is the vanilla path.
+
+**Fair play:** the tricorder only points where Dave already said, so it's in the same
+tier as the question that set the target (§3b). Settings that hide structure answers
+also keep it from pointing at them.
+
+**Tests:**
+- Bearing to arrow at all eight octants and the wrap at ±180°.
+- The arrival radius and the other-dimension text.
+- The target survives a restart (dynamic property).
+- A renamed item that isn't a tricorder (wrong lore) does nothing.
+- Another player's target never shows on someone else's tricorder.
+
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
 **One persona, two ways in (owner decision, 2026-10-10).** Minecraft_Dave is a single
@@ -1081,6 +1142,8 @@ and launcher tricks. The rules that keep it true:
 | The Dave quick menu (M7, optional) | a server form | ✅ |
 | Replies | `tellraw` chat, private to the asker | ✅ |
 | `guide_me` compass | actionbar text, refreshed by the server | ✅ |
+| Tricorder v1 (M9) | a renamed vanilla spyglass; actionbar arrow while held | ✅ |
+| Tricorder v2 (M9, optional) | a custom item; needs a server-pushed resource pack | ⚠️ the owner chooses (download prompt on join) |
 | Waypoint markers in the world (optional) | vanilla particles at a spot, visible only to the asker | ✅ |
 | Reminders and warnings | chat or actionbar, plus a vanilla sound | ✅ |
 | Maps | a short code typed into a browser; nothing is shown in-game | ✅ no in-game image |
