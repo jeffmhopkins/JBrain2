@@ -1,11 +1,14 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onReadAloudSettings } from "../agent/readAloudBus";
+import { closeTopModalLayer } from "../backLayers";
 import { isLocationCaptureEnabled } from "../location";
 import { SettingsScreen } from "./SettingsScreen";
 
-function setup() {
+// Settings opens on its category grid; each test drills into the page holding its card.
+function setup(category: string) {
   render(<SettingsScreen deviceLabel="Test device" onLogout={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: category }));
 }
 
 // The screen loads the server-synced settings on mount; a stateful stub
@@ -262,16 +265,61 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("SettingsScreen category grid", () => {
+  it("opens on a tile per category with no setting cards showing", () => {
+    render(<SettingsScreen deviceLabel="Test device" onLogout={vi.fn()} />);
+    for (const name of [
+      "Appearance",
+      "Voice",
+      "Capture",
+      "Radio",
+      "Web",
+      "Connections",
+      "Access",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByLabelText("Theme")).not.toBeInTheDocument();
+  });
+
+  it("pushes only the tapped category's cards, and its back button climbs to the grid", () => {
+    setup("Appearance");
+    expect(screen.getByLabelText("Theme")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Capture location")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.queryByLabelText("Theme")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Appearance" })).toBeInTheDocument();
+  });
+
+  it("registers the page as a back layer so the platform Back gesture climbs one level", () => {
+    setup("Access");
+    expect(screen.getByText("Session")).toBeInTheDocument();
+    act(() => {
+      expect(closeTopModalLayer()).toBe(true);
+    });
+    expect(screen.queryByText("Session")).not.toBeInTheDocument();
+    expect(closeTopModalLayer()).toBe(false);
+  });
+
+  it("climbs to the grid on a down-swipe from the top of the page", () => {
+    setup("Radio");
+    const page = screen.getByText("Amateur callsign").closest(".subscreen") as HTMLElement;
+    fireEvent.touchStart(page, { touches: [{ clientX: 100, clientY: 100 }] });
+    fireEvent.touchMove(page, { touches: [{ clientX: 102, clientY: 200 }] });
+    expect(screen.queryByText("Amateur callsign")).not.toBeInTheDocument();
+  });
+});
+
 describe("SettingsScreen capture location", () => {
   it("defaults the toggle to on", () => {
-    setup();
+    setup("Capture");
     const group = screen.getByLabelText("Capture location");
     const on = group.querySelector('[aria-pressed="true"]');
     expect(on).toHaveTextContent("On");
   });
 
   it("persists off across remounts via localStorage", () => {
-    setup();
+    setup("Capture");
     const group = within(screen.getByLabelText("Capture location"));
     fireEvent.click(group.getByRole("button", { name: "Off" }));
     expect(localStorage.getItem("jbrain.captureLocation")).toBe("off");
@@ -280,7 +328,7 @@ describe("SettingsScreen capture location", () => {
 
   it("persists turning it back on", () => {
     localStorage.setItem("jbrain.captureLocation", "off");
-    setup();
+    setup("Capture");
     const group = within(screen.getByLabelText("Capture location"));
     fireEvent.click(group.getByRole("button", { name: "On" }));
     expect(localStorage.getItem("jbrain.captureLocation")).toBe("on");
@@ -291,7 +339,7 @@ describe("SettingsScreen capture location", () => {
 describe("SettingsScreen browser-agent loop switch", () => {
   it("shows Fast and falls back to Classic on tap (PUTs browse_loop: b1)", async () => {
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Web");
     const group = within(screen.getByLabelText("Browser agent"));
     await waitFor(() =>
       expect(group.getByRole("button", { name: "Fast" })).toHaveAttribute("aria-pressed", "true"),
@@ -305,7 +353,7 @@ describe("SettingsScreen browser-agent loop switch", () => {
 describe("SettingsScreen stream-LLM-to-wall-display toggle", () => {
   it("defaults to Off and enables on tap (PUTs brain_llm_stream: true)", async () => {
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Voice");
     const group = within(screen.getByLabelText("Stream LLM to wall display"));
     // Server answered Off (owner text stays off the unauthenticated display by default).
     await waitFor(() =>
@@ -319,7 +367,7 @@ describe("SettingsScreen stream-LLM-to-wall-display toggle", () => {
 describe("SettingsScreen Tavily web-fetch panel", () => {
   it("saves+tests a key (never echoing it) and toggles the tier off", async () => {
     const { tavilyPuts } = stubSettingsFetch();
-    setup();
+    setup("Web");
 
     // Loads enabled-but-keyless (the single-owner default): the status pill reads "No key".
     const status = await screen.findByLabelText("Tavily status");
@@ -347,7 +395,7 @@ describe("SettingsScreen Tavily health", () => {
     const { state } = stubSettingsFetch();
     state.tavilyKeySet = true;
     state.tavilyHealth = "quota";
-    setup();
+    setup("Web");
     const status = await screen.findByLabelText("Tavily status");
     await waitFor(() => expect(status).toHaveTextContent("Out of credits"));
     const health = await screen.findByLabelText("Tavily health");
@@ -358,7 +406,7 @@ describe("SettingsScreen Tavily health", () => {
   it("shows no warning while the key is healthy", async () => {
     const { state } = stubSettingsFetch();
     state.tavilyKeySet = true;
-    setup();
+    setup("Web");
     const status = await screen.findByLabelText("Tavily status");
     await waitFor(() => expect(status).toHaveTextContent("Active"));
     expect(screen.queryByLabelText("Tavily health")).toBeNull();
@@ -368,7 +416,7 @@ describe("SettingsScreen Tavily health", () => {
 describe("SettingsScreen Brave Search panel", () => {
   it("saves+tests a key without echoing it, and the test counts toward the budget", async () => {
     const { bravePuts, braveTests } = stubSettingsFetch();
-    setup();
+    setup("Web");
     const status = await screen.findByLabelText("Brave status");
     await waitFor(() => expect(status).toHaveTextContent("No key"));
     expect(screen.getByLabelText("Brave usage")).toHaveTextContent("Used 0 of 900 this month.");
@@ -399,7 +447,7 @@ describe("SettingsScreen Brave Search panel", () => {
   it("toggles off, clears the key and saves a new budget", async () => {
     const { bravePuts, state } = stubSettingsFetch();
     state.braveKeySource = "stored";
-    setup();
+    setup("Web");
     const status = await screen.findByLabelText("Brave status");
     await waitFor(() => expect(status).toHaveTextContent("Active"));
 
@@ -429,7 +477,7 @@ describe("SettingsScreen Brave Search panel", () => {
     const { state } = stubSettingsFetch();
     state.braveKeySource = "stored";
     state.braveBlocked = "key_rejected";
-    setup();
+    setup("Web");
     const status = await screen.findByLabelText("Brave status");
     await waitFor(() => expect(status).toHaveTextContent("Key rejected"));
     expect(screen.getByText(/resets on the 1st \(UTC\)/)).toBeInTheDocument();
@@ -441,7 +489,7 @@ describe("SettingsScreen Brave Search panel", () => {
   it("saves a key while Brave is off and still runs the test", async () => {
     const { bravePuts, braveTests, state } = stubSettingsFetch();
     state.braveEnabled = false;
-    setup();
+    setup("Web");
     const status = await screen.findByLabelText("Brave status");
     await waitFor(() => expect(status).toHaveTextContent("Off"));
     const save = screen.getByRole("button", { name: "Save & test Brave key" });
@@ -459,7 +507,7 @@ describe("SettingsScreen Brave Search panel", () => {
     state.braveBudget = 10;
     state.braveUsed = 10;
     state.braveLastError = "Brave rejected the API key (HTTP 401)";
-    setup();
+    setup("Web");
     const status = await screen.findByLabelText("Brave status");
     await waitFor(() => expect(status).toHaveTextContent("Budget reached"));
     expect(await screen.findByLabelText("Brave health")).toHaveTextContent(
@@ -475,7 +523,7 @@ describe("SettingsScreen Brave Search panel", () => {
 describe("SettingsScreen read-wall-display-aloud toggle", () => {
   it("defaults to Off and enables on tap (PUTs brain_read_aloud: true)", async () => {
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Voice");
     const group = within(screen.getByLabelText("Read wall display aloud"));
     await waitFor(() =>
       expect(group.getByRole("button", { name: "Off" })).toHaveAttribute("aria-pressed", "true"),
@@ -488,7 +536,7 @@ describe("SettingsScreen read-wall-display-aloud toggle", () => {
 describe("SettingsScreen read-aloud voice picker", () => {
   it("defaults to the Kokoro model, listing the box's Kokoro voices (no Piper button)", async () => {
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Voice");
     const models = within(await screen.findByLabelText("Read-aloud model"));
     expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute("aria-pressed", "true");
     expect(models.getByRole("button", { name: "Native" })).toBeInTheDocument();
@@ -512,7 +560,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
       answerVoice: "kokoro-af_sky",
       voices: ["kokoro-af_heart", "kokoro-am_michael"],
     });
-    setup();
+    setup("Voice");
     const models = within(await screen.findByLabelText("Read-aloud model"));
     expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute("aria-pressed", "true");
     const sub = (await screen.findByLabelText("Kokoro voice")) as HTMLSelectElement;
@@ -525,7 +573,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
     const seen: Array<Record<string, unknown>> = [];
     const off = onReadAloudSettings((p) => seen.push(p as Record<string, unknown>));
     stubSettingsFetch();
-    setup();
+    setup("Voice");
     const select = await screen.findByLabelText("Kokoro voice");
     fireEvent.change(select, { target: { value: "kokoro-am_michael" } });
     await waitFor(() => expect(seen).toContainEqual({ brain_answer_voice: "kokoro-am_michael" }));
@@ -534,7 +582,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
 
   it("switches to the Native model and hides the on-box voice picker", async () => {
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Voice");
     const models = within(await screen.findByLabelText("Read-aloud model"));
     await waitFor(() =>
       expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute(
@@ -554,7 +602,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
     const seen: Array<Record<string, unknown>> = [];
     const off = onReadAloudSettings((p) => seen.push(p as Record<string, unknown>));
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Voice");
     const fx = within(await screen.findByLabelText("Voice character effects"));
     fireEvent.click(fx.getByRole("button", { name: "Chorus" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_answer_chorus: true }));
@@ -567,7 +615,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
 
   it("commits the reading-speed slider on release", async () => {
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Voice");
     const slider = await screen.findByLabelText("Reading speed");
     fireEvent.change(slider, { target: { value: "1.5" } });
     fireEvent.pointerUp(slider);
@@ -576,7 +624,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
 
   it("hides the chorus/robot toggles on the Native model (on-box-only effects)", async () => {
     stubSettingsFetch();
-    setup();
+    setup("Voice");
     const models = within(await screen.findByLabelText("Read-aloud model"));
     fireEvent.click(models.getByRole("button", { name: "Native" }));
     await waitFor(() => expect(screen.queryByLabelText("Voice character effects")).toBeNull());
@@ -588,7 +636,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
     // The reported "settings often don't take": a transient PUT failure used to be swallowed, so
     // the toggle looked set but reverted on the next load. Now it must show an error AND snap back.
     stubSettingsFetch("full", { failPut: true });
-    setup();
+    setup("Voice");
     const fx = within(await screen.findByLabelText("Voice character effects"));
     const chorus = fx.getByRole("button", { name: "Chorus" });
     expect(chorus).toHaveAttribute("aria-pressed", "false");
@@ -602,7 +650,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
 
   it("plays a voice sample through the owner's effects (speed/chorus/robot ride along)", async () => {
     const { ttsUrls } = stubSettingsFetch();
-    setup();
+    setup("Voice");
     const fx = within(await screen.findByLabelText("Voice character effects"));
     fireEvent.click(fx.getByRole("button", { name: "Chorus" }));
     fireEvent.click(fx.getByRole("button", { name: "Robot" }));
@@ -616,15 +664,16 @@ describe("SettingsScreen read-aloud voice picker", () => {
 
   it("opens the read-custom-text surface from the voice picker", async () => {
     stubSettingsFetch();
-    setup();
+    setup("Voice");
     const open = await screen.findByRole("button", { name: "Read custom text" });
     fireEvent.click(open);
     // The overlay is mostly a text area, with Play + Export controls.
     expect(await screen.findByLabelText("Text to read aloud")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export audio" })).toBeInTheDocument();
-    // Its back button closes it again.
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    // Its back button (the topmost, over the Voice page's own) closes it again.
+    const backs = screen.getAllByRole("button", { name: "Back" });
+    fireEvent.click(backs[backs.length - 1] as HTMLElement);
     await waitFor(() => expect(screen.queryByLabelText("Text to read aloud")).toBeNull());
   });
 
@@ -646,7 +695,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
     vi.stubGlobal("Audio", FakeAudio);
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
-    setup();
+    setup("Voice");
     const sample = await screen.findByRole("button", { name: "Play sample" });
     fireEvent.click(sample);
     await waitFor(() => expect(played).toHaveLength(1));
@@ -665,7 +714,7 @@ describe("SettingsScreen pronunciations", () => {
     stubSettingsFetch("full", {
       lexicon: { Titusville: "Tight us ville", GIF: "jiff" },
     });
-    setup();
+    setup("Voice");
     const pron = await pronPanel();
     expect(await pron.findByText("Titusville")).toBeInTheDocument();
     expect(pron.getByText("Tight us ville")).toBeInTheDocument();
@@ -675,7 +724,7 @@ describe("SettingsScreen pronunciations", () => {
 
   it("adds a word, PUTting the full map including the new entry", async () => {
     const { puts } = stubSettingsFetch("full", { lexicon: { GIF: "jiff" } });
-    setup();
+    setup("Voice");
     const pron = await pronPanel();
     // The empty state hides the form until the "Add" toggle opens it.
     fireEvent.click(await pron.findByRole("button", { name: /Add a pronunciation/ }));
@@ -693,7 +742,7 @@ describe("SettingsScreen pronunciations", () => {
     const { puts } = stubSettingsFetch("full", {
       lexicon: { GIF: "jiff", Titusville: "Tight us ville" },
     });
-    setup();
+    setup("Voice");
     const pron = await pronPanel();
     fireEvent.click(await pron.findByRole("button", { name: "Remove Titusville" }));
     await waitFor(() => expect(puts).toContainEqual({ pronunciation_lexicon: { GIF: "jiff" } }));
@@ -701,27 +750,27 @@ describe("SettingsScreen pronunciations", () => {
 
   it("shows the misaki health chip", async () => {
     stubSettingsFetch("full");
-    setup();
+    setup("Voice");
     expect(await screen.findByText(/Voice engine: misaki/)).toBeInTheDocument();
   });
 });
 
 describe("SettingsScreen response typing speed", () => {
   it("defaults the pick to 30/s", () => {
-    setup();
+    setup("Appearance");
     const group = screen.getByLabelText("Response typing speed");
     expect(group.querySelector('[aria-pressed="true"]')).toHaveTextContent("30/s");
   });
 
   it("persists a chosen rate across remounts via localStorage", () => {
-    setup();
+    setup("Appearance");
     fireEvent.click(screen.getByRole("button", { name: "45/s" }));
     expect(localStorage.getItem("jbrain.tokenRate")).toBe("45");
     expect(screen.getByRole("button", { name: "45/s" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("offers Instant as a zero-rate (pacing off) choice", () => {
-    setup();
+    setup("Appearance");
     fireEvent.click(screen.getByRole("button", { name: "Instant" }));
     expect(localStorage.getItem("jbrain.tokenRate")).toBe("0");
   });
@@ -729,7 +778,7 @@ describe("SettingsScreen response typing speed", () => {
 
 describe("SettingsScreen image analysis", () => {
   it("loads the server mode and marks it pressed (full is the default)", async () => {
-    setup();
+    setup("Capture");
     const group = screen.getByLabelText("Image analysis");
     await waitFor(() =>
       expect(group.querySelector('[aria-pressed="true"]')).toHaveTextContent("full analysis"),
@@ -742,7 +791,7 @@ describe("SettingsScreen image analysis", () => {
 
   it("reflects a server-side ocr-only mode on load", async () => {
     stubSettingsFetch("ocr");
-    setup();
+    setup("Capture");
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "ocr only" })).toHaveAttribute(
         "aria-pressed",
@@ -753,7 +802,7 @@ describe("SettingsScreen image analysis", () => {
 
   it("saves a pick via PUT /api/settings and round-trips it", async () => {
     const { puts, state } = stubSettingsFetch("full");
-    setup();
+    setup("Capture");
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "full analysis" })).toHaveAttribute(
         "aria-pressed",
@@ -793,7 +842,7 @@ describe("SettingsScreen calendar feed", () => {
       throw new Error(`Unexpected fetch: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    setup();
+    setup("Connections");
 
     // Disabled on load → a Generate button; after generating, the URL appears.
     fireEvent.click(await screen.findByRole("button", { name: "Generate link" }));
@@ -858,7 +907,7 @@ describe("SettingsScreen debug access", () => {
 
   it("mints a token and reveals the one-time payload", async () => {
     stubDebug();
-    setup();
+    setup("Access");
     fireEvent.click(await screen.findByRole("button", { name: "Mint token" }));
     const payload = (await screen.findByLabelText("Debug token payload")) as HTMLInputElement;
     expect(payload.value).toBe("PASTE-ME");
@@ -866,14 +915,14 @@ describe("SettingsScreen debug access", () => {
 
   it("explains when debug access is disabled on the server", async () => {
     stubDebug({ mintStatus: 409 });
-    setup();
+    setup("Access");
     fireEvent.click(await screen.findByRole("button", { name: "Mint token" }));
     expect(await screen.findByText(/Debug access is off/)).toBeInTheDocument();
   });
 
   it("lists an active token and revokes it on a confirmed tap", async () => {
     const { deletes } = stubDebug({ tokens: [tokenRow()] });
-    setup();
+    setup("Access");
     expect(await screen.findByText("Phone debug")).toBeInTheDocument();
     const revoke = screen.getByRole("button", { name: "Revoke" });
     fireEvent.click(revoke); // first tap arms the inline confirm
@@ -883,7 +932,7 @@ describe("SettingsScreen debug access", () => {
 
   it("suspends an active token", async () => {
     const { suspends } = stubDebug({ tokens: [tokenRow()] });
-    setup();
+    setup("Access");
     fireEvent.click(await screen.findByRole("button", { name: "Suspend" }));
     await waitFor(() => expect(suspends).toEqual(["abc"]));
   });
@@ -892,7 +941,7 @@ describe("SettingsScreen debug access", () => {
     const { resumes } = stubDebug({
       tokens: [tokenRow({ suspended_at: "2026-06-22T01:00:00Z" })],
     });
-    setup();
+    setup("Access");
     // A suspended token shows its status and offers Resume instead of Suspend.
     expect(await screen.findByText("suspended")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
@@ -908,7 +957,7 @@ describe("SettingsScreen debug access", () => {
         tokenRow({ id: "e", label: "Expired one", expires_at: "2000-01-01T00:00:00Z" }),
       ],
     });
-    setup();
+    setup("Access");
     expect(await screen.findByText("Active one")).toBeInTheDocument();
     expect(screen.getByText("Suspended one")).toBeInTheDocument();
     expect(screen.queryByText("Revoked one")).not.toBeInTheDocument();
@@ -929,7 +978,7 @@ describe("SettingsScreen time zone", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    setup();
+    setup("Capture");
     expect(await screen.findByLabelText("Time zone")).toHaveTextContent("America/New_York");
   });
 });
@@ -977,7 +1026,7 @@ describe("SettingsScreen Gmail (Archivist)", () => {
 
   it("saves pasted credentials and shows Connected", async () => {
     const { puts } = stubGmail();
-    setup();
+    setup("Connections");
     expect(await screen.findByText("Not connected")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/Client ID/), { target: { value: "cid" } });
@@ -991,7 +1040,7 @@ describe("SettingsScreen Gmail (Archivist)", () => {
 
   it("enables Connect once the client id + secret are saved (no token needed)", async () => {
     stubGmail();
-    setup();
+    setup("Connections");
     // Disconnected on load: Connect is disabled until credentials exist.
     expect(await screen.findByText("Not connected")).toBeInTheDocument();
     const connect = () => screen.getByRole("button", { name: "Connect Gmail" });
@@ -1010,7 +1059,7 @@ describe("SettingsScreen Gmail (Archivist)", () => {
 describe("SettingsScreen amateur callsign", () => {
   it("saves a callsign upper-cased", async () => {
     const { puts } = stubSettingsFetch();
-    setup();
+    setup("Radio");
 
     const field = (await screen.findByLabelText("Callsign")) as HTMLInputElement;
     fireEvent.change(field, { target: { value: "ke8xyz-9" } });
@@ -1024,7 +1073,7 @@ describe("SettingsScreen amateur callsign", () => {
 
   it("cannot save until the value changes", async () => {
     stubSettingsFetch();
-    setup();
+    setup("Radio");
     await screen.findByLabelText("Callsign");
 
     // Unset and untouched: Save is inert rather than writing an empty value over an

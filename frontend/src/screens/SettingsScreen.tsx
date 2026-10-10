@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { type ReadAloudPatch, emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
   AppSettings,
@@ -14,13 +14,103 @@ import type {
   TavilyTestResult,
 } from "../api/client";
 import { ApiError, api } from "../api/client";
+import { useBackLayer } from "../backLayers";
 import { BUILD_SHA, BUILD_TIME } from "../buildInfo";
 import { SdrRadiosCard } from "../components/SdrRadiosCard";
+import {
+  ChevronLeftIcon,
+  GlobeIcon,
+  ImageIcon,
+  LinkIcon,
+  LockIcon,
+  MicIcon,
+  RadioIcon,
+  SlidersIcon,
+} from "../components/icons";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
 import { ReadTextScreen } from "./ReadTextScreen";
+
+// The settings grew past one scroll, so the screen opens on a launcher-style tile grid
+// (DESIGN.md "Navigation: the card launcher") and each category pushes its own page.
+type SettingsCategory =
+  | "appearance"
+  | "voice"
+  | "capture"
+  | "radio"
+  | "web"
+  | "connections"
+  | "access";
+
+const SETTINGS_CATEGORIES: { id: SettingsCategory; title: string; icon: ReactNode }[] = [
+  { id: "appearance", title: "Appearance", icon: <SlidersIcon size={24} /> },
+  { id: "voice", title: "Voice", icon: <MicIcon size={24} /> },
+  { id: "capture", title: "Capture", icon: <ImageIcon size={24} /> },
+  { id: "radio", title: "Radio", icon: <RadioIcon size={24} /> },
+  { id: "web", title: "Web", icon: <GlobeIcon size={24} /> },
+  { id: "connections", title: "Connections", icon: <LinkIcon size={24} /> },
+  { id: "access", title: "Access", icon: <LockIcon size={24} /> },
+];
+
+const CATEGORY_TITLE = Object.fromEntries(
+  SETTINGS_CATEGORIES.map((c) => [c.id, c.title]),
+) as Record<SettingsCategory, string>;
+
+// Matches the subscreen's own down-swipe threshold in App.
+const SWIPE_DOWN_PX = 56;
+
+/** A category's pushed page: its own back bar over the grid, climbed by back, swipe-down or
+ *  the platform Back gesture (registered in the shared back-layer stack, like a Sheet). */
+function SettingsLayer({
+  title,
+  onBack,
+  children,
+}: {
+  title: string;
+  onBack: () => void;
+  children: ReactNode;
+}) {
+  useBackLayer(onBack);
+  const body = useRef<HTMLDivElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    back.current?.focus({ preventScroll: true });
+  }, []);
+  // The Settings card's own swipe-down would close all of Settings; a category climbs one level.
+  function onTouchStart(e: TouchEvent) {
+    e.stopPropagation();
+    const t = e.touches[0];
+    const atTop = (body.current?.scrollTop ?? 0) <= 4;
+    start.current = atTop && t ? { x: t.clientX, y: t.clientY } : null;
+  }
+  function onTouchMove(e: TouchEvent) {
+    e.stopPropagation();
+    const s = start.current;
+    const t = e.touches[0];
+    if (!s || !t) return;
+    const dy = t.clientY - s.y;
+    if (dy > SWIPE_DOWN_PX && dy > Math.abs(t.clientX - s.x) * 2) {
+      start.current = null;
+      onBack();
+    }
+  }
+  return (
+    <div className="subscreen" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
+      <header className="top-bar">
+        <button type="button" className="back-btn" onClick={onBack} aria-label="Back" ref={back}>
+          <ChevronLeftIcon size={22} />
+          <span className="screen-title">{title}</span>
+        </button>
+      </header>
+      <div className="screen-body settings" ref={body}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -73,6 +163,7 @@ interface SettingsScreenProps {
 }
 
 export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
+  const [category, setCategory] = useState<SettingsCategory | null>(null);
   const [theme, setTheme] = useState<ThemePref>(getThemePref);
   const [fontScale, setScale] = useState<FontScale>(getFontScale);
   const [tokenRate, setRate] = useState<TokenRate>(getTokenRate);
@@ -788,976 +879,1061 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
 
   return (
     <main className="screen-body settings">
-      <section className="settings-card">
-        <h2 className="settings-label">Theme</h2>
-        <div className="theme-picker" aria-label="Theme">
-          {THEME_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              aria-pressed={theme === opt.value}
-              className={`seg${theme === opt.value ? " seg-on" : ""}`}
-              onClick={() => pick(opt.value)}
-            >
-              {opt.label}
+      <div className="tile-grid settings-grid">
+        {SETTINGS_CATEGORIES.map((c) => (
+          <div key={c.id} className="tile-slot">
+            <button type="button" className="tile" onClick={() => setCategory(c.id)}>
+              <span className="tile-icon">{c.icon}</span>
+              <span className="tile-title">{c.title}</span>
             </button>
-          ))}
-        </div>
-      </section>
+          </div>
+        ))}
+      </div>
 
-      <section className="settings-card">
-        <h2 className="settings-label">Text size</h2>
-        <div className="theme-picker" aria-label="Text size">
-          {FONT_SCALES.map((scale) => (
-            <button
-              key={scale}
-              type="button"
-              aria-pressed={fontScale === scale}
-              className={`seg${fontScale === scale ? " seg-on" : ""}`}
-              onClick={() => {
-                setFontScale(scale);
-                setScale(scale);
-              }}
-            >
-              {scale}%
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Response typing speed</h2>
-        <p className="settings-meta">
-          how fast the assistant's answer types out, in tokens per second — the reveal is paced
-          steadily so fast local models read as smooth typing rather than snapping in. Instant turns
-          pacing off; the full answer shows the moment it lands.
-        </p>
-        <div className="theme-picker" aria-label="Response typing speed">
-          {TOKEN_RATES.map((rate) => (
-            <button
-              key={rate}
-              type="button"
-              aria-pressed={tokenRate === rate}
-              className={`seg${tokenRate === rate ? " seg-on" : ""}`}
-              onClick={() => {
-                setTokenRate(rate);
-                setRate(rate);
-              }}
-            >
-              {rate === 0 ? "Instant" : `${rate}/s`}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Image analysis</h2>
-        <p className="settings-meta">
-          how much a vision model reads from attached images — ocr only transcribes the text
-          verbatim; full analysis adds a salient description the fact pipeline mines. either way,
-          capture never waits — vision runs after sync.
-        </p>
-        <div className="theme-picker" aria-label="Image analysis">
-          {IMAGE_ANALYSIS_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              aria-pressed={imageMode === opt.value}
-              className={`seg${imageMode === opt.value ? " seg-on" : ""}`}
-              onClick={() => pickImageMode(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Stream LLM to wall display</h2>
-        <p className="settings-meta">
-          shows each chat turn on the on-box neural-brain display (:8800) as tendrils with the
-          prompt and answer text streaming along them, plus a fade-out popup of the answer. this
-          puts your real prompt and answer text on that display, which has no login — only turn it
-          on when the display is the box's own monitor (or bound to localhost), never an exposed LAN
-          screen. off by default.
-        </p>
-        <div className="theme-picker" aria-label="Stream LLM to wall display">
-          {[true, false].map((on) => (
-            <button
-              key={on ? "on" : "off"}
-              type="button"
-              aria-pressed={brainStream === on}
-              className={`seg${brainStream === on ? " seg-on" : ""}`}
-              disabled={brainStream === null}
-              onClick={() => pickBrainStream(on)}
-            >
-              {on ? "On" : "Off"}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Read wall display aloud</h2>
-        <p className="settings-meta">
-          speaks each streamed chat turn out loud on the box, rendered by Kokoro. companion to the
-          stream toggle above — it reads the same prompt and answer text, so it only speaks when
-          streaming is on and the display is the box's own monitor. the display shows its voice
-          panel only while this is on and voices are installed. off by default.
-        </p>
-        <div className="theme-picker" aria-label="Read wall display aloud">
-          {[true, false].map((on) => (
-            <button
-              key={on ? "on" : "off"}
-              type="button"
-              aria-pressed={brainReadAloud === on}
-              className={`seg${brainReadAloud === on ? " seg-on" : ""}`}
-              disabled={brainReadAloud === null}
-              onClick={() => pickBrainReadAloud(on)}
-            >
-              {on ? "On" : "Off"}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Read-aloud voice</h2>
-        <p className="settings-meta">
-          how the assistant reads answers aloud in chat (and on the wall display). pick a model:{" "}
-          <b>Kokoro</b> renders natural voices on the box; <b>Native</b> uses this device's built-in
-          voice. Kokoro falls back to native when the box can't be reached.
-        </p>
-        <div className="theme-picker" aria-label="Read-aloud model">
-          {models.map((model) => (
-            <button
-              key={model}
-              type="button"
-              aria-pressed={currentModel === model}
-              className={`seg${currentModel === model ? " seg-on" : ""}`}
-              disabled={brainEngine === null}
-              onClick={() => pickModel(model)}
-            >
-              {MODEL_LABEL[model]}
-            </button>
-          ))}
-        </div>
-        {brainEngine !== "native" &&
-          (voices === null ? (
-            <div className="settings-value">…</div>
-          ) : voices.length === 0 ? (
-            <p className="settings-meta">
-              no voices installed on the box, or the display is unreachable — install them with
-              deploy/tts-stt/install-tts.sh. read-aloud uses this device's built-in voice until
-              then.
-            </p>
-          ) : (
+      {category !== null && (
+        <SettingsLayer title={CATEGORY_TITLE[category]} onBack={() => setCategory(null)}>
+          {category === "appearance" && (
             <>
-              <p className="settings-meta">
-                Kokoro's natural English voices — American and British. play a sample to hear one
-                before choosing it.
-              </p>
-              <label className="settings-field">
-                Kokoro voice
-                <select
-                  aria-label="Kokoro voice"
-                  value={brainAnswerVoice ?? ""}
-                  onChange={(e) => pickAnswerVoice(e.target.value)}
-                >
-                  {/* Surface the saved Kokoro voice when the box doesn't list it so it isn't blank. */}
-                  {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
-                    <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
-                  )}
-                  {kokoroVoices.map((v) => (
-                    <option key={v} value={v}>
-                      {voiceLabel(v)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="settings-actions">
-                <button
-                  type="button"
-                  className="seg"
-                  disabled={!brainAnswerVoice || samplePlaying}
-                  onClick={playSample}
-                >
-                  {samplePlaying ? "Playing…" : "Play sample"}
-                </button>
-                <button
-                  type="button"
-                  className="seg"
-                  disabled={!brainAnswerVoice}
-                  onClick={() => setReadTextOpen(true)}
-                >
-                  Read custom text
-                </button>
-              </div>
-              {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
-            </>
-          ))}
-
-        {/* Voice effects. Speed + pitch apply to BOTH engines (native maps them onto the browser
-            utterance); chorus + robot are on-box (Kokoro) ffmpeg effects, so they're offered only
-            on the Kokoro model. Sliders save on a trailing debounce (drag updates the label live);
-            a release/blur flushes the save at once. */}
-        <div className="settings-fx">
-          <p className="settings-meta">
-            Voice effects — applied to chat read-aloud and the wall display.
-          </p>
-          {syncError && <p className="settings-meta settings-error">{syncError}</p>}
-          <label className="settings-field">
-            Reading speed: {(brainSpeed ?? 1).toFixed(2)}×
-            <input
-              type="range"
-              min={0.5}
-              max={2}
-              step={0.05}
-              value={brainSpeed ?? 1}
-              aria-label="Reading speed"
-              disabled={brainSpeed === null}
-              onChange={(e) => onSpeedInput(Number(e.target.value))}
-              onPointerUp={(e) => commitSpeed(Number(e.currentTarget.value))}
-              onKeyUp={(e) => commitSpeed(Number(e.currentTarget.value))}
-              onBlur={(e) => commitSpeed(Number(e.currentTarget.value))}
-            />
-          </label>
-          <label className="settings-field">
-            Pitch: {(brainPitch ?? 0) > 0 ? "+" : ""}
-            {brainPitch ?? 0} semitones
-            <input
-              type="range"
-              min={-12}
-              max={12}
-              step={1}
-              value={brainPitch ?? 0}
-              aria-label="Pitch"
-              disabled={brainPitch === null}
-              onChange={(e) => onPitchInput(Number(e.target.value))}
-              onPointerUp={(e) => commitPitch(Number(e.currentTarget.value))}
-              onKeyUp={(e) => commitPitch(Number(e.currentTarget.value))}
-              onBlur={(e) => commitPitch(Number(e.currentTarget.value))}
-            />
-          </label>
-          {currentModel === "kokoro" && (
-            <div className="theme-picker" aria-label="Voice character effects">
-              <button
-                type="button"
-                aria-pressed={brainChorus === true}
-                className={`seg${brainChorus ? " seg-on" : ""}`}
-                disabled={brainChorus === null}
-                onClick={() => pickChorus(!brainChorus)}
-              >
-                Chorus
-              </button>
-              <button
-                type="button"
-                aria-pressed={brainRobot === true}
-                className={`seg${brainRobot ? " seg-on" : ""}`}
-                disabled={brainRobot === null}
-                onClick={() => pickRobot(!brainRobot)}
-              >
-                Robot
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Pronunciations — the owner's respelling map, on-box (Kokoro) only, gated the same
-            way as the voice picker. The whole map is PUT on every edit (REPLACE semantics). */}
-        {currentModel === "kokoro" && (
-          <div className="pron">
-            {ttsHealth && ttsHealth.g2p !== "unavailable" && (
-              <div
-                className={`pron-chip ${ttsHealth.g2p === "misaki" ? "pron-chip-ok" : "pron-chip-warn"}`}
-              >
-                <span className="pron-dot" />
-                {ttsHealth.g2p === "misaki"
-                  ? "Voice engine: misaki ✓"
-                  : "Voice engine: espeak — pronunciations still apply, quality limited"}
-              </div>
-            )}
-            <div className="pron-card">
-              <div className="pron-card-h">
-                <div className="pron-card-t">How to say a word</div>
-                <div className="pron-card-d">
-                  Type a word and how it should sound. Read-aloud says it your way — no phonetics
-                  needed. Applies everywhere the box reads text.
-                </div>
-              </div>
-              <div className="pron-rows" aria-label="Pronunciations">
-                {lexicon === null ? null : Object.keys(lexicon).length === 0 ? (
-                  <div className="pron-empty">No custom pronunciations yet. Add one below.</div>
-                ) : (
-                  Object.entries(lexicon).map(([word, say]) => (
-                    <div className="pron-row" key={word}>
-                      <span className="pron-word">{word}</span>
-                      <span className="pron-arrow">→</span>
-                      <span className="pron-say">{say}</span>
-                      <button
-                        type="button"
-                        className={`pron-icon-btn pron-icon-play${pronPlayingKey === word ? " pron-playing" : ""}`}
-                        title="Test"
-                        aria-label={`Test ${word}`}
-                        onClick={() => playText(say, word)}
-                      >
-                        {pronPlayingKey === word ? "❚❚" : "▷"}
-                      </button>
-                      <button
-                        type="button"
-                        className="pron-icon-btn"
-                        title="Remove"
-                        aria-label={`Remove ${word}`}
-                        onClick={() => removePronunciation(word)}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-              {pronAdding ? (
-                <div className="pron-adder">
-                  <div className="pron-two">
-                    <label className="pron-field">
-                      Word
-                      <input
-                        value={pronWord}
-                        placeholder="Titusville"
-                        aria-label="Word"
-                        onChange={(e) => setPronWord(e.target.value)}
-                      />
-                    </label>
-                    <label className="pron-field">
-                      Say it like
-                      <input
-                        value={pronSay}
-                        placeholder="Tight us ville"
-                        aria-label="Say it like"
-                        onChange={(e) => setPronSay(e.target.value)}
-                      />
-                    </label>
-                  </div>
-                  <div className="pron-actions">
+              <section className="settings-card">
+                <h2 className="settings-label">Theme</h2>
+                <div className="theme-picker" aria-label="Theme">
+                  {THEME_OPTIONS.map((opt) => (
                     <button
+                      key={opt.value}
                       type="button"
-                      className="pron-btn pron-btn-test"
-                      disabled={!pronSay.trim()}
-                      onClick={() => playText(pronSay, "")}
+                      aria-pressed={theme === opt.value}
+                      className={`seg${theme === opt.value ? " seg-on" : ""}`}
+                      onClick={() => pick(opt.value)}
                     >
-                      {pronPlayingKey === "" ? "❚❚ Playing" : "▷ Test"}
+                      {opt.label}
                     </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="settings-card">
+                <h2 className="settings-label">Text size</h2>
+                <div className="theme-picker" aria-label="Text size">
+                  {FONT_SCALES.map((scale) => (
                     <button
+                      key={scale}
                       type="button"
-                      className="pron-btn pron-btn-ghost"
+                      aria-pressed={fontScale === scale}
+                      className={`seg${fontScale === scale ? " seg-on" : ""}`}
                       onClick={() => {
-                        setPronAdding(false);
-                        setPronWord("");
-                        setPronSay("");
+                        setFontScale(scale);
+                        setScale(scale);
                       }}
                     >
-                      Cancel
+                      {scale}%
                     </button>
-                    <button
-                      type="button"
-                      className="pron-btn pron-btn-primary"
-                      disabled={!pronWord.trim() || !pronSay.trim()}
-                      onClick={addPronunciation}
-                    >
-                      Save
-                    </button>
-                  </div>
+                  ))}
                 </div>
-              ) : (
-                <button type="button" className="pron-add-row" onClick={() => setPronAdding(true)}>
-                  ＋ Add a pronunciation
-                </button>
-              )}
-            </div>
-            <p className="pron-note">
-              Tip: spell it the way it sounds, splitting into chunks with spaces — “Cholmondeley →
-              Chumley”, “GIF → jiff”.
-            </p>
-          </div>
-        )}
-      </section>
+              </section>
 
-      <section className="settings-card">
-        <h2 className="settings-label">Time zone</h2>
-        <p className="settings-meta">
-          appointment times and other dates render in this zone — synced automatically from this
-          device, so the assistant's answers match the cards.
-        </p>
-        <div className="settings-value" aria-label="Time zone">
-          {timezone}
-        </div>
-      </section>
+              <section className="settings-card">
+                <h2 className="settings-label">Response typing speed</h2>
+                <p className="settings-meta">
+                  how fast the assistant's answer types out, in tokens per second — the reveal is
+                  paced steadily so fast local models read as smooth typing rather than snapping in.
+                  Instant turns pacing off; the full answer shows the moment it lands.
+                </p>
+                <div className="theme-picker" aria-label="Response typing speed">
+                  {TOKEN_RATES.map((rate) => (
+                    <button
+                      key={rate}
+                      type="button"
+                      aria-pressed={tokenRate === rate}
+                      className={`seg${tokenRate === rate ? " seg-on" : ""}`}
+                      onClick={() => {
+                        setTokenRate(rate);
+                        setRate(rate);
+                      }}
+                    >
+                      {rate === 0 ? "Instant" : `${rate}/s`}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+          {category === "voice" && (
+            <>
+              <section className="settings-card">
+                <h2 className="settings-label">Stream LLM to wall display</h2>
+                <p className="settings-meta">
+                  shows each chat turn on the on-box neural-brain display (:8800) as tendrils with
+                  the prompt and answer text streaming along them, plus a fade-out popup of the
+                  answer. this puts your real prompt and answer text on that display, which has no
+                  login — only turn it on when the display is the box's own monitor (or bound to
+                  localhost), never an exposed LAN screen. off by default.
+                </p>
+                <div className="theme-picker" aria-label="Stream LLM to wall display">
+                  {[true, false].map((on) => (
+                    <button
+                      key={on ? "on" : "off"}
+                      type="button"
+                      aria-pressed={brainStream === on}
+                      className={`seg${brainStream === on ? " seg-on" : ""}`}
+                      disabled={brainStream === null}
+                      onClick={() => pickBrainStream(on)}
+                    >
+                      {on ? "On" : "Off"}
+                    </button>
+                  ))}
+                </div>
+              </section>
 
-      <SdrRadiosCard />
+              <section className="settings-card">
+                <h2 className="settings-label">Read wall display aloud</h2>
+                <p className="settings-meta">
+                  speaks each streamed chat turn out loud on the box, rendered by Kokoro. companion
+                  to the stream toggle above — it reads the same prompt and answer text, so it only
+                  speaks when streaming is on and the display is the box's own monitor. the display
+                  shows its voice panel only while this is on and voices are installed. off by
+                  default.
+                </p>
+                <div className="theme-picker" aria-label="Read wall display aloud">
+                  {[true, false].map((on) => (
+                    <button
+                      key={on ? "on" : "off"}
+                      type="button"
+                      aria-pressed={brainReadAloud === on}
+                      className={`seg${brainReadAloud === on ? " seg-on" : ""}`}
+                      disabled={brainReadAloud === null}
+                      onClick={() => pickBrainReadAloud(on)}
+                    >
+                      {on ? "On" : "Off"}
+                    </button>
+                  ))}
+                </div>
+              </section>
 
-      <section className="settings-card">
-        <h2 className="settings-label">Amateur callsign</h2>
-        <p className="settings-meta">
-          your callsign, with or without an SSID. The Radio screen uses it to tell your own traffic
-          apart from everyone else's on a packet channel that is mostly other people. A bare
-          callsign matches every SSID you use, so <code>KE8XYZ</code> covers both the truck and the
-          handheld. Leave it empty if you would rather not say.
-        </p>
-        <label className="settings-field">
-          Callsign
-          <input
-            value={callsign}
-            placeholder="not set"
-            spellCheck={false}
-            autoCapitalize="characters"
-            autoComplete="off"
-            onChange={(e) => {
-              setCallsign(e.target.value.toUpperCase());
-              setCallsignError(null);
-            }}
-          />
-        </label>
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="seg"
-            // A distinct accessible name: this screen already has a Save in the Gmail
-            // card, and two controls that announce themselves identically are ambiguous
-            // to anyone not looking at which card they are in.
-            aria-label="Save callsign"
-            disabled={callsignSaving || callsign.trim() === callsignSaved}
-            onClick={() => void saveCallsign()}
-          >
-            {callsignSaving ? "Saving…" : "Save"}
-          </button>
-        </div>
-        {callsignError !== null && (
-          <p className="settings-meta" role="alert" style={{ color: "var(--danger)" }}>
-            {callsignError}
-          </p>
-        )}
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Gmail (Archivist)</h2>
-        <p className="settings-meta">
-          connects the Archivist agent to your Gmail so it can organize your mail. Paste the OAuth
-          Client ID and secret from your Google Cloud "Web application" client, Save, then Connect
-          to approve access. The Archivist reads, labels and archives — it never deletes. Secrets
-          are stored on the server and never shown again. (A refresh token from the bootstrap script
-          can be pasted instead, if you prefer.)
-        </p>
-        <div className="settings-value" aria-label="Gmail connection status">
-          {gmail === null
-            ? "…"
-            : gmail.connected
-              ? "Connected"
-              : gmail.client_id_set || gmail.client_secret_set
-                ? "Credentials saved — not connected yet"
-                : "Not connected"}
-        </div>
-        <label className="settings-field">
-          Client ID
-          <input
-            type="text"
-            autoComplete="off"
-            placeholder={gmail?.client_id_set ? "•••••• (saved)" : "…apps.googleusercontent.com"}
-            value={gmailId}
-            onChange={(e) => setGmailId(e.target.value)}
-          />
-        </label>
-        <label className="settings-field">
-          Client secret
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder={gmail?.client_secret_set ? "•••••• (saved)" : ""}
-            value={gmailSecret}
-            onChange={(e) => setGmailSecret(e.target.value)}
-          />
-        </label>
-        <label className="settings-field">
-          Refresh token
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder={gmail?.refresh_token_set ? "•••••• (saved)" : ""}
-            value={gmailToken}
-            onChange={(e) => setGmailToken(e.target.value)}
-          />
-        </label>
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="seg"
-            disabled={gmailSaving || (!gmailId.trim() && !gmailSecret.trim() && !gmailToken.trim())}
-            onClick={saveGmail}
-          >
-            {gmailSaving ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
-            className="seg"
-            disabled={!gmail?.client_id_set || !gmail?.client_secret_set}
-            onClick={connectGmail}
-          >
-            {gmail?.connected ? "Reconnect Gmail" : "Connect Gmail"}
-          </button>
-          <button type="button" className="seg" disabled={!gmail?.connected} onClick={testGmail}>
-            Test connection
-          </button>
-        </div>
-        <p className="settings-meta">
-          Save your Client ID and secret, then Connect to approve access in Google — no need to
-          paste a refresh token by hand.
-        </p>
-        {gmailNotice && <p className="settings-meta">{gmailNotice}</p>}
-        {gmailTest && (
-          <p className={`settings-meta${gmailTest.ok ? "" : " settings-error"}`}>
-            {gmailTest.detail}
-          </p>
-        )}
-      </section>
-
-      <section className="settings-card">
-        <div className="settings-cardhead">
-          <h2 className="settings-label">Tavily web search &amp; fetch</h2>
-          <span
-            className={`settings-pill${tavily?.effective ? " on" : ""}`}
-            aria-label="Tavily status"
-          >
-            <span className="dot" />
-            {tavily === null
-              ? "…"
-              : !tavily.wired
-                ? "Unavailable"
-                : tavily.effective
-                  ? tavily.health === "quota"
-                    ? "Out of credits"
-                    : tavily.health === "key_rejected"
-                      ? "Key rejected"
-                      : "Active"
-                  : tavily.enabled
-                    ? "No key"
-                    : "Off"}
-          </span>
-        </div>
-        <p className="settings-meta">
-          the last web-search fallback (after the box's own engines and Brave), and a hosted reader
-          for pages the box can't — bot walls, paywalls, JavaScript-only sites. Paste your Tavily
-          API key and Save &amp; test. The key is stored on the server and never shown again.
-        </p>
-        {tavily?.effective && tavily.health !== "ok" && (
-          <p className="settings-meta settings-error" aria-label="Tavily health">
-            {tavily.health_detail || "Tavily is failing"}
-            {tavily.health_since && ` since ${new Date(tavily.health_since).toLocaleString()}`}.{" "}
-            {tavily.health === "rate_limited"
-              ? "It should clear within a minute."
-              : "Web search is using the box's own engines until this clears."}
-          </p>
-        )}
-        <div className="settings-switch-row">
-          <span className="settings-meta" style={{ margin: 0 }}>
-            Enable the tier
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-label="Enable Tavily"
-            aria-checked={tavily?.enabled ?? false}
-            className={`settings-switch${tavily?.enabled ? " on" : ""}`}
-            disabled={tavily === null || !tavily.wired}
-            onClick={toggleTavily}
-          >
-            <span className="knob" />
-          </button>
-        </div>
-        <label className="settings-field">
-          API key
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder={tavily?.key_set ? "•••••• (saved)" : "tvly-…"}
-            value={tavilyKey}
-            onChange={(e) => setTavilyKey(e.target.value)}
-          />
-        </label>
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="seg"
-            disabled={tavilyTesting || !tavily?.enabled || (!tavilyKey.trim() && !tavily?.key_set)}
-            onClick={saveAndTestTavily}
-          >
-            {tavilyTesting ? "Testing…" : "Save & test"}
-          </button>
-          <button
-            type="button"
-            className="seg"
-            disabled={!tavily?.key_set}
-            onClick={clearTavilyKey}
-          >
-            Clear key
-          </button>
-        </div>
-        {tavilyTest && (
-          <p className={`settings-meta${tavilyTest.ok ? "" : " settings-error"}`}>
-            {tavilyTest.detail}
-          </p>
-        )}
-      </section>
-
-      <section className="settings-card">
-        <div className="settings-cardhead">
-          <h2 className="settings-label">Brave Search</h2>
-          <span
-            className={`settings-pill${brave?.effective ? " on" : ""}`}
-            aria-label="Brave status"
-          >
-            <span className="dot" />
-            {brave === null
-              ? "…"
-              : !brave.wired
-                ? "Unavailable"
-                : brave.effective
-                  ? "Active"
-                  : !brave.enabled
-                    ? "Off"
-                    : !brave.key_present
-                      ? "No key"
-                      : brave.blocked === "key_rejected"
-                        ? "Key rejected"
-                        : brave.blocked === "credit_spent"
-                          ? "Out of credit"
-                          : "Budget reached"}
-          </span>
-        </div>
-        <p className="settings-meta">
-          Searches go SearXNG first, then Brave, then Tavily. Stops for the month at the budget. The
-          count resets on the 1st (UTC), but Brave's free credit may reset on your billing date
-          instead — keep the budget under the free credit. Get a key from the{" "}
-          <a
-            href="https://api-dashboard.search.brave.com/app/keys"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Brave dashboard
-          </a>
-          , paste it and Save &amp; test. The key is stored on the server and never shown again.
-        </p>
-        {brave !== null && (
-          <p className="settings-meta" aria-label="Brave usage">
-            Used {brave.used_this_month} of {brave.budget} this month.
-          </p>
-        )}
-        {brave?.last_error && (
-          <p className="settings-meta settings-error" aria-label="Brave health">
-            {brave.last_error}
-            {brave.last_error_at && ` since ${new Date(brave.last_error_at).toLocaleString()}`}.
-          </p>
-        )}
-        <div className="settings-switch-row">
-          <span className="settings-meta" style={{ margin: 0 }}>
-            Enable the tier
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-label="Enable Brave"
-            aria-checked={brave?.enabled ?? false}
-            className={`settings-switch${brave?.enabled ? " on" : ""}`}
-            disabled={brave === null || !brave.wired}
-            onClick={toggleBrave}
-          >
-            <span className="knob" />
-          </button>
-        </div>
-        <label className="settings-field">
-          Monthly budget (queries)
-          <input
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={100000}
-            step={1}
-            value={braveBudget}
-            disabled={brave === null}
-            onChange={(e) => setBraveBudget(e.target.value)}
-            onBlur={commitBraveBudget}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitBraveBudget();
-            }}
-          />
-        </label>
-        <label className="settings-field">
-          Brave API key
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder={
-              brave?.key_source === "stored"
-                ? "•••••• (saved)"
-                : brave?.key_source === "env"
-                  ? "•••••• (from server config)"
-                  : "BSA…"
-            }
-            value={braveKey}
-            onChange={(e) => setBraveKey(e.target.value)}
-          />
-        </label>
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="seg"
-            aria-label="Save & test Brave key"
-            disabled={braveTesting || (!braveKey.trim() && !(brave?.enabled && brave.key_present))}
-            onClick={saveAndTestBrave}
-          >
-            {braveTesting ? "Testing…" : "Save & test"}
-          </button>
-          <button
-            type="button"
-            className="seg"
-            aria-label="Clear Brave key"
-            disabled={brave?.key_source !== "stored"}
-            onClick={clearBraveKey}
-          >
-            Clear key
-          </button>
-        </div>
-        <p className="settings-meta">A test spends one real query and counts toward the budget.</p>
-        {braveError && <p className="settings-meta settings-error">{braveError}</p>}
-        {braveTest && (
-          <p className={`settings-meta${braveTest.ok ? "" : " settings-error"}`}>
-            {braveTest.detail}
-          </p>
-        )}
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Browser agent</h2>
-        <p className="settings-meta">
-          how the assistant drives a web page it has to use (a location picker, a search box). fast
-          takes several steps per decision and reads the answer in the same call; classic is the
-          earlier one-step-at-a-time loop, kept as a fallback if fast gets a site wrong. applies to
-          the next browse.
-        </p>
-        <div className="theme-picker" aria-label="Browser agent">
-          {(
-            [
-              ["fast", "Fast"],
-              ["b1", "Classic"],
-            ] as const
-          ).map(([loop, label]) => (
-            <button
-              key={loop}
-              type="button"
-              aria-pressed={browseLoop === loop}
-              className={`seg${browseLoop === loop ? " seg-on" : ""}`}
-              disabled={browseLoop === null}
-              onClick={() => pickBrowseLoop(loop)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Capture location</h2>
-        <p className="settings-meta">
-          tags notes with where they were written — only when a fresh fix exists; capture never
-          waits for GPS.
-        </p>
-        <div className="theme-picker" aria-label="Capture location">
-          {[true, false].map((on) => (
-            <button
-              key={on ? "on" : "off"}
-              type="button"
-              aria-pressed={locationOn === on}
-              className={`seg${locationOn === on ? " seg-on" : ""}`}
-              onClick={() => {
-                setLocationCaptureEnabled(on);
-                setLocationOn(on);
-              }}
-            >
-              {on ? "On" : "Off"}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Calendar feed</h2>
-        <p className="settings-meta">
-          subscribe a calendar app to your appointments, read-only. the link carries appointment
-          titles from every domain — including health and finance — off your box into whatever
-          calendar subscribes, so keep it private; disable it to cut access instantly.
-        </p>
-        {feed?.enabled && feedUrl ? (
-          <>
-            <input
-              className="feed-url"
-              readOnly
-              value={feedUrl}
-              aria-label="Calendar feed URL"
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <div className="settings-actions">
-              <button type="button" className="seg" onClick={copyFeed}>
-                {copied ? "Copied" : "Copy link"}
-              </button>
-              <button type="button" className="seg" onClick={generateFeed}>
-                Regenerate
-              </button>
-              <button type="button" className="btn-destructive" onClick={disableFeed}>
-                Disable
-              </button>
-            </div>
-          </>
-        ) : (
-          <button type="button" className="seg" onClick={generateFeed} disabled={feed === null}>
-            Generate link
-          </button>
-        )}
-      </section>
-
-      <section className="settings-card">
-        <h2 className="settings-label">Debug access (Claude)</h2>
-        <p className="settings-meta">
-          mint a revocable, time-boxed token an assistant uses to iterate on prompts against your
-          local model, run read-only SQL, read logs, and switch model routing — live. the token
-          carries a key into your box, including health, finance, and location data, so treat it
-          like a password: share it only with a session you trust and revoke it the moment you're
-          done.
-        </p>
-        <div className="settings-actions" aria-label="New debug token">
-          <input
-            className="feed-url"
-            value={debugLabel}
-            placeholder="Label (e.g. Claude session)"
-            aria-label="Debug token label"
-            onChange={(e) => setDebugLabel(e.currentTarget.value)}
-          />
-          <div className="theme-picker" aria-label="Token lifetime">
-            {DEBUG_TTL_OPTIONS.map((opt) => (
-              <button
-                key={opt.hours}
-                type="button"
-                aria-pressed={debugTtl === opt.hours}
-                className={`seg${debugTtl === opt.hours ? " seg-on" : ""}`}
-                onClick={() => setDebugTtl(opt.hours)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <button type="button" className="seg" onClick={mintDebugToken}>
-            Mint token
-          </button>
-        </div>
-        {debugError && <p className="settings-meta settings-error">{debugError}</p>}
-        {mintedPayload && (
-          <>
-            <p className="settings-meta">
-              copy this now — it is shown once and can't be recovered. paste it to the assistant.
-            </p>
-            <input
-              className="feed-url"
-              readOnly
-              value={mintedPayload}
-              aria-label="Debug token payload"
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <div className="settings-actions">
-              <button
-                type="button"
-                className="seg"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(mintedPayload);
-                  setPayloadCopied(true);
-                }}
-              >
-                {payloadCopied ? "Copied" : "Copy token"}
-              </button>
-              <a
-                className="seg"
-                href={`/debug-console.html#${mintedPayload}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open console
-              </a>
-              <button type="button" className="seg" onClick={() => setMintedPayload(null)}>
-                Done
-              </button>
-            </div>
-          </>
-        )}
-        {liveDebugTokens.length > 0 && (
-          <ul className="debug-token-list" aria-label="Debug tokens">
-            {liveDebugTokens.map((t) => {
-              const status = t.suspended_at ? "suspended" : "active";
-              return (
-                <li key={t.id} className="debug-token-row">
-                  <div>
-                    <span className="settings-value">{t.label}</span>
-                    <span className={`debug-token-status debug-token-${status}`}> {status}</span>
+              <section className="settings-card">
+                <h2 className="settings-label">Read-aloud voice</h2>
+                <p className="settings-meta">
+                  how the assistant reads answers aloud in chat (and on the wall display). pick a
+                  model: <b>Kokoro</b> renders natural voices on the box; <b>Native</b> uses this
+                  device's built-in voice. Kokoro falls back to native when the box can't be
+                  reached.
+                </p>
+                <div className="theme-picker" aria-label="Read-aloud model">
+                  {models.map((model) => (
+                    <button
+                      key={model}
+                      type="button"
+                      aria-pressed={currentModel === model}
+                      className={`seg${currentModel === model ? " seg-on" : ""}`}
+                      disabled={brainEngine === null}
+                      onClick={() => pickModel(model)}
+                    >
+                      {MODEL_LABEL[model]}
+                    </button>
+                  ))}
+                </div>
+                {brainEngine !== "native" &&
+                  (voices === null ? (
+                    <div className="settings-value">…</div>
+                  ) : voices.length === 0 ? (
                     <p className="settings-meta">
-                      {t.expires_at
-                        ? `expires ${new Date(t.expires_at).toLocaleString()}`
-                        : "no expiry"}
-                      {t.last_used_at
-                        ? ` · last used ${new Date(t.last_used_at).toLocaleString()}`
-                        : " · never used"}
+                      no voices installed on the box, or the display is unreachable — install them
+                      with deploy/tts-stt/install-tts.sh. read-aloud uses this device's built-in
+                      voice until then.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="settings-meta">
+                        Kokoro's natural English voices — American and British. play a sample to
+                        hear one before choosing it.
+                      </p>
+                      <label className="settings-field">
+                        Kokoro voice
+                        <select
+                          aria-label="Kokoro voice"
+                          value={brainAnswerVoice ?? ""}
+                          onChange={(e) => pickAnswerVoice(e.target.value)}
+                        >
+                          {/* Surface the saved Kokoro voice when the box doesn't list it so it isn't blank. */}
+                          {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
+                            <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
+                          )}
+                          {kokoroVoices.map((v) => (
+                            <option key={v} value={v}>
+                              {voiceLabel(v)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="settings-actions">
+                        <button
+                          type="button"
+                          className="seg"
+                          disabled={!brainAnswerVoice || samplePlaying}
+                          onClick={playSample}
+                        >
+                          {samplePlaying ? "Playing…" : "Play sample"}
+                        </button>
+                        <button
+                          type="button"
+                          className="seg"
+                          disabled={!brainAnswerVoice}
+                          onClick={() => setReadTextOpen(true)}
+                        >
+                          Read custom text
+                        </button>
+                      </div>
+                      {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
+                    </>
+                  ))}
+
+                {/* Voice effects. Speed + pitch apply to BOTH engines (native maps them onto the browser
+                  utterance); chorus + robot are on-box (Kokoro) ffmpeg effects, so they're offered only
+                  on the Kokoro model. Sliders save on a trailing debounce (drag updates the label live);
+                  a release/blur flushes the save at once. */}
+                <div className="settings-fx">
+                  <p className="settings-meta">
+                    Voice effects — applied to chat read-aloud and the wall display.
+                  </p>
+                  {syncError && <p className="settings-meta settings-error">{syncError}</p>}
+                  <label className="settings-field">
+                    Reading speed: {(brainSpeed ?? 1).toFixed(2)}×
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={2}
+                      step={0.05}
+                      value={brainSpeed ?? 1}
+                      aria-label="Reading speed"
+                      disabled={brainSpeed === null}
+                      onChange={(e) => onSpeedInput(Number(e.target.value))}
+                      onPointerUp={(e) => commitSpeed(Number(e.currentTarget.value))}
+                      onKeyUp={(e) => commitSpeed(Number(e.currentTarget.value))}
+                      onBlur={(e) => commitSpeed(Number(e.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    Pitch: {(brainPitch ?? 0) > 0 ? "+" : ""}
+                    {brainPitch ?? 0} semitones
+                    <input
+                      type="range"
+                      min={-12}
+                      max={12}
+                      step={1}
+                      value={brainPitch ?? 0}
+                      aria-label="Pitch"
+                      disabled={brainPitch === null}
+                      onChange={(e) => onPitchInput(Number(e.target.value))}
+                      onPointerUp={(e) => commitPitch(Number(e.currentTarget.value))}
+                      onKeyUp={(e) => commitPitch(Number(e.currentTarget.value))}
+                      onBlur={(e) => commitPitch(Number(e.currentTarget.value))}
+                    />
+                  </label>
+                  {currentModel === "kokoro" && (
+                    <div className="theme-picker" aria-label="Voice character effects">
+                      <button
+                        type="button"
+                        aria-pressed={brainChorus === true}
+                        className={`seg${brainChorus ? " seg-on" : ""}`}
+                        disabled={brainChorus === null}
+                        onClick={() => pickChorus(!brainChorus)}
+                      >
+                        Chorus
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={brainRobot === true}
+                        className={`seg${brainRobot ? " seg-on" : ""}`}
+                        disabled={brainRobot === null}
+                        onClick={() => pickRobot(!brainRobot)}
+                      >
+                        Robot
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Pronunciations — the owner's respelling map, on-box (Kokoro) only, gated the same
+                  way as the voice picker. The whole map is PUT on every edit (REPLACE semantics). */}
+                {currentModel === "kokoro" && (
+                  <div className="pron">
+                    {ttsHealth && ttsHealth.g2p !== "unavailable" && (
+                      <div
+                        className={`pron-chip ${ttsHealth.g2p === "misaki" ? "pron-chip-ok" : "pron-chip-warn"}`}
+                      >
+                        <span className="pron-dot" />
+                        {ttsHealth.g2p === "misaki"
+                          ? "Voice engine: misaki ✓"
+                          : "Voice engine: espeak — pronunciations still apply, quality limited"}
+                      </div>
+                    )}
+                    <div className="pron-card">
+                      <div className="pron-card-h">
+                        <div className="pron-card-t">How to say a word</div>
+                        <div className="pron-card-d">
+                          Type a word and how it should sound. Read-aloud says it your way — no
+                          phonetics needed. Applies everywhere the box reads text.
+                        </div>
+                      </div>
+                      <div className="pron-rows" aria-label="Pronunciations">
+                        {lexicon === null ? null : Object.keys(lexicon).length === 0 ? (
+                          <div className="pron-empty">
+                            No custom pronunciations yet. Add one below.
+                          </div>
+                        ) : (
+                          Object.entries(lexicon).map(([word, say]) => (
+                            <div className="pron-row" key={word}>
+                              <span className="pron-word">{word}</span>
+                              <span className="pron-arrow">→</span>
+                              <span className="pron-say">{say}</span>
+                              <button
+                                type="button"
+                                className={`pron-icon-btn pron-icon-play${pronPlayingKey === word ? " pron-playing" : ""}`}
+                                title="Test"
+                                aria-label={`Test ${word}`}
+                                onClick={() => playText(say, word)}
+                              >
+                                {pronPlayingKey === word ? "❚❚" : "▷"}
+                              </button>
+                              <button
+                                type="button"
+                                className="pron-icon-btn"
+                                title="Remove"
+                                aria-label={`Remove ${word}`}
+                                onClick={() => removePronunciation(word)}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      {pronAdding ? (
+                        <div className="pron-adder">
+                          <div className="pron-two">
+                            <label className="pron-field">
+                              Word
+                              <input
+                                value={pronWord}
+                                placeholder="Titusville"
+                                aria-label="Word"
+                                onChange={(e) => setPronWord(e.target.value)}
+                              />
+                            </label>
+                            <label className="pron-field">
+                              Say it like
+                              <input
+                                value={pronSay}
+                                placeholder="Tight us ville"
+                                aria-label="Say it like"
+                                onChange={(e) => setPronSay(e.target.value)}
+                              />
+                            </label>
+                          </div>
+                          <div className="pron-actions">
+                            <button
+                              type="button"
+                              className="pron-btn pron-btn-test"
+                              disabled={!pronSay.trim()}
+                              onClick={() => playText(pronSay, "")}
+                            >
+                              {pronPlayingKey === "" ? "❚❚ Playing" : "▷ Test"}
+                            </button>
+                            <button
+                              type="button"
+                              className="pron-btn pron-btn-ghost"
+                              onClick={() => {
+                                setPronAdding(false);
+                                setPronWord("");
+                                setPronSay("");
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="pron-btn pron-btn-primary"
+                              disabled={!pronWord.trim() || !pronSay.trim()}
+                              onClick={addPronunciation}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="pron-add-row"
+                          onClick={() => setPronAdding(true)}
+                        >
+                          ＋ Add a pronunciation
+                        </button>
+                      )}
+                    </div>
+                    <p className="pron-note">
+                      Tip: spell it the way it sounds, splitting into chunks with spaces —
+                      “Cholmondeley → Chumley”, “GIF → jiff”.
                     </p>
                   </div>
-                  <div className="debug-token-actions">
-                    {status === "active" ? (
-                      <button type="button" className="seg" onClick={() => suspendDebugToken(t.id)}>
-                        Suspend
-                      </button>
-                    ) : (
-                      <button type="button" className="seg" onClick={() => resumeDebugToken(t.id)}>
-                        Resume
-                      </button>
-                    )}
+                )}
+              </section>
+            </>
+          )}
+          {category === "capture" && (
+            <>
+              <section className="settings-card">
+                <h2 className="settings-label">Image analysis</h2>
+                <p className="settings-meta">
+                  how much a vision model reads from attached images — ocr only transcribes the text
+                  verbatim; full analysis adds a salient description the fact pipeline mines. either
+                  way, capture never waits — vision runs after sync.
+                </p>
+                <div className="theme-picker" aria-label="Image analysis">
+                  {IMAGE_ANALYSIS_OPTIONS.map((opt) => (
                     <button
+                      key={opt.value}
                       type="button"
-                      className="btn-destructive"
-                      onClick={() =>
-                        revoking === t.id ? revokeDebugToken(t.id) : setRevoking(t.id)
-                      }
-                      onBlur={() => setRevoking(null)}
+                      aria-pressed={imageMode === opt.value}
+                      className={`seg${imageMode === opt.value ? " seg-on" : ""}`}
+                      onClick={() => pickImageMode(opt.value)}
                     >
-                      {revoking === t.id ? "Tap to confirm" : "Revoke"}
+                      {opt.label}
                     </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+                  ))}
+                </div>
+              </section>
 
-      <section className="settings-card">
-        <h2 className="settings-label">Session</h2>
-        <p className="settings-meta">{deviceLabel}</p>
-        <button
-          type="button"
-          className="btn-destructive"
-          onClick={() => (confirmingLogout ? onLogout() : setConfirmingLogout(true))}
-          onBlur={() => setConfirmingLogout(false)}
-        >
-          {confirmingLogout ? "Tap again to confirm" : "Log out"}
-        </button>
-        {/* Build stamp — the only reliable way to confirm which bundle a cached PWA is
-            actually running (a deploy/service-worker check). */}
-        <p className="settings-meta settings-build">
-          build {BUILD_SHA}
-          {BUILD_TIME ? ` · ${new Date(BUILD_TIME).toLocaleString()}` : ""}
-        </p>
-      </section>
+              <section className="settings-card">
+                <h2 className="settings-label">Capture location</h2>
+                <p className="settings-meta">
+                  tags notes with where they were written — only when a fresh fix exists; capture
+                  never waits for GPS.
+                </p>
+                <div className="theme-picker" aria-label="Capture location">
+                  {[true, false].map((on) => (
+                    <button
+                      key={on ? "on" : "off"}
+                      type="button"
+                      aria-pressed={locationOn === on}
+                      className={`seg${locationOn === on ? " seg-on" : ""}`}
+                      onClick={() => {
+                        setLocationCaptureEnabled(on);
+                        setLocationOn(on);
+                      }}
+                    >
+                      {on ? "On" : "Off"}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="settings-card">
+                <h2 className="settings-label">Time zone</h2>
+                <p className="settings-meta">
+                  appointment times and other dates render in this zone — synced automatically from
+                  this device, so the assistant's answers match the cards.
+                </p>
+                <div className="settings-value" aria-label="Time zone">
+                  {timezone}
+                </div>
+              </section>
+            </>
+          )}
+          {category === "radio" && (
+            <>
+              <SdrRadiosCard />
+
+              <section className="settings-card">
+                <h2 className="settings-label">Amateur callsign</h2>
+                <p className="settings-meta">
+                  your callsign, with or without an SSID. The Radio screen uses it to tell your own
+                  traffic apart from everyone else's on a packet channel that is mostly other
+                  people. A bare callsign matches every SSID you use, so <code>KE8XYZ</code> covers
+                  both the truck and the handheld. Leave it empty if you would rather not say.
+                </p>
+                <label className="settings-field">
+                  Callsign
+                  <input
+                    value={callsign}
+                    placeholder="not set"
+                    spellCheck={false}
+                    autoCapitalize="characters"
+                    autoComplete="off"
+                    onChange={(e) => {
+                      setCallsign(e.target.value.toUpperCase());
+                      setCallsignError(null);
+                    }}
+                  />
+                </label>
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    className="seg"
+                    // A distinct accessible name: this screen already has a Save in the Gmail
+                    // card, and two controls that announce themselves identically are ambiguous
+                    // to anyone not looking at which card they are in.
+                    aria-label="Save callsign"
+                    disabled={callsignSaving || callsign.trim() === callsignSaved}
+                    onClick={() => void saveCallsign()}
+                  >
+                    {callsignSaving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+                {callsignError !== null && (
+                  <p className="settings-meta" role="alert" style={{ color: "var(--danger)" }}>
+                    {callsignError}
+                  </p>
+                )}
+              </section>
+            </>
+          )}
+          {category === "web" && (
+            <>
+              <section className="settings-card">
+                <div className="settings-cardhead">
+                  <h2 className="settings-label">Tavily web search &amp; fetch</h2>
+                  <span
+                    className={`settings-pill${tavily?.effective ? " on" : ""}`}
+                    aria-label="Tavily status"
+                  >
+                    <span className="dot" />
+                    {tavily === null
+                      ? "…"
+                      : !tavily.wired
+                        ? "Unavailable"
+                        : tavily.effective
+                          ? tavily.health === "quota"
+                            ? "Out of credits"
+                            : tavily.health === "key_rejected"
+                              ? "Key rejected"
+                              : "Active"
+                          : tavily.enabled
+                            ? "No key"
+                            : "Off"}
+                  </span>
+                </div>
+                <p className="settings-meta">
+                  the last web-search fallback (after the box's own engines and Brave), and a hosted
+                  reader for pages the box can't — bot walls, paywalls, JavaScript-only sites. Paste
+                  your Tavily API key and Save &amp; test. The key is stored on the server and never
+                  shown again.
+                </p>
+                {tavily?.effective && tavily.health !== "ok" && (
+                  <p className="settings-meta settings-error" aria-label="Tavily health">
+                    {tavily.health_detail || "Tavily is failing"}
+                    {tavily.health_since &&
+                      ` since ${new Date(tavily.health_since).toLocaleString()}`}
+                    .{" "}
+                    {tavily.health === "rate_limited"
+                      ? "It should clear within a minute."
+                      : "Web search is using the box's own engines until this clears."}
+                  </p>
+                )}
+                <div className="settings-switch-row">
+                  <span className="settings-meta" style={{ margin: 0 }}>
+                    Enable the tier
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label="Enable Tavily"
+                    aria-checked={tavily?.enabled ?? false}
+                    className={`settings-switch${tavily?.enabled ? " on" : ""}`}
+                    disabled={tavily === null || !tavily.wired}
+                    onClick={toggleTavily}
+                  >
+                    <span className="knob" />
+                  </button>
+                </div>
+                <label className="settings-field">
+                  API key
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    placeholder={tavily?.key_set ? "•••••• (saved)" : "tvly-…"}
+                    value={tavilyKey}
+                    onChange={(e) => setTavilyKey(e.target.value)}
+                  />
+                </label>
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    className="seg"
+                    disabled={
+                      tavilyTesting || !tavily?.enabled || (!tavilyKey.trim() && !tavily?.key_set)
+                    }
+                    onClick={saveAndTestTavily}
+                  >
+                    {tavilyTesting ? "Testing…" : "Save & test"}
+                  </button>
+                  <button
+                    type="button"
+                    className="seg"
+                    disabled={!tavily?.key_set}
+                    onClick={clearTavilyKey}
+                  >
+                    Clear key
+                  </button>
+                </div>
+                {tavilyTest && (
+                  <p className={`settings-meta${tavilyTest.ok ? "" : " settings-error"}`}>
+                    {tavilyTest.detail}
+                  </p>
+                )}
+              </section>
+
+              <section className="settings-card">
+                <div className="settings-cardhead">
+                  <h2 className="settings-label">Brave Search</h2>
+                  <span
+                    className={`settings-pill${brave?.effective ? " on" : ""}`}
+                    aria-label="Brave status"
+                  >
+                    <span className="dot" />
+                    {brave === null
+                      ? "…"
+                      : !brave.wired
+                        ? "Unavailable"
+                        : brave.effective
+                          ? "Active"
+                          : !brave.enabled
+                            ? "Off"
+                            : !brave.key_present
+                              ? "No key"
+                              : brave.blocked === "key_rejected"
+                                ? "Key rejected"
+                                : brave.blocked === "credit_spent"
+                                  ? "Out of credit"
+                                  : "Budget reached"}
+                  </span>
+                </div>
+                <p className="settings-meta">
+                  Searches go SearXNG first, then Brave, then Tavily. Stops for the month at the
+                  budget. The count resets on the 1st (UTC), but Brave's free credit may reset on
+                  your billing date instead — keep the budget under the free credit. Get a key from
+                  the{" "}
+                  <a
+                    href="https://api-dashboard.search.brave.com/app/keys"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Brave dashboard
+                  </a>
+                  , paste it and Save &amp; test. The key is stored on the server and never shown
+                  again.
+                </p>
+                {brave !== null && (
+                  <p className="settings-meta" aria-label="Brave usage">
+                    Used {brave.used_this_month} of {brave.budget} this month.
+                  </p>
+                )}
+                {brave?.last_error && (
+                  <p className="settings-meta settings-error" aria-label="Brave health">
+                    {brave.last_error}
+                    {brave.last_error_at &&
+                      ` since ${new Date(brave.last_error_at).toLocaleString()}`}
+                    .
+                  </p>
+                )}
+                <div className="settings-switch-row">
+                  <span className="settings-meta" style={{ margin: 0 }}>
+                    Enable the tier
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label="Enable Brave"
+                    aria-checked={brave?.enabled ?? false}
+                    className={`settings-switch${brave?.enabled ? " on" : ""}`}
+                    disabled={brave === null || !brave.wired}
+                    onClick={toggleBrave}
+                  >
+                    <span className="knob" />
+                  </button>
+                </div>
+                <label className="settings-field">
+                  Monthly budget (queries)
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={100000}
+                    step={1}
+                    value={braveBudget}
+                    disabled={brave === null}
+                    onChange={(e) => setBraveBudget(e.target.value)}
+                    onBlur={commitBraveBudget}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitBraveBudget();
+                    }}
+                  />
+                </label>
+                <label className="settings-field">
+                  Brave API key
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    placeholder={
+                      brave?.key_source === "stored"
+                        ? "•••••• (saved)"
+                        : brave?.key_source === "env"
+                          ? "•••••• (from server config)"
+                          : "BSA…"
+                    }
+                    value={braveKey}
+                    onChange={(e) => setBraveKey(e.target.value)}
+                  />
+                </label>
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    className="seg"
+                    aria-label="Save & test Brave key"
+                    disabled={
+                      braveTesting || (!braveKey.trim() && !(brave?.enabled && brave.key_present))
+                    }
+                    onClick={saveAndTestBrave}
+                  >
+                    {braveTesting ? "Testing…" : "Save & test"}
+                  </button>
+                  <button
+                    type="button"
+                    className="seg"
+                    aria-label="Clear Brave key"
+                    disabled={brave?.key_source !== "stored"}
+                    onClick={clearBraveKey}
+                  >
+                    Clear key
+                  </button>
+                </div>
+                <p className="settings-meta">
+                  A test spends one real query and counts toward the budget.
+                </p>
+                {braveError && <p className="settings-meta settings-error">{braveError}</p>}
+                {braveTest && (
+                  <p className={`settings-meta${braveTest.ok ? "" : " settings-error"}`}>
+                    {braveTest.detail}
+                  </p>
+                )}
+              </section>
+
+              <section className="settings-card">
+                <h2 className="settings-label">Browser agent</h2>
+                <p className="settings-meta">
+                  how the assistant drives a web page it has to use (a location picker, a search
+                  box). fast takes several steps per decision and reads the answer in the same call;
+                  classic is the earlier one-step-at-a-time loop, kept as a fallback if fast gets a
+                  site wrong. applies to the next browse.
+                </p>
+                <div className="theme-picker" aria-label="Browser agent">
+                  {(
+                    [
+                      ["fast", "Fast"],
+                      ["b1", "Classic"],
+                    ] as const
+                  ).map(([loop, label]) => (
+                    <button
+                      key={loop}
+                      type="button"
+                      aria-pressed={browseLoop === loop}
+                      className={`seg${browseLoop === loop ? " seg-on" : ""}`}
+                      disabled={browseLoop === null}
+                      onClick={() => pickBrowseLoop(loop)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+          {category === "connections" && (
+            <>
+              <section className="settings-card">
+                <h2 className="settings-label">Gmail (Archivist)</h2>
+                <p className="settings-meta">
+                  connects the Archivist agent to your Gmail so it can organize your mail. Paste the
+                  OAuth Client ID and secret from your Google Cloud "Web application" client, Save,
+                  then Connect to approve access. The Archivist reads, labels and archives — it
+                  never deletes. Secrets are stored on the server and never shown again. (A refresh
+                  token from the bootstrap script can be pasted instead, if you prefer.)
+                </p>
+                <div className="settings-value" aria-label="Gmail connection status">
+                  {gmail === null
+                    ? "…"
+                    : gmail.connected
+                      ? "Connected"
+                      : gmail.client_id_set || gmail.client_secret_set
+                        ? "Credentials saved — not connected yet"
+                        : "Not connected"}
+                </div>
+                <label className="settings-field">
+                  Client ID
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    placeholder={
+                      gmail?.client_id_set ? "•••••• (saved)" : "…apps.googleusercontent.com"
+                    }
+                    value={gmailId}
+                    onChange={(e) => setGmailId(e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  Client secret
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    placeholder={gmail?.client_secret_set ? "•••••• (saved)" : ""}
+                    value={gmailSecret}
+                    onChange={(e) => setGmailSecret(e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  Refresh token
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    placeholder={gmail?.refresh_token_set ? "•••••• (saved)" : ""}
+                    value={gmailToken}
+                    onChange={(e) => setGmailToken(e.target.value)}
+                  />
+                </label>
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    className="seg"
+                    disabled={
+                      gmailSaving || (!gmailId.trim() && !gmailSecret.trim() && !gmailToken.trim())
+                    }
+                    onClick={saveGmail}
+                  >
+                    {gmailSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    className="seg"
+                    disabled={!gmail?.client_id_set || !gmail?.client_secret_set}
+                    onClick={connectGmail}
+                  >
+                    {gmail?.connected ? "Reconnect Gmail" : "Connect Gmail"}
+                  </button>
+                  <button
+                    type="button"
+                    className="seg"
+                    disabled={!gmail?.connected}
+                    onClick={testGmail}
+                  >
+                    Test connection
+                  </button>
+                </div>
+                <p className="settings-meta">
+                  Save your Client ID and secret, then Connect to approve access in Google — no need
+                  to paste a refresh token by hand.
+                </p>
+                {gmailNotice && <p className="settings-meta">{gmailNotice}</p>}
+                {gmailTest && (
+                  <p className={`settings-meta${gmailTest.ok ? "" : " settings-error"}`}>
+                    {gmailTest.detail}
+                  </p>
+                )}
+              </section>
+
+              <section className="settings-card">
+                <h2 className="settings-label">Calendar feed</h2>
+                <p className="settings-meta">
+                  subscribe a calendar app to your appointments, read-only. the link carries
+                  appointment titles from every domain — including health and finance — off your box
+                  into whatever calendar subscribes, so keep it private; disable it to cut access
+                  instantly.
+                </p>
+                {feed?.enabled && feedUrl ? (
+                  <>
+                    <input
+                      className="feed-url"
+                      readOnly
+                      value={feedUrl}
+                      aria-label="Calendar feed URL"
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                    <div className="settings-actions">
+                      <button type="button" className="seg" onClick={copyFeed}>
+                        {copied ? "Copied" : "Copy link"}
+                      </button>
+                      <button type="button" className="seg" onClick={generateFeed}>
+                        Regenerate
+                      </button>
+                      <button type="button" className="btn-destructive" onClick={disableFeed}>
+                        Disable
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="seg"
+                    onClick={generateFeed}
+                    disabled={feed === null}
+                  >
+                    Generate link
+                  </button>
+                )}
+              </section>
+            </>
+          )}
+          {category === "access" && (
+            <>
+              <section className="settings-card">
+                <h2 className="settings-label">Debug access (Claude)</h2>
+                <p className="settings-meta">
+                  mint a revocable, time-boxed token an assistant uses to iterate on prompts against
+                  your local model, run read-only SQL, read logs, and switch model routing — live.
+                  the token carries a key into your box, including health, finance, and location
+                  data, so treat it like a password: share it only with a session you trust and
+                  revoke it the moment you're done.
+                </p>
+                <div className="settings-actions" aria-label="New debug token">
+                  <input
+                    className="feed-url"
+                    value={debugLabel}
+                    placeholder="Label (e.g. Claude session)"
+                    aria-label="Debug token label"
+                    onChange={(e) => setDebugLabel(e.currentTarget.value)}
+                  />
+                  <div className="theme-picker" aria-label="Token lifetime">
+                    {DEBUG_TTL_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.hours}
+                        type="button"
+                        aria-pressed={debugTtl === opt.hours}
+                        className={`seg${debugTtl === opt.hours ? " seg-on" : ""}`}
+                        onClick={() => setDebugTtl(opt.hours)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" className="seg" onClick={mintDebugToken}>
+                    Mint token
+                  </button>
+                </div>
+                {debugError && <p className="settings-meta settings-error">{debugError}</p>}
+                {mintedPayload && (
+                  <>
+                    <p className="settings-meta">
+                      copy this now — it is shown once and can't be recovered. paste it to the
+                      assistant.
+                    </p>
+                    <input
+                      className="feed-url"
+                      readOnly
+                      value={mintedPayload}
+                      aria-label="Debug token payload"
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                    <div className="settings-actions">
+                      <button
+                        type="button"
+                        className="seg"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(mintedPayload);
+                          setPayloadCopied(true);
+                        }}
+                      >
+                        {payloadCopied ? "Copied" : "Copy token"}
+                      </button>
+                      <a
+                        className="seg"
+                        href={`/debug-console.html#${mintedPayload}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open console
+                      </a>
+                      <button type="button" className="seg" onClick={() => setMintedPayload(null)}>
+                        Done
+                      </button>
+                    </div>
+                  </>
+                )}
+                {liveDebugTokens.length > 0 && (
+                  <ul className="debug-token-list" aria-label="Debug tokens">
+                    {liveDebugTokens.map((t) => {
+                      const status = t.suspended_at ? "suspended" : "active";
+                      return (
+                        <li key={t.id} className="debug-token-row">
+                          <div>
+                            <span className="settings-value">{t.label}</span>
+                            <span className={`debug-token-status debug-token-${status}`}>
+                              {" "}
+                              {status}
+                            </span>
+                            <p className="settings-meta">
+                              {t.expires_at
+                                ? `expires ${new Date(t.expires_at).toLocaleString()}`
+                                : "no expiry"}
+                              {t.last_used_at
+                                ? ` · last used ${new Date(t.last_used_at).toLocaleString()}`
+                                : " · never used"}
+                            </p>
+                          </div>
+                          <div className="debug-token-actions">
+                            {status === "active" ? (
+                              <button
+                                type="button"
+                                className="seg"
+                                onClick={() => suspendDebugToken(t.id)}
+                              >
+                                Suspend
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="seg"
+                                onClick={() => resumeDebugToken(t.id)}
+                              >
+                                Resume
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn-destructive"
+                              onClick={() =>
+                                revoking === t.id ? revokeDebugToken(t.id) : setRevoking(t.id)
+                              }
+                              onBlur={() => setRevoking(null)}
+                            >
+                              {revoking === t.id ? "Tap to confirm" : "Revoke"}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+
+              <section className="settings-card">
+                <h2 className="settings-label">Session</h2>
+                <p className="settings-meta">{deviceLabel}</p>
+                <button
+                  type="button"
+                  className="btn-destructive"
+                  onClick={() => (confirmingLogout ? onLogout() : setConfirmingLogout(true))}
+                  onBlur={() => setConfirmingLogout(false)}
+                >
+                  {confirmingLogout ? "Tap again to confirm" : "Log out"}
+                </button>
+                {/* Build stamp — the only reliable way to confirm which bundle a cached PWA is
+                  actually running (a deploy/service-worker check). */}
+                <p className="settings-meta settings-build">
+                  build {BUILD_SHA}
+                  {BUILD_TIME ? ` · ${new Date(BUILD_TIME).toLocaleString()}` : ""}
+                </p>
+              </section>
+            </>
+          )}
+        </SettingsLayer>
+      )}
 
       {readTextOpen && brainAnswerVoice && (
         <ReadTextScreen
