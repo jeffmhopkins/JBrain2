@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** Proposed · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️
+> **Status:** Proposed · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ R1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -107,14 +107,17 @@ output is a short findings section added to this doc.
    BDS version opens it. Bedrock clients only join a server on their **exact** version, and
    clients auto-update. So BDS updates are a recurring operational need, not a one-time
    install. M3 builds on this result.
-2. **Memory and CPU** with the owner's world loaded and 1–3 players, so the `mem_limit` can be
+2. **Memory and CPU** with the owner's world loaded and 1–4 players, so the `mem_limit` can be
    set.
-3. **Console seams.**
+3. **LAN discovery from the Xbox.** Does the server appear under **Friends → LAN Games** on
+   the owner's Xbox when the port is published from a bridge network? If not, does it appear
+   with `network_mode: host`? This decides M1's networking.
+4. **Console seams.**
    - Does `save hold/query/resume` behave as documented with this world?
    - Does `execute as <player> at @s run locate structure mansion`, sent through stdin, print
      its result on stdout so the wrapper can capture it?
    - Same question for `locate biome`.
-4. **Script bridge without experiments** (the crux of M5):
+5. **Script bridge without experiments** (the crux of M5):
    - Does a behavior pack using **only stable** `@minecraft/server` APIs load on this world
      without turning on any experimental toggle?
    - Does `scriptevent jb:<id> <json>` on stdin reach `system.afterEvents.scriptEventReceive`?
@@ -122,7 +125,7 @@ output is a short findings section added to this doc.
    - Can a stable **custom slash command** (`/jb:ask <text>`) be registered for all players?
    - What does adding the pack do to achievements on this world? Record the answer for the
      owner.
-5. **Parser.** On one snapshot, list chunks, actors (entities), block entities, and the
+6. **Parser.** On one snapshot, list chunks, actors (entities), block entities, and the
    per-chunk hardcoded spawn areas, using a Python LevelDB-for-Bedrock reader (`amulet-core`
    with `leveldb-mcpe` bindings, or a minimal reader of our own). Record counts and how long
    the parse takes.
@@ -134,9 +137,16 @@ scheduled.
 
 - `deploy/Dockerfile.minecraft` and `deploy/minecraft/` (the wrapper), a `minecraft` profile,
   and a `minecraft` network shared only with `api`. Hardened like the SDR sidecar, with
-  `mem_limit: ${MC_MEM_LIMIT:-3g}`. The volume is `jbrain_minecraft`. Port
-  `${MC_BIND:-0.0.0.0}:19132:19132/udp` (plus 19133 for IPv6 if wanted). The EULA is accepted
-  by an explicit owner toggle, never by a default.
+  `mem_limit: ${MC_MEM_LIMIT:-2g}` (1–4 players on a small world; M0 confirms the figure). The
+  volume is `jbrain_minecraft`. Port `${MC_BIND:-0.0.0.0}:19132:19132/udp` (plus 19133 for
+  IPv6 if wanted). The EULA is accepted by an explicit owner toggle, never by a default.
+- **LAN discovery is a requirement, not a nicety.** An Xbox can't type in a server address, so
+  on the home network it joins through **Friends → LAN Games**. That list is filled by a
+  broadcast ping on UDP 19132, which the server has to answer. Docker's bridge networking
+  often doesn't pass broadcasts through to a published port, so M0 tests this. If the test
+  fails, the fallback is `network_mode: host` for this one container. That gives up the
+  isolated `minecraft` network, and the backend reaches the wrapper through the host gateway
+  with its bearer token. Windows can use either the LAN list or the box's address.
 - **Enabling without a terminal**: a PWA toggle (**Ops → Minecraft → Enable**) queues the
   intent in the settings store. The next **Ops → Update** reads it, as `local-models-sync.sh`
   does, adds `--profile minecraft`, and creates the container. After that, start and stop are
@@ -155,11 +165,11 @@ scheduled.
   server stopped, the backend streams it to `/world/import`. The wrapper unpacks it into
   `worlds/<name>` and points `level-name` at it. The previous world is kept, not overwritten,
   so a bad import is undone by switching back.
-- How the owner gets the file depends on the platform, and the PWA help text covers each one:
-  - **Windows/Android/iOS**: in-game **Edit world → Export world** produces a `.mcworld`.
-  - **Realms**: download the world to a device first, then export it.
-  - **Xbox/Switch/PlayStation**: there is no export path. The world has to be moved through a
-    Realm or a device that can export.
+- The owner's world is on **Windows** and is small (about 3 hours of building). Export it from
+  **Play → the world's pencil (Edit) → Export World**, which saves a `.mcworld`, then upload
+  that file from the PWA on the same PC. The PWA help text shows these steps. Because the
+  world is small, a size limit of a few hundred MB is plenty, and the upload doesn't need to
+  be resumable. Going the other way, any backup from M3 opens on Windows by double-clicking it.
 - **Settings**: a small editable subset of `server.properties`, covering server name,
   gamemode, difficulty, allow-cheats, max players, view and tick distance, and online-mode.
   The settings are written by the wrapper and applied on restart.
@@ -175,10 +185,15 @@ scheduled.
   to the backup shelf through the storage abstraction. Every artifact is therefore something
   the owner can **download and open in their own client**, which is the backup format players
   understand.
-- **Scheduled** through the workflow scheduler, not host cron, so the cadence is set in the
-  PWA. A suggested default is hourly while players are online and daily otherwise, with
-  retention modelled on `backup.sh` (dense for 48 h, then one per day for N days). A snapshot
-  also runs automatically before any BDS update, world switch, or restore.
+- **On demand only (owner decision, 2026-10-10).** Backups happen when the owner presses
+  **Back up now**, with an optional label such as "before the castle". There is no schedule.
+  The only automatic snapshots are safety nets: one runs before a BDS update, a world import
+  or switch, and a restore. Those are labelled as automatic.
+- Retention is by count: keep the newest 20, with automatic ones expiring first. The owner can
+  **pin** a backup to keep it forever and can delete any backup. A small world makes each
+  snapshot a few MB, so the count is generous. Scheduled backups through the workflow
+  scheduler are deferred to M7. Adding them later is a scheduler entry that calls the same
+  route, with no redesign.
 - **Restore**: pick a snapshot, and the server stops, the current world is snapshotted, the
   chosen one is swapped in, and the server starts again. All of this is one PWA action with a
   confirm dialog.
@@ -189,7 +204,38 @@ scheduled.
 - Decision for the owner: whether Minecraft snapshots also go into the whole-box `jbrain`
   export. If the volume is added to `backup.sh`, then `restore.sh` must change in step.
 - Tests: the snapshot protocol against the fake BDS (hold → query → truncate → resume, and
-  resume still runs on error), retention, and restore ordering.
+  resume still runs on error), count retention with pins, and restore ordering.
+
+### R1 — Remote play for the brothers (optional, after M1)
+
+The brothers play over the internet, and only up to 4 players ever connect. Two problems have
+to be solved separately: **getting packets to the box**, and **letting an Xbox find the
+server**.
+
+**Reachability.** Pick one:
+
+| Option | What it takes | Notes |
+|---|---|---|
+| **Router port-forward** of UDP 19132 to the box | One change on the owner's router. That is not a box terminal step. | Lowest latency, and no third party. The home IP can change, so add a small **dynamic DNS** updater: the box keeps an A record such as `mc.<domain>` current through the owner's existing Cloudflare zone. It is a backend job, not a sidecar. |
+| **UDP relay agent** (playit.gg-style) as a second container in the `minecraft` profile | No router change. The agent is claimed through a web link that the PWA shows. | Adds a third party and a hop. The brothers connect to the address the relay assigns. |
+
+Tailscale doesn't help here, because an Xbox can't run it.
+
+**Finding the server:**
+
+- **Brothers on Windows** add the address in **Servers → Add Server**, and that's all.
+- **Brothers on Xbox** can't add a server address. The proven route is a **broadcaster**
+  (MCXboxBroadcast-style). It signs in to a spare Microsoft account and advertises the server
+  as a joinable session, so anyone who is that account's Xbox friend sees it in **Friends** and
+  joins with one press. It runs as a third container under the same profile. Its sign-in is a
+  Microsoft **device-code** flow, so the PWA shows the code and link, with no terminal needed.
+  (BedrockConnect, the alternative, needs a DNS change on each brother's console, which is
+  worse.)
+- The **allowlist** (M2) is mandatory once the port is reachable from outside. The brothers'
+  gamertags go on it from the PWA.
+
+Exit: one brother joins from outside the home network, and the server shows them on the Ops
+card.
 
 ### M4 — World index (the companion's long-term memory of the world)
 
@@ -272,22 +318,32 @@ scheduled.
 - A visible **companion NPC** entity, which would need a resource pack that clients download.
 - A rendered top-down map in the PWA from the index.
 - Multiple worlds (a library, with one active at a time).
+- Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
 
-## 4. Open decisions for the owner
+## 4. Owner decisions
 
-1. **Who plays, and from where?** LAN only (Bedrock's LAN discovery shows the server in the
-   Friends tab) or friends over the internet? The Cloudflare Tunnel carries HTTP only, so
-   remote play needs either a router port-forward of UDP 19132 or a UDP relay such as
-   Tailscale or playit.gg. Either one is a host or router step (§7).
-2. **Which devices?** Phones and Windows can add a custom server address. Consoles cannot
-   easily, and need a workaround (LAN discovery on the same network, or a DNS-redirect trick).
-3. **The world file**: which platform it is on now, and roughly how big.
-4. **Behavior pack consent**: the companion needs a pack on the world. M0 reports what that
+**Decided (2026-10-10):**
+
+- **Players**: 1–4 people, mostly on the home network. Brothers may join over the internet,
+  which is wave R1.
+- **Devices**: Windows and Xbox Bedrock. The Xbox drives two requirements: LAN discovery has to
+  work (M0 and M1), and remote Xbox players need the broadcaster (R1).
+- **World**: a small world on Windows, about 3 hours of building. It is imported by exporting
+  a `.mcworld` (M2).
+- **Backups**: on demand for now, plus automatic safety snapshots before risky actions (M3).
+  Scheduled backups wait for M7.
+
+**Still open:**
+
+1. **Remote play**: are the brothers on Windows or Xbox? And which way do packets reach the
+   box: a router port-forward or a relay (R1)?
+2. **Behavior pack consent**: the companion needs a pack on the world. M0 reports what that
    does to achievements on this world before the owner decides.
-5. **Companion name and trigger**: `/jb:ask` versus a chat prefix.
-6. **Privacy between players**: may the bot say where other players are? The default is no.
-7. **Snapshot cadence and retention**, and whether Minecraft snapshots join the whole-box
-   export.
+3. **Companion name and trigger**: `/jb:ask` versus a chat prefix. Typing a slash command on an
+   Xbox controller is clumsy, so a chat prefix is worth a lot here if M0 finds a stable chat
+   event.
+4. **Privacy between players**: may the bot say where other players are? The default is no.
+5. **Whole-box export**: should Minecraft backups also go into the `jbrain` export?
 
 ## 5. Risks
 
@@ -311,8 +367,9 @@ public or unallowlisted servers. Letting the bot build, teleport, or give items.
 
 - **Publishing UDP 19132 on the LAN** comes for free with the compose `ports:` entry once the
   profile is created by an in-PWA update. No host step is needed.
-- **Internet play** needs a router port-forward. That is outside the box, and it is the
-  owner's router. Alternatively, a relay sidecar could be designed in later as its own
-  profile.
+- **Internet play (R1)** needs either a router port-forward or a relay agent. A port-forward
+  is a change on the owner's own router, not on the box. A relay agent is claimed through a
+  link the PWA shows. The Xbox broadcaster signs in with a device code that the PWA shows.
+  None of these needs a box terminal.
 - **Nothing else** in M1–M6 needs host access. If M0 finds a step that does, it gets designed
   out before the wave is scheduled.
