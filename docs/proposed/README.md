@@ -23,7 +23,9 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   relay behind CGNAT (R1). Then **Dave**, an in-game companion players ask "where's the
   nearest pig / woodland mansion / my brother": a stable-API behavior pack bridged over the
   console (`scriptevent` in, log lines out), a snapshot-fed world index, and a read-only,
-  KB-less agent that answers live → index → worldgen (`locate`). Waves M0 (on-box spike) – M7, R1.
+  KB-less agent that answers live → index → worldgen (`locate`), from a tiered tool catalog
+  (player / fair-play / admin / owner), plus 2D maps (terrain, biome, explored, changes) and
+  biome answers beyond the explored edge (M8). M0 is a debug-API rig the assistant drives. Waves M0 (on-box spike) – M7, R1.
 - `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
   owner's gesture, and the research answer that both hard halves already ship: whisper.cpp and
   Kokoro TTS are in production in the `tts-stt` container, and a full voice loop already runs

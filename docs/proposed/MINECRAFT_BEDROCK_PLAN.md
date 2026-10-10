@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** Proposed · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ R1◻️
+> **Status:** Proposed · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -160,6 +160,12 @@ short section added to this doc.
    chunks, actors (entities), block entities, and the per-chunk hardcoded spawn areas, using a Python LevelDB-for-Bedrock reader (`amulet-core`
    with `leveldb-mcpe` bindings, or a minimal reader of our own). Record counts and how long
    the parse takes.
+
+7. **Map and biome inputs** (for M8):
+   - Where does a block→colour table come from? Does BDS ship a vanilla pack with usable
+     textures or map colours, or do we keep our own table?
+   - Do `cubiomes` biome answers (Java 1.18+ generation) match `locate biome` on the
+     known-seed world at ~10 sample points?
 
 Exit: each item has an answer. Any "no" reshapes the wave it feeds before that wave is
 scheduled.
@@ -415,15 +421,9 @@ house by typing the address.
   It has no notes, wiki, web, or other domains. It runs on the most restrictive scope there
   is. Players are not principals, and a player's message must never reach the owner's
   knowledge base. This is enforced by the tool set and the session scope, not by the prompt.
-- Tools:
-  - `mc_nearest_entity(type)`
-  - `mc_locate_structure(kind)`
-  - `mc_locate_biome(biome)`
-  - `mc_find_container(item)`
-  - `mc_player_context()`, which returns the asker's position, dimension, last death and spawn
-  - `mc_where_is(player)`, which returns another player's position, live if they're online and
-    otherwise their last saved position
-  - `mc_world_info()`, which returns time, weather and day count
+- **Tools**: the ★ core set from the catalog in §3b. Later tools are added one at a time, each
+  as its own small PR, because each one is just a handler over the same index, bridge and
+  console.
 - **Answer cascade**: the tools try the freshest source first and always say which one
   answered.
   1. **Live**: the script's query against loaded chunks. This is accurate now, but only near
@@ -451,11 +451,56 @@ house by typing the address.
 
 ### M7 — Nice-to-haves (each is its own small decision)
 
-- "Where did I die?" (from the script's death event, kept per player) and a player
-  "remember this spot as *home*" waypoint table.
+- The non-★ tools in §3b, one per PR, in whatever order players actually ask for them.
 - A visible **companion NPC** entity, which would need a resource pack that clients download.
-- A rendered top-down map in the PWA from the index.
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
+
+### M8 — Maps and biomes (after M4; the map tools in §3b)
+
+**Owner request (2026-10-10): the assistant should generate 2D maps of areas and know about
+biomes.**
+
+- **Renderer**: Python (numpy + Pillow) in the sidecar, next to the parser. It works from the
+  snapshot, never the live world. Per chunk, it takes the **top block** of each column from
+  the heightmap and the subchunk palettes. That block is coloured by a block→colour table
+  shaped like the in-game map palette, and shaded by height so hills read. M0's parser probe
+  checks where the table comes from: BDS's bundled vanilla pack, or a hand-kept table for the
+  ~300 common blocks with an "unknown" colour for the rest. A rendered chunk is **cached per
+  snapshot** and reused while that chunk is unchanged, so most of a small world re-renders in
+  seconds.
+- **Layers**:
+  - `terrain` (top blocks)
+  - `biome`, from the per-subchunk biome palettes (`Data3D`), using the conventional
+    biome-map colours with a legend
+  - `height` (contours)
+  - `slice@Y`, a cave or ore layer, which is gated by fair play (§3b)
+  - `explored`, the fog of war: what has been generated at all
+  - `changes`, the difference between two snapshots, highlighting blocks changed since then
+- **Overlays**: players and their last positions, waypoints, deaths, beds and spawn, indexed
+  structures, `locate` results, chosen entity types ("all the pigs"), and a grid with
+  coordinates.
+- **Biomes beyond the explored edge**: since 1.18, Bedrock and Java share biome and terrain
+  generation for a given seed (structures differ). So a seed biome map of **unexplored**
+  land can come from `cubiomes` (C, Java 1.18+ biome generation). M0's known-seed world
+  checks that claim: compare `locate biome` answers with `cubiomes` output for the same
+  seed. If they disagree, that layer is dropped, and unexplored biomes come only from
+  `locate biome`, one point at a time.
+- **Where maps appear**:
+  - The owner sees them in a **Maps** screen in the PWA, with pan and zoom over tiles,
+    layer toggles, and pins for slot and snapshot.
+  - Owner-side jerv gets a `minecraft_map` tool that returns the image into chat.
+  - The assistant gets them through `POST /debug/minecraft/probe {name: "map"}`.
+- **Players can't be shown an image in Bedrock chat.** So Dave answers "map of here" with a
+  **short-lived share link** (for example 24 h) to that one PNG, served over HTTPS through the
+  existing tunnel. HTTP works there, unlike the game's UDP. The link carries an anonymous
+  scoped token, the same substrate as the intake/student links. It is rate-limited, shows the
+  active slot only, and exposes nothing else. Windows players click it. Xbox players open it
+  on a phone, or Dave also gives the directions in text.
+- Storage: rendered PNGs and tiles go through `BlobStore`. They are derived, so they are
+  pruned with their snapshot.
+- Tests: render a fixture snapshot to golden PNG hashes per layer, check the overlay
+  projection (coordinates → pixels, Nether scale), check that share-link scope and expiry
+  are refused outside the link, and check that `slice@Y` is refused when fair play is on.
 
 ## 3a. Debug control surface — the assistant as co-operator
 
@@ -514,6 +559,95 @@ here for this one service only.
   through the existing SQL and log routes. Mint it **short-lived** (1h or 24h) for a setup
   session, and revoke it after.
 
+## 3b. Agent tool catalog (brainstorm, 2026-10-10)
+
+These are the tools players reach **through Dave** in chat, and the owner reaches through the
+PWA, jerv, and the debug API. Every tool is a handler over three sources: **live** (the
+behavior pack's script, loaded chunks only), **index** (the last snapshot, M4), and
+**worldgen** (`locate`, and the seed biome map from M8). Each answer names its source and
+age. ★ marks the M6 core set; the rest land one tool per PR afterwards.
+
+**Access tiers.** Each tier is an owner setting per slot, and is enforced in the tool registry,
+never in the prompt:
+
+| Tier | Who | What |
+|---|---|---|
+| **Player** | Anyone on the allowlist | Read-only world knowledge that a careful player could find out for themselves. |
+| **Fair play** (a per-slot toggle, *off* = strict) | Same | Things that feel like cheating in survival: ore and X-ray finds, cave slices, the seed, ungenerated structures. Off in a survival world, on in a creative or "just exploring" world. |
+| **Admin** | Gamertags the owner lists | Harmless game-state changes on request: back up now, set time or weather, clear weather. These are the only mutating tools, and each one is on the wrapper's console allowlist. |
+| **Owner** | The PWA, jerv, and debug | Everything above, plus the server lifecycle, worlds, snapshots, and maps of any slot. |
+
+**Find and navigate**
+
+| Tool | Answers | Source | Tier |
+|---|---|---|---|
+| ★ `nearest_entity(type, filters)` | "nearest pig"; filters: baby, tamed, name tag, "my" (owned pets) | live → index | Player |
+| `count_entities(type, area)` | "how many cows are in my farm?" | live → index | Player |
+| ★ `locate_structure(kind)` | village, mansion, outpost, monument, ruined portal, ancient city, trial chamber, stronghold… | index → `locate` | Player for explored ones; **fair play** for `locate` beyond them |
+| ★ `locate_biome(biome)` | "nearest cherry grove / mushroom island" | index → `locate` / seed map | Player |
+| `find_villager(profession, trade?)` | "nearest librarian selling Mending" (villager trades are in the saved actor data) | index | Player |
+| `find_block(block, area)` | "nearest diamonds", "any spawners near here" | index | **Fair play** |
+| ★ `find_container(item)` | "which chest has my diamonds?" | index | Player |
+| ★ `where_is(player)` | another player's position (sharing is on, owner decision) | live → index | Player |
+| `guide_me(target)` / `stop_guiding` | a live **actionbar compass** ("→ pig, 42 m NE") refreshed every second until arrival. Display only: `titleraw … actionbar`, with no world change | live | Player |
+| `portal_math(x,z)` | Overworld↔Nether coordinates; "where do I build the portal so it links to my base?" | computed | Player |
+| `route(from, to)` | straight-line distance and bearing, plus a map with both points marked | computed + M8 | Player |
+
+**About me and the world**
+
+| Tool | Answers | Source | Tier |
+|---|---|---|---|
+| ★ `my_context()` | position, dimension, biome, facing, spawn or bed, last death | live | Player |
+| `where_did_i_die(n?)` | the last *n* deaths, with cause and coordinates; "are my items still there?" (an item-entity check near the spot) | death events + live | Player |
+| `my_inventory()` / `my_stats()` | "do I have enough iron for…?"; health, XP, hunger | live (script components) | Player |
+| ★ `world_info()` | time and day count, ticks until night, weather, moon phase, difficulty | live | Player |
+| `describe_area(radius)` | "what's around me?": biomes, water, structures, villages and players within *r*, as a short paragraph | index + seed map | Player |
+| `biome_at(x,z)` | which biome is at a coordinate, explored or not | index → seed map | Player |
+| `world_seed()` | the seed | `level.dat` | **Fair play** |
+
+**Memory and history**
+
+| Tool | Answers | Source | Tier |
+|---|---|---|---|
+| `waypoint_save(name)` / `list` / `delete` / `share` | "remember this as *home*"; "where's Josh's mine?" | `app.mc_waypoints` (per slot, per player) | Player |
+| `whats_new(since?)` | "what happened while I was gone?": joins, deaths, achievements, big build changes | event log + snapshot diff | Player |
+| `build_changes(area, since)` | "did anything change at the base since Tuesday?" A blocks-changed count plus a `changes` map (spots griefing too) | snapshot diff + M8 | Player |
+| `playtime / leaderboard` | play time, deaths, distance travelled, per player | event log | Player |
+| `remind_me(text, when)` | "remind me at nightfall to go home" (game time or real time), delivered in chat | scheduler + live | Player |
+
+**Game knowledge** (looked up, not recalled from the model's memory):
+
+| Tool | Answers | Source |
+|---|---|---|
+| `recipe(item)` | the crafting, smelting or brewing recipe | bundled Bedrock data files (PrismarineJS `minecraft-data`, Bedrock edition), pinned to the BDS version |
+| `item_info(item)` / `mob_info(mob)` | drops, food values, spawn conditions, what a mob is weak to | same |
+
+A weak local model "remembering" recipes is a known way to fabricate answers. Grounding them in
+a data file is the point of these tools.
+
+**Maps (M8)**
+
+| Tool | Answers | Tier |
+|---|---|---|
+| `map(center?, radius, layers, overlays)` | a PNG share link (players) or an inline image (owner). "Map of my base", "show me the biomes within 1000 blocks", "where are all the villages?" | Player; `slice@Y` is **fair play** |
+| `explored_map()` | what has been explored, as fog of war over the seed biome map | Player |
+
+**Admin (gamertag list; mutating, each command on the console allowlist)**
+
+| Tool | Does |
+|---|---|
+| `backup_now(label?)` | M3 snapshot: "Dave, back up before we blow this up" |
+| `set_time(day/night/…)`, `set_weather(clear/rain)` | the obvious ones |
+| `announce(text)` | a server-wide message |
+
+**Owner-only, outside the game**: everything in §3a, plus jerv's `minecraft_world` (M4) and
+`minecraft_map` (M8) tools, so the owner can ask jerv "show me the map of the Minecraft world"
+from the PWA.
+
+**Deliberately not tools**: giving items, teleporting, building, or editing blocks; reading
+anything outside the active slot; anything that touches JBrain notes or the wiki; free-form
+console access for players.
+
 ## 4. Owner decisions
 
 **Decided (2026-10-10):**
@@ -533,6 +667,9 @@ here for this one service only.
 - **Companion**: named **Dave** for now, and changeable later (M5, M6).
 - **Player locations**: Dave may say where other players are.
 - **Box backups**: Minecraft backups stay separate from the whole-box export (M3).
+- **Maps and biomes**: the assistant and Dave can render 2D maps (terrain, biome, height,
+  explored, changes) and answer biome questions, including beyond the explored edge (M8,
+  §3b).
 - **Testing**: a fresh, empty world first, on the home network only, with the assistant
   driving the box through a debug token (M0, §3a).
 - **World slots**: several worlds live on the server, one loaded at a time. Each slot can be
