@@ -3814,7 +3814,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const running = scenario.status.server?.state === "running";
     const slotOf = (id: string | undefined) => w.worlds.slots.find((s) => s.id === id);
     if (path === "/api/minecraft" && scenario.status.server) {
-      return json({ ...scenario.status, server: { ...scenario.status.server, job: w.job } });
+      // `?mcw=pending`: restart-bound settings saved since the last start.
+      const pending =
+        new URLSearchParams(globalThis.location?.search ?? "").get("mcw") === "pending"
+          ? ["allow-cheats", "allow-list", "max-players"]
+          : [];
+      return json({
+        ...scenario.status,
+        server: { ...scenario.status.server, job: w.job, pending_restart: pending },
+      });
     }
     if (path === "/api/minecraft/worlds") return json(w.worlds);
     if (path === "/api/minecraft/worlds/new-seed") {

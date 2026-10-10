@@ -418,7 +418,7 @@ export function mcServerSettings(): MinecraftServerSettings {
 }
 
 /** The `dev:mock` worlds states, picked with `?mcw=` on the page URL: default, fresh,
- *  seed_unknown, importing, loading, limit. */
+ *  seed_unknown, importing, loading, limit, pending. */
 export function minecraftWorldsScenario(name: string | null): {
   worlds: MinecraftWorlds;
   backups: MinecraftBackup[];
