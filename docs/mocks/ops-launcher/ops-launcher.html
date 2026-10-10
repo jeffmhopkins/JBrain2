@@ -178,11 +178,7 @@ select { font: inherit; color: var(--text); background: var(--surface-2); border
         <div class="vfoot"><span>load 0.67 · 0.40 · 0.38</span><span>up 5d 22h</span></div>
       </section>
 
-      <button class="attn" type="button" data-open="services">
-        <span class="dot bad"></span>
-        <span><b>AI - Optional down</b> <span class="muted">· AI degraded</span></span>
-        <span class="chev">›</span>
-      </button>
+      <button class="attn" type="button" data-open="services" id="attn" hidden></button>
 
       <section class="card" id="update" aria-label="Server update"></section>
 
@@ -211,13 +207,33 @@ select { font: inherit; color: var(--text); background: var(--surface-2); border
       <li>History charts (GPU, power, network, disk I/O) with the range picker.</li>
     </ul>
 
+    <h2>Try a failure</h2>
+    <label class="q" style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="sim"> Simulate byparr crashing. The banner, the Services tile and the group turn red. Off services never do.</label>
+
     <h2>Moves behind tiles</h2>
     <ul>
-      <li><b>Services</b>: the six groups, per-service restart, stop and logs, and Restart all (no longer a header button).</li>
+      <li><b>Services</b>: the groups below, per-service restart, start and logs, and Restart all (no longer a header button).</li>
       <li><b>Memory</b>: the per-process breakdown.</li>
       <li><b>Engine</b>: Flash-Next status and the two prompt-cache settings.</li>
       <li><b>Minecraft</b>, <b>Panels</b>, <b>Host</b> (kernel settings), <b>Runs</b>.</li>
       <li><b>Storage</b>: database size, notes, files, blobs, swap and fans.</li>
+    </ul>
+
+    <h2>Off is grey</h2>
+    <ul>
+      <li>A service is <b>off</b> when it is stopped and either opt-in (comfyui, jcode, sdr, mqtt) or the engine you didn't pick (local-llm while Flash-Next runs). It shows a grey dot and a Start button, and never counts against its group.</li>
+      <li>A stock service that stops, or anything that crashes or goes unhealthy, is still red <b>down</b> and raises the banner.</li>
+    </ul>
+
+    <h2>Service groups, re-sorted</h2>
+    <ul>
+      <li><b>Core</b> (6): api, worker, supervisor, db, proxy, cloudflared. Proxy and the tunnel join Core because without them you can't reach the box.</li>
+      <li><b>Models</b> (6): flash-next, embed, tts-stt, rapidocr, local-llm, comfyui. Flash-Next was stranded in Other; rapidocr was in Infra.</li>
+      <li><b>Assistant tools</b> (8): searxng, reader, byparr, browser, egress, htmlrender, pysandbox, jcode. Most of these sat in Infra or Other.</li>
+      <li><b>Devices</b> (3 here, 5 with MQTT on): wall, endpoint, sdr, mqtt, mqtt-ingest.</li>
+      <li><b>Apps</b> (2): minecraft, jlaunch.</li>
+      <li><b>One-shot jobs</b>: migrate and wipe. They only appear while one is running.</li>
+      <li class="del">"AI - Optional", "Infra", "Display" and the catch-all "Other" go away. Other stays only as a safety net for a service nobody has assigned yet.</li>
     </ul>
 
     <h2>Removed</h2>
@@ -228,9 +244,8 @@ select { font: inherit; color: var(--text); background: var(--surface-2); border
       <li class="del">Per-service Rebuild buttons, since Update already rebuilds everything.</li>
     </ul>
 
-    <h2>Open questions</h2>
-    <div class="q">Should services that are switched off on purpose (comfyui, jcode, and local-llm now that Flash-Next runs) show grey "off" instead of red "down"? Today they make AI and AI - Optional look broken.</div>
-    <div class="q">Keep the two prompt-cache settings under Engine, or drop them too and leave them at today's values?</div>
+    <h2>Still open</h2>
+    <div class="q">Keep the two prompt-cache settings under Engine (as shown), or drop them and leave them at today's values?</div>
   </aside>
 </div>
 
@@ -249,7 +264,7 @@ const ICONS = {
 const icon = (k, s = 24) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[k]}</svg>`;
 
 const TILES = [
-  { id: "services", title: "Services", sub: "2 need a look", tone: "bad" },
+  { id: "services", title: "Services", sub: "" },
   { id: "memory", title: "Memory", sub: "74% used", tone: "warn" },
   { id: "engine", title: "Engine", sub: "Flash-Next", tone: "ok" },
   { id: "minecraft", title: "Minecraft", sub: "running", tone: "ok" },
@@ -258,7 +273,7 @@ const TILES = [
   { id: "runs", title: "Runs", sub: "last 4m ago" },
   { id: "storage", title: "Storage", sub: "DB 614 MB" },
 ];
-$("#tiles").innerHTML = TILES.map(t => `
+const drawTiles = () => $("#tiles").innerHTML = TILES.map(t => `
   <button class="tile" type="button" data-open="${t.id}">
     ${t.tone && t.tone !== "ok" ? `<span class="dot ${t.tone}"></span>` : ""}
     ${icon(t.id)}
@@ -344,30 +359,65 @@ let updStep = 0; renderUpdate();
 $("#refresh").onclick = e => { const b = e.currentTarget; b.classList.remove("spin"); void b.offsetWidth; b.classList.add("spin"); };
 
 // ---- Pushed pages ----
+// The 25 containers this box runs, re-sorted. [service, level, detail, what it is]
+// "off" = stopped on purpose: an opt-in extra, or the engine you didn't pick.
 const GROUPS = [
-  { name: "Core", svcs: [["api", "ok", "up 5d"], ["worker", "ok", "up 5d"], ["supervisor", "ok", "up 5d"], ["postgres", "ok", "up 5d"]] },
-  { name: "AI", svcs: [["flash-next", "ok", "up 2h"], ["embed", "ok", "up 5d"], ["local-llm", "warn", "stopped"]] },
-  { name: "AI - Optional", svcs: [["comfyui", "bad", "stopped"], ["jcode", "bad", "stopped"]] },
-  { name: "Infra", svcs: [["proxy", "ok", "up 5d"], ["cloudflared", "ok", "up 5d"], ["reader", "ok", "up 5d"], ["byparr", "ok", "up 5d"], ["searxng", "ok", "up 5d"], ["rapidocr", "ok", "up 5d"], ["mqtt", "ok", "up 5d"]] },
-  { name: "Display", svcs: [["wall", "ok", "up 5d"]] },
-  { name: "Other", svcs: [["tts-stt", "ok", "up 5d"], ["jlaunch", "ok", "up 5d"], ["mqtt-ingest", "ok", "up 5d"], ["minecraft", "ok", "up 3d"], ["sdr", "ok", "up 5d"], ["pet", "ok", "up 5d"], ["migrate", "ok", "exited 0"], ["wipe", "ok", "exited 0"]] },
+  { name: "Core", why: "The app itself and the way in. If one of these is down, the app is.", svcs: [
+    ["api", "ok", "up 5d", "app server"], ["worker", "ok", "up 5d", "background jobs"], ["supervisor", "ok", "up 5d", "runs Update and restarts"],
+    ["db", "ok", "up 5d", "Postgres"], ["proxy", "ok", "up 5d", "front door (Caddy)"], ["cloudflared", "ok", "up 5d", "remote-access tunnel"]] },
+  { name: "Models", why: "Everything that runs a model on the box.", svcs: [
+    ["flash-next", "ok", "up 2h", "chat engine"], ["embed", "ok", "up 5d", "search embeddings"], ["tts-stt", "ok", "up 5d", "speech in and out"],
+    ["rapidocr", "ok", "up 5d", "text from images"], ["local-llm", "off", "off · Flash-Next is the engine", "old Standard engine"], ["comfyui", "off", "off · opt-in", "image generation"]] },
+  { name: "Assistant tools", why: "What the assistant reaches for mid-answer.", svcs: [
+    ["searxng", "ok", "up 5d", "web search"], ["reader", "ok", "up 5d", "page reader"], ["byparr", "ok", "up 5d", "bot-challenge solver"],
+    ["browser", "ok", "up 5d", "browser for the browse agent"], ["egress", "ok", "up 5d", "browser's filtered way out"], ["htmlrender", "ok", "up 5d", "HTML to image"],
+    ["pysandbox", "ok", "up 5d", "runs Python"], ["jcode", "off", "off · opt-in", "code mode"]] },
+  { name: "Devices", why: "Hardware and screens around the house.", svcs: [
+    ["wall", "ok", "up 5d", "wall display"], ["endpoint", "ok", "up 5d", "panel flasher"], ["sdr", "ok", "up 5d", "radio"]] },
+  { name: "Apps", why: "Things you run on the box.", svcs: [
+    ["minecraft", "ok", "up 3d", "Bedrock server"], ["jlaunch", "ok", "up 5d", "long compute jobs"]] },
 ];
+// "off" never drags a group down: only a real failure turns it amber or red.
 const roll = g => g.svcs.some(s => s[1] === "bad") ? "bad" : g.svcs.some(s => s[1] === "warn") ? "warn" : "ok";
+const offCount = g => g.svcs.filter(s => s[1] === "off").length;
 const ROLL_WORD = { ok: "all up", warn: "degraded", bad: "down" };
-let openGroup = "AI - Optional", confirmRestartAll = false;
+let openGroup = "Models", confirmRestartAll = false;
+
+// Demo switch: one tool crashes, so the banner, tile and chip can be seen in a real failure.
+let failing = false;
+function setFailing(on) {
+  failing = on;
+  const s = GROUPS[2].svcs[2];
+  s[1] = on ? "bad" : "ok"; s[2] = on ? "exited (1) · 3m ago" : "up 5d";
+  renderAttention();
+  if ($("#layer")) openPage(currentPage);
+}
+function renderAttention() {
+  const bad = GROUPS.filter(g => roll(g) !== "ok");
+  const off = GROUPS.reduce((n, g) => n + offCount(g), 0);
+  const total = GROUPS.reduce((n, g) => n + g.svcs.length, 0);
+  const a = $("#attn");
+  a.hidden = bad.length === 0;
+  if (bad.length) a.innerHTML = `<span class="dot bad"></span><span><b>${bad.map(g => g.svcs.filter(s => s[1] === "bad").map(s => s[0]).join(", ")).join(", ")} down</b> <span class="muted">· ${bad.map(g => g.name).join(", ")}</span></span><span class="chev">›</span>`;
+  const t = TILES[0];
+  t.sub = bad.length ? "1 down" : `${total - off} up · ${off} off`;
+  t.tone = bad.length ? "bad" : "";
+  drawTiles();
+}
 
 const PAGES = {
   services: () => `
-    ${GROUPS.map(g => { const r = roll(g); const open = openGroup === g.name; return `
+    ${GROUPS.map(g => { const r = roll(g); const off = offCount(g); const open = openGroup === g.name; return `
       <section class="card">
         <button class="grp-h" type="button" data-group="${g.name}" aria-expanded="${open}">
           <span class="grow">${g.name}</span>
-          <span class="r">${g.svcs.length} service${g.svcs.length > 1 ? "s" : ""}</span>
+          <span class="r">${g.svcs.length}</span>
+          ${off && r === "ok" ? `<span class="chip off"><span class="dot off"></span>${off} off</span>` : ""}
           <span class="chip ${r}"><span class="dot ${r}"></span>${ROLL_WORD[r]}</span>
         </button>
-        ${open ? `<div style="margin-top:8px">${g.svcs.map(([n, st, d]) => `
-          <div class="row"><span class="dot ${st}"></span><span class="grow"><span class="mono">${n}</span><br><span class="small muted">${d}</span></span>
-            <span class="svc-actions">${d === "stopped" ? '<button class="btn" type="button">Start</button>' : '<button class="btn" type="button">Restart</button>'}<button class="btn" type="button">Logs</button></span></div>`).join("")}</div>` : ""}
+        ${open ? `<p class="small muted" style="margin:8px 0 0">${g.why}</p><div style="margin-top:4px">${g.svcs.map(([n, st, d, what]) => `
+          <div class="row"><span class="dot ${st}"></span><span class="grow"><span class="mono">${n}</span> <span class="small muted">${what}</span><br><span class="small ${st === "bad" ? "" : "muted"}" ${st === "bad" ? 'style="color:var(--rose)"' : ""}>${d}</span></span>
+            <span class="svc-actions">${st === "off" || st === "bad" ? '<button class="btn" type="button">Start</button>' : '<button class="btn" type="button">Restart</button>'}<button class="btn" type="button">Logs</button></span></div>`).join("")}</div>` : ""}
       </section>`; }).join("")}
     <section class="card">
       <div class="update"><span class="txt"><b>Restart all</b><br><span class="small muted">Restarts every running service. The app drops briefly.</span></span>
@@ -416,8 +466,10 @@ const PAGES = {
 };
 const TITLES = Object.fromEntries(TILES.map(t => [t.id, t.title]));
 
+let currentPage = null;
 function openPage(id) {
   closePage();
+  currentPage = id;
   const layer = document.createElement("div");
   layer.className = "layer"; layer.id = "layer";
   layer.innerHTML = `<header class="top-bar"><button class="back-btn" type="button" aria-label="Back" id="pg-back">
@@ -442,6 +494,9 @@ function openPage(id) {
 function closePage() { confirmRestartAll = false; $("#layer")?.remove(); }
 document.addEventListener("click", e => { const o = e.target.closest("[data-open]"); if (o && !o.closest(".layer")) openPage(o.dataset.open); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closePage(); });
+
+renderAttention();
+$("#sim").addEventListener("change", e => setFailing(e.target.checked));
 
 // Live GPU/power wiggle so the top reads as live.
 setInterval(() => {
