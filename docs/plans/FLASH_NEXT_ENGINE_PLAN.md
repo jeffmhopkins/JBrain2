@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-07 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -474,9 +474,9 @@ on the real box".
 | Iterate on the image (pin bump, flags baked into it) | Debug `POST /refresh` (or `/rebuild`) with `flash-next` — rebuilds that one service from `main` without the ~10-minute full update. **For an engine service it is a quiesced build**: whichever engine is up is released (models unloaded, stopped, memory settled), the image builds under the update's bounded runner with **no engine running** (a llama.cpp compile beside a ~90 GiB engine is the update's own freeze), the container is recreated **stopped**, and exactly the engine that was up before comes back — the refreshed one or the other. So it works whichever engine serves, at the cost of local inference being down for the build; to try the new build, switch with the debug engine route afterwards | Claude with a token | exists; engine-safe in F1 |
 | Reclaim weight page cache | Debug `POST /llm/drop-page-cache` — range-aware on a resident Flash-Next: keeps the mmapped engram tensor's bytes, drops the rest (§3a) | Claude with a token | exists; F1, range-aware F3b |
 | Tune launch flags | Debug extra-args route (`-ngl`, `-ub`, `--ctx-checkpoints`, `-lv`, `--load-mode`, …), engine-aware; `-ot` is added to `EXTRA_ARG_FLAGS` | Claude with a token | F1 |
-| Switch engines | PWA **Ops → Local engine** (drain → swap → smoke → auto-rollback) over the owner API `POST /api/settings/llm/engine` | owner | F3a (API; the card after its mock is chosen) |
-| See what the engine is doing | PWA Ops card over `GET /api/settings/llm/engine` (engine, memory, last switch + smoke, history as `engine_switch` box events); logs via PWA and debug | owner | F3a (API) |
-| Clear or inspect disk prefix caches | The existing kv-prefix clear/snapshot surfaces, per role and per conversation; Ops → *Keep chats on disk* and *Prompt cache disk* | owner | F4 |
+| Switch engines | Owner API `POST /api/settings/llm/engine` (drain → swap → smoke → auto-rollback). The PWA switch shipped and was retired 2026-10-10 when the owner settled on Flash-Next: **Ops → Engine** now only leads back to the chosen engine (*Retry now*, *Start*); switching away is the debug `POST /api/debug/llm/engine` | owner | F3a ✅; PWA switch retired |
+| See what the engine is doing | PWA **Ops → Engine** page over `GET /api/settings/llm/engine` (engine, memory, last switch + smoke, history as `engine_switch` box events); logs via PWA and debug | owner | F3a (API) |
+| Clear or inspect disk prefix caches | The existing kv-prefix clear/snapshot surfaces, per role and per conversation; Ops → Engine → *Keep chats on disk* and *Prompt cache disk* | owner | F4 |
 | Try a custom engine | PWA engine sub-setting (mainline \| gufo \| …); images arrive by Ops → Update | owner | F5 |
 | Back out completely | Switch to Standard, Uninstall the weights in the PWA; the next update removes the stopped container and its image | owner | F1 + F3a |
 | Recover from a bad build | Ops → Update's existing rollback; the switch's auto-rollback keeps a local engine serving; Standard is never rebuilt by this plan | automatic | exists + F3a |

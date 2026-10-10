@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type ContainerStatus,
@@ -13,12 +13,30 @@ import {
   api,
 } from "../api/client";
 import { Dialog } from "../components/Dialog";
-import { LocalEngineCard } from "../components/LocalEngineCard";
-import { MinecraftOpsRow } from "../components/MinecraftOpsRow";
+import { LocalEngineSection, engineGlance } from "../components/LocalEngineCard";
 import { OpsCard } from "../components/OpsCard";
+import { PageLayer } from "../components/PageLayer";
 import { TimeSeriesPlot } from "../components/TimeSeriesPlot";
+import {
+  BotIcon,
+  ClockIcon,
+  CubeIcon,
+  DatabaseIcon,
+  LayersIcon,
+  MemoryIcon,
+  MonitorIcon,
+  ShieldIcon,
+} from "../components/icons";
 import { serverMetricSeries } from "../components/serverMetricSeries";
-import { type ConfirmSpec, MC_SERVICE, confirmContext, confirmFor } from "../minecraft";
+import { clearEngineFocus, useEngineSnapshot } from "../engineState";
+import {
+  type ConfirmSpec,
+  MC_SERVICE,
+  confirmContext,
+  confirmFor,
+  glanceOf,
+  tileOf,
+} from "../minecraft";
 import { agoLabel, panelConcerns, panelFacts, panelHealth } from "../panelStatus";
 import { useForeground, useForegroundRef } from "../visibility";
 import { RunsScreen } from "./RunsScreen";
@@ -92,10 +110,32 @@ function badgeClass(value: string): string {
 
 // ===== Health levels — the roll-up that colors service dots and group state =====
 
-type Level = "ok" | "warn" | "bad";
-const LEVEL_RANK: Record<Level, number> = { ok: 0, warn: 1, bad: 2 };
+// "off" is a service stopped on purpose. It is drawn grey and never counts against its group,
+// so a box with its opt-in extras switched off reads as healthy — before it did, AI and
+// "AI - Optional" sat amber and red for good and the colour stopped meaning anything.
+type Level = "ok" | "warn" | "bad" | "off";
+const LEVEL_RANK: Record<Level, number> = { off: 0, ok: 0, warn: 1, bad: 2 };
 
-function svcLevel(c: ContainerStatus): Level {
+// Services the box runs only when switched on (a compose profile): stopped is their normal
+// resting state. The chosen engine is the exception — it is opt-in to the stack but the one
+// local AI runs on, so it stopping is a failure, not a choice (see `svcLevel`).
+const OPT_IN_SERVICES = new Set([
+  "local-llm",
+  "flash-next",
+  "comfyui",
+  "jcode",
+  "sdr",
+  "mqtt",
+  "mqtt-ingest",
+  "cloudflared",
+  "migrate",
+  "wipe",
+]);
+
+/** `chosenEngine` is the compose service of the engine the owner chose, when known. */
+function svcLevel(c: ContainerStatus, chosenEngine: string | null): Level {
+  const stopped = c.state === "exited" || c.state === "created";
+  if (stopped && OPT_IN_SERVICES.has(c.service) && c.service !== chosenEngine) return "off";
   if (c.state === "exited" || c.state === "dead") return "bad";
   if (c.health === "unhealthy") return "bad";
   if (c.health === "starting" || c.state === "restarting" || c.state === "created") return "warn";
@@ -107,41 +147,80 @@ function worse(a: Level, b: Level): Level {
   return LEVEL_RANK[b] > LEVEL_RANK[a] ? b : a;
 }
 
-/** Services are grouped by role so the list stays scannable as the stack
- * grows (B3 redesign). Grouping is frontend-only — the backend status payload
- * is flat. Every compose service is assigned a group here; anything unrecognized
- * still falls into a trailing "Other" group, and empty groups don't render. */
+function groupLevel(items: ContainerStatus[], chosenEngine: string | null): Level {
+  return items.reduce<Level>((w, c) => worse(w, svcLevel(c, chosenEngine)), "ok");
+}
+
+/** Services are grouped by what they are FOR, so the list stays scannable as the stack grows.
+ * Grouping is frontend-only — the backend status payload is flat. Every compose service is
+ * assigned a group here; anything unrecognized still falls into a trailing "Other" group, and
+ * empty groups don't render. */
 const SERVICE_GROUPS: { label: string; services: string[] }[] = [
-  // The always-on app spine (db/web/postgres are alias names some deploys use).
-  { label: "Core", services: ["api", "worker", "supervisor", "db", "postgres", "web"] },
-  // On-box model / media inference: the always-on spine (embed, tts-stt) plus
-  // local-llm, which is opt-in but stays up once enabled.
-  { label: "AI", services: ["local-llm", "embed", "tts-stt"] },
-  // Opt-in extras guarded by compose profiles (comfyui, jcode) — off by default
-  // and typically stopped, so they get their own card and don't drag the AI
-  // group's roll-up to "down" when they're not running.
-  { label: "AI - Optional", services: ["comfyui", "jcode"] },
-  // Outward networking + web access (byparr is the reader's bot-challenge solver
-  // escalation), plus the on-box compute-job launcher.
+  // The app itself and the way in: without any one of these the app is down or unreachable
+  // (db/web/postgres are alias names some deploys use).
   {
-    label: "Infra",
+    label: "Core",
+    services: ["api", "worker", "supervisor", "db", "postgres", "web", "proxy", "cloudflared"],
+  },
+  // Everything that runs a model on the box, opt-in ones included — they show as off.
+  {
+    label: "Models",
+    services: ["flash-next", "local-llm", "embed", "tts-stt", "rapidocr", "comfyui"],
+  },
+  // What the assistant reaches for mid-answer.
+  {
+    label: "Assistant tools",
     services: [
-      "proxy",
-      "cloudflared",
+      "searxng",
       "reader",
       "byparr",
-      "searxng",
-      "rapidocr",
-      "jlaunch",
-      "mqtt",
-      "mqtt-ingest",
+      "browser",
+      "egress",
+      "htmlrender",
+      "pysandbox",
+      "jcode",
     ],
   },
-  // The on-box neural wall display that renders read-aloud (piper TTS).
-  { label: "Display", services: ["wall"] },
-  // One-shot maintenance containers — run once and exit.
-  { label: "Maintenance", services: ["migrate", "wipe"] },
+  // Hardware and screens around the house, and the phones' location feed.
+  { label: "Devices", services: ["wall", "endpoint", "sdr", "mqtt", "mqtt-ingest"] },
+  { label: "Apps", services: ["minecraft", "jlaunch"] },
+  // Run-once maintenance containers — present only while one runs.
+  { label: "One-shot jobs", services: ["migrate", "wipe"] },
 ];
+
+// What each service is, in the owner's words, beside its compose name.
+const SERVICE_WHAT: Record<string, string> = {
+  api: "app server",
+  worker: "background jobs",
+  supervisor: "updates and restarts",
+  db: "database",
+  postgres: "database",
+  proxy: "front door",
+  cloudflared: "remote-access tunnel",
+  "flash-next": "chat engine",
+  "local-llm": "Standard engine",
+  embed: "search embeddings",
+  "tts-stt": "speech in and out",
+  rapidocr: "text from images",
+  comfyui: "image generation",
+  searxng: "web search",
+  reader: "page reader",
+  byparr: "bot-challenge solver",
+  browser: "browse agent's browser",
+  egress: "browser's filtered way out",
+  htmlrender: "HTML to image",
+  pysandbox: "runs Python",
+  jcode: "code mode",
+  wall: "wall display",
+  endpoint: "panel flasher",
+  sdr: "radio",
+  mqtt: "location broker",
+  "mqtt-ingest": "location feed",
+  minecraft: "Bedrock server",
+  jlaunch: "long compute jobs",
+  migrate: "schema migration",
+  wipe: "install reset",
+};
 
 function groupContainers(
   containers: ContainerStatus[],
@@ -158,9 +237,7 @@ function groupContainers(
   return result;
 }
 
-// ===== Collapsible card — the shared disclosure shell for every Ops section =====
-
-// ===== Server update — folded into the System card's Load row (owner request) =====
+// ===== Server update — the one Update on the screen, right under the vitals =====
 
 type UpdatePhase =
   | { step: "idle" }
@@ -169,124 +246,6 @@ type UpdatePhase =
   | { step: "done"; ok: boolean; log: string };
 
 const UPDATE_POLL_MS = 3000;
-
-/** Whether an update rebuilds the model gateway onto the newest llama.cpp and then
- *  smoke-tests it by loading a model.
- *
- *  It lives next to the update button because that is what it governs, and it is here at
- *  all because it used to live only in the box's `.env` — unreachable for an owner running
- *  this thing remotely with no terminal. Worth reaching: the smoke test loads a model into
- *  the iGPU, which is the heaviest thing an otherwise-routine update does. */
-function GatewayAutoUpdateToggle() {
-  const [on, setOn] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const settings = await api.getSettings();
-        if (!cancelled) setOn(settings.local_llm_auto_update);
-      } catch {
-        // Leave it unknown rather than guessing a state the owner might act on.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function toggle(): Promise<void> {
-    if (on === null) return;
-    const next = !on;
-    setOn(next); // optimistic
-    try {
-      await api.updateSettings({ local_llm_auto_update: next });
-    } catch {
-      setOn(!next); // put it back: a toggle that lies about what the box will do is worse
-    }
-  }
-
-  return (
-    <div className="settings-switch-row ops-autoupdate">
-      <span className="settings-meta" style={{ margin: 0 }}>
-        Track newest llama.cpp <span className="muted">— rebuilds and loads a model to verify</span>
-      </span>
-      <button
-        type="button"
-        role="switch"
-        aria-label="Track newest llama.cpp on update"
-        aria-checked={on ?? false}
-        className={`settings-switch${on ? " on" : ""}`}
-        disabled={on === null}
-        onClick={() => void toggle()}
-      >
-        <span className="knob" />
-      </button>
-    </div>
-  );
-}
-
-/** Whether an update rebuilds the local inference engine with the Fast-Qwen-loads patch
- *  (the patched llama-server that turns a qwen MTP-hybrid disk restore from a ~176 s
- *  re-prefill into a ~12 s load).
- *
- *  It lives next to the auto-update toggle and the Update button because that is what it
- *  governs — the next Update runs the ~20-30 min rebuild — and it is a PWA switch at all
- *  because activating the patch used to mean editing the box `.env`, which the owner has no
- *  terminal to reach. A failed patched build rolls back and clears the setting on the box,
- *  so the toggle reflects what actually happened after the next Update. */
-function GatewayPatchRestoreToggle() {
-  const [on, setOn] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const settings = await api.getSettings();
-        if (!cancelled) setOn(settings.local_llm_patch_restore_checkpoint);
-      } catch {
-        // Leave it unknown rather than guessing a state the owner might act on.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function toggle(): Promise<void> {
-    if (on === null) return;
-    const next = !on;
-    setOn(next); // optimistic
-    try {
-      await api.updateSettings({ local_llm_patch_restore_checkpoint: next });
-    } catch {
-      setOn(!next); // put it back: a toggle that lies about what the box will do is worse
-    }
-  }
-
-  return (
-    <div className="settings-switch-row ops-autoupdate">
-      <span className="settings-meta" style={{ margin: 0 }}>
-        Fast Qwen loads{" "}
-        <span className="muted">
-          — experimental engine rebuild: the next Update runs a ~20-30 minute rebuild; if it fails,
-          the box rolls back and turns this off
-        </span>
-      </span>
-      <button
-        type="button"
-        role="switch"
-        aria-label="Fast Qwen loads (experimental engine rebuild)"
-        aria-checked={on ?? false}
-        className={`settings-switch${on ? " on" : ""}`}
-        disabled={on === null}
-        onClick={() => void toggle()}
-      >
-        <span className="knob" />
-      </button>
-    </div>
-  );
-}
 
 // Disk allowances the owner picks from; a stored value outside the list is shown as-is.
 const PROMPT_CACHE_BUDGETS_GB = [10, 25, 40, 60, 80, 120, 200];
@@ -300,10 +259,11 @@ const GATE_HINT: Record<RestoreGate, string> = {
   failed: " Restores are off: the engine's slot check failed.",
 };
 
-/** The prompt cache's two owner knobs (FLASH_NEXT_ENGINE_PLAN F4): whether Flash-Next keeps
- *  each chat conversation on disk across slot changes, restarts and engine switches, and how
- *  much disk the cache may use. Both apply at once — no Update needed. Same optimistic
- *  write-and-put-back as the toggles above. */
+/** The prompt cache's two owner knobs (FLASH_NEXT_ENGINE_PLAN F4), on the Engine page: whether
+ *  Flash-Next keeps each chat conversation on disk across slot changes, restarts and engine
+ *  switches, and how much disk the cache may use. Both apply at once — no Update needed. Each
+ *  write is optimistic and put back on a refusal: a control that lies about what the box will
+ *  do is worse than one that lags. */
 function PromptCacheControls() {
   const [conversations, setConversations] = useState<boolean | null>(null);
   const [budget, setBudget] = useState<number | null>(null);
@@ -465,13 +425,10 @@ function UpdateControl() {
             className="ops-update-btn"
             onClick={() => setPhase({ step: "confirm" })}
           >
-            Update server
+            Update
           </button>
         </div>
       )}
-      {phase.step === "idle" && <GatewayAutoUpdateToggle />}
-      {phase.step === "idle" && <GatewayPatchRestoreToggle />}
-      {phase.step === "idle" && <PromptCacheControls />}
       {phase.step === "confirm" && (
         <div className="ops-update-bar">
           <span className="ops-update-dot" />
@@ -509,58 +466,113 @@ function UpdateControl() {
   );
 }
 
-// ===== System card — the four vitals + the embedded server update =====
+// ===== Vitals — the current readings, always open at the top =====
 
-function SystemCard({ metrics }: { metrics: OpsMetrics | null }) {
-  let summary = "metrics unavailable";
-  if (metrics) {
-    const memPct = Math.round(
-      ((metrics.mem_total_bytes - metrics.mem_available_bytes) / metrics.mem_total_bytes) * 100,
+function VitalsCard({
+  metrics,
+  onRefresh,
+  busy,
+}: {
+  metrics: OpsMetrics | null;
+  onRefresh: () => void;
+  busy: boolean;
+}) {
+  const refresh = (
+    <button type="button" className="ops-refresh" onClick={onRefresh} disabled={busy}>
+      {busy ? "Refreshing…" : "Refresh"}
+    </button>
+  );
+  if (metrics === null) {
+    return (
+      <section className="ops-card ops-vitals" aria-label="Vitals">
+        <p className="muted ops-vitals-empty">metrics unavailable.</p>
+        <div className="ops-vitals-foot">{refresh}</div>
+      </section>
     );
-    const diskPct = Math.round(
-      ((metrics.disk_total_bytes - metrics.disk_free_bytes) / metrics.disk_total_bytes) * 100,
-    );
-    const gpu =
-      metrics.gpu_busy_percent != null ? `gpu ${Math.round(metrics.gpu_busy_percent)}% · ` : "";
-    const power = metrics.apu_power_w != null ? `${metrics.apu_power_w.toFixed(1)}W · ` : "";
-    const fanRpms = metrics.fan_rpm ? Object.values(metrics.fan_rpm) : [];
-    const fan = fanRpms.length > 0 ? `fan ${Math.max(...fanRpms)}rpm · ` : "";
-    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}${power}${fan}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
   }
+  // Reclaimable cache counts as available, so the meter reflects real occupancy.
+  const memUsed = memParts(metrics).used;
+  const diskUsed = metrics.disk_total_bytes - metrics.disk_free_bytes;
+  const pct = (used: number, total: number) => (total > 0 ? Math.round((used / total) * 100) : 0);
   return (
-    <OpsCard
-      title="System"
-      defaultOpen
-      summaryCollapsed={<span className="ops-card-summary">{summary}</span>}
-    >
-      {metrics === null ? (
-        <p className="muted ops-vrow-empty">metrics unavailable.</p>
-      ) : (
-        <SystemRows metrics={metrics} />
-      )}
-    </OpsCard>
+    <section className="ops-card ops-vitals" aria-label="Vitals">
+      <div className="ops-vitals-grid">
+        <div className="ops-vital">
+          <span className="ops-vk">GPU</span>
+          <span className="ops-vital-v">
+            {metrics.gpu_busy_percent != null ? `${Math.round(metrics.gpu_busy_percent)}%` : "—"}
+          </span>
+          {metrics.gpu_busy_percent != null && (
+            <Meter used={metrics.gpu_busy_percent} total={100} tone="util" />
+          )}
+        </div>
+        <div className="ops-vital">
+          <span className="ops-vk">Memory</span>
+          <span className="ops-vital-v">
+            {pct(memUsed, metrics.mem_total_bytes)}%{" "}
+            <small>
+              {fmtBytes(memUsed)} / {fmtBytes(metrics.mem_total_bytes)}
+            </small>
+          </span>
+          <Meter used={memUsed} total={metrics.mem_total_bytes} />
+        </div>
+        <div className="ops-vital">
+          <span className="ops-vk">Power</span>
+          {/* APU/SoC package power (amdgpu), not wall power — a readout, no meter. */}
+          <span className="ops-vital-v">
+            {metrics.apu_power_w != null ? (
+              <>
+                {metrics.apu_power_w.toFixed(1)} <small>W APU</small>
+              </>
+            ) : (
+              "—"
+            )}
+          </span>
+        </div>
+        <div className="ops-vital">
+          <span className="ops-vk">Disk</span>
+          <span className="ops-vital-v">
+            {pct(diskUsed, metrics.disk_total_bytes)}%{" "}
+            <small>
+              {fmtBytes(diskUsed)} / {fmtBytes(metrics.disk_total_bytes)}
+            </small>
+          </span>
+          <Meter used={diskUsed} total={metrics.disk_total_bytes} />
+        </div>
+      </div>
+      <div className="ops-vitals-foot">
+        <span>
+          load {metrics.load_1m.toFixed(2)} · {metrics.load_5m.toFixed(2)} ·{" "}
+          {metrics.load_15m.toFixed(2)} · up {fmtUptime(metrics.uptime_seconds)}
+        </span>
+        {refresh}
+      </div>
+    </section>
   );
 }
 
-function SystemRows({ metrics }: { metrics: OpsMetrics }) {
-  // Reclaimable cache counts as available, so the meter reflects real occupancy.
-  const memUsed = memParts(metrics).used;
+// ===== Storage — the slower-moving numbers that left the vitals =====
+
+function StorageRows({ metrics }: { metrics: OpsMetrics | null }) {
+  if (metrics === null) return <p className="muted ops-vrow-empty">metrics unavailable.</p>;
   const diskUsed = metrics.disk_total_bytes - metrics.disk_free_bytes;
   const swapUsed = metrics.swap_total_bytes - metrics.swap_free_bytes;
   return (
     <>
       <div className="ops-vrow">
-        <span className="ops-vk">Memory</span>
+        <span className="ops-vk">Database</span>
         <div className="ops-vmid">
-          <div className="ops-vline">
-            <span className="ops-vv">
-              {fmtBytes(memUsed)} <small>/ {fmtBytes(metrics.mem_total_bytes)}</small>
-            </span>
-            {metrics.swap_total_bytes > 0 && (
-              <span className="ops-vextra">swap {fmtBytes(swapUsed)}</span>
-            )}
-          </div>
-          <Meter used={memUsed} total={metrics.mem_total_bytes} />
+          {metrics.db ? (
+            <>
+              <span className="ops-vv">{fmtBytes(metrics.db.db_size_bytes)}</span>
+              <span className="ops-vsub">
+                {metrics.db.note_count} notes · {metrics.db.attachment_count} files
+                {metrics.blobs ? ` · ${fmtBytes(metrics.blobs.total_bytes)} blobs` : ""}
+              </span>
+            </>
+          ) : (
+            <span className="ops-vsub">unavailable</span>
+          )}
         </div>
       </div>
       <div className="ops-vrow">
@@ -572,22 +584,12 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
           <Meter used={diskUsed} total={metrics.disk_total_bytes} />
         </div>
       </div>
-      {metrics.gpu_busy_percent != null && (
+      {metrics.swap_total_bytes > 0 && (
         <div className="ops-vrow">
-          <span className="ops-vk">GPU</span>
+          <span className="ops-vk">Swap</span>
           <div className="ops-vmid">
-            <span className="ops-vv">{Math.round(metrics.gpu_busy_percent)}%</span>
-            <Meter used={metrics.gpu_busy_percent} total={100} tone="util" />
-          </div>
-        </div>
-      )}
-      {metrics.apu_power_w != null && (
-        <div className="ops-vrow">
-          <span className="ops-vk">Power</span>
-          <div className="ops-vmid">
-            {/* APU/SoC package power (amdgpu), not wall power — text readout, no meter. */}
             <span className="ops-vv">
-              {metrics.apu_power_w.toFixed(1)} W <small>APU package</small>
+              {fmtBytes(swapUsed)} <small>/ {fmtBytes(metrics.swap_total_bytes)}</small>
             </span>
           </div>
         </div>
@@ -605,35 +607,6 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
           </div>
         </div>
       )}
-      <div className="ops-vrow">
-        <span className="ops-vk">Database</span>
-        <div className="ops-vmid">
-          {metrics.db ? (
-            <>
-              <span className="ops-vv">{fmtBytes(metrics.db.db_size_bytes)}</span>
-              <span className="ops-vsub">
-                {metrics.db.note_count} notes · {metrics.db.attachment_count} files
-                {metrics.blobs ? ` · ${fmtBytes(metrics.blobs.total_bytes)} blobs` : ""}
-              </span>
-            </>
-          ) : (
-            <span className="ops-vsub">unavailable</span>
-          )}
-        </div>
-      </div>
-      <div className="ops-vrow ops-vrow-load">
-        <div className="ops-vrow-line">
-          <span className="ops-vk">Load</span>
-          <div className="ops-vmid">
-            <span className="ops-vv">
-              {metrics.load_1m.toFixed(2)} · {metrics.load_5m.toFixed(2)} ·{" "}
-              {metrics.load_15m.toFixed(2)}
-            </span>
-            <span className="ops-vsub">up {fmtUptime(metrics.uptime_seconds)}</span>
-          </div>
-        </div>
-        <UpdateControl />
-      </div>
     </>
   );
 }
@@ -641,44 +614,46 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
 // ===== Service group + row, each row carrying its own pullable log tail =====
 
 const LOG_TAIL = 200;
-
-// A per-service rebuild (compose build + up -d) runs as a supervisor one-shot, so like the
-// server update it needs progress, not fire-and-forget. Only one runs at a time (the
-// one-shot guard), so a single state at the screen level tracks which service and where.
-type RebuildState =
-  | { step: "idle" }
-  | { step: "running"; service: string; log: string; unreachable: boolean }
-  | { step: "done"; service: string; ok: boolean; log: string };
+const LEVEL_WORD: Record<Level, string> = {
+  ok: "all up",
+  off: "all up",
+  warn: "degraded",
+  bad: "down",
+};
 
 function ServiceGroup({
   group,
+  chosenEngine,
   memByService,
   onRestart,
-  onRebuild,
   onLifecycle,
-  rebuild,
 }: {
   group: { label: string; items: ContainerStatus[] };
+  chosenEngine: string | null;
   memByService: Map<string, number>;
   onRestart: (service: string) => void;
-  onRebuild: (service: string) => void;
   onLifecycle: (service: string, action: "start" | "stop") => void;
-  rebuild: RebuildState;
 }) {
-  const level = group.items.reduce<Level>((w, c) => worse(w, svcLevel(c)), "ok");
-  const label = level === "ok" ? "all up" : level === "warn" ? "degraded" : "down";
+  const level = groupLevel(group.items, chosenEngine);
+  const off = group.items.filter((c) => svcLevel(c, chosenEngine) === "off").length;
+  // A group of only switched-off extras is "off", not "all up": nothing in it is running.
+  const allOff = off === group.items.length;
   return (
     <OpsCard
       title={group.label}
       bodyClassName="ops-srows"
       headerRight={
         <>
-          <span className="ops-gcount">
-            {group.items.length} {group.items.length === 1 ? "service" : "services"}
-          </span>
-          <span className={`ops-gstate ops-gstate-${level}`}>
+          <span className="ops-gcount">{group.items.length}</span>
+          {off > 0 && !allOff && (
+            <span className="ops-gstate ops-gstate-off">
+              <span className="ops-gdot" />
+              {off} off
+            </span>
+          )}
+          <span className={`ops-gstate ops-gstate-${allOff ? "off" : level}`}>
             <span className="ops-gdot" />
-            {label}
+            {allOff ? "off" : LEVEL_WORD[level]}
           </span>
         </>
       }
@@ -687,11 +662,10 @@ function ServiceGroup({
         <ServiceRow
           key={c.service}
           c={c}
+          level={svcLevel(c, chosenEngine)}
           memBytes={memByService.get(c.service) ?? null}
           onRestart={onRestart}
-          onRebuild={onRebuild}
           onLifecycle={onLifecycle}
-          rebuild={rebuild}
         />
       ))}
     </OpsCard>
@@ -700,20 +674,19 @@ function ServiceGroup({
 
 function ServiceRow({
   c,
+  level,
   memBytes,
   onRestart,
-  onRebuild,
   onLifecycle,
-  rebuild,
 }: {
   c: ContainerStatus;
+  level: Level;
   memBytes: number | null;
   onRestart: (service: string) => void;
-  onRebuild: (service: string) => void;
   onLifecycle: (service: string, action: "start" | "stop") => void;
-  rebuild: RebuildState;
 }) {
   const [open, setOpen] = useState(false);
+  const what = SERVICE_WHAT[c.service];
   return (
     <div className="ops-srow">
       <button
@@ -722,30 +695,31 @@ function ServiceRow({
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <span className={`ops-sdot ops-sdot-${svcLevel(c)}`} />
+        <span className={`ops-sdot ops-sdot-${level}`} />
         <span className="ops-sinfo">
           <span className="ops-sline">
             <span className="ops-snm">{c.service}</span>
-            <span className={badgeClass(c.state)}>{c.state}</span>
-            {c.health && <span className={badgeClass(c.health)}>{c.health}</span>}
+            {level === "off" ? (
+              <span className="badge off">off</span>
+            ) : (
+              <>
+                <span className={badgeClass(c.state)}>{c.state}</span>
+                {c.health && <span className={badgeClass(c.health)}>{c.health}</span>}
+              </>
+            )}
           </span>
           <span className="ops-smeta">
-            {c.image}
-            {c.started_at && ` · since ${new Date(c.started_at).toLocaleString()}`}
+            {what ?? c.image}
+            {level !== "off" &&
+              c.started_at &&
+              ` · since ${new Date(c.started_at).toLocaleString()}`}
           </span>
         </span>
         {memBytes !== null && <span className="ops-smem">{fmtBytes(memBytes)}</span>}
         <span className="ops-scaret">›</span>
       </button>
       {open && (
-        <ServiceBody
-          c={c}
-          memBytes={memBytes}
-          onRestart={onRestart}
-          onRebuild={onRebuild}
-          onLifecycle={onLifecycle}
-          rebuild={rebuild}
-        />
+        <ServiceBody c={c} memBytes={memBytes} onRestart={onRestart} onLifecycle={onLifecycle} />
       )}
     </div>
   );
@@ -755,16 +729,12 @@ function ServiceBody({
   c,
   memBytes,
   onRestart,
-  onRebuild,
   onLifecycle,
-  rebuild,
 }: {
   c: ContainerStatus;
   memBytes: number | null;
   onRestart: (service: string) => void;
-  onRebuild: (service: string) => void;
   onLifecycle: (service: string, action: "start" | "stop") => void;
-  rebuild: RebuildState;
 }) {
   const [lines, setLines] = useState<string[] | null>(null);
   const [follow, setFollow] = useState(false);
@@ -887,28 +857,7 @@ function ServiceBody({
             Start
           </button>
         )}
-        <button
-          type="button"
-          className="ops-srebuild"
-          onClick={() => onRebuild(c.service)}
-          disabled={rebuild.step === "running"}
-        >
-          {rebuild.step === "running" && rebuild.service === c.service ? "Rebuilding…" : "Rebuild"}
-        </button>
       </div>
-      {rebuild.step !== "idle" && rebuild.service === c.service && (
-        <div className="ops-update-status" aria-label={`Rebuild ${c.service}`}>
-          {rebuild.step === "running" && (
-            <p className="muted">{rebuild.unreachable ? "Recreating — hold on…" : "Rebuilding…"}</p>
-          )}
-          {rebuild.step === "done" && (
-            <p className={rebuild.ok ? "muted" : "error"}>
-              {rebuild.ok ? "Rebuild complete." : "Rebuild failed — see log."}
-            </p>
-          )}
-          <pre className="ops-update-log">{rebuild.log}</pre>
-        </div>
-      )}
     </div>
   );
 }
@@ -917,17 +866,6 @@ function ServiceBody({
 
 const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
 
-/** Host settings the app depends on and cannot always apply.
- *
- *  This card exists because the setting that mattered was invisible. Our own installer put
- *  `ttm.pages_limit` at 124 GiB on a 121 GiB box — which DISABLES it, since the GTT
- *  over-commit it refuses can never occur above total RAM — and the product said nothing.
- *  It surfaced weeks later, from reading a shell script, after a freeze that cost a power
- *  cycle. A boot parameter cannot be changed from a phone; being told it is wrong can.
- *
- *  Collapsed by default when everything holds, and OPEN when something does not: a health
- *  panel nobody opens is not a health panel. The body fetches on mount, so a healthy box
- *  pays nothing for it. */
 // ===== The panels, as they last described themselves =====
 //
 // THE PANEL HAS REPORTED RICHLY FOR MONTHS AND NOBODY COULD READ IT. Everything below arrives
@@ -939,33 +877,14 @@ const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
 //
 // On Ops rather than beside the messages, because these are the questions asked ABOUT a panel
 // rather than through it — next to the update that put the version there.
-function PanelsCard({ refreshKey }: { refreshKey: number }) {
-  const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  // Refetched whenever the top Refresh bumps `refreshKey`, like the history card, and for a
-  // more pointed reason: the press right after an update is the owner asking THIS card
-  // whether the new version landed, and a card that answered with the pre-update reading
-  // would be worse than one that made him reload the app.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is a re-run trigger, not read in the effect
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await api.panelStatus();
-        if (!cancelled) setPanels(result.panels);
-      } catch (err) {
-        if (!cancelled) setError(errorMessage(err));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
-
-  const health = (panels ?? []).map((p) => panelHealth(p.age_s));
-  const unwell = health.filter((h) => h !== "ok").length;
-  const summary = error
+/** The Panels tile's line, and whether any panel needs a look. */
+function panelsGlance(
+  panels: PanelStatusOut[] | null,
+  error: string | null,
+): { word: string; unwell: number } {
+  const unwell = (panels ?? []).filter((p) => panelHealth(p.age_s) !== "ok").length;
+  const word = error
     ? "unavailable"
     : panels === null
       ? "checking…"
@@ -974,18 +893,15 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
         : unwell === 0
           ? `${panels.length} reporting`
           : `${unwell} not reporting`;
+  return { word, unwell };
+}
 
+// The fleet is fetched by the screen (refetched on every Refresh — the press right after an
+// update is the owner asking whether the new version landed), so the tile can say "2 not
+// reporting" without the page being open.
+function PanelsBody({ panels, error }: { panels: PanelStatusOut[] | null; error: string | null }) {
   return (
-    <OpsCard
-      // Keyed on the verdict for the reason `HostSettingsCard` is: `defaultOpen` is read into
-      // `useState` on the first render only, and this data arrives after mount.
-      key={unwell > 0 ? "attention" : "healthy"}
-      title="Panels"
-      defaultOpen={unwell > 0}
-      summaryCollapsed={
-        <span className={`ops-card-summary${unwell > 0 ? " warn" : ""}`}>{summary}</span>
-      }
-    >
+    <section className="ops-card">
       {error && <p className="muted ops-vrow-empty">{error}</p>}
       {panels?.length === 0 && (
         <p className="muted ops-vrow-empty">
@@ -1031,51 +947,23 @@ function PanelsCard({ refreshKey }: { refreshKey: number }) {
           </div>
         );
       })}
-    </OpsCard>
+    </section>
   );
 }
 
-function HostSettingsCard() {
-  const [data, setData] = useState<HostSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await api.opsHostSettings();
-        if (!cancelled) setData(result);
-      } catch (err) {
-        if (!cancelled) setError(errorMessage(err));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const bad = data ? data.settings.filter((c) => !c.ok) : [];
-  const summary = error
-    ? "unavailable"
-    : data === null
-      ? "checking…"
-      : bad.length === 0
-        ? "all good"
-        : `${bad.length} need${bad.length === 1 ? "s" : ""} attention`;
-
+/** Host settings the app depends on and cannot always apply.
+ *
+ *  This card exists because the setting that mattered was invisible. Our own installer put
+ *  `ttm.pages_limit` at 124 GiB on a 121 GiB box — which DISABLES it, since the GTT
+ *  over-commit it refuses can never occur above total RAM — and the product said nothing.
+ *  It surfaced weeks later, from reading a shell script, after a freeze that cost a power
+ *  cycle. A boot parameter cannot be changed from a phone; being told it is wrong can.
+ *
+ *  Its Ops tile turns red and names the count when something does not hold: a health panel
+ *  nobody opens is not a health panel. */
+function HostBody({ data, error }: { data: HostSettings | null; error: string | null }) {
   return (
-    <OpsCard
-      // Keyed on the verdict, not decorative. `OpsCard` reads `defaultOpen` into `useState`,
-      // which captures only the FIRST render — and this card's data arrives after mount, so
-      // without a key the auto-open never fires and a failing setting stays collapsed. That
-      // is the exact failure mode this card exists to prevent, so it is worth a remount.
-      key={bad.length > 0 ? "attention" : "healthy"}
-      title="Host settings"
-      defaultOpen={bad.length > 0}
-      summaryCollapsed={
-        <span className={`ops-card-summary${bad.length > 0 ? " warn" : ""}`}>{summary}</span>
-      }
-    >
+    <section className="ops-card">
       {error && <p className="muted ops-vrow-empty">{error}</p>}
       {data?.settings.map((c) => (
         <div key={c.key} className={`ops-host-row${c.ok ? "" : " bad"}`}>
@@ -1101,13 +989,12 @@ function HostSettingsCard() {
           )}
         </div>
       ))}
-    </OpsCard>
+    </section>
   );
 }
 
-/** The body is a child of OpsCard, so it mounts (and fetches) only when the card
- * is expanded — a collapsed History card costs nothing. The range buttons drive
- * the refetch; the resolution note tells the operator raw vs hourly rollup. */
+/** The range buttons drive the refetch; the resolution note tells the operator raw vs hourly
+ * rollup. */
 function HistoryBody({ refreshKey }: { refreshKey: number }) {
   const [range, setRange] = useState<MetricRange>("6h");
   const [history, setHistory] = useState<MetricsHistory | null>(null);
@@ -1179,16 +1066,15 @@ function HistoryBody({ refreshKey }: { refreshKey: number }) {
   );
 }
 
+// Always open: the graphs are half of what the owner opens Ops to see.
 function HistoryCard({ refreshKey }: { refreshKey: number }) {
   return (
-    <OpsCard
-      title="History"
-      defaultOpen
-      bodyClassName="ops-graph-body"
-      summaryCollapsed={<span className="ops-card-summary">graphs</span>}
-    >
-      <HistoryBody refreshKey={refreshKey} />
-    </OpsCard>
+    <section className="ops-card" aria-label="History">
+      <div className="ops-card-static">History</div>
+      <div className="ops-card-body ops-graph-body">
+        <HistoryBody refreshKey={refreshKey} />
+      </div>
+    </section>
   );
 }
 
@@ -1200,7 +1086,7 @@ function HistoryCard({ refreshKey }: { refreshKey: number }) {
 type MemItem = { service: string; rss_bytes: number; command: string };
 
 const MEM_GROUPS: { services: string[]; cls: string }[] = [
-  { services: ["local-llm", "embed", "comfyui", "tts-stt"], cls: "ai" },
+  { services: ["flash-next", "local-llm", "embed", "comfyui", "tts-stt", "rapidocr"], cls: "ai" },
   { services: ["jcode"], cls: "code" },
   { services: ["api", "worker", "supervisor", "db", "postgres", "web"], cls: "core" },
 ];
@@ -1232,12 +1118,9 @@ function MemoryCard({
 
   if (!metrics) {
     return (
-      <OpsCard
-        title="System memory"
-        summaryCollapsed={<span className="ops-card-summary">unavailable</span>}
-      >
+      <section className="ops-card">
         <p className="muted ops-vrow-empty">metrics unavailable.</p>
-      </OpsCard>
+      </section>
     );
   }
 
@@ -1293,14 +1176,7 @@ function MemoryCard({
   });
 
   return (
-    <OpsCard
-      title="System memory"
-      summaryCollapsed={
-        <span className="ops-card-summary">
-          {pct}% · {fmtBytes(used)} / {fmtBytes(total)}
-        </span>
-      }
-    >
+    <section className="ops-card ops-mem">
       <div className="ops-mem-head">
         <span className="ops-mem-pct">{pct}%</span>
         <span className="ops-mem-cap">
@@ -1476,11 +1352,35 @@ function MemoryCard({
         the instant anything needs the RAM. <b>iGPU</b> memory holding loaded model weights is real
         usage but has no per-process RSS, so it shows as its own slice, not in the rows above.
       </p>
-    </OpsCard>
+    </section>
   );
 }
 
-// The Ops row's glance doesn't need the screen's 5 s beat; it only has to be current enough
+// Ops opens on live vitals, the one Update, and the graphs; everything else sits behind a
+// launcher-style tile that pushes its own page (docs/mocks/ops-launcher/ops-launcher.html).
+type OpsPage = "services" | "memory" | "engine" | "panels" | "host" | "storage";
+
+const PAGE_TITLE: Record<OpsPage, string> = {
+  services: "Services",
+  memory: "Memory",
+  engine: "Engine",
+  panels: "Panels",
+  host: "Host",
+  storage: "Storage",
+};
+
+interface OpsTile {
+  id: string;
+  title: string;
+  icon: ReactNode;
+  sub: string;
+  /** A longer line for the tile's label, where the tile itself has room for one word. */
+  detail?: string;
+  tone: "" | "warn" | "bad";
+  onOpen: () => void;
+}
+
+// The Minecraft tile's glance doesn't need the screen's 5 s beat; it only has to be current enough
 // that "who's on" isn't stale when the owner looks.
 const MC_POLL_MS = 15_000;
 
@@ -1502,7 +1402,17 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
   // The Runs surface (Direction C) is an Ops sub-screen: it slides over Ops and
   // its back chevron returns here, matching the mock.
   const [showRuns, setShowRuns] = useState(false);
+  // The tile whose page is pushed over the grid, if any.
+  const [page, setPage] = useState<OpsPage | null>(null);
   const foreground = useForeground();
+  const engine = useEngineSnapshot();
+
+  // Panels and host settings are read here rather than in their pages so their tiles can say
+  // what needs a look without being opened.
+  const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
+  const [panelsError, setPanelsError] = useState<string | null>(null);
+  const [host, setHost] = useState<HostSettings | null>(null);
+  const [hostError, setHostError] = useState<string | null>(null);
 
   // Minecraft has its own screen, but its container is also stoppable from here — the
   // service row and Restart all — so Ops keeps a snapshot to warn before bouncing players.
@@ -1555,6 +1465,43 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the "refresh everything" signal.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .panelStatus()
+      .then((r) => {
+        if (!cancelled) {
+          setPanels(r.panels);
+          setPanelsError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setPanelsError(errorMessage(err));
+      });
+    api
+      .opsHostSettings()
+      .then((r) => {
+        if (!cancelled) {
+          setHost(r);
+          setHostError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setHostError(errorMessage(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  // The engine banner's "Details" (and a recovery the banner arms) lands on the Engine page.
+  useEffect(() => {
+    if (!engine.focus && engine.armed === null) return;
+    setPage("engine");
+    clearEngineFocus();
+  }, [engine.focus, engine.armed]);
 
   /** Act on the Minecraft container through its own API, so the world is saved first. */
   const runMc = useCallback(
@@ -1630,135 +1577,221 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
     [refresh, loadMc, runMc],
   );
 
-  // Per-service rebuild (compose build + up -d) via the supervisor one-shot. Long-running,
-  // so it kicks the one-shot then polls its status until it exits — and if the service being
-  // rebuilt is the api/proxy itself, the poll briefly can't reach the box (unreachable).
-  const [rebuild, setRebuild] = useState<RebuildState>({ step: "idle" });
-  const startRebuild = useCallback(
-    async (service: string) => {
-      if (rebuild.step === "running") return; // one at a time (the one-shot guard)
-      if (!window.confirm(`Rebuild ${service}? This rebuilds its image and recreates it.`)) return;
-      setError(null);
-      try {
-        await api.opsRebuildStart(service);
-      } catch (err) {
-        setError(
-          err instanceof ApiError && err.status === 409
-            ? "Another operation is running — try again when it finishes."
-            : errorMessage(err),
-        );
-        return;
-      }
-      setRebuild({
-        step: "running",
-        service,
-        log: `[rebuild] ${service} starting`,
-        unreachable: false,
-      });
-    },
-    [rebuild.step],
-  );
-
-  useEffect(() => {
-    if (rebuild.step !== "running") return;
-    let cancelled = false;
-    const tick = async () => {
-      let status: UpdateStatus;
-      try {
-        status = await api.opsRebuildStatus();
-      } catch {
-        // Rebuilding api/proxy drops the box briefly — flag it and keep polling.
-        if (!cancelled) setRebuild((r) => (r.step === "running" ? { ...r, unreachable: true } : r));
-        return;
-      }
-      if (cancelled) return;
-      if (status.state === "running") {
-        setRebuild((r) =>
-          r.step === "running" ? { ...r, log: status.log_tail, unreachable: false } : r,
-        );
-      } else if (status.state === "exited") {
-        setRebuild((r) =>
-          r.step === "running"
-            ? { step: "done", service: r.service, ok: status.exit_code === 0, log: status.log_tail }
-            : r,
-        );
-        void refresh();
-      }
-    };
-    const id = setInterval(() => void tick(), 2000);
-    void tick();
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [rebuild.step, refresh]);
-
   const groups = groupContainers(containers ?? []);
   const memByService = new Map((metrics?.containers ?? []).map((x) => [x.service, x.mem_bytes]));
+  const es = engine.state;
+  const chosenEngine = es ? (es.services[es.desired]?.service ?? null) : null;
+
+  // The banner names only real trouble: an "off" service never raises it.
+  const troubled = (containers ?? []).filter((c) => {
+    const l = svcLevel(c, chosenEngine);
+    return l === "bad" || l === "warn";
+  });
+  const troubleLevel = troubled.reduce<Level>((w, c) => worse(w, svcLevel(c, chosenEngine)), "ok");
+  const offCount = (containers ?? []).filter((c) => svcLevel(c, chosenEngine) === "off").length;
+
+  const mem = metrics ? memParts(metrics) : null;
+  const memPct = mem && mem.total > 0 ? Math.round((mem.used / mem.total) * 100) : null;
+  const engineTile = engineGlance(es, engine.error, engine.dismissed);
+  const panelTile = panelsGlance(panels, panelsError);
+  const hostBad = host ? host.settings.filter((c) => !c.ok).length : 0;
+  const showMc =
+    onOpenMinecraft !== undefined &&
+    mc.status?.container !== null &&
+    (mc.status !== null || mc.error);
+  // The launcher tile's word (it flags a waiting update), with the glance's line — who's on, or
+  // the lockout — carried in the tile's label.
+  const mcGlance = glanceOf(mc.status, mc.version, mc.error);
+  const mcTile = tileOf(mc.status, mc.version);
+  const mcTone: OpsTile["tone"] =
+    mcGlance.tone || (mcGlance.level === "bad" || mcGlance.level === "warn" ? mcGlance.level : "");
+
+  const tiles: OpsTile[] = [
+    {
+      id: "services",
+      title: "Services",
+      icon: <LayersIcon size={24} />,
+      sub:
+        containers === null
+          ? "checking…"
+          : troubled.length > 0
+            ? `${troubled.length} ${troubleLevel === "bad" ? "down" : "degraded"}`
+            : `${containers.length - offCount} up${offCount > 0 ? ` · ${offCount} off` : ""}`,
+      tone: troubled.length > 0 ? (troubleLevel === "bad" ? "bad" : "warn") : "",
+      onOpen: () => setPage("services"),
+    },
+    {
+      id: "memory",
+      title: "Memory",
+      icon: <MemoryIcon size={24} />,
+      sub: memPct === null ? "unavailable" : `${memPct}% used`,
+      tone: memPct !== null && memPct >= 95 ? "bad" : memPct !== null && memPct >= 85 ? "warn" : "",
+      onOpen: () => setPage("memory"),
+    },
+    {
+      id: "engine",
+      title: "Engine",
+      icon: <BotIcon size={24} />,
+      sub: engineTile.word,
+      tone: engineTile.tone,
+      onOpen: () => setPage("engine"),
+    },
+    ...(showMc && onOpenMinecraft
+      ? [
+          {
+            id: "minecraft",
+            title: "Minecraft",
+            icon: <CubeIcon size={24} />,
+            sub: mcTile?.word ?? mcGlance.word,
+            detail: mcGlance.meta,
+            tone: mcTone,
+            onOpen: onOpenMinecraft,
+          },
+        ]
+      : []),
+    {
+      id: "panels",
+      title: "Panels",
+      icon: <MonitorIcon size={24} />,
+      sub: panelTile.word,
+      tone: panelTile.unwell > 0 ? "warn" : "",
+      onOpen: () => setPage("panels"),
+    },
+    {
+      id: "host",
+      title: "Host",
+      icon: <ShieldIcon size={24} />,
+      sub: hostError
+        ? "unavailable"
+        : host === null
+          ? "checking…"
+          : hostBad === 0
+            ? "all good"
+            : `${hostBad} ${hostBad === 1 ? "issue" : "issues"}`,
+      tone: hostBad > 0 ? "bad" : "",
+      onOpen: () => setPage("host"),
+    },
+    {
+      id: "runs",
+      title: "Runs",
+      icon: <ClockIcon size={24} />,
+      sub: "workflows",
+      tone: "",
+      onOpen: () => setShowRuns(true),
+    },
+    {
+      id: "storage",
+      title: "Storage",
+      icon: <DatabaseIcon size={24} />,
+      sub: metrics?.db ? `DB ${fmtBytes(metrics.db.db_size_bytes)}` : "database",
+      tone: "",
+      onOpen: () => setPage("storage"),
+    },
+  ];
 
   return (
     <section className="ops">
-      <header className="ops-header">
-        <h2>Ops</h2>
-        <div className="ops-actions">
-          <button type="button" onClick={() => setShowRuns(true)}>
-            Runs
-          </button>
-          <button type="button" onClick={refresh} disabled={busy}>
-            {busy ? "Refreshing…" : "Refresh"}
-          </button>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => void restart("all")}
-            disabled={containers === null}
-          >
-            Restart all
-          </button>
-        </div>
-      </header>
-
       {error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
 
-      <SystemCard metrics={metrics} />
+      <VitalsCard metrics={metrics} onRefresh={() => void refresh()} busy={busy} />
 
-      <LocalEngineCard />
-
-      {onOpenMinecraft && mc.status?.container !== null && (mc.status !== null || mc.error) && (
-        <MinecraftOpsRow
-          status={mc.status}
-          version={mc.version}
-          error={mc.error}
-          onOpen={onOpenMinecraft}
-        />
+      {troubled.length > 0 && (
+        <button
+          type="button"
+          className={`ops-attn ops-attn-${troubleLevel}`}
+          onClick={() => setPage("services")}
+        >
+          <span className={`ops-sdot ops-sdot-${troubleLevel}`} />
+          <span className="ops-attn-text">
+            <b>
+              {troubled.map((c) => c.service).join(", ")}{" "}
+              {troubleLevel === "bad" ? "down" : "degraded"}
+            </b>
+          </span>
+          <span className="ops-scaret">›</span>
+        </button>
       )}
 
-      <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />
-
-      <PanelsCard refreshKey={refreshKey} />
-
-      <HostSettingsCard />
+      <section className="ops-card ops-update-card" aria-label="Server update">
+        <UpdateControl />
+      </section>
 
       <HistoryCard refreshKey={refreshKey} />
 
-      {containers === null && !error ? (
-        <p className="muted">Loading status…</p>
-      ) : (
-        groups.map((g) => (
-          <ServiceGroup
-            key={g.label}
-            group={g}
-            memByService={memByService}
-            onRestart={restart}
-            onRebuild={startRebuild}
-            onLifecycle={lifecycle}
-            rebuild={rebuild}
-          />
-        ))
+      <div className="tile-grid ops-tiles">
+        {tiles.map((t) => (
+          <div key={t.id} className="tile-slot">
+            <button
+              type="button"
+              className="tile"
+              onClick={t.onOpen}
+              aria-label={`${t.title}: ${t.sub}${t.detail ? ` — ${t.detail}` : ""}`}
+            >
+              {t.tone && <span className={`ops-tile-dot ${t.tone}`} aria-hidden="true" />}
+              <span className="tile-icon">{t.icon}</span>
+              <span className="tile-title">{t.title}</span>
+              <span className={`tile-sub${t.tone ? ` ${t.tone}` : ""}`}>{t.sub}</span>
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {page !== null && (
+        <PageLayer title={PAGE_TITLE[page]} onBack={() => setPage(null)}>
+          {page === "services" &&
+            (containers === null && !error ? (
+              <p className="muted">Loading status…</p>
+            ) : (
+              <>
+                {groups.map((g) => (
+                  <ServiceGroup
+                    key={g.label}
+                    group={g}
+                    chosenEngine={chosenEngine}
+                    memByService={memByService}
+                    onRestart={restart}
+                    onLifecycle={lifecycle}
+                  />
+                ))}
+                <section className="ops-card ops-restart-all">
+                  <span className="ops-restart-all-text">
+                    <b>Restart all</b>
+                    <span className="muted">
+                      Restarts every running service. The app drops briefly.
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => void restart("all")}
+                    disabled={containers === null}
+                  >
+                    Restart all
+                  </button>
+                </section>
+              </>
+            ))}
+          {page === "memory" && <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />}
+          {page === "engine" && (
+            <>
+              <LocalEngineSection />
+              <section className="ops-card ops-pad" aria-label="Prompt cache">
+                <PromptCacheControls />
+              </section>
+            </>
+          )}
+          {page === "panels" && <PanelsBody panels={panels} error={panelsError} />}
+          {page === "host" && <HostBody data={host} error={hostError} />}
+          {page === "storage" && (
+            <section className="ops-card">
+              <StorageRows metrics={metrics} />
+            </section>
+          )}
+        </PageLayer>
       )}
 
       {showRuns && <RunsScreen onClose={() => setShowRuns(false)} />}

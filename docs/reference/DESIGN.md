@@ -221,13 +221,14 @@ jlaunch, pet Control, jpanel, Room endpoints) — a switch pauses local AI on al
 so "only on the screens with the shared bar" would hide it exactly where a long-running
 local job lives. Like the status banner it is for problems and transitions only — the
 steel *"Flash-Next active"* strip it first carried was removed at the owner's request
-(2026-10-03); Ops → Local engine says which engine serves. **Amber**
+(2026-10-03); the Ops **Engine** tile says which engine serves. **Amber**
 while something holds the engine (a switch, a desired-≠-effective fallback, the
 perplexity one-shot, admission closed by a debug job), **rose** after a rollback or a
 failed switch — dismissable, per switch. When the latest read failed it keeps the last
 reading and says so (*"· can't reach the engine"*) rather than going silent or stale
 without a word. Its text is the live region, not the strip, so its own buttons are not
-re-announced on every poll. See "Ops Local engine card".
+re-announced on every poll. Its *Details* opens Ops straight onto the Engine page. See
+"Ops Engine page".
 
 **Status dot** — 8px circle: green=healthy, amber=degraded/retrying,
 rose=error, `--text-3`=unknown. Used in the composer footer. It no longer
@@ -621,44 +622,37 @@ similar) uses **half-width cards** in a 2-column grid, not full-width rows
 (settled in Phase 1 polish); names/images truncate with ellipsis rather
 than wrapping.
 
-**Ops Host settings card** — the one card that **opens itself**. Every other
-Ops card is collapsed by default and expands on tap; this one is `defaultOpen`
-when any checked setting fails, and collapses to a one-word summary ("all
-good") when they all hold. The asymmetry is deliberate and is the reason the
-card exists: `ttm.pages_limit` sat misconfigured for weeks and nothing said so,
-so a panel the owner has to think to open would not have helped. A failing row
-earns the space to state what breaks and what to do; a passing row is one quiet
-line behind the fold. Remedies that need a shell are prefixed **"Needs host
-access:"** rather than being styled the same as the ones an Update fixes — the
-owner has no terminal (CLAUDE.md #10), so "press the button" and "plan a
-reboot" must be distinguishable at a glance.
+**Ops Host tile** — the tile that **turns red by itself**. A failing host setting puts a
+rose dot and *"1 issue"* on the Host tile on the Ops grid without being opened; all holding,
+it reads *"all good"* and stays quiet. The asymmetry is deliberate and is the reason the
+check exists: `ttm.pages_limit` sat misconfigured for weeks and nothing said so, so a page
+the owner has to think to open would not have helped. On the page a failing row earns the
+space to state what breaks and what to do; a passing row is one quiet line. Remedies that
+need a shell are prefixed **"Needs host access:"** rather than being styled the same as the
+ones an Update fixes — the owner has no terminal (CLAUDE.md #10), so "press the button" and
+"plan a reboot" must be distinguishable at a glance.
 
-**Ops Local engine card** (GUI gate settled 2026-10-02 — chosen **A, a segmented
-toggle inside an Ops card**; binding mock
-`docs/mocks/engine-switch/a-segmented-toggle.html`, rivals B "two engine cards" and C
-"status-first block + stage timeline" kept beside it with the round record in
-`docs/mocks/engine-switch/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`
-F3a). Switches the box between **Standard** (the `local-llm` gateway) and **Flash-Next**
-(one model, its own container) — exactly one runs at a time.
+**Ops Engine page** — a status page, not a switch. The owner settled on Flash-Next
+(2026-10-10), so the Standard / Flash-Next segmented control the 2026-10-02 GUI gate chose
+(binding mock then `docs/mocks/engine-switch/a-segmented-toggle.html`, with the round record
+in `docs/mocks/engine-switch/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md`
+F3a) is gone, along with *Keep {engine}* and the not-installed / one-shot notices that
+explained why a segment was disabled. Everything that can still happen to the engine stays:
+an update or a failed start falling back, a switch started from the debug API, no engine left
+up. The registers below are still that mock's.
 
-- **A collapsed card that opens itself**, like Host settings: it expands while a switch
-  runs, after a rollback/failure (until dismissed), while desired ≠ effective, and when
-  the banner's *Switch back* arms a switch. `OpsCard` takes `open`/`onToggle` for this —
-  the key-remount trick Host settings uses would collapse the card the moment a confirm
-  was cancelled.
-- **The segmented control only arms.** A switch stops every local model for minutes, so
-  tapping the other segment expands an **inline confirm** that states the consequence
-  (pause, drain, what the per-task picks do, automatic rollback) with Cancel / Switch.
-  When the server's `guard` says now is a bad time (the nightly window, a workflow run)
-  the confirm says so, and **Switch anyway** (rose, `force: true`) stays disabled until a
-  separate **"I understand — nightly jobs may fail"** box is ticked; the tick is bound to
-  that guard's text. Force must never land under a finger: if a guard appears while a
-  confirm is open, the *same* button turns disabled — it is never swapped for an enabled
-  one under the tap. With no guard there is no force control at all. A confirm armed
-  against one engine is dropped if the serving engine changes under it.
-- **"Keep" is a confirm too.** On a fallback, *Keep {effective}* is offered only when the
-  box is cleanly on that engine (nothing would stop or reload) and its confirm says so;
-  on an inconsistent box it is named and confirmed as the switch it really is.
+- **The only actions lead back to the chosen engine** — *Retry now* on a fallback, *Try
+  again* after a failed switch to it, *Start {chosen}* when no engine is up — and each only
+  **arms an inline confirm** that states the consequence (pause, drain, smoke, automatic
+  rollback) with Cancel / *Start {engine}*. When the server's `guard` says now is a bad time
+  (the nightly window, a workflow run) the confirm says so, and *Start … anyway* (rose,
+  `force: true`) stays disabled until a separate **"I understand — nightly jobs may fail"**
+  box is ticked; the tick is bound to that guard's text. Force must never land under a
+  finger: if a guard appears while a confirm is open, the *same* button turns disabled — it
+  is never swapped for an enabled one under the tap. With no guard there is no force control
+  at all. A confirm armed against one engine is dropped if the serving engine changes under
+  it. A chosen engine that cannot start (not installed, a one-shot running) is offered no
+  action rather than a dead one.
 - **Cancel only while draining** (*"Cancel — nothing has stopped yet"*,
   `POST /api/settings/llm/engine/cancel`), and only while the server offers the route; a
   server without it (404) stops being offered it. A cancelled switch ends **neutral** —
@@ -666,23 +660,21 @@ F3a). Switches the box between **Standard** (the `local-llm` gateway) and **Flas
   Every surface reads endings from one `isTerminal()`, so a new terminal stage cannot
   leave the banner saying "Switching…" forever.
 - **No local engine up** is the one state louder than a rollback: a rose, non-dismissable
-  *"No local engine is up — reason"* in the card and the banner, with a *Start …* action
-  per startable engine (a real, confirmed switch). It is read against what is running now,
-  so it clears itself the moment an engine is up again.
+  *"No local engine is up — reason"* on the page and the banner, with *Start {chosen}* (a
+  real, confirmed switch). It is read against what is running now, so it clears itself the
+  moment an engine is up again.
 - **Progress is phased text + a five-step list with timestamps + the notes tail** —
   Drain → Stop → Start → Load → Smoke — the Server-update register, no fake bar.
-- **Disabled states say why**: Flash-Next not installed (with *Install in On-box
-  models*), a supervisor one-shot running, no container yet, a switch in flight.
-- **Readouts are the System card's label rows** — Engine (desired vs effective),
+- **Readouts are label rows** — Engine (desired vs effective),
   Memory (GTT used / pool, host free), Decode, Last smoke (per-probe chips), Engine
   log. Anything the api does not report reads **—**, never a guess (`decode_tps`,
   `effective_since` and `fallback_reason` render when the server sends them). A failed
   read keeps the last reading under *"Can't reach the engine · last read HH:MM"*.
-- **One shared store** (`engineState.ts`) feeds the card and the banner: the shell
+- **One shared store** (`engineState.ts`) feeds the page, its tile and the banner: the shell
   polls on a 30 s idle beat and every 2 s while a switch runs, backs off 2 → 4 → … → 30 s
   on failed reads (reset on success), pauses while the app is hidden, and stops only on a
   403 — until the next foreground signal (a 404 is transient: mid-update the api is briefly
-  an older build). The two can never disagree about whether a switch is happening, and a
+  an older build). They can never disagree about whether a switch is happening, and a
   header costs no request.
 - **LLM settings follows the engine**: an off-engine model keeps its **Stage** label but
   is disabled with the server's `blocked_reason` beneath it ("Runs on the Flash-Next
@@ -690,13 +682,11 @@ F3a). Switches the box between **Standard** (the `local-llm` gateway) and **Flas
   `remap_note` ("→ Flash-Next (engine active)") on the tier head and the task row; a
   Stage/Load refusal's 409 detail shows under the row instead of failing silently.
 
-A won for being native to the Ops stack — everything collapsed except System, the card
-earning space only when it needs attention — and the cheapest to build on `OpsCard`.
-Its known cost (a segmented control reads as a cheap toggle for a multi-minute,
-disruptive act) is carried by the confirm, which is why the confirm must state the
-consequence rather than ask "Are you sure?". B's side-by-side cards truncated at 390px
-and needed the heaviest (Dialog) confirm; C broke the collapsed-stack rule by spending a
-permanent block at the top of Ops when nothing is happening.
+The **prompt cache's two owner knobs** (*Keep chats on disk*, *Prompt cache disk*) live on
+this page under the status, because they are about the engine. The update's engine switches
+— *Track newest llama.cpp* and *Fast Qwen loads* — left the PWA with the segmented control:
+their stored values hold (Fast Qwen loads stays on — it builds the patched engine whose
+checkpoint sidecar Flash-Next's restore gate relies on).
 
 **KV pool view** (GUI gate settled 2026-10-03 — chosen **C, a quiet row line + a slot
 Sheet**; binding mock `docs/mocks/kv-pool/c-slot-sheet.html`, rivals A "summary that
@@ -864,43 +854,45 @@ auto-disarm). C won for putting the dangerous actions behind a deliberate
 tab rather than one long scroll of buttons (A) and for not leaning on a
 "last backup" freshness signal the backend doesn't track (B).
 
-**Ops screen — collapsible System + role groups (settled in a B-variant
-review; reference mock `docs/mocks/ops-redesign/ops-redesign-b3-system-open.html`,
-rivals A "status board" and C "health triage").** The flat full-width
-container list didn't scale past a handful of services, so the screen is now
-a stack of **collapsible cards** built on one shared disclosure shell
-(`OpsCard`: a header button with caret + `aria-expanded`, body mounted only
-when open — so a collapsed group never fetches its logs):
+**Ops screen — live readings on top, everything else behind tiles** (owner-reviewed
+2026-10-10 against the clickable mock `docs/mocks/ops-launcher/ops-launcher.html`; it
+replaces the 2026-era stack of collapsible cards, mock
+`docs/mocks/ops-redesign/ops-redesign-b3-system-open.html`, which had grown past a phone's
+worth of scrolling). The same pattern as the Settings grid:
 
-- **System card** (the one section **expanded by default**): the four vitals
-  — Memory, Disk, Database, Load — as labeled rows; collapsed, its header
-  shows a one-line recap (`mem 55% · disk 14% · load 0.55 · up 5h 40m`).
-  **Server update lives on the Load row** (owner request — it's a system
-  concern, not a footer afterthought): a steel info bar with the
-  tap-again-to-confirm button, expanding to the running/done log exactly as
-  the old card.
-- **Service groups** — services are **grouped by role** (Core / AI / Infra,
-  frontend-only mapping; anything unrecognized falls into a trailing Other),
-  each a **collapsed** card whose header carries a count and a **roll-up
-  state** (green "all up" / amber "degraded" / rose "down", worst-wins over
-  its members). A service **row** shows a level dot, name, state/health
-  badges, image·since meta, and memory; tapping it expands **its own log
-  tail** — the per-service viewer (Follow toggle = the SSE stream, scoped to
-  that one service) plus a one-tap **Copy logs** (writes the tail to the
-  clipboard; button reads "Copied" for 2s) and a Restart.
-- **AI usage moved off Ops to the LLM Settings screen** (`AiUsageCard`,
-  `frontend/src/screens/aiUsage.tsx`): token spend belongs with the model
-  config that drives it. It is a self-fetching collapsible drawer in the
-  same register as the Local-models drawer — collapsed, its header shows the
-  month's `in · out · ~$` recap; expanded, the today/month totals and the
-  per-task breakdown. Telemetry still fails quietly (a missing/malformed
-  payload reads "no usage data yet", never an exception).
+- **Always open, in this order**: the **vitals** card (GPU, memory, power, disk — current
+  value plus meter, with load, uptime and Refresh in its footer); a **problem banner** that
+  exists only while a service is down or degraded, names the services, and opens Services;
+  the **one Update** (tap, *Tap again to update*, the log, *Reload app* — the only update
+  control on the screen); the **History** graphs with their range picker.
+- **Then a 3-wide tile grid** in the launcher's own tile styles: Services, Memory, Engine,
+  Minecraft (when the box has its container; it opens the Minecraft screen), Panels, Host,
+  Runs (opens the Runs surface), Storage (database, notes/files/blobs, disk, swap, fans).
+  Each tile carries a one-line state; a tile that needs a look gets an amber or rose dot and
+  colours its line. A tile's accessible name is *"Title: state"*, plus the longer line where
+  the tile has room for one word (Minecraft's who's-on).
+- **A tile pushes its page** (`components/PageLayer.tsx`, shared with Settings): its own back
+  bar, climbed by back, a down-swipe at scroll-top or the platform back gesture.
+- **Services** are grouped by what they are **for** — Core (the app and the way in: api,
+  worker, supervisor, db, proxy, cloudflared), Models, Assistant tools, Devices, Apps,
+  One-shot jobs; frontend-only mapping, anything unrecognized falls into a trailing Other.
+  Each group is a collapsed `OpsCard` whose header carries a count and a **roll-up state**
+  (green "all up" / amber "degraded" / rose "down", worst-wins). A row shows a level dot,
+  name, state/health badges, what the service is in plain words, and memory; tapping it
+  expands **its own log tail** (Follow = the SSE stream, one-tap **Copy logs**) with
+  Restart and Stop/Start. *Restart all* sits at the foot of this page. There is no
+  per-service Rebuild: Update rebuilds everything.
+- **Off is grey, never a fault.** A service that is stopped and opt-in (a compose profile:
+  comfyui, jcode, sdr, mqtt, the engine not chosen, the one-shot jobs) reads **off** — grey
+  dot, an *off* badge, a Start button — and never counts against its group, the banner or
+  the tile; a group of nothing but off services reads *off*. The chosen engine stopping is
+  still a failure. Before this, AI and "AI - Optional" sat amber and rose for good and the
+  colour stopped meaning anything.
+- **AI usage lives on the LLM Settings screen** (`AiUsageCard`,
+  `frontend/src/screens/aiUsage.tsx`): token spend belongs with the model config that
+  drives it.
 
-Everything starts collapsed except System. Status colors stay paired with
-text (the dot's level is also the badge). Rejected rivals: A's one-screen
-tile board (status legible but logs/detail cramped) and C's health-triage
-bar + per-service sheet (the filter+sheet added navigation for a list that
-groups solve inline).
+Status colours stay paired with text (the dot's level is also the badge or the tile's line).
 
 **Runs — filtering (settled in a three-way mock review; chosen **B —
 multi-select show/hide chips + filter sheet** over A "kind segmented lanes" and
@@ -1702,7 +1694,9 @@ arrange the grid themselves):
   bar. Back, the down-swipe at scroll-top and the platform back gesture each climb one
   level to the grid (the page registers in the shared back-layer stack, like a sheet).
   A new setting joins the category it belongs to rather than adding a tile; the grid
-  drops to two columns only if titles stop fitting.
+  drops to two columns only if titles stop fitting. **Ops** is built the same way, under
+  its always-open vitals, Update and graphs (see "Ops screen"); both push their pages with
+  `components/PageLayer.tsx`.
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
 
@@ -3300,11 +3294,11 @@ confirm weight matches disconnecting players mid-game, and it holds up best at 3
 follows the Data screen's precedent of being lifted off Ops.
 
 - **Two entry points, one screen.** A **Minecraft** launcher tile under SYSTEM carries a
-  state dot and word, and flags *update*, *update failed* or *install failed* instead. An
-  **Ops shortcut row** (a plain list row with a trailing chevron, not an `OpsCard` caret,
-  since it navigates) sits under Local engine and glances the state, version and who's on,
-  or the amber *update available · {version} — newer clients can't join*. Opened from Ops,
-  the back chevron and swipe-down return to Ops.
+  state dot and word, and flags *update*, *update failed* or *install failed* instead. The
+  **Ops Minecraft tile** carries the same word (dotted amber or rose when it needs a look),
+  with the glance — version and who's on, or *update available · {version} — newer clients
+  can't join* — in its accessible name. Opened from Ops, the back chevron and swipe-down
+  return to Ops.
 - **Top to bottom:** an amber "you're behind" banner while an update waits (rose after a
   failure, keeping the lockout line); a status block (state, online-now and version tiles,
   Start or Restart/Stop); **Update** (running → latest, the matched article's title and date,

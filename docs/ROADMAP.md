@@ -67,7 +67,7 @@ attachments (content-addressed storage); offline capture with an
 IndexedDB outbox and idempotent sync; card-launcher navigation; dual
 theming with Settings. Server updates ship via `jbrain update`
 (build-from-source: backup → git pull → rebuild → migrate → restart) and
-the Ops screen's one-tap "Update server", which drives the same sequence
+the Ops screen's one-tap "Update", which drives the same sequence
 through a supervisor-spawned detached updater container.
 
 **Exit:** daily note capture from the phone is habitual, including

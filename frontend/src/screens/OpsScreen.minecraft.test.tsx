@@ -1,6 +1,6 @@
-// Ops' Minecraft entry and its other stop paths (README finding 16): the shortcut row's glance,
-// and the service row's Stop/Restart and the header's Restart all warning before they bounce
-// players — with the same words the Minecraft screen uses.
+// Ops' Minecraft entry and its other stop paths (README finding 16): the Minecraft tile's glance,
+// and the service row's Stop/Restart and the Services page's Restart all warning before they
+// bounce players — with the same words the Minecraft screen uses.
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,34 +63,42 @@ describe("OpsScreen · Minecraft", () => {
       .filter(([, init]) => init?.method === "POST")
       .map(([url, init]) => `${String(url)} ${init?.body ?? ""}`.trim());
 
-  it("the shortcut row glances who's on, and opens the screen", async () => {
+  async function openServices() {
+    fireEvent.click(await screen.findByRole("button", { name: /^Services:/ }));
+  }
+
+  it("the tile glances who's on, and opens the screen", async () => {
     serve(mcStatus());
     const open = vi.fn();
     render(<OpsScreen onOpenMinecraft={open} />);
-    expect(await screen.findByText(`${RUNNING} · BlockyFox and Mira_P on`)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Open Minecraft — running/ }));
+    const tile = await screen.findByRole("button", {
+      name: `Minecraft: running — ${RUNNING} · BlockyFox and Mira_P on`,
+    });
+    fireEvent.click(tile);
     expect(open).toHaveBeenCalledOnce();
   });
 
-  it("the shortcut row says newer clients are locked out while an update waits", async () => {
+  it("the tile flags that newer clients are locked out while an update waits", async () => {
     serve(mcStatus(), mcBehind());
     render(<OpsScreen onOpenMinecraft={() => {}} />);
-    expect(
-      await screen.findByText(`update available · ${LATEST} — newer clients can't join`),
-    ).toBeInTheDocument();
+    const tile = await screen.findByRole("button", {
+      name: new RegExp(`^Minecraft: .* — update available · ${LATEST} — newer clients can't join`),
+    });
+    expect(tile.querySelector(".ops-tile-dot.warn")).not.toBeNull();
   });
 
-  it("the shortcut row is absent on a box with no Minecraft container", async () => {
+  it("the tile is absent on a box with no Minecraft container", async () => {
     serve({ container: null, server: null, server_error: null });
     render(<OpsScreen onOpenMinecraft={() => {}} />);
-    await screen.findByRole("button", { name: /Other/ });
-    expect(screen.queryByRole("button", { name: /Open Minecraft/ })).toBeNull();
+    await screen.findByRole("button", { name: /^Services:/ });
+    expect(screen.queryByRole("button", { name: /^Minecraft:/ })).toBeNull();
   });
 
   it("Restart all warns in the Dialog when Minecraft players are on", async () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     serve(mcStatus());
     render(<OpsScreen />);
+    await openServices();
     const restartAll = await screen.findByRole("button", { name: "Restart all" });
     await waitFor(() => expect(restartAll).toBeEnabled());
     fireEvent.click(restartAll);
@@ -108,6 +116,7 @@ describe("OpsScreen · Minecraft", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     serve(mcStatus(mcServer({ players: [] })));
     render(<OpsScreen />);
+    await openServices();
     const restartAll = await screen.findByRole("button", { name: "Restart all" });
     await waitFor(() => expect(restartAll).toBeEnabled());
     fireEvent.click(restartAll);
@@ -119,7 +128,8 @@ describe("OpsScreen · Minecraft", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     serve(mcStatus());
     render(<OpsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /Other/ }));
+    await openServices();
+    fireEvent.click(await screen.findByRole("button", { name: /^Apps/ }));
     fireEvent.click(screen.getByText("minecraft"));
     fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
 
@@ -135,7 +145,8 @@ describe("OpsScreen · Minecraft", () => {
   it("the minecraft service row's Restart warns too, and acts at once with nobody on", async () => {
     serve(mcStatus());
     const { unmount } = render(<OpsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /Other/ }));
+    await openServices();
+    fireEvent.click(await screen.findByRole("button", { name: /^Apps/ }));
     fireEvent.click(screen.getByText("minecraft"));
     fireEvent.click(await screen.findByRole("button", { name: "Restart minecraft" }));
     expect(await screen.findByRole("dialog", { name: "Restart the server?" })).toBeTruthy();
@@ -144,7 +155,8 @@ describe("OpsScreen · Minecraft", () => {
     fetchMock.mockReset();
     serve(mcStatus(mcServer({ players: [] })));
     render(<OpsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /Other/ }));
+    await openServices();
+    fireEvent.click(await screen.findByRole("button", { name: /^Apps/ }));
     fireEvent.click(screen.getByText("minecraft"));
     fireEvent.click(await screen.findByRole("button", { name: "Restart minecraft" }));
     await waitFor(() => expect(posts()).toEqual(["/api/minecraft/restart"]));

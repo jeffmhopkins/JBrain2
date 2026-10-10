@@ -4269,24 +4269,6 @@ fieldset.settings-field > legend {
 
 /* ===== Ops ===== */
 
-.ops-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.ops-header h2 {
-  font-size: var(--fs-title);
-  margin: 0;
-}
-
-.ops-actions {
-  display: flex;
-  gap: 8px;
-}
-
 button.danger {
   background: var(--danger-tint);
   border-color: var(--border);
@@ -4568,14 +4550,6 @@ button.small {
   min-width: 0;
 }
 
-.ops-card-summary {
-  font-size: var(--fs-micro);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ops-card-caret {
   color: var(--text-3);
   transition: transform 0.2s ease-out;
@@ -4697,10 +4671,6 @@ button.small {
 .ops-host-remedy {
   margin: 2px 0 0;
   font-size: var(--fs-micro);
-}
-
-.ops-card-summary.warn {
-  color: var(--warn);
 }
 
 /* History card: range selector + per-metric sparklines. */
@@ -4876,6 +4846,174 @@ button.small {
   background: var(--danger);
   box-shadow: 0 0 0 3px var(--rose-tint);
 }
+.ops-gstate-off {
+  color: var(--text-2);
+}
+.ops-gstate-off .ops-gdot {
+  background: var(--text-3);
+}
+
+/* ===== Ops launcher layout (docs/mocks/ops-launcher/ops-launcher.html) =====
+   Vitals, the problem banner, the one Update and History stay open on top; every other
+   section is a tile that pushes its own page. */
+
+.ops-vitals {
+  padding: 14px;
+}
+
+.ops-vitals-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 16px;
+}
+
+.ops-vital {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ops-vital-v {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-vital-v small {
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.ops-vitals-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-vitals-empty {
+  margin: 0;
+}
+
+.ops-refresh {
+  flex: none;
+  font-size: var(--fs-micro);
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+}
+
+.ops-attn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--rose-tint);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.ops-attn-warn {
+  background: var(--amber-tint);
+}
+
+.ops-attn-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+}
+
+.ops-attn-bad b {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.ops-attn-warn b {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.ops-update-card {
+  padding: 12px 14px;
+}
+
+/* The card is the box; the idle bar inside it needs no second one. */
+.ops-update-card .ops-update-bar {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.ops-card-static {
+  padding: 14px;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.ops-pad {
+  padding: 4px 14px;
+}
+
+.ops-tiles {
+  margin-bottom: 12px;
+}
+
+.ops-tile-dot {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+}
+
+.ops-tile-dot.warn {
+  background: var(--warn);
+}
+
+.ops-tile-dot.bad {
+  background: var(--danger);
+}
+
+.tile-sub.warn {
+  color: var(--warn);
+}
+
+.tile-sub.bad {
+  color: var(--danger);
+}
+
+.ops-restart-all {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+}
+
+.ops-restart-all-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-secondary);
+}
+
+.ops-restart-all-text .muted {
+  font-size: var(--fs-micro);
+}
 
 /* System vitals rows */
 
@@ -4942,19 +5080,6 @@ button.small {
   font-size: var(--fs-micro);
   color: var(--text-3);
   margin-top: 3px;
-}
-
-/* The Load row stacks its value line over the embedded Server update. */
-.ops-vrow-load {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-}
-
-.ops-vrow-line {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 .ops-update-row {
@@ -5050,6 +5175,10 @@ button.small {
 .ops-sdot-bad {
   background: var(--danger);
   box-shadow: 0 0 0 3px var(--rose-tint);
+}
+/* Stopped on purpose (an opt-in extra, or the engine not chosen): grey, never a fault. */
+.ops-sdot-off {
+  background: var(--text-3);
 }
 
 .ops-sinfo {
@@ -5422,7 +5551,6 @@ button.small {
 .ops-srestart {
   flex: 1 1 100%;
 }
-.ops-srebuild,
 .ops-slifecycle {
   flex: 1;
   font-weight: 500;
@@ -5431,9 +5559,6 @@ button.small {
   border: 1px solid var(--border);
   background: var(--steel-tint);
   color: var(--steel);
-}
-.ops-srebuild:disabled {
-  opacity: 0.55;
 }
 
 /* ===== Bottom sheet (shared modal shell) ===== */
@@ -29574,76 +29699,14 @@ button.wf-sigpill {
   padding: 12px 14px 14px;
 }
 
-.engine-seg {
-  margin: 0;
-  min-width: 0;
-  display: flex;
-  gap: 3px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-  padding: 3px;
+/* With no notice, progress or confirm to show, the engine page opens straight on its rows. */
+.engine-body:empty {
+  display: none;
 }
 
-.engine-seg button {
-  flex: 1;
-  border: 1px solid transparent;
-  background: none;
-  border-radius: 9px;
-  min-height: 52px;
-  padding: 6px 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  color: var(--text-2);
-  font: inherit;
-  transition: background 0.15s ease-out;
-}
-
-.engine-seg button[aria-pressed="true"] {
-  background: var(--steel-tint);
-  color: var(--text);
-}
-
-.engine-seg button.armed {
-  border: 1px dashed var(--steel);
-}
-
-.engine-seg button.target {
-  background: var(--amber-tint);
-  color: var(--text);
-}
-
-.engine-seg button.wanted {
-  border: 1px dashed var(--amber);
-}
-
-.engine-seg button:disabled {
-  cursor: not-allowed;
-}
-
-.engine-seg button:disabled .engine-sn {
-  color: var(--text-3);
-}
-
-.engine-seg button[aria-pressed="true"]:disabled .engine-sn,
-.engine-seg button.target:disabled .engine-sn {
-  color: var(--text);
-}
-
-.engine-sn {
-  font-size: var(--fs-secondary);
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.engine-ss {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+.engine-body:empty + .ops-vrow,
+.ops-card > .ops-vrow:first-child {
+  border-top: 0;
 }
 
 .engine-dot {
@@ -29894,10 +29957,6 @@ button.wf-sigpill {
 
 .ops-vsub.warn {
   color: var(--amber);
-}
-
-.ops-card-summary.bad {
-  color: var(--danger);
 }
 
 .engine-logrow {

@@ -1,4 +1,4 @@
-import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type ReadAloudPatch, emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
   AppSettings,
@@ -14,11 +14,10 @@ import type {
   TavilyTestResult,
 } from "../api/client";
 import { ApiError, api } from "../api/client";
-import { useBackLayer } from "../backLayers";
 import { BUILD_SHA, BUILD_TIME } from "../buildInfo";
+import { PageLayer } from "../components/PageLayer";
 import { SdrRadiosCard } from "../components/SdrRadiosCard";
 import {
-  ChevronLeftIcon,
   GlobeIcon,
   ImageIcon,
   LinkIcon,
@@ -57,60 +56,6 @@ const SETTINGS_CATEGORIES: { id: SettingsCategory; title: string; icon: ReactNod
 const CATEGORY_TITLE = Object.fromEntries(
   SETTINGS_CATEGORIES.map((c) => [c.id, c.title]),
 ) as Record<SettingsCategory, string>;
-
-// Matches the subscreen's own down-swipe threshold in App.
-const SWIPE_DOWN_PX = 56;
-
-/** A category's pushed page: its own back bar over the grid, climbed by back, swipe-down or
- *  the platform Back gesture (registered in the shared back-layer stack, like a Sheet). */
-function SettingsLayer({
-  title,
-  onBack,
-  children,
-}: {
-  title: string;
-  onBack: () => void;
-  children: ReactNode;
-}) {
-  useBackLayer(onBack);
-  const body = useRef<HTMLDivElement>(null);
-  const back = useRef<HTMLButtonElement>(null);
-  const start = useRef<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    back.current?.focus({ preventScroll: true });
-  }, []);
-  // The Settings card's own swipe-down would close all of Settings; a category climbs one level.
-  function onTouchStart(e: TouchEvent) {
-    e.stopPropagation();
-    const t = e.touches[0];
-    const atTop = (body.current?.scrollTop ?? 0) <= 4;
-    start.current = atTop && t ? { x: t.clientX, y: t.clientY } : null;
-  }
-  function onTouchMove(e: TouchEvent) {
-    e.stopPropagation();
-    const s = start.current;
-    const t = e.touches[0];
-    if (!s || !t) return;
-    const dy = t.clientY - s.y;
-    if (dy > SWIPE_DOWN_PX && dy > Math.abs(t.clientX - s.x) * 2) {
-      start.current = null;
-      onBack();
-    }
-  }
-  return (
-    <div className="subscreen" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <header className="top-bar">
-        <button type="button" className="back-btn" onClick={onBack} aria-label="Back" ref={back}>
-          <ChevronLeftIcon size={22} />
-          <span className="screen-title">{title}</span>
-        </button>
-      </header>
-      <div className="screen-body settings" ref={body}>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -891,7 +836,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       </div>
 
       {category !== null && (
-        <SettingsLayer title={CATEGORY_TITLE[category]} onBack={() => setCategory(null)}>
+        <PageLayer
+          title={CATEGORY_TITLE[category]}
+          onBack={() => setCategory(null)}
+          bodyClassName="settings"
+        >
           {category === "appearance" && (
             <>
               <section className="settings-card">
@@ -1932,7 +1881,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               </section>
             </>
           )}
-        </SettingsLayer>
+        </PageLayer>
       )}
 
       {readTextOpen && brainAnswerVoice && (

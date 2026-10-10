@@ -11,6 +11,7 @@ function snap(over: Partial<EngineSnapshot> = {}): EngineSnapshot {
     lastOk: null,
     armed: null,
     dismissed: new Set(),
+    focus: false,
     ...over,
   };
 }

@@ -68,6 +68,8 @@ export interface EngineSnapshot {
   armed: EngineId | null;
   /** Switch ids whose rollback/failure the owner dismissed. */
   dismissed: ReadonlySet<string>;
+  /** Asked to show the engine (the banner's "Details"): Ops opens its Engine page and clears it. */
+  focus: boolean;
 }
 
 const DISMISS_KEY = "jbrain.engine.dismissed";
@@ -88,6 +90,7 @@ let snapshot: EngineSnapshot = {
   lastOk: null,
   armed: null,
   dismissed: loadDismissed(),
+  focus: false,
 };
 const listeners = new Set<() => void>();
 
@@ -232,7 +235,7 @@ export function dismissEngineSwitch(id: string): void {
 }
 
 export interface EngineNavigator {
-  /** Open the Ops screen (where the Local engine card lives). */
+  /** Open the Ops screen (where the Engine page lives). */
   ops: () => void;
   /** Open LLM settings' On-box models, where Flash-Next's weights are installed. */
   models: () => void;
@@ -248,7 +251,13 @@ export function setEngineNavigator(nav: EngineNavigator | null): void {
 
 export function openEngineCard(arm?: EngineId): void {
   if (arm !== undefined) armEngineSwitch(arm);
+  set({ focus: true });
   navigator_?.ops();
+}
+
+/** Ops took the focus request and opened its Engine page. */
+export function clearEngineFocus(): void {
+  if (snapshot.focus) set({ focus: false });
 }
 
 export function openOnBoxModels(): void {
@@ -268,7 +277,14 @@ export function resetEngineStore(): void {
   failures = 0;
   inflight = null;
   navigator_ = null;
-  snapshot = { state: null, error: null, lastOk: null, armed: null, dismissed: new Set() };
+  snapshot = {
+    state: null,
+    error: null,
+    lastOk: null,
+    armed: null,
+    dismissed: new Set(),
+    focus: false,
+  };
   for (const l of listeners) l();
 }
 
