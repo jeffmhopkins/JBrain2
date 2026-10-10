@@ -682,8 +682,13 @@ house by typing the address.
   them.
 - A reset or import deletes that world's history (`world_replaced`).
 - `GET /api/debug/minecraft/travel` shows the counts.
-- **Still M0b, with a player online:** the `querytarget` reply's exact shape on 1.26, and
-  a real death line arriving with its cause.
+- **`querytarget` checked on the box (2026-10-10):** an armor stand was summoned at spawn
+  under a temporary ticking area, then removed.
+  - On 1.26.52.3 the reply is **pretty-printed over many lines** (`Target data: [` … `]`),
+    not one line, so the parser re-joins it. The first deploy's one-line parser would
+    have dropped every sample.
+  - The fix carries the captured reply as its test.
+- **Still M0b, with a player online:** a real death line arriving with its cause.
 
 **Start recording early, draw it later.** History can't be recorded after the fact, so
 the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.

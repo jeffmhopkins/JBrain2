@@ -1002,7 +1002,7 @@ class Rig:
         for name, p in list(self.bds.players.items()):
             try:
                 pos = parse_querytarget(
-                    self.bds.command(f'querytarget "{name}"', wait_s=2.0, quiet_s=0.2)
+                    self.bds.command(f'querytarget "{name}"', wait_s=2.0)
                 )
             except bds.ConsoleError:
                 return kept  # stopping under us; the next pass tries again
@@ -1357,30 +1357,29 @@ _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 
 
 def parse_querytarget(lines: list[str]) -> dict[str, Any] | None:
-    """`querytarget` answers with a JSON list on one console line:
-    `[…] [{"dimension":0,"position":{"x":…,"y":…,"z":…},"yRot":…, …}]`."""
-    for line in lines:
-        start = line.find("[{")
-        if start < 0:
-            continue
-        try:
-            data = json.loads(line[start:])
-        except ValueError:
-            continue
-        if not isinstance(data, list) or not data or not isinstance(data[0], dict):
-            continue
-        first = data[0]
-        pos = first.get("position") or {}
-        try:
-            out: dict[str, Any] = {k: round(float(pos[k]), 1) for k in ("x", "y", "z")}
-        except (KeyError, TypeError, ValueError):
-            continue
-        dim = first.get("dimension")
-        out["dim"] = _DIMENSIONS.get(dim, str(dim)) if isinstance(dim, int) else "?"
-        if isinstance(first.get("yRot"), (int, float)):
-            out["yaw"] = round(float(first["yRot"]), 1)
-        return out
-    return None
+    """`querytarget` answers with a JSON list that BDS 1.26 pretty-prints over many
+    console lines, the first tagged: `[… INFO] Target data: [` … `]`. Only the first
+    line carries the log prefix, so the reply is re-joined and decoded from there."""
+    text = "\n".join(lines)
+    at = text.find("Target data:")
+    body = text[at + len("Target data:") :] if at >= 0 else text[max(text.find("[{"), 0) :]
+    try:
+        data, _ = json.JSONDecoder().raw_decode(body.lstrip())
+    except ValueError:
+        return None
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        return None
+    first = data[0]
+    pos = first.get("position") or {}
+    try:
+        out: dict[str, Any] = {k: round(float(pos[k]), 1) for k in ("x", "y", "z")}
+    except (KeyError, TypeError, ValueError):
+        return None
+    dim = first.get("dimension")
+    out["dim"] = _DIMENSIONS.get(dim, str(dim)) if isinstance(dim, int) else "?"
+    if isinstance(first.get("yRot"), (int, float)):
+        out["yaw"] = round(float(first["yRot"]), 1)
+    return out
 
 
 def crashed(rig: Rig) -> bool:

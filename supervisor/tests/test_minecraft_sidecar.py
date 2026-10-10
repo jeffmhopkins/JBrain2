@@ -1230,6 +1230,37 @@ QT_LINE = (
 )
 
 
+# Captured from the box's BDS 1.26.52.3 (2026-10-10, an armor stand at spawn): the reply
+# is pretty-printed over many lines, and only the first carries the log prefix.
+QT_REPLY_126 = [
+    "[2026-10-10 20:25:06:737 INFO] Target data: [",
+    "   {",
+    '      "dimension" : 0,',
+    '      "id" : -38654705663,',
+    '      "position" : {',
+    '         "x" : 0.50,',
+    '         "y" : 113.4060516357422,',
+    '         "z" : 0.50',
+    "      },",
+    '      "uniqueId" : "-38654705663",',
+    '      "yRot" : 0.0',
+    "   }",
+    "]",
+    "",
+]
+
+
+def test_the_real_multi_line_querytarget_reply_parses() -> None:
+    assert server.parse_querytarget(QT_REPLY_126) == {
+        "x": 0.5,
+        "y": 113.4,
+        "z": 0.5,
+        "dim": "overworld",
+        "yaw": 0.0,
+    }
+    assert server.parse_querytarget(["[x ERROR] No targets matched selector"]) is None
+
+
 def test_a_querytarget_reply_becomes_a_position() -> None:
     assert server.parse_querytarget([QT_LINE]) == {
         "x": 12.3,
