@@ -380,6 +380,7 @@ const SETTINGS: AppSettings = {
   image_analysis_mode: "full",
   owner_timezone: null,
   owner_callsign: null,
+  minecraft_gamertag: null,
   brain_llm_stream: false,
   brain_read_aloud: false,
   brain_answer_voice: "kokoro-af_heart",
@@ -4517,6 +4518,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "owner_timezone") {
         if (typeof value !== "string") return json({ detail: "bad timezone" }, 422);
         SETTINGS.owner_timezone = value;
+      } else if (key === "minecraft_gamertag") {
+        // The backend's check_gamertag: Xbox's 1-16 letters/digits/spaces, an
+        // optional #1234 suffix, refused rather than cleaned; empty clears it.
+        if (typeof value !== "string") return json({ detail: "that is not a gamertag" }, 422);
+        const tag = value.split(/\s+/).filter(Boolean).join(" ");
+        if (tag && !/^[A-Za-z0-9][A-Za-z0-9 ]{0,15}(#\d{1,4})?$/.test(tag)) {
+          return json({ detail: "that is not a gamertag" }, 422);
+        }
+        SETTINGS.minecraft_gamertag = tag || null;
       } else if (key === "brain_llm_stream") {
         if (typeof value !== "boolean") return json({ detail: "bad brain_llm_stream" }, 422);
         SETTINGS.brain_llm_stream = value;

@@ -656,7 +656,18 @@ export function App() {
             )}
             {card === "llm-settings" && <LLMSettingsScreen />}
             {card === "data" && <DataScreen />}
-            {card === "minecraft" && <MinecraftScreen />}
+            {card === "minecraft" && (
+              <MinecraftScreen
+                onOpenSession={(sessionId, agent) => {
+                  // Reveal the chat (not the launcher) and leave a return marker, so the
+                  // back gesture climbs back to Minecraft — the Tasks handoff's shape.
+                  setCard(null);
+                  setLauncherOpen(false);
+                  setSessionBackTo("minecraft");
+                  setOpenSession({ id: sessionId, agent });
+                }}
+              />
+            )}
             {card === "search" && (
               <SearchScreen onOpenResult={openNoteFromSearch} onOpenWiki={setWikiArticle} />
             )}

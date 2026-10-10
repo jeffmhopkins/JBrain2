@@ -6,7 +6,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
-import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
+import { type FullBrainDeps, modeForAgent, useFullBrain } from "./useFullBrain";
 
 function session(over: Partial<AgentSession> = {}): AgentSession {
   return {
@@ -715,5 +715,22 @@ describe("useFullBrain — a note conversation belongs to Entry, and is opened b
     await waitFor(() => expect(result.current.active?.id).toBe("N"));
     act(() => result.current.requestOpen("other-note-session"));
     expect(result.current.active).toBeNull();
+  });
+});
+
+describe("useFullBrain — Minecraft_Dave", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("lists and offers Minecraft_Dave on Research, and never on Full Brain", async () => {
+    const dave = session({ id: "D", agent: "minecraft_dave", domain_scopes: [] });
+    const d = deps({ listSessions: vi.fn(async () => [dave]) });
+    const research = renderHook(() => useFullBrain("research", d));
+    await waitFor(() => expect(research.result.current.sessions.map((s) => s.id)).toEqual(["D"]));
+    expect(research.result.current.agentOptions).toContain("minecraft_dave");
+    expect(modeForAgent("minecraft_dave")).toBe("research");
+
+    const fullbrain = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(fullbrain.result.current.agentOptions).toEqual(["curator"]));
+    expect(fullbrain.result.current.sessions.map((s) => s.id)).not.toContain("D");
   });
 });

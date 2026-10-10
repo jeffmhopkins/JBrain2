@@ -31158,6 +31158,15 @@ button.wf-sigpill {
   color: var(--danger-text);
 }
 
+/* Minecraft_Dave's card: the Ask row over the gamertag field, one rule between. */
+.mc-dave-tag {
+  border-top: 1px solid var(--border);
+}
+
+.mc-note.mc-bad {
+  color: var(--danger-text);
+}
+
 .mc-navstate {
   display: flex;
   align-items: center;

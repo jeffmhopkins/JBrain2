@@ -554,6 +554,22 @@ describe("MinecraftScreen", () => {
     expect(reads()).toBeGreaterThanOrEqual(first + 2);
   });
 
+  it("Ask Minecraft_Dave starts that persona's chat and hands it to the shell", async () => {
+    serve({
+      status: mcStatus(),
+      post: (path) =>
+        path === "/api/sessions"
+          ? Promise.resolve(json({ id: "dave-1", agent: "minecraft_dave" }))
+          : undefined,
+    });
+    const onOpenSession = vi.fn();
+    render(<MinecraftScreen onOpenSession={onOpenSession} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Ask Minecraft_Dave/ }));
+    await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith("dave-1", "minecraft_dave"));
+    // The gamertag field sits beside it even when the settings read fails.
+    expect(screen.getByLabelText("Your gamertag")).toBeInTheDocument();
+  });
+
   it("says when the server can't be reached", async () => {
     fetchMock.mockImplementation(async () =>
       json({ detail: "minecraft sidecar unreachable" }, 503),
