@@ -45,6 +45,11 @@ bds = _load("bds", "bds.py")
 server = _load("mc_server", "server.py")
 
 
+JBRAIN_PACK_ID = json.loads(
+    (DEPLOY / "minecraft/jbrain-pack/manifest.json").read_text()
+)["header"]["uuid"]
+
+
 @pytest.fixture(autouse=True)
 def _data_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Every wrapper path under a temp dir, for every test. A test that forgot one
@@ -381,6 +386,11 @@ class _FakeBds:
         self.state = "running"
         self.calls: list[str] = []
         self.players: dict[str, Any] = {}
+        self.world = "world"
+        self.replaced: list[str] = []
+
+    def note_world_replaced(self, folder: str) -> None:
+        self.replaced.append(folder)
 
     def wait_running(self, _timeout_s: float) -> bool:
         return self.starts
@@ -487,12 +497,15 @@ def test_the_probe_pack_is_listed_in_the_world_and_removable(
 
     out = rig.probe_pack(True)
     listed = json.loads((world / "world_behavior_packs.json").read_text())
-    assert listed == [{"pack_id": out["pack_id"], "version": [1, 0, 0]}]
+    ids = {p["pack_id"] for p in listed}
+    # Every start also (re)installs the box's own pack alongside the probe.
+    assert ids == {out["pack_id"], JBRAIN_PACK_ID}
     assert (world / "behavior_packs" / "jbrain_probe" / "scripts" / "main.js").exists()
     assert rig.bds.calls == ["stop", "start"]
 
     rig.probe_pack(False)
-    assert json.loads((world / "world_behavior_packs.json").read_text()) == []
+    listed = json.loads((world / "world_behavior_packs.json").read_text())
+    assert [p["pack_id"] for p in listed] == [JBRAIN_PACK_ID]
     assert not (world / "behavior_packs" / "jbrain_probe").exists()
 
 
@@ -1209,3 +1222,121 @@ def test_quick_edits_wait_their_turn_and_seeds_stay_on_one_line() -> None:
     rig._busy = ""
     with pytest.raises(ValueError):
         rig.reset_slot("slot2", "new_seed", "1\nallow-cheats=true")
+
+
+QT_LINE = (
+    '[2026-10-10 20:01:02:003 INFO] [{"dimension":1,"id":-4294967295,'
+    '"position":{"x":12.34,"y":64.0,"z":-80.56},"uniqueId":"-4294967295","yRot":91.2}]'
+)
+
+
+# Captured from the box's BDS 1.26.52.3 (2026-10-10, an armor stand at spawn): the reply
+# is pretty-printed over many lines, and only the first carries the log prefix.
+QT_REPLY_126 = [
+    "[2026-10-10 20:25:06:737 INFO] Target data: [",
+    "   {",
+    '      "dimension" : 0,',
+    '      "id" : -38654705663,',
+    '      "position" : {',
+    '         "x" : 0.50,',
+    '         "y" : 113.4060516357422,',
+    '         "z" : 0.50',
+    "      },",
+    '      "uniqueId" : "-38654705663",',
+    '      "yRot" : 0.0',
+    "   }",
+    "]",
+    "",
+]
+
+
+def test_the_real_multi_line_querytarget_reply_parses() -> None:
+    assert server.parse_querytarget(QT_REPLY_126) == {
+        "x": 0.5,
+        "y": 113.4,
+        "z": 0.5,
+        "dim": "overworld",
+        "yaw": 0.0,
+    }
+    assert server.parse_querytarget(["[x ERROR] No targets matched selector"]) is None
+
+
+def test_a_querytarget_reply_becomes_a_position() -> None:
+    assert server.parse_querytarget([QT_LINE]) == {
+        "x": 12.3,
+        "y": 64.0,
+        "z": -80.6,
+        "dim": "nether",
+        "yaw": 91.2,
+    }
+    for junk in ([], ["No targets matched selector"], ["[{not json"], ["[{}]"]):
+        assert server.parse_querytarget(junk) is None
+
+
+def test_positions_are_kept_only_after_a_real_move() -> None:
+    rig = _world_rig(running=True)
+    rig.bds.state = "running"
+    rig.bds.players = {"Steve42": {"xuid": "111"}}
+    at = {"x": 0.0}
+
+    def command(c: str, **_k: Any) -> list[str]:
+        assert c == 'querytarget "Steve42"'
+        return [
+            '[x INFO] [{"dimension":0,"position":'
+            f'{{"x":{at["x"]},"y":64,"z":0}},"yRot":0}}]'
+        ]
+
+    rig.bds.command = command  # type: ignore[attr-defined]
+    assert rig.sample_positions() == 1
+    at["x"] = 2.0  # under TRACK_MIN_MOVE: standing about costs nothing
+    assert rig.sample_positions() == 0
+    at["x"] = 9.0
+    assert rig.sample_positions() == 1
+    got = rig.track_after(0)
+    assert [(t["x"], t["xuid"], t["world"], t["dim"]) for t in got] == [
+        (0.0, "111", "world", "overworld"),
+        (9.0, "111", "world", "overworld"),
+    ]
+    assert rig.track_after(got[0]["id"]) == [got[1]]
+    rig.maintenance = True  # a world operation owns the console
+    assert rig.sample_positions() == 0
+
+
+def test_the_pack_reports_deaths_and_respawns_as_events(tmp_path: Path) -> None:
+    b = bds.Bds(tmp_path)
+    b.world = "slot2"
+    b._record("[x INFO] Player connected: Steve42, xuid: 111")
+    b._record(
+        '[Scripting] [jbrain] {"ev":"death","name":"Steve42","dim":"overworld",'
+        '"x":1.5,"y":64,"z":-3,"cause":"fall","killer":null}'
+    )
+    b._record(
+        '[Scripting] [jbrain] {"ev":"respawn","name":"Steve42","x":0,"y":70,"z":0}'
+    )
+    b._record('[Scripting] [jbrain] {"ev":"op","name":"Steve42"}')  # unknown: ignored
+    b._record("[Scripting] [jbrain] {not json")
+    kinds = [(e["kind"], e["xuid"], e["world"]) for e in b.events_after(0)]
+    assert kinds == [
+        ("join", "111", "slot2"),
+        ("death", "111", "slot2"),
+        ("respawn", "111", "slot2"),
+    ]
+    death = b.events_after(1)[0]
+    assert (death["cause"], death["x"], death["dim"]) == ("fall", 1.5, "overworld")
+    assert "killer" not in death  # null is not a string: dropped, not "None"
+
+
+def test_a_reset_or_import_marks_the_old_trail_as_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    _make_world("slot2")
+    rig = _world_rig()
+    rig.slots.update("slot2", seed="777")
+    rig.reset_slot("slot2", "same_seed")
+    assert rig.bds.replaced == ["slot2"]
+    real = bds.Bds(server.SERVER_DIR)
+    real.note_world_replaced("slot3")
+    (ev,) = real.events_after(0)
+    assert (ev["kind"], ev["world"], real.world) == ("world_replaced", "slot3", "world")

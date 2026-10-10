@@ -11,10 +11,12 @@ pipe owned by bds.py.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import hmac
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -80,6 +82,16 @@ RESTART_KEYS = {
 # The probe behavior pack (M0 item 5), bundled in the image — nothing uploaded.
 PROBE_PACK_SRC = Path(__file__).resolve().parent / "probe-pack"
 PROBE_PACK_DIR = "jbrain_probe"
+# The box's own behavior pack, installed into whichever world loads (§T1: deaths and
+# respawns, which BDS never prints).
+JBRAIN_PACK_SRC = Path(__file__).resolve().parent / "jbrain-pack"
+JBRAIN_PACK_DIR = "jbrain"
+# Travel log (§T1): each online player's position, this often, kept only once they have
+# moved this far — standing still costs nothing.
+TRACK_S = 10.0
+TRACK_MIN_MOVE = 4.0
+TRACK_KEPT = 20000
+_DIMENSIONS = {0: "overworld", 1: "nether", 2: "the_end"}
 
 
 class Rig:
@@ -106,6 +118,13 @@ class Rig:
         self._applied: dict[str, str] = {}
         # How the most recent world operation ended, for a client that got a 202.
         self.last_job: dict[str, Any] | None = None
+        # Position samples for the api's travel-log drain, numbered per boot like events.
+        self._track: collections.deque[dict[str, Any]] = collections.deque(
+            maxlen=TRACK_KEPT
+        )
+        self._track_id = 0
+        self._last_pos: dict[str, dict[str, Any]] = {}
+        self._track_lock = threading.Lock()
         self.slots = worlds.SlotStore(
             SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
         )
@@ -236,6 +255,12 @@ class Rig:
         self._step("starting")
         self.write_properties()
         self._applied = dict(self.properties())
+        self.bds.world = self.active_folder()
+        try:
+            self.install_pack(JBRAIN_PACK_SRC, JBRAIN_PACK_DIR, True)
+        except OSError as exc:
+            # The travel log loses deaths, but the server itself must still start.
+            print(f"[minecraft] jbrain pack not installed: {exc}", flush=True)
         self.bds.start()
         self._apply_rules_when_up(self.active_folder())
 
@@ -748,6 +773,7 @@ class Rig:
                         aside.rename(world)
                     raise
                 shutil.rmtree(aside, ignore_errors=True)
+                self.bds.note_world_replaced(folder)
 
                 # The world brings its own settings; the overwritten slot's game
                 # mode, rules and seed belonged to the world that is gone.
@@ -782,6 +808,7 @@ class Rig:
 
             def work() -> None:
                 shutil.rmtree(self.world_dir(folder), ignore_errors=True)
+                self.bds.note_world_replaced(folder)
                 if mode == "empty":
                     self.slots.clear(slot_id)
                     return
@@ -941,28 +968,84 @@ class Rig:
 
         threading.Thread(target=apply, daemon=True).start()
 
-    def probe_pack(self, install_it: bool) -> dict[str, Any]:
-        """Install (or remove) the bundled probe behavior pack in the active world and
-        restart the server so it loads. M0 item 5: does a stable-API pack load with no
-        experiments, and does its `console.log` reach this console?"""
-        manifest = json.loads((PROBE_PACK_SRC / "manifest.json").read_text())
+    def install_pack(self, src: Path, dir_name: str, install_it: bool) -> str:
+        """Put a bundled behavior pack into the loaded world (or take it out) and list
+        it in world_behavior_packs.json. Re-installing replaces the copy, so a world
+        always runs the pack version this image ships."""
+        manifest = json.loads((src / "manifest.json").read_text())
         pack_id = manifest["header"]["uuid"]
         world = self.world_dir()
-        dest = world / "behavior_packs" / PROBE_PACK_DIR
+        if not world.is_dir():
+            return pack_id  # a world BDS hasn't generated yet: next start installs it
+        dest = world / "behavior_packs" / dir_name
         listing = world / "world_behavior_packs.json"
         try:
             packs = json.loads(listing.read_text())
         except (FileNotFoundError, ValueError):
             packs = []
         packs = [p for p in packs if p.get("pack_id") != pack_id]
-        if install_it:
-            if dest.exists():
-                shutil.rmtree(dest)
-            shutil.copytree(PROBE_PACK_SRC, dest)
-            packs.append({"pack_id": pack_id, "version": manifest["header"]["version"]})
-        elif dest.exists():
+        if dest.exists():
             shutil.rmtree(dest)
+        if install_it:
+            shutil.copytree(src, dest)
+            packs.append({"pack_id": pack_id, "version": manifest["header"]["version"]})
         listing.write_text(json.dumps(packs, indent=2))
+        return pack_id
+
+    def sample_positions(self) -> int:
+        """One travel-log pass: ask the console where each online player is. A player
+        who moved less than TRACK_MIN_MOVE since their last kept sample is skipped.
+        Returns how many samples were kept."""
+        if self.bds.state != "running" or self.maintenance:
+            return 0
+        kept = 0
+        for name, p in list(self.bds.players.items()):
+            try:
+                pos = parse_querytarget(
+                    self.bds.command(f'querytarget "{name}"', wait_s=2.0)
+                )
+            except bds.ConsoleError:
+                return kept  # stopping under us; the next pass tries again
+            if pos is None:
+                continue
+            last = self._last_pos.get(name)
+            if (
+                last is not None
+                and last["dim"] == pos["dim"]
+                and math.dist(
+                    (last["x"], last["y"], last["z"]), (pos["x"], pos["y"], pos["z"])
+                )
+                < TRACK_MIN_MOVE
+            ):
+                continue
+            with self._track_lock:
+                self._track_id += 1
+                self._track.append(
+                    {
+                        "id": self._track_id,
+                        "at": time.time(),
+                        "name": name,
+                        "xuid": p.get("xuid", ""),
+                        "world": self.active_folder(),
+                        **pos,
+                    }
+                )
+            self._last_pos[name] = pos
+            kept += 1
+        for gone in set(self._last_pos) - set(self.bds.players):
+            # Rejoining starts a fresh trail point even if they logged out in place.
+            del self._last_pos[gone]
+        return kept
+
+    def track_after(self, after: int) -> list[dict[str, Any]]:
+        with self._track_lock:
+            return [dict(t) for t in self._track if t["id"] > after]
+
+    def probe_pack(self, install_it: bool) -> dict[str, Any]:
+        """Install (or remove) the bundled probe behavior pack in the active world and
+        restart the server so it loads. M0 item 5: does a stable-API pack load with no
+        experiments, and does its `console.log` reach this console?"""
+        pack_id = self.install_pack(PROBE_PACK_SRC, PROBE_PACK_DIR, install_it)
         if not self._life.acquire(blocking=False):
             raise RuntimeError(f"busy: {self._busy or 'another action'}")
         self.maintenance = True
@@ -1067,6 +1150,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, rig.rules_view(m.group(1)))
         elif url.path == "/allowlist":
             self._send(200, rig.allowlist())
+        elif url.path == "/track":
+            after = int(query.get("after", ["0"])[0])
+            self._send(200, {"boot_id": bds.BOOT_ID, "samples": rig.track_after(after)})
         elif url.path == "/events":
             after = int(query.get("after", ["0"])[0])
             self._send(
@@ -1270,6 +1356,32 @@ _WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 
 
+def parse_querytarget(lines: list[str]) -> dict[str, Any] | None:
+    """`querytarget` answers with a JSON list that BDS 1.26 pretty-prints over many
+    console lines, the first tagged: `[… INFO] Target data: [` … `]`. Only the first
+    line carries the log prefix, so the reply is re-joined and decoded from there."""
+    text = "\n".join(lines)
+    at = text.find("Target data:")
+    body = text[at + len("Target data:") :] if at >= 0 else text[max(text.find("[{"), 0) :]
+    try:
+        data, _ = json.JSONDecoder().raw_decode(body.lstrip())
+    except ValueError:
+        return None
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        return None
+    first = data[0]
+    pos = first.get("position") or {}
+    try:
+        out: dict[str, Any] = {k: round(float(pos[k]), 1) for k in ("x", "y", "z")}
+    except (KeyError, TypeError, ValueError):
+        return None
+    dim = first.get("dimension")
+    out["dim"] = _DIMENSIONS.get(dim, str(dim)) if isinstance(dim, int) else "?"
+    if isinstance(first.get("yRot"), (int, float)):
+        out["yaw"] = round(float(first["yRot"]), 1)
+    return out
+
+
 def crashed(rig: Rig) -> bool:
     """Did BDS exit on its own? Not during a wrapper-driven stop (maintenance), and not
     when the owner stopped it (run is off) — only then does the container exit so its
@@ -1293,6 +1405,16 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _term)
     signal.signal(signal.SIGINT, _term)
     rig.bring_up()
+
+    def _tracker() -> None:
+        while not rig.stopping:
+            try:
+                rig.sample_positions()
+            except Exception as exc:  # noqa: BLE001 — the log must never stop the server
+                print(f"[track] {type(exc).__name__}: {exc}", flush=True)
+            time.sleep(TRACK_S)
+
+    threading.Thread(target=_tracker, daemon=True).start()
     # BDS exiting on its own (a crash, a console `stop` that slipped through) ends the
     # container, so `restart: unless-stopped` brings it back rather than leaving a
     # healthy-looking wrapper around a dead game server.

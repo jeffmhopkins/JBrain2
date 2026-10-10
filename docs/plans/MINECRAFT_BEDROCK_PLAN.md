@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -671,6 +671,24 @@ house by typing the address.
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
 
 ### T1 — Travel log: per-player trails and fog of war (owner, 2026-10-10)
+
+**Shipped (code):**
+- The wrapper samples each online player with `querytarget` every 10 s (kept after 4
+  blocks of movement) and serves the samples at `GET /track`.
+- The `jbrain` behavior pack (`deploy/minecraft/jbrain-pack/`) is installed into
+  whichever world starts, and logs deaths (with cause and killer) and respawns.
+- Migration 0225 adds `mc_player_track`, `mc_player_explored` and `mc_player_events`,
+  owner-only, with isolation tests. The api's `TrackDrain` and the session drain fill
+  them.
+- A reset or import deletes that world's history (`world_replaced`).
+- `GET /api/debug/minecraft/travel` shows the counts.
+- **`querytarget` checked on the box (2026-10-10):** an armor stand was summoned at spawn
+  under a temporary ticking area, then removed.
+  - On 1.26.52.3 the reply is **pretty-printed over many lines** (`Target data: [` … `]`),
+    not one line, so the parser re-joins it. The first deploy's one-line parser would
+    have dropped every sample.
+  - The fix carries the captured reply as its test.
+- **Still M0b, with a player online:** a real death line arriving with its cause.
 
 **Start recording early, draw it later.** History can't be recorded after the fact, so
 the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import collections
 import io
+import json
 import os
 import re
 import subprocess
@@ -32,6 +33,9 @@ EVENTS_KEPT = 2000
 BOOT_ID = uuid.uuid4().hex
 _CONNECTED = re.compile(r"Player connected: ([^,]+), xuid: ?(\d*)")
 _DISCONNECTED = re.compile(r"Player disconnected: ([^,]+), xuid")
+# A line from the jbrain behavior pack: `[Scripting] [jbrain] {"ev": "death", …}`.
+_PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
+PACK_EVENTS = ("death", "respawn")
 _VERSION = re.compile(r"Version:? ([0-9][0-9.]*[0-9])")
 _STARTED = "Server started."
 # `save query` prints this line, then the file list on the next line.
@@ -97,6 +101,9 @@ class Bds:
         default_factory=lambda: collections.deque(maxlen=EVENTS_KEPT)
     )
     _event_id: int = 0
+    # The loaded world's folder, stamped on every event so the api files each one under
+    # the world it happened in. The wrapper sets it before each start.
+    world: str = "world"
     # Bumped on every start: the output reader of an earlier process must not write
     # "stopped" over the state of the process that replaced it (a fast restart).
     _gen: int = 0
@@ -168,10 +175,12 @@ class Bds:
                 name = m.group(1).strip()
                 gone = self.players.pop(name, None)
                 self._event("leave", name, gone["xuid"] if gone else "")
+            elif m := _PACK_LINE.search(text):
+                self._pack_event(m.group(1))
             self._cv.notify_all()
         print(text, flush=True)
 
-    def _event(self, kind: str, name: str, xuid: str) -> None:
+    def _event(self, kind: str, name: str, xuid: str, **extra: Any) -> None:
         # Caller holds self._cv.
         self._event_id += 1
         self._events.append(
@@ -181,8 +190,38 @@ class Bds:
                 "kind": kind,
                 "name": name,
                 "xuid": xuid,
+                "world": self.world,
+                **extra,
             }
         )
+
+    def _pack_event(self, raw: str) -> None:
+        """A death or respawn from the pack. Its text is player-influenced (a name), so
+        only known kinds and plain fields get through, each type-checked."""
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return
+        if not isinstance(data, dict) or data.get("ev") not in PACK_EVENTS:
+            return
+        name = str(data.get("name", ""))[:32]
+        extra: dict[str, Any] = {}
+        for key in ("x", "y", "z"):
+            if isinstance(data.get(key), (int, float)):
+                extra[key] = float(data[key])
+        for key in ("dim", "cause", "killer"):
+            if isinstance(data.get(key), str):
+                extra[key] = data[key][:64]
+        known = self.players.get(name)
+        self._event(str(data["ev"]), name, known["xuid"] if known else "", **extra)
+
+    def note_world_replaced(self, folder: str) -> None:
+        """A reset or import put different terrain in `folder`: the travel log of the
+        world that was there describes ground that no longer exists."""
+        with self._cv:
+            world, self.world = self.world, folder
+            self._event("world_replaced", "", "")
+            self.world = world
 
     def events_after(self, after: int) -> list[dict[str, Any]]:
         with self._cv:
