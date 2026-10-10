@@ -20,6 +20,10 @@ call, and whether it reads the owner's knowledge base:
   returns a place name only, never a coordinate, and jerv's prompt forbids
   volunteering it or sending it to the web. jerv still calls no knowledge-base tool
   and reads no note/entity/list/appointment.
+- `minecraft_dave` — the owner's Minecraft helper for the family Bedrock server: the
+  server, players and worldgen tools, each player's goals, progress log and line-level
+  memory, and the web for game knowledge. KB-less and closed, because world text is
+  player-authored (docs/plans/MINECRAFT_BEDROCK_PLAN.md §P1).
 - `archivist` — a sandboxed Gmail organizer: the `gmail_*` tools (search/read,
   list/create labels, label/archive), present only when Gmail is configured, plus a
   private cross-session memory (`archivist_memory_read`/`write`) over an owner-only
@@ -379,6 +383,36 @@ JMOLT_TOOLS = frozenset(
 # call in the same turn. `jmolt_observe`'s handler enforces the same rule at runtime (it
 # refuses if any egress tool is present in the turn). Owner-selectable, never spawnable.
 JMOLT_OBSERVER_TOOLS = frozenset({*MATH_TOOLS, "jmolt_observe", "current_time"})
+
+MINECRAFT_DAVE_AGENT = "minecraft_dave"
+
+# Minecraft_Dave's allowlist (docs/plans/MINECRAFT_BEDROCK_PLAN.md §P1): the family
+# server's tools — status, players and play history, worldgen `locate`, world info — plus
+# the chat player's goals, progress log and line-level memory, and the web for game
+# knowledge. Closed and KB-less: world text is player-authored, and with web fetch in hand
+# there must be no path from a planted sign or gamertag to the owner's notes. P2 adds the
+# index and live tools here as M4/M5 land; the admin tools join as staged Proposals.
+MINECRAFT_DAVE_TOOLS = WEB_TOOLS | frozenset(
+    {
+        *MATH_TOOLS,
+        "current_time",
+        "mc_player",
+        "mc_server_status",
+        "mc_players",
+        "mc_play_history",
+        "mc_world_info",
+        "mc_locate",
+        "mc_goals",
+        "mc_goal_create",
+        "mc_goal_update",
+        "mc_log",
+        "mc_log_read",
+        "mc_memory_read",
+        "mc_memory_add",
+        "mc_memory_replace",
+        "mc_memory_remove",
+    }
+)
 
 # The closed set of spawnable child personas. `spawn_subagent` validates a requested
 # persona against this set BEFORE calling `agent_for` — which falls back to the
@@ -834,6 +868,17 @@ AGENTS: dict[str, AgentProfile] = {
         tools=JMOLT_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=6,
+    ),
+    # Minecraft_Dave — the owner's Minecraft helper (MINECRAFT_BEDROCK_PLAN.md §P1). KB-less,
+    # closed allowlist; an interactive chat with a handful of tool calls a turn, so 2x the
+    # shared budget leaves room for a locate + log + memory round. Owner-selectable, never
+    # spawnable.
+    MINECRAFT_DAVE_AGENT: _profile(
+        MINECRAFT_DAVE_AGENT,
+        "minecraft_dave.prompt",
+        tools=MINECRAFT_DAVE_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
     ),
     # jmolt_observer — jerv's read-only lens on jmolt (docs/plans/JMOLT_PLAN.md, W4, M16).
     # KB-less and egress-toolless: it reads jmolt's record via `jmolt_observe` and nothing

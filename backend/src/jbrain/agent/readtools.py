@@ -325,6 +325,29 @@ OPTIONAL_GMAIL_TOOLS = frozenset(
     }
 )
 
+# Minecraft_Dave's tools (`web`-class, minecraft_dave-only). Always wired in main.py (each
+# call answers "the server can't answer" when the sidecar is down), but optional so a
+# build_registry() call without minecraft_handlers drops the sidecars.
+OPTIONAL_MINECRAFT_TOOLS = frozenset(
+    {
+        "mc_player",
+        "mc_server_status",
+        "mc_players",
+        "mc_play_history",
+        "mc_world_info",
+        "mc_locate",
+        "mc_goals",
+        "mc_goal_create",
+        "mc_goal_update",
+        "mc_log",
+        "mc_log_read",
+        "mc_memory_read",
+        "mc_memory_add",
+        "mc_memory_replace",
+        "mc_memory_remove",
+    }
+)
+
 # The jmolt persona's Moltbook read umbrella (`web`-class, opt-in). Always wired in
 # main.py (the client refuses at call time when unregistered), but marked optional so a
 # build_registry() call without moltbook_handlers (e.g. a unit test) drops the sidecar
@@ -1182,6 +1205,7 @@ def build_registry(
     canvas_handlers: dict[str, ToolHandler] | None = None,
     crop_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
+    minecraft_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
     research_report_handlers: dict[str, ToolHandler] | None = None,
     moltbook_handlers: dict[str, ToolHandler] | None = None,
@@ -1316,6 +1340,10 @@ def build_registry(
             # The archivist persona's Gmail tools (`web`-gated), present only when a
             # Gmail refresh token is configured; otherwise their sidecars are dropped.
             **(gmail_handlers or {}),
+            # Minecraft_Dave's tools (`web`-gated, minecraft_dave-only): the family server
+            # through its sidecar, and each player's goals, log and memory over owner-only
+            # tables (docs/plans/MINECRAFT_BEDROCK_PLAN.md §P1). Built in main.py.
+            **(minecraft_handlers or {}),
             # The jmolt persona's Moltbook read umbrella (`web`-gated, jmolt-only), built
             # in main.py over the pinned client + live key provider (docs/plans/JMOLT_PLAN.md).
             **(moltbook_handlers or {}),
@@ -1408,6 +1436,7 @@ def build_registry(
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
             | OPTIONAL_GMAIL_TOOLS
+            | OPTIONAL_MINECRAFT_TOOLS
             | OPTIONAL_MOLTBOOK_TOOLS
             | OPTIONAL_MOLTBOOK_WRITE_TOOLS
         ),

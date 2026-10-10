@@ -180,6 +180,11 @@ OWNER_TIMEZONE_KEY = "owner_timezone"
 # A FILTER, never an identity: a callsign is plain bytes in a frame and forges trivially
 # (deploy/sdr/packets.py). Nothing may gate an action on it.
 OWNER_CALLSIGN_KEY = "owner_callsign"
+# The owner's Minecraft gamertag, set on the Minecraft screen. A Minecraft_Dave chat starts
+# out about this player (docs/plans/MINECRAFT_BEDROCK_PLAN.md §P1); unset, the chat has no
+# player and its goal, log and memory writes refuse rather than guess. Like the callsign,
+# a label to start from and never an identity: nothing is gated on it.
+MINECRAFT_GAMERTAG_KEY = "minecraft_gamertag"
 
 # What the owner called each RTL-SDR dongle, and what it is for. A JSON map
 # serial -> {"name", "description", "role"}, where role is "general" or a service id.
@@ -664,6 +669,11 @@ class SqlSettingsStore:
         computed — so callers say so rather than guessing or matching nothing."""
         call = await self.get(ctx, OWNER_CALLSIGN_KEY, None)
         return call.strip().upper() if isinstance(call, str) and call.strip() else None
+
+    async def minecraft_gamertag(self, ctx: SessionContext) -> str | None:
+        """The owner's Minecraft gamertag, or None when unset."""
+        tag = await self.get(ctx, MINECRAFT_GAMERTAG_KEY, None)
+        return tag.strip() if isinstance(tag, str) and tag.strip() else None
 
     async def gmail_credentials(self, ctx: SessionContext) -> tuple[str, str, str]:
         """The stored (client_id, client_secret, refresh_token) — each "" when unset.

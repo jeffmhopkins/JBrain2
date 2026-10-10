@@ -33,6 +33,7 @@ from jbrain.agent import history_replay
 from jbrain.agent.agents import (
     CITES_COMPUTATIONS,
     DEEP_RESEARCH_TOOL,
+    MINECRAFT_DAVE_AGENT,
     SPAWN_TOOL,
     AgentProfile,
     agent_for_owner_reply,
@@ -68,6 +69,7 @@ from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
+from jbrain.agent.minecrafttools import chat_intro as minecraft_chat_intro
 from jbrain.agent.plantools import format_plan_results
 from jbrain.agent.prefstools import with_standing_instructions
 from jbrain.agent.readtools import (
@@ -1085,6 +1087,22 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # graph and force-supersedes, and a turn that ignored Jeff's rules and committed
     # anyway would write the graph the way he asked it not to. A 503 he can retry is
     # recoverable; that write is not.
+    # Minecraft_Dave starts every turn knowing whose chat it is, and that player's memory
+    # and open goals (MINECRAFT_BEDROCK_PLAN.md §P1). Best-effort, unlike the note
+    # persona's rules above: without it the turn still has the tools to read the same
+    # things, so a failed read degrades to "ask mc_player" rather than a 503.
+    if session.agent == MINECRAFT_DAVE_AGENT:
+        try:
+            intro = await minecraft_chat_intro(
+                request.app.state.session_maker,
+                get_settings_store(request),
+                owner_ctx,
+                str(session.id),
+            )
+        except Exception as exc:  # noqa: BLE001 — the tools read the same data on demand
+            log.warning("minecraft_dave.intro_failed", error=repr(exc))
+            intro = "## This chat\nCall mc_player to see whose chat this is."
+        profile = replace(profile, prompt=f"{profile.prompt}\n\n{intro}")
     if session.agent == NOTE_CONVERSE_AGENT:
         profile = replace(
             profile,
