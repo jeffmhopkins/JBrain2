@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M9◻️ M10◻️ M11◻️ M12◻️ R1◻️ P1◻️ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -704,8 +704,55 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 - **Privacy:** family-only and owner-visible, as decided for "where is everyone"
   (2026-10-10). Players can ask Dave about their own trail. Seeing others' trails follows
   the same rule as "where is Sam".
-- **Size:** about 120 lines of wrapper, one migration, a drain and tests. It's small, and
-  one PR.
+- **Events on the timeline (owner, 2026-10-10)**, in **`app.mc_player_events`**: world,
+  xuid, time, kind, dimension, x/y/z, detail. Kinds:
+  - **joined / left:** from the play sessions already recorded (M1), placed at the
+    session's first and last sample.
+  - **died:** BDS prints no death line on the console, so this needs the **first slice of
+    the `jbrain` behavior pack**. It is a `world.afterEvents.entityDie` handler for
+    players that `console.log`s the place and the cause (`damageSource.cause`, plus the
+    killer's type if any), using the bridge M0 proved. The wrapper installs it into the
+    loaded world, as it does the probe pack. M5 later grows the same pack.
+    - **M0b check:** the death line arrives, with its cause, from a real death.
+  - **respawned:** from the same pack (`playerSpawn`, when it isn't the first spawn).
+    Together with died, it gives the death-to-respawn gap.
+  - **changed dimension:** derived from the trail. No extra source is needed.
+- **Size:** about 150 lines of wrapper, the pack's death handler, one migration (track,
+  explored and events), a drain and tests. It's still one PR.
+
+### M8a — Timeline: scrub through time on the map (owner, 2026-10-10)
+
+**What the owner sees.** The PWA map gets a **time scrubber** along its bottom edge:
+- **Scrub or play** at 1×, 10×, 60× or 600×. Each player is a coloured dot that moves
+  along their trail, with a fading tail of the last few minutes behind it.
+  - Positions between 10-second samples are interpolated.
+  - A dimension change jumps the view to that dimension's map, with a note.
+- **Events** are marked on the scrubber and pinned on the map at their spot: deaths as a
+  skull, with the cause on tap ("fell from a high place", "killed by a Creeper"), plus
+  log-ins, log-outs and dimension changes. Tapping a marker on the scrubber jumps there.
+- **Player chips** choose who's shown. **Follow** keeps the map centred on one player.
+- **Sessions:** with a player chosen, **‹ previous session · next session ›** steps
+  through their play sessions. Each shows its date, length and distance. Jumping lands on
+  the session's start, and the scrubber zooms to fit it.
+- **The fog reveals over time:** the explored layer shows only what had been seen **by the
+  scrubbed moment** (each chunk's `first_seen` ≤ t), so you watch the world open up.
+- **Range presets:** this session, today, this week, everything. "Now" snaps back to live
+  positions.
+
+**How it's built:**
+- **API (owner-only):** `GET /api/minecraft/timeline?world=&from=&to=&players=` returns
+  the trails, downsampled to the zoom level (no more than about 2,000 points a player),
+  plus the events and the session list.
+  - The explored layer comes with first-seen times so the client can fade it in.
+  - The map tiles themselves are M8's.
+- **The client** keeps the trails in memory for the range on screen. Scrubbing is a
+  local redraw with no request per frame, so it stays smooth on a phone.
+- **Phone first:** a full-width scrubber with large handles, event markers with 44 px tap
+  targets, and play and pause in the thumb zone.
+- **GUI gate first** (DESIGN.md process): mocks of the scrubber and the session stepper
+  before any of it is built.
+
+**Depends on:** T1, which must already have been recording, and M8's map tiles.
 
 ### M8 — Maps and biomes (after M4; the map tools in §3b)
 
