@@ -11,6 +11,7 @@ import {
   mcStopped,
   mcUpdate,
   mcVersion,
+  mcWorlds,
 } from "../minecraftFixtures";
 import { MinecraftScreen } from "./MinecraftScreen";
 
@@ -50,6 +51,8 @@ describe("MinecraftScreen", () => {
         return json(typeof routes.status === "function" ? routes.status() : routes.status);
       }
       if (path.startsWith("/api/minecraft/version")) return json(routes.version ?? mcVersion());
+      // The worlds list is MinecraftWorlds.test.tsx's; here it only has to answer.
+      if (path === "/api/minecraft/worlds") return json(mcWorlds());
       if (path === "/api/minecraft/players") {
         return json(
           typeof routes.players === "function" ? routes.players() : (routes.players ?? mcPlayers()),
@@ -75,7 +78,7 @@ describe("MinecraftScreen", () => {
   const posted = () =>
     fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").map(([url]) => String(url));
 
-  it("running with two players: status, online timers, C's player table and server facts", async () => {
+  it("running with two players: status, online timers, C's player table and how to join", async () => {
     serve({ status: mcStatus() });
     render(<MinecraftScreen />);
 
@@ -96,9 +99,7 @@ describe("MinecraftScreen", () => {
     expect(within(table).getAllByText(/^since /)).toHaveLength(4);
     expect(within(rows[3] as HTMLElement).getByText(/^(yesterday|today)$/)).toBeInTheDocument();
 
-    // Server facts and how to join.
-    expect(screen.getByText("Survival · Normal")).toBeInTheDocument();
-    expect(screen.getByText("off — anyone on the network can join")).toBeInTheDocument();
+    // How to join. A world's mode now lives on its own page (MinecraftWorlds.test.tsx).
     expect(screen.getByText("Friends → LAN Games → JBrain")).toBeInTheDocument();
     expect(screen.getByText("192.168.1.40")).toBeInTheDocument();
     expect(screen.getByText("19132")).toBeInTheDocument();
@@ -177,8 +178,7 @@ describe("MinecraftScreen", () => {
     serve({ status: mcStatus(mcStopped({ auto_update: true })) });
     render(<MinecraftScreen />);
     expect(await screen.findByText("stopped")).toBeInTheDocument();
-    // The container keeps running, so world, join details and auto-update stay readable.
-    expect(screen.getByText("Survival · Normal")).toBeInTheDocument();
+    // The container keeps running, so join details and auto-update stay readable.
     expect(screen.getByText("192.168.1.40")).toBeInTheDocument();
     expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("The server is stopped.")).toBeInTheDocument();

@@ -3806,6 +3806,69 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const scenario = mc.minecraftScenario(
       new URLSearchParams(globalThis.location?.search ?? "").get("mc"),
     );
+    // Worlds and backups: `?mcw=<scenario>` (see minecraftWorldsScenario). Writes answer
+    // plausibly but change nothing, so every reload shows the reviewed fixture again.
+    const w = mc.minecraftWorldsScenario(
+      new URLSearchParams(globalThis.location?.search ?? "").get("mcw"),
+    );
+    const running = scenario.status.server?.state === "running";
+    const slotOf = (id: string | undefined) => w.worlds.slots.find((s) => s.id === id);
+    if (path === "/api/minecraft" && scenario.status.server) {
+      // `?mcw=pending`: restart-bound settings saved since the last start.
+      const pending =
+        new URLSearchParams(globalThis.location?.search ?? "").get("mcw") === "pending"
+          ? ["allow-cheats", "allow-list", "max-players"]
+          : [];
+      return json({
+        ...scenario.status,
+        server: { ...scenario.status.server, job: w.job, pending_restart: pending },
+      });
+    }
+    if (path === "/api/minecraft/worlds") return json(w.worlds);
+    if (path === "/api/minecraft/worlds/new-seed") {
+      return json({ seed: String(Math.floor(Math.random() * 9e15) - 4.5e15) });
+    }
+    const rules = path.match(/^\/api\/minecraft\/worlds\/(slot\d+)\/rules$/);
+    if (rules) {
+      const s = slotOf(rules[1]);
+      const live = !!s?.active && running;
+      const own: Record<string, Record<string, boolean>> = {
+        slot3: { doDayLightCycle: false, doWeatherCycle: false, doMobSpawning: false },
+        slot4: { keepInventory: true },
+      };
+      const set = method === "PUT" ? (JSON.parse(String(init?.body ?? "{}")).set ?? {}) : {};
+      const pending = live ? [] : [...(rules[1] === "slot4" ? ["keepInventory"] : [])];
+      return json(
+        mc.mcRules(rules[1], live, { ...own[rules[1] ?? ""], ...set }, [
+          ...pending,
+          ...(live ? [] : Object.keys(set)),
+        ]),
+      );
+    }
+    const world = path.match(/^\/api\/minecraft\/worlds\/(slot\d+)(?:\/(\w+))?$/);
+    if (world && (method === "POST" || method === "PATCH")) {
+      const s = slotOf(world[1]);
+      const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
+      if (world[2] === "load") return json({ slot: world[1], loaded: true });
+      return json({ ...s, ...body, applies: s?.active ? "next restart" : "next load" });
+    }
+    if (path === "/api/minecraft/backups" && method === "GET") {
+      const folder = slotOf(url.searchParams.get("slot") ?? undefined)?.folder;
+      return json({ snapshots: w.backups.filter((b) => !folder || b.folder === folder) });
+    }
+    if (path === "/api/minecraft/backups" && method === "POST") {
+      return json({ name: "slot2-now.mcworld", bytes: 8_000_000, files: 40 });
+    }
+    if (path.startsWith("/api/minecraft/backups/")) return json({ ok: true });
+    if (path === "/api/minecraft/allowlist") {
+      return json({ ...mc.mcAllowlist(), applies: "on/off at next restart; names now" });
+    }
+    if (path === "/api/minecraft/server-settings") {
+      if (method === "PUT") {
+        return json({ ...JSON.parse(String(init?.body ?? "{}")), applies: "next restart" });
+      }
+      return json(mc.mcServerSettings());
+    }
     if (path === "/api/minecraft") return json(scenario.status);
     if (path === "/api/minecraft/version") return json(scenario.version);
     if (path === "/api/minecraft/players") return json(scenario.players);

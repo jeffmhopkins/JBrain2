@@ -564,3 +564,56 @@ export const PuzzleIcon = (p: IconProps) => (
     <path d="M15.39 4.39a1 1 0 0 0 1.68-.47 2.5 2.5 0 1 1 3.01 3.01 1 1 0 0 0-.47 1.68l1.68 1.68a2.41 2.41 0 0 1 0 3.42l-1.68 1.68a1 1 0 0 1-1.68-.47 2.5 2.5 0 1 0-3.01 3.01 1 1 0 0 1 .47 1.68l-1.68 1.68a2.41 2.41 0 0 1-3.42 0l-1.68-1.68a1 1 0 0 0-1.68.47 2.5 2.5 0 1 1-3.01-3.01 1 1 0 0 0 .47-1.68l-1.68-1.68a2.41 2.41 0 0 1 0-3.42l1.68-1.68a1 1 0 0 1 1.68.47 2.5 2.5 0 1 0 3.01-3.01 1 1 0 0 1-.47-1.68l1.68-1.68a2.41 2.41 0 0 1 3.42 0z" />
   </Icon>
 );
+
+export const UploadIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="m17 8-5-5-5 5" />
+    <path d="M12 3v12" />
+  </Icon>
+);
+
+export const UndoIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 7v6h6" />
+    <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+  </Icon>
+);
+
+export const ArchiveIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect width="20" height="5" x="2" y="3" rx="1" />
+    <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+    <path d="M10 12h4" />
+  </Icon>
+);
+
+export const ClockIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 6v6l4 2" />
+  </Icon>
+);
+
+export const ShieldIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  </Icon>
+);
+
+export const SlidersIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 7h-9" />
+    <path d="M14 17H5" />
+    <circle cx="17" cy="17" r="3" />
+    <circle cx="7" cy="7" r="3" />
+  </Icon>
+);
+
+export const LayersIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" />
+    <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
+    <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
+  </Icon>
+);

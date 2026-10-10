@@ -48,14 +48,27 @@ import {
   updateRunning,
 } from "../minecraft";
 import { useForeground } from "../visibility";
+import { AllowlistSection, ServerSettingsSection } from "./MinecraftServerSettings";
+import { WorldModals } from "./MinecraftWorldSheets";
+import {
+  ErrLine,
+  RulesLayer,
+  WorldLayer,
+  WorldsEntry,
+  WorldsLayer,
+  WorldsProvider,
+  useWorlds,
+} from "./MinecraftWorlds";
 
 const STATUS_POLL_MS = 5000;
+/** While a world job runs its phase moves every few seconds, and the card should keep up. */
+const JOB_POLL_MS = 2000;
 const CLOCK_TICK_MS = 15_000;
 /** The roster's slow beat, and the re-read after a join or leave: the session drain writes
  *  a join up to 5 s after the server reports it, so the immediate read can miss a newcomer. */
 const PLAYERS_POLL_MS = 15_000;
 const PLAYERS_SETTLE_MS = 6000;
-const TOAST_MS = 2400;
+const TOAST_MS = 3200;
 /** A finished update stays on screen this long, then the section settles back. */
 const DONE_SHOWN_S = 5 * 60;
 
@@ -76,12 +89,12 @@ function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
 }
 
-const cap = (s: string) => (s ? s[0]?.toUpperCase() + s.slice(1) : s);
 const initial = (tag: string) => (tag[0] ?? "?").toUpperCase();
 
 export function MinecraftScreen() {
   const foreground = useForeground();
   const [status, setStatus] = useState<MinecraftStatus | null>(null);
+  const [statusSeq, setStatusSeq] = useState(0);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [version, setVersion] = useState<MinecraftVersion | null>(null);
   const [checking, setChecking] = useState(false);
@@ -112,6 +125,7 @@ export function MinecraftScreen() {
     try {
       const next = await api.minecraftStatus();
       setStatus(next);
+      setStatusSeq((n) => n + 1);
       setStatusError(null);
     } catch (err) {
       setStatusError(errorMessage(err));
@@ -140,20 +154,25 @@ export function MinecraftScreen() {
     void loadVersion(false);
   }, [loadVersion]);
 
+  const server = status?.server ?? null;
+  const job = server?.job ?? null;
+  // This device's own upload or long request: poll fast so its job shows at once.
+  const [localBusy, setLocalBusy] = useState(false);
+  const fast = job !== null || localBusy;
+
   // The screen's heartbeat: status every few seconds while it can be seen, and the clock
-  // that keeps session timers honest between polls.
+  // that keeps session timers honest between polls. A job's elapsed time ticks by the second.
   useEffect(() => {
     if (!foreground) return;
     void loadStatus();
-    const poll = setInterval(() => void loadStatus(), STATUS_POLL_MS);
-    const tick = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+    const poll = setInterval(() => void loadStatus(), fast ? JOB_POLL_MS : STATUS_POLL_MS);
+    const tick = setInterval(() => setNow(Date.now()), fast ? 1000 : CLOCK_TICK_MS);
     return () => {
       clearInterval(poll);
       clearInterval(tick);
     };
-  }, [foreground, loadStatus]);
+  }, [foreground, loadStatus, fast]);
 
-  const server = status?.server ?? null;
   const update = server?.update ?? null;
   const onlineKey = (server?.players ?? []).map((p) => p.xuid).join(",");
 
@@ -227,6 +246,27 @@ export function MinecraftScreen() {
   const updating = updateRunning(update);
   const busy = state === "starting" || state === "stopping" || state === "restarting";
   const runningVersion = server?.version ?? version?.running ?? null;
+
+  const worlds = useWorlds({
+    serverUp: installed && server !== null,
+    running: state === "running",
+    online: state === "running" ? (server?.players ?? []).map((p) => p.name) : [],
+    job,
+    lastJob: server?.last_job ?? null,
+    pendingRestart: server?.pending_restart ?? [],
+    statusSeq,
+    updating,
+    state,
+    nowMs: now,
+    toast: setToast,
+    refreshStatus: () => void loadStatus(),
+  });
+  const busyNow = worlds.upload !== null || worlds.inFlight !== null;
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (mainRef.current) mainRef.current.inert = worlds.pages.length > 0;
+  }, [worlds.pages.length]);
+  useEffect(() => setLocalBusy(busyNow), [busyNow]);
 
   function ask(kind: ConfirmKind) {
     setActionError(null);
@@ -328,111 +368,153 @@ export function MinecraftScreen() {
   const sheetPlayer = players?.players.find((p) => p.xuid === sheetXuid) ?? null;
 
   return (
-    <main className="screen-body mc-screen">
-      <Banner
-        failed={failed}
-        behind={behind && !updating && !failed}
-        latest={version?.latest ?? null}
-        running={runningVersion}
-        onDetails={toUpdate}
-      />
+    <WorldsProvider value={worlds}>
+      <main
+        className="screen-body mc-screen"
+        ref={mainRef}
+        aria-hidden={worlds.pages.length > 0 || undefined}
+      >
+        <Banner
+          failed={failed}
+          behind={behind && !updating && !failed}
+          latest={version?.latest ?? null}
+          running={runningVersion}
+          onDetails={toUpdate}
+        />
 
-      {statusError && (
-        <p className="error" role="alert">
-          Can&apos;t reach the Minecraft server — {statusError}
-        </p>
-      )}
-      {actionError && (
-        <p className="error" role="alert">
-          {actionError}
-        </p>
-      )}
+        {statusError && (
+          <p className="error" role="alert">
+            Can&apos;t reach the Minecraft server — {statusError}
+          </p>
+        )}
+        {actionError && (
+          <p className="error" role="alert">
+            {actionError}
+          </p>
+        )}
 
-      {status === null ? (
-        !statusError && <p className="muted">Loading…</p>
-      ) : (
-        <>
-          <Hero
-            state={state}
-            info={info}
-            server={server}
-            serverError={status.server_error}
-            runningVersion={runningVersion}
-            updating={updating}
-            busy={busy}
-            restartInFlight={restartInFlight}
-            waiting={inFlight !== null}
-            onStart={() => void act("start")}
-            onStop={() => ask("stop")}
-            onRestart={() => ask("restart")}
-            onRetry={() => void act("retry")}
-          />
+        {status === null ? (
+          !statusError && <p className="muted">Loading…</p>
+        ) : (
+          <>
+            <Hero
+              state={state}
+              info={info}
+              server={server}
+              serverError={status.server_error}
+              runningVersion={runningVersion}
+              updating={updating}
+              busy={busy}
+              restartInFlight={restartInFlight}
+              waiting={inFlight !== null}
+              worldName={worlds.active ? (worlds.active.name ?? null) : null}
+              jobWhat={job?.what ?? (worlds.upload ? "uploading a world" : worlds.inFlight)}
+              onStart={() => void act("start")}
+              onStop={() => ask("stop")}
+              onRestart={() => ask("restart")}
+              onRetry={() => void act("retry")}
+            />
 
-          <UpdateSection
-            state={state}
-            installed={installed}
-            version={version}
-            update={update}
-            failed={failed}
-            behind={behind}
-            busy={busy}
-            waiting={inFlight !== null}
-            runningVersion={runningVersion}
-            fromStopped={
-              updOrigin !== null && updOrigin.at === update?.started_at && updOrigin.stopped
-            }
-            nowMs={now}
-            checking={checking}
-            autoUpdate={autoUpdate}
-            onUpdate={() => ask("update")}
-            onDismiss={() => setDismissedFailure(update?.started_at ?? null)}
-            onCheck={() => void check()}
-            onToggleAuto={() => void toggleAutoUpdate()}
-          />
+            <ErrLine />
+            {installed && server && <WorldsEntry />}
 
-          <OnlineSection state={state} server={server} nowMs={now} />
+            <UpdateSection
+              state={state}
+              installed={installed}
+              version={version}
+              update={update}
+              failed={failed}
+              behind={behind}
+              busy={busy}
+              waiting={inFlight !== null}
+              runningVersion={runningVersion}
+              fromStopped={
+                updOrigin !== null && updOrigin.at === update?.started_at && updOrigin.stopped
+              }
+              nowMs={now}
+              checking={checking}
+              autoUpdate={autoUpdate}
+              onUpdate={() => ask("update")}
+              onDismiss={() => setDismissedFailure(update?.started_at ?? null)}
+              onCheck={() => void check()}
+              onToggleAuto={() => void toggleAutoUpdate()}
+            />
 
-          <PlayersSection
-            players={players}
+            <OnlineSection state={state} server={server} nowMs={now} />
+
+            <PlayersSection
+              players={players}
+              playersAt={playersAt}
+              nowMs={now}
+              onOpen={setSheetXuid}
+            />
+
+            <StatsSection available={players?.stats_available ?? false} />
+
+            {installed && server && (
+              <>
+                <ServerSettingsSection
+                  running={state === "running"}
+                  online={server.players.length}
+                  toast={setToast}
+                  onError={setActionError}
+                  pendingRestart={server.pending_restart ?? []}
+                  refreshStatus={() => void loadStatus()}
+                />
+                <AllowlistSection
+                  running={state === "running"}
+                  online={state === "running" ? server.players.map((p) => p.name) : []}
+                  known={(players?.players ?? []).map((p) => p.gamertag)}
+                  toast={setToast}
+                  onError={setActionError}
+                  pendingRestart={server.pending_restart ?? []}
+                  refreshStatus={() => void loadStatus()}
+                />
+              </>
+            )}
+
+            <JoinSection
+              installed={installed}
+              server={server}
+              onCopy={(a) => void copyAddress(a)}
+            />
+          </>
+        )}
+
+        {pending && pendingSpec && (
+          <Dialog
+            title={pendingSpec.title}
+            confirmLabel={pendingSpec.confirmLabel}
+            tone={pendingSpec.tone}
+            onCancel={() => setPending(null)}
+            onConfirm={() => void act(pending)}
+          >
+            {pendingSpec.body}
+          </Dialog>
+        )}
+
+        {sheetPlayer && (
+          <PlayerSheet
+            player={sheetPlayer}
             playersAt={playersAt}
             nowMs={now}
-            onOpen={setSheetXuid}
+            statsAvailable={players?.stats_available ?? false}
+            onClose={() => setSheetXuid(null)}
           />
-
-          <StatsSection available={players?.stats_available ?? false} />
-
-          <ServerSection
-            installed={installed}
-            server={server}
-            onCopy={(a) => void copyAddress(a)}
-          />
-        </>
+        )}
+      </main>
+      {worlds.pages.map((p) =>
+        p.kind === "worlds" ? (
+          <WorldsLayer key="worlds" />
+        ) : p.kind === "world" ? (
+          <WorldLayer key={`world-${p.slot}`} slot={p.slot} />
+        ) : (
+          <RulesLayer key={`rules-${p.slot}`} slot={p.slot} />
+        ),
       )}
-
-      {pending && pendingSpec && (
-        <Dialog
-          title={pendingSpec.title}
-          confirmLabel={pendingSpec.confirmLabel}
-          tone={pendingSpec.tone}
-          onCancel={() => setPending(null)}
-          onConfirm={() => void act(pending)}
-        >
-          {pendingSpec.body}
-        </Dialog>
-      )}
-
-      {sheetPlayer && (
-        <PlayerSheet
-          player={sheetPlayer}
-          playersAt={playersAt}
-          nowMs={now}
-          statsAvailable={players?.stats_available ?? false}
-          onClose={() => setSheetXuid(null)}
-        />
-      )}
-
-      {toast && <output className="toast">{toast}</output>}
-    </main>
+      <WorldModals />
+      {toast && <output className="toast mc-toast">{toast}</output>}
+    </WorldsProvider>
   );
 }
 
@@ -502,6 +584,8 @@ function Hero({
   busy,
   restartInFlight,
   waiting,
+  worldName,
+  jobWhat,
   onStart,
   onStop,
   onRestart,
@@ -516,6 +600,8 @@ function Hero({
   busy: boolean;
   restartInFlight: boolean;
   waiting: boolean;
+  worldName: string | null;
+  jobWhat: string | null;
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
@@ -561,7 +647,8 @@ function Hero({
       </p>
     );
   } else {
-    const lifecycleOk = (state === "running" || state === "unreachable") && !updating && !waiting;
+    const lifecycleOk =
+      (state === "running" || state === "unreachable") && !updating && !waiting && !jobWhat;
     const startable = state === "stopped" || state === "starting" || state === "down";
     const restarting = state === "restarting" || restartInFlight;
     body = (
@@ -570,6 +657,12 @@ function Hero({
           <div className="mc-notice mc-notice-bad">
             <AlertTriangleIcon size={16} />
             <div className="mc-errtext">{serverError}</div>
+          </div>
+        )}
+        {worldName && (
+          <div className="mc-fact mc-fact-world">
+            <div className="mc-fact-v">{worldName}</div>
+            <div className="mc-fact-k">world loaded</div>
           </div>
         )}
         <div className="mc-facts">
@@ -590,7 +683,7 @@ function Hero({
               type="button"
               className="mc-btn mc-btn-go mc-grow"
               onClick={onStart}
-              disabled={state === "starting" || updating || waiting}
+              disabled={state === "starting" || updating || waiting || !!jobWhat}
             >
               {state === "starting" ? <Spinner /> : <PlayIcon size={18} />}
               {state === "starting" ? "Starting…" : "Start server"}
@@ -623,7 +716,10 @@ function Hero({
             Busy updating — Start, Stop and Restart come back when it&apos;s done.
           </p>
         )}
-        {busy && !updating && <p className="mc-note">Wait for it to finish {state}.</p>}
+        {jobWhat && !updating && (
+          <p className="mc-note">Busy {jobWhat} — the server is handled for you.</p>
+        )}
+        {busy && !updating && !jobWhat && <p className="mc-note">Wait for it to finish {state}.</p>}
         {waiting && !busy && !updating && (
           <p className="mc-note">Waiting for the server to answer…</p>
         )}
@@ -1247,9 +1343,9 @@ function StatsSection({ available }: { available: boolean }) {
   );
 }
 
-// ---- server facts ----
+// ---- how to join ----
 
-function ServerSection({
+function JoinSection({
   installed,
   server,
   onCopy,
@@ -1258,8 +1354,7 @@ function ServerSection({
   server: MinecraftServer | null;
   onCopy: (address: string) => void;
 }) {
-  const known = installed && server !== null;
-  const address = known && server.lan_ip ? `${server.lan_ip}:${server.port}` : null;
+  const address = installed && server?.lan_ip ? `${server.lan_ip}:${server.port}` : null;
   let join: ReactNode;
   if (!installed) join = "Not installed yet — join details appear once the server is up.";
   else if (!server) join = "Join details show once the container is back up.";
@@ -1280,22 +1375,8 @@ function ServerSection({
   }
   return (
     <>
-      <h3 className="mc-sect">Server</h3>
+      <h3 className="mc-sect">Join</h3>
       <div className="mc-card">
-        <div className="mc-kv">
-          <span>World</span>
-          <span>{known ? server.level_name : "—"}</span>
-        </div>
-        <div className="mc-kv">
-          <span>Mode</span>
-          <span>{known ? `${cap(server.gamemode)} · ${cap(server.difficulty)}` : "—"}</span>
-        </div>
-        <div className="mc-kv">
-          <span>Allowlist</span>
-          <span>
-            {known ? (server.allow_list ? "on" : "off — anyone on the network can join") : "—"}
-          </span>
-        </div>
         <div className="mc-pad mc-join">
           <div className="mc-label">How to join</div>
           <p className="mc-note">{join}</p>

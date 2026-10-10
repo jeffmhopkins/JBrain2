@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ M2◻️ M3◻️ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ R1◻️
+> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1◻️ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1◻️ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -213,6 +213,10 @@ change.
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
   LAN Games), `/jb:dave` from a client, the inventory-at-death read, memory under play, the
   parser, map and biome inputs, and the vanilla-client checks.
+  - **Added for M9/M10:** the server-pushed resource pack. On joining from the Xbox and
+    from Windows, the pack downloads automatically with no install step, a test Power
+    Pack shows its icon and name, and the nine-eye recipe works in a crafting table.
+    Also time the join: the extra download should add almost nothing.
 
 **First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
 random seed that `/properties` and `level.dat` record. The known-seed checks can set
@@ -369,6 +373,34 @@ also reachable over the debug router (§3a).
   before it is built.
 
 ### M2 — World slots, importing the owner's world, and server settings
+
+**Owner additions (2026-10-10).**
+
+**Every world option is switchable, per world.** That covers difficulty, game mode and
+cheats, plus **all of the server's game rules**: 38 on 1.26.52.3, read from `gamerule`,
+such as `doFireTick` (fire spread), `keepInventory`, `mobGriefing`, `doDayLightCycle`,
+`pvp`, `showCoordinates`, `spawnRadius` and `playersSleepingPercentage`.
+- On the loaded world a change applies **live** through the console.
+- On any other world it's saved and applied **when that world loads**.
+- Every world's saved rules are re-applied on each load, so the world stays as set.
+- The rule list and its types come from the server, so a rule added in a later Bedrock
+  version shows up with no code change.
+
+**Safety and honesty, from the mock review (2026-10-10).**
+- **Chat warning before a stop:** an owner action that stops the loaded world with
+  players online (Load, import/reset/restore over it, Stop, Restart, Update) first says
+  so in chat and waits 10 seconds.
+- **Visible jobs:** the running job and its phase are in the status, so every device
+  sees them.
+- **Rules re-apply on every start**, not just on a Load.
+- **Worlds describe themselves:** an imported or restored world takes its seed, game
+  mode, difficulty, cheats and rules from its own `level.dat` (a small little-endian NBT
+  read), never from the world it replaced. The first-boot world learns its seed the same
+  way, so "reset with the same seed" works for it.
+
+**New-world seed: random or entered.** Random is a box-chosen seed, shown and
+re-rollable before creating, so "reset with the same seed" always works. An entered seed
+is any text up to 64 characters, as in Bedrock's own seed box.
 
 - **World slots (owner request, 2026-10-10).** The server holds several worlds, with **one
   loaded at a time**. A slot is a folder under `worlds/` plus a row in `app.mc_world_slots`.
@@ -631,12 +663,96 @@ house by typing the address.
   `ActionFormData`). The form has buttons for *Where am I*, *Nearest…*, *Guide me home*,
   *My last death*, *Map of here* and *Save this spot*. It is vanilla-safe (§3c), and it is
   optional since everyone has a keyboard.
-- A visible **companion NPC**. A *custom* entity needs a resource pack. The vanilla client
-  downloads that automatically, but it's heavier and breaks the "behavior pack only" rule in
-  §3c, so it's the owner's call. The alternative is a **vanilla mob** (an allay or villager
-  named "Dave", made invulnerable by the pack), which needs no client assets. Spawning it
+- A visible **companion NPC**. A *custom* entity's model and texture ride in the `jbrain`
+  resource pack that downloads automatically on join (allowed since 2026-10-10, §3c), at
+  the cost of a bigger download. The lighter option is a **vanilla mob** (an allay or
+  villager named "Dave", made invulnerable by the pack). Which to use is the owner's call. Spawning it
   changes the world, so it is an owner action, never a player's.
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
+
+### T1 — Travel log: per-player trails and fog of war (owner, 2026-10-10)
+
+**Start recording early, draw it later.** History can't be recorded after the fact, so
+the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
+
+- **Sampling (no add-on needed):** while anyone is online, the wrapper runs
+  `querytarget "<name>"` on the console for each online player (names come from the join
+  events) every **10 s**. It's a vanilla command, and BDS answers with JSON: dimension,
+  position and facing.
+  - A sample less than 4 blocks from that player's last kept one is dropped, so standing
+    still costs nothing.
+  - **M0b check:** the reply's exact shape on 1.26, and that it costs the server nothing
+    noticeable.
+- **Storage (owner-only RLS, with an isolation test, like `mc_player_sessions`):**
+  - **`app.mc_player_track`** holds the trails: world folder, xuid, time, dimension,
+    x/y/z. About 4 players × 6 a minute while moving; months of play is a few MB.
+  - **`app.mc_player_explored`** holds the per-person fog of war: world, xuid, dimension,
+    chunk x/z, first seen, last seen. A chunk is revealed when a player comes within **4
+    chunks** of it, which is roughly what they could see.
+  - Both are drained from the wrapper's events with the boot-id and replay-safe pattern
+    of play sessions.
+- **What it gives:**
+  - **M8 map layers:** *explored by* (one player, or everyone, each in their own
+    colour), *trail* (a session's path, or a day's), and *heat* (where time was spent).
+  - **Dave and the agent:** "where was I an hour ago?", "how did I get to that village?",
+    "has anyone been east of the river?" (the M6 `my_track` and `explored_by` tools).
+  - **PWA:** each player's lifetime stats gain distance travelled per dimension.
+- **A world reset or a restore:** a world's track and fog follow its **folder**. A reset
+  or "new seed" clears them, because they describe terrain that no longer exists. A
+  restore keeps them, since some of the trail may now be "in the future" of the restored
+  world, and that's harmless.
+- **Privacy:** family-only and owner-visible, as decided for "where is everyone"
+  (2026-10-10). Players can ask Dave about their own trail. Seeing others' trails follows
+  the same rule as "where is Sam".
+- **Events on the timeline (owner, 2026-10-10)**, in **`app.mc_player_events`**: world,
+  xuid, time, kind, dimension, x/y/z, detail. Kinds:
+  - **joined / left:** from the play sessions already recorded (M1), placed at the
+    session's first and last sample.
+  - **died:** BDS prints no death line on the console, so this needs the **first slice of
+    the `jbrain` behavior pack**. It is a `world.afterEvents.entityDie` handler for
+    players that `console.log`s the place and the cause (`damageSource.cause`, plus the
+    killer's type if any), using the bridge M0 proved. The wrapper installs it into the
+    loaded world, as it does the probe pack. M5 later grows the same pack.
+    - **M0b check:** the death line arrives, with its cause, from a real death.
+  - **respawned:** from the same pack (`playerSpawn`, when it isn't the first spawn).
+    Together with died, it gives the death-to-respawn gap.
+  - **changed dimension:** derived from the trail. No extra source is needed.
+- **Size:** about 150 lines of wrapper, the pack's death handler, one migration (track,
+  explored and events), a drain and tests. It's still one PR.
+
+### M8a — Timeline: scrub through time on the map (owner, 2026-10-10)
+
+**What the owner sees.** The PWA map gets a **time scrubber** along its bottom edge:
+- **Scrub or play** at 1×, 10×, 60× or 600×. Each player is a coloured dot that moves
+  along their trail, with a fading tail of the last few minutes behind it.
+  - Positions between 10-second samples are interpolated.
+  - A dimension change jumps the view to that dimension's map, with a note.
+- **Events** are marked on the scrubber and pinned on the map at their spot: deaths as a
+  skull, with the cause on tap ("fell from a high place", "killed by a Creeper"), plus
+  log-ins, log-outs and dimension changes. Tapping a marker on the scrubber jumps there.
+- **Player chips** choose who's shown. **Follow** keeps the map centred on one player.
+- **Sessions:** with a player chosen, **‹ previous session · next session ›** steps
+  through their play sessions. Each shows its date, length and distance. Jumping lands on
+  the session's start, and the scrubber zooms to fit it.
+- **The fog reveals over time:** the explored layer shows only what had been seen **by the
+  scrubbed moment** (each chunk's `first_seen` ≤ t), so you watch the world open up.
+- **Range presets:** this session, today, this week, everything. "Now" snaps back to live
+  positions.
+
+**How it's built:**
+- **API (owner-only):** `GET /api/minecraft/timeline?world=&from=&to=&players=` returns
+  the trails, downsampled to the zoom level (no more than about 2,000 points a player),
+  plus the events and the session list.
+  - The explored layer comes with first-seen times so the client can fade it in.
+  - The map tiles themselves are M8's.
+- **The client** keeps the trails in memory for the range on screen. Scrubbing is a
+  local redraw with no request per frame, so it stays smooth on a phone.
+- **Phone first:** a full-width scrubber with large handles, event markers with 44 px tap
+  targets, and play and pause in the thumb zone.
+- **GUI gate first** (DESIGN.md process): mocks of the scrubber and the session stepper
+  before any of it is built.
+
+**Depends on:** T1, which must already have been recording, and M8's map tiles.
 
 ### M8 — Maps and biomes (after M4; the map tools in §3b)
 
@@ -685,6 +801,630 @@ biomes.**
 - Tests: render a fixture snapshot to golden PNG hashes per layer, check the overlay
   projection (coordinates → pixels, Nether scale), check that share-link scope and expiry
   are refused outside the link, and check that `slice@Y` is refused when fair play is on.
+
+### M9 — The tricorder: a held item that points where Dave said (owner, 2026-10-10)
+
+**The idea.** Dave gives a player a target ("the nearest woodland mansion", "your base",
+"where you died"). While that player holds the **tricorder**, their HUD shows which way
+to turn and how far it is. Nobody has to read or type coordinates. It works like a
+compass that Dave sets.
+
+**What the player sees.**
+- Holding the tricorder: actionbar text refreshed about 4 times a second, e.g.
+  `↖ Woodland mansion · 412 blocks`.
+- The arrow is relative to where the player is **facing**: eight arrows, from the bearing
+  to the target minus the player's view direction. Turning re-points it.
+- Within about 8 blocks: `You're here — Woodland mansion`, plus one vanilla chime.
+- **Target in another dimension:** `Woodland mansion is in the Overworld — take a portal`.
+  The Nether pointer can aim at the portal Dave knows from the M4 index.
+- **No target yet:** `Ask Dave where to go: /jb:dave …`.
+- Putting the item away clears the actionbar. Nothing shows for anyone else.
+
+**How it's built** (on M5's bridge, using M6's `guide_me` tool):
+- Dave's `guide_me(player, target)` sends `scriptevent jb:target <xuid> <json>` with
+  the label, dimension and x/y/z. The pack stores it as a **dynamic property on the
+  player**, so it survives logging out and restarts.
+- A `system.runInterval` (every 5 ticks) checks each player's selected hotbar slot for
+  the tricorder and writes the actionbar line. It uses stable `@minecraft/server` only:
+  `getComponent("inventory")`, `selectedSlotIndex`, `getViewDirection`,
+  `onScreenDisplay.setActionBar`.
+- **One target per player.** A new `guide_me` replaces the old one. "Dave, clear my
+  tricorder" removes it. Targets are the player's own: a sibling's tricorder points
+  where *their* Dave said.
+- **Getting one:** Dave hands it over (`give` from the pack) the first time he sets a
+  target for a player who has none. Optionally there is a crafting recipe too (owner's
+  call).
+- **It's personal (owner, 2026-10-10).** It is named **"<Player>'s Tricorder"** (e.g.
+  "Steve42's Tricorder") and points to **its owner's** target, whoever holds it, so a
+  sibling can carry it to lead the way. The owner's id is an item dynamic property (the
+  item doesn't stack, so it can hold one).
+  - Each player has one at a time. A replacement from Dave retires the old one, which
+    then reads "This tricorder is retired".
+- **Never dropped on death (owner, 2026-10-10).** The item is created with
+  `ItemStack.keepOnDeath = true` (stable API), so it stays in the inventory through a
+  death even when everything else drops. M10's drop path skips it too.
+  - It can still be thrown away, put in a chest, or burnt in lava like any item. Dave
+    replaces a lost one on request.
+
+**The item itself: a true custom item, `jbrain:tricorder`** (owner, 2026-10-10: a small
+pack that downloads automatically on join is fine, §3c rule 2).
+- **Its own icon** comes from the server-pushed `jbrain` resource pack (§3c rule 2).
+- Stack size 1. Lore: "Points where Dave says". It can't be crafted by players.
+- The game's own `minecraft:display_name` is "Tricorder". Each copy's name tag is set to
+  **"<Player>'s Tricorder"** when Dave gives it.
+- It's never confused with a real item, because the script recognises the item type.
+  Name and lore are not needed for that.
+- **Fallback if the join download fails on a client in M0b:** a spyglass renamed
+  "<Player>'s Tricorder" with lore, recognised by its lore. It has the same behaviour
+  without its own icon.
+
+**Later, maybe:** Bedrock's **locator bar** (the `locatorbar` rule already exists on this
+server) could show Dave's target as a real waypoint marker on screen. It's only worth
+switching to once custom waypoints reach the stable script API, which M0b checks. Until
+then the actionbar arrow is the vanilla path.
+
+**Fair play:** the tricorder only points where Dave already said, so it's in the same
+tier as the question that set the target (§3b). Settings that hide structure answers
+also keep it from pointing at them.
+
+**Tests:**
+- Bearing to arrow at all eight octants and the wrap at ±180°.
+- The arrival radius and the other-dimension text.
+- The target survives a restart (dynamic property).
+- A renamed item that isn't a tricorder (wrong lore) does nothing.
+- Another player's target never shows on someone else's tricorder.
+
+### M10 — Power Packs: keep your inventory, or teleport (owner, 2026-10-10)
+
+#### The Power Pack (the currency)
+
+A **Power Pack** is crafted from **a full crafting table of Eyes of Ender**: nine eyes in a
+3×3 grid make one pack. It looks like an Eye of Ender but carries its own name. That
+makes it deliberately hard to get, at nine Ender Pearls plus nine Blaze Powder each.
+Plain Eyes of Ender do nothing special; they stay the End-portal key and nothing else.
+
+**How it's made:**
+- A **custom item `jbrain:power_pack`**:
+  - Name "Power Pack", plus lore ("Keeps your things, or takes you somewhere").
+  - Max stack 16.
+  - **Its own icon**, an Eye of Ender look with a glow so it's told apart at a glance,
+    from the server-pushed `jbrain` resource pack (§3c rule 2).
+  - It isn't an ender eye to the game, so it can't be thrown or used to fill an End-portal
+    frame by accident.
+- A **shaped recipe** (`recipes/power_pack.json`, crafting table, nine
+  `minecraft:ender_eye` → one `jbrain:power_pack`) in the behavior pack. Recipes are
+  stable data and need no experiment, and it shows in the recipe book like any vanilla
+  recipe.
+- **Checked in M0b:** the item shows with its icon and name, and the recipe works, on the
+  Xbox and on Windows, after the automatic download on join.
+- **Fallback, only if that download fails on a client:** Dave "forges" a pack instead of
+  the crafting table. "Dave, make me a Power Pack" takes nine eyes and gives an Eye of
+  Ender named "Power Pack" with lore. The script recognises it by its lore (an anvil can
+  rename an item but can't add lore, so it can't be faked).
+
+#### Keep your inventory, once per Power Pack
+
+**The rule.** A player who dies with a **Power Pack** anywhere in their inventory keeps
+everything, and **one pack is used up**. Without one, the death is a normal Survival death:
+items and XP drop at the spot. The tricorder (M9) is kept either way.
+
+**This decides "Per-player keep inventory" (§4).** It uses the fail-safe direction worked
+out there:
+- **The world's `keepInventory` rule is ON**, and the pack **drops** the inventory of a
+  player who had no Power Pack.
+- If the pack fails or is turned off, everyone keeps their things. Nobody ever loses
+  items to a script fault, and there is no duplication around disconnects or restarts.
+  The other way round (rule off, restore on respawn) risks both.
+
+**On `world.afterEvents.entityDie` for a player** (stable API):
+- **Pack present:** remove one `jbrain:power_pack`, taken from the smallest stack first.
+  Keep the rest, which the `keepInventory` rule already does.
+  - On respawn they get a private chat line and a vanilla sound: `Your Power Pack
+    burnt out — you kept your things. 2 packs left.`
+- **No pack:** for the inventory, armor and off-hand, `spawnItem` each stack at the death
+  spot and clear the slot. Skip anything with `keepOnDeath` (the tricorder). Destroy
+  **Curse of Vanishing** items.
+  - Then reset their XP and drop roughly the vanilla amount as orbs. That matches a
+    normal death, which only a pack avoids.
+- **Died in the void:** a drop would fall out of the world, so the drop goes to the
+  player's last safe position instead. This is a deliberate kindness, and settable later.
+
+**Per world, owner-only.** A switch on each world's page: **"Power Pack keeps
+inventory"**.
+- Turning it on sets that world's `keepInventory` rule on and installs the pack's charm.
+- In the rules editor, `keepInventory` then shows **"managed by the Power Pack charm"**
+  rather than a free switch, so the two can't contradict each other.
+- With the switch off, the world behaves exactly like vanilla.
+
+**Why it's costly:** one death saved costs nine eyes, so it's a real decision, not a free
+safety net (owner, 2026-10-10).
+
+**Checks first (M0b, needs a player):**
+- With `keepInventory` on, the inventory is readable and writable at `entityDie`.
+- `spawnItem` keeps enchantments, names and durability.
+- XP can be read and reset there.
+
+**Tests:**
+- Pack present: one consumed, everything else kept, the tricorder kept.
+- No pack: everything dropped at the spot except the tricorder, vanishing items gone.
+- Two deaths with one pack: the first keeps, the second drops.
+- A pack in the off-hand or a shulker box: the off-hand counts; inside a shulker box it
+  does not (the rule is "in your inventory").
+- Pack disabled: everyone keeps (fail-safe).
+- Nine eyes in the crafting table make one Power Pack; eight make nothing.
+
+#### Teleport to a known place, one Power Pack per trip (owner, 2026-10-10)
+
+**The rule.** A player who has settled a place with Dave can ask to be **teleported there**.
+It costs **one Power Pack** from their inventory. With none, Dave says so, and offers
+the tricorder (M9) instead.
+
+**"Known" means a coordinate that has been pinned down, not a guess.** These count:
+- **Saved places:** `waypoint_save` ("Dave, remember this as *home*"), set while standing
+  there or confirmed in conversation with Dave ("the village at 410, -1220 — save it as
+  *market*").
+- **Places a player has stood:** their bed or spawn, and the waypoints others have shared
+  with them.
+- **A located structure or biome** (`locate`) counts only after Dave has stated the
+  coordinate and the player has confirmed it ("yes, that one"). That is the "solidify"
+  step. Until then it's tricorder-only.
+
+**The flow (in game):**
+1. "Dave, take me to *market*." Dave names the place, the distance and dimension, and the
+   cost: `Market — 1,240 blocks, Overworld. Use 1 Power Pack? (you have 3)`.
+2. The player confirms on a **server form** with Yes and No buttons (`@minecraft/server-ui`,
+   vanilla), so a misheard place never costs a pack.
+3. The script checks the Power Pack is still there, then calls `player.tryTeleport(spot,
+   {dimension, checkForBlocks: true})` (stable). **Only if the teleport succeeds** is one
+   Power Pack removed. A blocked or failed teleport costs nothing, and Dave says why.
+4. It plays the vanilla enderman-teleport sound and portal particles at both ends.
+
+**Safety:**
+- **Landing spot:** the saved Y is used, and the two blocks above it must be free
+  (`checkForBlocks`). A spot that has since been built over is refused, not glitched into.
+- A place in **unexplored (ungenerated) terrain** has no safe Y yet, so it stays
+  tricorder-only until someone has walked there.
+- **Cross-dimension** trips are allowed only to places in a dimension the player has
+  already visited, so nobody gets into the End early.
+- **Never to another player** by default. "Take me to Sam" would need Sam to accept on a
+  form, and that is left as an owner option for later.
+- Every trip is logged (who, from, to, pack spent) in the session log the owner sees.
+
+**Per world, owner-only switch:** "Power Pack teleport" (on by default, alongside the
+keep-inventory charm). With it off, Dave says teleporting isn't allowed in this world.
+
+**Why it stays fair:** each trip costs a Power Pack (nine eyes). The same packs are the
+keep-inventory charm, so players choose how to spend them.
+
+**Tests:**
+- No pack: refused, nothing changes.
+- Blocked landing: refused, and the pack is kept.
+- Success: exactly one Power Pack removed and the player is at the spot.
+- An unconfirmed `locate` result is refused as unknown.
+- A cross-dimension trip to a dimension never visited is refused.
+- Choosing No on the form costs nothing.
+
+### M11 — Trans-dimensional chests (owner idea, 2026-10-10; details open)
+
+**The idea.** An expanded ender chest. A **trans-dimensional chest** can be **dyed a
+colour**, and all of one player's chests of the same colour share **one inventory**, in
+any dimension. So a red chest at the base and a red chest in the Nether hold the same
+things, and a blue pair is a separate store. This is late-game ("End") content: crafted,
+not handed out.
+
+**Two kinds (owner, 2026-10-10):**
+
+| | **Private** trans-dimensional chest | **Cargo** trans-dimensional chest (hopperable) |
+|---|---|---|
+| Whose store | **The opener's**: like a vanilla ender chest, everyone sees their own red store in any red chest | **The placer's**: a red cargo chest moves items to the placer's other red cargo chests |
+| Hoppers | **No**, like a vanilla ender chest. A hopper under it would drain someone's private store | **Yes**, hoppers feed in and pull out on both ends |
+| What it's for | Carrying your own things between bases and dimensions | Automation: a farm in one place feeding storage at the base, across dimensions |
+| How it works | The travelling vault (below) | An item pipe (below) |
+
+The private chest is the design below. The cargo chest follows it.
+
+**The engineering problem, and the proposed answer (private chest).**
+- **The problem:** a stable-API script can't copy an item's full data (enchantments,
+  names, durability, shulker contents) into storage and back. Syncing a "shared"
+  inventory between several chests risks losing items or duplicating them, especially
+  when two are open at once.
+- **The answer: one vault per channel, which travels.** Each channel (player + colour)
+  is a single invisible **vault entity** with a `minecraft:inventory` component. Entities
+  with inventories keep their items through any teleport, including across dimensions.
+  - At rest it waits in a fixed **vault room**, a small area kept loaded with a
+    `tickingarea`, out of reach of players.
+  - Opening any chest of that colour **moves the vault entity into that chest**, and the
+    player opens its inventory as they would a chest minecart's.
+  - When the player walks away or closes it, the vault returns to the vault room.
+  - **Items are never copied, only the vault moves**, so nothing can be duplicated or
+    lost. A chest of a channel whose vault is out (open somewhere else) says "In use at
+    the other red chest".
+- **The private chest itself** is a custom block, `jbrain:td_chest`, with a `color` state. Its
+  model and colours come in the join-download resource pack (§3c rule 2).
+  - **Dyeing:** use a dye on it (`playerInteractWithBlock`) to set the colour, which
+    switches the chest to that colour's channel. A channel's items stay in its vault, so
+    re-dyeing a chest never moves or loses anything.
+  - Breaking the chest drops only the chest; the contents stay in the vault.
+- **Spike first (an M0-style check, needs a player):**
+  - an entity inventory opens from the Xbox and from Windows;
+  - a vault entity keeps a full inventory (enchanted and named items, a filled shulker
+    box) through a cross-dimension teleport;
+  - the tickingarea vault room survives a server restart;
+  - the interaction events this needs are on stable.
+
+**The cargo chest: an item pipe between chests of one colour.**
+- **Why it can't share one inventory:** hoppers act on real containers, in many places
+  at once, while a travelling vault can be in only one place. So a cargo chest is a real
+  container, and its colour makes a **pipe**.
+- **One receiver per colour (owner, 2026-10-10):** the **first** red cargo chest a player
+  places is their red **receiver**. Every red cargo chest they place after it is a
+  **sender**. Items arriving in a sender, by hopper or by hand, are moved to that one
+  receiver, and a hopper under the receiver pulls them onward.
+  - There's no switch to flip. Each chest shows an in or out mark, and its name says
+    which it is ("Steve42's red cargo receiver").
+  - **Receiver broken:** that colour has no receiver, and its senders hold their items
+    until one exists. The **next red cargo chest that player places** becomes the
+    receiver. An existing sender is never silently promoted, so items never start
+    piling up somewhere unexpected.
+  - **Re-dyeing follows the same rule:** a cargo chest dyed to a new colour becomes that
+    colour's receiver only if the colour has none, and otherwise it's a sender. Its
+    contents stay in it either way.
+- **Moves are real `Container.moveItem` calls**, stable, run inside one script tick.
+  Items keep all their data and can't be duplicated.
+- **Back-pressure:** when the receiver is full, items simply wait in the sender, just
+  like a full hopper chain. Nothing is dropped or destroyed.
+- **Loading:** the sender is loaded because its hopper is working. A receiver in an
+  unloaded area (another dimension, a far base) is kept loaded with a `tickingarea`.
+  - There's one receiver per player per colour, so one ticking area each. BDS limits how
+    many ticking areas there are, so each player gets a small number of **active
+    colours** (for example 4).
+  - That limit is also a natural cost lever.
+- **The container:** a custom block with an inventory, if the M11 spike shows custom
+  blocks can hold one on stable and hoppers see it. Otherwise it's a vanilla barrel the
+  script registers by position, marked with a coloured particle and a name, which
+  hoppers already handle.
+- **Who can use it:** anyone can put items into a sender, which makes it a public drop
+  box. Only the placer can re-colour it, and breaking it drops its contents like
+  a normal chest.
+- **Spike additions:** hopper interaction with the chosen container; `moveItem` keeping
+  enchanted, named and shulker items across dimensions; how many ticking areas BDS
+  allows.
+
+**Open (owner):**
+1. **Cargo sharing:** can a cargo network be shared between players (Sam's red sender
+   feeds Josh's receiver), or is it only ever the placer's? Routing is decided: one
+   receiver, the first one placed.
+2. **Cost.** For example, crafting one chest needs an ender chest plus a Power Pack
+   (nine eyes), and the dye is free. Or the chest is cheap but each **new colour channel**
+   costs a Power Pack the first time it's used.
+3. **How many colours:** the 16 dye colours.
+4. **What happens to a vault if its owner is removed from the allowlist:** it's kept, and
+   the owner can see its contents from the PWA.
+
+### M12 — Wormhole gates: two linked portals (owner idea, 2026-10-10; details open)
+
+**The idea.** Like a Nether portal, but between **two places the players choose**, in any
+dimensions. Gates are **very expensive** to make.
+
+**How a gate comes to be (proposed):**
+1. **Craft a pair of Wormhole Seeds.** One craft makes **two** linked seeds
+   (`jbrain:wormhole_seed`, stack size 1). They share a pair id stored on each seed as an
+   item dynamic property. The tooltip says "Wormhole Seed — pair 7, side A/B".
+2. **Build a frame and plant seed A**, as with a Nether portal.
+   - The player builds the frame first: e.g. a 4×5 ring of **crying obsidian**, which is
+     itself costly.
+   - Using the seed on the frame's base plants it, and the script checks the frame's
+     shape.
+   - The gate **forms but stays dormant**: a dim, still surface with a faint particle
+     shimmer, and a chat line "Waiting for its twin".
+3. **Plant seed B anywhere else**, in any dimension. **Both gates come alive** at the same
+   moment, with an animated wormhole surface and a vanilla sound at both ends. The link
+   is **bi-directional**.
+4. **Stepping in:** the script sees a player inside the gate surface and
+   `tryTeleport`s them to the other gate's exit spot, facing out. A short cooldown stops
+   the player bouncing straight back. Mobs and items don't travel; that's a later option.
+
+**Rules (proposed):**
+- **Breaking any frame block** takes that gate down, and the twin goes dormant again.
+  Rebuilding the frame and re-using the seed restores it. Mining the gate's core returns
+  the seed, so a gate can be moved.
+- **A blocked exit** (built over, or filled with water or lava) refuses the trip rather
+  than putting the player inside blocks.
+- **Logging:** every trip is recorded (who, from, to), and gates show on the M8 map.
+- **A cross-dimension gate** to a dimension a player has never visited is refused, so
+  nobody reaches the End early. This is the same rule as the M10 teleport.
+- **Gates are shared infrastructure.** Anyone can step through, unless the owner makes a
+  gate private to its builder (owner option).
+
+**Built on:**
+- custom items and a custom block for the gate surface (its texture and animation come in
+  the join download);
+- frame detection by block checks;
+- `tryTeleport`;
+- gate records kept by the pack: world dynamic properties for pair id, both ends, state
+  and builder, mirrored to the sidecar for the PWA.
+
+It needs M5's pack install, not Dave, though Dave can answer "where does the blue gate go?"
+
+**Open (owner): how expensive?** Some options:
+1. **A Nether Star at the core:** a seed pair needs a Nether Star (killing a Wither) plus 4
+   Power Packs (36 eyes). This is the true end-game, and only a few gates ever exist.
+2. **Power Packs only:** 8 Power Packs (72 eyes) for a pair. That's heavy grinding, but
+   no boss fight.
+3. **A cheaper seed with an expensive frame:** the frame needs crying obsidian plus a
+   ring of blocks of diamond or netherite. A gate is a visible monument of what it cost.
+
+Also open:
+- whether a gate can be re-linked;
+- whether more than two gates can share a network (a hub);
+- whether mobs and items travel.
+
+### M13 — The laser cannon: a beam weapon (owner idea, 2026-10-10; details open)
+
+**Yes, it's doable on stable APIs, with nothing for players to install** beyond the join
+download (§3c rule 2). A beam is a **hitscan**: an instant line, not a flying projectile.
+- **The item:** `jbrain:laser_cannon`, a custom item with its own icon from the join
+  download. It's held like a tool, with a cooldown so it can't machine-gun.
+- **Firing** (`world.afterEvents.itemUse`):
+  - The script traces the player's aim with `getEntitiesFromViewDirection` and
+    `getBlockFromViewDirection` (both stable, up to e.g. 48 blocks).
+  - It hits the **first** mob in the line, unless a block is nearer, which stops the
+    beam.
+  - Damage is applied with `entity.applyDamage(n, {cause, damagingEntity: player})`, so
+    kills count as the player's and mobs drop loot as normal.
+- **The beam:** a line of particles from the muzzle to the hit, drawn in the same tick
+  with `dimension.spawnParticle`. It uses a red beam particle and a zap sound from the
+  join download, with vanilla particles as the fallback. There's a small spark burst at
+  the hit.
+- **Charge shot (optional):** `itemStartUse` and `itemReleaseUse` (stable). Holding
+  charges the shot (shown on the actionbar), and letting go fires a stronger, wider beam.
+- **Rules it obeys:**
+  - **Players** are only hit when the world's `pvp` rule is on. Otherwise the beam passes
+    through them.
+  - **Blocks are never broken** by default. An owner option allows lighting fires or
+    breaking soft blocks, and it obeys `mobGriefing`.
+  - **No hits through walls:** the block trace stops the beam.
+- **Spike first:** the hit and particle timing on Xbox, that `applyDamage` credits kills
+  and loot, and the cost of drawing the particle line with 4 players firing.
+
+**Open (owner):**
+1. **Ammo or energy:** Power Packs (M10, for example one pack = 20 shots, on a charge
+   meter), or Redstone, or no ammo but a long cooldown.
+2. **How strong:** roughly a diamond sword (7 damage) per shot, or a bow-and-arrow-ish 4,
+   with the charge shot up to double.
+3. **The recipe:** for example a Power Pack + a Beacon? + iron and redstone. It's
+   end-game like the gates, or mid-game.
+4. **PvP at all**, even on worlds where `pvp` is on (kids' worlds)?
+
+### M14 — Powered armor: netherite plus a Power Pack (owner idea, 2026-10-10; details open)
+
+**The recipe (owner):** a **netherite armor piece + a Power Pack** gives the **powered**
+piece: powered helmet, chestplate, leggings and boots.
+- **Made at the smithing table, not the crafting table.** Bedrock's
+  `recipe_smithing_transform` (behavior-pack data, stable) is how vanilla upgrades diamond
+  to netherite, and it **keeps the piece's enchantments and damage**. A crafting-table
+  recipe would wipe a player's enchantments.
+- **The slots:** template = netherite upgrade smithing template, base = the netherite
+  piece, addition = a Power Pack. A full set costs 4 Power Packs (36 Eyes of Ender) plus 4
+  templates on top of netherite. That's end-game.
+  - **Option:** make the Power Pack itself the template (tagged
+    `minecraft:transform_templates`), so no netherite template is needed. It's cheaper,
+    and the owner chooses.
+- **The items:** `jbrain:powered_helmet` and the rest. They're custom wearables with
+  netherite-level protection and toughness and fire-proof, plus the powers below. The
+  icons and the worn look (attachables) come in the join download (§3c rule 2).
+
+**Powers (proposed; the owner picks):** a script checks worn armor every second
+(`getComponent("equippable")`, stable) and applies effects (`addEffect`, stable) while a
+piece is worn.
+
+| Piece | Power while worn |
+|---|---|
+| Helmet | Night Vision, and water breathing |
+| Chestplate | Resistance I |
+| Leggings | Speed I |
+| Boots | No fall damage (cancelled from `entityHurt`), and Jump Boost I |
+| **Full set bonus** | **Fire Resistance**, and a faint glow on the HUD: "Powered armor: online" |
+
+**Open (owner):**
+1. **Which powers:** the table above, or others (Strength, Haste, a short dash on
+   double-jump, which needs the spike to check it's possible on stable).
+2. **Charge:** are the powers free once crafted, or do they **draw down a charge** that a
+   Power Pack refills (a meter on the actionbar, so powers fade when it's empty)? Free is
+   simpler; charge keeps Power Packs worth farming.
+3. **The template:** a vanilla netherite template, or the Power Pack as the template.
+4. **Keep on death:** like the tricorder, or dropped like normal armor (the Power Pack
+   charm (M10) already protects it)?
+
+**Spike first:** a smithing-transform recipe with a custom result keeps enchantments and
+damage on Bedrock; a custom wearable with an attachable shows on the Xbox; and the
+effect refresh doesn't flicker.
+
+### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
+
+**One persona, two ways in (owner decision, 2026-10-10).** Minecraft_Dave is a single
+persona. The in-game companion (M5/M6) and the PWA agent are the **same agent**: one
+prompt and one set of goal, log and memory tools, reached through two doors. Each door
+fixes **whose session it is**:
+
+| Door | Who | Session player | Can switch player? | Tool tier |
+|---|---|---|---|---|
+| **PWA** (the agent picker, or "Ask about this world" on the Minecraft screen) | the owner | **the owner's gamertag** by default, a setting on the Minecraft screen | yes: a player picker in the chat, and "switch to Mira" | Owner: everything below |
+| **In game** (`/jb:dave …`) | any player on the server | **that player**, from the xuid the server-side script reports (never typed) | **no** | Player: §3b's Player tier, plus their own goals, log and memory |
+
+- **Each player has their own continuing conversation.** In game, a player's messages go
+  to *their* Minecraft_Dave session, so "and the next one?" follows on. A session rolls
+  over after 6 hours idle, keeping the history and starting a fresh context.
+- **Per-player data follows the session player**, never the speaker's claim. A player's
+  goals, log and memory are theirs, and in game nobody can read or write another
+  player's (sharing between players is the owner's switch).
+- **Why unifying is safe:** the persona has **no KB access**, so the in-game door can't
+  reach the owner's notes whatever a player types. Player text is untrusted data,
+  fenced, on every path.
+- **In game, some owner tools are held back:**
+  - the Admin tools stay with the gamertags on the admin list (§3b);
+  - **web search and fetch are OFF in game by default**, an owner setting. They're for
+    the owner in the PWA. Turned on in game, they'd let any player have the box fetch
+    arbitrary pages and read them back into chat, which matters with children playing.
+- The **in-game name** stays the companion setting (`/jb:dave`, "Dave"), and the persona
+  shows as **Minecraft_Dave** in the PWA.
+
+**Owner request (2026-10-10).** The owner wants a selectable agent persona for Minecraft,
+with:
+- maps rendered in the PWA as one of its tools;
+- the **full Dave toolset**;
+- **web search and fetch**;
+- a **memory / session-log** toolset.
+
+**Why it's a persona, not Dave.** Dave answers *players* in game, so he is deliberately
+narrow: read-only, tier-gated, no web, no memory, no notes, and every word from a player
+is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
+`jbrain.agent.agents`, alongside `curator`, `jerv`, `teacher` and `archivist` (ASSISTANT.md
+§"Agent selection"), and it gets the owner tier of every tool. Both agents share the same
+`mc_*` handlers; only the allowlist and the tier differ.
+
+**The persona** (id `minecraft_dave`; display name **Minecraft_Dave**, owner decision
+2026-10-10):
+- **System prompt:** a Minecraft-savvy helper for the owner's server and family worlds.
+  World data is the source of truth; game knowledge comes from looked-up data, not
+  recall.
+- **Tool allowlist:** a closed `frozenset` with the shape below, assembled by name like
+  `note_ingest`'s.
+- **KB access: none.** It doesn't read the owner's notes. That is the line against a
+  confused deputy, since world text (signs, book contents, chat, gamertags) is
+  player-authored and untrusted; see "Safety".
+- **Selectable** in the existing agent picker, and openable from the Minecraft screen
+  ("Ask about this world").
+
+**Tools.** Everything in §3b at the **Owner** tier, plus three more groups:
+
+| Group | Tools | Source / status |
+|---|---|---|
+| World, worldgen (works **today**, M0b) | `mc_locate_structure`, `mc_locate_biome`, `mc_world_info` (time, weather, day) | Console `execute positioned … locate`, already proven on the box |
+| Server and play history (works **today**, M1) | `mc_server_status`, `mc_players` (totals, online, sessions), `mc_play_history` (who played when, joins and leaves by day) | `/api/minecraft` and `app.mc_player_sessions` |
+| World index (after **M4**) | `mc_find_container`, `mc_find_villager`, `mc_find_block`, `mc_describe_area`, `mc_biome_at`, `mc_build_changes`, `mc_whats_new` | Snapshot index |
+| Live (after **M5**) | `mc_nearest_entity`, `mc_where_is`, `mc_player_context`, `mc_where_did_i_die`, `mc_inventory` | Behavior-pack bridge |
+| Maps (with **M8**) | `minecraft_map(center, radius, layers, overlays, slot?)`: terrain, biome, height, explored, changes, slice@Y; overlays for players, waypoints, structures, deaths | Renderer in the sidecar; returns an image artifact rendered **inline in the chat** |
+| Admin (owner) | `mc_backup_now`, `mc_set_time`, `mc_set_weather`, `mc_announce` | Console allowlist; staged as Proposals per ASSISTANT.md's write policy, never silent |
+| Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
+| Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
+| Memory, **per player**, self-managed | `mc_memory_read`, plus **line-level edits only**: `mc_memory_add(text)`, `mc_memory_replace(line, text)`, `mc_memory_remove(line)`. There is no whole-document write. | `app.mc_player_memory` (one row per line, with history); see "Memory: self-managed, never overwritten" below |
+
+**Goals and the progress log (owner, 2026-10-10).** The "session log" is a **journal of
+progress toward a player's goals**, and Dave helps that player get there. Everything is
+tied to a **Minecraft player**, keyed by xuid like the play history, so a gamertag change
+doesn't lose it.
+
+- **Goals** (`app.mc_goals`): player xuid, world slot, title (for example "Beacon at the
+  base" or "20 obsidian for the portal"), optional target notes, status
+  (open / done / abandoned), created and finished times.
+- **Progress log** (`app.mc_goal_log`): player xuid, optional goal, time, text, and
+  **source**:
+  - `owner`: written from the PWA agent;
+  - `player`: typed in game, e.g. `/jb:dave log got 12 obsidian`;
+  - `dave`: Dave's own summary entry, made only when the player asks;
+  - later `auto` (M5): add-on events such as "died in the Nether", "crafted beacon".
+- **Player memory** (`app.mc_player_memory`): short durable facts about one player. How
+  it is written is below.
+
+**Memory: self-managed, never overwritten (owner, 2026-10-10).** Minecraft_Dave keeps
+its own memory, with no approval card per write, but it can never replace the whole
+document. Two precedents in this repo set the design:
+
+- **The archivist's clobber.** `archivist_memory_write` is a full-replace upsert. The
+  archivist once rewrote its memory and then misreported what it had destroyed, so it
+  now gets a before/after **receipt** (`agent/archivisttools.py`). The receipt only
+  mitigates a full replace; it doesn't prevent one.
+- **ASSISTANT.md's memory rule and `owner_prefs`.** The rule is "delta edits
+  (ADD/UPDATE/REMOVE on individual bullets), never full rewrites — full regeneration
+  rots accumulated self-knowledge". `owner_prefs` implements it: numbered lines, one
+  line per call, and no full-rewrite verb.
+
+So for each player:
+- **Memory is numbered lines.** The only verbs are add, replace one line and remove one
+  line. A single call can't wipe or rewrite the memory, the same guarantee `owner_prefs`
+  gives.
+- **Nothing is deleted outright.** A replaced or removed line keeps its old text with a
+  `superseded_at` timestamp, so the owner can see a line's history in the player sheet
+  and restore it. The agent reads only current lines.
+- **Every write returns a receipt** quoting the line before and after (the archivist's
+  lesson), so the model's account of its own memory stays grounded.
+- **Caps**: 60 lines and 6k characters per player, checked before the write, with a
+  refusal that says to consolidate.
+- **Read at the start of a chat**: that player's memory and open goals are injected into
+  the system prompt. Lines that came from player-typed text are fenced as data, because
+  in-game logging (P2) means memory can carry untrusted words.
+- In P2, **Dave in game can add memory lines for the asker only**, and only when the
+  player asks ("remember my base is here"), which comes through the same verbs.
+
+**How it's used:**
+- **In game, through Dave** (player tier). The asker's identity comes from the
+  **server-side script** (`origin.sourceEntity`), never from what the player types, so a
+  player reads and writes **only their own** goals, log and memory.
+  - `/jb:dave goals` lists them.
+  - `/jb:dave log <text>` adds a progress entry.
+  - `/jb:dave help with <goal>` makes Dave read the goal and recent log and answer with
+    world data. For "20 obsidian": the nearest lava pool from `locate`, whether they own a
+    diamond pickaxe from `mc_inventory`, and what's still needed.
+  - Another player's goals stay private unless the owner turns sharing on, the same
+    switch that governs `where_is`.
+- **In the PWA, through the owner's persona.** A chat is **bound to one player**, chosen
+  when it starts: a player picker, defaulting to the owner's own gamertag, which is a
+  setting on the Minecraft screen. The persona reads and writes that player's goals, log
+  and memory, and can switch players when asked. The owner sees every player's journal.
+- **On the Minecraft screen.** Each player's sheet in Players gains a **Goals** list with
+  the latest log lines. That is a small extension of the binding mock, and goes through
+  the GUI gate only if it grows beyond a list.
+
+**Rules for the data:**
+- Player-typed entries are **untrusted text**. They are stored as data and shown to the
+  model only inside the untrusted-data fence, never as instructions.
+- Entries are capped (500 characters) and in-game writes are rate-limited per player.
+- All three tables are **owner-only RLS**, with isolation tests. Dave's writes go through
+  the api's owner context *on behalf of* the xuid the script vouched for; a player is
+  never a database principal.
+
+**Safety.**
+- **Untrusted world text** (sign text, books, gamertags, chat) reaches the model only
+  inside the `briefs.py` untrusted-data fence.
+- **No reach into notes.** With web fetch in the allowlist and no KB access, there is no
+  path from planted world text to the owner's notes.
+- **Writes are staged.** Admin tools and memory writes follow the session's write policy,
+  so a world-changing tool is a Proposal unless the owner allowed it.
+
+**The map tool-view.** It's a new GUI surface, so it goes through the **GUI gate**:
+three mocks and the owner's pick, as a registered component (DESIGN.md "Agent tool
+views"). It shows the PNG with pinch-zoom, a legend for the layers, overlay toggles, and
+tappable markers that show coordinates. Copying "go to X Z" is explicit. The Minecraft
+screen's "Maps" section (M8) reuses the same component.
+
+**Waves:**
+- **P1 — the persona with what works today.**
+  - The persona: its prompt, the picker entry, and launch from the Minecraft screen,
+    with **the chat bound to one player**.
+  - Worldgen `locate` and world info.
+  - Server status, players and play history.
+  - **Goals, the progress log and player memory**: their tables (with RLS tests), the
+    tools, and the Goals list in the player sheet.
+  - Web search and fetch.
+  - The admin tools as Proposals.
+  - Persona tests: the allowlist is closed, there's no KB access, and world text is
+    fenced.
+- **P2 — grows with M4/M5.** The index and live tools join the allowlist as each wave
+  lands, one tool per PR, with tool-step-polish entries. With M5 the same goal, log and
+  memory tools reach **Dave in game** at player tier (`/jb:dave goals|log|help with …`),
+  scoped to the asker's own xuid. `auto` log entries come from add-on events.
+- **P3 — maps.** M8's renderer, the `minecraft_map` tool, and the map tool-view (GUI
+  gate), also embedded on the Minecraft screen.
+
+**Decided (owner, 2026-10-10):**
+- **No approvals** for goals, log or memory writes, **provided the session has a defined
+  player**. A PWA chat with no gamertag set refuses the writes and asks for one, rather
+  than guessing.
+- Minecraft_Dave runs on the **local model**.
+
+**Pending:** the owner's gamertag. It's entered on the Minecraft screen's settings, so P1
+doesn't need it to be built.
 
 ## 3a. Debug control surface — the assistant as co-operator
 
@@ -834,7 +1574,11 @@ a data file is the point of these tools.
 `minecraft_map` (M8) tools, so the owner can ask jerv "show me the map of the Minecraft world"
 from the PWA.
 
-**Deliberately not tools**: giving items, teleporting, building, or editing blocks; reading
+**Deliberately not tools**: giving items, teleporting, building, or editing blocks. There
+are two owner-approved, narrow exceptions (2026-10-10): Dave hands a player **their own
+tricorder** (M9), and **teleports a player to a known place for one Power Pack**, after
+they confirm on a form (M10). Beyond those, nothing is given or teleported, and there is
+no cross-player teleport. Also not tools: reading
 anything outside the active slot; anything that touches JBrain notes or the wiki; free-form
 console access for players.
 
@@ -842,13 +1586,22 @@ console access for players.
 
 **Every player-facing feature must work on an unmodified, store-installed Bedrock client on
 Windows and Xbox.** That rules out client mods, resource packs players install themselves,
-and launcher tricks. The rules that keep it true:
+and launcher tricks. A pack the server sends on join is allowed, because it's
+automatic. The rules that keep it true:
 
 1. **Everything runs on the server.** The behavior pack's script runs inside BDS. The client
    only ever gets standard protocol messages.
-2. **Behavior pack only, no resource pack** for every planned feature. No custom textures,
-   models, sounds or UI files. Anything that would need one (a custom NPC model) is labelled
-   and left to the owner (M7).
+2. **A resource pack only if the server pushes it on join** (owner decision, 2026-10-10).
+   - **Allowed:** a small `jbrain` resource pack that BDS sends to every client as it
+     joins. It downloads automatically, with nothing to install, no third-party tool or
+     site, and it works the same from a computer or an Xbox.
+   - **How:** the wrapper installs it with the behavior pack into each world it loads
+     (`world_resource_packs.json`) and pins `texturepacks-required=true`. A client that
+     declines the pack can't join, rather than joining half-working.
+   - **What it carries:** the icons for the tricorder (M9) and the Power Pack (M10), and
+     any later custom model, such as an NPC (M7).
+   - **Kept small:** a few kilobytes of icons, so the join stays quick on the Xbox.
+   - **Still ruled out:** anything a player would have to install themselves.
 3. **No experimental toggles.** Only stable script APIs. A feature that needs a beta API
    waits, or gets a stable fallback (§5).
 4. **Output uses only vanilla channels.** Those are chat (`tellraw`), the actionbar and title
@@ -867,12 +1620,17 @@ and launcher tricks. The rules that keep it true:
 | The Dave quick menu (M7, optional) | a server form | ✅ |
 | Replies | `tellraw` chat, private to the asker | ✅ |
 | `guide_me` compass | actionbar text, refreshed by the server | ✅ |
+| Power Pack (M10) | a custom item and crafting recipe; its icon arrives in the automatic join download | ✅ by decision, confirmed on the Xbox and Windows in M0b |
+| Power Pack teleport (M10) | a server form with Yes and No, then a normal teleport with vanilla sound and particles | ✅ |
+| Power Pack charm (M10) | ordinary death and drops; the eye vanishes; a chat line on respawn | ✅ |
+| Tricorder (M9) | a custom item (icon from the join download) with an actionbar arrow while held | ✅ by decision, confirmed in M0b |
+| The `jbrain` resource pack | downloaded automatically on joining; nothing to install | ✅ owner-approved, 2026-10-10 |
 | Waypoint markers in the world (optional) | vanilla particles at a spot, visible only to the asker | ✅ |
 | Reminders and warnings | chat or actionbar, plus a vanilla sound | ✅ |
 | Maps | a short code typed into a browser; nothing is shown in-game | ✅ no in-game image |
 | `my_inventory` / `my_stats` / deaths | read on the server by the script | ✅ |
 | Admin tools (time, weather, backup) | ordinary server commands | ✅ |
-| Companion NPC (M7) | a vanilla mob is fine; a custom model needs a resource pack | ⚠️ the owner chooses |
+| Companion NPC (M7) | a vanilla mob, or a custom model sent in the join download | ✅ |
 | Joining at all | the client must be on the **same version** as BDS | ⚠️ that is why M3's one-click update exists |
 
 **M0 checks this on the real clients** with the fresh world, on the owner's Windows PC and on
@@ -925,7 +1683,10 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
 
 1. **Achievements**: M0 reports what the pack does to achievements on this world, for the
    record. The owner has already accepted the add-on.
-2. **Per-player keep inventory: undecided (owner, 2026-10-10).** Bedrock's `keepInventory`
+2. **Per-player keep inventory: DECIDED → the Power Pack charm (M10, owner,
+   2026-10-10).** A player keeps their inventory on death if they carry a Power Pack
+   (crafted from nine Eyes of Ender), and one pack is used up. The tricorder is always kept. The approach below is the one
+   M10 uses. Bedrock's `keepInventory`
    is a world-wide game rule, so a per-player version needs the M5 add-on. The approach
    worked out, recorded for if it's chosen:
    - Turn `keepInventory` on for the whole world. When a player who is **not** on the keep
@@ -956,7 +1717,8 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
 ## 6. Out of scope
 
 Java Edition (a different server, different protocol, and RCON). Mods, Realms hosting, and
-public or unallowlisted servers. Letting the bot build, teleport, or give items.
+public or unallowlisted servers. Letting the bot build, teleport, or give items, beyond M9's tricorder and M10's Power-Pack-paid
+teleport to a known place.
 
 ## 7. Terminal-dependency gaps (non-negotiable #10)
 

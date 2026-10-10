@@ -14,11 +14,13 @@ only the screen knows what the owner has already been told.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, cast
+from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.background import BackgroundTask
 
 from jbrain.api.deps import SettingsDep, owner_only
 from jbrain.minecraft import changelog, sessions
@@ -52,6 +54,14 @@ def _server_view(raw: dict[str, Any]) -> dict[str, Any]:
         "players": raw.get("players") or [],
         "update": raw.get("update") or {"state": "idle"},
         "auto_update": bool(raw.get("auto_update", False)),
+        # A world operation in flight (what, phase, started_at), so every device sees it.
+        "job": raw.get("job"),
+        # server.properties keys saved since the last start ("gamemode", "allow-list", …):
+        # what a restart will change, the same on every device.
+        "pending_restart": raw.get("pending_restart") or [],
+        # How the last world operation ended: a load, reset, restore or import that ran
+        # past the sidecar's wait answers {"accepted": true}, and this is its outcome.
+        "last_job": raw.get("last_job"),
     }
 
 
@@ -171,3 +181,238 @@ async def players(request: Request, settings: SettingsDep) -> dict[str, Any]:
         # Lifetime stats (deaths, mobs, blocks, distance) arrive with the M5 add-on.
         "stats_available": False,
     }
+
+
+# --- Worlds and backups (MINECRAFT_BEDROCK_PLAN §M2/§M3) -----------------------------
+# Every world operation is the sidecar's, under its lifecycle lock: a load, import,
+# reset or restore backs up what it would replace first, and refuses (409) while an
+# update or another operation owns the server.
+
+_SLOT = r"^slot\d+$"
+_BACKUP = r"^[A-Za-z0-9_.-]+\.mcworld$"
+
+
+@router.get("/worlds")
+async def worlds(settings: SettingsDep) -> dict[str, Any]:
+    return await mc.call(settings, "GET", "/worlds")
+
+
+# The sidecar answers a world operation within ~20 s, as 202 if it is still running, so
+# no request nears Cloudflare's ~100 s cut-off; this only bounds a wedged sidecar.
+WORLD_JOB_TIMEOUT_S = 60.0
+
+
+class WorldIn(BaseModel):
+    name: str | None = Field(default=None, max_length=40)
+    seed: str | None = Field(default=None, max_length=64)
+    rules: dict[str, bool | int | str] | None = None
+    gamemode: Literal["survival", "creative", "adventure"] | None = None
+    difficulty: Literal["peaceful", "easy", "normal", "hard"] | None = None
+    cheats: bool | None = None
+
+
+@router.post("/worlds/{slot}/load")
+async def load_world(slot: Annotated[str, Path(pattern=_SLOT)], settings: SettingsDep):
+    return await mc.call(settings, "POST", f"/worlds/{slot}/load", timeout_s=WORLD_JOB_TIMEOUT_S)
+
+
+@router.post("/worlds/{slot}/create")
+async def create_world(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: WorldIn, settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(
+        settings, "POST", f"/worlds/{slot}/create", json=body.model_dump(exclude_none=True)
+    )
+
+
+@router.patch("/worlds/{slot}")
+async def update_world(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: WorldIn, settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(
+        settings, "POST", f"/worlds/{slot}/update", json=body.model_dump(exclude_none=True)
+    )
+
+
+class ResetIn(BaseModel):
+    mode: Literal["same_seed", "new_seed", "empty"]
+    seed: str | None = Field(default=None, max_length=64)
+
+
+@router.post("/worlds/{slot}/reset")
+async def reset_world(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: ResetIn, settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(
+        settings,
+        "POST",
+        f"/worlds/{slot}/reset",
+        json=body.model_dump(),
+        timeout_s=WORLD_JOB_TIMEOUT_S,
+    )
+
+
+@router.post("/worlds/{slot}/import")
+async def import_world(
+    slot: Annotated[str, Path(pattern=_SLOT)],
+    request: Request,
+    settings: SettingsDep,
+    name: str = "",
+) -> dict[str, Any]:
+    """The PWA uploads the .mcworld as the raw request body; it streams straight on."""
+    length = int(request.headers.get("content-length") or 0)
+    if length <= 0:
+        raise HTTPException(status_code=411, detail="upload needs a Content-Length")
+    return await mc.upload(
+        settings, f"/worlds/{slot}/import", request.stream(), length, {"name": name}
+    )
+
+
+@router.get("/backups")
+async def backups(settings: SettingsDep, slot: str = "") -> dict[str, Any]:
+    return await mc.call(settings, "GET", "/snapshots", params={"slot": slot} if slot else None)
+
+
+class BackupIn(BaseModel):
+    label: str = Field(default="", max_length=40)
+    slot: str | None = Field(default=None, pattern=_SLOT)
+
+
+@router.post("/backups")
+async def back_up_now(body: BackupIn, settings: SettingsDep) -> dict[str, Any]:
+    return await mc.call(
+        settings, "POST", "/snapshot", json=body.model_dump(), timeout_s=mc.SNAPSHOT_TIMEOUT_S
+    )
+
+
+class PinIn(BaseModel):
+    pinned: bool
+
+
+@router.post("/backups/{name}/pin")
+async def pin_backup(
+    name: Annotated[str, Path(pattern=_BACKUP)], body: PinIn, settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(settings, "POST", f"/snapshots/{name}/pin", json=body.model_dump())
+
+
+@router.delete("/backups/{name}")
+async def delete_backup(
+    name: Annotated[str, Path(pattern=_BACKUP)], settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(settings, "POST", f"/snapshots/{name}/delete")
+
+
+class RestoreIn(BaseModel):
+    slot: str = Field(pattern=_SLOT)
+
+
+@router.post("/backups/{name}/restore")
+async def restore_backup(
+    name: Annotated[str, Path(pattern=_BACKUP)], body: RestoreIn, settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(
+        settings,
+        "POST",
+        f"/snapshots/{name}/restore",
+        json=body.model_dump(),
+        timeout_s=WORLD_JOB_TIMEOUT_S,
+    )
+
+
+@router.get("/backups/{name}/file")
+async def download_backup(
+    name: Annotated[str, Path(pattern=_BACKUP)], settings: SettingsDep
+) -> StreamingResponse:
+    """The owner's download — the only copy of a Minecraft backup that leaves the box
+    (they're kept apart from the box backups), so the sidecar records it per world."""
+    client, resp = await mc.download(settings, f"/snapshots/{name}/file")
+
+    async def _close() -> None:
+        await resp.aclose()
+        await client.aclose()
+
+    return StreamingResponse(
+        resp.aiter_bytes(),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Content-Length": resp.headers.get("content-length", ""),
+        },
+        background=BackgroundTask(_close),
+    )
+
+
+@router.get("/allowlist")
+async def allowlist(settings: SettingsDep) -> dict[str, Any]:
+    return await mc.call(settings, "GET", "/allowlist")
+
+
+class AllowlistIn(BaseModel):
+    add: str | None = Field(default=None, max_length=32)
+    remove: str | None = Field(default=None, max_length=32)
+    enabled: bool | None = None
+
+
+@router.post("/allowlist")
+async def change_allowlist(body: AllowlistIn, settings: SettingsDep) -> dict[str, Any]:
+    return await mc.call(settings, "POST", "/allowlist", json=body.model_dump(exclude_none=True))
+
+
+# Server-wide settings: a fixed set, not the debug surface's free-form overrides.
+SERVER_KEYS = {
+    "server_name": "server-name",
+    "max_players": "max-players",
+    "view_distance": "view-distance",
+}
+
+
+class ServerSettingsIn(BaseModel):
+    server_name: str | None = Field(default=None, min_length=1, max_length=40)
+    max_players: int | None = Field(default=None, ge=1, le=30)
+    view_distance: int | None = Field(default=None, ge=5, le=32)
+
+
+@router.get("/server-settings")
+async def server_settings(settings: SettingsDep) -> dict[str, Any]:
+    eff = (await mc.call(settings, "GET", "/properties"))["effective"]
+    out: dict[str, Any] = {k: eff.get(v) for k, v in SERVER_KEYS.items()}
+    for key in ("max_players", "view_distance"):  # server.properties holds text
+        try:
+            out[key] = int(out[key]) if out[key] is not None else None
+        except ValueError:
+            out[key] = None
+    return out
+
+
+@router.put("/server-settings")
+async def put_server_settings(body: ServerSettingsIn, settings: SettingsDep) -> dict[str, Any]:
+    changes = {SERVER_KEYS[k]: str(v) for k, v in body.model_dump(exclude_none=True).items()}
+    await mc.call(settings, "POST", "/properties", json={"set": changes})
+    return {**(await server_settings(settings)), "applies": "next restart"}
+
+
+@router.get("/worlds/new-seed")
+async def new_seed(settings: SettingsDep) -> dict[str, Any]:
+    """A random seed for the create-world form; re-rollable, shown before creating."""
+    return await mc.call(settings, "GET", "/worlds/new-seed")
+
+
+@router.get("/worlds/{slot}/rules")
+async def world_rules(
+    slot: Annotated[str, Path(pattern=_SLOT)], settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(settings, "GET", f"/worlds/{slot}/rules")
+
+
+class RulesIn(BaseModel):
+    # rule id -> true/false, a number, or a one-word choice; validated by the sidecar
+    # against the server's own rule list.
+    set: dict[str, bool | int | str]
+
+
+@router.put("/worlds/{slot}/rules")
+async def set_world_rules(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: RulesIn, settings: SettingsDep
+) -> dict[str, Any]:
+    return await mc.call(settings, "POST", f"/worlds/{slot}/rules", json=body.model_dump())

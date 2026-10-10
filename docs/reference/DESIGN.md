@@ -3329,6 +3329,89 @@ follows the Data screen's precedent of being lifted off Ops.
   `41 d 4 h`).
 - Accent words use the accent text tokens (see "Color tokens").
 
+### Worlds and backups — the Worlds sub-screen (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-worlds/b-worlds-subscreen.html`)
+
+Waves M2 and M3 (five world slots, per-world settings and game rules, import, reset, backups
+and restore) hang off this screen. The owner chose **B — a Worlds sub-screen** over A
+(Worlds and Backups sections in the main scroll) and C (a world-chip switcher with tabs); the
+round's record, with the verified backend facts it was built to, is
+`docs/mocks/minecraft-worlds/README.md`. B won because it is the only variant that puts a
+world's backups, settings, rules and destructive actions together on one page about that
+world (*backups belong to a slot*), it gives the 39-rule editor a full page where its sticky
+live/pending note reads best, and it keeps the main screen a short page about the server.
+The cost is depth: a restore from the main screen is Worlds → world → backup Sheet → restore
+Sheet → Dialog.
+
+- **One row, two pushed pages.** Under the status block a **Worlds & backups** row (a plain
+  navigation row, like the Ops shortcut) glances *{world} loaded · N of 5 slots used* or the
+  running job's *{what} — {phase}…*, and *last copy off the box {date}* or the amber *no world
+  has a copy off the box yet*. The status block's facts are headed by a full-width **world
+  loaded** tile. **Worlds** groups the slots as *Loaded*, *Other worlds* and *Empty slots*
+  (empty ones carry **New world** and **Import**); with every slot used it says *All 5 slots
+  in use — reset or empty one first.* A world's page has its facts (origin, seed with **Copy**
+  or *unknown — not recorded*, size, played, backups) and **Load**; **Settings** with a
+  **Game rules** row; its **Backups**; and **Manage** (Rename, Import over, Reset). **Game
+  rules** is a third page. Each pushed page brings its own back bar, registers in the
+  back-layer stack like a Sheet (so the platform Back gesture and a down-swipe climb one
+  level, not out of Minecraft), and leaves the page beneath it inert. A pushed page takes
+  focus at its back button; popping it returns focus to the row that opened it.
+- **Live means loaded and running**, and every surface says which. Difficulty applies live on
+  the loaded, running world; game mode (the default for new players — anyone who has played
+  keeps theirs) and cheats apply at the next restart; on the loaded world with the server
+  stopped a change waits for the start; on any other world it waits for its next load. The
+  rules page's sticky note follows the API's `live`, and its amber **pending** tags follow the
+  API's `pending`. Saved rules are re-applied on every start. Restart-bound **pending** tags
+  (the loaded world's game mode and cheats, the allowlist switch, the server settings) come
+  from the box's `pending_restart`, the same on every device; only a change to a world that
+  isn't loaded is remembered by the device that made it, until that world loads.
+- **The rules editor** keeps the seven groups (World, Time & weather, Players, Mobs & drops,
+  Crafting, Commands, Display) with plain-English labels, the rule id in mono and a *changed ·
+  default X* tag; a rule a later server adds lands in an **Other** group under its own id
+  rather than vanishing. Booleans are switches; numbers are steppers whose save is
+  **debounced** (the value moves at once, one save when tapping or typing settles, 700 ms);
+  `playerWaypoints` offers only the reported value plus *everyone*. Search filters in place;
+  each group and the whole set reset to defaults, with room under **Reset all** so a toast
+  never covers it.
+- **Forms are Sheets, consequences are Dialogs** (the shared shells). New world: name (40),
+  seed **Random** (the box's roll, shown, with **Re-roll** — so the seed is always known) or
+  **Enter a seed** (64, with a counter), game mode, difficulty, cheats, and a collapsed **World
+  rules** step. Import: the Windows export help, the file and its size, refused over 1 GB
+  before anything uploads, warned over 100 MB (*only uploads at home on the Wi-Fi*), a slot
+  picker when opened from outside a slot, and *Settings come from the world file*; over an
+  occupied world it confirms in the Dialog, promising the world in the file rather than a
+  name (the box names it from the world's own levelname.txt). The upload is the raw file with
+  real XHR progress and a **Cancel upload** button; the tunnel's 413 reads *Over 100 MB only
+  uploads at home on the Wi-Fi.* Reset offers **Same seed** only when the seed is known and never offers **Empty**
+  for the loaded world, then the Dialog asks for the world's name typed out. Load's Dialog is
+  one sentence: the 10-second chat warning and backup with players on (destructive), a plain
+  primary with nobody on, and no backup clause when the server is stopped. Restore picks the
+  target and says what comes with it (another world's backup brings its seed and settings).
+  The Dialog shell grew a **primary** tone and an optional gate under its sentence for this.
+- **Backups belong to a world.** Each lists label or automatic reason (the box's `note`, e.g.
+  *before loading Creative test*), *yours* or
+  *automatic*, size, date, *pinned* and any download; a row opens a Sheet with Restore…,
+  **Download** (a plain `<a download>` link, so the box records it), Pin and Delete. **Delete
+  is disabled on a pinned backup** with *Unpin it first — a pinned backup can't be deleted.*
+  Retention is explained where it acts (*N of 20 kept · pinned*, a meter, automatic ones go
+  first, pinned ones are kept outside the 20) and, at the limit, names the backup the next
+  one removes.
+- **Jobs show what `/status` reports, nothing more**: the job's *what*, its phase with a
+  one-line explanation, and the time since `started_at`, polled every 2 s while it runs. The
+  only extra is on the device uploading a world: the upload's real bytes and meter. Load,
+  reset, restore and import may answer *accepted* when they outlast the box's wait; the
+  screen then follows `server.job` and reports the newer `server.last_job` (its `ok` and
+  `detail`). While a job, an update, this device's upload or its own request in flight owns
+  the server, every world action is disabled with the reason (*Wait — the server is
+  {what}.*), and Start/Stop/Restart wait too. A **refusal** (400, 409, 413) shows its detail
+  in a dismissable rose line and says *nothing changed*; any other failure (503, a dropped
+  connection, a gateway timeout) never says that — it says the server may still be working
+  and to watch for its job card. Rename, settings and rules refused while a job holds the
+  world (409) show the reason and put the control back.
+- **Server settings and the allowlist stay on the main screen**: server name, max players
+  (1–30), view distance (5–32), the five fixed slots and Xbox sign-in, applying at the next
+  restart; the allowlist's on/off applies at the next restart (turning it off confirms), names
+  are live while it runs. Their *pending* tags come from `pending_restart`.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

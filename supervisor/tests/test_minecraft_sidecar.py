@@ -12,11 +12,13 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import struct
 import subprocess
 import sys
 import textwrap
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -38,8 +40,25 @@ def _load(name: str, filename: str):
 
 
 install = _load("install", "install.py")
+worlds = _load("worlds", "worlds.py")
 bds = _load("bds", "bds.py")
 server = _load("mc_server", "server.py")
+
+
+@pytest.fixture(autouse=True)
+def _data_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Every wrapper path under a temp dir, for every test. A test that forgot one
+    would otherwise write to /data — fine as root locally, a PermissionError on CI."""
+    data = tmp_path / "data"
+    monkeypatch.setattr(server, "DATA", data)
+    monkeypatch.setattr(server, "SERVER_DIR", data / "server")
+    monkeypatch.setattr(server, "SNAPSHOT_DIR", data / "snapshots")
+    monkeypatch.setattr(server, "OVERRIDES", data / "properties.json")
+    monkeypatch.setattr(server, "SETTINGS", data / "settings.json")
+    monkeypatch.setattr(server, "SLOTS", data / "slots.json")
+    monkeypatch.setattr(server, "SNAPSHOT_INDEX", data / "snapshot-index.json")
+    monkeypatch.setattr(server, "UPLOAD_DIR", data / "uploads")
+
 
 FAKE_BDS = textwrap.dedent(
     """
@@ -361,6 +380,7 @@ class _FakeBds:
         self.starts = starts
         self.state = "running"
         self.calls: list[str] = []
+        self.players: dict[str, Any] = {}
 
     def wait_running(self, _timeout_s: float) -> bool:
         return self.starts
@@ -537,8 +557,8 @@ def test_a_stopped_world_is_backed_up_cold_and_restores_aside(
 
     assert (world / "level.dat").read_bytes() == b"v1"
     assert (world / "db" / "1.ldb").read_bytes() == b"chunk"
-    aside = [p for p in world.parent.iterdir() if p.name.startswith("world.replaced-")]
-    assert len(aside) == 1 and (aside[0] / "level.dat").read_bytes() == b"v2-broken"
+    # The replaced folder is moved aside during the restore and removed once it worked.
+    assert not [p for p in world.parent.iterdir() if ".replaced-" in p.name]
     with pytest.raises(ValueError):
         rig.restore("../../etc/passwd")
 
@@ -658,22 +678,34 @@ def test_a_fast_restart_keeps_the_new_process_state(running) -> None:
     assert running.state == "running" and running.running
 
 
-def test_auto_backups_are_pruned_but_owner_snapshots_kept(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_retention_keeps_20_per_world_auto_first_pins_never(tmp_path: Path) -> None:
     import os
 
-    monkeypatch.setattr(server, "SNAPSHOT_DIR", tmp_path)
-    for i in range(14):
-        p = tmp_path / f"world-2026{i:02d}-pre-update-1.26.{i}.mcworld"
-        p.write_bytes(b"x")
-        os.utime(p, (i, i))
-    (tmp_path / "world-mine.mcworld").write_bytes(b"x")
-    server.prune_automatic()
-    left = sorted(p.name for p in tmp_path.iterdir())
-    assert "world-mine.mcworld" in left
-    assert len([n for n in left if "pre-update" in n]) == server.KEEP_AUTOMATIC
-    assert "world-202600-pre-update-1.26.0.mcworld" not in left  # oldest went first
+    snaps = tmp_path / "snaps"
+    snaps.mkdir()
+    index = worlds.SnapshotIndex(tmp_path / "index.json", snaps)
+    for i in range(18):
+        name = f"world-2026{i:02d}-pre-update.mcworld"
+        (snaps / name).write_bytes(b"x")
+        os.utime(snaps / name, (i, i))
+        index.record(name, "world", "pre-update", auto=True)
+    for i in range(18, 24):
+        name = f"world-2026{i:02d}-mine.mcworld"
+        (snaps / name).write_bytes(b"x")
+        os.utime(snaps / name, (i, i))
+        index.record(name, "world", "mine", auto=False)
+    index.set_pinned("world-202600-pre-update.mcworld", True)  # oldest, but pinned
+    (snaps / "slot2-202601-x.mcworld").write_bytes(b"x")  # another world: untouched
+    index.record("slot2-202601-x.mcworld", "slot2", "x", auto=False)
+
+    removed = index.prune("world")
+
+    left = {s["name"] for s in index.listing("world")}
+    assert len([n for n in left if n != "world-202600-pre-update.mcworld"]) == 20
+    assert "world-202600-pre-update.mcworld" in left  # pinned is kept and not counted
+    assert all("pre-update" in n for n in removed)  # automatic ones went first
+    assert all(f"world-2026{i:02d}-mine.mcworld" in left for i in range(18, 24))
+    assert index.listing("slot2")
 
 
 def test_a_restore_refuses_a_zip_member_escaping_the_world(
@@ -688,3 +720,492 @@ def test_a_restore_refuses_a_zip_member_escaping_the_world(
     with pytest.raises(ValueError):
         rig.restore("evil.mcworld")
     assert not (tmp_path / "escape").exists()
+
+
+def _world_rig(running: bool = False):
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+    rig.bds.running = running
+    return rig
+
+
+def _make_world(folder: str, content: bytes = b"lvl") -> Path:
+    world = server.SERVER_DIR / "worlds" / folder
+    (world / "db").mkdir(parents=True)
+    (world / "level.dat").write_bytes(content)
+    return world
+
+
+def test_the_existing_world_is_slot_one_and_the_rest_are_empty() -> None:
+    _make_world("world")
+    view = _world_rig().worlds_view()
+    assert [s["id"] for s in view["slots"]] == [f"slot{i}" for i in range(1, 6)]
+    first = view["slots"][0]
+    assert first["exists"] and first["active"] and first["name"] == "World"
+    assert not any(s["exists"] for s in view["slots"][1:])
+
+
+def test_create_then_load_switches_world_with_a_backup_of_the_old_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=True)
+    monkeypatch.setattr(rig, "snapshot", lambda label, **kw: {"name": label})
+    rig.create_slot("slot2", {"name": "Creative", "gamemode": "creative", "seed": "42"})
+    rig.load_slot("slot2")
+    assert rig.active_folder() == "slot2"
+    eff = rig.properties()
+    assert (eff["gamemode"], eff["level-seed"]) == ("creative", "42")
+    assert rig.bds.calls == ["stop", "start"]
+    with pytest.raises(ValueError):
+        rig.create_slot("slot1", {})  # occupied
+
+
+def test_import_validates_backs_up_and_names_from_the_world(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("slot2", b"old")
+    rig = _world_rig()
+    rig.slots.update("slot2", name="Old")
+    upload = tmp_path / "up.mcworld"
+    upload.write_bytes(
+        _zip(
+            {
+                "My World/level.dat": b"new",
+                "My World/levelname.txt": b"Castle",
+                "My World/db/1.ldb": b"c",
+            }
+        )
+    )
+    rec = rig.import_slot("slot2", upload)
+    world = server.SERVER_DIR / "worlds" / "slot2"
+    assert (world / "level.dat").read_bytes() == b"new"  # unwrapped from its folder
+    assert rec["name"] == "Castle" and rec["origin"] == "imported"
+    assert any("pre-import" in s["name"] for s in rig.index.listing("slot2"))
+    bad = tmp_path / "bad.mcworld"
+    bad.write_bytes(_zip({"readme.txt": b"hi"}))
+    with pytest.raises(ValueError):
+        rig.import_slot("slot3", bad)
+    evil = tmp_path / "evil.mcworld"
+    evil.write_bytes(_zip({"level.dat": b"x", "../escape": b"x"}))
+    with pytest.raises(ValueError):
+        rig.import_slot("slot3", evil)
+
+
+def test_reset_rules_and_same_seed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    _make_world("slot2")
+    rig = _world_rig()
+    rig.slots.update("slot2", seed="777")
+    with pytest.raises(ValueError):
+        rig.reset_slot("slot1", "empty")  # the loaded world can't be emptied
+    with pytest.raises(ValueError):
+        rig.reset_slot("slot1", "same_seed")  # seed unknown
+    rec = rig.reset_slot("slot2", "same_seed")
+    assert rec["seed"] == "777" and not rec["exists"]  # regenerates on next load
+    assert any("pre-reset" in s["name"] for s in rig.index.listing("slot2"))
+    rig.reset_slot("slot2", "empty")
+    assert rig.slots.get("slot2")["seed"] is None
+
+
+def test_restore_into_another_slot_and_pinned_backups_resist_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world", b"v1")
+    rig = _world_rig()
+    snap = rig.snapshot("mine", auto=False)["name"]
+    rig.restore_snapshot(snap, "slot3")
+    assert (server.SERVER_DIR / "worlds" / "slot3" / "level.dat").read_bytes() == b"v1"
+    rig.index.set_pinned(snap, True)
+    with pytest.raises(ValueError):
+        rig.delete_snapshot(snap)
+    rig.index.set_pinned(snap, False)
+    rig.delete_snapshot(snap)
+    assert not (server.SNAPSHOT_DIR / snap).exists()
+
+
+def test_world_operations_refuse_while_an_update_runs() -> None:
+    rig = _world_rig()
+    rig._life.acquire()
+    rig._busy = "updating"
+    with pytest.raises(RuntimeError):
+        rig.load_slot("slot2")
+
+
+def test_the_allowlist_edits_the_file_when_stopped_and_the_console_when_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (server.SERVER_DIR).mkdir(parents=True)
+    rig = _world_rig()
+    rig.change_allowlist({"add": "Steve42", "enabled": True})
+    assert rig.allowlist() == {"enabled": True, "players": ["Steve42"]}
+    sent: list[str] = []
+    rig.bds.running = True
+    rig.bds.command = lambda c, **k: sent.append(c) or []  # type: ignore[attr-defined]
+    rig.change_allowlist({"remove": "Steve42"})
+    assert sent == ['allowlist remove "Steve42"']
+    with pytest.raises(ValueError):
+        rig.change_allowlist({"add": 'x" op @a'})
+
+
+LIVE_RULES_LINE = (
+    "[2026-10-10 16:42:54:260 INFO] commandBlockOutput = true, doFireTick = true, "
+    "keepInventory = false, playerWaypoints = everyone, randomTickSpeed = 1, "
+    "spawnRadius = 10"
+)
+
+
+def test_the_live_gamerule_line_parses_into_typed_rules() -> None:
+    got = worlds.parse_gamerules([LIVE_RULES_LINE])
+    assert got == {
+        "commandBlockOutput": True,
+        "doFireTick": True,
+        "keepInventory": False,
+        "playerWaypoints": "everyone",
+        "randomTickSpeed": 1,
+        "spawnRadius": 10,
+    }
+
+
+def test_rule_changes_are_checked_by_name_and_type() -> None:
+    known = worlds.DEFAULT_RULES
+    assert worlds.check_rules({"doFireTick": "false", "spawnRadius": 3}, known) == {
+        "doFireTick": False,
+        "spawnRadius": 3,
+    }
+    for bad in (
+        {"noSuchRule": True},
+        {"doFireTick": 5},
+        {"spawnRadius": "lots"},
+        {"spawnRadius": -1},
+        {"playerWaypoints": "a; op @a"},
+    ):
+        with pytest.raises(ValueError):
+            worlds.check_rules(bad, known)
+
+
+def test_rules_on_a_world_not_loaded_are_saved_and_pending() -> None:
+    _make_world("world")
+    rig = _world_rig()
+    rig.create_slot("slot2", {"name": "Peaceful", "rules": {"doFireTick": False}})
+    view = rig.set_rules("slot2", {"keepInventory": True})
+    assert view["live"] is False
+    assert (
+        view["rules"]["doFireTick"] is False and view["rules"]["keepInventory"] is True
+    )
+    assert view["pending"] == ["doFireTick", "keepInventory"]
+
+
+def test_rules_on_the_loaded_world_apply_live_and_are_remembered() -> None:
+    _make_world("world")
+    rig = _world_rig(running=True)
+    rig.bds.state = "running"
+    sent: list[str] = []
+
+    def command(c: str, **_k: Any) -> list[str]:
+        sent.append(c)
+        return [LIVE_RULES_LINE] if c == "gamerule" else ["Game rule updated"]
+
+    rig.bds.command = command  # type: ignore[attr-defined]
+    view = rig.set_rules("slot1", {"doFireTick": False})
+    assert "gamerule doFireTick false" in sent and view["live"] is True
+    assert rig.slots.get("slot1")["rules"] == {
+        "doFireTick": False
+    }  # re-applied on load
+
+
+def test_a_loaded_world_gets_its_saved_rules_once_it_is_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time as _t
+
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=False)
+    sent: list[str] = []
+    rig.bds.command = lambda c, **k: sent.append(c) or []  # type: ignore[attr-defined]
+    rig.create_slot("slot2", {"rules": {"keepInventory": True, "doFireTick": False}})
+    rig.load_slot("slot2")
+    for _ in range(50):
+        if len(sent) == 2:
+            break
+        _t.sleep(0.02)
+    assert sorted(sent) == ["gamerule doFireTick false", "gamerule keepInventory true"]
+
+
+def test_a_manual_seed_is_any_text_on_one_line() -> None:
+    assert worlds.check_seed("  glacier 42 ") == "glacier 42"
+    with pytest.raises(ValueError):
+        worlds.check_seed("a\nb")
+    with pytest.raises(ValueError):
+        worlds.check_seed("x" * 65)
+
+
+def _level_dat(**tags: Any) -> bytes:
+    """A Bedrock level.dat: the 8-byte header, then a little-endian NBT compound. A
+    nested compound and a list are included so the reader has to walk past them."""
+
+    def name(n: str) -> bytes:
+        return struct.pack("<H", len(n)) + n.encode()
+
+    body = b""
+    for key, value in tags.items():
+        if isinstance(value, str):
+            body += b"\x08" + name(key) + name(value)
+        elif key == "RandomSeed":
+            body += b"\x04" + name(key) + struct.pack("<q", value)
+        elif isinstance(value, bool) or key.islower():
+            body += b"\x01" + name(key) + struct.pack("<b", int(value))
+        else:
+            body += b"\x03" + name(key) + struct.pack("<i", value)
+    body += b"\x0a" + name("abilities") + b"\x05" + name("flySpeed")
+    body += struct.pack("<f", 0.05) + b"\x00"
+    body += b"\x09" + name("lastOpenedWithVersion") + b"\x03" + struct.pack("<i", 2)
+    body += struct.pack("<ii", 1, 26)
+    nbt = b"\x0a" + name("") + body + b"\x00"
+    return struct.pack("<ii", 10, len(nbt)) + nbt
+
+
+CASTLE = _level_dat(
+    RandomSeed=-2794311108712645813,
+    GameType=1,
+    Difficulty=0,
+    commandsEnabled=True,
+    LevelName="Castle Hill",
+    dofiretick=False,
+    keepinventory=True,
+    spawnradius=3,
+)
+
+
+def test_level_dat_tells_a_world_its_seed_settings_and_rules(tmp_path: Path) -> None:
+    (tmp_path / "level.dat").write_bytes(CASTLE)
+    facts = worlds.world_facts(tmp_path)
+    assert facts["seed"] == "-2794311108712645813"
+    assert (facts["gamemode"], facts["difficulty"], facts["cheats"]) == (
+        "creative",
+        "peaceful",
+        True,
+    )
+    rules = facts["rules_known"]
+    assert (rules["doFireTick"], rules["keepInventory"], rules["spawnRadius"]) == (
+        False,
+        True,
+        3,
+    )
+    assert rules["mobGriefing"] is True  # absent from the file: the default
+    for junk in (b"", b"\x00" * 8, CASTLE[:-5], b"x" * 40):
+        (tmp_path / "level.dat").write_bytes(junk)
+        assert worlds.world_facts(tmp_path) == {}
+
+
+def test_the_first_world_learns_its_seed_from_level_dat() -> None:
+    _make_world("world", CASTLE)
+    first = _world_rig().worlds_view()["slots"][0]
+    assert first["seed"] == "-2794311108712645813"
+
+
+def test_an_import_takes_its_settings_from_the_file_not_the_old_slot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("slot2")
+    rig = _world_rig()
+    rig.slots.update("slot2", name="Creative test", seed="1", difficulty="hard")
+    rig.set_rules("slot2", {"doDayLightCycle": False})
+    upload = tmp_path / "up.mcworld"
+    upload.write_bytes(_zip({"level.dat": CASTLE, "db/1.ldb": b"c"}))
+    rec = rig.import_slot("slot2", upload)
+    assert rec["seed"] == "-2794311108712645813" and rec["difficulty"] == "peaceful"
+    assert rec["rules"] == {} and rec["rules_known"]["keepInventory"] is True
+    upload.write_bytes(_zip({"level.dat": b"unreadable", "db/1.ldb": b"c"}))
+    assert rig.import_slot("slot2", upload)["seed"] is None  # not the old world's
+
+
+def test_another_worlds_backup_brings_its_seed_name_and_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world", CASTLE)
+    rig = _world_rig()
+    rig.bds.state = "stopped"
+    rig.slots.update("slot1", name="Castle Hill")
+    rig.set_rules("slot1", {"keepInventory": True})
+    snap = rig.snapshot("mine", auto=False)["name"]
+    _make_world("slot3")
+    rig.slots.update("slot3", name="Other", seed="5", gamemode="adventure")
+    occupied = rig.restore_snapshot(snap, "slot3")
+    assert occupied["seed"] == "-2794311108712645813" and occupied["name"] == "Other"
+    assert occupied["gamemode"] == "creative" and occupied["rules"] == {
+        "keepInventory": True
+    }
+    empty = rig.restore_snapshot(snap, "slot4")
+    assert empty["name"].startswith("Castle Hill (") and empty["origin"] == "restored"
+
+
+def test_players_get_a_chat_warning_before_the_server_stops_under_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    monkeypatch.setattr(server, "WARN_S", 0.0)
+    _make_world("world")
+    rig = _world_rig(running=True)
+    sent: list[str] = []
+    rig.bds.command = lambda c, **k: sent.append(c) or []  # type: ignore[attr-defined]
+    rig.server_action("restart")
+    assert sent == []  # nobody on: no message
+    rig.bds.players = {"Steve": {}}
+    rig.server_action("stop")
+    assert sent and sent[0].startswith("say ") and "stops in" in sent[0]
+
+
+def test_a_running_job_and_its_phase_show_in_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig()
+    rig.bds.exit_code = None  # type: ignore[attr-defined]
+    rig.bds.started_at = None  # type: ignore[attr-defined]
+    rig.bds.version = "1.26.52.3"
+    seen: list[Any] = []
+    monkeypatch.setattr(
+        rig, "restore", lambda name, folder: seen.append(rig.status()["job"])
+    )
+    snap = rig.snapshot("mine", auto=False)["name"]
+    rig.restore_snapshot(snap, "slot1")
+    assert seen[0]["what"] == "restoring a backup" and seen[0]["phase"] == "writing"
+    assert seen[0]["started_at"] and rig.status()["job"] is None
+
+
+def test_saved_rules_come_back_on_a_plain_start_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time as _t
+
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=False)
+    rig.bds.state = "stopped"
+    sent: list[str] = []
+    rig.bds.command = lambda c, **k: sent.append(c) or []  # type: ignore[attr-defined]
+    rig.set_rules("slot1", {"doFireTick": False})
+    assert sent == []  # stopped: saved, pending
+    rig.server_action("start")
+    for _ in range(50):
+        if sent:
+            break
+        _t.sleep(0.02)
+    assert sent == ["gamerule doFireTick false"]
+
+
+def test_a_download_is_recorded_on_the_backup_and_the_world() -> None:
+    _make_world("world")
+    rig = _world_rig()
+    snap = rig.snapshot("mine", auto=False)["name"]
+    assert rig.index.listing()[0]["downloaded_at"] is None
+    rig.index.note_download(snap, "world")
+    assert rig.index.listing()[0]["downloaded_at"] and rig.index.last_download("world")
+
+
+def test_a_setting_saved_since_the_last_start_reads_as_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=False)
+    assert rig.pending_restart() == []  # never started: nothing to compare against
+    rig.server_action("start")
+    rig.bds.command = lambda c, **k: []  # type: ignore[attr-defined]
+    rig.update_slot("slot1", {"gamemode": "creative", "difficulty": "hard"})
+    rig.set_overrides({"max-players": "8"})
+    # difficulty went live through the console, so only the others wait for a restart
+    assert rig.pending_restart() == ["gamemode", "max-players"]
+    rig.server_action("restart")
+    assert rig.pending_restart() == []
+
+
+def test_an_automatic_backup_says_what_it_was_taken_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    _make_world("world")
+    rig = _world_rig(running=False)
+    rig.create_slot("slot2", {"name": "Creative test"})
+    rig.bds.running = True
+    monkeypatch.setattr(
+        rig,
+        "snapshot",
+        lambda label, **kw: rig.cold_snapshot(label, None, True, kw.get("note", "")),
+    )
+    rig.load_slot("slot2")
+    (snap,) = rig.index.listing("world")
+    assert snap["note"] == "before loading Creative test" and snap["auto"]
+
+
+def test_a_long_world_operation_answers_202_and_reports_its_end() -> None:
+    import threading
+
+    rig = _world_rig()
+    gate = threading.Event()
+    code, body = rig.run_job("loading a world", lambda: gate.wait(5), wait_s=0.05)
+    assert (code, body["accepted"]) == (202, True)
+    gate.set()
+    for _ in range(100):
+        if rig.last_job:
+            break
+        threading.Event().wait(0.01)
+    assert rig.last_job["what"] == "loading a world" and rig.last_job["ok"] is True
+    assert rig.run_job("quick", lambda: {"done": 1}) == (200, {"done": 1})
+
+    def refuse() -> None:
+        raise RuntimeError("busy: updating")
+
+    with pytest.raises(RuntimeError):  # a refusal is immediate, so it stays a 409
+        rig.run_job("loading a world", refuse)
+    assert rig.last_job["ok"] is False and "busy" in rig.last_job["detail"]
+
+
+def test_an_import_to_a_busy_server_is_refused_before_the_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import urllib.error
+    import urllib.request
+
+    httpd, _get = _serve(monkeypatch, "t")
+    try:
+        rig = server.RIG
+        rig._life.acquire()
+        rig._busy = "updating"
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{httpd.server_port}/worlds/slot2/import",
+            data=b"x" * 1024,
+            method="POST",
+            headers={"Authorization": "Bearer t"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(req, timeout=5)
+        assert err.value.code == 409
+        assert not any(server.UPLOAD_DIR.glob("*"))  # nothing was read or kept
+    finally:
+        httpd.shutdown()
+
+
+def test_quick_edits_wait_their_turn_and_seeds_stay_on_one_line() -> None:
+    _make_world("world")
+    _make_world("slot2")
+    rig = _world_rig()
+    rig._life.acquire()
+    rig._busy = "importing a world"
+    with pytest.raises(RuntimeError):
+        rig.update_slot("slot2", {"name": "Mine"})  # an import may be rewriting it
+    with pytest.raises(RuntimeError):
+        rig.set_rules("slot2", {"pvp": False})
+    rig._life.release()
+    rig._busy = ""
+    with pytest.raises(ValueError):
+        rig.reset_slot("slot2", "new_seed", "1\nallow-cheats=true")
