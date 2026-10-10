@@ -187,9 +187,15 @@ change.
 - **Memory**: about 280 MB RSS idle with no players. It is re-measured under play.
 - **The script bridge (item 5) can't be probed through the console.** Installing a test
   behavior pack means writing into the world folder, and the debug surface deliberately
-  has no file write. The next PR adds a wrapper route that installs a **bundled** probe pack
-  (`deploy/minecraft/probe-pack/`, nothing uploaded) into the active world, then the probe
-  runs.
+  has no file write. So the wrapper gained `POST /probe-pack`, which installs the
+  **bundled** probe pack (`deploy/minecraft/probe-pack/`, nothing uploaded) into the active
+  world and restarts. The pack logs `[jbrain-probe]` lines for: loaded, chat event
+  available, the `jb:dave` custom command registered, `scriptevent` echoes, and whether a
+  dead player's inventory is readable (the keep-inventory question).
+- **Also shipped for M1's backend**: join/leave events with a per-boot id (`GET /events`),
+  including synthetic leaves when the server stops; `GET /version` (cached Mojang lookup);
+  and `POST /update` (snapshot first, a failed snapshot installs nothing, then install
+  and restart). All are on the debug router too.
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
   LAN Games), memory under play, the script bridge, the parser, map and biome inputs, and
   the vanilla-client checks.

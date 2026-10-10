@@ -15,12 +15,21 @@ import re
 import subprocess
 import threading
 import time
+import uuid
 import zipfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 LOG_LINES = 5000
+# Join/leave events kept for the api's drain. It polls every few seconds, so this is
+# hours of headroom; a gap (the api down longer than that) loses only events the api
+# would reconcile anyway from `/status`'s online list.
+EVENTS_KEPT = 2000
+# Changes on every wrapper start, so the api can tell "event ids restarted" from "no new
+# events" and close any session the restart cut off.
+BOOT_ID = uuid.uuid4().hex
 _CONNECTED = re.compile(r"Player connected: ([^,]+), xuid: ?(\d*)")
 _DISCONNECTED = re.compile(r"Player disconnected: ([^,]+), xuid")
 _VERSION = re.compile(r"Version:? ([0-9][0-9.]*[0-9])")
@@ -72,7 +81,9 @@ class Bds:
     spawn: Callable[[Path], subprocess.Popen[str]] | None = None
     state: str = "stopped"
     version: str = ""
-    players: dict[str, str] = field(default_factory=dict)
+    # gamertag -> {"xuid", "joined_at"}; joined_at is what the Ops card's session timer
+    # counts from.
+    players: dict[str, dict[str, Any]] = field(default_factory=dict)
     started_at: float | None = None
     exit_code: int | None = None
     _proc: subprocess.Popen[str] | None = None
@@ -82,6 +93,10 @@ class Bds:
     _seq: int = 0
     _cv: threading.Condition = field(default_factory=threading.Condition)
     _cmd_lock: threading.Lock = field(default_factory=threading.Lock)
+    _events: collections.deque[dict[str, Any]] = field(
+        default_factory=lambda: collections.deque(maxlen=EVENTS_KEPT)
+    )
+    _event_id: int = 0
 
     def _default_spawn(self, server_dir: Path) -> subprocess.Popen[str]:
         return subprocess.Popen(
@@ -100,6 +115,7 @@ class Bds:
             return
         self.players.clear()
         self.exit_code = None
+        self.version = ""  # re-read from the banner: an update changes it
         self.state = "starting"
         spawn = self.spawn or self._default_spawn
         self._proc = spawn(self.server_dir)
@@ -113,6 +129,11 @@ class Bds:
             self._record(raw.rstrip("\n"))
         code = proc.wait()
         with self._cv:
+            # A stopping server logs no disconnects, so the sessions it ends are closed
+            # here — otherwise play time would run on through the downtime.
+            for name, p in self.players.items():
+                self._event("leave", name, p["xuid"])
+            self._event("server_stop", "", "")
             self.exit_code = code
             self.state = "stopped"
             self.players.clear()
@@ -124,14 +145,36 @@ class Bds:
             self._lines.append(Line(self._seq, time.time(), time.monotonic(), text))
             if _STARTED in text:
                 self.state = "running"
+                self._event("server_start", "", "")
             if not self.version and (m := _VERSION.search(text)):
                 self.version = m.group(1)
             if m := _CONNECTED.search(text):
-                self.players[m.group(1).strip()] = m.group(2)
+                name, xuid = m.group(1).strip(), m.group(2)
+                self.players[name] = {"xuid": xuid, "joined_at": time.time()}
+                self._event("join", name, xuid)
             elif m := _DISCONNECTED.search(text):
-                self.players.pop(m.group(1).strip(), None)
+                name = m.group(1).strip()
+                gone = self.players.pop(name, None)
+                self._event("leave", name, gone["xuid"] if gone else "")
             self._cv.notify_all()
         print(text, flush=True)
+
+    def _event(self, kind: str, name: str, xuid: str) -> None:
+        # Caller holds self._cv.
+        self._event_id += 1
+        self._events.append(
+            {
+                "id": self._event_id,
+                "at": time.time(),
+                "kind": kind,
+                "name": name,
+                "xuid": xuid,
+            }
+        )
+
+    def events_after(self, after: int) -> list[dict[str, Any]]:
+        with self._cv:
+            return [dict(e) for e in self._events if e["id"] > after]
 
     @property
     def running(self) -> bool:

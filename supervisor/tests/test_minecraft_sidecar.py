@@ -111,7 +111,8 @@ def test_a_command_returns_the_lines_printed_in_reply(running) -> None:
 
 def test_players_are_tracked_from_the_console(running) -> None:
     running.command("join Steve", wait_s=2)
-    assert running.players == {"Steve": "2535"}
+    assert running.players["Steve"]["xuid"] == "2535"
+    assert running.players["Steve"]["joined_at"] > 0
     running.command("leave Steve", wait_s=2)
     assert running.players == {}
 
@@ -327,3 +328,124 @@ def test_no_token_configured_refuses_rather_than_running_open(
         assert get("/properties", "Bearer ") == 503
     finally:
         httpd.shutdown()
+
+
+def test_joins_and_leaves_become_events_with_a_session_start(running) -> None:
+    running.command("join Steve", wait_s=2)
+    joined_at = running.players["Steve"]["joined_at"]
+    running.command("leave Steve", wait_s=2)
+    kinds = [(e["kind"], e["name"]) for e in running.events_after(0)]
+    assert ("join", "Steve") in kinds and ("leave", "Steve") in kinds
+    assert kinds[0] == ("server_start", "")
+    assert joined_at > 0
+
+
+def test_a_stopping_server_closes_every_open_session(running) -> None:
+    # BDS logs no disconnects on shutdown; without these the play time would run on.
+    running.command("join Steve", wait_s=2)
+    mark = running.events_after(0)[-1]["id"]
+    running.stop(wait_s=5)
+    tail = [(e["kind"], e["name"]) for e in running.events_after(mark)]
+    assert tail == [("leave", "Steve"), ("server_stop", "")]
+
+
+def test_versions_compare_numerically_not_as_text() -> None:
+    assert server.version_key("1.26.100.1") > server.version_key("1.26.52.3")
+
+
+class _FakeBds:
+    def __init__(self, version: str = "1.26.52.3") -> None:
+        self.version = version
+        self.running = True
+        self.calls: list[str] = []
+
+    def stop(self) -> None:
+        self.calls.append("stop")
+        self.running = False
+
+    def start(self) -> None:
+        self.calls.append("start")
+        self.running = True
+
+
+def _update_rig(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, snapshot_ok: bool):
+    monkeypatch.setattr(server, "DATA", tmp_path)
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    installed: list[str] = []
+    monkeypatch.setattr(server.install, "resolve", lambda want: ("1.26.60.4", "u"))
+    monkeypatch.setattr(server.install, "ensure", lambda d, v: installed.append(v))
+    monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+
+    def snap(label: str) -> dict[str, str]:
+        if not snapshot_ok:
+            raise OSError("disk full")
+        return {"name": f"{label}.mcworld"}
+
+    monkeypatch.setattr(rig, "snapshot", snap)
+    return rig, installed
+
+
+def _wait_done(rig) -> dict:
+    import time as _t
+
+    for _ in range(100):
+        if rig.update_state.get("finished_at"):
+            return rig.update_state
+        _t.sleep(0.05)
+    raise AssertionError("update never finished")
+
+
+def test_an_update_backs_up_first_then_installs_and_restarts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=True)
+    rig.start_update()
+    st = _wait_done(rig)
+    assert st["state"] == "done"
+    assert st["backup"] == "pre-update-1.26.52.3.mcworld"
+    assert installed == ["1.26.60.4"]
+    assert rig.bds.calls == ["stop", "start"]
+
+
+def test_a_failed_backup_installs_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=False)
+    rig.start_update()
+    st = _wait_done(rig)
+    assert st["state"] == "failed" and "disk full" in st["error"]
+    assert installed == []
+    assert rig.bds.running  # never stopped
+
+
+def test_an_up_to_date_server_is_not_restarted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, installed = _update_rig(monkeypatch, tmp_path, snapshot_ok=True)
+    rig.bds.version = "1.26.60.4"
+    assert rig.start_update()["state"] == "current"
+    assert installed == [] and rig.bds.calls == []
+
+
+def test_the_probe_pack_is_listed_in_the_world_and_removable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+    world = tmp_path / "server" / "worlds" / "world"
+    world.mkdir(parents=True)
+
+    out = rig.probe_pack(True)
+    listed = json.loads((world / "world_behavior_packs.json").read_text())
+    assert listed == [{"pack_id": out["pack_id"], "version": [1, 0, 0]}]
+    assert (world / "behavior_packs" / "jbrain_probe" / "scripts" / "main.js").exists()
+    assert rig.bds.calls == ["stop", "start"]
+
+    rig.probe_pack(False)
+    assert json.loads((world / "world_behavior_packs.json").read_text()) == []
+    assert not (world / "behavior_packs" / "jbrain_probe").exists()
