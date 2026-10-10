@@ -6,6 +6,7 @@ import {
   type PointerEvent,
   type ReactNode,
   type TouchEvent,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -291,7 +292,14 @@ export function Launcher({
   const [order, setOrder] = useState<LauncherTarget[]>(loadOrder);
   const [ownEditing, setOwnEditing] = useState(false);
   const editing = editingProp ?? ownEditing;
-  const setEditing = onEditingChange ?? setOwnEditing;
+  // Stable across renders whoever owns edit mode, so the effects below that end it don't
+  // re-run on every parent render.
+  const editingChange = useRef(onEditingChange);
+  editingChange.current = onEditingChange;
+  const setEditing = useCallback(
+    (next: boolean) => (editingChange.current ?? setOwnEditing)(next),
+    [],
+  );
   const [showHidden, setShowHidden] = useState(false);
   const [dragging, setDragging] = useState<LauncherTarget | null>(null);
   const tileEls = useRef(new Map<LauncherTarget, HTMLElement>());
@@ -323,7 +331,7 @@ export function Launcher({
       setEditing(false);
       setShowHidden(false);
     }
-  }, [open]);
+  }, [open, setEditing]);
 
   useEffect(
     () => () => {
@@ -446,7 +454,7 @@ export function Launcher({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, editing]);
+  }, [open, onClose, editing, setEditing]);
 
   if (!open && !closing) return null;
 
