@@ -663,10 +663,10 @@ house by typing the address.
   `ActionFormData`). The form has buttons for *Where am I*, *Nearest…*, *Guide me home*,
   *My last death*, *Map of here* and *Save this spot*. It is vanilla-safe (§3c), and it is
   optional since everyone has a keyboard.
-- A visible **companion NPC**. A *custom* entity needs a resource pack. The vanilla client
-  downloads that automatically, but it's heavier and breaks the "behavior pack only" rule in
-  §3c, so it's the owner's call. The alternative is a **vanilla mob** (an allay or villager
-  named "Dave", made invulnerable by the pack), which needs no client assets. Spawning it
+- A visible **companion NPC**. A *custom* entity's model and texture ride in the `jbrain`
+  resource pack that downloads automatically on join (allowed since 2026-10-10, §3c), at
+  the cost of a bigger download. The lighter option is a **vanilla mob** (an allay or
+  villager named "Dave", made invulnerable by the pack). Which to use is the owner's call. Spawning it
   changes the world, so it is an owner action, never a player's.
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
 

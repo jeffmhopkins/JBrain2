@@ -12,7 +12,11 @@ interface DialogProps {
   /** The consequence, in one sentence. */
   children: ReactNode;
   confirmLabel: string;
-  tone?: "danger" | "warn";
+  /** "primary" is for a confirm whose act harms nothing (Load with nobody on). */
+  tone?: "danger" | "warn" | "primary";
+  /** A gate under the sentence, such as typing the world's name before a reset. */
+  extra?: ReactNode;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -22,6 +26,8 @@ export function Dialog({
   children,
   confirmLabel,
   tone = "danger",
+  extra,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: DialogProps) {
@@ -61,7 +67,7 @@ export function Dialog({
 
   function trapTab(event: KeyboardEvent<HTMLDialogElement>) {
     if (event.key !== "Tab") return;
-    const buttons = panelRef.current?.querySelectorAll<HTMLButtonElement>("button");
+    const buttons = panelRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input");
     if (!buttons || buttons.length === 0) return;
     const first = buttons[0];
     const last = buttons[buttons.length - 1];
@@ -98,11 +104,17 @@ export function Dialog({
         <p className="dialog-body" id={`${id}-b`}>
           {children}
         </p>
+        {extra}
         <div className="dialog-actions">
           <button type="button" ref={cancelRef} onClick={onCancel}>
             Cancel
           </button>
-          <button type="button" className={`dialog-confirm dialog-${tone}`} onClick={onConfirm}>
+          <button
+            type="button"
+            className={`dialog-confirm dialog-${tone}`}
+            onClick={onConfirm}
+            disabled={confirmDisabled}
+          >
             {confirmLabel}
           </button>
         </div>
