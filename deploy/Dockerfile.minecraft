@@ -29,9 +29,10 @@ WORKDIR /app
 COPY deploy/minecraft/install.py ./install.py
 COPY deploy/minecraft/bds.py ./bds.py
 COPY deploy/minecraft/server.py ./server.py
+COPY deploy/minecraft/worlds.py ./worlds.py
 COPY deploy/minecraft/probe-pack ./probe-pack
 
-RUN python3 -c "import server, bds, install"
+RUN python3 -c "import server, bds, install, worlds"
 
 USER mc
 ENV PYTHONUNBUFFERED=1
