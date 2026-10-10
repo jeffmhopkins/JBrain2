@@ -167,6 +167,8 @@ short section added to this doc.
    - Do `cubiomes` biome answers (Java 1.18+ generation) match `locate biome` on the
      known-seed world at ~10 sample points?
 
+8. **Vanilla-client checks**: the §3c list, on Windows and on the Xbox.
+
 Exit: each item has an answer. Any "no" reshapes the wave it feeds before that wave is
 scheduled.
 
@@ -410,6 +412,12 @@ house by typing the address.
   `<id>`.
 - **Outbound (reply)**: `tellraw <asker> {…}` via the console. Replies are private to the asker
   by default.
+- **A Dave menu for controllers**: typing on an Xbox is slow. `/dave` with no text, or saying
+  just "Dave", opens a **server form** (`@minecraft/server-ui` `ActionFormData`). The form is
+  a list of buttons: *Where am I*, *Nearest…* (with a sub-list of common mobs), *Guide me
+  home*, *My last death*, *Map of here*, *Save this spot*. Forms are drawn by the vanilla
+  client from data the server sends, so there is nothing to install. Picking a button sends
+  the same question as typing it would.
 - The drain loop follows the `aprslog` shape. Everything that comes from players is
   **untrusted input**.
 
@@ -452,7 +460,11 @@ house by typing the address.
 ### M7 — Nice-to-haves (each is its own small decision)
 
 - The non-★ tools in §3b, one per PR, in whatever order players actually ask for them.
-- A visible **companion NPC** entity, which would need a resource pack that clients download.
+- A visible **companion NPC**. A *custom* entity needs a resource pack. The vanilla client
+  downloads that automatically, but it's heavier and breaks the "behavior pack only" rule in
+  §3c, so it's the owner's call. The alternative is a **vanilla mob** (an allay or villager
+  named "Dave", made invulnerable by the pack), which needs no client assets. Spawning it
+  changes the world, so it is an owner action, never a player's.
 - Scheduled backups: a workflow-scheduler entry that calls M3's on-demand route.
 
 ### M8 — Maps and biomes (after M4; the map tools in §3b)
@@ -494,8 +506,9 @@ biomes.**
   **short-lived share link** (for example 24 h) to that one PNG, served over HTTPS through the
   existing tunnel. HTTP works there, unlike the game's UDP. The link carries an anonymous
   scoped token, the same substrate as the intake/student links. It is rate-limited, shows the
-  active slot only, and exposes nothing else. Windows players click it. Xbox players open it
-  on a phone, or Dave also gives the directions in text.
+  active slot only, and exposes nothing else. **Bedrock chat links aren't clickable**, so the
+  link is a short code that's easy to type, such as `hopkinsbrain.com/m/7KQ2`. Players open
+  it in a browser on their PC or phone, and Dave always gives the directions in text as well.
 - Storage: rendered PNGs and tiles go through `BlobStore`. They are derived, so they are
   pruned with their snapshot.
 - Tests: render a fixture snapshot to golden PNG hashes per layer, check the overlay
@@ -648,6 +661,54 @@ from the PWA.
 anything outside the active slot; anything that touches JBrain notes or the wiki; free-form
 console access for players.
 
+## 3c. Vanilla-client compatibility (owner requirement, 2026-10-10)
+
+**Every player-facing feature must work on an unmodified, store-installed Bedrock client on
+Windows and Xbox.** That rules out client mods, resource packs players install themselves,
+and launcher tricks. The rules that keep it true:
+
+1. **Everything runs on the server.** The behavior pack's script runs inside BDS. The client
+   only ever gets standard protocol messages.
+2. **Behavior pack only, no resource pack** for every planned feature. No custom textures,
+   models, sounds or UI files. Anything that would need one (a custom NPC model) is labelled
+   and left to the owner (M7).
+3. **No experimental toggles.** Only stable script APIs. A feature that needs a beta API
+   waits, or gets a stable fallback (§5).
+4. **Output uses only vanilla channels.** Those are chat (`tellraw`), the actionbar and title
+   (`titleraw`), sounds and particles the game already has, and server forms
+   (`@minecraft/server-ui`), which the client draws from server data.
+5. **No clickable links or in-game images.** Bedrock chat can't do either. Maps go out as a
+   short code to type into a browser.
+
+**Each player-facing feature, checked:**
+
+| Feature | How the client sees it | Vanilla? |
+|---|---|---|
+| Joining (LAN list, `mc.hopkinsbrain.com`, relay address) | the standard server list | ✅ |
+| Asking in chat (`Dave, …`) | ordinary chat, read by the server script | ✅ if M0 finds a stable chat event. Otherwise `/dave` |
+| `/dave <question>` | a server-registered custom command, which appears in the client's normal command autocomplete | ✅ M0 checks it on Xbox and Windows |
+| The Dave menu (buttons) | a server form | ✅ M0 checks controller use on Xbox |
+| Replies | `tellraw` chat, private to the asker | ✅ |
+| `guide_me` compass | actionbar text, refreshed by the server | ✅ |
+| Waypoint markers in the world (optional) | vanilla particles at a spot, visible only to the asker | ✅ |
+| Reminders and warnings | chat or actionbar, plus a vanilla sound | ✅ |
+| Maps | a short code typed into a browser; nothing is shown in-game | ✅ no in-game image |
+| `my_inventory` / `my_stats` / deaths | read on the server by the script | ✅ |
+| Admin tools (time, weather, backup) | ordinary server commands | ✅ |
+| Companion NPC (M7) | a vanilla mob is fine; a custom model needs a resource pack | ⚠️ the owner chooses |
+| Joining at all | the client must be on the **same version** as BDS | ⚠️ that is why M3's one-click update exists |
+
+**M0 checks this on the real clients** with the fresh world, on the owner's Windows PC and on
+the Xbox:
+
+- What is shown on joining a server that has the behavior pack.
+- Whether `/dave` shows up in autocomplete.
+- Whether a server form works with a controller.
+- Whether the actionbar compass updates smoothly.
+- Whether `tellraw` reaches only the asker.
+
+Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
+
 ## 4. Owner decisions
 
 **Decided (2026-10-10):**
@@ -661,9 +722,12 @@ console access for players.
 - **Devices**: Windows and Xbox on the home network. Remote players (the brothers) are on
   Windows only, so they join by address and no Xbox broadcaster is needed. The home Xbox means
   LAN discovery has to work (M0 and M1).
-- **Add-on**: yes. The companion is a behavior pack, which is an add-on. A behavior pack with
-  no resource pack shouldn't trigger the "download add-ons" prompt for players, and M0
-  confirms that. Experimental toggles are still never turned on without asking.
+- **Add-on**: yes. The companion is a behavior pack, which is an add-on. The vanilla client
+  handles a server's packs on its own; at most a player sees the standard "download add-ons"
+  prompt the first time they join, and M0 records exactly what Windows and Xbox show.
+  Experimental toggles are still never turned on without asking.
+- **Vanilla clients only (owner requirement, 2026-10-10)**: everything must work on an
+  unmodified Windows or Xbox Bedrock client (§3c).
 - **Companion**: named **Dave** for now, and changeable later (M5, M6).
 - **Player locations**: Dave may say where other players are.
 - **Box backups**: Minecraft backups stay separate from the whole-box export (M3).
