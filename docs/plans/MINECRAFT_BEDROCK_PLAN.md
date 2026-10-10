@@ -65,7 +65,7 @@ a handful of players; M0 measures the real figure.
                                  │    snapshot (save hold/query/resume), allowlisted console,
                                  │    world import, LevelDB index export, companion bridge
                                  └─ volume jbrain_minecraft (worlds/, config, BDS binary)
-                                        ▲  HTTP on the `minecraft` network (api only)
+                                        ▲  HTTP + bearer, via host.docker.internal (host network)
  api (backend) ─────────────────────────┘
    ├─ /api/minecraft/*   PWA: status, players, import, snapshots, settings, allowlist
    ├─ minecraft drain    chat questions in, companion replies out (aprslog shape)
@@ -125,18 +125,15 @@ mid-save.
   - `bds.py` owns the console. It collects each command's reply, tracks players from the
     log, refuses `stop` and `save …` (each has its own route), takes hot `.mcworld`
     snapshots through `save hold`/`query`/`resume`, and stops gracefully.
-  - `server.py` serves the HTTP surface on the `minecraft` network: `/status`, `/logs`,
+  - `server.py` serves the HTTP control surface (bearer-guarded): `/status`, `/logs`,
     `/command`, `/snapshot`, `/snapshots`, and `/properties` (owner overrides layered on the
     compose defaults, applied at the next start, with the ports pinned).
 - `deploy/Dockerfile.minecraft`, and the `minecraft` compose service: **in the stock stack,
-  with no profile**, at the owner's request. It sits on its own `minecraft` network (shared
-  only with `api`, not `internal`), with a 2 GB `mem_limit`, a 60 s stop grace, UDP
-  19132/19133 published, and the `minecraft` volume kept out of the box backups. The
-  wrapper's HTTP port is unauthenticated and reachable only over that network, the
-  `endpoint` precedent.
+  with no profile**, at the owner's request. It has a 2 GB `mem_limit`, a 60 s stop grace,
+  and the `minecraft` volume, which is kept out of the box backups. M0a shipped it on its
+  own bridge network with UDP published; the M0b finding below moved it to the **host
+  network**, with a bearer on the control port.
 - **Defaults chosen for the LAN-only test**:
-  - `transport=raknet`. BDS 1.26 defaults to `nethernet`, which can allocate client UDP
-    ports beyond the one published.
   - `allow-list=false`. Nothing is forwarded from the router, and an empty allowlist would
     lock the family out.
   - `content-log-console-output-enabled=true`, so script output reaches the console for
@@ -150,6 +147,36 @@ IPv6 at all, and RakNet aborts when it cannot open its IPv6 socket. Docker conta
 the box have the IPv6 address family even without IPv6 routing, but **M0b's first status
 read confirms the server binds**. If it doesn't, the fix is a compose sysctl, not a code
 change.
+
+**M0b findings so far (2026-10-10), on the box with the debug token:**
+
+- **It runs.** `ffb9713` deployed, and the container came up healthy. BDS 1.26.52.3
+  downloaded itself, generated the world, and bound IPv4 and IPv6, so the sandbox's IPv6
+  failure did not recur. The console (`list`, `time query daytime`) and a hot
+  `.mcworld` snapshot both worked against the real server.
+- **RakNet is dead in 1.26.** Started on `transport=raknet`, the server ran and then logged
+  *"NetherNet is the only supported transport type. Players will not be able to connect to
+  your game without NetherNet."* Switched to `nethernet` through the properties override,
+  it started cleanly. Mojang's bundled how-to says NetherNet:
+  - signals over **TCP** on `server-port` (an HTTP handshake);
+  - negotiates gameplay **UDP** ports per client, from the ephemeral range unless
+    `server-udp-ports` pins them;
+  - advertises the server's **own** addresses to the client.
+
+  On a bridge network that address is the container's 172.x and LAN broadcasts never
+  arrive, so **the follow-up PR moves the container to `network_mode: host`**. That was the
+  plan's named fallback (M0 item 3). It also:
+  - makes `nethernet` the default;
+  - puts a bearer token (`MINECRAFT_TOKEN`, minted by `update-inner.sh` and `install.sh`)
+    on the control port, since that port is now on the LAN;
+  - has the api reach the control port through `host.docker.internal:19180`.
+- **Implication for R1 (internet play)**: forwarding UDP 19132 alone won't do. NetherNet
+  needs TCP 19132 for signaling plus a UDP range pinned with `server-udp-ports`, and its
+  advertised mapping (`[public-ip:]external:internal`) has to name the public address.
+  R1's step 0 accounts for this.
+- **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
+  LAN Games), memory under play, `locate` capture, the script bridge, the parser, map and
+  biome inputs, and the vanilla-client checks.
 
 **First boot** generates the world from `MC_LEVEL_SEED` if one is set, otherwise from a
 random seed that `/properties` and `level.dat` record. The known-seed checks can set
@@ -201,33 +228,74 @@ short section added to this doc.
 Exit: each item has an answer. Any "no" reshapes the wave it feeds before that wave is
 scheduled.
 
-### M1 — The server container and its lifecycle
+### M1 — The Minecraft Ops card: lifecycle, server updates, players
 
-- `deploy/Dockerfile.minecraft` and `deploy/minecraft/` (the wrapper), a `minecraft` profile,
-  and a `minecraft` network shared only with `api`. That network is **not** `internal: true`,
-  because BDS needs outbound internet for Xbox Live sign-in and its own updates. Hardened like
-  the SDR sidecar, with
-  `mem_limit: ${MC_MEM_LIMIT:-2g}` (1–4 players on a small world; M0 confirms the figure). The
-  volume is `jbrain_minecraft`. Port `${MC_BIND:-0.0.0.0}:19132:19132/udp` (plus 19133 for
-  IPv6 if wanted). BDS has no EULA file; running it is acceptance of Mojang's EULA and
+**Built in M0a**, kept here for the record:
+
+- `deploy/Dockerfile.minecraft` and `deploy/minecraft/` (the wrapper), on the **host
+  network** (M0b: NetherNet needs the box's real address and LAN broadcast), with
+  outbound internet for Xbox Live sign-in and its own updates. The control port is guarded
+  by `MINECRAFT_TOKEN`. `mem_limit: ${MC_MEM_LIMIT:-2g}` (1–4 players on a small world).
+  The volume is `jbrain_minecraft`. BDS has no EULA file; running it is acceptance of Mojang's EULA and
   privacy policy. The owner chose on-by-default knowing that (2026-10-10), and the
   Dockerfile header says so.
 - **LAN discovery is a requirement, not a nicety.** An Xbox can't type in a server address, so
   on the home network it joins through **Friends → LAN Games**. That list is filled by a
-  broadcast ping on UDP 19132, which the server has to answer. Docker's bridge networking
-  often doesn't pass broadcasts through to a published port, so M0 tests this. If the test
-  fails, the fallback is `network_mode: host` for this one container. That gives up the
-  isolated `minecraft` network, and the backend reaches the wrapper through the host gateway
-  with its bearer token. Windows can use either the LAN list or the box's address.
+  broadcast the server has to answer. This is why the container is on the host network
+  (M0b). Windows can use either the LAN list or the box's address.
 - **On by default (owner decision, 2026-10-10, built in M0a)**: the service has no profile,
   so the first **Ops → Update** after merge creates and starts it. Start and stop are the
   existing supervisor routes, which Ops already shows for every container.
-- A Minecraft card on `OpsScreen`: state, version, players online, start/stop/restart, logs.
-  Everything on it is also on the debug router (§3a), which M0 already shipped.
+**What M1 adds: a Minecraft card in Ops** (owner requests, 2026-10-10). Everything on it is
+also reachable over the debug router (§3a).
+
+- **Lifecycle**: the state (`installing` / `running` / `stopped` / `install_failed` with its
+  error), uptime, and **Start / Stop / Restart**. Restart is stop-then-start, so the 60 s
+  save grace is honoured.
+- **Server updates**:
+  - **The version check.** The wrapper reads Mojang's download index (`install.py`
+    `latest_url`) on demand and on a slow timer, and the card shows *running X / latest Y*.
+  - **What changed.** Mojang posts each release's changelog in the "Release Changelogs"
+    section of feedback.minecraft.net, which has a public listing API. Titles use the
+    marketing number: BDS `1.26.52.3` is "Minecraft Bedrock Edition **26.52** … Changelog".
+    So the box can find the article for the new version and show:
+    - a **short "what changed"**: the first few bullet points of that article, taken
+      **verbatim**, with no model summarising them;
+    - a **Release notes** link to the full article.
+
+    If the article isn't posted yet, the card says "release notes not published yet" and
+    links to Mojang's general update page (`aka.ms/MinecraftUpdate`). The update still
+    works without it.
+  - **Update server**: one button. It takes a snapshot (the M0a hot snapshot, labelled
+    `pre-update-<old version>`), installs the new BDS into the volume (the wrapper's
+    preserve-on-update rules apply), and restarts.
+
+    BDS follows `latest` on every container start today. Once this button exists, that
+    automatic follow becomes a setting (*auto-update on restart*: on/off), so the owner
+    can pin a version and update only when they choose.
+- **Players**:
+  - **Online now**: each player with **how long this session has lasted**. The wrapper
+    records each join time from the `Player connected` log line.
+  - **Time on the server**: total play time, session count, first seen and last seen, per
+    player. The api drains join and leave events from the wrapper into
+    `app.mc_player_sessions`, keyed by **xuid** so a gamertag change doesn't split a
+    player. The table is owner-RLS'd and has an isolation test. If the server or box goes
+    down mid-session, no leave line is ever logged, so on startup any open session is
+    closed at the last time the server was seen running. Totals never count downtime.
+  - **Lifetime stats** (deaths and causes, mobs killed, blocks mined and placed, distance
+    travelled) appear here **once the M5 add-on exists**. Bedrock keeps no player
+    statistics and its console exposes none, so they can only be counted by the
+    behavior-pack script from in-game events. They feed the same per-player rows, and
+    Dave's `playtime / leaderboard` tool (§3b).
 - First boot with no imported world generates a fresh world in slot 1, so the server is
   playable before M2.
-- Tests: wrapper unit tests against a fake BDS script (stdin/stdout), the compose logging test,
-  ops proxy tests, and a frontend card test.
+- Tests: the version check against a fixture download index and a fixture changelog listing
+  (version → article match, verbatim bullets, the fallback when no article exists); the
+  update sequence (snapshot before install, restart after, nothing installed if the
+  snapshot fails); session accounting (join/leave, an unclosed session closed at the last
+  seen time, xuid as the key); the `mc_player_sessions` RLS isolation test; the ops proxy;
+  and the card's frontend tests. GUI gate (`../reference/DESIGN.md`): the card gets a mock
+  before it is built.
 
 ### M2 — World slots, importing the owner's world, and server settings
 
@@ -302,10 +370,9 @@ scheduled.
   isn't offered for the active slot). Because this destroys the world, the confirm dialog
   asks the owner to **type the slot's name**. The slot's world index (M4) is cleared with it,
   so Dave never answers from the old world.
-- **BDS updates**: the card shows "server X.Y / latest X.Z" and offers **Update server**, which
-  snapshots and then fetches the new BDS into the volume before restarting. Clients
-  auto-update, so a lagging server locks every player out. That makes this the most-used
-  control after start/stop.
+- **BDS updates** moved to M1 (owner request, 2026-10-10), since a lagging server locks out
+  every auto-updated client. M3 only adds the pre-update snapshot to the backup list and
+  retention.
 - **Separate from the box backups (owner decision, 2026-10-10).** Minecraft backups do **not**
   go into the whole-box `jbrain` export or into `backup.sh`, and `jbrain_minecraft` is left
   out of both, as the jcode volumes are. They live on their own shelf. Because of that, the
@@ -334,6 +401,10 @@ by owner decision, 2026-10-10).** Test the router before anything more drastic.
 - Note whether the router's app offers **UPnP** and **port forwarding**.
 - On the box: a throwaway UPnP probe maps UDP 19132, and the outside status-service ping
   confirms it from the internet.
+- **NetherNet changes what gets forwarded** (M0b): TCP 19132 for signaling plus a pinned
+  UDP range (`server-udp-ports`, for example 19140-19149), advertised with the public
+  address (`server-udp-ports=<public-ip>:19140-19149:19140-19149`). The UPnP helper maps
+  all of them, and the DNS updater keeps that advertised IP current.
 - **Gate**: if this passes, build path 1 only. The relay (path 2) is not built unless a
   probe fails.
 
@@ -785,6 +856,20 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
 
 1. **Achievements**: M0 reports what the pack does to achievements on this world, for the
    record. The owner has already accepted the add-on.
+2. **Per-player keep inventory: undecided (owner, 2026-10-10).** Bedrock's `keepInventory`
+   is a world-wide game rule, so a per-player version needs the M5 add-on. The approach
+   worked out, recorded for if it's chosen:
+   - Turn `keepInventory` on for the whole world. When a player who is **not** on the keep
+     list dies, the script drops their inventory, armor and off-hand at the death spot,
+     destroys Curse of Vanishing items, and resets their XP and drops roughly the vanilla
+     amount as orbs.
+   - That direction means a failed or disabled add-on leaves everyone keeping their items,
+     never losing them. The opposite (rule off, restore items on respawn) risks loss or
+     duplication around disconnects and restarts.
+   - It is owner-only, per player and per world, set from the Players section, never by
+     players through Dave.
+   - If it's chosen, M0 or M5 first checks that the inventory is still readable at
+     `entityDie` and that `spawnItem` works on stable APIs.
 
 ## 5. Risks
 

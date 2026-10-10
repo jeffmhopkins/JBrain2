@@ -167,6 +167,11 @@ services:
       JBRAIN_JLAUNCH_URL: ${JLAUNCH_URL:-http://jlaunch:9101}
       JBRAIN_JLAUNCH_ENABLED: ${JLAUNCH_ENABLED:-true}
       JBRAIN_JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}
+      # The Minecraft sidecar runs on the host network (see its service), so the api
+      # reaches its control port through the host gateway, with the bearer
+      # update-inner.sh mints.
+      JBRAIN_MINECRAFT_URL: ${MINECRAFT_URL:-http://host.docker.internal:19180}
+      JBRAIN_MINECRAFT_TOKEN: ${MINECRAFT_TOKEN:-}
       # The radio sidecar (docs/plans/SDR_RADIO_PLAN.md). Deliberately defaults EMPTY
       # rather than to http://sdr:8000: the service is profile-gated and absent on a box
       # with no dongle, so a hardcoded default would turn "this box has no radio" into a
@@ -249,7 +254,10 @@ services:
     # fenced network the headless browser sits on (BROWSER_AGENT_PLAN.md §2): the api drives
     # it over MCP, and `test_browser_compose.py` asserts nothing else but the egress proxy
     # joins it.
-    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel, browser, minecraft]
+    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel, browser]
+    # `host.docker.internal` -> the host, for the host-networked Minecraft sidecar.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -1068,10 +1076,17 @@ services:
   # volume at start and follows `MC_BDS_VERSION` (default: latest, because clients
   # auto-update and only join their exact version).
   #
+  # HOST NETWORK, and the M0b finding that forced it (2026-10-10): BDS 1.26 accepts only
+  # NetherNet, which signals over TCP on 19132, negotiates gameplay UDP ports per client,
+  # advertises the server's OWN address to the client, and finds LAN players (the Xbox's
+  # "LAN Games" list) by broadcast. On a bridge network the advertised address is the
+  # container's 172.x and broadcasts never arrive, so nobody on the LAN could join.
+  # With host networking the control port (MC_CONTROL_PORT, default 19180) is on the LAN
+  # too, so it takes the MINECRAFT_TOKEN bearer that update-inner.sh mints; with no token
+  # it refuses every call. The api reaches it through `host.docker.internal`.
+  #
   # NOT egress-free: BDS checks every player's Xbox Live sign-in and the wrapper fetches
-  # server updates. The control port (8000) is reachable only over the `minecraft`
-  # network, which only `api` shares; players reach the published UDP ports.
-  # `stop_grace_period` covers the console `stop` that flushes the world before exit.
+  # server updates. `stop_grace_period` covers the console `stop` that flushes the world.
   minecraft:
     logging: *logbound
     image: jbrain2-minecraft:local
@@ -1081,8 +1096,10 @@ services:
     restart: unless-stopped
     mem_limit: ${MC_MEM_LIMIT:-2g}
     stop_grace_period: 60s
+    network_mode: host
     environment:
-      MC_PORT: 8000
+      MC_PORT: ${MC_CONTROL_PORT:-19180}
+      MC_TOKEN: ${MINECRAFT_TOKEN:-}
       MC_BDS_VERSION: ${MC_BDS_VERSION:-latest}
       MC_SERVER_NAME: ${MC_SERVER_NAME:-JBrain}
       MC_LEVEL_NAME: ${MC_LEVEL_NAME:-world}
@@ -1092,13 +1109,9 @@ services:
       # Off for the LAN-only M0 test: the router forwards nothing, and an empty allowlist
       # would lock the family out. R1 (internet play) refuses to turn on with this off.
       MC_ALLOW_LIST: ${MC_ALLOW_LIST:-false}
-      MC_TRANSPORT: ${MC_TRANSPORT:-raknet}
-    ports:
-      - "${MC_BIND:-0.0.0.0}:19132:19132/udp"
-      - "${MC_BIND:-0.0.0.0}:19133:19133/udp"
+      MC_TRANSPORT: ${MC_TRANSPORT:-nethernet}
     volumes:
       - minecraft:/data
-    networks: [minecraft]
 
   # The panel flasher (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2). PART OF THE STOCK STACK,
   # like `pysandbox` and `htmlrender` and unlike `sdr` — and the difference is the reason
@@ -1206,9 +1219,6 @@ networks:
   # without a cable, and it has no business reaching the internet to do it.
   panel:
     internal: true
-  # The Minecraft sidecar's control network: only `minecraft` + `api` join it. Deliberately
-  # NOT `internal` — Bedrock needs the internet for Xbox Live sign-in and server updates.
-  minecraft:
   # EGRESS-FREE by declaration: the headless browser's network (BROWSER_AGENT_PLAN.md §2).
   # Only `browser`, `api` and `egress` join it — the api to drive the browser over MCP, the
   # proxy to be its single way out. With no gateway, the proxy's deny list is the only path to

@@ -252,9 +252,11 @@ def test_properties_are_set_in_place_and_comments_survive(tmp_path: Path) -> Non
     )
 
 
-def test_the_box_pins_raknet_and_console_script_output() -> None:
+def test_the_box_pins_nethernet_and_console_script_output() -> None:
+    # BDS 1.26 refuses players on RakNet ("NetherNet is the only supported transport"),
+    # measured on the box in M0b.
     got = install.env_overrides({})
-    assert got["transport"] == "raknet"
+    assert got["transport"] == "nethernet"
     assert got["content-log-console-output-enabled"] == "true"
     assert got["allow-list"] == "false"
     assert "level-seed" not in got
@@ -271,7 +273,57 @@ def test_property_overrides_refuse_the_pinned_ports_and_line_breaks(
         rig.set_overrides({"server-port": "25565"})
     with pytest.raises(ValueError):
         rig.set_overrides({"motd": "a\nb"})
-    rig.set_overrides({"transport": "nethernet"})
-    assert rig.properties()["transport"] == "nethernet"
-    rig.set_overrides({"transport": None})
+    rig.set_overrides({"transport": "raknet"})
     assert rig.properties()["transport"] == "raknet"
+    rig.set_overrides({"transport": None})
+    assert rig.properties()["transport"] == "nethernet"
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, token: str):
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    monkeypatch.setattr(server, "TOKEN", token)
+    monkeypatch.setattr(server, "RIG", server.Rig(env={}))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_port}"
+
+    def get(path: str, auth: str | None = None) -> int:
+        req = urllib.request.Request(base + path)
+        if auth is not None:
+            req.add_header("Authorization", auth)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status
+        except urllib.error.HTTPError as exc:
+            return exc.code
+
+    return httpd, get
+
+
+def test_the_control_port_needs_the_bearer_but_health_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Host-networked, so this port is on the LAN: anything but /healthz is the api's.
+    httpd, get = _serve(monkeypatch, "s3cret")
+    try:
+        assert get("/healthz") == 200
+        assert get("/properties") == 401
+        assert get("/properties", "Bearer wrong") == 401
+        assert get("/properties", "Bearer s3cret") == 200
+    finally:
+        httpd.shutdown()
+
+
+def test_no_token_configured_refuses_rather_than_running_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    httpd, get = _serve(monkeypatch, "")
+    try:
+        assert get("/healthz") == 200
+        assert get("/properties", "Bearer ") == 503
+    finally:
+        httpd.shutdown()

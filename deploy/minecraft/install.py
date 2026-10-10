@@ -151,9 +151,11 @@ def apply_properties(path: Path, overrides: dict[str, str]) -> None:
 def env_overrides(env: Mapping[str, str]) -> dict[str, str]:
     """The server.properties keys this box pins, from the compose environment.
 
-    `transport=raknet` is deliberate: BDS 1.26 defaults to `nethernet`, which can
-    allocate client UDP ports beyond 19132 that a single published port does not
-    cover. RakNet is one port plus LAN discovery on it — what M0 tests first.
+    `transport=nethernet` is forced by BDS 1.26 itself: on the box, a RakNet server
+    started and then logged that NetherNet is the only supported transport and players
+    cannot connect without it (M0b, 2026-10-10). NetherNet signals over TCP on
+    `server-port` and negotiates gameplay UDP ports per client, which is why the
+    container runs on the host network.
     `content-log-console-output-enabled` puts script `console.log` on stdout, which is
     the companion bridge's return channel (M5)."""
     out = {
@@ -163,10 +165,9 @@ def env_overrides(env: Mapping[str, str]) -> dict[str, str]:
         "difficulty": env.get("MC_DIFFICULTY", "normal"),
         "allow-list": env.get("MC_ALLOW_LIST", "false"),
         "online-mode": "true",
-        "transport": env.get("MC_TRANSPORT", "raknet"),
+        "transport": env.get("MC_TRANSPORT", "nethernet"),
         "enable-lan-visibility": "true",
         "server-port": "19132",
-        "server-portv6": "19133",
         "content-log-console-output-enabled": "true",
     }
     seed = env.get("MC_LEVEL_SEED", "")

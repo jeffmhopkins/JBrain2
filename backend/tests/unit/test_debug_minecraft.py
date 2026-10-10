@@ -18,7 +18,11 @@ from fastapi import HTTPException
 
 from jbrain.api import debug_minecraft as mc
 
-SETTINGS: Any = SimpleNamespace(minecraft_url="http://minecraft:8000", supervisor_token="t")
+SETTINGS: Any = SimpleNamespace(
+    minecraft_url="http://host.docker.internal:19180",
+    minecraft_token="mc-tok",
+    supervisor_token="t",
+)
 PRINCIPAL: Any = SimpleNamespace(id="x", label="l", kind="capability_token")
 
 
@@ -150,7 +154,21 @@ async def test_no_minecraft_url_is_a_503_naming_the_absence() -> None:
     with pytest.raises(HTTPException) as exc:
         await mc.minecraft_snapshots(
             _request(FakeSupervisor(RUNNING)),
-            cast(Any, SimpleNamespace(minecraft_url="", supervisor_token="t")),
+            cast(Any, SimpleNamespace(minecraft_url="", minecraft_token="", supervisor_token="t")),
             PRINCIPAL,
         )
     assert exc.value.status_code == 503
+
+
+async def test_every_sidecar_call_carries_the_bearer(sidecar) -> None:
+    seen, _ = sidecar
+    await mc.minecraft_snapshots(_request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL)
+    assert seen[0].headers["Authorization"] == "Bearer mc-tok"
+
+
+async def test_a_sidecar_auth_refusal_is_a_deploy_fault_not_a_state(sidecar) -> None:
+    _, replies = sidecar
+    replies["/snapshots"] = httpx.Response(401, json={"detail": "unauthorized"})
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_snapshots(_request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL)
+    assert exc.value.status_code == 502
