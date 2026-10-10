@@ -1501,7 +1501,7 @@ function RuleRow({
   return (
     <div className={`mc-rule ${r.kind}`}>
       <span className="mc-rl">
-        <span className="mc-rt">{r.label}</span>
+        <span className="mc-rtl">{r.label}</span>
         {r.sub && <span className="mc-rs">{r.sub}</span>}
         <span className="mc-rid mc-mono">{r.id}</span>
         {(pending || changed) && (

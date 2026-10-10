@@ -31384,7 +31384,7 @@ button.wf-sigpill {
   font-weight: 400;
 }
 
-.mc-loaded {
+.badge.mc-loaded {
   color: var(--ok-text);
   flex: none;
 }
@@ -31680,7 +31680,8 @@ button.wf-sigpill {
 /* The live/pending note stays in view while the rules scroll under it. */
 .mc-rules-note {
   position: sticky;
-  top: 0;
+  /* Flush under the bar: the scroller's own top padding would show rules above it. */
+  top: -8px;
   z-index: 1;
   margin: 0 -2px;
   padding: 10px 2px;
@@ -31821,7 +31822,7 @@ button.wf-sigpill {
   flex-direction: column;
 }
 
-.mc-rt {
+.mc-rtl {
   font-size: var(--fs-secondary);
 }
 
@@ -32168,4 +32169,13 @@ button.wf-sigpill {
   background: var(--steel-tint);
   border-color: transparent;
   color: var(--steel-text);
+}
+
+/* The switch's hit area clears 44px once its own border is counted. */
+.mc-switch::after {
+  inset: -10px -1px;
+}
+
+.mc-layer .back-btn {
+  min-height: 44px;
 }
