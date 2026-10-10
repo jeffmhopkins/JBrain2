@@ -408,9 +408,9 @@ describe("Launcher Minecraft tile", () => {
   });
 });
 
-// Long-press greys a tile, and it drops out 5s later unless pressed again; hidden tiles
-// collect behind a "Hidden" tile that expands them, where a long-press restores one.
-describe("Launcher long-press hide", () => {
+// The grid arranges like a phone home screen: a long-press enters edit mode, where a
+// tile drags to a new slot and its × hides it; hidden tiles sit behind a "Hidden" tile.
+describe("Launcher arranging", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     localStorage.clear();
@@ -427,71 +427,120 @@ describe("Launcher long-press hide", () => {
     localStorage.clear();
   });
 
+  const tile = (name: string) => screen.getByRole("button", { name });
+  const pt = (x = 0, y = 0) => ({ pointerId: 1, button: 0, clientX: x, clientY: y });
+
   function longPress(name: string) {
-    const tile = screen.getByRole("button", { name });
-    fireEvent.pointerDown(tile);
+    fireEvent.pointerDown(tile(name), pt());
     act(() => vi.advanceTimersByTime(500));
-    fireEvent.pointerUp(tile);
-    fireEvent.click(tile);
+    fireEvent.pointerUp(tile(name), pt());
+    fireEvent.click(tile(name));
   }
 
-  it("greys the tile, hides it after the grace window, and doesn't navigate", () => {
+  function rect(el: HTMLElement, left: number, top: number) {
+    el.getBoundingClientRect = () =>
+      ({ left, top, right: left + 100, bottom: top + 100, width: 100, height: 100 }) as DOMRect;
+  }
+
+  it("has no section headers", () => {
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    expect(screen.queryByText("Knowledge")).toBeNull();
+    expect(screen.queryByText("System")).toBeNull();
+  });
+
+  it("enters edit mode on long-press without navigating; taps don't navigate until Done", () => {
     const onNavigate = vi.fn();
     render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
 
     longPress("Pet");
+    expect(tile("Pet")).toHaveClass("tile-editing");
+    fireEvent.click(tile("Ops"));
     expect(onNavigate).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Pet" })).toHaveClass("tile-pending");
 
-    act(() => vi.advanceTimersByTime(5_000));
-    expect(screen.queryByRole("button", { name: "Pet" })).toBeNull();
-    expect(JSON.parse(localStorage.getItem("jb.launcher.hidden") ?? "[]")).toEqual(["petcontrol"]);
-  });
-
-  it("keeps the tile when long-pressed again inside the grace window", () => {
-    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
-
-    longPress("Pet");
-    act(() => vi.advanceTimersByTime(2_000));
-    longPress("Pet");
-    act(() => vi.advanceTimersByTime(10_000));
-    expect(screen.getByRole("button", { name: "Pet" })).not.toHaveClass("tile-pending");
+    fireEvent.click(tile("Done"));
+    expect(tile("Pet")).not.toHaveClass("tile-editing");
+    fireEvent.click(tile("Ops"));
+    expect(onNavigate).toHaveBeenCalledWith("ops");
   });
 
   it("a short tap still navigates", () => {
     const onNavigate = vi.fn();
     render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
 
-    const tile = screen.getByRole("button", { name: "Pet" });
-    fireEvent.pointerDown(tile);
+    fireEvent.pointerDown(tile("Pet"), pt());
     act(() => vi.advanceTimersByTime(200));
-    fireEvent.pointerUp(tile);
-    fireEvent.click(tile);
+    fireEvent.pointerUp(tile("Pet"), pt());
+    fireEvent.click(tile("Pet"));
     act(() => vi.advanceTimersByTime(1_000));
     expect(onNavigate).toHaveBeenCalledWith("petcontrol");
-    expect(tile).not.toHaveClass("tile-pending");
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
   });
 
-  it("expands hidden tiles behind the Hidden tile and restores one on long-press", () => {
-    localStorage.setItem("jb.launcher.hidden", JSON.stringify(["petcontrol"]));
+  it("a press that drifts is a scroll, not an edit", () => {
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    fireEvent.pointerDown(tile("Pet"), pt(0, 0));
+    fireEvent.pointerMove(tile("Pet"), pt(0, 40));
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+  });
+
+  it("drags a tile onto another's slot and remembers the order", () => {
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    rect(tile("Search"), 0, 0);
+    rect(tile("Wiki"), 200, 0);
+
+    // Long-press Search and, without lifting, carry it over Wiki.
+    fireEvent.pointerDown(tile("Search"), pt(50, 50));
+    act(() => vi.advanceTimersByTime(500));
+    fireEvent.pointerMove(tile("Search"), pt(250, 50));
+    fireEvent.pointerUp(tile("Search"), pt(250, 50));
+
+    const order = JSON.parse(localStorage.getItem("jb.launcher.order") ?? "[]");
+    expect(order.slice(0, 3)).toEqual(["research", "wiki", "search"]);
+    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(names.indexOf("Search")).toBeGreaterThan(names.indexOf("Wiki"));
+  });
+
+  it("hides with ×, collects behind Hidden, and + restores the tile", () => {
     const onNavigate = vi.fn();
     render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
 
+    longPress("Pet");
+    fireEvent.click(tile("Hide Pet"));
+    expect(JSON.parse(localStorage.getItem("jb.launcher.hidden") ?? "[]")).toEqual(["petcontrol"]);
+    // In edit mode the hidden tray is open with a + to restore.
+    expect(tile("Show Pet")).toBeInTheDocument();
+
+    fireEvent.click(tile("Done"));
     expect(screen.queryByRole("button", { name: "Pet" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Hidden/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Pet" }));
+    fireEvent.click(tile("Hidden 1"));
+    fireEvent.click(tile("Pet"));
     expect(onNavigate).toHaveBeenCalledWith("petcontrol");
 
-    longPress("Pet");
-    expect(screen.queryByRole("button", { name: /Hidden/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Pet" })).toBeInTheDocument();
+    longPress("Ops");
+    fireEvent.click(tile("Show Pet"));
     expect(localStorage.getItem("jb.launcher.hidden")).toBe("[]");
+    fireEvent.click(tile("Done"));
+    expect(screen.queryByRole("button", { name: /Hidden/ })).toBeNull();
+    expect(tile("Pet")).toBeInTheDocument();
   });
 
-  it("closing inside the grace window still hides the tile", () => {
-    const { unmount } = render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+  it("restores a saved order and appends tiles it has never seen", () => {
+    localStorage.setItem("jb.launcher.order", JSON.stringify(["ops", "bogus", "search"]));
+    render(<Launcher open onClose={() => {}} onNavigate={() => {}} />);
+    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    const tiles = names.filter((n) => n === "Ops" || n === "Search" || n === "Research");
+    expect(tiles).toEqual(["Ops", "Search", "Research"]);
+  });
+
+  it("Escape leaves edit mode before it closes the launcher", () => {
+    const onClose = vi.fn();
+    render(<Launcher open onClose={onClose} onNavigate={() => {}} />);
     longPress("Pet");
-    unmount();
-    expect(JSON.parse(localStorage.getItem("jb.launcher.hidden") ?? "[]")).toEqual(["petcontrol"]);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
   });
 });

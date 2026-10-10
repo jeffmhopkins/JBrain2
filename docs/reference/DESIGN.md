@@ -1634,8 +1634,9 @@ local append with an amber "pending sync" chip until the outbox clears.
 ## Navigation: the card launcher (no bottom nav)
 
 There is **no bottom tab bar**. Navigation is a full-screen **card
-launcher** (the v1 knowledge-hub tile grid: 3-column tiles under uppercase
-section headers — KNOWLEDGE, AUTHORING, SYSTEM):
+launcher** (the v1 knowledge-hub tile grid: one flat 3-column grid — the
+KNOWLEDGE / AUTHORING / SYSTEM section headers were dropped once the owner could
+arrange the grid themselves):
 
 - Opened by **swiping up on the omnibox** (settled when the top bar's right
   cluster became the vitals chart — the bolt icon that used to open it is gone).
@@ -1648,12 +1649,16 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   the whole screen.
 - Every overlay surface must have a visible, tappable exit; a gesture is
   never the only way out (settled in Phase 1 polish).
-- **Long-press hides a tile.** The tile greys out and drops from the grid 5s
-  later; a second long-press inside that window keeps it. Hidden tiles collect
-  behind a **Hidden** tile (last in SYSTEM, shown only when something is hidden,
-  with the count) that expands them in a section below, where a tap still opens
-  one and a long-press restores it. The hidden set is device-local
-  (`jb.launcher.hidden`) — a per-phone layout choice, not a box setting.
+- **The owner arranges it like a phone home screen.** A long-press enters edit
+  mode (tiles wiggle; a **Done** button joins the head; Escape leaves edit mode
+  before it closes the launcher). Still holding, the finger carries the tile;
+  in edit mode any press is a pickup, and the tile under the finger yields its
+  slot live. Each tile's **×** hides it; hidden tiles collect behind a **Hidden**
+  tile (last in the grid, with the count) that expands them below a rule, where
+  a tap still opens one and, in edit mode, a **+** returns it to the slot it
+  left. Taps don't navigate in edit mode. Order and hidden set are device-local
+  (`jb.launcher.order`, `jb.launcher.hidden`) — a per-phone layout choice, not a
+  box setting; a tile added later appends to the end.
 - **Navigation is a tree, and swiping down climbs it** (settled in Phase 1
   polish): card screen → (swipe down at scroll-top) → launcher → (swipe
   down) → home. Swipe up on the omnibox descends into the launcher. The
