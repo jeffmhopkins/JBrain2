@@ -982,6 +982,9 @@ The private chest is the design below. The cargo chest follows it.
     until one exists. The **next red cargo chest that player places** becomes the
     receiver. An existing sender is never silently promoted, so items never start
     piling up somewhere unexpected.
+  - **Re-dyeing follows the same rule:** a cargo chest dyed to a new colour becomes that
+    colour's receiver only if the colour has none, and otherwise it's a sender. Its
+    contents stay in it either way.
 - **Moves are real `Container.moveItem` calls**, stable, run inside one script tick.
   Items keep all their data and can't be duplicated.
 - **Back-pressure:** when the receiver is full, items simply wait in the sender, just
