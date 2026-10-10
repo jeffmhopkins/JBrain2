@@ -74,6 +74,8 @@ describe("OpsScreen · Minecraft", () => {
     const tile = await screen.findByRole("button", {
       name: `Minecraft: running — ${RUNNING} · BlockyFox and Mira_P on`,
     });
+    // The same green dot the launcher tile carries: a running server is news worth a glance.
+    expect(tile.querySelector(".mc-tile-dot.ok")).not.toBeNull();
     fireEvent.click(tile);
     expect(open).toHaveBeenCalledOnce();
   });
@@ -84,7 +86,7 @@ describe("OpsScreen · Minecraft", () => {
     const tile = await screen.findByRole("button", {
       name: new RegExp(`^Minecraft: .* — update available · ${LATEST} — newer clients can't join`),
     });
-    expect(tile.querySelector(".ops-tile-dot.warn")).not.toBeNull();
+    expect(tile.querySelector(".mc-tile-dot.warn")).not.toBeNull();
   });
 
   it("the tile is absent on a box with no Minecraft container", async () => {
