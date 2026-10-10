@@ -522,9 +522,13 @@
   .job-ph{font-size:var(--fs-secondary);color:var(--text-2);}
   .job-ph b{color:var(--text);font-weight:500;}
   .hint .hb{color:var(--text);font-weight:500;}
-  #toast.lift{bottom:auto;top:66px;transform:translateX(-50%) translateY(-12px);}
-  #toast.lift.show{transform:translateX(-50%) translateY(0);}
+  /* room under Reset all, so the bottom toast never sits on it */
+  .rules .rfoot{padding-bottom:76px;}
+  .rules-in .rules .rfoot{padding-bottom:0;}
   @media (max-width:360px){ .c-tabs button{font-size:12px;padding:0 2px;} .c-tabs .cnt{margin-left:3px;} }
+  .file .fn{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;}
+  .seedbox{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;font-size:13px;line-height:1.3;padding-top:6px;padding-bottom:6px;}
+  @media (max-width:360px){ .c-tabs button{display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15;text-overflow:clip;} .c-tabs .cnt{margin-left:0;font-size:10.5px;} }
 
 </style>
 </head>
@@ -1053,7 +1057,7 @@ function slotSettings(s) {
   if (isEmpty(s)) return '';
   const when = s.id !== S.active ? `Not loaded — a change is saved and applied when ${esc(s.name)} next loads.`
     : !running() ? 'Loaded, server stopped — a change is applied when the server starts.'
-    : 'Loaded and running — difficulty changes live. Cheats, and game mode, apply at the next restart.';
+    : 'Loaded and running — difficulty changes live; game mode and cheats apply at the next restart.';
   const pend = k => s.p && s.p[k] ? '<span class="pend">pending</span>' : '';
   return `<p class="hint ${liveNow(s) ? 'live' : ''}">${when}</p>
     <div class="set"><div class="set-l"><span>Game mode ${pend('mode')}</span></div>${seg('mode', ['Survival','Creative','Adventure'], s.mode, o => `set:${s.id}|mode|${o}`, 'Game mode')}<span class="hint">The default for new players and new characters — anyone who has played keeps their own mode.</span></div>
@@ -1431,9 +1435,7 @@ const RULE_GROUPS = [
   ]],
 ];
 const RULES = {};
-/* A rules edit's toast lifts clear of the editor's Reset-all footer. */
-const _toast = toast;
-toast = msg => { _toast(msg); const t = document.getElementById('toast'); t.classList.toggle('lift', !!document.querySelector('.rules')); };
+
 RULE_GROUPS.forEach(([g, , rows]) => rows.forEach(([id, label, def, sub, o]) => { RULES[id] = {id, label, def, sub, g, ...(o || {})}; }));
 const fmtNum = v => typeof v === 'number' ? v.toLocaleString('en-US') : v;
 const ruleWord = (r, v) => typeof v === 'boolean' ? (v ? 'on' : 'off') : `${fmtNum(v)}${r.unit || ''}`;
