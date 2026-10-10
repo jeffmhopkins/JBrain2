@@ -249,33 +249,76 @@ scheduled.
 - Tests: the snapshot protocol against the fake BDS (hold → query → truncate → resume, and
   resume still runs on error), count retention with pins, and restore ordering.
 
-### R1 — Remote play for the brothers (optional, after M1)
+### R1 — Remote play for the brothers, through the Cloudflare tunnel (optional, after M1)
 
-The brothers play over the internet, and only up to 4 players ever connect. Two problems have
-to be solved separately: **getting packets to the box**, and **letting an Xbox find the
-server**.
+The brothers are on Windows, and only up to 4 players ever connect. The owner wants the game
+to come in through the **existing Cloudflare tunnel**, so there's no router change and the
+home IP stays private.
 
-**Reachability.** Pick one:
+**What the tunnel can and can't carry.** Bedrock speaks **UDP** on port 19132. The tunnel's
+**public hostnames** carry only HTTP/WebSocket (and TCP with a client-side helper). So there
+is no `mc.<domain>` that any Bedrock client can just type in. Cloudflare's product for public
+UDP (Spectrum) is an Enterprise feature. What the tunnel **does** carry is UDP to a **private
+network** that the box advertises. Clients reach that network by running Cloudflare's **WARP
+client** (Cloudflare One agent), signed in to the owner's Zero Trust team. The free Zero Trust
+plan covers up to 50 users. This fits "the brothers": they are known people on Windows, and
+WARP runs on Windows.
 
-| Option | What it takes | Notes |
-|---|---|---|
-| **Router port-forward** of UDP 19132 to the box | One change on the owner's router. That is not a box terminal step. | Lowest latency, and no third party. The home IP can change, so add a small **dynamic DNS** updater: the box keeps an A record such as `mc.<domain>` current through the owner's existing Cloudflare zone. It is a backend job, not a sidecar. |
-| **UDP relay agent** (playit.gg-style) as a second container in the `minecraft` profile | No router change. The agent is claimed through a web link that the PWA shows. | Adds a third party and a hop. The brothers connect to the address the relay assigns. |
+```
+brother's PC: Minecraft ─UDP→ WARP client ─→ Cloudflare ─→ existing tunnel ─→ cloudflared
+   ─UDP→ minecraft:19132 (a pinned private subnet, e.g. 10.193.19.0/29)
+```
 
-Tailscale doesn't help here, because an Xbox can't run it.
+**Box side** (a compose change that ships through **Ops → Update**, no terminal):
 
-**Finding the server:**
+- `cloudflared` joins the `minecraft` network.
+- That network gets a **pinned, unusual subnet**, and the minecraft container a fixed address.
+  An ordinary `192.168.x.x` would likely collide with the brothers' own home networks.
+- The brothers add the server at that fixed address. Players at home keep using the LAN or
+  the box's own address.
+- If M0 forced host networking for the container, cloudflared routes to the box's LAN address
+  instead, with the same collision caveat.
 
-- **The brothers are on Windows (owner decision, 2026-10-10).** They add the address under
-  **Servers → Add Server**, and that's all.
-- **Not built unless needed**: if a remote Xbox player is ever added, an Xbox can't type an
-  address. The route then is a **broadcaster** (MCXboxBroadcast-style) as a third container.
-  It signs in to a spare Microsoft account through a device code that the PWA shows, and the
-  server then appears in that account's friends' **Friends** tab.
-- The **allowlist** (M2) is mandatory once the port is reachable from outside. The brothers'
-  gamertags go on it from the PWA.
+**Dashboard side** (the owner, in a browser, once; the tunnel is token-managed, so all of this
+is in the dashboard, not on the box):
 
-Exit: one brother joins from outside the home network, and the server shows them on the Ops
+1. Turn on **WARP-to-Tunnel / private network routing** and add the subnet as a route on the
+   existing tunnel.
+2. Create a **device enrollment rule** that lets in the brothers' email addresses (one-time PIN
+   login).
+3. Set **split tunnels to Include mode**, listing only that subnet. WARP then carries only game
+   traffic, and the rest of the brothers' internet use is untouched.
+
+These steps get a new runbook section beside `CLOUDFLARE_TUNNEL.md`.
+
+**Brother side, once:**
+
+1. Install WARP.
+2. Join the owner's team name and sign in with the emailed PIN.
+3. In Minecraft, **Servers → Add Server** with the fixed address and port 19132.
+4. While playing, WARP must be connected.
+
+**Caveats, which M0 or R1 verify on the real box:**
+
+- cloudflared proxies UDP only over its **QUIC** transport. If the box's outbound UDP 7844 is
+  blocked, cloudflared falls back to HTTP/2, which carries no UDP. Ops shows the connector's
+  protocol.
+- Latency goes through a Cloudflare hop. That should be fine for 1–4 players, but it gets
+  measured.
+- The **allowlist** (M2) still gates by gamertag. WARP adds a second gate in front: only
+  enrolled people can reach the address at all.
+
+**Fallbacks, if WARP proves unworkable:**
+
+- A router port-forward of UDP 19132, plus a dynamic-DNS record kept current through the
+  Cloudflare API.
+- A playit.gg-style relay container.
+
+A remote Xbox player would need neither of these: WARP doesn't run on Xbox, so that case
+would need an MCXboxBroadcast-style broadcaster plus a port-forward. It is recorded here and
+not built.
+
+Exit: one brother joins from his own house through WARP, and the server shows him on the Ops
 card.
 
 ### M4 — World index (the companion's long-term memory of the world)
@@ -283,14 +326,14 @@ card.
 - After each snapshot, the wrapper parses **the snapshot copy** and streams JSONL. The backend
   upserts it into owner-RLS'd tables:
   - `app.mc_snapshots`
-
-  Every row in these tables is keyed by **slot**. Dave answers only about the active slot.
   - `app.mc_chunks` (explored chunks per dimension)
   - `app.mc_entities` (type, position, dimension, name tag, snapshot)
   - `app.mc_block_entities` (chests and their contents, signs, spawners, beds)
   - `app.mc_structures` (from the per-chunk hardcoded spawn areas: fortress, witch hut, ocean
     monument, pillager outpost)
   - `app.mc_players` (last position, spawn, dimension)
+
+  Every row in these tables is keyed by **slot**. Dave answers only about the active slot.
 
   Each table gets an RLS isolation test.
 - The native LevelDB dependency stays **in the sidecar image**, not in the backend.
@@ -379,6 +422,8 @@ card.
 
 - **Players**: 1–4 people, mostly on the home network. Brothers may join over the internet,
   which is wave R1.
+- **Remote play path**: through the existing **Cloudflare tunnel**, using WARP private-network
+  routing (R1). Port-forward and relay are fallbacks only.
 - **Devices**: Windows and Xbox on the home network. Remote players (the brothers) are on
   Windows only, so they join by address and no Xbox broadcaster is needed. The home Xbox means
   LAN discovery has to work (M0 and M1).
@@ -397,9 +442,7 @@ card.
 
 **Still open:**
 
-1. **How remote packets reach the box**: a router port-forward or a relay (R1). This can wait
-   until R1.
-2. **Achievements**: M0 reports what the pack does to achievements on this world, for the
+1. **Achievements**: M0 reports what the pack does to achievements on this world, for the
    record. The owner has already accepted the add-on.
 
 ## 5. Risks
@@ -424,8 +467,8 @@ public or unallowlisted servers. Letting the bot build, teleport, or give items.
 
 - **Publishing UDP 19132 on the LAN** comes for free with the compose `ports:` entry once the
   profile is created by an in-PWA update. No host step is needed.
-- **Internet play (R1)** needs either a router port-forward or a relay agent. A port-forward
-  is a change on the owner's own router, not on the box. A relay agent is claimed through a
-  link the PWA shows. Neither needs a box terminal.
+- **Internet play (R1)** goes through the existing tunnel. The box-side change ships through
+  Ops → Update. The rest is the Cloudflare dashboard (owner, in a browser) and the WARP client
+  on the brothers' PCs. Neither touches a box terminal.
 - **Nothing else** in M1–M6 needs host access. If M0 finds a step that does, it gets designed
   out before the wave is scheduled.
