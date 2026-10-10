@@ -702,7 +702,8 @@ is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
 §"Agent selection"), and it gets the owner tier of every tool. Both agents share the same
 `mc_*` handlers; only the allowlist and the tier differ.
 
-**The persona** (working id `minecraft`; display name is the owner's call):
+**The persona** (id `minecraft_dave`; display name **Minecraft_Dave**, owner decision
+2026-10-10):
 - **System prompt:** a Minecraft-savvy helper for the owner's server and family worlds.
   World data is the source of truth; game knowledge comes from looked-up data, not
   recall.
@@ -805,7 +806,6 @@ screen's "Maps" section (M8) reuses the same component.
   gate), also embedded on the Minecraft screen.
 
 **Open for the owner:**
-- the persona's display name;
 - whether memory and log writes need approval or are free (a log entry is meant to be
   quick, so free is the suggested default);
 - which model it runs on (local by default);
