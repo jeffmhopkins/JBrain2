@@ -18,6 +18,10 @@ see `docs/ROADMAP.md` for current status. Completed build plans and design
 research live under `docs/archive/` (see `docs/README.md` for the full map). How
 those docs are kept true — the two doc kinds, the freshness header, and the
 archive-on-merge rule — is `docs/DOC_LIFECYCLE.md`, enforced by the `docs` CI gate.
+The Minecraft world's story (the Old Makers, Dave the satellite AI, the crew, the
+Tricorder, and Dave's in-game words) is canon in the Bleepbloop_City repo's
+`notes/lore.md`. That page is the source of truth; jbrain2 only implements it, and when
+they disagree the code and docs here are fixed to match it.
 
 ## Non-negotiables for all code in this repo
 
