@@ -39,19 +39,19 @@
       "h": 720,
       "title": "3 \u00b7 Holding KEY \u2014 talking to Jerv"
     },
-    "Elora.dc.html": {
+    "Quorra.dc.html": {
       "x": 0,
       "y": 1903,
       "w": 720,
       "h": 720,
-      "title": "4 \u00b7 Elora thread (unplayed message)"
+      "title": "4 \u00b7 Quorra thread (unplayed message)"
     },
-    "RecElora.dc.html": {
+    "RecQuorra.dc.html": {
       "x": 800,
       "y": 1903,
       "w": 720,
       "h": 720,
-      "title": "5 \u00b7 Holding KEY \u2014 message to Elora"
+      "title": "5 \u00b7 Holding KEY \u2014 message to Quorra"
     },
     "Minecraft.dc.html": {
       "x": 1600,
@@ -123,8 +123,8 @@
     "Home.dc.html",
     "Jerv.dc.html",
     "RecJerv.dc.html",
-    "Elora.dc.html",
-    "RecElora.dc.html",
+    "Quorra.dc.html",
+    "RecQuorra.dc.html",
     "Minecraft.dc.html",
     "Settings.dc.html",
     "Updating.dc.html",

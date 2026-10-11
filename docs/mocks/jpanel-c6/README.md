@@ -13,8 +13,8 @@ panel, the others import it at a fixed `start` state).
 
 ## What was decided
 
-- **Home, page 1:** Jerv top-left, Minecraft top-right (dimmed, "Soon" — not built), Elora
-  bottom-left, Lydian bottom-right. Unplayed messages ride the tile as an amber count.
+- **Home, page 1:** Jerv top-left, Minecraft top-right (dimmed, "Soon" — not built), Quorra
+  bottom-left, Tamsin bottom-right. Unplayed messages ride the tile as an amber count.
 - **Home, page 2 (swipe left):** Clock, then Settings. Kept off page 1 because it is rarely used and the
   four main tiles already fill the glass.
 - **Buttons:** KEY (left) is hold-to-talk, PWR (middle) screen on/off, BOOT (right) home /
@@ -36,7 +36,7 @@ panel, the others import it at a fixed `start` state).
   (**Calibrate**: the twins' 16-target, taps-until-they-agree routine; BOOT cancels and
   keeps the old map).
 - **Ground is pure black** (an unlit AMOLED pixel is off); colours are `DESIGN.md`'s accents:
-  Jerv violet, Elora amber, Lydian teal, Minecraft green, steel for actions.
+  Jerv violet, Quorra amber, Tamsin teal, Minecraft green, steel for actions.
 - **Clock:** opens on a **giant 24-hour time** and nothing else. Tapping it opens the alarm
   list (next alarm, on/off switches only); back returns to the face. Everything is 24-hour,
   on the panel and in the PWA editor. Alarms are **created and edited in the PWA** (jpanel →

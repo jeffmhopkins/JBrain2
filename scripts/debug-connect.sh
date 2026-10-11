@@ -688,7 +688,7 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
-  panel-flash) # [--port /dev/ttyACM0] [--name Elora] [--role jpet|display] [--board ID] [--erase] — flash a panel
+  panel-flash) # [--port /dev/ttyACM0] [--name Quorra] [--role jpet|display] [--board ID] [--erase] — flash a panel
     # Uses the network the owner asked this box to REMEMBER; a Wi-Fi password is never
     # taken from here, because it would then live in a debug transcript. Mints a fresh
     # device key and retires the ones it replaced — which the flash only started actually

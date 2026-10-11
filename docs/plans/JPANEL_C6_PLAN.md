@@ -6,7 +6,7 @@
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
-not a pet. It is an owner's tool: talk to Jerv, post voice to Elora and Lydian, a clock with
+not a pet. It is an owner's tool: talk to Jerv, post voice to Quorra and Tamsin, a clock with
 alarms, settings — and later Minecraft.
 
 The approved on-glass design is `../mocks/jpanel-c6/` (README there lists every decision).
@@ -19,7 +19,7 @@ The owner: *"all these apps [should be] self-contained little things that we can
 their own … a central UI library that it pulls stuff from, but the clock versus jerv versus
 all this should have its own little object."*
 
-That is the architecture, not a style preference. Each app — **Jerv, Thread (Elora, Lydian),
+That is the architecture, not a style preference. Each app — **Jerv, Thread (Quorra, Tamsin),
 Clock, Settings, Minecraft** — lives in its own ESP-IDF component, depends only on the UI kit
 and on service *interfaces*, and can be built, run and tested without any other app present.
 
@@ -33,7 +33,7 @@ firmware-c6/
     svc_*/              services: one owner per chip (display, touch, audio, power, rtc,
                         buttons) and per box route (box client, talk upload, messages, alarms)
     app_jerv/
-    app_thread/         ONE app, instantiated twice (Elora, Lydian) with a config
+    app_thread/         ONE app, instantiated twice (Quorra, Tamsin) with a config
     app_clock/
     app_settings/
     app_minecraft/      a stub until the Minecraft wave

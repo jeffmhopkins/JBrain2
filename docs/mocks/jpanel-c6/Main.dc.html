@@ -387,13 +387,13 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","elora","rec-elora","lydian","minecraft","settings","updating","calib","clock","clock-night","clock-alarms","ringing"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-alarms","ringing"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
       jerv: { color: '#A493C9', tint: 'rgba(164,147,201,0.16)', name: 'Jerv', initial: '' },
-      elora: { color: '#C9A36A', tint: 'rgba(201,163,106,0.16)', name: 'Elora', initial: 'E' },
-      lydian: { color: '#6FB6B1', tint: 'rgba(111,182,177,0.16)', name: 'Lydian', initial: 'L' },
+      quorra: { color: '#C9A36A', tint: 'rgba(201,163,106,0.16)', name: 'Quorra', initial: 'Q' },
+      tamsin: { color: '#6FB6B1', tint: 'rgba(111,182,177,0.16)', name: 'Tamsin', initial: 'T' },
       minecraft: { color: '#8FBC9A', tint: 'rgba(143,188,154,0.16)', name: 'Minecraft', initial: '' },
       settings: { color: '#C4C7CC', tint: '#1E2024', name: 'Settings', initial: '' },
       clock: { color: '#E6E7E9', tint: '#1E2024', name: 'Alarms', initial: '' }
@@ -406,11 +406,11 @@ class Component extends DCLogic {
         { id: 1, from: 'me', kind: 'voice', durS: 3, text: 'Add milk to the shopping list.' },
         { id: 2, from: 'them', kind: 'text', text: 'Added milk to your shopping list.' }
       ],
-      elora: [
+      quorra: [
         { id: 3, from: 'me', kind: 'voice', durS: 4, text: 'Have a good day at school!', status: 'Played' },
         { id: 4, from: 'them', kind: 'voice', durS: 5, text: 'Daddy, when are you coming home?', played: false }
       ],
-      lydian: [
+      tamsin: [
         { id: 5, from: 'them', kind: 'voice', durS: 3, text: 'I made you a drawing.', played: true },
         { id: 6, from: 'me', kind: 'voice', durS: 2, text: "I can't wait to see it!", status: 'Played' }
       ]
@@ -426,7 +426,7 @@ class Component extends DCLogic {
         { id: 3, h: 21, m: 0, days: 'Every day', label: 'Girls to bed', on: true }
       ] };
     if (start === 'home-p2') s.page = 1;
-    if (start === 'jerv' || start === 'elora' || start === 'lydian' || start === 'minecraft') s.screen = start;
+    if (start === 'jerv' || start === 'quorra' || start === 'tamsin' || start === 'minecraft') s.screen = start;
     if (start === 'settings') s.screen = 'settings';
     if (start === 'updating') { s.screen = 'settings'; s.fw = { version: '0.0.1', phase: 'downloading', pct: 64 }; }
     if (start === 'calib') { s.screen = 'settings'; s.calib = { i: 5, taps: 1 }; }
@@ -435,7 +435,7 @@ class Component extends DCLogic {
     if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
     if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
-    if (start === 'rec-elora') { s.screen = 'elora'; s.rec = { to: 'elora', secs: 4.1, frozen: true }; }
+    if (start === 'rec-quorra') { s.screen = 'quorra'; s.rec = { to: 'quorra', secs: 4.1, frozen: true }; }
     return s;
   }
 
@@ -671,8 +671,8 @@ class Component extends DCLogic {
     if (secs < 0.6) { this.put({ rec: null }); this.say('Hold KEY the whole time you talk'); return; }
     const said = {
       jerv: ['Remind me to call the vet tomorrow at nine.', 'Turn the porch light off at eleven.'],
-      elora: ['Goodnight sweetheart, sleep well.', "I'll be home in twenty minutes."],
-      lydian: ['Goodnight, sleep tight.', "I'll be home in twenty minutes."]
+      quorra: ['Goodnight sweetheart, sleep well.', "I'll be home in twenty minutes."],
+      tamsin: ['Goodnight, sleep tight.', "I'll be home in twenty minutes."]
     }[to];
     const id = s.nextId;
     const text = said[s.said % said.length];
@@ -726,10 +726,10 @@ class Component extends DCLogic {
     };
     const tile = (key) => {
       const a = A[key];
-      const badge = key === 'elora' || key === 'lydian' ? this.unplayed(s.threads[key]) : 0;
+      const badge = key === 'quorra' || key === 'tamsin' ? this.unplayed(s.threads[key]) : 0;
       return {
         key: key, label: a.name, initial: a.initial, color: a.color, tint: a.tint,
-        isJerv: key === 'jerv', isCube: key === 'minecraft', isPerson: key === 'elora' || key === 'lydian',
+        isJerv: key === 'jerv', isCube: key === 'minecraft', isPerson: key === 'quorra' || key === 'tamsin',
         soon: key === 'minecraft', hasBadge: badge > 0, badge: badge,
         iconOpacity: key === 'minecraft' ? 0.45 : 1,
         labelColor: key === 'minecraft' ? '#9A9DA3' : '#E6E7E9',
@@ -776,7 +776,7 @@ class Component extends DCLogic {
       isHome1: on && s.screen === 'home' && s.page === 1 && !s.rec && !s.ring,
       dot0: s.page === 0 ? '#E6E7E9' : '#3A3D42',
       dot1: s.page === 1 ? '#E6E7E9' : '#3A3D42',
-      tiles: [tile('jerv'), tile('minecraft'), tile('elora'), tile('lydian')],
+      tiles: [tile('jerv'), tile('minecraft'), tile('quorra'), tile('tamsin')],
       emptySlots: [{ label: 'Empty' }, { label: 'Empty' }],
       isPage: isPage && !s.rec && !s.calib && !s.ring && s.fw.phase !== 'restarting' && !(s.screen === 'clock' && s.clockView === 'face'),
       isSettings: isPage && s.screen === 'settings' && !s.calib && s.fw.phase !== 'restarting',
@@ -893,7 +893,7 @@ class Component extends DCLogic {
       },
       isThread: isPage && !!thread && !s.rec && !s.ring,
       isMinecraft: isPage && s.screen === 'minecraft' && !s.rec,
-      cur: { name: a.name, color: a.color, tint: a.tint, initial: a.initial, isJerv: s.screen === 'jerv', isCube: s.screen === 'minecraft', isPerson: s.screen === 'elora' || s.screen === 'lydian', isGear: s.screen === 'settings', isClock: s.screen === 'clock' },
+      cur: { name: a.name, color: a.color, tint: a.tint, initial: a.initial, isJerv: s.screen === 'jerv', isCube: s.screen === 'minecraft', isPerson: s.screen === 'quorra' || s.screen === 'tamsin', isGear: s.screen === 'settings', isClock: s.screen === 'clock' },
       msgs: msgs,
       isRec: on && !!s.rec,
       rec: rec || { color: '#7FA7C9', tint: 'transparent', title: '', time: '0:00', ring: 170 },
