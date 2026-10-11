@@ -35,7 +35,8 @@ _CONNECTED = re.compile(r"Player connected: ([^,]+), xuid: ?(\d*)")
 _DISCONNECTED = re.compile(r"Player disconnected: ([^,]+), xuid")
 # A line from the jbrain behavior pack: `[Scripting] [jbrain] {"ev": "death", …}`.
 _PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
-PACK_EVENTS = ("death", "respawn")
+# `wreck` is the spawn wreck reporting its build (plan §SW1): loaded, pod, ship, done.
+PACK_EVENTS = ("death", "respawn", "wreck")
 _VERSION = re.compile(r"Version:? ([0-9][0-9.]*[0-9])")
 _STARTED = "Server started."
 # `save query` prints this line, then the file list on the next line.
@@ -209,7 +210,7 @@ class Bds:
         for key in ("x", "y", "z"):
             if isinstance(data.get(key), (int, float)):
                 extra[key] = float(data[key])
-        for key in ("dim", "cause", "killer"):
+        for key in ("dim", "cause", "killer", "phase"):
             if isinstance(data.get(key), str):
                 extra[key] = data[key][:64]
         known = self.players.get(name)

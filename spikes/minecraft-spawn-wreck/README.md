@@ -1,9 +1,11 @@
 # Spawn wreck: a crashed escape pod under a damaged mothership
 
-**Design spike, not production.** It answers one question before any world-generation
-work: *what do the two builds look like?* The owner signed off on the look from the
-preview renders in `renders/`. Nothing here is wired into the `minecraft` sidecar, the
-`jbrain` behavior pack, or world creation yet; that is a separate, planned change.
+**Design spike.** It answered one question before any world-generation work: *what do
+the two builds look like?* The owner signed off on the look from the preview renders.
+The build into worlds is planned as waves SW1–SW3 in
+`docs/plans/MINECRAFT_BEDROCK_PLAN.md`. `export.py` hands the builds to the sidecar as
+`deploy/minecraft/wreck/*.json.gz`, which `deploy/minecraft/structures.py` turns into
+structure files at image build.
 
 ## The two builds
 
@@ -61,10 +63,21 @@ They are previews of block placement, not of the game.
 - **Lighting:** it's Cycles path tracing, not Minecraft's lighting.
 - **Ground:** the distant grass is a flat plane.
 
-## Output format
+## Output format, and handing a change to the sidecar
 
-`gen_*.py` write JSON voxel lists: `[[x, y, z, "block_id"], ...]` in Minecraft axes (x east,
-y up, z south). Block ids are vanilla Bedrock names, with a few render-only stand-ins for
-oriented blocks (`ladder_n/s/e/w`, `bed_head/bed_feet`, `iron_trapdoor_flat`). Turning these
-into `.mcstructure` files with the right block states is the first step of the integration
-plan.
+`gen_*.py` write JSON voxel lists, `[[x, y, z, "block_id"], ...]`, in Minecraft axes (x
+east, y up, z south). Block ids are vanilla Bedrock names, plus a few render-only stand-ins
+for oriented blocks (`ladder_n/s/e/w`, `bed_head/bed_feet`, `iron_trapdoor_flat`).
+
+`export.py` turns these stand-ins into real ids with their block states. It keeps only the
+fires that can't spread, and writes the sidecar's input. After changing a design, re-export
+with Mojang's block metadata, so every block state is checked against the game:
+
+```
+git -C ~/.cache/jbrain-wreck/bedrock-samples sparse-checkout add metadata/vanilladata_modules
+python3 export.py ../../deploy/minecraft/wreck \
+  ~/.cache/jbrain-wreck/bedrock-samples/metadata/vanilladata_modules/mojang-blocks.json
+```
+
+The supervisor's `tests/test_minecraft_wreck.py` re-checks the committed export: bed
+halves are paired, fires are safe, and every tile round-trips.

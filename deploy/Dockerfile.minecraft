@@ -50,13 +50,19 @@ COPY deploy/minecraft/server.py ./server.py
 COPY deploy/minecraft/worlds.py ./worlds.py
 COPY deploy/minecraft/leveldb.py ./leveldb.py
 COPY deploy/minecraft/mapping.py ./mapping.py
+COPY deploy/minecraft/structures.py ./structures.py
 COPY deploy/minecraft/probe-pack ./probe-pack
 COPY deploy/minecraft/probe-rp ./probe-rp
 COPY deploy/minecraft/jbrain-pack ./jbrain-pack
+# The spawn wreck (§SW1): its builds become .mcstructure files inside its pack here, so
+# the repo carries compact block lists rather than megabytes of generated binaries.
+COPY deploy/minecraft/wreck ./wreck
+COPY deploy/minecraft/wreck-pack ./wreck-pack
+RUN python3 structures.py build wreck wreck-pack
 COPY --from=predict /jbrain-predict ./jbrain-predict
 COPY --from=predict /cubiomes.LICENSE ./licenses/cubiomes.LICENSE
 
-RUN python3 -c "import server, bds, install, worlds, leveldb, mapping"
+RUN python3 -c "import server, bds, install, worlds, leveldb, mapping, structures"
 # The prediction is only worth drawing if it is right: spots a real 1.26 server generated
 # from this seed — a warm ocean (Java id 44) and a mangrove swamp (184) — must still
 # predict as those biomes on the compiled binary.
