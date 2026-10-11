@@ -269,6 +269,12 @@ class _FakeBds:
     def note_world_replaced(self, folder: str) -> None:
         self.replaced.append(folder)
 
+    def events_after(self, _after: int) -> list[dict[str, Any]]:
+        return []
+
+    def wait_running(self, _timeout_s: float) -> bool:
+        return False  # the first-start watch has nothing to watch here
+
     def stop(self) -> None:
         self.running = False
 
@@ -444,34 +450,139 @@ def _node_pack(tmp_path: Path) -> Path:
     return root
 
 
-def test_this_waves_pack_passes_a_world_over_so_no_build_lands_later(
-    tmp_path: Path,
-) -> None:
-    """A world armed now will have been played by the time the build ships: the pack
-    records it as passed over, and says done so the wrapper disarms it."""
-    root = _node_pack(tmp_path)
-    script = """
-        import { sim } from "@minecraft/server";
-        sim.reset(() => "minecraft:air", { x: 0, z: 0 }, () => {});
-        await import("./pack/scripts/main.js");
-        sim.load();
-        console.log("STATE " + sim.props.get("jbrain:wreck"));
-    """
-    out = subprocess.run(
+def _node(root: Path, script: str) -> str:
+    return subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=root,
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-    state = json.loads(out.split("STATE ", 1)[1])
-    assert state["stage"] == "done" and state["skipped"] is True
-    phases = [
+
+
+def _phases(out: str) -> list[str]:
+    return [
         json.loads(line.split("[jbrain] ", 1)[1])["phase"]
         for line in out.splitlines()
         if "[jbrain] " in line
     ]
-    assert phases == ["loaded", "done"]
+
+
+@pytest.mark.parametrize(
+    ("before", "ticks"),
+    [
+        # SW1 passed it over: a world armed before the build shipped and played since.
+        ('{"stage":"done","skipped":true}', 0),
+        # No record, but it has run for an hour: not a new world either.
+        (None, 72000),
+    ],
+)
+def test_a_world_that_is_not_new_is_never_built_on(
+    tmp_path: Path, before: str | None, ticks: int
+) -> None:
+    root = _node_pack(tmp_path)
+    preset = f"sim.props.set('jbrain:wreck', {json.dumps(before)});" if before else ""
+    out = _node(
+        root,
+        f"""
+        import {{ sim }} from "@minecraft/server";
+        let placed = 0;
+        sim.reset(() => "minecraft:air", {{ x: 0, z: 0 }}, () => placed++);
+        {preset}
+        sim.setTime({ticks});
+        await import("./pack/scripts/main.js");
+        sim.load();
+        console.log("PLACED " + placed);
+        console.log("STATE " + sim.props.get("jbrain:wreck"));
+        """,
+    )
+    assert "PLACED 0" in out
+    assert _phases(out) == ["loaded", "done"]  # the wrapper still disarms it
+    assert json.loads(out.split("STATE ", 1)[1].splitlines()[0])["stage"] == "done"
+
+
+def test_the_planning_rules_hold(tmp_path: Path) -> None:
+    """plan.js's own unit tests (node --test): site choice, materials, crater, canopy,
+    apron, ship height, kit."""
+    _node_pack(tmp_path)  # fails clearly if node is missing
+    result = subprocess.run(
+        ["node", "--test", str(MC / "wreck-sim" / "plan.test.mjs")],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-2000:]
+
+
+SIM_SCENARIOS = [
+    "plains", "forest", "jungle", "desert", "snowy", "mountainside", "badlands",
+    "swamp", "mangrove", "island", "ocean", "peaks_under_ship",
+]  # fmt: skip
+
+
+def test_the_crash_site_comes_down_right_in_every_kind_of_world(tmp_path: Path) -> None:
+    """The real build script against a synthetic world per kind of ground a spawn can
+    be on: the pod whole and supported, the hatch open onto walkable ground, spawn on
+    it, the parachute on the ground, the kit stocked, the ship clear of the terrain and
+    under the build limit, and no ticking area left behind."""
+    root = _node_pack(tmp_path)
+    shutil.copy(MC / "wreck-sim" / "sim.mjs", root / "sim.mjs")
+    out = subprocess.run(
+        ["node", "sim.mjs", "pack", str(MC / "wreck")],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=600,
+    ).stdout
+    results = {r["scenario"]: r for r in map(json.loads, out.splitlines())}
+    assert sorted(results) == sorted(SIM_SCENARIOS)
+    failed = {
+        name: [k for k, ok in r["checks"].items() if not ok]
+        for name, r in results.items()
+        if not r["ok"]
+    }
+    assert not failed
+    assert results["ocean"]["site"]["splash"] is True
+    assert not any(r["site"]["splash"] for n, r in results.items() if n != "ocean")
+    plains = results["plains"]["ship"]["z"]
+    assert results["peaks_under_ship"]["ship"]["z"] != plains  # slid clear of the peaks
+
+
+class _WatchBds:
+    def __init__(self, events: list[dict[str, Any]], players: dict[str, Any]) -> None:
+        self._events = events
+        self.players = players
+
+    def wait_running(self, _timeout_s: float) -> bool:
+        return True
+
+    def events_after(self, after: int) -> list[dict[str, Any]]:
+        return [e for e in self._events if e["id"] > after]
+
+
+@pytest.mark.parametrize(
+    ("events", "players", "restarts"),
+    [
+        ([], {}, 1),  # the pack never reported: restart once, before anyone plays
+        ([{"id": 5, "kind": "wreck", "phase": "loaded"}], {}, 0),
+        ([], {"Steve": {"xuid": "1"}}, 0),  # someone's already in: leave it
+    ],
+)
+def test_a_new_world_that_came_up_without_its_pack_restarts_once(
+    monkeypatch: pytest.MonkeyPatch,
+    events: list[dict[str, Any]],
+    players: dict[str, Any],
+    restarts: int,
+) -> None:
+    monkeypatch.setattr(server, "WRECK_WAIT_S", 0.05)
+    rig = _rig()
+    rig.create_slot("slot2", {"name": "New"})
+    rig._apply_slot(rig.slots.get("slot2"))
+    rig.bds = _WatchBds(events, players)
+    calls: list[str] = []
+    monkeypatch.setattr(rig, "server_action", lambda action: calls.append(action))
+    rig._watch_wreck("slot2", 0)
+    assert calls == ["restart"] * restarts
 
 
 def test_the_wreck_pack_is_its_own_pack_on_stable_scripting() -> None:

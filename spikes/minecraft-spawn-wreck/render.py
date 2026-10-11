@@ -67,15 +67,36 @@ FACES = {
     "anvil": ("anvil_top", "anvil_base", "anvil_base"),
     "lantern": "lantern",
     "white_carpet": "wool_white",
+    "sandstone": ("sandstone_top", "sandstone_top", "sandstone_side"),
+    "jungle_log": ("log_jungle_top", "log_jungle_top", "log_jungle"),
+    "jungle_leaves": "leaves_jungle",
+    "mangrove_leaves": "leaves_jungle",
+    "mangrove_log": ("log_jungle_top", "log_jungle_top", "log_jungle"),
+    "spruce_log": ("log_spruce_top", "log_spruce_top", "log_spruce"),
+    "spruce_leaves": "leaves_spruce",
+    "andesite": "andesite",
+    "cobblestone": "cobblestone",
+    "ochre_froglight": ("ochre_top", "ochre_top", "ochre_side"),
+    "snow_layer": "snow",
+    "water": "water",
+    "moss_block": "moss",
+    "sand": "sand",
+    "red_sand": "red_sand",
+    "mud": "mud",
+    "packed_mud": "packed_mud",
+    "orange_terracotta": "terracotta_orange",
+    "red_sandstone": ("red_sandstone_top", "red_sandstone_top", "red_sandstone_side"),
+    "bed": ("bed_head_top", "planks_oak", "bed_head_side"),
+    "iron_trapdoor": "iron_trapdoor",
     "white_wool": "wool_white",
     "orange_wool": "wool_orange",
     "orange_carpet": "wool_orange",
     "iron_trapdoor_flat": "iron_trapdoor",
 }
 # blocks the game draws thinner than a cube: height of the box
-THIN = {"red_carpet": 1 / 16, "farmland": 15 / 16, "anvil": 1.0, "lantern": 9 / 16, "campfire": 7 / 16, "white_carpet": 1 / 16, "orange_carpet": 1 / 16, "iron_trapdoor_flat": 3 / 16, "bed_head": 9 / 16, "bed_feet": 9 / 16}
-EMIT = {"glass_red": 6.0, "glass_lime": 6.0, "campfire_log_lit": 2.0, "shroomlight": 8.0, "glowstone": 3.0, "sea_lantern": 3.0, "redstone_lamp_on": 3.0, "magma": 2.5, "fire_0": 6.0}
-TRANSLUCENT = {"light_blue_stained_glass", "glass", "red_stained_glass", "lime_stained_glass"}
+THIN = {"snow_layer": 2 / 16, "iron_trapdoor": 3 / 16, "bed": 9 / 16, "red_carpet": 1 / 16, "farmland": 15 / 16, "anvil": 1.0, "lantern": 9 / 16, "campfire": 7 / 16, "white_carpet": 1 / 16, "orange_carpet": 1 / 16, "iron_trapdoor_flat": 3 / 16, "bed_head": 9 / 16, "bed_feet": 9 / 16}
+EMIT = {"ochre_top": 3.0, "ochre_side": 3.0, "glass_red": 6.0, "glass_lime": 6.0, "campfire_log_lit": 2.0, "shroomlight": 8.0, "glowstone": 3.0, "sea_lantern": 3.0, "redstone_lamp_on": 3.0, "magma": 2.5, "fire_0": 6.0}
+TRANSLUCENT = {"water", "light_blue_stained_glass", "glass", "red_stained_glass", "lime_stained_glass"}
 COLORS = {"player_legs": (0.15, 0.2, 0.55), "player_body": (0.0, 0.6, 0.65)}
 
 MODE = argv[3] if len(argv) > 3 else ""
@@ -192,7 +213,7 @@ for tex, idx in sorted(mat_index.items(), key=lambda kv: kv[1]):
         t.image = img
         t.interpolation = "Closest"
         nt.links.new(t.outputs["Color"], bsdf.inputs["Base Color"])
-        if tex in ("glass_light_blue", "fire_0", "glass", "ladder", "wheat", "carrots", "lantern", "glass_red", "glass_lime"):
+        if tex in ("glass_light_blue", "fire_0", "glass", "ladder", "wheat", "carrots", "lantern", "glass_red", "glass_lime", "water"):
             nt.links.new(t.outputs["Alpha"], bsdf.inputs["Alpha"])
             m.blend_method = "BLEND"
         if tex in ("glass_light_blue", "glass", "glass_red", "glass_lime"):

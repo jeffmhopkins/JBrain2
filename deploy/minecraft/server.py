@@ -102,6 +102,8 @@ JBRAIN_PACK_DIR = "jbrain"
 # armed when it was created; its structures are built into it at image build.
 WRECK_PACK_SRC = Path(__file__).resolve().parent / "wreck-pack"
 WRECK_PACK_DIR = "jbrain_wreck"
+# How long a brand-new armed world's first start waits for its pack to say it loaded.
+WRECK_WAIT_S = 90.0
 # Travel log (§T1): each online player's position, this often, kept only once they have
 # moved this far — standing still costs nothing.
 TRACK_S = 10.0
@@ -284,6 +286,10 @@ class Rig:
         self.write_properties()
         self._applied = dict(self.properties())
         self.bds.world = self.active_folder()
+        rec = self.slots.by_folder(self.active_folder())
+        fresh = bool(rec and rec.get("wreck") == "armed" and not rec["exists"])
+        before = self.bds.events_after(0) if fresh else []
+        seen = before[-1]["id"] if before else 0
         # The wreck first: for an armed new world it makes the folder, so the box's own
         # pack reaches that world's first session too.
         self._install_wreck()
@@ -302,6 +308,11 @@ class Rig:
             except OSError as exc:
                 print(f"[minecraft] test kit not refreshed: {exc}", flush=True)
         self.bds.start()
+        if fresh:
+            folder = self.active_folder()
+            threading.Thread(
+                target=self._watch_wreck, args=(folder, seen), daemon=True
+            ).start()
         self._apply_rules_when_up(self.active_folder())
 
     def _stop(self, why: str) -> None:
@@ -1069,6 +1080,28 @@ class Rig:
         except OSError as exc:
             # No crash site this start; the server itself must still come up.
             print(f"[minecraft] wreck pack not installed: {exc}", flush=True)
+
+    def _watch_wreck(self, folder: str, seen: int) -> None:
+        """A new world's first load is the pack's one chance at an untouched spawn. If
+        BDS generated the world without it (it didn't take the pack from the empty
+        folder), restart once, now that the folder is a world, before anyone plays."""
+        if not self.bds.wait_running(WRECK_WAIT_S):
+            return
+        deadline = time.monotonic() + WRECK_WAIT_S
+        while time.monotonic() < deadline:
+            if any(e["kind"] == "wreck" for e in self.bds.events_after(seen)):
+                return
+            time.sleep(1)
+        rec = self.slots.by_folder(folder)
+        if folder != self.active_folder() or not rec or rec.get("wreck") != "armed":
+            return
+        if self.bds.players:
+            return  # someone is already in: a restart now would be worse than no wreck
+        print("[wreck] the pack didn't load on the first start; restarting", flush=True)
+        try:
+            self.server_action("restart")
+        except (RuntimeError, ValueError) as exc:
+            print(f"[wreck] restart refused: {exc}", flush=True)
 
     def note_wreck(self) -> None:
         """A world whose pack reports the wreck built is marked done, so the pack comes

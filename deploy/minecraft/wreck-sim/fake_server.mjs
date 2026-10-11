@@ -96,6 +96,7 @@ const props = new Map();
 let spawn = { x: 0, y: 32767, z: 0 };
 let dim = null;
 let placeHook = null;
+let ticks = 0;
 
 export const world = {
   afterEvents: { worldLoad: { subscribe: (fn) => listeners.push(fn) } },
@@ -106,7 +107,7 @@ export const world = {
   setDefaultSpawnLocation: (loc) => {
     spawn = { ...loc };
   },
-  getAbsoluteTime: () => 0,
+  getAbsoluteTime: () => ticks,
   structureManager: {
     place: (id, d, loc) => placeHook(id, d, loc),
   },
@@ -131,6 +132,7 @@ export const sim = {
     spawn = { x: spawnAt.x, y: 32767, z: spawnAt.z };
     dim = new Dimension(terrain);
     placeHook = onPlace;
+    ticks = 0;
     return dim;
   },
   load() {
@@ -138,4 +140,7 @@ export const sim = {
   },
   props,
   spawn: () => spawn,
+  setTime: (t) => {
+    ticks = t;
+  },
 };
