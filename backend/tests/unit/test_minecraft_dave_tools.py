@@ -16,6 +16,7 @@ from jbrain.agent import minecrafttools as mt
 from jbrain.agent.loop import ToolContext
 from jbrain.db.session import SessionContext
 from jbrain.minecraft import client as mc
+from jbrain.minecraft.asker import Asker, Spot, asking
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
 
@@ -207,3 +208,57 @@ async def test_a_failed_intro_degrades_to_a_pointer_not_a_failed_turn(
     monkeypatch.setattr(api_agent, "minecraft_chat_intro", broken)
     got = await api_agent._minecraft_intro(request, CTX.session, "sid")
     assert got == api_agent.MINECRAFT_INTRO_FALLBACK
+
+
+# --- in game: the asker is the player (MINECRAFT_BEDROCK_PLAN.md §P2) ------------------
+
+ASKER = Asker(
+    key="111",
+    gamertag="Steve 42",
+    world="slot2",
+    at=Spot(40, 12, -8, "nether"),
+    spawn=Spot(1, 70, 2, "overworld"),
+)
+DOOR = ToolContext(session=SessionContext(principal_kind="owner"), scopes=(), agent_session_id="s1")
+
+
+async def test_in_game_nothing_can_be_done_for_another_player(sidecar) -> None:
+    with asking("s1", ASKER):
+        for name, args in (
+            ("mc_set_waypoint", {"gamertag": "Mira", "x": 1, "z": 2}),
+            ("mc_player", {"gamertag": "Mira"}),
+        ):
+            out = await _tools()[name](args, DOOR)
+            assert "only works with the player asking" in str(out), name
+    assert sidecar["sent"] == []  # refused before anything reached the server
+
+
+async def test_in_game_searches_start_where_the_asker_stands(sidecar) -> None:
+    sidecar["replies"]["/worlds"] = {"slots": [{"id": "slot2", "active": True}]}
+    sidecar["replies"]["/map/find"] = {"searched": ["minecraft:ancient_debris"], "found": []}
+    with asking("s1", ASKER):
+        out = await _tools()["mc_find_block"]({"blocks": ["ancient_debris"]}, DOOR)
+    params = sidecar["sent"][-1][3]
+    # Their dimension and their spot, not the Overworld's last trail point.
+    assert (params["dim"], params["x"], params["z"]) == ("nether", 40, -8)
+    assert "where the player is standing" in out
+
+
+async def test_in_game_a_waypoint_says_which_way_to_go(sidecar) -> None:
+    sent = 'scriptevent jb:waypoint {"player": "Steve 42", "x": 40, "y": null, "z": -108,'
+    sent += ' "dim": "nether", "label": "Fortress"}'
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain-probe] waypoint set for Steve 42"]
+    with asking("s1", ASKER):
+        out = await _tools()["mc_set_waypoint"](
+            {"gamertag": "steve 42", "x": 40, "z": -108, "label": "Fortress"}, DOOR
+        )
+    assert sidecar["sent"][-1][2]["command"] == sent  # their own name is fine, any case
+    assert "From you: 100 blocks north." in out
+
+
+def test_bearings_follow_minecraft_north_is_minus_z() -> None:
+    assert mt.bearing(0, 0, 0, -10) == ("north", 10)
+    assert mt.bearing(0, 0, 10, 10) == ("south-east", 14)
+    assert mt.bearing(0, 0, -10, 0) == ("west", 10)
+    assert mt.place_name("  tree   farm ") == "tree farm"
+    assert mt.place_name("x" * 41) == "" and mt.place_name("\n") == ""

@@ -1,10 +1,11 @@
 // M0 item 5 probe (docs/plans/MINECRAFT_BEDROCK_PLAN.md). Every line it logs starts
 // with "[jbrain-probe]" so the wrapper's console can be grepped for the answers:
 // does a stable-API pack load with no experiments, does console output reach the
-// server console, does `scriptevent` arrive, can a custom command be registered, is
-// there a stable chat event, and is a dead player's inventory still readable.
-import { system, world, CommandPermissionLevel, CustomCommandParamType,
-  CustomCommandStatus } from "@minecraft/server";
+// server console, does `scriptevent` arrive, is there a stable chat event, and is a
+// dead player's inventory still readable. The `/jb:dave` command it once probed is now
+// the jbrain pack's (the in-game door, §M5): two packs registering one name would
+// collide.
+import { system, world } from "@minecraft/server";
 
 // Home-test kit (docs/runbooks/MINECRAFT_HOME_TEST.md): the custom items and recipe from
 // this pack, with icons from the server-pushed probe resource pack. Each finding is a
@@ -15,26 +16,6 @@ const say = (msg) => console.log(`[jbrain-probe] ${msg}`);
 
 say("loaded");
 say(`chatSend after-event available: ${Boolean(world.afterEvents.chatSend)}`);
-
-system.beforeEvents.startup.subscribe((ev) => {
-  try {
-    ev.customCommandRegistry.registerCommand(
-      {
-        name: "jb:dave",
-        description: "Ask Dave (probe)",
-        permissionLevel: CommandPermissionLevel.Any,
-        optionalParameters: [{ name: "question", type: CustomCommandParamType.String }],
-      },
-      (origin, question) => {
-        say(`command from ${origin.sourceEntity?.name ?? "?"}: ${question ?? ""}`);
-        return { status: CustomCommandStatus.Success, message: "Dave heard you (probe)" };
-      },
-    );
-    say("custom command jb:dave registered");
-  } catch (e) {
-    say(`custom command registration failed: ${e}`);
-  }
-});
 
 // Each player's tricorder destination, set by Minecraft_Dave through the console
 // (`scriptevent jb:waypoint {json}`). Kept as a world property keyed by gamertag, so it is

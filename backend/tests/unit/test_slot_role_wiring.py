@@ -38,7 +38,7 @@ AGENT_LOOP_ROLES = {
 # LoopTurnExecutor defaults to the scheduled slot; a site that is not a scheduled-style
 # background turn names its own.
 EXECUTOR_ROLES = {
-    "main.py": [None, None, None],
+    "main.py": [None, None, None, "SlotRole.WORKSHOP"],
     "analysis/converse.py": ["SlotRole.WORKSHOP", "SlotRole.WORKSHOP"],
 }
 

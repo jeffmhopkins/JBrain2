@@ -1782,10 +1782,26 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "739ba8520c3a7507d632d8c5254e6d083b55a770b59d090a58fa9b2af2737bb3",
         ),
+        # v2: `place`, a saved place's name, as an alternative to coordinates.
         "mc_set_waypoint.tool": (
             "mc_set_waypoint",
+            2,
+            "27daf01130fe6331a72fb228bdd55008cfb1320480410f0b724fc47f3a48a865",
+        ),
+        "mc_place_save.tool": (
+            "mc_place_save",
             1,
-            "cf24f1cece775ced5a5103274687607c5350c93750fb17a3f8105a9b6bd46649",
+            "3915b06c70f876a77ae2a2c47236802f97188f157c32976d3ff61b5862ae8df9",
+        ),
+        "mc_places.tool": (
+            "mc_places",
+            1,
+            "396eef1ecf5e38018152df4d6c7aa395b56a66d92c87733ec8bb301dcf55773c",
+        ),
+        "mc_place_remove.tool": (
+            "mc_place_remove",
+            1,
+            "9c9c361ada06950f833ffd1248dfc2da387830bd96796118d8aab1848c1a0b9c",
         ),
         "mc_goals.tool": (
             "mc_goals",

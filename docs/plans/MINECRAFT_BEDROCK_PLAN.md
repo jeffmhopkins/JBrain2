@@ -623,6 +623,45 @@ house by typing the address.
 - The drain loop follows the `aprslog` shape. Everything that comes from players is
   **untrusted input**.
 
+**The in-game door, first cut (built 2026-10-11, owner: "Dave, point me home" / "Dave,
+mark this location as tree farm" / "Dave, navigate to tree farm" — "this is what we
+should be able to do once we're live").** Not yet tried from a real client.
+- **The command** lives in the always-installed `jbrain` pack (`deploy/minecraft/jbrain-pack`),
+  not the probe pack, so every world has it and the two packs can't register one name
+  twice. `/jb:dave <words>` logs one `[jbrain] {"ev":"dave",…}` line with the asker's
+  name, words, block position and dimension, and their bed or respawn anchor
+  (`player.getSpawnPoint()`, `null` when unset), then tells the asker "Dave is
+  thinking…". Each word is its own `String` parameter, so `point me home` needs no
+  quotes. **Checked on BDS 1.26.52:** the engine caps a custom command at 8 parameters
+  (24 refused the whole command), and a `String` parameter takes one plain word or one
+  `"quoted phrase"` — a comma or a bare number is a syntax error the player sees. So
+  "Dave, …" (the comma) and coordinates go in quotes: `/jb:dave "Dave, mark this
+  location as tree farm"`; a leading "Dave," is dropped either way. A console origin is
+  refused ("Only a player can ask Dave").
+- **The sidecar** (`bds.py`) turns the line into a `dave` event carrying the **xuid BDS
+  logged when that name connected** — the script API has no xuid, and the line's own
+  fields are never trusted for identity. A name that never connected, or an empty
+  question, is dropped.
+- **The api** (`jbrain.minecraft.door`, started in `main.py` beside the session and
+  track drains) polls `/events` and runs each fresh question (≤ 2 minutes old, so a
+  restart never answers an old one late) as one headless Minecraft_Dave turn on the
+  scheduled-task path (`LoopTurnExecutor`, on the workshop slot so it never evicts the
+  owner's chat prefix), in the asker's own continuing session
+  (`mc_chat_player.door`, migration 0228; a new one after 6 hours idle, the old one kept
+  in the PWA). Player tier (`agents.narrow_for_ingame`): no web, no `mc_command` /
+  `mc_server_action`, no log/config/world/backup reads, no `mc_player`. While the turn
+  runs, the tools see the asker (`minecraft/asker.py`): their position and dimension are
+  the default for searches, places and waypoints, and any other gamertag is refused.
+  The question is fenced; the asker's position and bed come in a plain line before it.
+- **The reply** is `tellraw "<gamertag>" {"rawtext":[{"text":"<Dave> …"}]}` through the
+  console, built with `json.dumps` (no reply can end the command), stripped of
+  markdown and `§` codes, in chunks of ≤ 220 characters and ≤ 900 in all. One turn at a
+  time per player: up to 3 more wait ("One moment…"), beyond that "Hang on…"; at most two
+  players' turns run at once. A failed turn answers a short apology and is logged.
+- **Not yet:** the companion's name as a setting (the command is fixed at `jb:dave`),
+  per-player rate limits beyond the queue, live `scriptevent jb:q` queries, and the
+  owner setting to allow the web in game.
+
 ### M6 — The companion agent
 
 - A dedicated persona named **Dave** (owner decision, 2026-10-10). The name is changeable in
@@ -982,7 +1021,14 @@ settable while the player is offline — and the held tricorder shows
 The script answers with a `[jbrain-probe] waypoint set/cleared/refused` line, which the
 tool reads back: no answer means the kit isn't in the loaded world, and the tool says so
 rather than claiming it worked. Checked on a local 1.26 server: set (a gamertag with a
-space), a refused bad dimension, cleared. Still to come from the design below: the
+space), a refused bad dimension, cleared. **Saved places (2026-10-11):** `mc_set_waypoint`
+also takes `place`, a name the player saved with `mc_place_save` (`app.mc_places`,
+migration 0228: per player and world folder, names unique ignoring case, saving again
+moves it; `mc_places` lists them with the way to each from the asker in game,
+`mc_place_remove` forgets one). With no coordinates a place is saved where the in-game
+asker stands, else at the player's last tracked position. **"home"** is their saved home,
+else the bed the in-game event reported, else Dave says neither exists and offers to mark
+it. In game the answer also says which way and how far the target is. Still to come from the design below: the
 per-xuid player property, the named and retired "<Player>'s Tricorder", keepOnDeath, and
 Dave handing one over.
 
@@ -1642,6 +1688,11 @@ screen's "Maps" section (M8) reuses the same component.
   than guessing.
 - Minecraft_Dave runs on the **local model**.
 
+**P2 progress (2026-10-11):** the in-game door (§M5 above) — the same persona, goal,
+log and memory tools reach players in game at player tier, scoped to the asker's xuid —
+plus saved places (`mc_place_save`, `mc_places`, `mc_place_remove`; `mc_set_waypoint`'s
+`place`), prompt `agent-minecraft-dave-v7`.
+
 **Pending:** the owner's gamertag, which is entered on the Minecraft screen. Until it's set,
 new Minecraft_Dave chats have no player and ask whose chat it is.
 
@@ -1758,7 +1809,7 @@ never in the prompt:
 
 | Tool | Answers | Source | Tier |
 |---|---|---|---|
-| `waypoint_save(name)` / `list` / `delete` / `share` | "remember this as *home*"; "where's Josh's mine?" | `app.mc_waypoints` (per slot, per player) | Player |
+| `waypoint_save(name)` / `list` / `delete` / `share` — **shipped as `mc_place_save` / `mc_places` / `mc_place_remove`** (2026-10-11, §M9; sharing not yet) | "remember this as *home*"; "where's Josh's mine?" | `app.mc_places` (per world folder, per player) | Player |
 | `whats_new(since?)` | "what happened while I was gone?": joins, deaths, achievements, big build changes | event log + snapshot diff | Player |
 | `build_changes(area, since)` | "did anything change at the base since Tuesday?" A blocks-changed count plus a `changes` map (spots griefing too) | snapshot diff + M8 | Player |
 | `playtime / leaderboard` | play time, deaths, distance travelled, per player | event log | Player |
