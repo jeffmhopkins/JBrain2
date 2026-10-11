@@ -1070,8 +1070,9 @@ def test_in_game_dave_is_the_player_tier_and_only_ever_narrower() -> None:
     )
 
     dave = narrow_for_ingame(AGENTS["minecraft_dave"])
-    assert dave.tools == MINECRAFT_DAVE_INGAME_TOOLS
-    assert dave.tools <= MINECRAFT_DAVE_TOOLS
+    tools = dave.tools
+    assert tools is not None and tools == MINECRAFT_DAVE_INGAME_TOOLS
+    assert tools <= MINECRAFT_DAVE_TOOLS
     held_back = {
         "web_search",
         "web_fetch",
@@ -1083,11 +1084,11 @@ def test_in_game_dave_is_the_player_tier_and_only_ever_narrower() -> None:
         "mc_backups",
         "mc_player",
     }
-    assert not dave.tools & held_back
-    assert {"mc_place_save", "mc_places", "mc_set_waypoint", "mc_goals"} <= dave.tools
+    assert not tools & held_back
+    assert {"mc_place_save", "mc_places", "mc_set_waypoint", "mc_goals"} <= tools
     # Every player gets the world searches (owner, 2026-10-11): ore and block finding,
     # structures, what's at a spot — all read-only, from the world's own files or locate.
-    assert {"mc_find_block", "mc_locate", "mc_nearby", "mc_what_is_at"} <= dave.tools
+    assert {"mc_find_block", "mc_locate", "mc_nearby", "mc_what_is_at"} <= tools
     assert dave.prompt == AGENTS["minecraft_dave"].prompt
     # Intersection: it can't widen a profile that was already narrower.
     assert narrow_for_ingame(replace(dave, tools=frozenset({"mc_goals", "web_fetch"}))).tools == {
