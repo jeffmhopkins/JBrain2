@@ -1572,8 +1572,9 @@ saved places.
 once the gate has really changed. With none, Dave says so and the gate keeps its target.
 
 **Rules:**
-- **Breaking a frame block** closes the gate (it goes dormant, keeping its seed and target).
-  Rebuilding the frame reopens it to the same place for free.
+- **Breaking a frame block destroys the gate, and the seed is lost** (owner, 2026-10-11).
+  Rebuilding the frame needs a new seed. While a gate stands, its planter can ask Dave to
+  re-point it (above).
 - **Every trip is logged** (who, gate, place) and gates show on the M8 map.
 - **Saved places stay the planter's.** If the target place is removed (`mc_place_remove`),
   the gate goes dormant until it is re-aimed.
@@ -1585,7 +1586,6 @@ Opening and re-aiming are Dave tools on the M10 path: a `scriptevent` the pack c
 and the pack's answer read back, as `mc_set_waypoint` does.
 
 **Open (owner):**
-- **Mining the core** to get the seed back, so a gate can be moved.
 - **Whether mobs and items travel** (later option).
 - **Lore:** the story and Dave's lines for planting, opening and re-aiming belong on the
   Bleepbloop_City lore page, as a later-tech beat shown once gates are built.
@@ -1750,7 +1750,7 @@ world-wide).
 - animals **bred** by players (`entitySpawn` with cause `Born`);
 - villagers and golems (iron, snow and copper golems, which canon calls Old Maker helpers);
 - bosses: the Ender Dragon and the Wither are never removed, so a beacon can't skip a
-  fight. Open (owner): whether the Warden counts.
+  fight. **The Warden is removed** like any other hostile mob (owner, 2026-10-11).
 
 Everything else in range goes: zombies, skeletons, creepers, spiders, phantoms, slimes,
 endermen, piglins, wild cows and sheep, and the rest.
@@ -1776,7 +1776,6 @@ endermen, piglins, wild cows and sheep, and the rest.
 mob farm needs to be outside the 3×3.
 
 **Open (owner):**
-- **The Warden:** removed, or left alone like the bosses.
 - **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
   lore page; its icon joins the item set (`docs/mocks/minecraft-items/`).
 
