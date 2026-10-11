@@ -136,9 +136,9 @@ import {
   clusterBadge,
   colorOf,
   drawScale,
+  drawTiles,
   fetchTile,
   grid,
-  hole,
   line,
   markerGlyph,
   markerLabel,
@@ -983,7 +983,11 @@ export function MapLayer({
   }, [redraw]);
 
   const want = useCallback(
-    (key: string, t: { zoom: number; tx: number; tz: number }): TileEntry | null => {
+    (
+      key: string,
+      t: { zoom: number; tx: number; tz: number },
+      layer: BaseLayer,
+    ): TileEntry | null => {
       const st = state.current;
       const now = Date.now();
       const have = cache.current.get(key);
@@ -996,7 +1000,7 @@ export function MapLayer({
       const entry: TileEntry = { img: have?.img ?? null, at: now, state: "loading" };
       cache.current.set(key, entry);
       inFlight.current++;
-      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, st.layer)
+      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer)
         .then((img) => {
           cache.current.set(key, { img, at: Date.now(), state: "ok" });
         })
@@ -1035,16 +1039,14 @@ export function MapLayer({
     // tiles
     ctx.imageSmoothingEnabled = false;
     const spots = visibleTiles(v, f);
-    let pending = 0;
-    for (const s of spots) {
-      const entry = want(tileKey(st.slot, st.dim, s, st.layer), s);
-      if (entry?.img)
-        ctx.drawImage(entry.img, 0, 0, 256, 256, s.sx, s.sy, s.size + 0.5, s.size + 0.5);
-      else {
-        if (entry?.state !== "failed") pending++;
-        hole(ctx, s.sx, s.sy, s.size, entry?.state === "failed" ? "failed" : "loading", t);
-      }
-    }
+    const pending = drawTiles(
+      ctx,
+      spots,
+      st.layer,
+      (s, layer) => cache.current.get(tileKey(st.slot, st.dim, s, layer)),
+      (s, layer) => want(tileKey(st.slot, st.dim, s, layer), s, layer),
+      t,
+    );
     setTiles((p) =>
       p.visible === spots.length && p.pending === pending ? p : { visible: spots.length, pending },
     );

@@ -33,6 +33,7 @@ import os
 import re
 import struct
 import subprocess
+import threading
 import time
 import zlib
 from collections import OrderedDict
@@ -382,40 +383,26 @@ class WorldIndex:
         self._surface = {}
 
     def _column(self, cell: tuple[int, int, int]) -> Column | None:
-        value = self._raw.get(cell)
-        if value is None:
-            return None
-        try:
-            return decode_data2d(value) if cell in self._legacy else decode_data3d(value)
-        except (struct.error, IndexError):
-            return None  # one corrupt chunk is a hole in the map, not a failed tile
-
-    def _tops(self, cell: tuple[int, int, int], step: int) -> dict[int, tuple[int, int]] | None:
-        """(height, biome) of the columns a zoom of `step` draws, by column index."""
-        if step == 1:
-            col = self._column(cell)
-            return None if col is None else dict(enumerate(zip(col.height, col.biome)))
-        offsets = _offsets(step)
-        sample = sample_data2d if cell in self._legacy else surface_sample
-        try:
-            return {z * 16 + x: sample(self._raw[cell], x, z) for x in offsets for z in offsets}
-        except (struct.error, IndexError):
-            return None
+        return _decode(self._raw, self._legacy, cell)
 
     def surfaces(
         self, dim: int, cx0: int, cz0: int, n: int, step: int = 1
     ) -> dict[tuple[int, int], Surface]:
         """The true-colour surface of every explored chunk in an n×n square, the columns
         a zoom of `step` draws, reading block sections only for chunks not yet known."""
+        # One consistent view of the index: the sidecar draws true colour outside its map
+        # lock, so a re-read can swap these mid-draw. This tile then finishes from the old
+        # world and its surfaces land in the old cache, never the new one.
+        raw, legacy, cache = self._raw, self._legacy, self._surface
         floor = _FLOOR.get(dim, 0)
         out: dict[tuple[int, int], Surface] = {}
         todo: list[tuple[int, int, int]] = []
         for cx in range(cx0, cx0 + n):
             for cz in range(cz0, cz0 + n):
-                if (dim, cx, cz) not in self._raw:
+                if (dim, cx, cz) not in raw:
                     continue
                 cell = (dim, cx, cz)
-                known = self._surface.get((*cell, 1)) or self._surface.get((*cell, step))
+                known = cache.get((*cell, 1)) or cache.get((*cell, step))
                 if known is not None:
                     out[(cx, cz)] = known
                 else:
@@ -424,7 +411,7 @@ class WorldIndex:
             tops: dict[tuple[int, int, int], tuple[dict[int, tuple[int, int]], range]] = {}
             keys: set[bytes] = set()
             for cell in todo[start : start + SURFACE_BATCH]:
-                columns = self._tops(cell, step)
+                columns = _tops(raw, legacy, cell, step)
                 if not columns:
                     continue
                 ys = [h - 1 + floor for h, _ in columns.values()]
@@ -438,7 +425,7 @@ class WorldIndex:
                 mine = {
                     sy: v for sy in sections if (v := values.get(blocks.section_key(*cell, sy)))
                 }
-                surface = self._surface[(*cell, step)] = surface_of(columns, mine, floor)
+                surface = cache[(*cell, step)] = surface_of(columns, mine, floor)
                 out[(cell[1], cell[2])] = surface
         return out
 
@@ -510,6 +497,36 @@ class WorldIndex:
             "max_z": max(zs) * 16 + 15,
             "chunks": len(cells),
         }
+
+
+def _decode(
+    raw: dict[tuple[int, int, int], bytes], legacy: set[tuple[int, int, int]], cell: tuple
+) -> Column | None:
+    value = raw.get(cell)
+    if value is None:
+        return None
+    try:
+        return decode_data2d(value) if cell in legacy else decode_data3d(value)
+    except (struct.error, IndexError):
+        return None  # one corrupt chunk is a hole in the map, not a failed tile
+
+
+def _tops(
+    raw: dict[tuple[int, int, int], bytes],
+    legacy: set[tuple[int, int, int]],
+    cell: tuple[int, int, int],
+    step: int,
+) -> dict[int, tuple[int, int]] | None:
+    """(height, biome) of the columns a zoom of `step` draws, by column index."""
+    if step == 1:
+        col = _decode(raw, legacy, cell)
+        return None if col is None else dict(enumerate(zip(col.height, col.biome)))
+    offsets = _offsets(step)
+    sample = sample_data2d if cell in legacy else surface_sample
+    try:
+        return {z * 16 + x: sample(raw[cell], x, z) for x in offsets for z in offsets}
+    except (struct.error, IndexError):
+        return None
 
 
 def _offsets(step: int) -> range:
@@ -626,6 +643,8 @@ class Predictor:
     def __init__(self, binary: Path = PREDICT_BIN, keep: int = 256) -> None:
         self.binary, self.keep = binary, keep
         self._cache: OrderedDict[tuple, bytes] = OrderedDict()
+        # True-colour and biome tiles are drawn on different threads; both predict.
+        self._lock = threading.Lock()
 
     def available(self, dim: int) -> bool:
         return dim in _FLOOR and self.binary.is_file()
@@ -639,7 +658,10 @@ class Predictor:
         if not self.available(dim):
             return {}
         key = (seed, dim, x0, z0, n, step)
-        packed = self._cache.get(key)
+        with self._lock:
+            packed = self._cache.get(key)
+            if packed is not None:
+                self._cache.move_to_end(key)
         if packed is None:
             try:
                 out = subprocess.run(
@@ -653,11 +675,10 @@ class Predictor:
             if len(out) != n * n * 4:
                 return {}
             packed = zlib.compress(out, 1)
-            self._cache[key] = packed
-            if len(self._cache) > self.keep:
-                self._cache.popitem(last=False)
-        else:
-            self._cache.move_to_end(key)
+            with self._lock:
+                self._cache[key] = packed
+                if len(self._cache) > self.keep:
+                    self._cache.popitem(last=False)
         values: tuple[int, ...] = struct.unpack(f"<{n * n * 2}h", zlib.decompress(packed))
         # Only the Overworld speaks Java's ids; the Nether's and End's are Bedrock's
         # already, and Java's numbers for 178-181 are other biomes entirely.
@@ -699,6 +720,11 @@ def _over(base: list[bytearray], top: list[bytearray]) -> list[bytearray]:
     return base
 
 
+def true_colour_of(layer: str, dim: int) -> bool:
+    """Whether a tile reads block sections: the Surface layer, outside the Nether."""
+    return layer == "surface" and dim != DIMENSIONS["nether"]
+
+
 def tile(
     index: WorldIndex,
     dim: int,
@@ -718,7 +744,7 @@ def tile(
     span = CHUNKS_PER_TILE << zoom
     cx0, cz0 = tx * span, tz * span
     step = 1 << zoom
-    true_colour = layer == "surface" and dim != DIMENSIONS["nether"]
+    true_colour = true_colour_of(layer, dim)
     if zoom:
         sampled = (
             index.surface_samples(dim, cx0, cz0, span, step)

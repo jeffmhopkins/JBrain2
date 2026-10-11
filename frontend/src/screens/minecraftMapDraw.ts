@@ -19,6 +19,7 @@ import {
   GLYPHS,
   type MapView,
   type Placed,
+  type TileSpot,
   initialOf,
   scaleBar,
   structureInfo,
@@ -151,6 +152,36 @@ export function stars(ctx: CanvasRenderingContext2D, f: Frame, t: Tokens) {
     ctx.fillRect(Math.round(x), Math.round(y), big, big);
   }
   ctx.restore();
+}
+
+/** Draws the base layer's tiles and returns how many are still on their way. A Surface tile
+ *  the box hasn't drawn yet (a true-colour tile costs it up to a second once the world moves)
+ *  shows the Biomes tile in its place, asked for first because the box draws it in
+ *  milliseconds, so the map is never a field of holes while Surface catches up. `peek` reads
+ *  the cache without asking the box; `want` asks if the tile isn't there. */
+export function drawTiles(
+  ctx: CanvasRenderingContext2D,
+  spots: TileSpot[],
+  layer: BaseLayer,
+  peek: (s: TileSpot, layer: BaseLayer) => TileEntry | undefined,
+  want: (s: TileSpot, layer: BaseLayer) => TileEntry | null,
+  t: Tokens,
+): number {
+  if (layer === "surface") {
+    for (const s of spots) if (!peek(s, "surface")?.img) want(s, "biomes");
+  }
+  let pending = 0;
+  for (const s of spots) {
+    const top = want(s, layer);
+    const shown = top?.img ? top : layer === "surface" ? peek(s, "biomes") : undefined;
+    if (!top?.img && top?.state !== "failed") pending++;
+    if (shown?.img) {
+      ctx.drawImage(shown.img, 0, 0, 256, 256, s.sx, s.sy, s.size + 0.5, s.size + 0.5);
+    } else {
+      hole(ctx, s.sx, s.sy, s.size, top?.state === "failed" ? "failed" : "loading", t);
+    }
+  }
+  return pending;
 }
 
 /** A tile not here yet: shimmer-hatched while it loads, finely hatched if it failed. */

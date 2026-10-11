@@ -150,7 +150,7 @@ describe("the minecraft_map chat card", () => {
     await waitFor(() => expect(tiles.length).toBeGreaterThan(0));
     for (const t of tiles) {
       expect(t).toMatch(
-        /^\/api\/minecraft\/map\/tile\/nether\/0\/-?\d+\/-?\d+\.png\?slot=slot2&layer=surface$/,
+        /^\/api\/minecraft\/map\/tile\/nether\/0\/-?\d+\/-?\d+\.png\?slot=slot2&layer=(surface|biomes)$/,
       );
     }
     await waitFor(() =>

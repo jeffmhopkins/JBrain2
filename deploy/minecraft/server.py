@@ -162,6 +162,7 @@ class Rig:
         # Map tiles (§M8): one chunk index per world folder, and the PNGs it rendered,
         # both dropped when that world's database files change.
         self._map_lock = threading.Lock()
+        self._surface_lock = threading.Lock()
         self._map_index: dict[str, mapping.WorldIndex] = {}
         self._block_index: dict[str, blocks.BlockIndex] = {}
         self._map_seed: dict[str, str | None] = {}
@@ -1586,21 +1587,31 @@ class Rig:
             folder, index = self._map_for(slot_id)
             key = (folder, dim, zoom, tx, tz, layer)
             cached = self._tiles.get(key)
-            if cached is None:
-                cached = mapping.tile(
-                    index,
-                    mapping.DIMENSIONS[dim],
-                    zoom,
-                    tx,
-                    tz,
-                    self._predictor,
-                    self._map_seed.get(folder),
-                    layer,
+            signature, seed = index._signature, self._map_seed.get(folder)
+            if cached is None and not mapping.true_colour_of(layer, mapping.DIMENSIONS[dim]):
+                image = mapping.tile(
+                    index, mapping.DIMENSIONS[dim], zoom, tx, tz, self._predictor, seed, layer
                 )
-                if len(self._tiles) > 512:  # a few MB of PNGs at most
-                    self._tiles.clear()
-                self._tiles[key] = cached
-        return cached
+                cached = self._keep_tile(key, image)
+        if cached is not None:
+            return cached
+        # A true-colour tile reads block sections and can take a second once the world
+        # moves, so it's drawn outside the map lock: the Biomes tiles the PWA shows under
+        # it meanwhile are never queued behind it. One true-colour draw at a time.
+        with self._surface_lock:
+            image = mapping.tile(
+                index, mapping.DIMENSIONS[dim], zoom, tx, tz, self._predictor, seed, layer
+            )
+        with self._map_lock:
+            if index._signature == signature:  # not drawn from a world since re-read
+                self._keep_tile(key, image)
+        return image
+
+    def _keep_tile(self, key: tuple, image: bytes) -> bytes:
+        if len(self._tiles) > 512:  # a few MB of PNGs at most
+            self._tiles.clear()
+        self._tiles[key] = image
+        return image
 
     def probe_pack(self, install_it: bool) -> dict[str, Any]:
         """Install (or remove) the bundled probe behavior pack in the active world and

@@ -3622,7 +3622,9 @@ opens this screen on its spot.
   marker or is dropped — never drawn under it.
 - **Layers:** two live base layers, a radio pair: **Surface** (the default; explored ground in
   its real block colours, hillshaded, the satellite survey beyond) and **Biomes** (explored +
-  satellite survey, all biome colours). The pick is remembered per device. In the Nether
+  satellite survey, all biome colours). The pick is remembered per device. A Surface tile the
+  box hasn't drawn yet shows the Biomes tile in its place (asked for first, drawn in
+  milliseconds), never a loading hole while Biomes is there to show. In the Nether
   Surface draws biomes too, and its legend says why (the top block is the bedrock roof). Height
   is listed, disabled, *later*. Overlays: **Players**; **Trails** (live, each player's latest
   session; on the timeline, everyone's path up to the moment, faint, with a bold fading tail of

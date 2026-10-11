@@ -976,7 +976,10 @@ tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
   fully explored area costs about a second on the sidecar, not milliseconds; the tile cache
   hides it after that. The satellite survey under it stays biomes (the seed predicts no
   blocks), and the Nether stays biomes (its top block is the bedrock roof). The PWA picks
-  **Surface** (default) or **Biomes** per device; tiles take `?layer=`.
+  **Surface** (default) or **Biomes** per device; tiles take `?layer=`. While a Surface
+  tile is still being drawn, the PWA shows that spot's Biomes tile (owner, same day). The
+  sidecar draws true colour outside its map lock, one at a time, so a Biomes tile is never
+  queued behind one.
 - **Tiles:** 256×256 px. Zoom 0 is 1 px per block; zoom k is 1 px per 2^k blocks, up
   to zoom 4 = **1 px per chunk** (owner, 2026-10-10), a 4096-block tile. Zoomed-out
   pixels read only the one column they show, so every zoom renders in milliseconds. A
