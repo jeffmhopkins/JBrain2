@@ -69,13 +69,20 @@ export class Dimension {
     this.items = new Map();
     this.commands = [];
     this.heightRange = { min: -64, max: 320 };
-    this.areas = new Map(); // name -> [cx0, cz0, cx1, cz1] in chunks
+    this.areas = new Map(); // name -> {box: [cx0, cz0, cx1, cz1] in chunks, at: clock}
   }
   loaded(x, z) {
     const cx = Math.floor(x / 16);
     const cz = Math.floor(z / 16);
-    for (const [x0, z0, x1, z1] of this.areas.values()) {
-      if (cx >= x0 && cx <= x1 && cz >= z0 && cz <= z1) return true;
+    // Like the game, an area's chunks come in over several ticks: here a few chunks a
+    // job step, in rows, so a chunk in the middle loads after the corners have.
+    for (const { box, at } of this.areas.values()) {
+      const [x0, z0, x1, z1] = box;
+      if (cx < x0 || cx > x1 || cz < z0 || cz > z1) continue;
+      const order = (cx - x0) * (z1 - z0 + 1) + (cz - z0);
+      const row = Math.floor((z1 - z0 + 1) / 2);
+      const ready = order === 0 || cx === x1 || ((cz === z0 || cz === z1) && order < row) ? 0 : order;
+      if (clock - at >= ready / CHUNKS_PER_STEP) return true;
     }
     return false;
   }
@@ -121,7 +128,7 @@ export class Dimension {
         Math.floor(Math.max(x0, x1) / 16), Math.floor(Math.max(z0, z1) / 16)];
       if ((box[2] - box[0] + 1) * (box[3] - box[1] + 1) > 100) throw new Error("ticking area over 100 chunks");
       if (this.areas.size >= 10) throw new Error("too many ticking areas");
-      this.areas.set(words[8], box);
+      this.areas.set(words[8], { box, at: clock });
     } else if (words[0] === "tickingarea" && words[2] === "circle") {
       const [x, , z, r] = words.slice(3, 7).map(Number);
       const cx = Math.floor(x / 16);
@@ -129,13 +136,17 @@ export class Dimension {
       // Only the inscribed square counts here, so code that leans on the corners of a
       // circle fails as it would in the game.
       const k = Math.floor(r / Math.SQRT2);
-      this.areas.set(words[7], [cx - k, cz - k, cx + k, cz + k]);
+      this.areas.set(words[7], { box: [cx - k, cz - k, cx + k, cz + k], at: clock });
     }
     return { successCount: 1 };
   }
 }
 
 let stopAfterSteps = Infinity;
+let clock = 0; // job steps run so far: the fake's ticks
+let stopped = 0;
+const CHUNKS_PER_STEP = 3;
+const timeouts = [];
 
 const listeners = [];
 const props = new Map();
@@ -165,10 +176,20 @@ export const system = {
     // test stops the "server" mid-job, is dropped there with no cleanup at all.
     let steps = 0;
     while (!gen.next().done) {
-      if (++steps >= stopAfterSteps) return 1; // abandoned: no finally, no catch
+      clock += 1;
+      if (++steps >= stopAfterSteps) {
+        stopped += 1;
+        timeouts.length = 0; // the "server" is gone: nothing it scheduled runs either
+        return 1; // abandoned: no finally, no catch
+      }
       if (steps > 5e6) throw new Error("job never finished");
     }
     return 1;
+  },
+  runTimeout(fn, _ticks) {
+    // Run once the current load's work has: sim.load() drains these.
+    timeouts.push(fn);
+    return timeouts.length;
   },
 };
 
@@ -182,11 +203,17 @@ export const sim = {
     placeHook = onPlace;
     ticks = 0;
     stopAfterSteps = Infinity;
+    stopped = 0;
+    clock = 0;
+    timeouts.length = 0;
     return dim;
   },
   load() {
     for (const fn of listeners) fn({});
+    for (let i = 0; timeouts.length && i < 20; i += 1) timeouts.shift()();
   },
+  stopped: () => stopped,
+  clock: () => clock,
   /** Stop the "server" dead after this many job steps (Infinity: never). */
   stopAfter(n) {
     stopAfterSteps = n;

@@ -7,7 +7,9 @@
 // Progress lives in a world dynamic property: the stage, each step done, and the ground
 // as first read. A build cut short (a crash, a restart) resumes at the step it stopped
 // on, from those first heights, so nothing is dug twice or placed twice; a finished one
-// never runs again. That record, not the wrapper's bookkeeping, is the guard.
+// never runs again. That record, not the wrapper's bookkeeping, is the guard. (A hard
+// kill can save the record and the chunks a moment apart; the worst that does is redo
+// one step, and each step lands on the same blocks again.)
 import { BlockPermutation, ItemStack, system, world } from "@minecraft/server";
 import { WRECK } from "./data.js";
 import * as plan from "./plan.js";
@@ -24,6 +26,7 @@ const SHIP_AREA = "jbrain_wreck_ship";
 const SURVEY = 64;
 const LOAD_WAIT_TICKS = 20 * 90;
 const MAX_FAILURES = 3;
+const RETRY_TICKS = 20 * 30;
 const POD_STEPS = ["terrain", "place", "crater", "canopy", "details", "kit", "spawn"];
 
 const emit = (ev) => console.log(`[jbrain] ${JSON.stringify(ev)}`);
@@ -82,19 +85,27 @@ function dropAreas(dim) {
   for (const name of [POD_AREA, SHIP_AREA]) command(dim, `tickingarea remove ${name}`, true);
 }
 
-/** Wait (as a job: yielding) until every listed column can be read. */
-function* waitLoaded(dim, columns) {
+/**
+ * Wait (as a job: yielding) until every chunk of the box can be read. A ticking area
+ * loads its chunks over several ticks, so the corners being ready says nothing about
+ * the middle: one column per chunk is checked, and a chunk once seen stays counted.
+ */
+function* loadBox(dim, x0, z0, x1, z1) {
+  const waiting = new Set();
+  for (let cx = Math.floor(x0 / 16); cx <= Math.floor(x1 / 16); cx += 1) {
+    for (let cz = Math.floor(z0 / 16); cz <= Math.floor(z1 / 16); cz += 1) waiting.add(`${cx},${cz}`);
+  }
   for (let t = 0; t < LOAD_WAIT_TICKS; t += 1) {
-    if (columns.every(([x, z]) => blockAt(dim, x, 0, z))) return true;
+    for (const k of [...waiting]) {
+      const [cx, cz] = k.split(",").map(Number);
+      const x = Math.min(Math.max(cx * 16, x0), x1);
+      const z = Math.min(Math.max(cz * 16, z0), z1);
+      if (blockAt(dim, x, 0, z)) waiting.delete(k);
+    }
+    if (waiting.size === 0) return;
     yield;
   }
-  return false;
-}
-
-function* load4(dim, x0, z0, x1, z1) {
-  if (!(yield* waitLoaded(dim, [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]))) {
-    throw new Unloaded(`chunks ${x0},${z0}..${x1},${z1} never loaded`);
-  }
+  throw new Unloaded(`${waiting.size} chunks of ${x0},${z0}..${x1},${z1} never loaded`);
 }
 
 /** The ground of one column: the topmost block that isn't a plant, tree or snow cover. */
@@ -128,7 +139,7 @@ function* plan_(dim, state) {
   const cx = Math.floor(spawn.x);
   const cz = Math.floor(spawn.z);
   area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
-  yield* load4(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = yield* survey(dim, cx, cz, SURVEY);
   const site = plan.chooseSite(ground, { x: cx, z: cz }, WRECK.pod);
   const frame = plan.podFrame(site, WRECK.pod);
@@ -146,7 +157,7 @@ function* plan_(dim, state) {
 
 /** Clear plants and trees standing on a column, so nothing hangs over the site. */
 function clearColumn(dim, x, z, g) {
-  for (let y = g.y + 1; y <= g.y + 24; y += 1) {
+  for (let y = g.y + 1; y <= g.y + 40; y += 1) { // a mega jungle tree is ~31 tall
     const b = blockAt(dim, x, y, z);
     if (b && plan.standsOnGround(b.typeId) && plan.bare(b.typeId) !== "air") set(dim, x, y, z, "air");
   }
@@ -269,7 +280,7 @@ function* podStep(dim, state, step, ground) {
 function* buildPod(dim, state) {
   const { x: cx, z: cz } = state.spawn;
   area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
-  yield* load4(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = plan.decodeGround(state.ground);
   for (const step of POD_STEPS) {
     if (state.steps.includes(step)) continue;
@@ -312,7 +323,7 @@ function* buildShip(dim, state) {
     for (const shift of plan.SHIP_SHIFTS) {
       const [x0, z0] = [base.x, base.z + shift];
       area(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
-      yield* load4(dim, x0, z0, x0 + lx - 1, z0 + lz - 1);
+      yield* loadBox(dim, x0, z0, x0 + lx - 1, z0 + lz - 1);
       const y = plan.shipHeight(base.y, yield* peakUnder(dim, x0, z0, lx, lz), ly, top);
       if (y !== null) {
         state.ship = { x: x0, y, z: z0 };
@@ -326,7 +337,7 @@ function* buildShip(dim, state) {
   }
   const { x, y, z } = state.ship;
   area(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
-  yield* load4(dim, x, z, x + lx - 1, z + lz - 1);
+  yield* loadBox(dim, x, z, x + lx - 1, z + lz - 1);
   for (let i = state.tiles ?? 0; i < ship.tiles.length; i += 1) {
     const t = ship.tiles[i];
     world.structureManager.place(t.id, dim, { x: x + t.x, y, z: z + t.z });
@@ -356,8 +367,9 @@ function* build(state) {
     }
     emit({ ev: "wreck", phase: "done" });
   } catch (err) {
-    // Retried at the next load from the step it stopped on; a build that keeps failing
-    // is given up rather than left half-trying forever.
+    // Retried shortly, in this same session, from the step it stopped on (before anyone
+    // has had time to build at spawn); a build that keeps failing is given up rather
+    // than left half-trying forever.
     state.failures = (state.failures ?? 0) + 1;
     const cause = String(err?.message ?? err).slice(0, 60);
     if (state.failures >= MAX_FAILURES) {
@@ -368,6 +380,7 @@ function* build(state) {
     } else {
       save(state);
       emit({ ev: "wreck", phase: "failed", cause });
+      system.runTimeout(() => system.runJob(build(load())), RETRY_TICKS);
     }
   } finally {
     dropAreas(dim);
@@ -382,7 +395,9 @@ world.afterEvents.worldLoad.subscribe(() => {
     emit({ ev: "wreck", phase: "done" }); // in case the wrapper missed it last time
     return;
   }
-  if (!state.stage && world.getAbsoluteTime() > FRESH_TICKS) {
+  // A world that already tried (and failed) to build is new by that record, however long
+  // it has run since.
+  if (!state.stage && !state.failures && world.getAbsoluteTime() > FRESH_TICKS) {
     save({ stage: "done", skipped: true });
     emit({ ev: "wreck", phase: "done", cause: "not a new world" });
     return;

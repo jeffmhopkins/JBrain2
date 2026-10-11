@@ -1540,8 +1540,10 @@ lands on a world that was played before it shipped.
 - **Ship stage.** It reads the peaks under each candidate spot and keeps a ship that
   started too high under the build limit. The chosen spot, and each tile placed, is
   recorded.
-- **Failure.** A failure is reported (`failed`) and retried at the next load, and given
-  up after three tries. Ticking areas come out on every exit.
+- **Failure.** It waits for every chunk of a box before reading it, because an area
+  loads over several ticks. A failure is reported (`failed`) and retried 30 s later in
+  the same session, before anyone has built at spawn. It is given up after three
+  tries. Ticking areas come out on every exit.
 - **Wrapper.** If a brand-new world's first start shows no sign of the pack, the
   wrapper restarts it once, as a plain restart under the lifecycle lock (never an
   update) and only while nobody is on.
@@ -1551,7 +1553,8 @@ lands on a world that was played before it shipped.
     `@minecraft/server` that is as strict as the game about unloaded chunks. It covers
     plains, forest, jungle, desert, snowy, mountainside, badlands, swamp, mangrove,
     island, open ocean, a high plateau, peaks under the ship, a placement refused once,
-    and a server stopped dead at four points of a build.
+    and a server stopped dead at 1%, 30%, 60% and 90% of a build. The fake's ticking
+    areas load chunk by chunk.
   - Every one must come out right, and a resumed build must equal an uninterrupted one
     block for block.
   - The supervisor's pytest runs both suites.

@@ -98,7 +98,6 @@ async function run(name, spec, n, stopAt = Infinity) {
   const original = console.log;
   console.log = (line) => logs.push(String(line));
   try {
-    if (spec.failPlaceOnce) sim.load(); // the failed attempt; the load below retries
     if (stopAt !== Infinity) {
       // The server stops dead mid-build, then starts again: the second load resumes.
       sim.stopAfter(stopAt);
@@ -120,7 +119,7 @@ async function run(name, spec, n, stopAt = Infinity) {
   // Uninterrupted: the whole story in one load. Resumed: it ends done, never failed.
   checks.finished =
     spec.failPlaceOnce
-      ? phases === "loaded,failed,loaded,pod,ship,done"
+      ? phases === "loaded,failed,pod,ship,done" // retried in the same session
       : stopAt === Infinity
         ? phases === "loaded,pod,ship,done"
         : phases.endsWith(",done") && !phases.includes("failed");
@@ -189,6 +188,8 @@ async function run(name, spec, n, stopAt = Infinity) {
     checks.ship_tiles_placed = placed.filter((p) => p.id !== WRECK.pod.id).length === WRECK.ship.tiles.length;
   }
   checks.ticking_areas_removed = dim.areas.size === 0;
+  // A resume case proves nothing unless the build really was stopped part-way.
+  if (stopAt !== Infinity) checks.was_stopped = sim.stopped() === 1;
   const digest = createHash("sha256");
   for (const [k, c] of [...dim.cells].sort(([a], [b]) => (a < b ? -1 : 1))) {
     digest.update(`${k}=${c.id}${JSON.stringify(c.states)};`);
@@ -211,6 +212,7 @@ async function run(name, spec, n, stopAt = Infinity) {
   }
   return {
     scenario: name,
+    steps: sim.clock(),
     world: digest.digest("hex"),
     ok: Object.values(checks).every(Boolean),
     checks,
@@ -229,8 +231,9 @@ for (const [name, spec] of Object.entries(SCENARIOS)) {
 // with must be exactly the one an uninterrupted build makes.
 if (!only.length || only.includes("resume")) {
   const clean = await run("plains", SCENARIOS.plains, n++);
-  for (const stopAt of [5, 400, 2500, 6000]) {
-    const r = await run(`resume_after_${stopAt}`, SCENARIOS.plains, n++, stopAt);
+  for (const pct of [1, 30, 60, 90]) {
+    const stopAt = Math.max(2, Math.floor((clean.steps * pct) / 100));
+    const r = await run(`resume_after_${pct}pct`, SCENARIOS.plains, n++, stopAt);
     r.checks.same_world_as_uninterrupted = r.world === clean.world;
     r.ok = Object.values(r.checks).every(Boolean);
     console.log(JSON.stringify(r));
