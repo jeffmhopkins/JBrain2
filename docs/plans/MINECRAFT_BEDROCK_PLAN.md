@@ -1173,7 +1173,8 @@ Dave handing one over.
   `ItemStack.keepOnDeath = true` (stable API), so it stays in the inventory through a
   death even when everything else drops. M10's drop path skips it too.
   - It can still be thrown away, put in a chest, or burnt in lava like any item.
-    **Canon (DW1):** a lost one comes back at the player's next respawn, not on request.
+    **Superseded by the canon (DW1):** it's locked to the inventory, so it can't leave
+    the player at all, and a missing one is re-beamed whenever they wake.
 
 **The item itself: a true custom item, `jbrain:tricorder`** (owner, 2026-10-10: a small
 pack that downloads automatically on join is fine, §3c rule 2).
@@ -1788,9 +1789,15 @@ for the owner's sign-off on the lore page, and DW1 isn't built until they're sig
   the item's owner xuid, an item dynamic property, as M9 planned. Without one, a fixed
   static line answers, with no AI turn. Someone else's Tricorder gets the "not tuned to
   you" line.
-- **Never dropped:** created with `ItemStack.keepOnDeath = true`, as M9 planned.
-- **Replaced at respawn:** on `playerSpawn` after a death, a player with no Tricorder of
-  their own gets a new one, beamed in. It's retired only if the old one turns up again,
+- **Bound to the player (canon, owner 2026-10-11):** created with
+  `ItemStack.lockMode = ItemLockMode.inventory`, so it can't be dropped, thrown, put in a
+  chest or moved out of the inventory, and `keepOnDeath = true`, so a death keeps it.
+  Both are stable API. A box check confirms it in Bedrock's own UI on Windows and Xbox:
+  the Q / drop key, dragging it out, a chest, a death.
+- **Re-beamed on waking (a safety net):** on every `playerSpawn`, both a join and a
+  respawn, a player without their own Tricorder gets a new one, with the "nearly lost
+  you" line. Anything that slips past the lock lands here: `/clear`, a hopper-minecart
+  edge, an old unlocked copy. A new one retires any other copy with the same owner,
   following M9's one-at-a-time rule.
 - **Power Pack uses (M10)** need the player's own Tricorder on them too, above.
 
