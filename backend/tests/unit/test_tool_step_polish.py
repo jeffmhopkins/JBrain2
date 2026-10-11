@@ -183,6 +183,7 @@ _AUTHORS_BRIEF = {
     "mc_place_save",
     "mc_places",
     "mc_place_remove",
+    "mc_wormhole_aim",
     "mc_transport",
     "mc_replicator_program",
     "mc_command",

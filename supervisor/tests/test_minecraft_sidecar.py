@@ -1642,6 +1642,7 @@ def test_every_world_gets_the_jbrain_resource_pack_and_clients_must_take_it(
         "replicator.png",
         "replicator_programmed.png",
         "tricorder.png",
+        "wormhole_seed.png",
     ]
     assert rig.properties()["texturepacks-required"] == "true"
     rig._start()  # a second start replaces, never duplicates

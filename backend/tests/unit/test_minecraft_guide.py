@@ -12,17 +12,17 @@ from jbrain.minecraft import guide
 
 def test_the_guide_is_pinned_to_its_version() -> None:
     """The entries are prompt material: a wording change bumps the version with it."""
-    assert guide.VERSION == "agent-minecraft-dave-guide-v4"
+    assert guide.VERSION == "agent-minecraft-dave-guide-v5"
     body = guide._PROMPT.body  # noqa: SLF001 — the pin is on the file's exact text
     assert hashlib.sha256(body.encode()).hexdigest() == (
-        "faee6edadbdf37a492334c6ef92724f9dc29a40d4c38fbdb8da84d70bcdd262a"
+        "5a535ea193795919880c478c5c1090cfdcd36fad90d93b239ca5326740c01318"
     )
 
 
 def test_only_built_items_have_entries() -> None:
-    """The Tricorder, the Power Pack, the No-Spawn Beacon and the Replicator are built;
-    the pack's two uses, keeping your things and transport, are built (each a per-world
-    switch); wormholes are not, so the guide never describes them."""
+    """Every Old Maker item in the canon is built: the Tricorder, the Power Pack and its
+    two uses (keeping your things and transport, each a per-world switch), the No-Spawn
+    Beacon, the Replicator and the Wormhole Seed (§M12), so each has its entry."""
     assert set(guide.ENTRIES) == {
         "intro_game",
         "intro_owner",
@@ -33,10 +33,8 @@ def test_only_built_items_have_entries() -> None:
         "power_pack_unused",
         "no_spawn_beacon",
         "replicator",
+        "wormhole_seed",
     }
-    whole = "\n".join(guide.ENTRIES.values()).lower()
-    for unbuilt in ("wormhole", "chorus"):
-        assert unbuilt not in whole, unbuilt
     # The canon's recipe and rules, as the lore page says them.
     assert "eight Ender Pearls in a ring around one Blaze Powder" in guide.ENTRIES["power_pack"]
     assert "only works for its owner" in guide.ENTRIES["tricorder"]
@@ -44,6 +42,19 @@ def test_only_built_items_have_entries() -> None:
     beacon = guide.ENTRIES["no_spawn_beacon"]
     assert "a Power Pack in the middle of a crafting table, surrounded by eight echo" in beacon
     assert "so does the Warden" in beacon and "the Ender Dragon and the Wither" in beacon
+    seed = " ".join(guide.ENTRIES["wormhole_seed"].split())
+    for canon in (
+        "4 popped chorus fruit",
+        "4 Ender Pearls in the corners",
+        "blocks of diamond",
+        "within 4 blocks",
+        "one of their own saved places",
+        "only goes one way",
+        "Each re-aim burns one Power Pack",
+        "the seed burns out",
+        "anyone can step in",
+    ):
+        assert canon in seed, canon
 
 
 def test_known_is_read_strictly_and_always_has_the_tricorder() -> None:
@@ -115,3 +126,24 @@ def test_the_beacon_opens_only_on_its_own_unlock() -> None:
         "no_spawn_beacon"
     )
     assert "### The No-Spawn Beacon" in guide.for_owner()
+
+
+def test_the_wormhole_seed_opens_its_entry_and_a_pack_is_then_never_useless() -> None:
+    """The pack reports `wormhole_seed` once a player who made a Power Pack holds popped
+    chorus fruit. A re-aim burns a pack, so in a world without the keep switch the
+    "does nothing yet" entry gives way to the gates."""
+    assert guide.parse_known(["power_pack_uses", "wormhole_seed"]) >= {"wormhole_seed"}
+    known = {"power_pack", "power_pack_uses", "wormhole_seed"}
+    assert guide.entries_for(known, keep_switch=True) == [
+        "tricorder",
+        "power_pack",
+        "power_pack_keep",
+        "wormhole_seed",
+    ]
+    assert guide.entries_for(known, keep_switch=False) == [
+        "tricorder",
+        "power_pack",
+        "wormhole_seed",
+    ]
+    assert "wormhole" not in guide.for_player({"power_pack_uses"}, keep_switch=True).lower()
+    assert "### The Wormhole Seed" in guide.for_owner()

@@ -50,6 +50,7 @@ from jbrain.agent.minecraftmap import build_minecraft_map_handlers
 from jbrain.agent.minecraftreplicator import build_minecraft_replicator_handlers
 from jbrain.agent.minecrafttools import build_minecraft_handlers
 from jbrain.agent.minecrafttransport import build_minecraft_transport_handlers
+from jbrain.agent.minecraftwormhole import build_minecraft_wormhole_handlers
 from jbrain.agent.moltbooktools import build_moltbook_handlers
 from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
 from jbrain.agent.ocrtools import build_ocr_handlers
@@ -1334,6 +1335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 **build_minecraft_map_handlers(maker, settings, settings_store),
                 **build_minecraft_transport_handlers(maker, settings),
                 **build_minecraft_replicator_handlers(settings),
+                **build_minecraft_wormhole_handlers(maker, settings, settings_store),
                 **build_minecraft_admin_handlers(settings, app.state.agent_proposals),
             },
             moltbook_handlers=moltbook_handlers,
