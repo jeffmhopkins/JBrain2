@@ -777,6 +777,17 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 
 ### M8 — Maps and biomes (after M4; the map tools in §3b)
 
+**The viewer's design is settled (owner, 2026-10-11): `docs/mocks/minecraft-map/` variant
+A** — the map full-bleed under one persistent bottom panel (world, status, Layers /
+Timeline), explored ground in full colour over the dimmed satellite survey in all three
+dimensions, zoom from 1 px per chunk to 8 px per block, a status line that never says
+Live while replaying, clustered structure markers, tap-a-spot (biome, y, explored or
+survey, Copy X Z), a long-press pin, and the same component as the inline card in
+Minecraft_Dave's chat. **Session navigation is 3 · Days**: a day strip with a dot per
+player who played, that day's sessions as chips, and each player's full session list
+behind **Sessions**. The mock README lists the four DESIGN exceptions approved with the
+pick and the remaining build gaps (a saved structure sweep; the travel-log session API).
+
 **Renderer, first layer (shipped 2026-10-10).**
 - **Reader:** `deploy/minecraft/leveldb.py` is a stdlib reader for Mojang's LevelDB
   (tables with raw-deflate blocks, plus the write-ahead log, newest write winning). It

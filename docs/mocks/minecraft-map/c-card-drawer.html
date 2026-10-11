@@ -1,0 +1,1602 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Minecraft Map · C — Card and drawer</title>
+<!-- GUI gate mock — docs/mocks/minecraft-map/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M8, §M8a, §T1
+     and P3 "The map tool-view". Reached from the binding Minecraft screen (frontend/src/screens/MinecraftScreen.tsx).
+     Self-contained and offline; tokens per docs/reference/DESIGN.md. The map picture is drawn procedurally. -->
+<style>
+/* ===== tokens — copied from frontend/src/styles/tokens.css (drawn at 100% text size) ===== */
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66; --surface-composer:#141518;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px; --fs-hero:28px; --fs-chat:20px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+    --ok-text:var(--green); --warn-text:var(--amber); --danger-text:var(--rose); --steel-text:var(--steel);
+    /* Map-only tokens (this surface's proposal — see README "Assumptions"). The void, the
+       explored-by veil, the glyph halo and the glyph ink are part of the picture, so they stay
+       dark (ink light) in BOTH themes; only the label plate follows the theme. */
+    --map-fog:#0B0C0E; --map-void:#141518; --map-halo:rgba(8,9,11,.9); --map-plate:rgba(23,24,27,.9);
+    --map-ink:#F2F2F2; --map-ink-on:#0E0F11;
+    --frame:#2A2C30; --page:#000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF;
+    --scrim:rgba(247,247,245,.6); --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --ok-text:color-mix(in srgb, var(--green) 46%, var(--text));
+    --warn-text:color-mix(in srgb, var(--amber) 50%, var(--text));
+    --danger-text:color-mix(in srgb, var(--rose) 54%, var(--text));
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --map-fog:#0B0C0E; --map-void:#1E2024; --map-halo:rgba(8,9,11,.85); --map-plate:rgba(255,255,255,.92);
+    --frame:#C9C9C4; --page:#DADAD6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;width:20px;height:20px;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  [hidden]{display:none !important;}
+  .num{font-variant-numeric:tabular-nums;}
+  .mono{font-family:var(--font-mono);}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+
+  /* ===== reviewer chrome — OUTSIDE the design ===== */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel-text);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;background:transparent;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);width:62px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+
+  /* ===== the phone ===== */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  @media (max-width:430px){
+    body{padding-top:12px;}
+    .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;}
+  }
+  @media (min-width:900px){ .phone{width:560px;} .caption,.sim{max-width:560px;} }
+
+  /* ===== shared atoms (mirrored from the built Minecraft screen, frontend/src/styles.css .mc-*) ===== */
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px 0 4px;border-bottom:1px solid var(--border);flex:none;background:var(--bg);}
+  .bar .back,.icon-btn{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;flex:none;border-radius:var(--r-input);}
+  .bar .ttl{font-size:var(--fs-screen);font-weight:500;}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-micro);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+  .badge.ok{color:var(--ok-text);background:var(--green-tint);} .badge.warn{color:var(--warn-text);background:var(--amber-tint);}
+  .badge.bad{color:var(--danger-text);background:var(--rose-tint);} .badge.info{color:var(--steel-text);background:var(--steel-tint);}
+  .badge.off{color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);}
+  .dot{width:8px;height:8px;border-radius:999px;flex:none;display:inline-block;}
+  .dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);} .dot.warn{background:var(--warn);box-shadow:0 0 0 3px var(--amber-tint);}
+  .dot.bad{background:var(--danger);box-shadow:0 0 0 3px var(--rose-tint);} .dot.off{background:var(--text-3);}
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 14px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;white-space:nowrap;}
+  .btn svg{width:18px;height:18px;}
+  .btn.primary{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+  .btn.go{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+  .btn:disabled{background:var(--surface-2);border-color:var(--border);color:var(--text-3);cursor:default;}
+  .btn.grow{flex:1;min-width:0;}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;}
+  .sect{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);}
+  .note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .note b{color:var(--text);font-weight:500;}
+  .notice{display:flex;gap:9px;align-items:flex-start;border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-micro);line-height:1.45;color:var(--text);}
+  .notice svg{width:16px;height:16px;margin-top:1px;}
+  .notice b{font-weight:500;}
+  .notice.warn{background:var(--amber-tint);} .notice.warn svg{color:var(--warn-text);}
+  .notice.bad{background:var(--rose-tint);} .notice.bad svg{color:var(--danger-text);}
+  .notice.info{background:var(--steel-tint);} .notice.info svg{color:var(--steel-text);}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;gap:2px;}
+  .seg button{appearance:none;flex:1;min-width:0;min-height:44px;border:0;border-radius:9px;background:transparent;color:var(--text-2);font-size:var(--fs-head);font-weight:500;padding:0 4px;white-space:nowrap;}
+  .seg button[aria-checked="true"]{background:var(--steel-tint);color:var(--text);}
+  .seg button:disabled{color:var(--text-3);cursor:default;}
+  .switch{appearance:none;width:44px;min-width:44px;height:26px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);position:relative;flex:none;}
+  .switch::after{content:"";position:absolute;inset:-10px -2px;}
+  .switch .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:var(--text-3);transition:left .15s ease-out,background .15s ease-out;}
+  .switch[aria-checked="true"]{background:var(--steel-tint);border-color:transparent;} .switch[aria-checked="true"] .knob{left:21px;background:var(--steel);}
+  .switch:disabled{cursor:default;border-style:dashed;}
+
+  /* modal shells — one Sheet, one toast (DESIGN "Modal system") */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .16s ease-out;z-index:40;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;transform:translateY(100%);transition:transform .18s ease-out;z-index:41;padding:0 16px calc(16px + env(safe-area-inset-bottom));max-height:86%;overflow:auto;visibility:hidden;}
+  .sheet.show{transform:translateY(0);visibility:visible;}
+  .grip{width:32px;height:4px;border-radius:999px;background:var(--border);margin:10px auto 12px;}
+  .sheet h3{font-size:var(--fs-title);font-weight:500;}
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(16px);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 16px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;transition:.18s ease-out;max-width:88%;z-index:60;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  #toast.up{bottom:var(--toast-up,120px);}
+
+  /* ===== the map viewport (shared component) ===== */
+  .mv{position:relative;overflow:hidden;background:var(--map-void);touch-action:none;user-select:none;-webkit-user-select:none;}
+  .mv canvas{position:absolute;inset:0;width:100%;height:100%;display:block;image-rendering:pixelated;}
+  .mv.inline{touch-action:pan-y;}
+  .fab{appearance:none;width:44px;height:44px;border-radius:var(--r-input);background:var(--surface);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-card);flex:none;}
+  .fab svg{width:20px;height:20px;}
+  .fab[aria-pressed="true"]{background:color-mix(in srgb, var(--steel) 13%, var(--surface));color:var(--steel-text);border-color:var(--steel);}
+  .fabcol{display:flex;flex-direction:column;gap:8px;}
+  .pill{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 12px;font-size:var(--fs-micro);color:var(--text);box-shadow:var(--shadow-card);white-space:nowrap;}
+  .pill .muted{color:var(--text-2);}
+
+  /* map-status line (honest status: snapshot time, live or not) */
+  .mstat{display:flex;align-items:center;gap:8px;font-size:var(--fs-micro);color:var(--text-2);line-height:1.35;min-width:0;}
+  .mstat b{color:var(--text);font-weight:500;}
+  .mstat .spin{width:14px;height:14px;border-radius:999px;border:1.5px solid var(--text-3);border-top-color:var(--steel);animation:spin .9s linear infinite;flex:none;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .mstat .mstat-tx{flex:1;min-width:0;}
+  .mstat.time b{color:var(--warn-text);}
+  .mstat-live{flex:none;min-height:44px;padding:0 12px;font-size:var(--fs-micro);}
+
+  /* layer picker */
+  .ly-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .ly{appearance:none;display:flex;align-items:center;gap:10px;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:8px 10px;min-height:56px;min-width:0;}
+  .ly[aria-checked="true"]{border-color:var(--steel);background:var(--steel-tint);}
+  .ly:disabled{cursor:default;border-style:dashed;}
+  .ly:disabled .lt{color:var(--text-2);}
+  .ly .sw.later{background:var(--surface);border-style:dashed;}
+  .ly .sw{width:32px;height:32px;border-radius:8px;flex:none;image-rendering:pixelated;border:1px solid var(--border);}
+  .ly .lt{display:block;font-size:var(--fs-secondary);font-weight:500;color:var(--text);}
+  .ly .ls{display:block;font-size:var(--fs-micro);color:var(--text-2);line-height:1.3;}
+  .ly-who{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .ov{display:flex;align-items:center;gap:12px;min-height:48px;padding:2px 0;}
+  .ov + .ov{border-top:1px solid var(--border);}
+  .ov .gl{width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex:none;color:var(--text-2);}
+  .ov .gl svg{width:18px;height:18px;}
+  .ov .ot{flex:1;min-width:0;font-size:var(--fs-secondary);}
+  .ov .ot small{display:block;font-size:var(--fs-micro);color:var(--text-2);}
+  .ov.later .ot{color:var(--text-2);}
+  .dims{display:flex;}
+
+  /* chips (players, explored-by) */
+  .chip{appearance:none;display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:var(--fs-micro);font-weight:500;position:relative;white-space:nowrap;}
+  .chip::after{content:"";position:absolute;inset:-4px -2px;}
+  .chip[aria-pressed="true"],.chip[aria-checked="true"]{background:var(--steel-tint);color:var(--text);border-color:var(--steel);}
+  .chip .pd{width:10px;height:10px;border-radius:999px;flex:none;border:1.5px solid currentColor;}
+  .chip[aria-pressed="true"] .pd,.chip[aria-checked="true"] .pd{border-color:transparent;}
+  .chip .on{font-size:var(--fs-micro);color:var(--ok-text);}
+
+  /* legend */
+  .lg{display:flex;flex-direction:column;gap:8px;}
+  .lg-row{display:flex;flex-wrap:wrap;gap:6px 14px;}
+  .lg-i{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);}
+  .lg-i i{width:12px;height:12px;border-radius:3px;display:inline-block;flex:none;border:1px solid var(--border);}
+  .lg-i svg{width:14px;height:14px;}
+  .lg-ramp{height:10px;border-radius:999px;border:1px solid var(--border);}
+  .lg-ends{display:flex;justify-content:space-between;font-size:var(--fs-micro);color:var(--text-2);}
+
+  /* detail (what you tapped) */
+  .det{display:flex;flex-direction:column;gap:10px;}
+  .det-h{display:flex;align-items:flex-start;gap:10px;}
+  .det-ic{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);}
+  .det-ic svg{width:18px;height:18px;}
+  .det-ic.death{background:var(--rose-tint);border-color:transparent;color:var(--danger-text);}
+  .det-ic.pl{border-color:transparent;color:var(--map-ink-on);font-weight:700;font-size:var(--fs-secondary);}
+  .det-ic.st{color:var(--warn-text);background:var(--amber-tint);border-color:transparent;}
+  .det-tx{flex:1;min-width:0;}
+  .det-t{font-size:var(--fs-body);font-weight:500;overflow-wrap:anywhere;}
+  .det-s{font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;line-height:1.4;}
+  .coord{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:6px 6px 6px 12px;min-width:0;}
+  .coord .xyz{flex:1;min-width:0;font-family:var(--font-mono);font-size:var(--fs-body);font-variant-numeric:tabular-nums;line-height:1.3;display:flex;flex-wrap:wrap;gap:0 12px;}
+  .coord .xyz span{white-space:nowrap;}
+  .coord .xyz em{font-style:normal;color:var(--text-2);margin-right:4px;}
+  .coord .btn{flex:none;padding:0 12px;}
+  .det .alt{font-size:var(--fs-micro);color:var(--text-2);}
+  .det .alt b{color:var(--text);font-weight:500;font-family:var(--font-mono);}
+
+  .selrow{display:flex;align-items:center;gap:10px;min-width:0;}
+  .selrow .det-tx{flex:1;min-width:0;}
+  .selrow .sr-t{font-size:var(--fs-secondary);font-weight:500;overflow-wrap:anywhere;line-height:1.3;}
+  .selrow .sr-c{font-size:var(--fs-micro);color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .selrow .sr-copy{width:44px;padding:0;flex:none;}
+  .selrow .det-ic{width:30px;height:30px;}
+  .nudge{display:flex;align-items:center;gap:2px;}
+  .nudge .note{flex:1;}
+  .nudge .icon-btn{color:var(--text);background:var(--surface-2);border:1px solid var(--border);}
+  .lg-n{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:999px;background:var(--map-halo);color:var(--map-ink);font-size:var(--fs-micro);font-weight:700;flex:none;}
+
+  /* ===== timeline (M8a) ===== */
+  .tl{display:flex;flex-direction:column;gap:4px;}
+  .tl-top{display:flex;align-items:center;gap:8px;min-width:0;}
+  .tl-play{appearance:none;width:44px;height:44px;border-radius:999px;border:0;background:var(--steel-tint);color:var(--steel-text);display:flex;align-items:center;justify-content:center;flex:none;}
+  .tl-play svg{width:18px;height:18px;}
+  .tl-speed{appearance:none;min-width:52px;height:44px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:600;font-variant-numeric:tabular-nums;flex:none;padding:0 8px;}
+  .tl-when{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.2;}
+  .tl-when b{font-size:var(--fs-body);font-weight:500;font-variant-numeric:tabular-nums;}
+  .tl-when span{font-size:var(--fs-micro);color:var(--text-2);}
+  .tl-now{appearance:none;min-height:44px;padding:0 12px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-micro);font-weight:500;display:inline-flex;align-items:center;gap:6px;flex:none;}
+  .tl-now[aria-pressed="true"]{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+  .tl-scrub{position:relative;height:88px;touch-action:none;margin:0 2px;}
+  .tl-marks{position:absolute;left:0;right:0;top:0;height:44px;}
+  .tl-mk{appearance:none;position:absolute;top:0;width:44px;height:44px;margin-left:-22px;border:0;background:none;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;color:var(--text-2);}
+  .tl-mk svg{width:16px;height:16px;}
+  .tl-mk.death{color:var(--danger-text);}
+  .tl-mk.dim{color:var(--violet);}
+  .tl-mk .n{position:absolute;top:0;right:2px;font-size:var(--fs-micro);font-weight:600;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;min-width:18px;height:18px;line-height:16px;text-align:center;padding:0 3px;}
+  .tl-more{margin-top:10px;}
+  .tl-track{position:absolute;left:0;right:0;top:44px;height:44px;cursor:pointer;}
+  .tl-rail{position:absolute;left:0;right:0;top:19px;height:6px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);}
+  .tl-sess{position:absolute;top:19px;height:6px;border-radius:999px;opacity:.55;}
+  .tl-fill{position:absolute;left:0;top:19px;height:6px;border-radius:999px;background:var(--steel);}
+  .tl-thumb{position:absolute;top:8px;width:28px;height:28px;margin-left:-14px;border-radius:999px;background:var(--surface);border:2px solid var(--steel);box-shadow:0 0 0 4px var(--steel-tint);pointer-events:none;}
+  .tl-ends{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:var(--fs-micro);color:var(--text-2);font-variant-numeric:tabular-nums;margin-top:-2px;}
+  .tl-chips{display:flex;flex-wrap:wrap;gap:6px 6px;}
+  .tl-step{display:flex;align-items:center;gap:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:0 2px;min-height:52px;}
+  .tl-step .icon-btn{color:var(--text);}
+  .tl-step .icon-btn:disabled{color:var(--text-3);}
+  .tl-step .mid{flex:1;min-width:0;text-align:center;line-height:1.25;}
+  .tl-step .who{appearance:none;background:none;border:0;font-size:var(--fs-secondary);font-weight:500;display:inline-flex;align-items:center;gap:6px;min-height:28px;position:relative;}
+  .tl-step .who::after{content:"";position:absolute;inset:-8px -6px;}
+  .tl-step .who .pd{width:10px;height:10px;border-radius:999px;}
+  .tl-step .meta{display:block;font-size:var(--fs-micro);color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .tl-follow{appearance:none;min-height:44px;padding:0 10px;border-radius:10px;border:0;background:none;color:var(--text-2);font-size:var(--fs-micro);font-weight:500;display:inline-flex;align-items:center;gap:5px;flex:none;}
+  .tl-follow svg{width:16px;height:16px;}
+  @media (max-width:360px){ .tl-follow .fl{display:none;} .tl-follow{width:44px;justify-content:center;padding:0;} .mstat.time .sub{display:none;} }
+  .tl-follow[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel-text);}
+
+  /* ===== chat (Minecraft_Dave) — the P3 inline tool-view ===== */
+  .chat{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;}
+  .bubble{max-width:80%;padding:11px 14px;border-radius:16px;font-size:var(--fs-chat);line-height:1.45;overflow-wrap:anywhere;}
+  .bubble.me{align-self:flex-end;background:var(--steel-tint);border:1px solid var(--steel-tint);border-bottom-right-radius:0;}
+  .bubble.ai{align-self:flex-start;max-width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:0;display:flex;flex-direction:column;gap:8px;}
+  .tool-view{border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden;}
+  .tv-h{display:flex;align-items:center;gap:8px;padding:4px 4px 4px 12px;min-height:44px;font-size:var(--fs-micro);color:var(--text-2);}
+  .tv-h b{color:var(--text);font-weight:500;}
+  .tv-h .icon-btn{margin-left:auto;color:var(--text);}
+  .tv-map{height:220px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);cursor:zoom-in;}
+  .tv-foot{padding:10px 12px;display:flex;flex-direction:column;gap:8px;}
+  .tv-tog{display:flex;flex-wrap:wrap;gap:6px;}
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 16px 14px;background:var(--bg);}
+  .composer .box{background:var(--surface-composer);border:1px solid var(--border);border-radius:16px;min-height:48px;display:flex;align-items:center;padding:0 14px;color:var(--text-2);font-size:var(--fs-body);}
+
+  /* the Minecraft screen excerpt (entry state) */
+  .scroll{flex:1;overflow-y:auto;padding:12px 16px 28px;}
+  .mc-hero{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:16px;margin-bottom:12px;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-card);}
+  .mc-state{display:flex;align-items:center;gap:10px;}
+  .mc-state .w{font-size:var(--fs-title);font-weight:500;}
+  .mc-state .sub{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);}
+  .mc-facts{display:flex;gap:8px;}
+  .mc-fact{flex:1;background:var(--surface-2);border-radius:10px;padding:8px 10px;min-width:0;}
+  .mc-fact .v{font-size:var(--fs-secondary);font-weight:500;}
+  .mc-fact .k{font-size:var(--fs-micro);color:var(--text-2);}
+  .mc-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow-card);}
+  .navrow{appearance:none;width:100%;display:flex;align-items:center;gap:12px;background:none;border:0;padding:12px 14px;min-height:60px;text-align:left;color:var(--text);}
+  .navrow + .navrow{border-top:1px solid var(--border);}
+  .navrow > svg:last-child{color:var(--text-3);width:18px;height:18px;}
+  .navrow .ico{width:36px;height:36px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;}
+  .navrow .tx{flex:1;min-width:0;}
+  .navrow .t{display:block;font-size:var(--fs-body);font-weight:500;}
+  .navrow .m{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;}
+  .mc-sect{display:flex;align-items:baseline;gap:8px;margin:18px 2px 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:400;}
+  .mc-sect .r{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-transform:none;letter-spacing:0;}
+  .ghost{height:120px;border:1px dashed var(--border);border-radius:var(--r-card);display:flex;align-items:center;justify-content:center;color:var(--text-2);font-size:var(--fs-micro);}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important;}
+  }
+  .tv-lg{display:flex;flex-wrap:wrap;gap:4px 12px;}
+  /* ===================== variant C — a card that expands; a crosshair readout; a side drawer ===================== */
+  .scr{position:absolute;inset:0;display:flex;flex-direction:column;}
+  .c-card .tv-map{height:230px;cursor:pointer;}
+  .c-card .tv-foot .btnrow .btn{flex:1;}
+  .c-on{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:var(--fs-micro);color:var(--text-2);}
+  .c-on span{display:inline-flex;align-items:center;gap:6px;}
+  .c-on i{width:9px;height:9px;border-radius:999px;display:inline-block;}
+  .bar .ttl{font-size:var(--fs-title);}
+  .c-world{appearance:none;background:none;border:0;display:inline-flex;align-items:center;gap:4px;min-height:44px;padding:0 6px;border-radius:var(--r-input);color:var(--text);min-width:0;text-align:left;line-height:1.15;}
+  .c-world .t{font-size:var(--fs-title);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .c-world .d{display:block;font-size:var(--fs-micro);color:var(--text-2);}
+  .c-world svg{width:16px;height:16px;color:var(--text-2);}
+  .c-acts{margin-left:auto;display:flex;gap:2px;}
+  .c-acts .icon-btn[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel-text);}
+  .c-acts .icon-btn{color:var(--text);}
+  .c-mapwrap{flex:1;position:relative;min-height:0;}
+  .c-mapwrap .mv{position:absolute;inset:0;}
+  .c-zoom{position:absolute;right:12px;top:12px;z-index:5;}
+  .c-strip{position:absolute;left:12px;top:12px;right:68px;z-index:5;display:flex;}
+  .c-strip .pill{white-space:normal;line-height:1.35;border-radius:12px;}
+  .c-strip .pill.bad{background:var(--surface);border-color:var(--rose);}
+  .c-strip .pill.bad svg{color:var(--danger-text);width:16px;height:16px;}
+  .c-cross{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;pointer-events:none;z-index:4;}
+  .c-cross::before,.c-cross::after{content:"";position:absolute;background:var(--map-ink);box-shadow:0 0 0 1.5px var(--map-halo);}
+  .c-cross.snapped{display:none;}
+  .c-cross::before{left:21px;top:4px;width:2px;height:36px;}
+  .c-cross::after{top:21px;left:4px;height:2px;width:36px;}
+  .c-cross i{position:absolute;inset:14px;border-radius:999px;border:2px solid var(--map-ink);box-shadow:0 0 0 1.5px var(--map-halo),inset 0 0 0 1.5px var(--map-halo);}
+  .c-stat{padding-bottom:8px;margin-bottom:10px;border-bottom:1px solid var(--border);}
+  .c-stat .mstat{min-height:20px;}
+  .c-read{flex:none;border-top:1px solid var(--border);background:var(--surface);padding:12px 16px calc(14px + env(safe-area-inset-bottom));}
+  .c-read .det-h{align-items:center;}
+  .c-read .hint{font-size:var(--fs-micro);color:var(--text-2);margin-top:8px;}
+  .c-mini{display:flex;align-items:center;gap:8px;min-width:0;}
+  .c-mini .selrow{flex:1;}
+  .c-mini .xyz{flex:1;min-width:0;font-family:var(--font-mono);font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .c-mini .xyz em{font-style:normal;color:var(--text-2);margin-right:3px;}
+  .c-mini .what{font-size:var(--fs-micro);color:var(--text-2);display:block;font-family:inherit;}
+  .c-tray{flex:none;border-top:1px solid var(--border);background:var(--surface);padding:10px 16px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;max-height:52%;overflow-y:auto;}
+  .c-tray .tl{display:flex;flex-direction:column;}
+  .c-tray .tl-step{order:-1;}
+  .c-tray .c-mini{padding-bottom:8px;border-bottom:1px solid var(--border);}
+  .c-dbody .ly-grid{grid-template-columns:1fr 1fr;}
+  .c-wl{display:flex;flex-direction:column;gap:6px;}
+  .c-wl .ly{min-height:48px;}
+  .c-wl .ly .sw{display:flex;align-items:center;justify-content:center;color:var(--text-2);}
+  .c-wl .ly .sw svg{width:16px;height:16px;}
+</style>
+</head>
+<body>
+  <div class="caption"><span class="tag">GUI gate · Minecraft map · M8 / M8a / P3</span><br><b>C — Card and crosshair</b> (revision 2). The map is a card on the Minecraft screen, the same card Minecraft_Dave puts in a chat. Tap it to go full screen. A fixed crosshair reads out the block under it, and a tap pans there. World, dimension and layers live in the shared bottom sheet.</div>
+  <div class="sim" id="sim" aria-label="Mock controls"></div>
+  <div class="phone" id="phone">
+    <section class="scr" id="scr-map">
+      <div class="bar" id="c-bar"></div>
+      <div class="c-mapwrap" id="c-mapwrap">
+        <div class="mv" id="map"></div>
+        <div class="c-cross" aria-hidden="true"><i></i></div>
+        <div class="c-strip" id="c-strip"></div>
+        <div class="fabcol c-zoom" id="c-zoom"></div>
+      </div>
+      <div id="c-bottom" style="display:contents"></div>
+    </section>
+    <section class="scr" id="scr-other" hidden></section>
+    <div class="scrim" id="scrim" data-act="dismiss"></div>
+    <div class="sheet" id="drawer" role="dialog" aria-modal="true" aria-label="Map: world, dimension and layers"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </div>
+<script>
+'use strict';
+/* ===== shared core — identical in A / B / C so they compare like-for-like =====
+   Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M8 (maps and biomes, the satellite survey), §M8a (timeline),
+   §T1 (travel log) and P3 ("The map tool-view"). The pictures are drawn procedurally here; the real ones are the
+   box's 256×256 tiles (deploy/minecraft/mapping.py: zoom 0 = 1 px/block … zoom 4 = 1 px/chunk). */
+
+/* ---------- icons (Lucide-style outline) ---------- */
+const IC = {
+  back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
+  chevL:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  chevD:'<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
+  x:'<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  plus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
+  minus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
+  layers:'<svg viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>',
+  clock:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  play:'<svg viewBox="0 0 24 24"><polygon points="7 4 20 12 7 20 7 4"/></svg>',
+  pause:'<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
+  copy:'<svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
+  crosshair:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M22 12h-4"/><path d="M6 12H2"/><path d="M12 6V2"/><path d="M12 22v-4"/></svg>',
+  locate:'<svg viewBox="0 0 24 24"><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.5"/></svg>',
+  expand:'<svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/></svg>',
+  skull:'<svg viewBox="0 0 24 24"><path d="M12 3a8 8 0 0 0-5 14.2V20a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2.8A8 8 0 0 0 12 3z"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><path d="M10 21v-2"/><path d="M14 21v-2"/></svg>',
+  bed:'<svg viewBox="0 0 24 24"><path d="M2 4v16"/><path d="M2 8h18a2 2 0 0 1 2 2v10"/><path d="M2 17h20"/><path d="M6 8v9"/></svg>',
+  flag:'<svg viewBox="0 0 24 24"><path d="M4 22V4"/><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1"/></svg>',
+  pinp:'<svg viewBox="0 0 24 24"><path d="M20 10c0 4.99-5.54 10.19-7.4 11.8a1 1 0 0 1-1.2 0C9.54 20.19 4 14.99 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>',
+  user:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+  route:'<svg viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>',
+  grid:'<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>',
+  castle:'<svg viewBox="0 0 24 24"><path d="M22 20v-9H2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2Z"/><path d="M18 11V4H6v7"/><path d="M15 22v-4a3 3 0 0 0-6 0v4"/><path d="M22 11V9"/><path d="M2 11V9"/><path d="M6 4V2"/><path d="M18 4V2"/><path d="M10 4V2"/><path d="M14 4V2"/></svg>',
+  portal:'<svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="1"/><path d="M10 7c2 1 2 3 0 5s-2 4 0 5"/><path d="M14 7c-2 1-2 3 0 5s2 4 0 5"/></svg>',
+  login:'<svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg>',
+  logout:'<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>',
+  alert:'<svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+  cloudoff:'<svg viewBox="0 0 24 24"><path d="m2 2 20 20"/><path d="M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.31-.2"/><path d="M21.53 16.82A4.5 4.5 0 0 0 17.5 10h-1.79A7.01 7.01 0 0 0 10.2 5.06"/></svg>',
+  map:'<svg viewBox="0 0 24 24"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/></svg>',
+  cube:'<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>',
+  globe:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>',
+  rewind:'<svg viewBox="0 0 24 24"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>',
+  search:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+  send:'<svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+  satellite:'<svg viewBox="0 0 24 24"><path d="M13 7 9 3 5 7l4 4"/><path d="m17 11 4 4-4 4-4-4"/><path d="m8 12 4 4 6-6-4-4Z"/><path d="m16 8 3-3"/><path d="M9 21a6 6 0 0 0-6-6"/></svg>',
+  eye:'<svg viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>',
+  up:'<svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg>',
+  arrowL:'<svg viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>',
+  arrowR:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
+  arrowU:'<svg viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>',
+  arrowD:'<svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>',
+  house:'<svg viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+};
+
+/* ---------- time + formatting ---------- */
+const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
+const at = (d, h, m, s = 0) => new Date(2026, 9, d, h, m, s).getTime();
+const NOW = at(10, 14, 40);            // Sat Oct 10, 2:40 pm
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const NB = ' ';
+function fmtClock(t) { const d = new Date(t); let h = d.getHours(); const m = d.getMinutes(); const ap = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${h}:${String(m).padStart(2, '0')}${NB}${ap}`; }
+function dayDiff(t) { const a = new Date(t), b = new Date(NOW); return Math.round((new Date(b.getFullYear(), b.getMonth(), b.getDate()) - new Date(a.getFullYear(), a.getMonth(), a.getDate())) / DAY); }
+function fmtDay(t) { const dd = dayDiff(t); if (dd === 0) return 'Today'; if (dd === 1) return 'Yesterday'; const d = new Date(t); return `${DOW[d.getDay()]}${NB}Oct${NB}${d.getDate()}`; }
+function fmtShortDay(t) { const d = new Date(t); return `${DOW[d.getDay()]}${NB}Oct${NB}${d.getDate()}`; }
+function fmtDur(ms) { const m = Math.round(ms / MIN); if (m < 60) return `${m}${NB}min`; const h = Math.floor(m / 60), r = m % 60; return `${h}h${NB}${String(r).padStart(2, '0')}m`; }
+function fmtAgo(t) { const m = Math.round((NOW - t) / MIN); if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`; if (dayDiff(t) === 0) return `today ${fmtClock(t)}`; return `${fmtDay(t).replace('Today', 'today').replace('Yesterday', 'yesterday')} ${fmtClock(t)}`; }
+function fmtKm(b) { return `${(b / 1000).toFixed(1)}${NB}km`; }
+const fmtN = n => Math.abs(n) >= 1000 ? n.toLocaleString('en-US') : String(n);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------- deterministic noise ---------- */
+function mkNoise(seed) {
+  const h = (x, z) => { let n = Math.imul(x | 0, 374761393) ^ Math.imul(z | 0, 668265263) ^ Math.imul(seed | 0, 1442695041); n = Math.imul(n ^ (n >>> 13), 1274126177); n ^= n >>> 16; return (n >>> 0) / 4294967296; };
+  const sm = t => t * t * (3 - 2 * t);
+  const vn = (x, z) => { const xi = Math.floor(x), zi = Math.floor(z), u = sm(x - xi), v = sm(z - zi); const a = h(xi, zi), b = h(xi + 1, zi), c = h(xi, zi + 1), d = h(xi + 1, zi + 1); return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
+  const fbm = (x, z, o) => { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < o; i++) { s += a * vn(x * f + i * 17.31, z * f - i * 9.17); n += a; a *= .5; f *= 2.03; } return s / n; };
+  return { h, vn, fbm };
+}
+function rng(seed) { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+/* ---------- the biome atlas palette (data inside the picture, not UI chrome) ----------
+   The renderer's own table (deploy/minecraft/mapping.py BIOME_COLORS, Bedrock ids in the
+   comments), so the mock's picture is the picture the box serves. Raw RGB by design. */
+const BIOMES = [
+  ['Ocean', [0, 0, 112]], ['Deep Ocean', [0, 0, 48]], ['River', [0, 0, 255]], ['Beach', [250, 222, 85]],          // 0 24 7 16
+  ['Plains', [141, 179, 96]], ['Forest', [5, 102, 33]], ['Birch Forest', [48, 116, 68]], ['Dark Forest', [64, 81, 26]], // 1 4 27 29
+  ['Taiga', [11, 102, 89]], ['Snowy Plains', [255, 255, 255]], ['Desert', [250, 148, 24]], ['Savanna', [189, 178, 95]], // 5 12 2 35
+  ['Jungle', [83, 123, 9]], ['Swamp', [7, 249, 178]], ['Windswept Hills', [96, 96, 96]], ['Stony Peaks', [123, 143, 116]], // 21 6 3 189
+  ['Snowy Slopes', [196, 196, 196]], ['Cherry Grove', [255, 145, 200]], ['Meadow', [131, 187, 109]],               // 184 192 186
+  ['Nether Wastes', [191, 59, 59]], ['Crimson Forest', [221, 8, 8]], ['Warped Forest', [73, 144, 123]], ['Soul Sand Valley', [94, 56, 48]], ['Basalt Deltas', [64, 54, 54]], // 8 179 180 178 181
+  ['The End', [128, 128, 255]],                                                                                       // 9
+];
+const WATER = new Set([0, 1, 2]);
+
+/* ---------- the fixture ---------- */
+const PLAYERS = [
+  { id: 'BlockyFox', tok: '--steel', init: 'B', online: true, bed: [-136, 94] },
+  { id: 'Mira_P', tok: '--green', init: 'M', online: true, bed: [226, -296] },
+  { id: 'Steve42', tok: '--amber', init: 'S', online: false },
+  { id: 'Pebble_J', tok: '--violet', init: 'P', online: false },
+];
+const PL = Object.fromEntries(PLAYERS.map(p => [p.id, p]));
+const SPAWN = [32, -8];
+const PORTAL_O = [-40, 40], PORTAL_N = [-5, 5];
+const VILLAGE = [232, -304], CASTLE = [-140, 90];
+const PLACES = [
+  { id: 'keep', name: 'Castle keep', by: 'BlockyFox', dim: 'o', x: -140, z: 90, y: 104 },
+  { id: 'portal', name: 'Nether portal', by: 'BlockyFox', dim: 'o', x: -40, z: 40, y: 72 },
+  { id: 'farm', name: "Mira's farm", by: 'Mira_P', dim: 'o', x: 196, z: -262, y: 68 },
+  { id: 'wreck', name: 'Wreck dive', by: 'Steve42', dim: 'o', x: 424, z: 140, y: 51 },
+  { id: 'fort', name: 'Blaze farm', by: 'BlockyFox', dim: 'n', x: 70, z: -52, y: 70 },
+  { id: 'nportal', name: 'Portal home', by: 'BlockyFox', dim: 'n', x: -5, z: 5, y: 64 },
+];
+const WORLDS = [
+  { slot: 1, name: 'World', seed: 2794311108712645813, loaded: false, played: 'Oct 4', kind: 'sparse' },
+  { slot: 2, name: 'Castle Hill', seed: 6104328617705162911, loaded: true, played: 'now', kind: 'main' },
+  { slot: 3, name: 'Creative test', seed: 8675309, loaded: false, played: 'Oct 7', kind: 'blob' },
+  { slot: 4, name: 'Skyblock run', seed: 5127438807419962211, loaded: false, played: '', kind: 'none' },
+  { slot: 5, name: 'Empty slot', loaded: false, kind: 'free' },
+];
+const worldLine = w => w.kind === 'free' ? 'empty · no world here' : w.kind === 'none' ? 'never loaded · nothing to draw yet' : w.loaded ? 'loaded · being played now' : `last played ${w.played}`;
+const DIMS = { o: 'Overworld', n: 'Nether', e: 'The End' };
+const LAYERS = { biome: ['Biomes', 'hillshaded · live'] };
+const LATER_LAYERS = [['surface', 'Surface', 'true colour'], ['height', 'Height', 'contours']];
+
+/* Structures, exactly as the server's own `locate structure` reports them (x, z; Y is
+   unknown until the structure generates — `y?` in its answer). */
+const SK = {
+  village: ['Village', 'house'], mansion: ['Woodland mansion', 'castle'], monument: ['Ocean monument', 'landmark'],
+  pillager_outpost: ['Pillager outpost', 'flag'], ancient_city: ['Ancient city', 'building'], trail_ruins: ['Trail ruins', 'landmark'],
+  trial_chambers: ['Trial chambers', 'swords'], stronghold: ['Stronghold', 'eye'], temple: ['Temple', 'landmark'],
+  ruins: ['Ocean ruins', 'landmark'], shipwreck: ['Shipwreck', 'ship'], buried_treasure: ['Buried treasure', 'gem'],
+  ruined_portal: ['Ruined portal', 'portal'], mineshaft: ['Mineshaft', 'pick'],
+  fortress: ['Nether fortress', 'castle'], bastion_remnant: ['Bastion remnant', 'castle'], end_city: ['End city', 'building'],
+};
+const STRUCTS = {
+  o: [['village', 232, -304], ['village', -1000, 747], ['village', 1460, -620], ['mansion', -3785, 2605], ['monument', 1087, 1056],
+    ['pillager_outpost', -174, -419], ['ancient_city', -1820, -1340], ['trail_ruins', 150, 830], ['trial_chambers', -720, 920],
+    ['stronghold', 1480, -1640], ['temple', -1551, 1149], ['temple', 1400, 307], ['ruins', 700, 380], ['shipwreck', 434, 146],
+    ['buried_treasure', 308, 258], ['ruined_portal', 180, 380], ['ruined_portal', -260, -520], ['mineshaft', -300, 500], ['mineshaft', 472, -138]],
+  n: [['fortress', 60, -40], ['bastion_remnant', -180, 140], ['ruined_portal', 120, 200], ['fortress', -420, -380]],
+  e: [['end_city', 1100, -400], ['end_city', -1240, 860]],
+};
+/* Lucide outlines as canvas paths, so the overlay glyphs match the chrome's icon set */
+const SPATH = {
+  house: 'M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
+  castle: 'M22 20v-9H2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2ZM18 11V4H6v7M15 22v-4a3 3 0 0 0-6 0v4M22 11V9M2 11V9M6 4V2M18 4V2M10 4V2M14 4V2',
+  landmark: 'M3 22h18M6 18v-7M10 18v-7M14 18v-7M18 18v-7M12 2l8 5H4Z',
+  flag: 'M4 22V4M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1',
+  building: 'M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18ZM6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2M10 6h4M10 10h4M10 14h4M10 18h4',
+  swords: 'M14.5 17.5 3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M19 21l2-2M14.5 6.5 18 3h3v3l-3.5 3.5M5 14l4 4M7 17l-3 3M3 19l2 2',
+  eye: 'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0M15 12a3 3 0 1 1-6 0 3 3 0 1 1 6 0',
+  ship: 'M12 10.189V14M12 2v3M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1',
+  gem: 'M6 3h12l4 6-10 13L2 9ZM11 3 8 9l4 13 4-13-3-6M2 9h20',
+  portal: 'M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM10 7c2 1 2 3 0 5s-2 4 0 5M14 7c-2 1-2 3 0 5s2 4 0 5',
+  pick: 'M14.531 12.469 6.619 20.38a1 1 0 1 1-3-3l7.912-7.912M15.686 4.314A12.5 12.5 0 0 0 5.461 2.958 1 1 0 0 0 5.58 4.71a22 22 0 0 1 6.318 3.393M17.7 3.7a1 1 0 0 0-1.4 0l-4.6 4.6a1 1 0 0 0 0 1.4l2.6 2.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4zM19.686 8.314a12.501 12.501 0 0 1 1.356 10.225 1 1 0 0 1-1.751-.119 22 22 0 0 0-3.393-6.319',
+};
+const P2D = {}; const spath = k => P2D[k] || (P2D[k] = new Path2D(SPATH[k]));
+const sIcon = k => `<svg viewBox="0 0 24 24"><path d="${SPATH[SK[k][1]]}"/></svg>`;
+
+/* ---------- the world, as functions of (x, z): every block has a prediction ----------
+   A stand-in for the box's two sources: `jbrain-predict` (the seed's prediction — the
+   satellite survey) and the real chunks in LevelDB. Bedrock matches the prediction at ~97%
+   of columns, so the mock draws both from one function and differs only in how it's shown. */
+function mkOverworld(seed, main) {
+  const ns = mkNoise(seed), ns2 = mkNoise(seed ^ 0x5bd1e995);
+  return (x, z, lod = 0) => {
+    const q = lod > 1 ? 2 : lod;
+    const cont = ns2.fbm(x / 2600 + 7, z / 2600 - 3, 4) + .06 + (main ? .3 * Math.exp(-(x * x + (z + 100) ** 2) / (2 * 700 * 700)) : 0);
+    const local = Math.exp(-((x - 300) ** 2 + (z - 200) ** 2) / (2 * 800 * 800));
+    const se = main ? sstep(250, 430, x + z * .35 + (ns2.fbm(z / 140, 3, 3) - .5) * 240) * local : 0;
+    const land = clamp(sstep(.38, .45, cont) - se, 0, 1);
+    const e = ns.fbm(x / 260, z / 260, 5 - q);
+    let mt = sstep(.6, .76, ns.fbm(x / 900 + 33, z / 900 - 80, 3));
+    let flat = 0;
+    if (main) {
+      mt *= 1 - .95 * Math.exp(-((x - CASTLE[0]) ** 2 + (z - CASTLE[1]) ** 2 + (x - SPAWN[0]) ** 2 * .3) / (2 * 260 * 260));
+      const m = Math.max(0, 1 - Math.hypot(x + 380, z + 300) / 260); mt = Math.max(mt, m * .95);
+      const jit = (ns2.fbm(x / 50, z / 50, 2) - .5) * 70;
+      flat = Math.max(sstep(150, 70, Math.hypot(x - VILLAGE[0], z - VILLAGE[1]) + jit), sstep(110, 40, Math.hypot(x - SPAWN[0], z - SPAWN[1]) + jit));
+    }
+    let yl = 70 + (e - .5) * 30 + mt * (58 + (ns2.fbm(x / 70, z / 70, 3 - q) - .5) * 50);
+    if (main) yl += 20 * Math.exp(-((x - CASTLE[0]) ** 2 + (z - CASTLE[1]) ** 2) / (2 * 55 * 55));
+    yl = yl * (1 - flat) + 68 * flat;
+    const yo = 61 - (1 - land) * 16 - sstep(.36, .26, cont) * 20 - se * 10;
+    let y = Math.round(yo + (yl - yo) * sstep(0, .6, land) + (lod ? 0 : (ns.vn(x / 3, z / 3) - .5) * 1.5));
+    const t = clamp(.5 + (ns.fbm(x / 1100 + 100, z / 1100, 4 - q) - .5) * 2.2 + clamp(z * .0002, -.1, .1), 0, 1) * (1 - flat) + .52 * flat;
+    const hu = clamp(.5 + (ns2.fbm(x / 900 - 70, z / 900 + 30, 4 - q) - .5) * 2.2, 0, 1) * (1 - flat) + .38 * flat;
+    const r = Math.abs(ns2.fbm(x / 420 + 50, z / 420 - 20, 3) - .5), w = ns.fbm(x / 180 - 300, z / 180 + 200, 2);
+    let river = false; const rw = .008;
+    if (r < rw && y < 100 && y >= 61 && land > .9) { river = true; y = Math.min(y, 59 - Math.round((rw - r) * 300)); }
+    else if (r < rw * 2.4 && y > 62 && y < 100) y = Math.min(y, 63 + Math.round((r - rw) * 420));
+    let b;
+    if (y < 62) b = river ? 2 : (y < 46 ? 1 : 0);
+    else if (y >= 124) b = t < .5 ? 16 : 15;
+    else if (y >= 100) b = w > .66 && t > .4 ? 17 : (t < .36 ? 16 : 14);
+    else if (y <= 64 && land < .7) b = 3;
+    else if (t < .3) b = hu < .5 ? 9 : 8;
+    else if (t > .7) b = hu < .42 ? 10 : hu < .66 ? 11 : 12;
+    else if (y <= 66 && hu > .62) b = 13;
+    else if (hu < .4) b = (y > 82 && w > .55) ? 18 : 4;
+    else if (hu > .68) b = 7;
+    else b = w > .56 ? 6 : 5;
+    return [b, y];
+  };
+}
+function mkNether(seed) {
+  const ns = mkNoise(seed + 3);
+  return (x, z) => {
+    const bz = ns.fbm(x / 140 + 40, z / 140 - 9, 3), bs = ns.fbm(x / 90 - 11, z / 90 + 6, 2);
+    const y = Math.round(40 + ns.fbm(x / 70, z / 70, 3) * 60);
+    const b = bz > .6 ? 20 : bz < .36 ? 21 : bs > .64 ? 22 : bs < .3 ? 23 : 19;
+    return [b, y];
+  };
+}
+function mkEnd(seed) {
+  const ns = mkNoise(seed + 11);
+  return (x, z) => {
+    const d = Math.hypot(x, z) + (ns.fbm(x / 30, z / 30, 2) - .5) * 40;
+    if (d < 112) return [24, Math.round(66 - d / 6)];
+    if (Math.hypot(x, z) < 1000) return null;
+    let n = ns.fbm(x / 170, z / 170, 3) - .03;
+    for (const [, cx, cz] of STRUCTS.e) n = Math.max(n, .74 - Math.hypot(x - cx, z - cz) / 260);
+    return n > .6 ? [24, Math.round(50 + (n - .6) * 140)] : null;
+  };
+}
+
+/* ---------- the travel log (T1): sessions, samples, events ---------- */
+function buildLog() {
+  const r = rng(4242), ns = mkNoise(31);
+  const sessions = [], events = [];
+  function session(player, start, end, plan) {
+    const s = { player, start, end, samples: [], dist: 0 };
+    let t = start, d = plan[0].d || 'o', [x, z] = plan[0].p;
+    const push = (nx, nz, nd) => { const last = s.samples[s.samples.length - 1]; if (last && last.d === nd && Math.hypot(nx - last.x, nz - last.z) < 4) return; if (last && last.d === nd) s.dist += Math.hypot(nx - last.x, nz - last.z); s.samples.push({ t, x: Math.round(nx), z: Math.round(nz), d: nd }); };
+    push(x, z, d); events.push({ t, kind: 'joined', player, x, z, d });
+    for (let w = 1; w < plan.length && t < end; w++) {
+      const wp = plan[w];
+      if (wp.portal) { t += 6e3; events.push({ t, kind: 'dim', player, x, z, d, to: wp.portal }); d = wp.portal; [x, z] = d === 'n' ? PORTAL_N : PORTAL_O; push(x, z, d); continue; }
+      if (wp.respawn) { t += 9e3; const bed = PL[player].bed || SPAWN; const fromD = d; d = 'o'; [x, z] = bed; push(x, z, d); events.push({ t, kind: 'respawned', player, x, z, d, from: fromD }); continue; }
+      const [tx, tz] = wp.p, speed = wp.speed || 4.2, dist = Math.hypot(tx - x, tz - z), steps = Math.max(1, Math.round(dist / (speed * 10)));
+      const sx = x, sz = z, ph = r() * 100;
+      for (let q = 1; q <= steps && t < end; q++) {
+        t += 10e3; const f = q / steps, wob = Math.sin(f * Math.PI) * 26 * (ns.fbm(ph + f * 3, 1, 2) - .5) * 2;
+        const nx = sx + (tx - sx) * f - (tz - sz) / (dist || 1) * wob, nz = sz + (tz - sz) * f + (tx - sx) / (dist || 1) * wob;
+        x = nx; z = nz; push(x, z, d);
+      }
+      if (wp.died) { t += 4e3; events.push({ t, kind: 'died', player, x: Math.round(x), z: Math.round(z), d, cause: wp.died, y: wp.y }); }
+      if (wp.dwell) { const until = Math.min(end, t + wp.dwell * MIN); while (t + 60e3 < until) { t += 60e3; push(tx + (r() - .5) * 18, tz + (r() - .5) * 18, d); } t = until; }
+    }
+    const last = s.samples[s.samples.length - 1];
+    if (end <= NOW) events.push({ t: end, kind: 'left', player, x: last.x, z: last.z, d: last.d });
+    s.endPos = last; sessions.push(s);
+    return s;
+  }
+  const B = 'BlockyFox', M = 'Mira_P', S = 'Steve42', P = 'Pebble_J';
+  session(B, at(4, 16, 2), at(4, 17, 31), [{ p: SPAWN }, { p: [-20, 40] }, { p: CASTLE, dwell: 34 }, { p: [40, 130] }, { p: [10, 20], dwell: 6 }]);
+  session(M, at(4, 16, 10), at(4, 17, 20), [{ p: SPAWN }, { p: [120, -140] }, { p: VILLAGE, dwell: 40 }]);
+  session(M, at(5, 17, 0), at(5, 18, 10), [{ p: VILLAGE }, { p: [196, -262], dwell: 52 }]);
+  session(P, at(5, 19, 10), at(5, 19, 48), [{ p: SPAWN }, { p: [60, 40], dwell: 22 }]);
+  session(B, at(6, 15, 31), at(6, 16, 48), [{ p: CASTLE }, { p: [-250, -90] }, { p: [-330, -230], dwell: 8 }, { p: [-372, -262], died: 'fell from a high place', y: 131 }, { respawn: 1 }, { p: [-100, 150], dwell: 22 }]);
+  session(S, at(6, 18, 0), at(6, 18, 40), [{ p: SPAWN }, { p: [-120, -60] }, { p: [-40, -150] }, { p: SPAWN, dwell: 4 }]);
+  session(B, at(7, 10, 20), at(7, 11, 5), [{ p: CASTLE }, { p: [-200, 40] }, { p: CASTLE, dwell: 22 }]);
+  session(B, at(7, 16, 5), at(7, 17, 12), [{ p: CASTLE }, { p: [60, 200] }, { p: [-60, 300], died: 'killed by a Zombie', y: 66 }, { respawn: 1 }, { p: [-150, 120], dwell: 20 }]);
+  session(S, at(7, 19, 30), at(7, 20, 5), [{ p: SPAWN }, { p: [-40, -150], dwell: 12 }, { p: SPAWN }]);
+  session(M, at(8, 17, 0), at(8, 18, 30), [{ p: VILLAGE }, { p: [196, -262], dwell: 34 }, { p: [150, -200], died: 'killed by a Creeper', y: 69 }, { respawn: 1 }, { p: [196, -262], dwell: 40 }]);
+  session(P, at(8, 18, 0), at(8, 18, 40), [{ p: SPAWN }, { p: [60, 40] }, { p: [90, 60], died: 'killed by a Zombie', y: 70 }, { respawn: 1 }, { p: [10, 10], dwell: 10 }]);
+  session(B, at(9, 16, 10), at(9, 19, 52), [{ p: CASTLE, dwell: 12 }, { p: PORTAL_O }, { portal: 'n' }, { p: [30, -20] }, { p: [60, -40], dwell: 24 }, { p: [86, -30] }, { p: [41, -58], died: 'burned in lava', y: 33 }, { respawn: 1 }, { p: [100, 60] }, { p: [300, 100] }, { p: [430, 150], dwell: 16, speed: 3 }, { p: [380, 40] }, { p: [250, -150] }, { p: VILLAGE, dwell: 25 }, { p: [120, -40] }, { p: CASTLE, dwell: 20 }]);
+  session(M, at(9, 17, 0), at(9, 18, 15), [{ p: VILLAGE }, { p: [300, -420] }, { p: [120, -470] }, { p: VILLAGE, dwell: 6 }]);
+  session(S, at(9, 19, 20), at(9, 20, 14), [{ p: SPAWN }, { p: [200, 40] }, { p: [380, 120] }, { p: [430, 150], died: 'drowned', y: 48, speed: 2.5 }, { respawn: 1 }, { p: [60, -30], dwell: 30 }]);
+  session(M, at(10, 9, 40), at(10, 10, 25), [{ p: VILLAGE }, { p: [196, -262], dwell: 30 }]);
+  session(B, at(10, 13, 58), NOW, [{ p: CASTLE }, { p: [-20, -60] }, { p: [130, -180] }, { p: [196, -262], dwell: 8 }, { p: [100, -380] }, { p: [-30, -430] }]);
+  session(M, at(10, 14, 33), NOW, [{ p: VILLAGE }, { p: [330, -400] }, { p: [420, -470] }]);
+  sessions.sort((a, b) => a.start - b.start); events.sort((a, b) => a.t - b.t);
+  return { sessions, events };
+}
+
+/* ---------- which chunks exist ----------
+   Generated: the server builds every chunk within view distance of a player (6 chunks here),
+   which is what the base layer draws in full colour. Explored-by: the travel log's stricter
+   4-chunk rule, with a first-seen time per player — the optional fog-of-war overlay. */
+const ck = (cx, cz) => (cx + 1e5) * 4e5 + (cz + 1e5);
+function generatedFrom(samples, radius, extra = []) {
+  const set = new Set(), r2 = radius * radius + radius;
+  const mark = (x, z) => { const cx = Math.floor(x / 16), cz = Math.floor(z / 16); for (let j = -radius; j <= radius; j++) for (let i = -radius; i <= radius; i++) if (i * i + j * j <= r2) set.add(ck(cx + i, cz + j)); };
+  let lx = null, lz = null;
+  for (const q of samples) { if (lx !== null && Math.hypot(q.x - lx, q.z - lz) < 12) continue; mark(q.x, q.z); lx = q.x; lz = q.z; }
+  for (const [x, z] of extra) mark(x, z);
+  return set;
+}
+function exploredFrom(sessions, dim) {
+  const m = new Map();
+  for (const s of sessions) for (const q of s.samples) {
+    if (q.d !== dim) continue;
+    const ci = Math.floor(q.x / 16), cj = Math.floor(q.z / 16);
+    for (let dj = -4; dj <= 4; dj++) for (let di = -4; di <= 4; di++) {
+      if (di * di + dj * dj > 18) continue; const k = ck(ci + di, cj + dj);
+      let e = m.get(k); if (!e) { e = { cx: ci + di, cz: cj + dj, all: Infinity, by: {} }; m.set(k, e); }
+      if (q.t < e.all) e.all = q.t; if (!(q.t >= e.by[s.player])) e.by[s.player] = q.t;
+    }
+  }
+  return m;
+}
+
+/* ---------- world registry (lazy) ---------- */
+const WCACHE = {};
+function worldData(slot) {
+  if (WCACHE[slot]) return WCACHE[slot];
+  const w = WORLDS.find(v => v.slot === slot); let out;
+  const st = d => STRUCTS[d].map(([k, x, z]) => ({ k, x, z }));
+  if (w.kind === 'main') {
+    const log = buildLog(), all = d => log.sessions.flatMap(s => s.samples.filter(q => q.d === d));
+    out = { w, log, structs: { o: st('o'), n: st('n'), e: st('e') }, dims: {
+      o: { f: mkOverworld(w.seed % 100000, true), gen: generatedFrom(all('o'), 6, [SPAWN]), ex: exploredFrom(log.sessions, 'o') },
+      n: { f: mkNether(7), gen: generatedFrom(all('n'), 6), ex: exploredFrom(log.sessions, 'n') },
+      e: { f: mkEnd(99), gen: new Set(), ex: new Map() } } };
+  } else if (w.kind === 'none' || w.kind === 'free') {
+    out = { w, log: { sessions: [], events: [] }, empty: true, dims: {}, structs: {} };
+  } else {
+    const sp = w.kind === 'sparse' ? [[0, 0]] : [[0, 0], [60, 40], [120, -60], [-40, 80]];
+    out = { w, log: { sessions: [], events: [] }, structs: { o: [], n: [], e: [] }, dims: {
+      o: { f: mkOverworld(w.kind === 'sparse' ? 913 : 4407, false), gen: generatedFrom([], w.kind === 'sparse' ? 3 : 5, sp), ex: new Map() },
+      n: { f: mkNether(w.kind === 'sparse' ? 21 : 33), gen: new Set(), ex: new Map() },
+      e: { f: mkEnd(5), gen: new Set(), ex: new Map() } } };
+  }
+  return (WCACHE[slot] = out);
+}
+
+/* ---------- tiles: 256×256 px, zoom k = one pixel per 2^k blocks, k = 0…4 ----------
+   Zoomed-out pixels are point samples, as the renderer's are. Explored chunks draw in full
+   colour; the survey under them is half-desaturated at 65% brightness (mapping.py
+   SURVEY_SATURATION / SURVEY_BRIGHTNESS). Tiles render a few per frame, like a network. */
+const TILE = 256, MAX_Z = 4;
+const TCACHE = new Map(), TQUEUE = [];
+function tileKey(slot, dim, L, tx, tz) { return `${slot}|${dim}|${L}|${tx}|${tz}`; }
+function getTile(slot, dim, L, tx, tz) {
+  const k = tileKey(slot, dim, L, tx, tz); const c = TCACHE.get(k);
+  if (c) return c; if (!TQUEUE.some(q => q.k === k)) TQUEUE.push({ k, slot, dim, L, tx, tz }); return null;
+}
+function renderTile(slot, dim, L, tx, tz) {
+  const d = worldData(slot).dims[dim], f = d.f, step = 1 << L, x0 = tx * TILE * step, z0 = tz * TILE * step, N = TILE + 1;
+  const hs = new Float32Array(N * N), bs = new Int16Array(N * N);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const s = f(x0 + (i - 1) * step, z0 + (j - 1) * step, L); const k = j * N + i; if (s) { bs[k] = s[0]; hs[k] = s[1]; } else bs[k] = -1; }
+  const cv = document.createElement('canvas'); cv.width = cv.height = TILE; const cx = cv.getContext('2d'), im = cx.createImageData(TILE, TILE), px = im.data;
+  const gain = (dim === 'n' ? .01 : .06) / step;
+  for (let j = 0; j < TILE; j++) for (let i = 0; i < TILE; i++) {
+    const k = (j + 1) * N + (i + 1), b = bs[k], o = (j * TILE + i) * 4; if (b < 0) continue;
+    const h = hs[k], wv = bs[k - 1] < 0 ? h : hs[k - 1], nv = bs[k - N] < 0 ? h : hs[k - N];
+    let sh = WATER.has(b) ? .85 + .15 * clamp((h - 40) / 22, 0, 1) : 1 + clamp(((h - wv) + (h - nv)) * gain, -.35, .35);
+    let [r, g, bl] = BIOMES[b][1]; r *= sh; g *= sh; bl *= sh;
+    const bx = x0 + i * step, bz = z0 + j * step;
+    if (!d.gen.has(ck(Math.floor(bx / 16), Math.floor(bz / 16)))) { const gr = r * .3 + g * .59 + bl * .11; r = (gr + (r - gr) * .5) * .65; g = (gr + (g - gr) * .5) * .65; bl = (gr + (bl - gr) * .5) * .65; }
+    px[o] = r; px[o + 1] = g; px[o + 2] = bl; px[o + 3] = 255;
+  }
+  cx.putImageData(im, 0, 0); return cv;
+}
+function pumpTiles() {
+  const t0 = performance.now(); let did = false;
+  while (TQUEUE.length && performance.now() - t0 < 24) { const q = TQUEUE.shift(); TCACHE.set(q.k, renderTile(q.slot, q.dim, q.L, q.tx, q.tz)); did = true; }
+  if (did) redrawAll();
+}
+function sampleAt(slot, dim, x, z) {
+  const d = worldData(slot).dims[dim]; if (!d || !d.f) return null;
+  const s = d.f(x, z, 0); if (!s) return { void: true };
+  return { biome: BIOMES[s[0]][0], y: WATER.has(s[0]) ? 62 : s[1], water: WATER.has(s[0]), gen: d.gen.has(ck(Math.floor(x / 16), Math.floor(z / 16))) };
+}
+
+/* ---------- timeline helpers ---------- */
+function sessionsOf(log, player) { return log.sessions.filter(s => s.player === player); }
+function posAt(log, player, t) {
+  for (const s of log.sessions) {
+    if (s.player !== player || t < s.start || t > s.end) continue;
+    const a = s.samples; if (!a.length) return null;
+    if (t <= a[0].t) return { ...a[0], s };
+    for (let i = 1; i < a.length; i++) if (a[i].t >= t) {
+      const p = a[i - 1], q = a[i];
+      if (p.d !== q.d || q.t - p.t > 30e3 || Math.hypot(q.x - p.x, q.z - p.z) > 90) return { ...p, s };
+      const f = (t - p.t) / (q.t - p.t); return { x: p.x + (q.x - p.x) * f, z: p.z + (q.z - p.z) * f, d: p.d, t, s };
+    }
+    return { ...a[a.length - 1], s };
+  }
+  return null;
+}
+function lastPos(log, player, until = NOW) {
+  let best = null; for (const s of log.sessions) if (s.player === player && s.start <= until) best = s;
+  if (!best) return null; const p = posAt(log, player, Math.min(until, best.end)); return p && { ...p, live: best.end >= NOW && until >= NOW, at: Math.min(until, best.end) };
+}
+function presetRange(pre, log) {
+  if (pre === 'session') { const on = log.sessions.filter(s => s.end >= NOW); const st = on.length ? Math.min(...on.map(s => s.start)) : NOW - HR; return [st, NOW]; }
+  if (pre === 'today') return [at(10, 0, 0), NOW];
+  if (pre === 'week') return [NOW - 7 * DAY, NOW];
+  return [at(4, 15, 30), NOW];
+}
+const timeTravel = () => S.tl.on && S.tl.t < NOW - 1000;
+
+/* ---------- state ---------- */
+const S = {
+  state: 'live', slot: 2, dim: 'o', layer: 'biome', exBy: 'all',
+  ov: { players: true, trails: true, deaths: true, beds: true, places: true, structures: true, explored: false, grid: false },
+  sel: null,
+  tl: { on: false, t: NOW, from: 0, to: NOW, playing: false, speed: 60, preset: 'session', shown: new Set(PLAYERS.map(p => p.id)), focus: 'BlockyFox', follow: false, sess: null, cur: null, dimNote: null },
+  loadN: 0, cachedBox: null,
+};
+const PRESETS = [['session', 'Session', 'This session'], ['today', 'Today', 'Today'], ['week', 'Week', 'This week'], ['all', 'All', 'Everything']];
+const SPEEDS = [1, 10, 60, 600];
+
+function tokens() { const cs = getComputedStyle(document.documentElement); const g = n => cs.getPropertyValue(n).trim(); return { fog: g('--map-fog'), voidc: g('--map-void'), halo: g('--map-halo'), plate: g('--map-plate'), ink: g('--map-ink'), inkOn: g('--map-ink-on'), text: g('--text'), text2: g('--text-2'), rose: g('--rose'), violet: g('--violet'), steel: g('--steel'), amber: g('--amber'), border: g('--border'), s2: g('--surface-2'), t3: g('--text-3'), ...Object.fromEntries(PLAYERS.map(p => [p.id, g(p.tok)])) }; }
+let TK = null;
+const pcol = id => (TK || (TK = tokens()))[id];
+
+/* ---------- the map view: draw + gestures (one component: full screen, card, and chat) ---------- */
+const VIEWS = [];
+const S_MIN = 1 / 16, S_MAX = 8;        // 1 px per chunk … 8 px per block (past 1 px/block: nearest-neighbour)
+class MapView {
+  constructor(el, opts = {}) {
+    this.el = el; this.o = opts; this.c = document.createElement('canvas'); el.prepend(this.c); this.ctx = this.c.getContext('2d');
+    this.v = { x: opts.x ?? 20, z: opts.z ?? -60, s: opts.s ?? 1 }; this.ptr = new Map(); this.hits = []; this.dirty = true;
+    this.cfg = opts.cfg || (() => ({ slot: S.slot, dim: S.dim, layer: S.layer, ov: S.ov, exBy: S.exBy, tl: S.tl, sel: S.sel, state: S.state }));
+    new ResizeObserver(() => this.resize()).observe(el); this.resize();
+    if (opts.interactive !== false) this.bind();
+    VIEWS.push(this);
+  }
+  resize() { const r = this.el.getBoundingClientRect(), d = window.devicePixelRatio || 1; this.w = r.width; this.h = r.height; this.c.width = Math.max(1, Math.round(r.width * d)); this.c.height = Math.max(1, Math.round(r.height * d)); this.dpr = d; this.dirty = true; }
+  /* the part of the box that isn't under a sheet: centring and "fit" aim at its middle */
+  get visH() { return this.h - (this.o.bottomInset || 0); }
+  toScreen(x, z) { return [(x - this.v.x) * this.v.s + this.w / 2, (z - this.v.z) * this.v.s + this.visH / 2 + (this.o.topInset || 0) / 2]; }
+  toWorld(sx, sy) { return [(sx - this.w / 2) / this.v.s + this.v.x, (sy - this.visH / 2 - (this.o.topInset || 0) / 2) / this.v.s + this.v.z]; }
+  center(x, z, s) { this.v.x = x; this.v.z = z; if (s) this.v.s = clamp(s, S_MIN, S_MAX); this.dirty = true; this.o.onView && this.o.onView(this); }
+  fit(pts, pad = 60, maxS = 1.4) {
+    if (!pts.length) return; this.resize(); const xs = pts.map(p => p[0]), zs = pts.map(p => p[1]);
+    const w = Math.max(...xs) - Math.min(...xs) || 1, h = Math.max(...zs) - Math.min(...zs) || 1;
+    const avail = [Math.max(80, this.w - pad * 2), Math.max(60, this.visH - (this.o.topInset || 0) - pad * 2)];
+    this.center((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2, Math.min(maxS, avail[0] / w, avail[1] / h));
+  }
+  glide(x, z, s) {
+    const v = this.v, x0 = v.x, z0 = v.z, s0 = v.s, s1 = s || s0, t0 = performance.now(), reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const step = now => { const f = reduce ? 1 : Math.min(1, (now - t0) / 200), e = 1 - (1 - f) ** 3; this.center(x0 + (x - x0) * e, z0 + (z - z0) * e, s0 * Math.pow(s1 / s0, e)); if (f < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+  zoomBy(f, sx = this.w / 2, sy = this.visH / 2) { const [wx, wz] = this.toWorld(sx, sy); this.v.s = clamp(this.v.s * f, S_MIN, S_MAX); const [nx, nz] = this.toWorld(sx, sy); this.v.x += wx - nx; this.v.z += wz - nz; this.dirty = true; this.o.onView && this.o.onView(this); }
+  bind() {
+    const el = this.el;
+    el.addEventListener('pointerdown', e => {
+      if (e.target.closest('button,a,input,[data-noptr]')) return;
+      el.setPointerCapture(e.pointerId); this.ptr.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
+      if (this.ptr.size === 2) { const [a, b] = [...this.ptr.values()]; this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: this.v.s }; clearTimeout(this.lp); }
+      this.moved = false; this.longed = false;
+      // long-press drops a pin you can nudge block by block (C's crosshair, as a gesture)
+      if (this.ptr.size === 1 && this.o.onLongPress) { const r = el.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top; clearTimeout(this.lp); this.lp = setTimeout(() => { if (!this.moved && this.ptr.size === 1) { this.longed = true; const [x, z] = this.toWorld(sx, sy); this.o.onLongPress(Math.floor(x), Math.floor(z), this); } }, 480); }
+    });
+    el.addEventListener('pointermove', e => {
+      const p = this.ptr.get(e.pointerId); if (!p) return;
+      const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+      if (Math.hypot(p.x - p.x0, p.y - p.y0) > 6) { this.moved = true; clearTimeout(this.lp); }
+      if (this.ptr.size >= 2 && this.pinch) {
+        const [a, b] = [...this.ptr.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y), r = el.getBoundingClientRect();
+        const mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top; const f = (this.pinch.s * d / this.pinch.d) / this.v.s; this.zoomBy(f, mx, my);
+        this.v.x -= dx / 2 / this.v.s; this.v.z -= dy / 2 / this.v.s;
+      } else if (this.ptr.size === 1 && this.moved && !this.o.inline) { this.v.x -= dx / this.v.s; this.v.z -= dy / this.v.s; if (S.tl.follow && this.o.main) { S.tl.follow = false; this.o.onFollowOff && this.o.onFollowOff(); } }
+      this.dirty = true; this.o.onView && this.o.onView(this);
+    });
+    const up = e => {
+      const p = this.ptr.get(e.pointerId); if (!p) return; this.ptr.delete(e.pointerId); if (this.ptr.size < 2) this.pinch = null; clearTimeout(this.lp);
+      if (!this.moved && !this.longed && this.ptr.size === 0 && e.type === 'pointerup') { const r = this.el.getBoundingClientRect(); this.tap(e.clientX - r.left, e.clientY - r.top); }
+    };
+    el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('wheel', e => { e.preventDefault(); const r = el.getBoundingClientRect(); this.zoomBy(e.deltaY < 0 ? 1.25 : .8, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+  }
+  tap(sx, sy) {
+    let best = null, bd = 23; for (const h of this.hits) { const d = Math.hypot(h.sx - sx, h.sy - sy); if (d < bd) { bd = d; best = h; } }
+    if (best && best.kind === 'cluster') { this.openCluster(best); return; }
+    const [x, z] = this.toWorld(sx, sy);
+    this.o.onTap && this.o.onTap(best ? best : { kind: 'spot', x: Math.floor(x), z: Math.floor(z), dim: this.cfg().dim }, this);
+  }
+  /* a count badge zooms in until its members separate; markers on the very same block open the first */
+  openCluster(c) {
+    const m = c.members; let minD = Infinity;
+    for (let i = 0; i < m.length; i++) for (let j = i + 1; j < m.length; j++) minD = Math.min(minD, Math.hypot(m[i].x - m[j].x, m[i].z - m[j].z));
+    const want = clamp(Math.min(Math.max(this.v.s * 2.2, 52 / Math.max(minD, .01)), this.v.s * 8), S_MIN, S_MAX);
+    const cx = m.reduce((a, q) => a + q.x, 0) / m.length, cz = m.reduce((a, q) => a + q.z, 0) / m.length;
+    if (want <= this.v.s * 1.01) { this.o.onTap && this.o.onTap(m[0].hit, this); return; }
+    this.glide(cx, cz, want);
+  }
+  keepOuts() {
+    const r0 = this.el.getBoundingClientRect(), out = [];
+    if (this.o.floatSel) for (const e of document.querySelectorAll(this.o.floatSel)) {
+      const r = e.getBoundingClientRect(); if (!r.width || !r.height || e.closest('[hidden]')) continue;
+      out.push({ x: r.left - r0.left - 4, y: r.top - r0.top - 4, w: r.width + 8, h: r.height + 8 });
+    }
+    if (this.o.bottomInset) out.push({ x: 0, y: this.h - this.o.bottomInset, w: this.w, h: this.o.bottomInset });
+    return out;
+  }
+  frame() {
+    if (!this.dirty) return; this.dirty = false;
+    const cfg = this.cfg(), ctx = this.ctx, W = this.w, H = this.h, tk = TK || (TK = tokens());
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = tk.voidc; ctx.fillRect(0, 0, W, H); this.hits = []; this.holes = [];
+    const wd = worldData(cfg.slot); if (wd.empty) return;
+    const dd = wd.dims[cfg.dim]; if (!dd) return;
+    if (cfg.dim === 'e') this.drawStars(ctx, tk);
+    const s = this.v.s; let L = 0; while (L < MAX_Z && s * (1 << L) < .75) L++;
+    const span = TILE << L, [wx0, wz0] = this.toWorld(0, 0), [wx1, wz1] = this.toWorld(W, H);
+    ctx.imageSmoothingEnabled = false; let pending = 0, vis = 0;
+    for (let tz = Math.floor(wz0 / span); tz <= Math.floor(wz1 / span); tz++) for (let tx = Math.floor(wx0 / span); tx <= Math.floor(wx1 / span); tx++) {
+      const [sx, sy] = this.toScreen(tx * span, tz * span), ts = span * s; vis++;
+      const st = this.tileState(cfg, tx * span, tz * span, span, sx + ts / 2, sy + ts / 2);
+      if (st !== 'ok') { this.holes.push([sx, sy, ts, st]); continue; }
+      const img = getTile(cfg.slot, cfg.dim, L, tx, tz);
+      if (img) ctx.drawImage(img, 0, 0, TILE, TILE, sx, sy, ts + .5, ts + .5); else { pending++; this.holes.push([sx, sy, ts, 'loading']); }
+    }
+    this.tilesVisible = vis; this.tilesPending = this.holes.filter(h => h[3] === 'loading').length;
+    for (const [x, y, w, st] of this.holes) this.drawTileHole(ctx, x, y, w, st, tk, false);
+    const scaleR = this.o.scale !== false ? this.scaleRect() : null;
+    this.drawOverlays(ctx, cfg, wd, tk, scaleR);
+    if (scaleR) this.drawScale(ctx, tk, scaleR);
+    this.o.afterFrame && this.o.afterFrame(this);
+  }
+  drawStars(ctx, tk) {
+    ctx.save(); ctx.fillStyle = tk.ink; const r = rng(17);
+    for (let i = 0; i < 140; i++) { const x = r() * this.w, y = r() * this.h; ctx.globalAlpha = .12 + r() * .3; ctx.fillRect(Math.round(x), Math.round(y), r() < .15 ? 2 : 1, r() < .15 ? 2 : 1); }
+    ctx.restore();
+  }
+  tileState(cfg, bx, bz, span, cxs, cys) {
+    if (cfg.state === 'loading') { const d = Math.hypot(cxs - this.w / 2, cys - this.visH / 2) / (span * this.v.s); return d < S.loadN * .45 ? 'ok' : 'loading'; }
+    if (cfg.state === 'offline') { const b = S.cachedBox; if (cfg.dim !== 'o' || !b) return 'nocache'; return bx + span > b[0] && bx < b[2] && bz + span > b[1] && bz < b[3] ? 'ok' : 'nocache'; }
+    return 'ok';
+  }
+  /* placeholder squares: a shimmer for loading, hatching for "not on this phone"; their words go above the overlays */
+  drawTileHole(ctx, x, y, s, st, tk, words) {
+    ctx.save();
+    if (!words) {
+      ctx.fillStyle = tk.s2; ctx.fillRect(x, y, s, s); ctx.strokeStyle = tk.border; ctx.lineWidth = 1; ctx.strokeRect(x + .5, y + .5, s - 1, s - 1);
+      ctx.beginPath(); ctx.rect(x, y, s, s); ctx.clip(); ctx.strokeStyle = tk.border; ctx.lineWidth = st === 'loading' ? 10 : 1.5; ctx.globalAlpha = st === 'loading' ? .55 : 1;
+      const g = st === 'loading' ? 34 : 9; ctx.beginPath(); for (let d = -s; d < s; d += g) { ctx.moveTo(x + d, y + s); ctx.lineTo(x + d + s, y); } ctx.stroke();
+    }
+    ctx.restore();
+  }
+  drawGrid(ctx, tk) {
+    const s = this.v.s, step = s >= 2 ? 64 : s >= .5 ? 256 : s >= .125 ? 1024 : 4096; const [x0, z0] = this.toWorld(0, 0), [x1, z1] = this.toWorld(this.w, this.h);
+    ctx.save(); ctx.strokeStyle = tk.ink; ctx.globalAlpha = .35; ctx.lineWidth = 1;
+    for (let x = Math.ceil(x0 / step) * step; x < x1; x += step) { const [sx] = this.toScreen(x, 0); ctx.beginPath(); ctx.moveTo(Math.round(sx) + .5, 0); ctx.lineTo(Math.round(sx) + .5, this.h); ctx.stroke(); }
+    for (let z = Math.ceil(z0 / step) * step; z < z1; z += step) { const [, sy] = this.toScreen(0, z); ctx.beginPath(); ctx.moveTo(0, Math.round(sy) + .5); ctx.lineTo(this.w, Math.round(sy) + .5); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    for (let x = Math.ceil(x0 / step) * step; x < x1; x += step) { const [sx] = this.toScreen(x, 0); if (sx > 8 && sx < this.w - 70) this.labels.push({ txt: 'X ' + x, x: sx + 4, y: (this.o.gridTop || 6), pr: 9, left: true }); }
+    for (let z = Math.ceil(z0 / step) * step; z < z1; z += step) { const [, sy] = this.toScreen(0, z); if (sy > 30 && sy < this.visH - 30) this.labels.push({ txt: 'Z ' + z, x: 6, y: sy + 4, pr: 9, left: true }); }
+    ctx.restore();
+  }
+  plate(ctx, txt, x, y, tk, center = true, align) {
+    ctx.save(); ctx.font = '500 12px system-ui,sans-serif'; const w = ctx.measureText(txt).width + 12, h = 20;
+    const lx = align === 'left' ? x : x - w / 2, ly = center ? y - h - 6 : y;
+    ctx.fillStyle = tk.plate; ctx.beginPath(); ctx.roundRect(lx, ly, w, h, 6); ctx.fill();
+    ctx.fillStyle = tk.text; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, lx + 6, ly + h / 2 + .5); ctx.restore();
+  }
+  /* "Explored by …" — the travel log's fog of war, an optional veil over the base map */
+  drawVeil(ctx, cfg, wd, tk) {
+    const ex = wd.dims[cfg.dim].ex, tl = cfg.tl, tcut = tl.on ? tl.t : NOW + 1, s = this.v.s;
+    const who = cfg.exBy === 'all' ? (tl.on ? [...tl.shown] : PLAYERS.map(p => p.id)) : [cfg.exBy];
+    const [x0, z0] = this.toWorld(-16, -16), [x1, z1] = this.toWorld(this.w + 16, this.h + 16);
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, this.w, this.h);
+    for (const e of ex.values()) {
+      const bx = e.cx * 16, bz = e.cz * 16; if (bx > x1 || bz > z1 || bx + 16 < x0 || bz + 16 < z0) continue;
+      if (!who.some(p => e.by[p] <= tcut)) continue;
+      const [sx, sy] = this.toScreen(bx, bz), a = Math.round(sx), b = Math.round(sy), w = Math.round(sx + 16 * s) - a, h = Math.round(sy + 16 * s) - b;
+      ctx.moveTo(a, b); ctx.lineTo(a, b + h); ctx.lineTo(a + w, b + h); ctx.lineTo(a + w, b); ctx.closePath();
+    }
+    ctx.fillStyle = tk.fog; ctx.globalAlpha = .62; ctx.fill('nonzero'); ctx.restore();
+  }
+  drawOverlays(ctx, cfg, wd, tk, scaleR) {
+    const log = wd.log, dim = cfg.dim, tl = cfg.tl, tOn = tl.on, t = tl.t, s = this.v.s; this.labels = this.labels || []; this.labels.length = 0;
+    if (cfg.ov.grid) this.drawGrid(ctx, tk);
+    const shown = id => tOn ? tl.shown.has(id) : true;
+    if (cfg.ov.explored && wd.dims[dim].ex.size) this.drawVeil(ctx, cfg, wd, tk);
+    // trails
+    if (cfg.ov.trails) for (const ses of log.sessions) {
+      if (!shown(ses.player)) continue;
+      if (tOn && (ses.end < tl.from || ses.start > t)) continue;
+      if (!tOn && !(ses.end >= NOW || (this.o.trailSince && ses.start >= this.o.trailSince) || ses === lastSessionOf(log, ses.player))) continue;
+      const col = pcol(ses.player); const pts = ses.samples.filter(q => q.d === dim && (!tOn || q.t <= t));
+      if (pts.length < 2) continue;
+      for (const pass of [0, 1]) {
+        ctx.beginPath(); let prev = null;
+        for (const q of pts) { const [x, y] = this.toScreen(q.x, q.z); if (!prev || q.t - prev.t > 30e3 || Math.hypot(q.x - prev.x, q.z - prev.z) > 90) ctx.moveTo(x, y); else ctx.lineTo(x, y); prev = q; }
+        if (tOn) { const p = posAt(log, ses.player, t); if (p && p.d === dim) { const [x, y] = this.toScreen(p.x, p.z); ctx.lineTo(x, y); } }
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        if (pass === 0) { ctx.strokeStyle = tk.halo; ctx.lineWidth = s < .2 ? 3.5 : 5; ctx.globalAlpha = tOn ? .35 : .55; }
+        else { ctx.strokeStyle = col; ctx.lineWidth = s < .2 ? 1.5 : 2.5; ctx.globalAlpha = tOn ? .45 : 1; }
+        ctx.stroke(); ctx.globalAlpha = 1;
+      }
+      if (tOn) {
+        const tail = pts.filter(q => q.t >= t - 6 * MIN); if (tail.length) {
+          ctx.beginPath(); let prev = null; for (const q of tail) { const [x, y] = this.toScreen(q.x, q.z); if (!prev || q.t - prev.t > 30e3) ctx.moveTo(x, y); else ctx.lineTo(x, y); prev = q; }
+          const p = posAt(log, ses.player, t); if (p && p.d === dim) { const [x, y] = this.toScreen(p.x, p.z); ctx.lineTo(x, y); }
+          ctx.strokeStyle = tk.halo; ctx.lineWidth = 6; ctx.stroke(); ctx.strokeStyle = col; ctx.lineWidth = 3.5; ctx.stroke();
+        }
+      }
+    }
+    // point markers, collected so they can cluster
+    const M = [], add = (type, x, z, hit, label, pr, col) => M.push({ type, x, z, hit, label, pr, col });
+    if (cfg.ov.structures) for (const st of wd.structs[dim] || []) add('struct', st.x, st.z, { kind: 'struct', ...st, dim }, SK[st.k][0], 5);
+    if (cfg.ov.beds && dim === 'o' && wd.w.kind === 'main') {
+      add('spawn', SPAWN[0], SPAWN[1], { kind: 'spawn', x: SPAWN[0], z: SPAWN[1], y: 72, dim }, 'Spawn', 4);
+      for (const p of PLAYERS) if (p.bed && shown(p.id)) add('bed', p.bed[0], p.bed[1], { kind: 'bed', player: p.id, x: p.bed[0], z: p.bed[1], y: p.id === 'BlockyFox' ? 104 : 69, dim }, null, 4, pcol(p.id));
+    }
+    if (cfg.ov.places && wd.w.kind === 'main') for (const pl of PLACES) if (pl.dim === dim) add('place', pl.x, pl.z, { kind: 'place', ...pl }, pl.name, 2);
+    for (const ev of log.events) {
+      if (ev.d !== dim || !shown(ev.player)) continue;
+      if (tOn && (ev.t > t || ev.t < tl.from)) continue;
+      if (ev.kind === 'died' && cfg.ov.deaths) add('skull', ev.x, ev.z, { ...ev, kind: 'death', dim: ev.d }, null, 1);
+      else if (tOn && (ev.kind === 'joined' || ev.kind === 'left')) add(ev.kind, ev.x, ev.z, { ...ev, dim: ev.d }, null, 3, pcol(ev.player));
+      else if (tOn && ev.kind === 'dim') add('dim', ev.x, ev.z, { ...ev, kind: 'dimev', dim: ev.d }, null, 3);
+    }
+    const sel = cfg.sel, isSel = h => sel && sel.kind === h.kind && sel.x === h.x && sel.z === h.z && sel.t === h.t && sel.k === h.k;
+    const R = 40, clusters = [], singles = [];
+    for (const m of M) {
+      [m.sx, m.sy] = this.toScreen(m.x + .5, m.z + .5);
+      if (m.sx < -30 || m.sy < -30 || m.sx > this.w + 30 || m.sy > this.h + 30) continue;
+      if (isSel(m.hit)) { m.sel = true; continue; }
+      singles.push(m);
+    }
+    singles.sort((a, b) => a.pr - b.pr);
+    for (const m of singles) { const c = clusters.find(c => Math.hypot(c.sx - m.sx, c.sy - m.sy) < R); if (c) c.members.push(m); else clusters.push({ sx: m.sx, sy: m.sy, members: [m] }); }
+    for (const c of clusters) {
+      if (c.members.length === 1) { const m = c.members[0]; this.glyph(ctx, m.type, m.sx, m.sy, tk, m.hit, s >= .25 || m.type === 'place' ? m.label : null, m.col, m.pr); }
+      else this.cluster(ctx, c, tk);
+    }
+    // players: live dots (or last-known), or their position at the scrubbed moment; never clustered
+    if (cfg.ov.players || tOn) for (const p of PLAYERS) {
+      if (!shown(p.id)) continue;
+      let pos, live = false, hollow = false;
+      if (tOn) { pos = posAt(log, p.id, t); if (!pos) continue; live = true; }
+      else { pos = lastPos(log, p.id); if (!pos) continue; live = pos.live && cfg.state !== 'stopped' && cfg.state !== 'offline'; hollow = !live; }
+      if (pos.d !== dim) continue;
+      this.player(ctx, p, pos.x, pos.z, tk, live, hollow, { kind: 'player', player: p.id, x: Math.round(pos.x), z: Math.round(pos.z), dim, live, at: pos.at, y: 70 }, s >= .25 || live);
+    }
+    for (const m of M) if (m.sel) this.glyph(ctx, m.type, m.sx, m.sy, tk, m.hit, m.label || selLabel(m.hit), m.col, -1, true);
+    // the tapped or pinned spot
+    if (sel && sel.kind === 'spot' && sel.dim === dim && !this.o.noSpot) {
+      const [x, y] = this.toScreen(sel.x + .5, sel.z + .5); ctx.save();
+      if (sel.pinned && s >= 2) { ctx.strokeStyle = tk.halo; ctx.lineWidth = 4; ctx.strokeRect(x - s / 2 - 1, y - s / 2 - 1, s + 2, s + 2); ctx.strokeStyle = tk.ink; ctx.lineWidth = 2; ctx.strokeRect(x - s / 2 - 1, y - s / 2 - 1, s + 2, s + 2); }
+      ctx.strokeStyle = tk.halo; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.stroke(); ctx.strokeStyle = tk.ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.stroke();
+      ctx.beginPath(); for (const [a, b, c2, d] of [[-20, 0, -14, 0], [14, 0, 20, 0], [0, -20, 0, -14], [0, 14, 0, 20]]) { ctx.moveTo(x + a, y + b); ctx.lineTo(x + c2, y + d); }
+      ctx.strokeStyle = tk.halo; ctx.lineWidth = 5; ctx.stroke(); ctx.strokeStyle = tk.ink; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
+    }
+    // placeholder words go with the labels, so they stay inside the visible map and clear of the controls
+    for (const [x, y, w, st] of this.holes || []) {
+      const x0 = Math.max(x, 0), y0 = Math.max(y, 0), x1 = Math.min(x + w, this.w), y1 = Math.min(y + w, this.visH);
+      if (x1 - x0 > 170 && y1 - y0 > 70) this.labels.push({ txt: st === 'loading' ? 'loading…' : 'not saved on this phone', x: (x0 + x1) / 2, y: (y0 + y1) / 2 + 16, pr: .5 });
+    }
+    this.placeLabels(ctx, tk, scaleR);
+  }
+  /* labels: the tapped thing's first, then players, places, structures; each clamped inside the
+     map and clear of the floating controls, the scale bar and the other labels — or dropped */
+  placeLabels(ctx, tk, scaleR) {
+    const keep = this.keepOuts(); if (scaleR) keep.push(scaleR);
+    const placed = [], hit = r => [...keep, ...placed].some(q => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h);
+    ctx.save(); ctx.font = '500 12px system-ui,sans-serif';
+    for (const l of this.labels.sort((a, b) => a.pr - b.pr)) {
+      const w = ctx.measureText(l.txt).width + 12, h = 20;
+      let r = l.left ? { x: l.x, y: l.y, w, h } : { x: l.x - w / 2, y: l.y - 26, w, h };
+      r.x = clamp(r.x, 4, this.w - w - 4); r.y = clamp(r.y, 4, this.visH - h - 4);
+      if (!l.left && hit(r)) { const below = { ...r, y: l.y + 30 }; if (below.y + h < this.visH - 4 && !hit(below)) r = below; else if (l.pr >= 0) continue; }
+      if (l.left && hit(r)) continue;
+      placed.push({ x: r.x - 2, y: r.y - 2, w: r.w + 4, h: r.h + 4 });
+      ctx.fillStyle = tk.plate; ctx.beginPath(); ctx.roundRect(r.x, r.y, w, h, 6); ctx.fill();
+      ctx.fillStyle = tk.text; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(l.txt, r.x + 6, r.y + h / 2 + .5);
+    }
+    ctx.restore();
+  }
+  cluster(ctx, c, tk) {
+    const n = c.members.length, x = c.sx, y = c.sy, deaths = c.members.every(m => m.type === 'skull');
+    ctx.save(); ctx.beginPath(); ctx.arc(x, y, 16, 0, 7); ctx.fillStyle = tk.halo; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 13, 0, 7); ctx.lineWidth = 2; ctx.strokeStyle = deaths ? tk.rose : tk.ink; ctx.stroke();
+    ctx.fillStyle = tk.ink; ctx.font = '700 12px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(n), x, y + .5); ctx.restore();
+    const wx = c.members.reduce((a, m) => a + m.x, 0) / n, wz = c.members.reduce((a, m) => a + m.z, 0) / n;
+    this.hits.push({ kind: 'cluster', members: c.members.map(m => ({ x: m.x, z: m.z, hit: m.hit })), x: wx, z: wz, sx: x, sy: y });
+  }
+  glyph(ctx, type, x, y, tk, hit, label, col, pr, on) {
+    ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const ring = r => { ctx.beginPath(); ctx.arc(x, y, r, 0, 7); };
+    if (type === 'skull') {
+      ring(on ? 13 : 11); ctx.fillStyle = tk.halo; ctx.fill(); ring(on ? 11 : 9); ctx.fillStyle = tk.rose; ctx.fill();
+      ctx.fillStyle = tk.inkOn; ctx.beginPath(); ctx.arc(x - 3, y - 1, 2, 0, 7); ctx.arc(x + 3, y - 1, 2, 0, 7); ctx.fill(); ctx.fillRect(x - 2.5, y + 3, 1.5, 3); ctx.fillRect(x + 1, y + 3, 1.5, 3);
+    } else if (type === 'bed') {
+      ctx.fillStyle = tk.halo; ctx.beginPath(); ctx.roundRect(x - 10, y - 7, 20, 14, 4); ctx.fill(); ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(x - 8, y - 5, 16, 10, 2); ctx.fill(); ctx.fillStyle = tk.ink; ctx.fillRect(x - 7, y - 4, 5, 8);
+    } else if (type === 'spawn') {
+      ring(11); ctx.fillStyle = tk.halo; ctx.fill(); ctx.fillStyle = tk.ink; ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 3.6 : 8; ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } ctx.closePath(); ctx.fill();
+    } else if (type === 'place') {
+      ctx.fillStyle = tk.halo; ctx.beginPath(); ctx.arc(x, y - 9, 9, Math.PI * .8, Math.PI * 2.2); ctx.lineTo(x, y + 3); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = tk.ink; ctx.beginPath(); ctx.arc(x, y - 9, 7, Math.PI * .8, Math.PI * 2.2); ctx.lineTo(x, y + 1); ctx.closePath(); ctx.fill(); ctx.fillStyle = tk.halo; ctx.beginPath(); ctx.arc(x, y - 9, 2.6, 0, 7); ctx.fill();
+    } else if (type === 'struct') {
+      ctx.fillStyle = tk.halo; ctx.beginPath(); ctx.roundRect(x - 12, y - 12, 24, 24, 7); ctx.fill();
+      ctx.strokeStyle = tk.amber; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(x - 10.5, y - 10.5, 21, 21, 6); ctx.stroke();
+      ctx.translate(x - 7.5, y - 7.5); ctx.scale(15 / 24, 15 / 24); ctx.strokeStyle = tk.ink; ctx.lineWidth = 2.2; ctx.stroke(spath(SK[hit.k][1]));
+    } else if (type === 'joined' || type === 'left') {
+      ring(7); ctx.fillStyle = tk.halo; ctx.fill(); ring(4.5); if (type === 'joined') { ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke(); } else { ctx.fillStyle = col; ctx.fill(); }
+    } else if (type === 'dim') {
+      ctx.fillStyle = tk.halo; ctx.beginPath(); ctx.moveTo(x, y - 11); ctx.lineTo(x + 9, y); ctx.lineTo(x, y + 11); ctx.lineTo(x - 9, y); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = tk.violet; ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x + 6, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 6, y); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    const oy = type === 'place' ? 9 : 0;
+    if (on) { ctx.save(); ctx.strokeStyle = tk.halo; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x, y - oy, 18, 0, 7); ctx.stroke(); ctx.strokeStyle = tk.ink; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
+    if (label) this.labels.push({ txt: label, x, y: y - (type === 'place' ? 14 : type === 'struct' ? 8 : 6), pr: pr ?? 3 });
+    this.hits.push({ ...hit, sx: x, sy: y - (type === 'place' ? 8 : 0) });
+  }
+  player(ctx, p, wx, wz, tk, live, hollow, hit, label) {
+    const [x, y] = this.toScreen(wx, wz), col = pcol(p.id);
+    if (x < -30 || y < -30 || x > this.w + 30 || y > this.h + 30) return;
+    ctx.save();
+    if (live && !matchMedia('(prefers-reduced-motion: reduce)').matches && !S.tl.on) { const ph = (performance.now() % 1600) / 1600; ctx.globalAlpha = (1 - ph) * .5; ctx.beginPath(); ctx.arc(x, y, 10 + ph * 12, 0, 7); ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1; this.dirty = true; }
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fillStyle = tk.halo; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 9.5, 0, 7);
+    if (hollow) { ctx.fillStyle = tk.halo; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.stroke(); ctx.fillStyle = col; }
+    else { ctx.fillStyle = col; ctx.fill(); ctx.fillStyle = tk.inkOn; }
+    ctx.font = '700 11px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(p.init, x, y + .5);
+    ctx.restore();
+    const sel = this.cfg().sel, on = sel && sel.kind === 'player' && sel.player === p.id;
+    if (on) { ctx.save(); ctx.strokeStyle = tk.halo; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x, y, 17, 0, 7); ctx.stroke(); ctx.strokeStyle = tk.ink; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
+    if (label) this.labels.push({ txt: p.id + (hollow ? ' · offline' : ''), x, y: y - 8, pr: on ? -1 : live ? 0 : 1 });
+    this.hits.push({ ...hit, sx: x, sy: y });
+  }
+  scaleRect() {
+    const s = this.v.s, nice = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]; const b = nice.find(n => n * s >= 56) || 4096; const w = b * s;
+    const bpp = Math.round(1 / s), txt = `${fmtN(b)} blocks${s <= S_MIN + 1e-6 ? ' · 1 px = 1 chunk' : bpp >= 2 ? ` · 1 px = ${bpp} blocks` : ''}`;
+    this.ctx.font = '500 12px system-ui,sans-serif'; const tw = this.ctx.measureText(txt).width;
+    const x = this.o.scaleX ?? 12, y = this.visH - (this.o.scaleBottom ?? 12);
+    return { x: x - 6, y: y - 24, w: Math.max(w, tw) + 12 + 30, h: 32, b, bw: w, txt, bx: x, by: y };
+  }
+  drawScale(ctx, tk, r) {
+    ctx.save(); ctx.fillStyle = tk.plate; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.strokeStyle = tk.text; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(r.bx, r.by - 5); ctx.lineTo(r.bx, r.by + 1); ctx.lineTo(r.bx + r.bw, r.by + 1); ctx.lineTo(r.bx + r.bw, r.by - 5); ctx.stroke();
+    ctx.fillStyle = tk.text; ctx.font = '500 12px system-ui,sans-serif'; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left'; ctx.fillText(r.txt, r.bx, r.by - 8);
+    ctx.font = '700 12px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillText('N↑', r.x + r.w - 15, r.by - 2); ctx.restore();
+  }
+}
+function selLabel(h) { return h.kind === 'death' ? `${h.player} died here` : h.kind === 'struct' ? SK[h.k][0] : h.kind === 'bed' ? `${h.player}'s bed` : null; }
+function lastSessionOf(log, id) { let b = null; for (const s of log.sessions) if (s.player === id) b = s; return b; }
+function hexRgb(h) { h = h.trim(); if (h.startsWith('rgb')) return h.match(/[\d.]+/g).slice(0, 3).map(Number); const n = parseInt(h.replace('#', ''), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+(function loop() { pumpTiles(); for (const v of VIEWS) if (v.el.isConnected) v.frame(); requestAnimationFrame(loop); })();
+function redrawAll() { for (const v of VIEWS) v.dirty = true; }
+
+/* ---------- copy ---------- */
+async function copyText(txt, label) {
+  let ok = false; try { await navigator.clipboard.writeText(txt); ok = true; } catch (e) { try { const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove(); } catch (e2) { ok = false; } }
+  toast(ok ? `Copied ${label || txt}` : `Couldn't reach the clipboard — ${txt}`);
+}
+let toastT; function toast(m, up) { const t = document.getElementById('toast'); t.textContent = m; t.classList.toggle('up', !!up); t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400); }
+
+/* ---------- describing a tapped thing ---------- */
+const SURVEY_WORD = 'Satellite survey (predicted)';
+function describe(sel) {
+  const dimN = DIMS[sel.dim || S.dim];
+  if (sel.kind === 'spot') {
+    const b = sampleAt(S.slot, sel.dim, sel.x, sel.z);
+    if (!b) return { ic: IC.crosshair, t: 'Nothing to draw here', s: dimN, x: sel.x, z: sel.z };
+    if (b.void) return { ic: IC.crosshair, t: 'The void', s: `${dimN} · no ground here, not even in the survey`, x: sel.x, z: sel.z };
+    return { ic: b.gen ? IC.crosshair : IC.satellite, t: b.biome, s: `${b.gen ? 'Explored' : SURVEY_WORD} · ${b.water ? 'water surface' : 'ground'} at Y${NB}${b.gen ? '' : '~'}${b.y}`, x: sel.x, z: sel.z, y: b.y, approxY: !b.gen, spot: true, pinned: sel.pinned };
+  }
+  if (sel.kind === 'struct') { const b = sampleAt(S.slot, sel.dim, sel.x, sel.z); return { sic: sel.k, t: SK[sel.k][0], s: `Located by the server · ${b && b.gen ? 'explored ground' : 'in the survey, not explored yet'} · ${dimN}`, x: sel.x, z: sel.z, yUnknown: true }; }
+  if (sel.kind === 'death') return { ic: IC.skull, icc: 'death', t: `${sel.player} ${sel.cause}`, s: `${fmtDay(sel.t)}, ${fmtClock(sel.t)} · ${dimN}`, x: sel.x, z: sel.z, y: sel.y, replay: sel.t };
+  if (sel.kind === 'player') { const live = sel.live; return { pl: sel.player, t: sel.player, s: S.tl.on ? `here at ${fmtClock(S.tl.t)}, ${fmtDay(S.tl.t).toLowerCase()} · ${dimN}` : live ? `online · here now · ${dimN}` : `offline · logged off here ${fmtAgo(sel.at)}`, x: sel.x, z: sel.z, y: sel.y, follow: true }; }
+  if (sel.kind === 'bed') return { ic: IC.bed, t: `${sel.player}'s bed`, s: `${dimN} · where ${sel.player} respawns`, x: sel.x, z: sel.z, y: sel.y };
+  if (sel.kind === 'spawn') return { ic: IC.flag, t: 'World spawn', s: `${dimN} · where new players start`, x: sel.x, z: sel.z, y: sel.y };
+  if (sel.kind === 'place') return { ic: IC.pinp, t: sel.name, s: `Saved by ${sel.by} · ${dimN}`, x: sel.x, z: sel.z, y: sel.y };
+  if (sel.kind === 'joined' || sel.kind === 'left') return { ic: sel.kind === 'joined' ? IC.login : IC.logout, t: `${sel.player} ${sel.kind === 'joined' ? 'logged in' : 'logged off'}`, s: `${fmtDay(sel.t)}, ${fmtClock(sel.t)} · ${dimN}`, x: sel.x, z: sel.z };
+  if (sel.kind === 'dimev') return { ic: IC.portal, t: `${sel.player} went to the ${DIMS[sel.to].replace('The ', '')}`, s: `${fmtDay(sel.t)}, ${fmtClock(sel.t)} · through the portal here`, x: sel.x, z: sel.z };
+  return { ic: IC.info, t: '—', s: '', x: sel.x, z: sel.z };
+}
+function detIcon(d) { return d.pl ? `<span class="det-ic pl" style="background:var(${PL[d.pl].tok})" aria-hidden="true">${PL[d.pl].init}</span>` : d.sic ? `<span class="det-ic st" aria-hidden="true">${sIcon(d.sic)}</span>` : `<span class="det-ic ${d.icc || ''}" aria-hidden="true">${d.ic}</span>`; }
+function htmlDetail(sel, opt = {}) {
+  const d = describe(sel), dim = sel.dim || S.dim;
+  const alt = dim === 'n' ? `<div class="alt">Overworld side: <b>X${NB}${d.x * 8} · Z${NB}${d.z * 8}</b></div>` : '';
+  const extra = [];
+  if (d.follow && !opt.noFollow) extra.push(`<button class="btn grow" data-act="follow:${d.pl}">${IC.locate}Follow</button>`, `<button class="btn grow" data-act="sessions:${d.pl}">${IC.clock}Sessions</button>`);
+  if (d.replay && !opt.noReplay) extra.push(`<button class="btn grow" data-act="replay:${d.replay}">${IC.rewind}Replay the minutes before</button>`);
+  const nudge = d.pinned && !opt.noNudge ? `<div class="nudge" role="group" aria-label="Nudge the pin one block"><span class="note">Nudge one block</span><button class="icon-btn" data-act="nudge:-1:0" aria-label="West">${IC.arrowL}</button><button class="icon-btn" data-act="nudge:0:-1" aria-label="North">${IC.arrowU}</button><button class="icon-btn" data-act="nudge:0:1" aria-label="South">${IC.arrowD}</button><button class="icon-btn" data-act="nudge:1:0" aria-label="East">${IC.arrowR}</button></div>` : '';
+  return `<div class="det">
+    <div class="det-h">${detIcon(d)}<div class="det-tx"><div class="det-t">${esc(d.t)}</div><div class="det-s">${esc(d.s)}</div></div>${opt.close ? `<button class="icon-btn" data-act="desel" aria-label="Close">${IC.x}</button>` : ''}</div>
+    <div class="coord"><div class="xyz"><span><em>X</em>${d.x}</span>${d.y && !d.approxY ? `<span><em>Y</em>${d.y}</span>` : ''}<span><em>Z</em>${d.z}</span></div><button class="btn primary" data-act="copy:${d.x} ${d.z}">${IC.copy}Copy X Z</button></div>
+    ${nudge}${alt}${extra.length ? `<div class="btnrow">${extra.join('')}</div>` : ''}
+  </div>`;
+}
+/* the time-mode form: one row, so the stepper and transport keep their room */
+function htmlSelRow(sel, opt = {}) {
+  const d = describe(sel);
+  return `<div class="selrow">${detIcon(d)}<div class="det-tx"><div class="sr-t">${esc(d.t)}</div><div class="sr-c mono">X${NB}${d.x} · Z${NB}${d.z}</div></div><button class="btn primary sr-copy" data-act="copy:${d.x} ${d.z}" aria-label="Copy X Z ${d.x} ${d.z}">${IC.copy}</button>${opt.close === false ? '' : `<button class="icon-btn" data-act="desel" aria-label="Close">${IC.x}</button>`}</div>`;
+}
+
+/* ---------- layers + overlays + legend ---------- */
+const OVS = [
+  ['players', IC.user, 'Players', 'last positions · live while on'],
+  ['trails', IC.route, 'Trails', 'today’s and each player’s latest'],
+  ['deaths', IC.skull, 'Deaths', 'tap a skull for the cause'],
+  ['beds', IC.bed, 'Beds & spawn', ''],
+  ['places', IC.pinp, 'Saved places', ''],
+  ['structures', IC.castle, 'Structures', 'from the server’s locate · exact'],
+  ['explored', IC.eye, 'Explored by…', 'the travel log’s fog of war'],
+  ['grid', IC.grid, 'Grid & coordinates', ''],
+];
+const LATER = [['gates', IC.portal, 'Wormhole gates', 'comes with M12']];
+const surveyRgb = c => { const g = c[0] * .3 + c[1] * .59 + c[2] * .11; return c.map(v => Math.round((g + (v - g) * .5) * .65)); };
+function htmlLayers(opt = {}) {
+  const sw = (c, c2) => `<span class="sw" style="background:linear-gradient(135deg,rgb(${c}) 0 50%,rgb(${c2}) 50%)" aria-hidden="true"></span>`;
+  const forest = BIOMES[5][1], plains = BIOMES[4][1];
+  const live = `<button class="ly" role="radio" aria-checked="true" data-act="layer:biome">${sw(forest.join(), surveyRgb(plains).join())}<span style="min-width:0"><span class="lt">Biomes</span><span class="ls">explored + satellite survey</span></span></button>`;
+  const later = LATER_LAYERS.map(([k, t, s]) => `<button class="ly" role="radio" aria-checked="false" disabled><span class="sw later" aria-hidden="true"></span><span style="min-width:0"><span class="lt">${t}</span><span class="ls">${s} · later</span></span></button>`).join('');
+  const who = S.ov.explored ? `<div class="ly-who" role="radiogroup" aria-label="Explored by"><button class="chip" role="radio" aria-checked="${S.exBy === 'all'}" data-act="exby:all">Anyone</button>${PLAYERS.map(p => `<button class="chip" role="radio" aria-checked="${S.exBy === p.id}" data-act="exby:${p.id}"><span class="pd" style="background:var(${p.tok});color:var(${p.tok})"></span>${p.id}</button>`).join('')}</div>` : '';
+  const ovs = OVS.map(([k, ic, t, s]) => `<div class="ov"><span class="gl" aria-hidden="true">${ic}</span><span class="ot">${t}${s ? `<small>${s}</small>` : ''}</span><button class="switch" role="switch" aria-checked="${S.ov[k]}" aria-label="${t}" data-act="ov:${k}"><span class="knob"></span></button></div>${k === 'explored' ? who : ''}`).join('')
+    + LATER.map(([k, ic, t, s]) => `<div class="ov later"><span class="gl" aria-hidden="true">${ic}</span><span class="ot">${t}<small>${s}</small></span><span class="badge off">later</span></div>`).join('');
+  return `${opt.noHead ? '' : '<div class="sect" style="margin-bottom:8px">Map</div>'}<div class="ly-grid" role="radiogroup" aria-label="Base layer">${live}${later}</div>
+    <div class="sect" style="margin:16px 0 4px">On the map</div><div>${ovs}</div>
+    ${opt.legend === false ? '' : `<div class="sect" style="margin:16px 0 8px">Legend</div>${htmlLegend()}`}`;
+}
+function htmlLegend(compact) {
+  const i = (c, t) => `<span class="lg-i"><i style="background:rgb(${c.join(',')})"></i>${t}</span>`;
+  const ids = S.dim === 'o' ? [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 3, 2, 0, 1] : S.dim === 'n' ? [19, 20, 21, 22, 23] : [24];
+  const ex = BIOMES[S.dim === 'o' ? 5 : S.dim === 'n' ? 19 : 24][1];
+  const pair = `<div class="lg-row">${i(ex, 'Explored')}${i(surveyRgb(ex), 'Satellite survey')}</div>`;
+  if (compact) return `<div class="lg">${pair}<p class="note">Full colour is ground the server has generated; dimmed is predicted from the seed.</p></div>`;
+  let body = `${pair}<p class="note">Explored ground is drawn in full colour. Everything else is the satellite's survey — predicted from the seed, half-desaturated and dimmed. ${S.dim === 'e' ? 'Black is the void.' : 'It matches the real world at about 97% of blocks.'}</p>`;
+  body += `<div class="lg-row">${ids.map(k => i(BIOMES[k][1], BIOMES[k][0])).join('')}</div><p class="note">Biome colours, hillshaded from the north-west. Water darkens with depth.</p>`;
+  if (S.ov.explored) body += `<div class="lg-row"><span class="lg-i"><i style="background:var(--map-fog);opacity:.62"></i>Veiled: not explored by ${S.exBy === 'all' ? 'anyone' : S.exBy}</span></div>`;
+  body += `<div class="lg-row" style="margin-top:2px"><span class="lg-i" style="color:var(--danger-text)">${IC.skull}<span style="color:var(--text-2)">Death</span></span><span class="lg-i">${IC.bed}Bed</span><span class="lg-i">${IC.flag}Spawn</span><span class="lg-i">${IC.pinp}Saved place</span><span class="lg-i">${IC.castle}Structure</span><span class="lg-i"><span class="lg-n" aria-hidden="true">3</span>Grouped — tap to zoom in</span>${S.tl.on ? `<span class="lg-i" style="color:var(--violet)">${IC.portal}<span style="color:var(--text-2)">Dimension change</span></span>` : ''}</div>`;
+  return `<div class="lg">${body}</div>`;
+}
+function htmlDims(cls = 'seg') {
+  const wd = worldData(S.slot);
+  return `<div class="${cls} dims" role="radiogroup" aria-label="Dimension">${Object.entries(DIMS).map(([k, n]) => `<button role="radio" aria-checked="${S.dim === k}" data-act="dim:${k}" ${wd.empty ? 'disabled' : ''}>${n.replace('The ', '')}</button>`).join('')}</div>`;
+}
+
+/* ---------- honest status line ----------
+   The map reads the running world and trails it by up to a minute; there are no snapshots.
+   While the timeline is anywhere but now, the line says so — it never says Live then. */
+function statusInfo() {
+  const wd = worldData(S.slot), w = wd.w;
+  if (wd.empty) return { tone: 'off', head: 'Nothing to draw yet', sub: w.kind === 'free' ? 'This slot is empty.' : `${w.name} has never been loaded, so it has no ground or seed yet.` };
+  if (timeTravel()) { const tl = S.tl; return { tone: 'warn', time: true, head: `Not live · ${dayDiff(tl.t) < 2 ? fmtDay(tl.t).toLowerCase() : fmtDay(tl.t)} ${fmtClock(tl.t)}`, sub: `${tl.playing ? `Replaying at ${tl.speed}×` : 'Paused'} · positions from the travel log · terrain as of now` }; }
+  if (S.state === 'offline') return { tone: 'bad', head: 'Box unreachable — retrying…', sub: `Tiles this phone saved at 2:31${NB}pm · positions as of then` };
+  if (S.state === 'stopped') return { tone: 'off', head: `Server stopped at 1:12${NB}pm`, sub: 'Map as of then · players where they logged off' };
+  if (!w.loaded) return { tone: 'off', head: `${w.name} isn't loaded`, sub: `Map as of ${w.played}, when it was last played` };
+  const on = PLAYERS.filter(p => p.online).length;
+  if (S.state === 'loading') { const v = APP.view; return { tone: 'spin', head: `Loading map tiles · ${v ? Math.max(0, (v.tilesVisible || 0) - (v.tilesPending || 0)) : 0} of ${v ? v.tilesVisible || 0 : 0}`, sub: `Live · ${on} on · up to a minute behind` }; }
+  if (S.dim === 'e') return { tone: 'ok', head: `Live · ${on} on`, sub: 'Nobody has been to the End — all of it is the survey' };
+  return { tone: 'ok', head: `Live · ${on} on`, sub: 'Up to a minute behind the world · positions live' };
+}
+function htmlStatus(compact, opt = {}) {
+  const si = statusInfo();
+  const dot = si.tone === 'spin' ? '<span class="spin" aria-hidden="true"></span>' : `<span class="dot ${si.tone}" aria-hidden="true"></span>`;
+  const back = si.time && opt.back ? `<button class="btn go mstat-live" data-act="tl:live">Back to live</button>` : '';
+  return `<div class="mstat${si.time ? ' time' : ''}" role="status">${dot}<span class="mstat-tx"><b>${esc(si.head)}</b>${compact ? '' : `<span class="sub"><br>${esc(si.sub)}</span>`}</span>${back}</div>`;
+}
+
+/* ---------- timeline (M8a) ---------- */
+function tlLog() { return worldData(S.slot).log; }
+function tlStart(preset) { const tl = S.tl; tl.on = true; tl.preset = preset || tl.preset; [tl.from, tl.to] = presetRange(tl.preset, tlLog()); tl.t = tl.preset === 'session' ? tl.from : Math.max(tl.from, tl.to - 40 * MIN); tl.sess = null; tl.cur = null; redrawAll(); }
+function tlEvents() { const tl = S.tl; return tlLog().events.filter(e => e.t >= tl.from && e.t <= tl.to && tl.shown.has(e.player) && (e.kind === 'died' || e.kind === 'dim' || e.kind === 'joined' || e.kind === 'left')); }
+function htmlStepper() {
+  const tl = S.tl, list = sessionsOf(tlLog(), tl.focus), cur = currentSessionIdx(list), s = list[cur];
+  return `<div class="tl-step">
+      <button class="icon-btn" data-act="tl:sess:-1" aria-label="Previous session" ${cur <= 0 ? 'disabled' : ''}>${IC.chevL}</button>
+      <div class="mid"><button class="who" data-act="tl:focus" aria-label="Sessions of ${tl.focus} — tap for the next player"><span class="pd" style="background:var(${PL[tl.focus].tok})"></span>${tl.focus}${IC.chevD.replace('<svg', '<svg style="width:14px;height:14px"')}</button>
+        <span class="meta">${s ? `Oct${NB}${new Date(s.start).getDate()} · ${fmtDur(Math.min(s.end, NOW) - s.start)} · ${fmtKm(s.dist)}` : 'no sessions yet'}</span></div>
+      <button class="icon-btn" data-act="tl:sess:1" aria-label="Next session" ${cur >= list.length - 1 ? 'disabled' : ''}>${IC.chev}</button>
+      <button class="tl-follow" data-act="tl:follow" aria-pressed="${tl.follow}" aria-label="Follow ${tl.focus}">${IC.locate}<span class="fl">Follow</span></button>
+    </div>`;
+}
+function htmlTlTop(opt = {}) {
+  const tl = S.tl, live = tl.t >= NOW - 1000;
+  return `<div class="tl-top">
+      <button class="tl-play" data-act="tl:play" aria-label="${tl.playing ? 'Pause' : 'Play'}">${tl.playing ? IC.pause : IC.play}</button>
+      <button class="tl-speed" data-act="tl:speed" aria-label="Playback speed ${tl.speed} times — tap to change">${tl.speed}×</button>
+      <div class="tl-when"><b id="tl-clock">${fmtClock(tl.t)}</b><span id="tl-day">${fmtDay(tl.t)}</span></div>
+      ${opt.follow ? htmlFollowBtn() : ''}<button class="tl-now" data-act="tl:now" aria-pressed="${live}">${live ? '<span class="dot ok" aria-hidden="true"></span>Live' : 'Now'}</button>
+    </div>`;
+}
+function htmlFollowBtn() { const tl = S.tl; return `<button class="tl-follow" data-act="tl:follow" aria-pressed="${tl.follow}" aria-label="Follow ${tl.focus}">${IC.locate}<span class="fl">Follow</span></button>`; }
+function htmlTlMarks(evs, pct, W = 300) {
+  const clusters = [];
+  for (const e of evs) { const p = pct(e.t); const c = clusters[clusters.length - 1]; if (c && (p - c.p) * W / 100 < 44) { c.list.push(e); } else clusters.push({ p, list: [e] }); }
+  return clusters.map(c => { const d = c.list.find(e => e.kind === 'died'), dm = c.list.find(e => e.kind === 'dim'), lead = d || dm || c.list[0];
+    const cls = d ? 'death' : dm ? 'dim' : ''; const g = d ? IC.skull : dm ? IC.portal : lead.kind === 'joined' ? IC.login : IC.logout;
+    const what = c.list.map(e => e.kind === 'died' ? `${e.player} ${e.cause}` : e.kind === 'dim' ? `${e.player} to the ${DIMS[e.to]}` : `${e.player} ${e.kind === 'joined' ? 'logged in' : 'logged off'}`).join('; ');
+    return `<button class="tl-mk ${cls}" style="left:clamp(22px, ${c.p}%, calc(100% - 22px))" data-act="tl:jump:${lead.t}" aria-label="${esc(fmtClock(lead.t) + ' — ' + what)}">${g}${c.list.length > 1 ? `<span class="n">${c.list.length}</span>` : ''}</button>`; }).join('');
+}
+function tlPct() { const tl = S.tl, span = Math.max(1, tl.to - tl.from); return t => clamp((t - tl.from) / span * 100, 0, 100); }
+function htmlTlTrack(bands = true) {
+  const tl = S.tl, pct = tlPct();
+  const sess = bands ? tlLog().sessions.filter(s => tl.shown.has(s.player) && s.end >= tl.from && s.start <= tl.to).map(s => `<span class="tl-sess" style="left:${pct(s.start)}%;width:${Math.max(.6, pct(s.end) - pct(s.start))}%;background:var(${PL[s.player].tok})"></span>`).join('') : '';
+  return `<div class="tl-track" data-scrub role="slider" tabindex="0" aria-label="Time" aria-valuemin="${tl.from}" aria-valuemax="${tl.to}" aria-valuenow="${tl.t}" aria-valuetext="${fmtDay(tl.t)} ${fmtClock(tl.t)}">
+        <div class="tl-rail"></div>${sess}<div class="tl-fill" style="width:${pct(tl.t)}%"></div><div class="tl-thumb" style="left:${pct(tl.t)}%"></div>
+      </div>`;
+}
+function tlRangeLabel() { const tl = S.tl; return tl.sess ? tl.sess : (PRESETS.find(p => p[0] === tl.preset) || [0, 0, 'Custom range'])[2]; }
+function htmlTlEnds(peek = true) {
+  const tl = S.tl;
+  return `<div class="tl-ends"${peek ? ' data-peek-end' : ''}><span>${fmtShortDay(tl.from) === fmtShortDay(tl.to) ? '' : fmtShortDay(tl.from) + ' '}${fmtClock(tl.from)}</span><span>${esc(tlRangeLabel())}</span><span>${tl.to >= NOW ? 'now' : fmtClock(tl.to)}</span></div>`;
+}
+function htmlTlScrub(opt = {}) {
+  return `<div class="tl-scrub" id="tl-scrub"${opt.peek ? ' data-peek-end' : ''}>
+      <div class="tl-marks">${htmlTlMarks(tlEvents(), tlPct())}</div>
+      ${htmlTlTrack()}
+    </div>${opt.ends === false ? '' : '\n    ' + htmlTlEnds()}`;
+}
+function htmlTlRange() { const tl = S.tl; return `<div class="seg" role="radiogroup" aria-label="Range">${PRESETS.map(([k, l, full]) => `<button role="radio" aria-checked="${!tl.sess && tl.preset === k}" aria-label="${full}" data-act="tl:preset:${k}">${l}</button>`).join('')}</div>`; }
+function htmlTimeline(mode = 'full') {
+  const top = htmlTlTop(), scrub = htmlTlScrub();
+  if (mode === 'compact') return `<div class="tl">${top}${scrub}</div>`;
+  const more = `<div class="sect tl-more">Range and who's shown</div>`;
+  // session-first: the stepper, then the transport and scrubber; presets and chips one drag further
+  return `<div class="tl">${htmlStepper()}${top}${scrub}${mode === 'tray' ? '' : more + htmlTlRange() + htmlWhoShown()}</div>`;
+}
+function htmlWhoShown() {
+  return `<div class="tl-chips" role="group" aria-label="Who's shown">${PLAYERS.map(p => `<button class="chip" aria-pressed="${S.tl.shown.has(p.id)}" data-act="tl:show:${p.id}"><span class="pd" style="background:var(${p.tok});color:var(${p.tok})"></span>${p.id}${p.online ? '<span class="on">on</span>' : ''}</button>`).join('')}</div>`;
+}
+function sessFacts(s) {
+  const evs = tlLog().events.filter(e => e.player === s.player && e.t >= s.start && e.t <= s.end);
+  const dims = ['o', ...new Set(s.samples.map(q => q.d).filter(d => d !== 'o'))];
+  return { deaths: evs.filter(e => e.kind === 'died'), dims, live: s.end >= NOW, len: Math.min(s.end, NOW) - s.start };
+}
+function curSess() {
+  const log = tlLog(), tl = S.tl; if (tl.cur !== null && log.sessions[tl.cur]) return log.sessions[tl.cur];
+  const list = sessionsOf(log, tl.focus); return list.find(s => tl.t >= s.start - 2 * MIN && tl.t <= s.end + 2 * MIN) || list[currentSessionIdx(list)] || null;
+}
+function loadSession(i) {
+  const tl = S.tl, s = tlLog().sessions[i]; if (!s) return;
+  tl.on = true; tl.cur = i; tl.focus = s.player; tl.shown.add(s.player);
+  tl.from = s.start - 2 * MIN; tl.to = Math.min(NOW, s.end + 2 * MIN); tl.t = s.start; tl.playing = false;
+  tl.sess = `${s.player} · ${fmtShortDay(s.start)}, ${fmtClock(s.start)}`;
+  const p = s.samples[0]; if (p.d !== S.dim) S.dim = p.d; S.sel = null; APP.pendingCenter = [p.x, p.z];
+}
+function currentSessionIdx(list) { const t = S.tl.t; let idx = list.length - 1; for (let i = 0; i < list.length; i++) { if (t <= list[i].end) { idx = i; break; } } return idx; }
+
+/* timeline playback: a local redraw, no request per frame */
+let lastTick = 0;
+function tlTick(ts) {
+  const tl = S.tl; const dt = lastTick ? Math.min(100, ts - lastTick) : 0; lastTick = ts;
+  if (tl.on && tl.playing) {
+    tl.t += dt * tl.speed;
+    if (tl.t >= tl.to) { tl.t = tl.to; tl.playing = false; APP.renderTimeline(); }
+    APP.onTlTime(); APP.renderStatus();
+  }
+  requestAnimationFrame(tlTick);
+}
+requestAnimationFrame(tlTick);
+function followTick(view) {
+  const tl = S.tl; if (!tl.on || !tl.follow) return;
+  const p = posAt(tlLog(), tl.focus, tl.t); if (!p) return;
+  if (p.d !== S.dim) {
+    const ev = [...tlLog().events].reverse().find(e => e.player === tl.focus && e.t <= tl.t && (e.kind === 'dim' || e.kind === 'respawned'));
+    S.dim = p.d; tl.dimNote = ev && ev.kind === 'respawned' ? `${tl.focus} died and respawned in the ${DIMS[p.d].replace('The ', '')}` : `${tl.focus} went to the ${DIMS[p.d].replace('The ', '')}`;
+    APP.onDimAuto && APP.onDimAuto(); toast(tl.dimNote, true);
+  }
+  view.center(p.x, p.z);
+}
+function bindScrub(root, onChange) {
+  const tr = root.querySelector('[data-scrub]'); if (!tr) return;
+  const set = e => { const r = tr.getBoundingClientRect(); const f = clamp((e.clientX - r.left) / r.width, 0, 1); S.tl.t = S.tl.from + f * (S.tl.to - S.tl.from); onChange(); APP.renderStatus(); };
+  tr.addEventListener('pointerdown', e => { tr.setPointerCapture(e.pointerId); S.tl.playing = false; tr._d = true; set(e); });
+  tr.addEventListener('pointermove', e => { if (tr._d) set(e); });
+  tr.addEventListener('pointerup', () => { tr._d = false; APP.renderTimeline(); });
+  tr.addEventListener('keydown', e => { const st = (S.tl.to - S.tl.from) / 50; if (e.key === 'ArrowRight') { S.tl.t = Math.min(S.tl.to, S.tl.t + st); onChange(); } if (e.key === 'ArrowLeft') { S.tl.t = Math.max(S.tl.from, S.tl.t - st); onChange(); } });
+}
+function updateScrubLive(root) {
+  const tl = S.tl, span = Math.max(1, tl.to - tl.from), p = clamp((tl.t - tl.from) / span * 100, 0, 100);
+  root.querySelectorAll('.tl-fill').forEach(e => e.style.width = p + '%'); root.querySelectorAll('.tl-thumb').forEach(e => e.style.left = p + '%');
+  root.querySelectorAll('#tl-clock').forEach(e => e.textContent = fmtClock(tl.t)); root.querySelectorAll('#tl-day').forEach(e => e.textContent = fmtDay(tl.t));
+  root.querySelectorAll('[data-scrub]').forEach(e => { e.setAttribute('aria-valuenow', tl.t); e.setAttribute('aria-valuetext', `${fmtDay(tl.t)} ${fmtClock(tl.t)}`); });
+}
+function tlStop() { Object.assign(S.tl, { on: false, playing: false, follow: false, dimNote: null, t: NOW }); }
+
+/* ---------- common actions (each variant adds its own) ---------- */
+function commonAct(a, el) {
+  const [k, v, w] = a.split(':');
+  const tl = S.tl;
+  switch (k) {
+    case 'copy': copyText(a.slice(5), `X Z: ${a.slice(5)}`); return true;
+    case 'layer': return true;
+    case 'exby': S.exBy = v; redrawAll(); APP.render(); return true;
+    case 'ov': S.ov[v] = !S.ov[v]; redrawAll(); APP.render(); return true;
+    case 'dim': S.dim = v; S.sel = null; tl.dimNote = null; if (APP.view) APP.view.center(v === 'o' ? 130 : v === 'n' ? 20 : 0, v === 'o' ? -250 : v === 'n' ? -20 : 0, v === 'o' ? .7 : v === 'n' ? 1 : .18); redrawAll(); APP.onDim && APP.onDim(); APP.render(); return true;
+    case 'desel': S.sel = null; redrawAll(); APP.render(); return true;
+    case 'nudge': if (S.sel && S.sel.kind === 'spot') { S.sel = { ...S.sel, x: S.sel.x + +v, z: S.sel.z + +w }; APP.view && APP.view.center(S.sel.x + .5, S.sel.z + .5); redrawAll(); APP.render(); } return true;
+    case 'follow': tl.focus = v; if (!tl.on) tlStart('session'); tl.t = NOW; tl.follow = true; S.sel = null; redrawAll(); APP.render(); return true;
+    case 'sessions': tl.focus = v; tlStart('session'); APP.openTimeline && APP.openTimeline(); S.sel = null; APP.render(); return true;
+    case 'replay': { const t = +v; tlStart('session'); const ev = tlLog().events.find(e => e.t === t); const s = tlLog().sessions.find(q => q.player === ev.player && t >= q.start && t <= q.end); tl.from = s.start; tl.to = Math.min(s.end, NOW); tl.sess = `${ev.player}'s session`; tl.cur = tlLog().sessions.indexOf(s); tl.focus = ev.player; tl.t = Math.max(s.start, t - 3 * MIN); tl.playing = true; tl.speed = 10; tl.follow = true; S.sel = null; APP.openTimeline && APP.openTimeline(); redrawAll(); APP.render(); return true; }
+    case 'tl':
+      if (v === 'live') { tlStop(); APP.onLive && APP.onLive(); redrawAll(); APP.render(); return true; }
+      if (v === 'play') { if (tl.t >= tl.to) tl.t = tl.from; tl.playing = !tl.playing; }
+      else if (v === 'speed') tl.speed = SPEEDS[(SPEEDS.indexOf(tl.speed) + 1) % SPEEDS.length];
+      else if (v === 'now') { tl.preset = 'session'; [tl.from, tl.to] = presetRange('session', tlLog()); tl.t = NOW; tl.playing = false; tl.sess = null; tl.cur = null; }
+      else if (v === 'preset') { tl.preset = w; tl.sess = null; tl.cur = null; [tl.from, tl.to] = presetRange(w, tlLog()); tl.t = clamp(tl.t, tl.from, tl.to); }
+      else if (v === 'jump') { tl.t = +w; tl.playing = false; const ev = tlLog().events.find(e => e.t === +w); if (ev) { if (ev.d !== S.dim) S.dim = ev.d; S.sel = ev.kind === 'died' ? { ...ev, kind: 'death', dim: ev.d } : null; APP.pendingCenter = [ev.x + .5, ev.z + .5]; } }
+      else if (v === 'show') { tl.shown.has(w) ? tl.shown.delete(w) : tl.shown.add(w); if (!tl.shown.has(tl.focus) && tl.shown.size) tl.focus = [...tl.shown][0]; }
+      else if (v === 'focus') { const ids = PLAYERS.map(p => p.id); tl.focus = ids[(ids.indexOf(tl.focus) + 1) % ids.length]; tl.shown.add(tl.focus); }
+      else if (v === 'follow') tl.follow = !tl.follow;
+      else if (v === 'load') loadSession(+w);
+      else if (v === 'range') { tl.from = +w; tl.to = Math.min(NOW, +a.split(':')[3]); tl.sess = null; tl.preset = 'custom'; tl.t = clamp(tl.t, tl.from, tl.to); }
+      else if (v === 'sess') { const list = sessionsOf(tlLog(), tl.focus); let i = currentSessionIdx(list) + (+w); i = clamp(i, 0, list.length - 1); const s = list[i]; if (s) { tl.from = s.start - 2 * MIN; tl.to = Math.min(NOW, s.end + 2 * MIN); tl.t = s.start; tl.sess = `${tl.focus} · ${fmtShortDay(s.start)}, ${fmtClock(s.start)}`; tl.cur = tlLog().sessions.indexOf(s); tl.playing = false; const p = s.samples[0]; if (p.d !== S.dim) S.dim = p.d; APP.pendingCenter = [p.x, p.z]; } }
+      tl.dimNote = null; redrawAll(); APP.renderTimeline(); APP.renderStatus();
+      if (APP.pendingCenter && APP.view) { const [x, z] = APP.pendingCenter; APP.pendingCenter = null; APP.view.center(x, z); }
+      return true;
+  }
+  return false;
+}
+
+/* ---------- mock states (reviewer chrome) ---------- */
+const STATES = [
+  ['entry', 'Entry'], ['live', 'Live · default'], ['loading', 'Loading tiles'], ['zoomout', 'Zoomed out · 1 px/chunk'],
+  ['unexplored', 'Unplayed world'], ['stopped', 'Server stopped'], ['offline', 'Box offline'],
+  ['timeline', 'Timeline · this session'], ['replay', 'Long session replay'], ['chat', 'Chat card'],
+];
+/* where each state opens: fit the online players, as map/info's extent would */
+function stateView(id, v) {
+  if (id === 'zoomout') return v.center(-200, 200, S_MIN);
+  if (id === 'unexplored') return v.center(20, 10, .5);
+  if (id === 'replay') return v.center(-140, 90, 1.4);
+  if (id === 'timeline') return v.center(150, -330, .9);
+  if (id === 'offline') return v.center(250, -40, .6);
+  const ps = PLAYERS.map(p => lastPos(tlLog(), p.id)).filter(p => p && p.live && p.d === 'o').map(p => [p.x, p.z]);
+  v.fit(ps.concat([VILLAGE]), 56, 1.2);
+}
+let loadTimer = null;
+function applyState(id) {
+  clearInterval(loadTimer); const tl = S.tl; const tt = document.getElementById('toast'); if (tt) tt.classList.remove('show');
+  Object.assign(S, { state: ['loading', 'stopped', 'offline'].includes(id) ? id : 'live', slot: 2, dim: 'o', layer: 'biome', exBy: 'all', sel: null });
+  S.ov.explored = false;
+  Object.assign(tl, { on: false, playing: false, follow: false, speed: 60, preset: 'session', sess: null, cur: null, dimNote: null, focus: 'BlockyFox', t: NOW, shown: new Set(PLAYERS.map(p => p.id)) });
+  if (id === 'unexplored') S.slot = 1;
+  if (id === 'loading') { S.loadN = 0; loadTimer = setInterval(() => { S.loadN++; redrawAll(); APP.renderStatus(); if (S.loadN >= 3) clearInterval(loadTimer); }, 300); }
+  if (id === 'offline') S.cachedBox = [-512, -512, 256, 0];
+  if (id === 'timeline') { tlStart('session'); tl.t = at(10, 14, 21); }
+  if (id === 'replay') { const s = tlLog().sessions.find(q => q.player === 'BlockyFox' && q.start === at(9, 16, 10)); tl.on = true; tl.from = s.start - 2 * MIN; tl.to = s.end + 2 * MIN; tl.sess = `BlockyFox · Fri Oct 9, 4:10 pm`; tl.cur = tlLog().sessions.indexOf(s); tl.focus = 'BlockyFox'; tl.t = at(9, 16, 22); tl.speed = 600; tl.playing = true; tl.follow = true; tl.shown = new Set(['BlockyFox', 'Mira_P']); }
+  redrawAll();
+}
+/* default theme follows the system (DESIGN "Theming"); the mock controls override it */
+document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+/* ---------- shared shells: the mock-controls strip, the Minecraft-screen excerpt, the chat ---------- */
+function buildSim(extra = '') {
+  const el = document.getElementById('sim');
+  el.innerHTML = `<div class="stitle">Mock controls — not part of the design</div>
+    <div class="srow"><span class="sl">State</span>${STATES.map(([k, l]) => `<button data-sim="state:${k}" aria-pressed="${k === CUR}">${l}</button>`).join('')}</div>
+    <div class="srow"><span class="sl">Tap</span><button data-sim="tap:death">a death</button><button data-sim="tap:spot">a spot</button><button data-sim="tap:player">a player</button><button data-sim="tap:survey">a survey spot</button><button data-sim="tap:struct">a structure</button><button data-sim="tap:pin">long-press</button><button data-sim="tap:nether">Nether</button><button data-sim="tap:end">End</button>${extra}</div>
+    <div class="srow"><span class="sl">Theme</span><button data-sim="theme:dark" aria-pressed="${document.documentElement.dataset.theme === 'dark'}">Dark</button><button data-sim="theme:light" aria-pressed="${document.documentElement.dataset.theme === 'light'}">Light</button></div>`;
+}
+let CUR = 'live';
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-sim]'); if (!b) return;
+  const [k, v] = b.dataset.sim.split(':');
+  if (k === 'theme') { document.documentElement.dataset.theme = v; TK = null; redrawAll(); APP.render(); }
+  if (k === 'state') { CUR = v; applyState(v); APP.state(v); }
+  if (k === 'tap') simTap(v);
+  buildSim(APP.simExtra || '');
+});
+function simTap(v) {
+  if (CUR === 'entry' || CUR === 'chat') { CUR = 'live'; applyState('live'); APP.state('live'); }
+  const log = tlLog(); let sel = null;
+  if (v === 'death') { const ev = log.events.find(e => e.kind === 'died' && e.player === 'Mira_P'); sel = ev && { ...ev, kind: 'death', dim: ev.d }; }
+  if (v === 'spot') sel = { kind: 'spot', x: 212, z: -341, dim: 'o' };
+  if (v === 'survey') sel = { kind: 'spot', x: 748, z: -566, dim: 'o' };
+  if (v === 'struct') sel = { kind: 'struct', k: 'pillager_outpost', x: -174, z: -419, dim: 'o' };
+  if (v === 'pin') { S.dim = 'o'; S.sel = { kind: 'spot', x: 229, z: -298, dim: 'o', pinned: true }; APP.render(); APP.view.center(229.5, -297.5, 6); return; }
+  if (v === 'end') { S.dim = 'e'; S.sel = null; redrawAll(); APP.render(); APP.view.center(300, -150, .1); return; }
+  if (v === 'player') { const p = lastPos(log, 'BlockyFox'); sel = p && { kind: 'player', player: 'BlockyFox', x: Math.round(p.x), z: Math.round(p.z), dim: p.d, live: p.live, at: p.at, y: 70 }; }
+  if (v === 'nether') { S.dim = 'n'; S.sel = null; APP.view.center(30, -20, 1); redrawAll(); APP.render(); return; }
+  if (!sel) return; if (sel.dim !== S.dim) S.dim = sel.dim;
+  APP.select(sel, true);
+}
+function htmlMcScreen(entry) {
+  return `<div class="bar"><button class="back" aria-label="Back">${IC.back}</button><span class="ttl">Minecraft</span></div>
+  <div class="scroll">
+    <div class="mc-hero"><div class="mc-state"><span class="dot ok" aria-hidden="true"></span><span class="w">Running</span><span class="sub">up 4 h 12 m</span></div>
+      <div class="mc-fact" style="flex:none"><div class="v">Castle Hill</div><div class="k">world loaded</div></div>
+      <div class="mc-facts"><div class="mc-fact"><div class="v">2 of 10</div><div class="k">online now</div></div><div class="mc-fact"><div class="v">1.26.52.3</div><div class="k">version</div></div></div>
+    </div>
+    <div class="mc-card"><button class="navrow"><span class="ico" aria-hidden="true">${IC.globe}</span><span class="tx"><span class="t">Worlds & backups</span><span class="m">Castle Hill loaded · 4 of 5 slots used</span></span>${IC.chev}</button></div>
+    ${entry}
+    <h3 class="mc-sect">Update</h3><div class="ghost">Update · Online now · Players … (unchanged)</div>
+  </div>`;
+}
+function htmlChatScreen(card) {
+  const ev = DEATH9();
+  return `<div class="bar"><button class="back" aria-label="Back">${IC.back}</button><span class="ttl" style="font-size:var(--fs-title)">Minecraft_Dave</span><span class="badge info" style="margin-left:auto">BlockyFox</span></div>
+  <div class="chat" id="chat">
+    <div class="bubble me">where did I die yesterday?</div>
+    <div class="bubble ai"><div>Yesterday at <b>${fmtClock(ev.t)}</b> you burned in lava in the Nether, just west of the fortress. Your trail and the spot:</div>
+      ${card}
+      <div>The portal home is at <b>X -5 · Z 5</b>. Keep to the netherrack path — the lava lake is right beside it.</div>
+    </div>
+  </div>
+  <div class="composer"><div class="box">Ask Minecraft_Dave…</div></div>`;
+}
+/* the P3 inline tool-view: one finger scrolls the chat, two fingers pinch the card, a tap on a
+   marker shows its coordinates, a tap anywhere else opens the full map */
+const CHAT = { ov: { players: false, trails: true, deaths: true, beds: false, places: true, structures: true, explored: false, grid: false }, sel: null };
+const DEATH9 = () => tlLog().events.find(e => e.kind === 'died' && e.player === 'BlockyFox' && e.d === 'n');
+function htmlChatCard(opt = {}) {
+  const ev = DEATH9(); const sel = CHAT.sel || { ...ev, kind: 'death', dim: ev.d };
+  const tog = [['trails', 'Trail'], ['deaths', 'Deaths'], ['places', 'Places'], ['structures', 'Structures']].map(([k, l]) => `<button class="chip" aria-pressed="${CHAT.ov[k]}" data-act="cov:${k}">${l}</button>`).join('');
+  return `<div class="tool-view" data-tv>
+    <div class="tv-h">${IC.map.replace('<svg', '<svg style="width:16px;height:16px"')}<span><b>Castle Hill · Nether</b> · Biomes</span><button class="icon-btn" data-act="expand" aria-label="Open the full map">${IC.expand}</button></div>
+    <div class="mv inline tv-map" id="chatmap"></div>
+    <div class="tv-foot">
+      ${htmlDetail(sel, { noFollow: true, noReplay: true })}
+      <div class="tv-tog" role="group" aria-label="Show on the map">${tog}</div>
+      <div class="tv-lg"><span class="lg-i"><i style="background:rgb(${BIOMES[19][1].join()})"></i>Explored</span><span class="lg-i"><i style="background:rgb(${surveyRgb(BIOMES[19][1]).join()})"></i>Satellite survey</span><span class="lg-i" style="color:var(--danger-text)">${IC.skull}<span style="color:var(--text-2)">Death</span></span><span class="lg-i">${IC.pinp}Place</span><span class="lg-i">${IC.castle}Structure</span></div>
+      ${opt.note ? `<p class="note">${opt.note}</p>` : ''}
+    </div></div>`;
+}
+function mountChatMap(onExpand) {
+  const el = document.getElementById('chatmap'); if (!el) return;
+  const ev = DEATH9();
+  const v = new MapView(el, { x: ev.x + 10, z: ev.z + 4, s: 2, scaleBottom: 8, scaleX: 10, inline: true, interactive: true,
+    cfg: () => ({ slot: 2, dim: 'n', layer: 'biome', ov: CHAT.ov, exBy: 'all', tl: { on: false, shown: new Set() }, sel: CHAT.sel || { ...ev, kind: 'death', dim: ev.d }, state: 'live' }),
+    trailSince: at(9, 0, 0),
+    onTap: (hit) => { if (hit.kind === 'spot') { onExpand(); return; } CHAT.sel = hit; APP.render(); } });
+  // one-finger drags belong to the chat's scroll: only pinch (two pointers) moves the card
+  return v;
+}
+/* ===================== variant C ===================== */
+const C = { time: false, ret: 'entry', cur: null, curKey: '' };
+const $ = id => document.getElementById(id);
+
+const APP = {
+  view: null, card: null, simExtra: '',
+  state(id) {
+    C.ret = id === 'chat' ? 'chat' : 'entry'; C.time = id === 'timeline' || id === 'replay'; CHAT.sel = null; closeDrawer();
+    this.render(); stateView(id, this.view);
+  },
+  /* C's tap means "aim here": the map pans the tapped thing under the crosshair */
+  select(sel) { this.view.glide(sel.x + .5, sel.z + .5); },
+  openTimeline() { C.time = true; },
+  onLive() { C.time = false; },
+  onTlTime() { followTick(this.view); updateScrubLive(document.querySelector('.c-tray') || document.body); this.view.dirty = true; },
+  onDimAuto() { this.render(); },
+  renderStatus() { this.strip(); const el = $('c-stat'); if (el) { const h = htmlStatus(true); if (el.innerHTML !== h) el.innerHTML = h; } },
+  renderTimeline() { this.renderBottom(); },
+  strip() {
+    const wd = worldData(S.slot);
+    let h = '';
+    if (wd.empty) h = `<span class="pill">${IC.info}<span><b>Nothing to draw yet.</b> ${esc(wd.w.name)} gets ground the first time it loads.</span></span>`;
+    else if (S.state === 'offline') h = `<span class="pill bad">${IC.cloudoff}<span><b>Box unreachable — retrying…</b> Tiles saved on this phone at 2:31${NB}pm.</span></span>`;
+    else if (S.slot === 1) h = `<span class="pill">${IC.satellite}<span><b>Hardly played</b> — the rest is the satellite survey.</span></span>`;
+    $('c-strip').innerHTML = h;
+  },
+  render() {
+    const other = CUR === 'entry' || CUR === 'chat';
+    $('scr-map').hidden = other; $('scr-other').hidden = !other;
+    if (CUR === 'entry') { $('scr-other').innerHTML = htmlMcScreen(`<h3 class="mc-sect">Map<span class="r">Castle Hill · Overworld</span></h3>${this.cardHtml()}`); this.mountCard(); return; }
+    if (CUR === 'chat') { const sc = $('chat') && $('chat').scrollTop; $('scr-other').innerHTML = htmlChatScreen(htmlChatCard()); mountChatMap(() => this.expandFromChat()); if (sc) $('chat').scrollTop = sc; return; }
+    const wd = worldData(S.slot);
+    $('c-bar').innerHTML = `<button class="back" data-act="back" aria-label="Back to the Minecraft screen">${IC.back}</button>
+      <button class="c-world" data-act="drawer" aria-label="World, dimension and layers: ${esc(wd.w.name)}, ${DIMS[S.dim]}"><span style="min-width:0"><span class="t" style="display:block">${esc(wd.w.name)}</span><span class="d">${DIMS[S.dim]} · Biomes</span></span>${IC.chevD}</button>
+      <span class="c-acts"><button class="icon-btn" data-act="time" aria-pressed="${C.time}" aria-label="Timeline" ${wd.log.sessions.length ? '' : 'disabled'}>${IC.clock}</button><button class="icon-btn" data-act="drawer" aria-label="Layers">${IC.layers}</button></span>`;
+    $('c-zoom').innerHTML = `<button class="fab" data-act="zin" aria-label="Zoom in">${IC.plus}</button><button class="fab" data-act="zout" aria-label="Zoom out">${IC.minus}</button>`;
+    this.strip(); this.renderBottom(); if ($('drawer').classList.contains('show')) fillDrawer();
+  },
+  renderBottom() {
+    const wd = worldData(S.slot); C.curKey = '';
+    const keep = [this.view.v.x, this.view.v.z];
+    if (wd.empty) $('c-bottom').innerHTML = '';
+    else if (C.time) { $('c-bottom').innerHTML = `<div class="c-tray"><div id="c-stat">${htmlStatus(true)}</div><div class="c-mini" id="c-read"></div>${htmlTimeline('tray')}<button class="btn" data-act="drawer" style="min-height:44px">${IC.user}Who's shown · ${S.tl.shown.size} of 4</button></div>`; bindScrub($('c-bottom'), () => { updateScrubLive($('c-bottom')); followTick(this.view); redrawAll(); }); }
+    else $('c-bottom').innerHTML = `<div class="c-read"><div class="c-stat" id="c-stat">${htmlStatus(true)}</div><div id="c-read"></div></div>`;
+    // the crosshair is the map's centre: hold the same world point under it when the tray resizes the map
+    this.view.resize(); this.view.center(keep[0], keep[1]);
+    $('toast').style.setProperty('--toast-up', ($('phone').getBoundingClientRect().bottom - $('c-mapwrap').getBoundingClientRect().bottom + 12) + 'px');
+  },
+  /* the readout describes whatever sits under the crosshair; a marker within 24 px snaps it */
+  afterFrame(v) {
+    const r = $('c-read'); if (!r) return;
+    const cx = v.w / 2, cy = v.visH / 2; let best = null, bd = 25;
+    for (const h of v.hits) { if (h.kind === 'cluster') continue; const d = Math.hypot(h.sx - cx, h.sy - cy); if (d < bd) { bd = d; best = h; } }
+    const [x, z] = v.toWorld(cx, cy);
+    const sel = best ? best : { kind: 'spot', x: Math.floor(x), z: Math.floor(z), dim: S.dim };
+    const key = JSON.stringify([sel.kind, sel.x, sel.z, sel.t, sel.player, sel.k, C.time, S.dim, S.state]);
+    document.querySelector('.c-cross').classList.toggle('snapped', !!best);
+    if (key === C.curKey) return; C.curKey = key; C.cur = sel;
+    const was = S.sel; S.sel = best || null; if ((was && was.x) !== (S.sel && S.sel.x)) v.dirty = true;
+    if (C.time) { r.innerHTML = htmlSelRow(sel, { close: false }); return; }
+    r.innerHTML = htmlDetail(sel) + (best ? '' : `<p class="hint">Drag the map to aim the crosshair, or tap a spot to bring it here.</p>`);
+  },
+  cardHtml() {
+    const ls = lastPos(tlLog(), 'BlockyFox');
+    return `<div class="tool-view c-card" style="background:var(--surface)">
+      <div class="tv-h">${IC.map.replace('<svg', '<svg style="width:16px;height:16px"')}<span><b>Castle Hill</b> · Biomes</span><button class="icon-btn" data-act="open-map" aria-label="Open the full map">${IC.expand}</button></div>
+      <div class="mv inline tv-map" id="cardmap" role="button" tabindex="0" aria-label="Open the full map"></div>
+      <div class="tv-foot">
+        <div class="c-on"><span><i style="background:var(--steel)"></i>BlockyFox on · X ${Math.round(ls.x)} Z ${Math.round(ls.z)}</span><span><i style="background:var(--green)"></i>Mira_P on</span><span style="color:var(--text-2)">Live · up to a minute behind</span></div>
+        <div class="btnrow"><button class="btn primary" data-act="open-map">${IC.expand}Open map</button><button class="btn" data-act="open-time">${IC.clock}Replay today</button></div>
+      </div></div>`;
+  },
+  mountCard() {
+    const el = $('cardmap'); if (!el) return;
+    new MapView(el, { x: 110, z: -300, s: .5, scale: false, inline: true, interactive: true,
+      cfg: () => ({ slot: 2, dim: 'o', layer: 'biome', ov: { players: true, trails: true, deaths: true, beds: false, places: false, structures: false, explored: false, grid: false }, exBy: 'all', tl: { on: false, shown: new Set() }, sel: null, state: 'live' }),
+      onTap: () => openFull() });
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFull(); } });
+  },
+  expandFromChat() { const ev = DEATH9(); CUR = 'live'; C.ret = 'chat'; C.time = false; S.dim = 'n'; S.sel = null; this.render(); this.view.center(ev.x + .5, ev.z + .5, 2); buildSim(); },
+};
+function openFull(time) { CUR = time ? 'timeline' : 'live'; applyState(CUR); APP.state(CUR); C.ret = 'entry'; buildSim(); }
+
+APP.view = new MapView($('map'), { main: true, x: 130, z: -250, s: .7, noSpot: true, gridTop: 56, floatSel: '#c-zoom .fab, #c-strip .pill, .c-cross:not(.snapped)',
+  onTap: (hit) => { if (hit.kind === 'player') S.tl.focus = hit.player; APP.select(hit); },
+  afterFrame: v => APP.afterFrame(v),
+  onFollowOff: () => APP.renderBottom() });
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b || b.closest('#sim')) return;
+  const a = b.dataset.act;
+  if (a.startsWith('cov:')) { CHAT.ov[a.slice(4)] = !CHAT.ov[a.slice(4)]; APP.render(); return; }
+  if (a === 'expand') { APP.expandFromChat(); return; }
+  if (a === 'open-map') { openFull(false); return; }
+  if (a === 'open-time') { openFull(true); return; }
+  if (a === 'back') { CUR = C.ret === 'chat' ? 'chat' : 'entry'; applyState(CUR); APP.render(); buildSim(); return; }
+  if (a === 'zin') { APP.view.zoomBy(1.6); return; }
+  if (a === 'zout') { APP.view.zoomBy(1 / 1.6); return; }
+  if (a === 'time') { C.time = !C.time; if (C.time) tlStart(S.tl.preset || 'session'); else tlStop(); redrawAll(); APP.render(); return; }
+  if (a === 'drawer') { openDrawer(); return; }
+  if (a.startsWith('slot:')) { S.slot = +a.slice(5); S.dim = 'o'; C.time = false; tlStop(); APP.view.center(0, 0, S.slot === 2 ? .7 : .5); redrawAll(); APP.render(); fillDrawer(); return; }
+  if (a === 'dismiss' || a === 'close-drawer') { closeDrawer(); return; }
+  if (a.startsWith('follow:') || a.startsWith('sessions:') || a.startsWith('replay:')) C.time = true;
+  commonAct(a, b);
+});
+function fillDrawer() {
+  const d = $('drawer');
+  d.innerHTML = `<div class="grip"></div><h3 style="margin-bottom:12px">Map</h3>
+      <div class="sect" style="margin-bottom:8px">World</div>
+      <div class="c-wl" role="radiogroup" aria-label="World">${WORLDS.map(w => `<button class="ly" role="radio" aria-checked="${S.slot === w.slot}" data-act="slot:${w.slot}" ${w.kind === 'free' ? 'disabled' : ''}><span class="sw" aria-hidden="true">${IC.globe}</span><span style="min-width:0"><span class="lt">${esc(w.name)}</span><span class="ls">Slot ${w.slot} · ${worldLine(w)}</span></span></button>`).join('')}</div>
+      <div class="sect" style="margin:16px 0 8px">Dimension</div>${htmlDims('seg')}
+      ${C.time ? `<div class="sect" style="margin:16px 0 8px">Timeline · who's shown</div>${htmlWhoShown()}` : ''}
+      <div style="height:16px"></div>${htmlLayers()}`;
+}
+function openDrawer() { fillDrawer(); const was = $('drawer').classList.contains('show'); $('drawer').classList.add('show'); $('scrim').classList.add('show'); if (!was) $('drawer').querySelector('button').focus(); }
+function closeDrawer() { $('drawer').classList.remove('show'); $('scrim').classList.remove('show'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+/* swipe the sheet down to close it (the shared Sheet's gesture) */
+(() => { const d = $('drawer'); let y0 = null; d.addEventListener('pointerdown', e => { if (d.scrollTop <= 0) y0 = e.clientY; }); d.addEventListener('pointerup', e => { if (y0 !== null && e.clientY - y0 > 60) closeDrawer(); y0 = null; }); })();
+
+CUR = 'entry'; applyState('entry'); APP.state('entry'); buildSim();
+</script>
+</body>
+</html>
