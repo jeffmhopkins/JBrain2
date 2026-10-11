@@ -14,6 +14,24 @@
 # (`online-mode`) and the wrapper downloads server updates. It runs on the HOST network
 # (NetherNet needs the box's real address and LAN broadcast), so the control port is
 # guarded by a bearer token rather than by topology, and the process is unprivileged.
+#
+# One compiled piece: `jbrain-predict` (deploy/minecraft/predict/), the map's "satellite"
+# layer, built in its own stage against cubiomes (MIT, Cubitect) at a pinned commit, so
+# the runtime image gains a binary and no compiler.
+FROM debian:trixie-slim AS predict
+ARG CUBIOMES_COMMIT=e61f90580cbdd883214a8054670dacae655e59c0
+COPY deploy/minecraft/predict/predict.c /src/predict.c
+RUN set -eux; \
+    printf '%s' "${CUBIOMES_COMMIT}" | grep -Eq '^[0-9a-f]{40}$'; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates git gcc make libc6-dev; \
+    git clone --filter=blob:none https://github.com/Cubitect/cubiomes /cubiomes; \
+    git -C /cubiomes checkout "${CUBIOMES_COMMIT}"; \
+    make -C /cubiomes libcubiomes; \
+    gcc -O2 -Wall -Wextra -Werror -I/cubiomes -o /jbrain-predict /src/predict.c \
+        /cubiomes/libcubiomes.a -lm; \
+    cp /cubiomes/LICENSE /cubiomes.LICENSE
+
 FROM debian:trixie-slim
 
 RUN apt-get update \
@@ -35,8 +53,16 @@ COPY deploy/minecraft/mapping.py ./mapping.py
 COPY deploy/minecraft/probe-pack ./probe-pack
 COPY deploy/minecraft/probe-rp ./probe-rp
 COPY deploy/minecraft/jbrain-pack ./jbrain-pack
+COPY --from=predict /jbrain-predict ./jbrain-predict
+COPY --from=predict /cubiomes.LICENSE ./licenses/cubiomes.LICENSE
 
 RUN python3 -c "import server, bds, install, worlds, leveldb, mapping"
+# The prediction is only worth drawing if it is right: spots a real 1.26 server generated
+# from this seed — a warm ocean (Java id 44) and a mangrove swamp (184) — must still
+# predict as those biomes on the compiled binary.
+RUN python3 -c "import mapping; p = mapping.Predictor(); seed = '7353120887189866808'; \
+    assert p.grid(seed, 0, 1280, 384, 1, 4)[(1280, 384)][1] == 40; \
+    assert p.grid(seed, 0, 832, 2560, 1, 4)[(832, 2560)][1] == 191"
 
 USER mc
 ENV PYTHONUNBUFFERED=1

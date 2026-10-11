@@ -64,6 +64,29 @@ if ! command -v direwolf >/dev/null 2>&1; then
   fi
 fi
 
+# --- jbrain-predict (the Minecraft map's seed-predicted "satellite" layer) ---
+# Built into the minecraft image by deploy/Dockerfile.minecraft; the tests stand in a fake
+# for it, so this is only for rendering real predicted tiles on a workstation
+# (MC_PREDICT_BIN=~/.cache/jbrain/jbrain-predict). The cubiomes commit MUST match the
+# Dockerfile's CUBIOMES_COMMIT. Never fatal: without it the map draws real chunks only.
+predict_bin="$HOME/.cache/jbrain/jbrain-predict"
+cubiomes_commit=e61f90580cbdd883214a8054670dacae655e59c0
+if [ ! -x "$predict_bin" ] && command -v gcc >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+  log "building jbrain-predict (cubiomes $cubiomes_commit)"
+  cub_dir="$(mktemp -d)"
+  if git clone -q --filter=blob:none https://github.com/Cubitect/cubiomes "$cub_dir" \
+    && git -C "$cub_dir" checkout -q "$cubiomes_commit" \
+    && make -s -C "$cub_dir" libcubiomes >/dev/null 2>&1 \
+    && mkdir -p "$(dirname "$predict_bin")" \
+    && gcc -O2 -I"$cub_dir" -o "$predict_bin" deploy/minecraft/predict/predict.c \
+      "$cub_dir/libcubiomes.a" -lm; then
+    :
+  else
+    log "WARNING: could not build jbrain-predict — local map tiles draw real chunks only"
+  fi
+  rm -rf "$cub_dir"
+fi
+
 # --- Python (backend + supervisor: FastAPI, pytest, ruff, pyright) ---
 # backend/.python-version pins 3.13 so coverage's sys.monitoring core
 # (COVERAGE_CORE=sysmon) is available — it cuts the pytest coverage overhead from

@@ -217,6 +217,71 @@ def test_a_chunk_last_saved_before_1_18_is_drawn_not_left_as_a_hole(
     assert tuple(rows[8][24 * 4 : 24 * 4 + 4]) == (*mapping.BIOME_COLORS[4], 255)
 
 
+def _fake_predictor(tmp_path: Path, biome: int, height: int = 100) -> Path:
+    """A stand-in for jbrain-predict: every sample is (height, biome); counts runs."""
+    script = tmp_path / "jbrain-predict"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import struct, sys\n"
+        f"open({str(tmp_path / 'runs')!r}, 'a').write('x')\n"
+        "n = int(sys.argv[5])\n"
+        f"sys.stdout.buffer.write(struct.pack('<hh', {height}, {biome}) * n * n)\n"
+    )
+    script.chmod(0o755)
+    return script
+
+
+def test_unvisited_ground_is_predicted_and_the_real_world_drawn_over_it(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "db"
+    db.mkdir()
+    write_table(
+        db / "000005.ldb",
+        [(mapping.chunk_key(0, 0, 0, mapping.DATA3D), 1, data3d(lambda x, z: 80, 1))],
+    )
+    index = mapping.WorldIndex(db)
+    index.refresh()
+    # Java's mangrove swamp (184) is Bedrock's 191: the prediction speaks Java's ids.
+    predictor = mapping.Predictor(_fake_predictor(tmp_path, biome=184))
+    grid = predictor.grid("123", 0, 0, 0, 2, 4)
+    assert grid == {
+        (0, 0): (100, 191),
+        (4, 0): (100, 191),
+        (0, 4): (100, 191),
+        (4, 4): (100, 191),
+    }
+    predictor.grid("123", 0, 0, 0, 2, 4)
+    assert (tmp_path / "runs").read_text() == "x"  # a seed always predicts the same
+    assert predictor.grid("123", 1, 0, 0, 2, 4) == {}  # only the Overworld
+
+    for zoom in (0, 2):
+        image = mapping.tile(index, 0, zoom, 0, 0, predictor, "123")
+        rows = _decode_png(image)
+        assert tuple(rows[0][0:4]) == (*mapping.BIOME_COLORS[1], 255)  # the real chunk
+        # Predicted ground is drawn, but as the survey: dimmer than explored ground.
+        survey = rows[200][800:804]
+        assert survey[3] == 255 and 0 < sum(survey[:3]) < sum(mapping.BIOME_COLORS[191])
+    # No seed (a level.dat that doesn't say) or no binary: real chunks only.
+    assert _decode_png(mapping.tile(index, 0, 0, 0, 0, predictor, None))[200][803] == 0
+    broken = mapping.Predictor(tmp_path / "missing")
+    assert _decode_png(mapping.tile(index, 0, 0, 0, 0, broken, "123"))[200][803] == 0
+
+
+def _decode_png(data: bytes) -> list[bytes]:
+    """The RGBA rows of a PNG the renderer wrote (filter 0, one IDAT)."""
+    width = struct.unpack(">I", data[16:20])[0]
+    pos, idat = 8, b""
+    while pos < len(data):
+        (size,) = struct.unpack(">I", data[pos : pos + 4])
+        if data[pos + 4 : pos + 8] == b"IDAT":
+            idat += data[pos + 8 : pos + 8 + size]
+        pos += 12 + size
+    raw = zlib.decompress(idat)
+    line = width * 4 + 1
+    return [raw[y * line + 1 : (y + 1) * line] for y in range(len(raw) // line)]
+
+
 def test_the_index_rereads_on_change_but_not_more_often_than_a_minute(
     tmp_path: Path,
 ) -> None:

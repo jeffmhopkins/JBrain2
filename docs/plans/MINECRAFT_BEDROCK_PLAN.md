@@ -796,6 +796,37 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
   the renderer reads that too, lifted onto the 1.18 floor so it meets its neighbours
   without a seam; a re-saved chunk's `Data3D` wins. Not yet checked against a real
   pre-1.18 world: the layout is the documented one, which `Data3D` shares.
+- **Satellite layer: ground nobody has visited** (owner, 2026-10-11: "like a satellite
+  from orbit would have seen"). Since 1.18 Bedrock generates biomes and terrain from the
+  same noise as Java for the same seed, so `jbrain-predict` (`deploy/minecraft/predict/`,
+  built against cubiomes, MIT, at a pinned commit in the image's build stage) predicts
+  the Overworld's surface from the seed in `level.dat`, and the real chunks are drawn
+  over it. **Explored vs unexplored stays visible** (owner, same day): predicted ground
+  is drawn as the satellite's *survey* — half-desaturated, at 65% brightness — and
+  explored ground in full colour, so the whole world pans but what anyone has actually
+  seen stands out. **Lore:** the server's AI connection comes from an AI satellite in
+  orbit; the survey is its view. Minecraft_Dave can speak from that later.
+
+  Checked against a 1.26 server generating the same seed:
+  - biomes match at **97%** of 4,311 real columns, and every miss sits on a border
+    between two biomes;
+  - heights are off by a median of about 2.5 blocks (90% of points within 9, trees
+    included);
+  - cubiomes speaks Java's ids; the 1.13+ oceans and every 1.16+ biome are translated
+    (`JAVA_TO_BEDROCK`), each checked on a real spot;
+  - the biome is read AT the predicted surface (the height map's own ids came from
+    below it: a cave biome under a beach).
+
+  **The Nether did not match** (3 of 4 spots wrong), so only the Overworld is predicted:
+  ungenerated Nether and End ground stays transparent. `map/info` says which
+  (`predicted`). Predicting them is being researched (a Bedrock-specific Nether
+  generator, the End's parity with Java, or the server's own `locate biome`).
+
+  **Structures can't come from cubiomes**: Bedrock places them differently from Java.
+  The server's own `locate structure` does it exactly instead. It is instant, read-only
+  (it generates nothing), works in the Nether, and answers nearest-from-a-point, so a
+  grid sweep finds every one in an area once per world. That is the next layer:
+  structure markers.
 - **Routes:** `GET /api/minecraft/map/info` and `/map/tile/{dim}/{z}/{x}/{y}.png`
   (owner), plus debug twins.
 - **Facts verified on a real 1.26 world** that BDS generated locally:
