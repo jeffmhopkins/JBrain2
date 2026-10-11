@@ -91,6 +91,12 @@ export function wreckState(s: MinecraftSlot, running: boolean): WreckState {
   return s.wreck_phase in WRECK_PHASE ? "building" : "armed";
 }
 
+/** The state's colour class: amber while building, rose when a try failed. */
+export function wreckTone(s: MinecraftSlot, running: boolean): string | undefined {
+  const k = wreckState(s, running);
+  return k === "building" ? "mc-pend-t" : k === "failed" ? "mc-danger-t" : undefined;
+}
+
 /** The world row's line: "Crash site: on its way". */
 export function wreckRowText(s: MinecraftSlot, running: boolean): string {
   switch (wreckState(s, running)) {

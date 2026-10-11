@@ -756,7 +756,11 @@ class Rig:
                 self._stop(f"Switching to the world {rec['name']}")
             if not rec["exists"] and not rec["seed"]:
                 rec = self.slots.update(
-                    slot_id, seed=worlds.new_seed(), origin="new", wreck=self._arm()
+                    slot_id,
+                    seed=worlds.new_seed(),
+                    origin="new",
+                    created_at=time.time(),
+                    wreck=self._arm(),
                 )
             self._step("writing")
             self._apply_slot(rec)

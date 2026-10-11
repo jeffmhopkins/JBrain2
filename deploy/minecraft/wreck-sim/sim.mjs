@@ -71,6 +71,11 @@ const SCENARIOS = {
   peaks_under_ship: {
     h: (x, z) => (z < -10 && z > -100 && x > -110 && x < 110 ? 230 + wave(x, z, 20) : 68 + wave(x, z, 1)),
   },
+  // Built, then started again: the pack says done again, for a wrapper that missed it.
+  reloaded: { h: (x, z) => 68 + wave(x, z, 1.5), loads: 2 },
+  // A world already played when the pack first sees it: passed over, and every later
+  // start says so too, or the wrapper would record it built.
+  already_played: { h: (x, z) => 68 + wave(x, z, 1.5), played: true, loads: 2 },
 };
 
 async function run(name, spec, n, stopAt = Infinity) {
@@ -104,7 +109,8 @@ async function run(name, spec, n, stopAt = Infinity) {
       sim.load();
       sim.stopAfter(Infinity);
     }
-    sim.load();
+    if (spec.played) sim.setTime(1e6);
+    for (let i = 0; i < (spec.loads ?? 1); i += 1) sim.load();
   } finally {
     console.log = original;
   }
@@ -117,12 +123,16 @@ async function run(name, spec, n, stopAt = Infinity) {
 
   const phases = events.map((e) => e.phase).join(",");
   // Uninterrupted: the whole story in one load. Resumed: it ends done, never failed.
-  checks.finished =
-    spec.failPlaceOnce
-      ? phases === "loaded,failed,pod,ship,done" // retried in the same session
-      : stopAt === Infinity
-        ? phases === "loaded,pod,ship,done"
-        : phases.endsWith(",done") && !phases.includes("failed");
+  const done = events.filter((e) => e.phase === "done");
+  checks.finished = spec.played
+    ? phases === "loaded,done,loaded,done" && done.every((e) => e.cause) && !placed.length
+    : spec.loads === 2
+      ? phases === "loaded,pod,ship,done,loaded,done" && done.every((e) => !e.cause)
+      : spec.failPlaceOnce
+        ? phases === "loaded,failed,pod,ship,done" // retried in the same session
+        : stopAt === Infinity
+          ? phases === "loaded,pod,ship,done"
+          : phases.endsWith(",done") && !phases.includes("failed");
   const o = state.frame?.origin;
   if (o) {
     // The hull is there, whole.

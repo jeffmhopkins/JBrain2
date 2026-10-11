@@ -31638,6 +31638,15 @@ button.wf-sigpill {
   color: var(--warn-text);
 }
 
+.mc-danger-t {
+  color: var(--danger-text);
+}
+
+/* The crash-site default: its own block in the Server settings card, as it saves at once. */
+.mc-wk-pad {
+  border-top: 1px solid var(--border);
+}
+
 .mc-chg-t {
   color: var(--steel-text);
 }

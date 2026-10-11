@@ -81,6 +81,7 @@ export function ServerSettingsSection({
   // Optimistic, as the auto-update switch is: a poll landing mid-PUT doesn't flip it back.
   const [wreckOn, setWreckOn] = useState(spawnWreck);
   const wreckInFlight = useRef(false);
+  const [wreckSaving, setWreckSaving] = useState(false);
   useEffect(() => {
     if (!wreckInFlight.current) setWreckOn(spawnWreck);
   }, [spawnWreck]);
@@ -89,6 +90,7 @@ export function ServerSettingsSection({
     const next = !wreckOn;
     setWreckOn(next);
     wreckInFlight.current = true;
+    setWreckSaving(true);
     try {
       await api.minecraftSettings({ spawn_wreck: next });
       const waiting =
@@ -104,6 +106,7 @@ export function ServerSettingsSection({
       onError(`Couldn't change the crash-site default — ${message(err)}`);
     } finally {
       wreckInFlight.current = false;
+      setWreckSaving(false);
     }
   }
 
@@ -242,10 +245,8 @@ export function ServerSettingsSection({
             </div>
           </div>
         )}
-      </div>
-      {/* Its own block: Save settings applies at the next restart, and this applies at once. */}
-      <div className="mc-card">
-        <div className="mc-pad mc-pad-roomy">
+        {/* Its own block: Save settings applies at the next restart, and this at once. */}
+        <div className="mc-pad mc-pad-roomy mc-wk-pad">
           <div className="mc-sw-row">
             <span className="mc-sw-l">
               <b>Crash site by default</b>
@@ -260,6 +261,7 @@ export function ServerSettingsSection({
               aria-checked={wreckOn}
               aria-label="Crash site by default"
               className={`mc-switch${wreckOn ? " on" : ""}`}
+              disabled={wreckSaving}
               onClick={() => void toggleWreck()}
             >
               <span className="mc-knob" />

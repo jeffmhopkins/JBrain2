@@ -474,6 +474,8 @@ def test_loading_an_empty_slot_generates_an_armed_world(
     monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
     rig.load_slot("slot3")
     assert rig.slots.get("slot3")["wreck"] == "armed"
+    # Made now: a build phase left from the folder's last world isn't this one's.
+    assert rig.slots.get("slot3")["created_at"]
     rig.set_settings({"spawn_wreck": False})
     rig.load_slot("slot4")
     assert rig.slots.get("slot4")["wreck"] is None
@@ -589,7 +591,8 @@ def test_the_planning_rules_hold(tmp_path: Path) -> None:
 SIM_SCENARIOS = [
     "plains", "forest", "jungle", "desert", "snowy", "mountainside", "badlands",
     "swamp", "mangrove", "island", "ocean", "high_plateau", "place_fails_once",
-    "peaks_under_ship", "resume_after_1pct", "resume_after_30pct",
+    "peaks_under_ship", "reloaded", "already_played", "resume_after_1pct",
+    "resume_after_30pct",
     "resume_after_60pct", "resume_after_90pct",
 ]  # fmt: skip
 
@@ -619,7 +622,12 @@ def test_the_crash_site_comes_down_right_in_every_kind_of_world(tmp_path: Path) 
     }
     assert not failed
     assert results["ocean"]["site"]["splash"] is True
-    assert not any(r["site"]["splash"] for n, r in results.items() if n != "ocean")
+    assert not any(
+        r["site"]["splash"]
+        for n, r in results.items()
+        if n not in ("ocean", "already_played")
+    )
+    assert "site" not in results["already_played"]  # passed over: nothing built
     # A spawn too high for the ship's usual height: capped under the build limit.
     assert results["high_plateau"]["ship"]["y"] + 64 <= 319
     # Stopped dead mid-build and resumed: the same world as an uninterrupted build.

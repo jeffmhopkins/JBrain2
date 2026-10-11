@@ -194,7 +194,10 @@ happen.
 - **The reset override** shipped: a reset takes `wreck: true | false`, as create does.
 - **A world passed over is `skipped`, not `done`.** The pack's `done` with a cause (an SW1-era
   world, or a build that gave up after three tries) marks the slot `skipped`, shown as *not
-  built*, so *built* means built.
+  built*, so *built* means built. The pack says so again on every later start, so a wrapper
+  that missed the first report still records it. One gap stays: a slot recorded `done` before
+  SW3 shipped keeps that record, since the pack is out of a done world. So an SW1-era world
+  that was passed over still reads *built*.
 - **The build's phase reaches the PWA with the slot** (`wreck_phase`), so every device sees it.
   It shows as *building* only while that world is loaded and the server is up; a stopped build
   reads *on its way*. The box doesn't report the retry countdown, so *failed* reads *didn't

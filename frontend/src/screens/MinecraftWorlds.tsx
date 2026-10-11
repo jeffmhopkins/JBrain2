@@ -91,6 +91,7 @@ import {
   wreckFactText,
   wreckLaterText,
   wreckRowText,
+  wreckTone,
 } from "../minecraftWorlds";
 
 /** One save per settled stepper: the value moves at once, the PUT goes out when tapping or
@@ -928,7 +929,9 @@ function WorldRow({ s }: { s: MinecraftSlot }) {
           {s.last_backup ? `last backup ${whenOf(s.last_backup, w.nowMs)}` : "no backups yet"} ·{" "}
           {s.last_download ? `downloaded ${shortDate(s.last_download)}` : "never downloaded"}
         </span>
-        <span className="mc-wmeta">Crash site: {wreckRowText(s, w.running)}</span>
+        <span className="mc-wmeta">
+          Crash site: <span className={wreckTone(s, w.running)}>{wreckRowText(s, w.running)}</span>
+        </span>
       </span>
       <ChevronRightIcon size={18} />
     </button>
@@ -1313,6 +1316,7 @@ export function WorldLayer({ slot }: { slot: string }) {
       </Layer>
     );
   }
+  const later = wreckLaterText(s, w.running);
 
   const changed = rules ? changedRules(rules).length : 0;
   const rulePend = rules?.pending.length ?? 0;
@@ -1338,7 +1342,7 @@ export function WorldLayer({ slot }: { slot: string }) {
           <dt>Origin</dt>
           <dd>{originText(s)}</dd>
           <dt>Crash site</dt>
-          <dd>{wreckFactText(s, w.running)}</dd>
+          <dd className={wreckTone(s, w.running)}>{wreckFactText(s, w.running)}</dd>
           <dt>Seed</dt>
           <dd>
             {s.seed ? (
@@ -1380,7 +1384,7 @@ export function WorldLayer({ slot }: { slot: string }) {
               : "none yet"}
           </dd>
         </dl>
-        {wreckLaterText(s, w.running) && <p className="mc-note">{wreckLaterText(s, w.running)}</p>}
+        {later && <p className="mc-note">{later}</p>}
         {!s.active && (
           <>
             <button

@@ -392,7 +392,9 @@ world.afterEvents.worldLoad.subscribe(() => {
   const state = load();
   if (state.stage === "done") {
     dropAreas(world.getDimension("overworld")); // any a crash left behind
-    emit({ ev: "wreck", phase: "done" }); // in case the wrapper missed it last time
+    // In case the wrapper missed it last time; a world passed over says so again, or
+    // the wrapper would record it built.
+    emit({ ev: "wreck", phase: "done", ...(state.skipped ? { cause: "passed over" } : {}) });
     return;
   }
   // A world that already tried (and failed) to build is new by that record, however long
