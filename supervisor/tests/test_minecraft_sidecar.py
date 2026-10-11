@@ -1728,7 +1728,10 @@ def _locating_console(asked: list[str]):
 
 
 def _wait_swept(rig) -> dict:
-    for _ in range(200):
+    # A wall-clock deadline, not a fixed number of polls: on a loaded runner the sweep's
+    # thread can take seconds to get scheduled, and 200 short polls ran out first.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
         view = rig.sweep_view()
         if view["state"] != "running":
             return view
