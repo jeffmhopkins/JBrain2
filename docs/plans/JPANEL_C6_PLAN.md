@@ -1,8 +1,9 @@
 # Jeff's jpanel — the ESP32-C6 panel as a set of small apps
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** C0🟡 C1◻️ C2🟡 C2d◻️ C3◻️ C3b◻️ C4◻️
-> — C0's code has landed (the bring-up image in `../../firmware-c6/` and the box's
-> two-board flasher/manifest) and stays open until it has run on the board. C2's framework
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** C0✅ C1✅ C2🟡 C2d◻️ C3◻️ C3b◻️ C4◻️
+> — C0 and C1 are proven on the board (2026-10-11): USB-flashed 0.0.1 from the PWA's board
+> picker, it joined Wi-Fi 6, reached the box over TLS, and took 0.0.2 over the air and kept it
+> across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
 > half has landed beside it, not in the image: `components/` (the contract, `ui_kit`, the
 > shell, fake services, every app as descriptor + model + view, `svc_debug`), `host/` and
 > `sim/` — see "What the framework lays down" under §1.
@@ -200,8 +201,8 @@ answering. An alarm outranks it; it outranks every app.
 
 | Wave | What | Done when |
 |---|---|---|
-| **C0** 🟡 | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Code landed 2026-10-11; open until C1 proves it on hardware. |
-| **C1** | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
+| **C0** ✅ | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Proven on the board 2026-10-11. |
+| **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
 | **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check), outside the image. **Left:** the drivers behind the services, and switching the framework into the image. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
 | **C2d** | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. |
 | **C3** | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). | Each app's mock states reproduced on the glass and in `sim/`. |
