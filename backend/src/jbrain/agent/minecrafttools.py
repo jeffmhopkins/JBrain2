@@ -55,6 +55,7 @@ _GAME_ID = re.compile(r"^(minecraft:)?[a-z_]{2,40}$")
 _GOAL_STATUSES = ("open", "done", "abandoned")
 _COORD_MAX = 30_000_000
 _DIMENSIONS = ("overworld", "nether", "the_end")
+_DIMENSION_NAMES = {"overworld": "Overworld", "nether": "Nether", "the_end": "End"}
 
 
 def fence(body: str) -> str:
@@ -534,11 +535,12 @@ def build_minecraft_handlers(
         )
         if isinstance(got, str):
             return got
-        where_ = f"({xi}, {zi}) in the {dim.replace('_', ' ')}, {origin}"
+        where_ = f"({xi}, {zi}) in the {_DIMENSION_NAMES[dim]}, {origin}"
         if got.get("source") == "unknown":
             return ToolOutput(
-                f"Nobody has explored {where_} yet, and the satellite's survey doesn't"
-                " reach that dimension, so it's unknown.",
+                f"Nothing is known at {where_}: nobody has explored it, and the"
+                " satellite's survey shows no ground there (the End's open void, or a world"
+                " whose seed isn't known).",
                 result_brief="unknown",
             )
         how = (
@@ -567,7 +569,7 @@ def build_minecraft_handlers(
         if isinstance(got, str):
             return got
         near = [n for n in got.get("nearby", []) if n["distance"] <= radius]
-        head = f"Within {radius} blocks of ({xi}, {zi}) in the {dim.replace('_', ' ')}, {origin}"
+        head = f"Within {radius} blocks of ({xi}, {zi}) in the {_DIMENSION_NAMES[dim]}, {origin}"
         if not near:
             return ToolOutput(f"{head}: no structures.", result_brief="none")
         lines = [

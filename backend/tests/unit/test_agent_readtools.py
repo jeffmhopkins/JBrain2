@@ -1794,8 +1794,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "mc_what_is_at.tool": (
             "mc_what_is_at",
-            1,
-            "fb73ca4de48cc34de7aac044500dde5b02f663b270dfce4d043637930a5023fe",
+            2,
+            "bde3de8951d40facacd6525a23243d968d739892b14d199977a969dd37cd4a8a",
         ),
         "mc_backups.tool": (
             "mc_backups",

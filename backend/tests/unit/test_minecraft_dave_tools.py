@@ -75,7 +75,7 @@ async def test_what_is_at_names_the_biome_and_says_where_the_answer_came_from(
     assert sidecar["sent"][-1][3] == {"slot": "slot3", "dim": "overworld", "x": 10, "z": -20}
     sidecar["replies"]["/map/point"] = {"source": "unknown"}
     out = await _tools()["mc_what_is_at"]({"x": 0, "z": 0, "dimension": "the_end"}, CTX)
-    assert "unknown" in out
+    assert "Nothing is known" in out and "in the End" in out
     for bad in ({"x": 1}, {"x": 0, "z": 0, "dimension": "aether"}, {"x": "a", "z": 0}):
         sent = len(sidecar["sent"])
         await _tools()["mc_what_is_at"](bad, CTX)
