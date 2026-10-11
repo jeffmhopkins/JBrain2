@@ -623,6 +623,45 @@ house by typing the address.
 - The drain loop follows the `aprslog` shape. Everything that comes from players is
   **untrusted input**.
 
+**The in-game door, first cut (built 2026-10-11, owner: "Dave, point me home" / "Dave,
+mark this location as tree farm" / "Dave, navigate to tree farm" — "this is what we
+should be able to do once we're live").** Not yet tried from a real client.
+- **The command** lives in the always-installed `jbrain` pack (`deploy/minecraft/jbrain-pack`),
+  not the probe pack, so every world has it and the two packs can't register one name
+  twice. `/jb:dave <words>` logs one `[jbrain] {"ev":"dave",…}` line with the asker's
+  name, words, block position and dimension, and their bed or respawn anchor
+  (`player.getSpawnPoint()`, `null` when unset), then tells the asker "Dave is
+  thinking…". Each word is its own `String` parameter, so `point me home` needs no
+  quotes. **Checked on BDS 1.26.52:** the engine caps a custom command at 8 parameters
+  (24 refused the whole command), and a `String` parameter takes one plain word or one
+  `"quoted phrase"` — a comma or a bare number is a syntax error the player sees. So
+  "Dave, …" (the comma) and coordinates go in quotes: `/jb:dave "Dave, mark this
+  location as tree farm"`; a leading "Dave," is dropped either way. A console origin is
+  refused ("Only a player can ask Dave").
+- **The sidecar** (`bds.py`) turns the line into a `dave` event carrying the **xuid BDS
+  logged when that name connected** — the script API has no xuid, and the line's own
+  fields are never trusted for identity. A name that never connected, or an empty
+  question, is dropped.
+- **The api** (`jbrain.minecraft.door`, started in `main.py` beside the session and
+  track drains) polls `/events` and runs each fresh question (≤ 2 minutes old, so a
+  restart never answers an old one late) as one headless Minecraft_Dave turn on the
+  scheduled-task path (`LoopTurnExecutor`, on the workshop slot so it never evicts the
+  owner's chat prefix), in the asker's own continuing session
+  (`mc_chat_player.door`, migration 0228; a new one after 6 hours idle, the old one kept
+  in the PWA). Player tier (`agents.narrow_for_ingame`): no web, no `mc_command` /
+  `mc_server_action`, no log/config/world/backup reads, no `mc_player`. While the turn
+  runs, the tools see the asker (`minecraft/asker.py`): their position and dimension are
+  the default for searches, places and waypoints, and any other gamertag is refused.
+  The question is fenced; the asker's position and bed come in a plain line before it.
+- **The reply** is `tellraw "<gamertag>" {"rawtext":[{"text":"<Dave> …"}]}` through the
+  console, built with `json.dumps` (no reply can end the command), stripped of
+  markdown and `§` codes, in chunks of ≤ 220 characters and ≤ 900 in all. One turn at a
+  time per player: up to 3 more wait ("One moment…"), beyond that "Hang on…"; at most two
+  players' turns run at once. A failed turn answers a short apology and is logged.
+- **Not yet:** the companion's name as a setting (the command is fixed at `jb:dave`),
+  per-player rate limits beyond the queue, live `scriptevent jb:q` queries, and the
+  owner setting to allow the web in game.
+
 ### M6 — The companion agent
 
 - A dedicated persona named **Dave** (owner decision, 2026-10-10). The name is changeable in
@@ -777,6 +816,17 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 
 ### M8 — Maps and biomes (after M4; the map tools in §3b)
 
+**The viewer's design is settled (owner, 2026-10-11): `docs/mocks/minecraft-map/` variant
+A** — the map full-bleed under one persistent bottom panel (world, status, Layers /
+Timeline), explored ground in full colour over the dimmed satellite survey in all three
+dimensions, zoom from 1 px per chunk to 8 px per block, a status line that never says
+Live while replaying, clustered structure markers, tap-a-spot (biome, y, explored or
+survey, Copy X Z), a long-press pin, and the same component as the inline card in
+Minecraft_Dave's chat. **Session navigation is 3 · Days**: a day strip with a dot per
+player who played, that day's sessions as chips, and each player's full session list
+behind **Sessions**. The mock README lists the four DESIGN exceptions approved with the
+pick and the remaining build gaps (a saved structure sweep; the travel-log session API).
+
 **Renderer, first layer (shipped 2026-10-10).**
 - **Reader:** `deploy/minecraft/leveldb.py` is a stdlib reader for Mojang's LevelDB
   (tables with raw-deflate blocks, plus the write-ahead log, newest write winning). It
@@ -809,7 +859,8 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 
   Checked against a 1.26 server generating the same seed:
   - biomes match at **97%** of 4,311 real columns, and every miss sits on a border
-    between two biomes;
+    between two biomes (re-measured 2026-10-11 over all 122,624 columns of the dev
+    world's 479 chunks: 96.4%, 98% of misses within 4 blocks of a border);
   - heights are off by a median of about 2.5 blocks (90% of points within 9, trees
     included);
   - cubiomes speaks Java's ids; the 1.13+ oceans and every 1.16+ biome are translated
@@ -817,10 +868,67 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
   - the biome is read AT the predicted surface (the height map's own ids came from
     below it: a cave biome under a beach).
 
-  **The Nether did not match** (3 of 4 spots wrong), so only the Overworld is predicted:
-  ungenerated Nether and End ground stays transparent. `map/info` says which
-  (`predicted`). Predicting them is being researched (a Bedrock-specific Nether
-  generator, the End's parity with Java, or the server's own `locate biome`).
+  **The Nether and the End are predicted too**, by Bedrock's own seeding rather than
+  Java's. Bedrock seeds their noise with a Mersenne Twister on the seed's low 32 bits,
+  not with `java.util.Random`, so cubiomes' Java answers were wrong there (3 of 4 Nether
+  spots). `jbrain-predict` ports the seeding from Reed A. Cartwright's Bedrock fork of
+  cubiomes (`reedacartwright/cubiomes`, branch `bedrock`, MIT; its LICENSE is
+  byte-for-byte cubiomes' own). That seeding drives upstream cubiomes' noise, voronoi
+  and End terrain code at the same pin, so there is no second dependency.
+  - **Nether:** a 2D biome. The 4-block cell is read at y=0 from a double-perlin with
+    Bedrock's amplitude, then the 1.14 voronoi seeded with the **full** 64-bit seed (the
+    low 32 bits alone give 99.5%). Bedrock ids come out directly (8, 178–181), and the
+    height is the roof (128), which is what a real Nether map shows.
+  - **Nether accuracy:** **99.994%** of 349,184 sampled columns on seed
+    7353120887189866808 (20 misses, all on borders), and 100% of 7,688 on a negative
+    seed (−3913570224095895553). Of the 364,288 columns in the 1,423 Nether chunks saved
+    in the local test worlds, all but 20 match.
+  - **End:** biome 9 and the terrain's height, as the first air above it to match real
+    chunks. Void is height **−1** (`PREDICT_VOID`): `Predictor.grid` leaves it out, so
+    it draws transparent like ground nobody has generated.
+  - **The End's one Bedrock constant:** the island noise is drawn after skipping
+    **10,360** twister outputs, where the fork's Java-style 17,292 (66 perlins × 262)
+    predicts no better than chance. The skip is 40 perlins (the terrain's 16+16+8
+    octaves) × 259 draws (3 offsets + 256 shuffle swaps). It was found on 2026-10-11 by
+    testing hypotheses against a real 1.26.52.3 world; no published source has it.
+  - **End accuracy, land vs void:** **99.2%** of 10,217 points on the first seed and
+    **98.7%** of 15,376 on the second, out to about 6,400 blocks. The misses are nearly
+    all real land predicted as void: the small floating islets that the End-island
+    *feature* places, which is decoration, not terrain noise.
+  - **End accuracy, height:** 94–95% exact where both say land. On the 20 saved main
+    island chunks, land vs void is 100%. Every height miss there is real ground ABOVE
+    the prediction (the obsidian pillars), never below it.
+
+  The Dockerfile's build-time smoke check now also asserts a warped forest in the
+  Nether, plus an outer island's ground and the void just off it in the End. All are
+  real spots on the first seed, and the Java-seeded binary fails all three. `map/info`
+  says `predicted` in all three dimensions once the seed is known.
+
+  **Overworld: upstream cubiomes stays.** Reed's fork generates the 1.16 *layered*
+  Overworld, which 1.18 replaced with the noise Bedrock now shares with Java. Every
+  column of the 479 real chunks of the dev world (122,624 columns, biome at the surface)
+  was compared:
+
+  | Overworld predictor | Zoom 0 (every column) | Zoom 2 (every 4th) |
+  |---|---|---|
+  | upstream cubiomes | **96.4%** | 96.4% (of 7,664) |
+  | Reed's fork | 3.6% | 3.6% |
+
+  For upstream, 4,304 of the 4,386 misses lie within 4 blocks of a real biome border.
+
+  **Time per 256×256-pixel tile** was measured on a 4-core dev container, as the median
+  of four tiles near and far from the origin. Zoom k samples every 2^k blocks.
+
+  | Dimension | Zoom 0 | Zoom 1 | Zoom 2 | Zoom 3 | Zoom 4 |
+  |---|---|---|---|---|---|
+  | Overworld | 0.15 s | 0.66 s | 2.4 s | 2.3 s | 2.5 s |
+  | Nether | 0.01 s | 0.27 s | 0.24 s | 0.27 s | 0.26 s |
+  | End | 0.05 s | 0.15 s | 0.6 s | 2.3 s | 2.1 s |
+
+  The End's cost is about 40 perlin samples per height cell of every 8-block terrain
+  column. So its columns are split across the cores (single-threaded, zoom 3–4 took
+  about 7 s), and the 625 island-noise reads per column come from one per-tile grid.
+  A seed always predicts the same ground, so each tile is computed once and cached.
 
   **Structures can't come from cubiomes**: Bedrock places them differently from Java.
   The server's own `locate structure` does it exactly instead. It is instant, read-only
@@ -901,6 +1009,28 @@ compass that Dave sets.
   The Nether pointer can aim at the portal Dave knows from the M4 index.
 - **No target yet:** `Ask Dave where to go: /jb:dave …`.
 - Putting the item away clears the actionbar. Nothing shows for anyone else.
+
+**Waypoints, first cut (shipped 2026-10-11, owner: "a tool to set the tricorder waypoint
+destination per user").** Dave's `mc_set_waypoint(x, z, y?, dimension?, label?,
+gamertag?, clear?)` sends `scriptevent jb:waypoint {json}` over the console (the JSON is
+`json.dumps`-escaped, so a label can't end the command). The home-test kit's script
+stores it as a **world** dynamic property keyed by gamertag — saved with the world and
+settable while the player is offline — and the held tricorder shows
+`↗ <label> · 412 blocks · y -58` (the y when given), `You're here` within 3 blocks,
+`<label> is in the Nether` from another dimension, and world spawn when none is set.
+The script answers with a `[jbrain-probe] waypoint set/cleared/refused` line, which the
+tool reads back: no answer means the kit isn't in the loaded world, and the tool says so
+rather than claiming it worked. Checked on a local 1.26 server: set (a gamertag with a
+space), a refused bad dimension, cleared. **Saved places (2026-10-11):** `mc_set_waypoint`
+also takes `place`, a name the player saved with `mc_place_save` (`app.mc_places`,
+migration 0228: per player and world folder, names unique ignoring case, saving again
+moves it; `mc_places` lists them with the way to each from the asker in game,
+`mc_place_remove` forgets one). With no coordinates a place is saved where the in-game
+asker stands, else at the player's last tracked position. **"home"** is their saved home,
+else the bed the in-game event reported, else Dave says neither exists and offers to mark
+it. In game the answer also says which way and how far the target is. Still to come from the design below: the
+per-xuid player property, the named and retired "<Player>'s Tricorder", keepOnDeath, and
+Dave handing one over.
 
 **How it's built** (on M5's bridge, using M6's `guide_me` tool):
 - Dave's `guide_me(player, target)` sends `scriptevent jb:target <xuid> <json>` with
@@ -1480,7 +1610,7 @@ is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
 | World index (after **M4**) | `mc_find_container`, `mc_find_villager`, `mc_find_block`, `mc_describe_area`, `mc_biome_at`, `mc_build_changes`, `mc_whats_new` | Snapshot index |
 | Live (after **M5**) | `mc_nearest_entity`, `mc_where_is`, `mc_player_context`, `mc_where_did_i_die`, `mc_inventory` | Behavior-pack bridge |
 | Maps (with **M8**) | `minecraft_map(center, radius, layers, overlays, slot?)`: terrain, biome, height, explored, changes, slice@Y; overlays for players, waypoints, structures, deaths | Renderer in the sidecar; returns an image artifact rendered **inline in the chat** |
-| Admin (owner) | `mc_backup_now`, `mc_set_time`, `mc_set_weather`, `mc_announce` | Console allowlist; staged as Proposals per ASSISTANT.md's write policy, never silent |
+| Admin (owner) | `mc_command` (any console command) and `mc_server_action` (every server action) — superseded the four planned admin tools, 2026-10-11 | Look-only commands run at once; everything else is staged as a `minecraft` Proposal the owner approves, never silent |
 | Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
 | Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
 | Memory, **per player**, self-managed | `mc_memory_read`, plus **line-level edits only**: `mc_memory_add(text)`, `mc_memory_replace(line, text)`, `mc_memory_remove(line)`. There is no whole-document write. | `app.mc_player_memory` (one row per line, with history); see "Memory: self-managed, never overwritten" below |
@@ -1583,14 +1713,45 @@ screen's "Maps" section (M8) reuses the same component.
   - `mc_server_status`, `mc_players`, `mc_play_history`
   - `mc_world_info`, `mc_locate` (structure or biome, from the player's last trail
     point)
+  - `mc_what_is_at` and `mc_nearby` (2026-10-11, after the owner watched Dave hunt
+    biome by biome for "what biome is at 0,0"): one call for the biome and surface
+    height at a spot (explored ground, else the satellite's survey), and one for the
+    nearest structure of every kind around a spot (the server's own `locate`, swept
+    over Bedrock's structure ids checked on 1.26).
+  - `mc_find_block` (owner, 2026-10-11: "can you point me to the nearest diamond"): the
+    nearest blocks of any kind in **explored** ground, with exact x, y, z
+    (`deploy/minecraft/blocks.py`). It reads each section's palette from its
+    `SubChunkPrefix` record (tag 47; version 9, little-endian NBT palette, 4096 packed
+    x,z,y indices), keeps only which block names each section holds — names, not
+    blocks, so a big world's index stays small — and decodes positions only in the
+    sections that hold a wanted block, nearest chunk first, reading just those records
+    through each table's index (`leveldb.read_keys`). An ore name brings its deepslate
+    twin. Checked on a real 1.26 world: the game's own `testforblock` confirmed every
+    find it was asked about (two diamond ores, a spawner, a chest), and the block above
+    a find reads as what it really is. Unexplored ground can't be searched — ore
+    placement doesn't exist until the game generates the chunk.
+  - **The whole server** (owner, 2026-10-11: "expose ALL raw server tools to Dave, so
+    he has everything needed"; `agent/minecraftadmin.py`). Reads run at once:
+    `mc_server_log`, `mc_worlds` (slots, or one slot's rules), `mc_backups`,
+    `mc_server_config` (server.properties, the allowlist, versions), and `mc_command`
+    for a console command that only looks. **Everything else is a Proposal** of the new
+    `minecraft` kind (migration 0227) that the owner approves inline in the chat: any
+    other console command (`mc_command`), and every server action (`mc_server_action`:
+    start/stop/restart, backup, load/create/update/reset/restore a world, rules,
+    pin/delete backups, the allowlist, server.properties, auto-update, the update).
+    A staged action stores the exact sidecar call, built from input the owner API's own
+    models validate, and the executor re-checks the route against an allowlist at
+    enact; a server refusal holds the leaf instead of reporting it done. This replaces
+    the earlier plan's four admin tools (`mc_backup_now`, `mc_set_time`,
+    `mc_set_weather`, `mc_announce`): every one is now a case of these two.
   - `mc_goals`, `mc_goal_create`, `mc_goal_update`, `mc_log`, `mc_log_read`
   - `mc_memory_read`, `mc_memory_add`, `mc_memory_replace`, `mc_memory_remove`
 - **Migration 0226:** `mc_goals`, `mc_goal_log`, `mc_player_memory`, `mc_chat_player`,
   owner-only, with isolation tests.
 - **Moved to a follow-up PR:**
   - the player sheet's Goals list, which needs a small owner API over the goal tables;
-  - the admin tools as Proposals (`mc_backup_now`, `mc_set_time`, `mc_set_weather`,
-    `mc_announce`), which need Proposal executors.
+  - the admin tools as Proposals — shipped 2026-10-11 as the whole-server reach above
+    (`mc_command`, `mc_server_action` and four reads, migration 0227).
 - **Local model:** there is no per-persona route. Minecraft_Dave runs where `agent.turn`
   does, which on the box is `local:qwen3.8-flash-next` (checked 2026-10-10).
 
@@ -1603,7 +1764,8 @@ screen's "Maps" section (M8) reuses the same component.
   - **Goals, the progress log and player memory**: their tables (with RLS tests), the
     tools, and the Goals list in the player sheet.
   - Web search and fetch.
-  - The admin tools as Proposals.
+  - The admin tools as Proposals (shipped 2026-10-11: every server capability, see
+    above).
   - Persona tests: the allowlist is closed, there's no KB access, and world text is
     fenced.
 - **P2 — grows with M4/M5.** The index and live tools join the allowlist as each wave
@@ -1618,6 +1780,11 @@ screen's "Maps" section (M8) reuses the same component.
   player**. A PWA chat with no gamertag set refuses the writes and asks for one, rather
   than guessing.
 - Minecraft_Dave runs on the **local model**.
+
+**P2 progress (2026-10-11):** the in-game door (§M5 above) — the same persona, goal,
+log and memory tools reach players in game at player tier, scoped to the asker's xuid —
+plus saved places (`mc_place_save`, `mc_places`, `mc_place_remove`; `mc_set_waypoint`'s
+`place`), prompt `agent-minecraft-dave-v7`.
 
 **Pending:** the owner's gamertag, which is entered on the Minecraft screen. Until it's set,
 new Minecraft_Dave chats have no player and ask whose chat it is.
@@ -1735,7 +1902,7 @@ never in the prompt:
 
 | Tool | Answers | Source | Tier |
 |---|---|---|---|
-| `waypoint_save(name)` / `list` / `delete` / `share` | "remember this as *home*"; "where's Josh's mine?" | `app.mc_waypoints` (per slot, per player) | Player |
+| `waypoint_save(name)` / `list` / `delete` / `share` — **shipped as `mc_place_save` / `mc_places` / `mc_place_remove`** (2026-10-11, §M9; sharing not yet) | "remember this as *home*"; "where's Josh's mine?" | `app.mc_places` (per world folder, per player) | Player |
 | `whats_new(since?)` | "what happened while I was gone?": joins, deaths, achievements, big build changes | event log + snapshot diff | Player |
 | `build_changes(area, since)` | "did anything change at the base since Tuesday?" A blocks-changed count plus a `changes` map (spots griefing too) | snapshot diff + M8 | Player |
 | `playtime / leaderboard` | play time, deaths, distance travelled, per player | event log | Player |

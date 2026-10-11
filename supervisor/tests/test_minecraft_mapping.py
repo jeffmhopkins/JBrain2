@@ -33,6 +33,7 @@ def _load(name: str):
 
 leveldb = _load("leveldb")
 mapping = _load("mapping")
+blocks = _load("blocks")
 
 
 def _varint(n: int) -> bytes:
@@ -54,18 +55,24 @@ def _block(entries: list[tuple[bytes, bytes]]) -> bytes:
     return body + struct.pack("<II", 0, 1)  # one restart point at offset 0
 
 
-def write_table(path: Path, entries: list[tuple[bytes, int, bytes | None]]) -> None:
-    """A one-data-block table, raw-deflate compressed like Mojang's LevelDB."""
+def write_table(
+    path: Path, entries: list[tuple[bytes, int, bytes | None]], per_block: int = 0
+) -> None:
+    """A table raw-deflate compressed like Mojang's LevelDB: one data block, or one per
+    `per_block` entries with an index naming each block's last key."""
     internal = sorted(
         (k + struct.pack("<Q", (seq << 8) | (1 if v is not None else 0)), v or b"")
         for k, seq, v in entries
     )
-    data = _block(internal)
-    deflate = zlib.compressobj(6, zlib.DEFLATED, -15)
-    packed = deflate.compress(data) + deflate.flush()
-    out = packed + bytes([4]) + b"\0\0\0\0"
-    handle = _varint(0) + _varint(len(packed))
-    index = _block([(internal[-1][0], handle)])
+    size = per_block or len(internal)
+    out, handles = b"", []
+    for start in range(0, len(internal), size):
+        part = internal[start : start + size]
+        deflate = zlib.compressobj(6, zlib.DEFLATED, -15)
+        packed = deflate.compress(_block(part)) + deflate.flush()
+        handles.append((part[-1][0], _varint(len(out)) + _varint(len(packed))))
+        out += packed + bytes([4]) + b"\0\0\0\0"
+    index = _block(handles)
     index_off = len(out)
     out += index + bytes([0]) + b"\0\0\0\0"
     footer = _varint(0) + _varint(0) + _varint(index_off) + _varint(len(index))
@@ -253,7 +260,7 @@ def test_unvisited_ground_is_predicted_and_the_real_world_drawn_over_it(
     }
     predictor.grid("123", 0, 0, 0, 2, 4)
     assert (tmp_path / "runs").read_text() == "x"  # a seed always predicts the same
-    assert predictor.grid("123", 1, 0, 0, 2, 4) == {}  # only the Overworld
+    assert predictor.grid("123", 3, 0, 0, 2, 4) == {}  # no such dimension
 
     for zoom in (0, 2):
         image = mapping.tile(index, 0, zoom, 0, 0, predictor, "123")
@@ -266,6 +273,52 @@ def test_unvisited_ground_is_predicted_and_the_real_world_drawn_over_it(
     assert _decode_png(mapping.tile(index, 0, 0, 0, 0, predictor, None))[200][803] == 0
     broken = mapping.Predictor(tmp_path / "missing")
     assert _decode_png(mapping.tile(index, 0, 0, 0, 0, broken, "123"))[200][803] == 0
+
+
+def test_the_nether_is_predicted_in_bedrock_ids_at_its_roof(tmp_path: Path) -> None:
+    # The binary already speaks Bedrock's Nether ids: 179 is crimson forest there, and
+    # would be misread as a mangrove swamp (184) through the Overworld's translation.
+    predictor = mapping.Predictor(_fake_predictor(tmp_path, biome=179, height=128))
+    assert all(predictor.available(dim) for dim in (0, 1, 2))
+    assert not predictor.available(3)
+    assert set(predictor.grid("123", 1, 0, 0, 2, 4).values()) == {(128, 179)}
+    index = mapping.WorldIndex(tmp_path / "empty")
+    rows = _decode_png(mapping.tile(index, 1, 2, 0, 0, predictor, "123"))
+    pixel = rows[100][400:404]
+    assert pixel[3] == 255 and 0 < sum(pixel[:3]) < sum(mapping.BIOME_COLORS[179])
+
+
+def _fake_end(tmp_path: Path) -> Path:
+    """A stand-in for jbrain-predict over the End: even columns land at 60, odd void."""
+    script = tmp_path / "jbrain-predict"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import struct, sys\n"
+        "n = int(sys.argv[5])\n"
+        "for k in range(n * n):\n"
+        "    sys.stdout.buffer.write(struct.pack('<hh', -1 if k % n % 2 else 60, 9))\n"
+    )
+    script.chmod(0o755)
+    return script
+
+
+def test_the_ends_void_is_predicted_as_nothing(tmp_path: Path) -> None:
+    db = tmp_path / "db"
+    db.mkdir()
+    # One real End chunk, explored: drawn in full over the prediction.
+    write_table(
+        db / "000005.ldb",
+        [(mapping.chunk_key(0, 0, 2, mapping.DATA3D), 1, data3d(lambda x, z: 62, 9))],
+    )
+    index = mapping.WorldIndex(db)
+    index.refresh()
+    predictor = mapping.Predictor(_fake_end(tmp_path))
+    assert predictor.grid("123", 2, 0, 0, 2, 4) == {(0, 0): (60, 9), (0, 4): (60, 9)}
+    rows = _decode_png(mapping.tile(index, 2, 0, 0, 0, predictor, "123"))
+    assert tuple(rows[0][4:8]) == (*mapping.BIOME_COLORS[9], 255)  # explored beats void
+    land, void = rows[100][400:404], rows[100][404:408]
+    assert land[3] == 255 and sum(land[:3]) < sum(mapping.BIOME_COLORS[9])
+    assert void[3] == 0  # no ground there, explored or predicted: transparent
 
 
 def _decode_png(data: bytes) -> list[bytes]:
@@ -330,3 +383,100 @@ def test_packed_biome_stores_decode_in_xzy_order(bits: int) -> None:
     decoded, end = mapping._palette_store(store, 0)
     assert end == len(store)
     assert decoded[0] == 7 and decoded[256] == 21  # x=0 → palette[0], x=1 → palette[1]
+
+
+def _nbt_block(name: str) -> bytes:
+    """One palette entry as Bedrock writes it: a compound of name, states, version."""
+
+    def s(text: str) -> bytes:
+        return struct.pack("<H", len(text)) + text.encode()
+
+    body = b"\x08" + s("name") + s(name)
+    body += b"\x0a" + s("states") + b"\x01" + s("upper_block_bit") + b"\x00" + b"\x00"
+    body += b"\x03" + s("version") + struct.pack("<i", 18100737)
+    return b"\x0a" + s("") + body + b"\x00"
+
+
+def subchunk(sy: int, placed: dict[tuple[int, int, int], str]) -> bytes:
+    """A version-9 section of stone with `placed` blocks at local (x, y, z), 4 bits."""
+    palette = ["minecraft:stone", *sorted(set(placed.values()))]
+    index = [0] * 4096
+    for (x, y, z), name in placed.items():
+        index[(x << 8) | (z << 4) | y] = palette.index(name)
+    words = [sum(index[w * 8 + j] << (j * 4) for j in range(8)) for w in range(512)]
+    layer = bytes([4 << 1]) + struct.pack("<512I", *words)
+    layer += struct.pack("<i", len(palette)) + b"".join(_nbt_block(n) for n in palette)
+    return bytes([9, 1]) + struct.pack("<b", sy) + layer
+
+
+def _sub_key(cx: int, cz: int, sy: int, dim: int = 0) -> bytes:
+    dim_part = struct.pack("<i", dim) if dim else b""
+    return struct.pack("<ii", cx, cz) + dim_part + bytes([47]) + struct.pack("<b", sy)
+
+
+def test_blocks_are_found_nearest_first_with_their_real_coordinates(
+    tmp_path: Path,
+) -> None:
+    write_table(
+        tmp_path / "000005.ldb",
+        [
+            # Chunk (0, 0), section -4 (y -64..-49): a diamond ore at local (3, 2, 5).
+            (_sub_key(0, 0, -4), 1, subchunk(-4, {(3, 2, 5): "minecraft:diamond_ore"})),
+            (_sub_key(0, 0, 0), 2, subchunk(0, {})),
+            # Far away: a nearer-looking chunk index, but 100 chunks east.
+            (
+                _sub_key(100, 0, 1),
+                3,
+                subchunk(1, {(0, 0, 0): "minecraft:deepslate_diamond_ore"}),
+            ),
+            (
+                _sub_key(2, 0, 0, dim=1),
+                4,
+                subchunk(0, {(1, 1, 1): "minecraft:ancient_debris"}),
+            ),
+        ],
+        per_block=2,  # several data blocks, so lookups go through the index
+    )
+    index = blocks.BlockIndex(tmp_path)
+    index.refresh()
+    assert "minecraft:diamond_ore" in index.names(0)
+    assert "minecraft:ancient_debris" not in index.names(0)  # the Nether's own
+    wanted = {"minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"}
+    hits, searched = index.find(0, 0, 0, wanted, limit=5, radius=4000)
+    assert searched == 2  # the Overworld chunks; the Nether one is its own
+    assert [(h["block"], h["x"], h["y"], h["z"]) for h in hits] == [
+        ("minecraft:diamond_ore", 3, -62, 5),
+        ("minecraft:deepslate_diamond_ore", 1600, 16, 0),
+    ]
+    assert index.find(0, 0, 0, wanted, radius=500)[0][0]["x"] == 3  # the far one is out
+    nether, _ = index.find(1, 0, 0, {"minecraft:ancient_debris"})
+    assert (nether[0]["x"], nether[0]["y"], nether[0]["z"]) == (33, 1, 1)
+
+
+def test_read_keys_takes_the_newest_write_and_only_the_blocks_it_needs(
+    tmp_path: Path,
+) -> None:
+    write_table(
+        tmp_path / "000005.ldb",
+        [(bytes([k]) * 4, k, b"old") for k in range(1, 9)],
+        per_block=2,
+    )
+    write_log(
+        tmp_path / "000006.log", 50, [(bytes([3]) * 4, b"new"), (bytes([5]) * 4, None)]
+    )
+    got = leveldb.read_keys(
+        tmp_path, {bytes([3]) * 4, bytes([5]) * 4, bytes([8]) * 4, b"nope"}
+    )
+    assert got == {bytes([3]) * 4: b"new", bytes([8]) * 4: b"old"}  # 5 was deleted
+    assert leveldb.read_db(tmp_path)[bytes([1]) * 4] == b"old"
+
+
+def test_a_version_8_section_takes_its_y_from_the_key(tmp_path: Path) -> None:
+    # Version 8 is version 9 without the y byte: an old world's records until re-saved.
+    v9 = subchunk(-4, {(3, 2, 5): "minecraft:diamond_ore"})
+    v8 = bytes([8, v9[1]]) + v9[3:]
+    write_table(tmp_path / "000005.ldb", [(_sub_key(0, 0, -4), 1, v8)])
+    index = blocks.BlockIndex(tmp_path)
+    index.refresh()
+    hits, _ = index.find(0, 0, 0, {"minecraft:diamond_ore"})
+    assert (hits[0]["x"], hits[0]["y"], hits[0]["z"]) == (3, -62, 5)

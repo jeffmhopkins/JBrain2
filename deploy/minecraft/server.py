@@ -32,6 +32,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
+import blocks
 import bds
 import install
 import mapping
@@ -146,6 +147,7 @@ class Rig:
         # both dropped when that world's database files change.
         self._map_lock = threading.Lock()
         self._map_index: dict[str, mapping.WorldIndex] = {}
+        self._block_index: dict[str, blocks.BlockIndex] = {}
         self._map_seed: dict[str, str | None] = {}
         self._predictor = mapping.Predictor()
         self._tiles: dict[tuple, bytes] = {}
@@ -290,6 +292,15 @@ class Rig:
         except OSError as exc:
             # The travel log loses deaths, but the server itself must still start.
             print(f"[minecraft] jbrain pack not installed: {exc}", flush=True)
+        # The home-test kit, where a world has it, is refreshed the same way: a copy left
+        # from an older image kept registering `/jb:dave` after the command moved to the
+        # jbrain pack, so the new one failed to register and the kit ran stale code.
+        if (self.world_dir() / "behavior_packs" / PROBE_PACK_DIR).is_dir():
+            try:
+                self.install_pack(PROBE_PACK_SRC, PROBE_PACK_DIR, True)
+                self.install_pack(PROBE_RP_SRC, PROBE_PACK_DIR, True, kind="resource")
+            except OSError as exc:
+                print(f"[minecraft] test kit not refreshed: {exc}", flush=True)
         self.bds.start()
         self._apply_rules_when_up(self.active_folder())
 
@@ -1170,6 +1181,111 @@ class Rig:
             "predicted": predicted,
         }
 
+    def map_point(self, slot_id: str, dim: str, x: int, z: int) -> dict[str, Any]:
+        """What is at one block column: its biome and surface height, and whether that is
+        explored ground or the satellite's survey (the seed's prediction)."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+            raise ValueError("that point is outside the world")
+        d = mapping.DIMENSIONS[dim]
+        with self._map_lock:
+            folder, index = self._map_for(slot_id)
+            got, source = index.point(d, x, z), "explored"
+            seed = self._map_seed.get(folder)
+            if got is None and seed is not None:
+                got = self._predictor.grid(seed, d, x, z, 1, 1).get((x, z))
+                source = "survey"
+        if got is None:
+            return {"x": x, "z": z, "dimension": dim, "source": "unknown"}
+        height, biome = got
+        bedrock_id, name = mapping.BIOME_NAMES.get(biome, (f"biome {biome}", f"Biome {biome}"))
+        return {
+            "x": x,
+            "z": z,
+            "dimension": dim,
+            "source": source,
+            "biome": name,
+            "biome_id": f"minecraft:{bedrock_id}",
+            # The top block's y; the survey's is an estimate, typically within a few blocks.
+            "y": height + mapping.floor_of(d) - 1,
+        }
+
+    def map_find(
+        self, slot_id: str, dim: str, x: int, z: int, names: list[str], limit: int, radius: int
+    ) -> dict[str, Any]:
+        """The nearest blocks of the named kinds in explored ground around (x, z): "where's
+        the nearest diamond". An ore name brings its deepslate twin along, since a player
+        asking for diamonds means both."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+            raise ValueError("that point is outside the world")
+        wanted: set[str] = set()
+        for raw in names:
+            name = raw.strip().lower()
+            if not _BLOCK_NAME.fullmatch(name):
+                raise ValueError(f"`{raw}` isn't a block id")
+            name = name if name.startswith("minecraft:") else f"minecraft:{name}"
+            wanted.add(name)
+            if name.endswith("_ore") and "deepslate_" not in name:
+                wanted.add(name.replace("minecraft:", "minecraft:deepslate_", 1))
+        if not wanted:
+            raise ValueError("name at least one block")
+        d = mapping.DIMENSIONS[dim]
+        with self._map_lock:
+            rec = self.slots.get(slot_id)
+            if not rec["exists"]:
+                raise ValueError(f"{slot_id} has no world yet")
+            folder = rec["folder"]
+            index = self._block_index.get(folder)
+            if index is None:
+                index = self._block_index[folder] = blocks.BlockIndex(self.world_dir(folder) / "db")
+            index.refresh()
+            known = index.names(d)
+            hits, searched = index.find(d, x, z, wanted & known, limit, radius)
+        missing = sorted(wanted - known)
+        bare = {n.removeprefix("minecraft:").removeprefix("deepslate_") for n in missing}
+        suggestions = sorted(
+            n for n in known if any(b in n for b in bare)
+        )[:12] if missing and not (wanted & known) else []
+        return {
+            "dimension": dim,
+            "x": x,
+            "z": z,
+            "searched": sorted(wanted & known),
+            "not_in_explored_ground": missing,
+            "suggestions": suggestions,
+            "explored_chunks_in_range": searched,
+            "radius": radius,
+            "found": hits,
+        }
+
+    def map_nearby(self, dim: str, x: int, z: int) -> dict[str, Any]:
+        """The nearest structure of each kind the dimension has, from (x, z), by the
+        running server's own `locate` — exact, and it generates nothing."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+            raise ValueError("that point is outside the world")
+        if not self.bds.running:
+            raise RuntimeError("the server isn't running, so it can't search its world")
+        found = []
+        for kind in mapping.STRUCTURES[mapping.DIMENSIONS[dim]]:
+            got = mapping.parse_located(
+                self.bds.command(
+                    f"execute in {dim} positioned {x} 64 {z} run locate structure {kind}",
+                    wait_s=2.0,
+                    quiet_s=0.15,
+                )
+            )
+            if got is not None:
+                _, sx, sz = got
+                distance = round(math.dist((x, z), (sx, sz)))
+                found.append({"structure": kind, "x": sx, "z": sz, "distance": distance})
+        found.sort(key=lambda f: f["distance"])
+        return {"world": self.active_folder(), "dimension": dim, "x": x, "z": z, "nearby": found}
+
     def map_tile(self, slot_id: str, dim: str, zoom: int, tx: int, tz: int) -> bytes:
         if dim not in mapping.DIMENSIONS:
             raise ValueError("dimension must be overworld, nether or the_end")
@@ -1319,6 +1435,45 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/find":
+            try:
+                x, z = int(query.get("x", [""])[0]), int(query.get("z", [""])[0])
+                limit = max(1, min(int(query.get("limit", ["5"])[0]), 20))
+                radius = max(16, min(int(query.get("radius", ["2048"])[0]), 16384))
+            except ValueError:
+                self._send(400, {"detail": "x, z, limit and radius are whole numbers"})
+                return
+            try:
+                self._send(
+                    200,
+                    rig.map_find(
+                        query.get("slot", ["slot1"])[0],
+                        query.get("dim", ["overworld"])[0],
+                        x,
+                        z,
+                        query.get("blocks", [""])[0].split(","),
+                        limit,
+                        radius,
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+        elif url.path in ("/map/point", "/map/nearby"):
+            dim = query.get("dim", ["overworld"])[0]
+            try:
+                x, z = int(query.get("x", [""])[0]), int(query.get("z", [""])[0])
+            except ValueError:
+                self._send(400, {"detail": "x and z are whole numbers"})
+                return
+            try:
+                if url.path == "/map/point":
+                    self._send(200, rig.map_point(query.get("slot", ["slot1"])[0], dim, x, z))
+                else:
+                    self._send(200, rig.map_nearby(dim, x, z))
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+            except (RuntimeError, bds.ConsoleError) as exc:
+                self._send(409, {"detail": str(exc)})
         elif m := _MAP_TILE.match(url.path):
             try:
                 image = rig.map_tile(
@@ -1540,6 +1695,7 @@ _SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
 _WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
 _WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
+_BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
 _MAP_TILE = re.compile(r"^/map/tile/(overworld|nether|the_end)/(\d)/(-?\d+)/(-?\d+)\.png$")
 
 

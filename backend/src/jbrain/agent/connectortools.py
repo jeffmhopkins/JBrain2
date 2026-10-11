@@ -11,11 +11,13 @@ agent-note kinds (correction/knowledge) and egress.
 """
 
 import uuid
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.mergetools import entity_merge_executor
+from jbrain.agent.minecraftadmin import MINECRAFT_OPS, minecraft_executor
 from jbrain.agent.prefstools import PREFS_OP, owner_prefs_executor
 from jbrain.agent.proposals import (
     LeafExecutor,
@@ -123,6 +125,7 @@ def build_leaf_executor(
     jobs: JobEnqueuer,
     analysis: SqlAnalysisRepo,
     maker: async_sessionmaker[AsyncSession],
+    minecraft_config: Any = None,
 ) -> LeafExecutor:
     """The Proposal executor, dispatching by leaf op: an egress_call fires the
     connector; a merge_entities leaf folds one entity into another through the
@@ -137,10 +140,15 @@ def build_leaf_executor(
     predicate_resolve = predicate_resolution_executor(analysis)
     intake_note = intake_note_executor(notes, jobs)
     owner_prefs = owner_prefs_executor(maker)
+    minecraft = minecraft_executor(minecraft_config)
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         if node.op == "egress_call":
             await egress(ctx, proposal, node)
+        elif node.op in MINECRAFT_OPS:
+            # The owner approved a Minecraft_Dave server change: the console command or
+            # sidecar call it staged runs now (agent/minecraftadmin.py).
+            await minecraft(ctx, proposal, node)
         elif node.op == "merge_entities":
             await merge(ctx, proposal, node)
         elif node.op == "predicate_resolve":

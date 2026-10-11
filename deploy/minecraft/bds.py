@@ -36,7 +36,9 @@ _DISCONNECTED = re.compile(r"Player disconnected: ([^,]+), xuid")
 # A line from the jbrain behavior pack: `[Scripting] [jbrain] {"ev": "death", …}`.
 _PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
 # `wreck` is the spawn wreck reporting its build (plan §SW1): loaded, pod, ship, done.
-PACK_EVENTS = ("death", "respawn", "wreck")
+PACK_EVENTS = ("death", "respawn", "dave", "wreck")
+# A `/jb:dave` question as the pack cuts it (§M5); anything longer was not the pack's.
+QUESTION_MAX = 256
 _VERSION = re.compile(r"Version:? ([0-9][0-9.]*[0-9])")
 _STARTED = "Server started."
 # `save query` prints this line, then the file list on the next line.
@@ -197,8 +199,11 @@ class Bds:
         )
 
     def _pack_event(self, raw: str) -> None:
-        """A death or respawn from the pack. Its text is player-influenced (a name), so
-        only known kinds and plain fields get through, each type-checked."""
+        """A death, respawn or `/jb:dave` question from the pack. Its text is
+        player-influenced (a name, a question), so only known kinds and plain fields get
+        through, each type-checked. The xuid is never the line's: it is the one BDS
+        logged when that name connected, so a question is filed under the account that
+        is really on the server."""
         try:
             data = json.loads(raw)
         except ValueError:
@@ -206,14 +211,22 @@ class Bds:
         if not isinstance(data, dict) or data.get("ev") not in PACK_EVENTS:
             return
         name = str(data.get("name", ""))[:32]
-        extra: dict[str, Any] = {}
-        for key in ("x", "y", "z"):
-            if isinstance(data.get(key), (int, float)):
-                extra[key] = float(data[key])
-        for key in ("dim", "cause", "killer", "phase"):
+        extra: dict[str, Any] = _place(data)
+        for key in ("cause", "killer", "phase"):
             if isinstance(data.get(key), str):
                 extra[key] = data[key][:64]
         known = self.players.get(name)
+        if data["ev"] == "dave":
+            text = data.get("text")
+            if not isinstance(text, str) or not text.strip() or known is None:
+                # An empty question, or one from a name the server never saw connect,
+                # has nobody to answer.
+                return
+            extra["text"] = text[:QUESTION_MAX]
+            spawn = data.get("spawn")
+            extra["spawn"] = _place(spawn) if isinstance(spawn, dict) else None
+            if extra["spawn"] is not None and len(extra["spawn"]) < 4:
+                extra["spawn"] = None  # a spawn point is only useful whole
         self._event(str(data["ev"]), name, known["xuid"] if known else "", **extra)
 
     def note_world_replaced(self, folder: str) -> None:
@@ -351,6 +364,18 @@ class Bds:
         # finish before anyone starts the next process.
         if self._reader is not None:
             self._reader.join(timeout=10)
+
+
+def _place(data: dict[str, Any]) -> dict[str, Any]:
+    """The x/y/z numbers and dimension name in a pack line, type-checked."""
+    out: dict[str, Any] = {}
+    for key in ("x", "y", "z"):
+        value = data.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[key] = float(value)
+    if isinstance(data.get("dim"), str):
+        out["dim"] = data["dim"][:64]
+    return out
 
 
 def _is_file_list(text: str) -> bool:

@@ -1,6 +1,6 @@
 ---
 name: mc_locate
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -11,7 +11,7 @@ params:
       description: Whether to find a structure or a biome.
     id:
       type: string
-      description: The Bedrock id, e.g. mansion, village, ancient_city, trial_chambers for structures, or cherry_grove, mushroom_fields, deep_dark for biomes.
+      description: The Bedrock id, e.g. mansion, village, ancient_city, trial_chambers for structures, or cherry_grove, mushroom_island, deep_dark for biomes (Bedrock ids, so badlands is mesa).
     x:
       type: integer
       description: Search from this X. Leave x and z out to search from this chat's player's last known position.

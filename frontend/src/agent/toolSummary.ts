@@ -209,6 +209,19 @@ const STEP_LABELS: Record<string, string> = {
   mc_play_history: "Checked play history",
   mc_world_info: "Checked the world",
   mc_locate: "Searched for the nearest",
+  mc_what_is_at: "Looked at a spot",
+  mc_nearby: "Checked what's nearby",
+  mc_find_block: "Searched for blocks",
+  mc_set_waypoint: "Set the tricorder",
+  mc_place_save: "Saved a place",
+  mc_places: "Listed saved places",
+  mc_place_remove: "Forgot a place",
+  mc_command: "Ran a server command",
+  mc_server_action: "Asked to change the server",
+  mc_server_log: "Read the server log",
+  mc_worlds: "Checked the worlds",
+  mc_backups: "Listed the backups",
+  mc_server_config: "Read the server settings",
   mc_goals: "Read the goals",
   mc_goal_create: "Added a goal",
   mc_goal_update: "Updated a goal",
@@ -347,6 +360,18 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   mc_player: ["gamertag"],
   // The Bedrock id ("mansion", "cherry_grove") is what "the nearest one" was.
   mc_locate: ["id"],
+  // A spot is its coordinates; "around me" (none given) shows nothing.
+  mc_what_is_at: ["x", "z"],
+  mc_nearby: ["x", "z"],
+  mc_find_block: ["blocks"],
+  // A saved place's name is the destination; coordinates carry a label instead.
+  mc_set_waypoint: ["place", "label"],
+  mc_place_save: ["name"],
+  mc_place_remove: ["name"],
+  mc_command: ["command"],
+  mc_server_action: ["action"],
+  mc_worlds: ["slot"],
+  mc_backups: ["slot"],
   mc_goals: ["status"],
   mc_goal_create: ["title"],
   mc_goal_update: ["status", "title"],
@@ -363,6 +388,11 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
 const NO_INLINE: ReadonlySet<string> = new Set([
   // takes no arguments — there is only one radio to release
   "sdr_stop",
+  // the console log's tail is a count, and the config read takes nothing
+  "mc_server_log",
+  "mc_server_config",
+  // the player's saved places take no argument
+  "mc_places",
   // the snippet is multi-line source; a collapsed row is the wrong place for it, and the
   // expanded view is where the code belongs
   "run_python",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 import struct
 import subprocess
 import sys
@@ -1364,6 +1365,53 @@ def test_the_pack_reports_deaths_and_respawns_as_events(tmp_path: Path) -> None:
     assert "killer" not in death  # null is not a string: dropped, not "None"
 
 
+def test_a_dave_question_is_an_event_filed_under_the_connected_xuid(
+    tmp_path: Path,
+) -> None:
+    """The in-game door (§M5): the pack's `dave` line becomes one event carrying the
+    asker's place and bed, under the xuid BDS logged at connect, never the line's."""
+    b = bds.Bds(tmp_path)
+    b._record("[x INFO] Player connected: Steve 42, xuid: 111")
+    b._record(
+        '[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","xuid":"999",'
+        '"text":"Dave, point me home","x":10.5,"y":64,"z":-3,"dim":"overworld",'
+        '"spawn":{"x":1,"y":70,"z":2,"dim":"overworld"}}'
+    )
+    b._record(
+        '[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","text":"'
+        + "x" * 400
+        + '","x":1,"y":2,"z":3,"dim":"nether","spawn":{"x":true}}'
+    )
+    # Nobody to answer: an empty question, and a name that never connected.
+    b._record('[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","text":"  "}')
+    b._record('[Scripting] [jbrain] {"ev":"dave","name":"Ghost","text":"hi"}')
+    asks = [e for e in b.events_after(0) if e["kind"] == "dave"]
+    assert len(asks) == 2
+    first, second = asks
+    assert (first["xuid"], first["name"], first["text"]) == (
+        "111",
+        "Steve 42",
+        "Dave, point me home",
+    )
+    assert (first["x"], first["dim"]) == (10.5, "overworld")
+    assert first["spawn"] == {"x": 1.0, "y": 70.0, "z": 2.0, "dim": "overworld"}
+    assert len(second["text"]) == bds.QUESTION_MAX
+    assert second["spawn"] is None  # a partial spawn point is no spawn point
+
+
+def test_only_the_jbrain_pack_registers_the_dave_command() -> None:
+    """Both packs can be in one world, and two registrations of `jb:dave` collide."""
+    mc_dir = DEPLOY / "minecraft"
+    door = (mc_dir / "jbrain-pack/scripts/main.js").read_text()
+    probe = (mc_dir / "probe-pack/scripts/main.js").read_text()
+    assert 'name: "jb:dave"' in door and "getSpawnPoint" in door
+    assert "registerCommand" not in probe
+    # The engine refuses the whole command past eight parameters (BDS 1.26.52), which
+    # would leave players with no door at all.
+    words = re.search(r"const WORDS = (\d+);", door)
+    assert words is not None and int(words.group(1)) <= 8
+
+
 def test_a_reset_or_import_marks_the_old_trail_as_gone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1378,6 +1426,17 @@ def test_a_reset_or_import_marks_the_old_trail_as_gone(
     real.note_world_replaced("slot3")
     (ev,) = real.events_after(0)
     assert (ev["kind"], ev["world"], real.world) == ("world_replaced", "slot3", "world")
+
+
+def test_every_dimension_is_predicted_once_the_seed_is_known(tmp_path: Path) -> None:
+    mapping = sys.modules.get("mapping") or __import__("mapping")
+    _make_world("world", CASTLE)
+    rig = _world_rig()
+    binary = tmp_path / "jbrain-predict"
+    binary.write_text("")
+    rig._predictor = mapping.Predictor(binary)
+    for dim in ("overworld", "nether", "the_end"):
+        assert rig.map_info("slot1", dim)["predicted"] is True
 
 
 def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
@@ -1398,3 +1457,109 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     assert (
         rig.map_tile("slot1", "overworld", 0, 0, 0) is png
     )  # cached until files change
+
+
+def test_a_point_is_explored_ground_the_survey_or_unknown() -> None:
+    mapping = sys.modules.get("mapping") or __import__("mapping")
+    _make_world("world")
+    rig = _world_rig()
+    assert rig.map_point("slot1", "overworld", 5, 5)["source"] == "unknown"
+    with pytest.raises(ValueError):
+        rig.map_point("slot1", "aether", 0, 0)
+
+    class Survey:
+        def grid(self, seed: str, dim: int, x: int, z: int, n: int, step: int):
+            assert (seed, dim, n, step) == ("42", 0, 1, 1)
+            return {(x, z): (130, 192)}
+
+    rig._predictor = Survey()
+    rig._map_seed["world"] = "42"
+    got = rig.map_point("slot1", "overworld", 100, -7)
+    assert (got["source"], got["biome"], got["biome_id"]) == (
+        "survey",
+        "Cherry Grove",
+        "minecraft:cherry_grove",
+    )
+    assert got["y"] == 130 + mapping.floor_of(0) - 1  # the top block, not the air above
+
+
+def test_nearby_asks_the_running_server_for_each_structure_kind() -> None:
+    rig = _world_rig()
+    with pytest.raises(RuntimeError):
+        rig.map_nearby("overworld", 0, 0)  # a stopped server has no world to search
+    rig.bds.running = True
+    asked: list[str] = []
+
+    def command(c: str, **_k: Any) -> list[str]:
+        asked.append(c)
+        if c.endswith("structure fortress"):
+            return [
+                "[x INFO] The nearest minecraft:fortress is at block -656, (y?), -224"
+            ]
+        if c.endswith("structure bastion_remnant"):
+            return [
+                "[x] The nearest minecraft:bastion_remnant is at block 30, (y?), 40"
+            ]
+        return ["[x ERROR] Could not find any structure of that type nearby"]
+
+    rig.bds.command = command  # type: ignore[attr-defined]
+    got = rig.map_nearby("nether", 0, 0)
+    assert all(
+        c.startswith("execute in nether positioned 0 64 0 run locate") for c in asked
+    )
+    assert [(n["structure"], n["distance"]) for n in got["nearby"]] == [
+        ("bastion_remnant", 50),
+        ("fortress", 693),
+    ]
+
+
+def test_find_brings_an_ores_deepslate_twin_and_suggests_names() -> None:
+    _make_world("world")
+    rig = _world_rig()
+    asked: list[tuple] = []
+
+    class Index:
+        def refresh(self) -> None:
+            pass
+
+        def names(self, dim: int) -> set[str]:
+            return {"minecraft:deepslate_diamond_ore", "minecraft:diamond_block"}
+
+        def find(self, dim, x, z, wanted, limit, radius):
+            asked.append((dim, x, z, wanted, limit, radius))
+            return [
+                {"block": "minecraft:deepslate_diamond_ore", "x": 1, "y": -50, "z": 2}
+            ], 9
+
+    rig._block_index["world"] = Index()
+    got = rig.map_find("slot1", "overworld", 0, 0, ["diamond_ore"], 3, 500)
+    assert asked[-1][3] == {"minecraft:deepslate_diamond_ore"}  # what the world holds
+    assert got["not_in_explored_ground"] == ["minecraft:diamond_ore"]
+    assert got["found"][0]["y"] == -50 and got["explored_chunks_in_range"] == 9
+    none = rig.map_find("slot1", "overworld", 0, 0, ["diamond"], 3, 500)
+    assert none["searched"] == [] and "minecraft:diamond_block" in none["suggestions"]
+    with pytest.raises(ValueError):
+        rig.map_find("slot1", "overworld", 0, 0, ["stone; op @a"], 3, 500)
+
+
+def test_an_installed_test_kit_is_refreshed_on_every_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+    world = tmp_path / "server" / "worlds" / "world"
+    world.mkdir(parents=True)
+    rig._start()
+    assert not (
+        world / "behavior_packs" / "jbrain_probe"
+    ).exists()  # never added unasked
+
+    rig.probe_pack(True)
+    stale = world / "behavior_packs" / "jbrain_probe" / "scripts" / "main.js"
+    stale.write_text("// an older image's kit")
+    rig._start()
+    assert stale.read_text() != "// an older image's kit"  # the image's copy again
+    rp = json.loads((world / "world_resource_packs.json").read_text())
+    assert [p["pack_id"] for p in rp] == [PROBE_RP_ID]  # listed once, not appended

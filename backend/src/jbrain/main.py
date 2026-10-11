@@ -44,6 +44,7 @@ from jbrain.agent.jmolt_sweep import JmoltSweep, run_jmolt_sweep_loop
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
+from jbrain.agent.minecraftadmin import build_minecraft_admin_handlers
 from jbrain.agent.minecrafttools import build_minecraft_handlers
 from jbrain.agent.moltbooktools import build_moltbook_handlers
 from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
@@ -190,6 +191,7 @@ from jbrain.llm.residency import (
     pg_box_lock,
     pg_box_try_lock,
 )
+from jbrain.llm.slot_roles import SlotRole
 from jbrain.llm.warm_keeper import WarmKeeper
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
@@ -198,6 +200,7 @@ from jbrain.locations.ratelimit import TokenBucket
 from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.media import ffmpeg_available
 from jbrain.minecraft.changelog import Changelog as MinecraftChangelog
+from jbrain.minecraft.door import DaveDoor, run_dave_door
 from jbrain.minecraft.sessions import SessionDrain, run_session_drain
 from jbrain.minecraft.travel import TrackDrain, run_track_drain
 from jbrain.models.images import GeneratedImageRepo
@@ -1321,7 +1324,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             canvas_handlers=canvas_handlers,
             crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,
-            minecraft_handlers=build_minecraft_handlers(maker, settings, settings_store),
+            minecraft_handlers={
+                **build_minecraft_handlers(maker, settings, settings_store),
+                **build_minecraft_admin_handlers(settings, app.state.agent_proposals),
+            },
             moltbook_handlers=moltbook_handlers,
             moltbook_write_handlers=moltbook_write_handlers,
             external_handlers=build_external_handlers(
@@ -1523,6 +1529,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The travel log (§T1): position samples into trails and per-player fog of war,
         # recorded from now so the maps (M8) and timeline (M8a) have history to draw.
         minecraft_track_task = asyncio.create_task(run_track_drain(TrackDrain(maker, settings)))
+        # The in-game door (§M5/§P2): each `/jb:dave` question is a headless Minecraft_Dave
+        # turn in the asker's own session, at player tier, answered by a private tellraw.
+        minecraft_door_task = asyncio.create_task(
+            run_dave_door(
+                DaveDoor(
+                    maker,
+                    settings,
+                    sessions=app.state.agent_sessions,
+                    runlog=app.state.agent_runlog,
+                    transcript=app.state.agent_transcript,
+                    # A player is waiting in game, like a guided-intake visitor: the workshop
+                    # slot, so a question neither evicts jerv's chat prefix nor queues
+                    # behind scheduled tasks.
+                    executor=LoopTurnExecutor(
+                        app.state.llm_router,
+                        app.state.agent_registry,
+                        slot_role=SlotRole.WORKSHOP,
+                    ),
+                    owner_principal_id=lambda: _owner_principal_id(maker),
+                )
+            )
+        )
         # jmolt's integrity watch (W4): the tamper watch diffing the public profile against
         # the outbox ledger (M21) and account-state surfacing with auto-pause on suspension
         # (M22). A slow loop under a non-jmolt owner context; engages the kill (M6) + reverts
@@ -1676,6 +1704,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         aprs_backfill_task.cancel()
         minecraft_drain_task.cancel()
         minecraft_track_task.cancel()
+        minecraft_door_task.cancel()
         jmolt_integrity_loop_task.cancel()
         await app.state.jmolt_night_lane.drain()
         plan_continuation_task.cancel()

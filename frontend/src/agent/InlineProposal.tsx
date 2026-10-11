@@ -22,6 +22,9 @@ export const INLINE_KINDS = new Set([
   // A one-leaf library-video removal jerv staged; the owner approves it here and the executor
   // hard-deletes. Renders as a plain labelled leaf ("Remove … from your library").
   "remove-library-video",
+  // A Minecraft_Dave server change (a console command or a server action): one labelled
+  // leaf naming exactly what runs on approval.
+  "minecraft",
 ]);
 
 // A leaf whose proposed text the owner may correct in place (the executor reads

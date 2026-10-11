@@ -2,6 +2,7 @@
 allowlist, and knowledge-base access (docs/reference/ASSISTANT.md "Agent selection")."""
 
 import hashlib
+from dataclasses import replace
 
 import pytest
 
@@ -947,8 +948,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "minecraft_dave": (
-            "agent-minecraft-dave-v1",
-            "46aced48866148eb0a468d829cff23fabab229172e5d79e8cfc14218780ad5cc",
+            "agent-minecraft-dave-v7",
+            "5df2dc57bc10f454a8e9d77f719a355ba7e6525ed0871d6f49d3d01940ce8267",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —
@@ -1057,3 +1058,39 @@ def test_minecraft_dave_is_closed_kb_less_and_has_its_tools_and_the_web() -> Non
     for name in OPTIONAL_MINECRAFT_TOOLS:
         assert load_tool(TOOLS_DIR / f"{name}.tool").spec.permission == "web", name
     assert "untrusted_external_data" in dave.prompt
+
+
+def test_in_game_dave_is_the_player_tier_and_only_ever_narrower() -> None:
+    """The in-game door (MINECRAFT_BEDROCK_PLAN.md "One persona, two ways in"): a player
+    gets no web, no admin, console or config tool, and no way to switch whose data it is."""
+    from jbrain.agent.agents import (
+        MINECRAFT_DAVE_INGAME_TOOLS,
+        MINECRAFT_DAVE_TOOLS,
+        narrow_for_ingame,
+    )
+
+    dave = narrow_for_ingame(AGENTS["minecraft_dave"])
+    tools = dave.tools
+    assert tools is not None and tools == MINECRAFT_DAVE_INGAME_TOOLS
+    assert tools <= MINECRAFT_DAVE_TOOLS
+    held_back = {
+        "web_search",
+        "web_fetch",
+        "mc_command",
+        "mc_server_action",
+        "mc_server_log",
+        "mc_server_config",
+        "mc_worlds",
+        "mc_backups",
+        "mc_player",
+    }
+    assert not tools & held_back
+    assert {"mc_place_save", "mc_places", "mc_set_waypoint", "mc_goals"} <= tools
+    # Every player gets the world searches (owner, 2026-10-11): ore and block finding,
+    # structures, what's at a spot — all read-only, from the world's own files or locate.
+    assert {"mc_find_block", "mc_locate", "mc_nearby", "mc_what_is_at"} <= tools
+    assert dave.prompt == AGENTS["minecraft_dave"].prompt
+    # Intersection: it can't widen a profile that was already narrower.
+    assert narrow_for_ingame(replace(dave, tools=frozenset({"mc_goals", "web_fetch"}))).tools == {
+        "mc_goals"
+    }

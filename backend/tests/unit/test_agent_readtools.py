@@ -1777,6 +1777,32 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "c22563fc12d61589cccc3f6aa033380a3aa5367c2ed97f3d7565236141a4b42b",
         ),
+        "mc_find_block.tool": (
+            "mc_find_block",
+            1,
+            "739ba8520c3a7507d632d8c5254e6d083b55a770b59d090a58fa9b2af2737bb3",
+        ),
+        # v2: `place`, a saved place's name, as an alternative to coordinates.
+        "mc_set_waypoint.tool": (
+            "mc_set_waypoint",
+            2,
+            "27daf01130fe6331a72fb228bdd55008cfb1320480410f0b724fc47f3a48a865",
+        ),
+        "mc_place_save.tool": (
+            "mc_place_save",
+            1,
+            "3915b06c70f876a77ae2a2c47236802f97188f157c32976d3ff61b5862ae8df9",
+        ),
+        "mc_places.tool": (
+            "mc_places",
+            1,
+            "396eef1ecf5e38018152df4d6c7aa395b56a66d92c87733ec8bb301dcf55773c",
+        ),
+        "mc_place_remove.tool": (
+            "mc_place_remove",
+            1,
+            "9c9c361ada06950f833ffd1248dfc2da387830bd96796118d8aab1848c1a0b9c",
+        ),
         "mc_goals.tool": (
             "mc_goals",
             1,
@@ -1784,8 +1810,48 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "mc_locate.tool": (
             "mc_locate",
+            2,
+            "3c6a3df49a97dfbc5f36501ac7e42257585b3af449934b5617d72de1a8792e4b",
+        ),
+        "mc_nearby.tool": (
+            "mc_nearby",
             1,
-            "2420d9b3089e4de74d17b028a5688c11fc3e337ed72298f77ed820c95872d553",
+            "43eab953cbc85a6cae673a36db3d82a94bc965f639ea7cae4996bb209c175e08",
+        ),
+        "mc_what_is_at.tool": (
+            "mc_what_is_at",
+            2,
+            "bde3de8951d40facacd6525a23243d968d739892b14d199977a969dd37cd4a8a",
+        ),
+        "mc_backups.tool": (
+            "mc_backups",
+            1,
+            "9aec2fdc6646675396757483a6ce227d9c57cf7be10f3dcacf1590f84f119adf",
+        ),
+        "mc_command.tool": (
+            "mc_command",
+            1,
+            "f2ab12cc7ce29afaf174c55b09de2c73ca320173e5622b74a948398aa9141745",
+        ),
+        "mc_server_action.tool": (
+            "mc_server_action",
+            1,
+            "36a65811ed32c2b4782fd7f2883bd50b20cde583109cda52e110d00458e9d570",
+        ),
+        "mc_server_config.tool": (
+            "mc_server_config",
+            1,
+            "e53bf0ce9ad1b54174c192f3475870b313ef1e9eaec0f44fb564f50947c930c8",
+        ),
+        "mc_server_log.tool": (
+            "mc_server_log",
+            1,
+            "7f60c5171feb68db75053a8f5b69b4dac8aaba13217b440d6c530a3cd48c0c33",
+        ),
+        "mc_worlds.tool": (
+            "mc_worlds",
+            1,
+            "0e6a2cb56231f5f9efccc0bb507fad175ded0e73d4b36d7c32456c14efcbe420",
         ),
         "mc_log.tool": (
             "mc_log",

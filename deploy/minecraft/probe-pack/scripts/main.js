@@ -1,10 +1,11 @@
 // M0 item 5 probe (docs/plans/MINECRAFT_BEDROCK_PLAN.md). Every line it logs starts
 // with "[jbrain-probe]" so the wrapper's console can be grepped for the answers:
 // does a stable-API pack load with no experiments, does console output reach the
-// server console, does `scriptevent` arrive, can a custom command be registered, is
-// there a stable chat event, and is a dead player's inventory still readable.
-import { system, world, CommandPermissionLevel, CustomCommandParamType,
-  CustomCommandStatus } from "@minecraft/server";
+// server console, does `scriptevent` arrive, is there a stable chat event, and is a
+// dead player's inventory still readable. The `/jb:dave` command it once probed is now
+// the jbrain pack's (the in-game door, §M5): two packs registering one name would
+// collide.
+import { system, world } from "@minecraft/server";
 
 // Home-test kit (docs/runbooks/MINECRAFT_HOME_TEST.md): the custom items and recipe from
 // this pack, with icons from the server-pushed probe resource pack. Each finding is a
@@ -16,27 +17,49 @@ const say = (msg) => console.log(`[jbrain-probe] ${msg}`);
 say("loaded");
 say(`chatSend after-event available: ${Boolean(world.afterEvents.chatSend)}`);
 
-system.beforeEvents.startup.subscribe((ev) => {
+// Each player's tricorder destination, set by Minecraft_Dave through the console
+// (`scriptevent jb:waypoint {json}`). Kept as a world property keyed by gamertag, so it is
+// saved with the world and can be set while the player is offline.
+const DIMS = { overworld: "minecraft:overworld", nether: "minecraft:nether", the_end: "minecraft:the_end" };
+const waypointKey = (name) => `jb:waypoint:${name.toLowerCase()}`;
+const waypointOf = (name) => {
+  const raw = world.getDynamicProperty(waypointKey(name));
+  if (typeof raw !== "string") return undefined;
   try {
-    ev.customCommandRegistry.registerCommand(
-      {
-        name: "jb:dave",
-        description: "Ask Dave (probe)",
-        permissionLevel: CommandPermissionLevel.Any,
-        optionalParameters: [{ name: "question", type: CustomCommandParamType.String }],
-      },
-      (origin, question) => {
-        say(`command from ${origin.sourceEntity?.name ?? "?"}: ${question ?? ""}`);
-        return { status: CustomCommandStatus.Success, message: "Dave heard you (probe)" };
-      },
-    );
-    say("custom command jb:dave registered");
-  } catch (e) {
-    say(`custom command registration failed: ${e}`);
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
   }
-});
+};
+
+const setWaypoint = (message) => {
+  const wp = JSON.parse(message);
+  if (typeof wp.player !== "string" || !wp.player) throw new Error("no player");
+  if (wp.clear) {
+    world.setDynamicProperty(waypointKey(wp.player), undefined);
+    say(`waypoint cleared for ${wp.player}`);
+    return;
+  }
+  if (!Number.isFinite(wp.x) || !Number.isFinite(wp.z) || !(wp.dim in DIMS)) {
+    throw new Error("x, z and dim are required");
+  }
+  const label = String(wp.label ?? "Waypoint").slice(0, 40);
+  world.setDynamicProperty(
+    waypointKey(wp.player),
+    JSON.stringify({ x: wp.x, y: Number.isFinite(wp.y) ? wp.y : null, z: wp.z, dim: wp.dim, label }),
+  );
+  say(`waypoint set for ${wp.player}: ${label} at ${wp.x} ${wp.z} (${wp.dim})`);
+};
 
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
+  if (ev.id === "jb:waypoint") {
+    try {
+      setWaypoint(ev.message);
+    } catch (e) {
+      say(`waypoint refused: ${e}`);
+    }
+    return;
+  }
   if (ev.id.startsWith("jb:")) say(`scriptevent ${ev.id} ${ev.message}`);
 });
 
@@ -66,8 +89,8 @@ const once = (key, msg) => {
   say(msg);
 };
 
-// The arrow the tricorder (M9) will draw, aimed at world spawn for the test: the bearing to
-// the target minus where the player faces, in eight steps.
+// The tricorder's arrow: the bearing to the player's waypoint (world spawn when Dave hasn't
+// set one) minus where the player faces, in eight steps.
 const ARROWS = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"];
 const arrowTo = (player, tx, tz) => {
   const { x, z } = player.location;
@@ -93,8 +116,19 @@ system.runInterval(() => {
     const held = inv.getItem(player.selectedSlotIndex);
     if (held?.typeId === "jbrain:tricorder") {
       once(`hold:${player.name}`, `tricorder held: ${player.name} (actionbar arrow on)`);
-      const { arrow, blocks } = arrowTo(player, 0, 0);
-      player.onScreenDisplay.setActionBar(`${arrow} World spawn · ${blocks} blocks`);
+      const wp = waypointOf(player.name);
+      if (!wp) {
+        const { arrow, blocks } = arrowTo(player, 0, 0);
+        player.onScreenDisplay.setActionBar(`${arrow} World spawn · ${blocks} blocks`);
+      } else if (player.dimension.id !== DIMS[wp.dim]) {
+        const where = { overworld: "the Overworld", nether: "the Nether", the_end: "the End" }[wp.dim];
+        player.onScreenDisplay.setActionBar(`${wp.label} is in ${where}`);
+      } else {
+        const { arrow, blocks } = arrowTo(player, wp.x, wp.z);
+        const depth = wp.y === null ? "" : ` · y ${wp.y}`;
+        const here = blocks < 3 ? "You're here" : `${blocks} blocks`;
+        player.onScreenDisplay.setActionBar(`${arrow} ${wp.label} · ${here}${depth}`);
+      }
     }
   }
 }, 5);

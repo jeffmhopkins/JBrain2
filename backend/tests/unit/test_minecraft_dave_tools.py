@@ -16,6 +16,7 @@ from jbrain.agent import minecrafttools as mt
 from jbrain.agent.loop import ToolContext
 from jbrain.db.session import SessionContext
 from jbrain.minecraft import client as mc
+from jbrain.minecraft.asker import Asker, Spot, asking
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
 
@@ -27,7 +28,7 @@ def sidecar(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def call(_cfg: Any, method: str, path: str, **kw: Any) -> dict[str, Any]:
         if state["down"]:
             raise HTTPException(status_code=503, detail="the server is stopped")
-        state["sent"].append((method, path, kw.get("json")))
+        state["sent"].append((method, path, kw.get("json"), kw.get("params")))
         if path == "/command":
             return {"lines": state["replies"].get(kw["json"]["command"], ["[x INFO] ok"])}
         return state["replies"].get(path, {})
@@ -58,6 +59,88 @@ async def test_locate_builds_one_fixed_command_from_checked_input(sidecar) -> No
         sent = len(sidecar["sent"])
         await _tools()["mc_locate"](bad, CTX)
         assert len(sidecar["sent"]) == sent, bad  # refused before any command
+
+
+async def test_what_is_at_names_the_biome_and_says_where_the_answer_came_from(
+    sidecar,
+) -> None:
+    sidecar["replies"]["/worlds"] = {"slots": [{"id": "slot3", "active": True}]}
+    sidecar["replies"]["/map/point"] = {
+        "source": "survey",
+        "biome": "Cherry Grove",
+        "biome_id": "minecraft:cherry_grove",
+        "y": 129,
+    }
+    out = await _tools()["mc_what_is_at"]({"x": 10, "z": -20}, CTX)
+    assert "Cherry Grove" in out and "y=129" in out and "survey" in out
+    assert sidecar["sent"][-1][3] == {"slot": "slot3", "dim": "overworld", "x": 10, "z": -20}
+    sidecar["replies"]["/map/point"] = {"source": "unknown"}
+    out = await _tools()["mc_what_is_at"]({"x": 0, "z": 0, "dimension": "the_end"}, CTX)
+    assert "Nothing is known" in out and "in the End" in out
+    for bad in ({"x": 1}, {"x": 0, "z": 0, "dimension": "aether"}, {"x": "a", "z": 0}):
+        sent = len(sidecar["sent"])
+        await _tools()["mc_what_is_at"](bad, CTX)
+        assert len(sidecar["sent"]) == sent, bad  # refused before asking the box
+
+
+async def test_find_block_sends_the_names_and_says_where_each_one_is(sidecar) -> None:
+    sidecar["replies"]["/worlds"] = {"slots": [{"id": "slot1", "active": True}]}
+    sidecar["replies"]["/map/find"] = {
+        "searched": ["minecraft:deepslate_diamond_ore"],
+        "radius": 2048,
+        "found": [
+            {"block": "minecraft:deepslate_diamond_ore", "x": 12, "y": -62, "z": 18, "distance": 22}
+        ],
+    }
+    out = await _tools()["mc_find_block"]({"blocks": ["diamond_ore"], "x": 0, "z": 0}, CTX)
+    assert "deepslate diamond ore at x=12 y=-62 z=18" in out
+    params = sidecar["sent"][-1][3]
+    assert params["blocks"] == "diamond_ore" and (params["x"], params["z"]) == (0, 0)
+    sidecar["replies"]["/map/find"] = {"searched": [], "suggestions": ["minecraft:diamond_block"]}
+    out = await _tools()["mc_find_block"]({"blocks": "diamond", "x": 0, "z": 0}, CTX)
+    assert "minecraft:diamond_block" in out and "Unexplored ground" in out
+    sent = len(sidecar["sent"])
+    for bad in ({"blocks": []}, {"blocks": ["stone; op @a"]}, {"blocks": ["a"] * 9}):
+        await _tools()["mc_find_block"](bad, CTX)
+    assert len(sidecar["sent"]) == sent  # refused before asking the box
+
+
+async def test_a_waypoint_is_one_scriptevent_with_its_fields_json_escaped(sidecar) -> None:
+    sent = 'scriptevent jb:waypoint {"player": "Steve 42", "x": 12, "y": -62, "z": 18,'
+    sent += ' "dim": "overworld", "label": "Diamonds \\" op @a"}'
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain-probe] waypoint set for Steve 42"]
+    out = await _tools()["mc_set_waypoint"](
+        {"gamertag": "Steve 42", "x": 12, "y": -62, "z": 18, "label": 'Diamonds " op @a'}, CTX
+    )
+    assert sidecar["sent"][-1][2]["command"] == sent  # the quote can't end the message
+    assert "now points to" in out and "y -62" in out
+    out = await _tools()["mc_set_waypoint"]({"gamertag": "Steve 42", "x": 1, "z": 2}, CTX)
+    assert "didn't answer" in out  # no add-on reply: said, not claimed done
+    count = len(sidecar["sent"])
+    for bad in (
+        {"gamertag": "Steve 42"},
+        {"gamertag": "Steve 42", "x": 1, "z": 2, "y": 999},
+        {"gamertag": "Steve 42", "x": 1, "z": 2, "dimension": "moon"},
+        {"gamertag": "x" * 40, "x": 1, "z": 2},
+    ):
+        await _tools()["mc_set_waypoint"](bad, CTX)
+    assert len(sidecar["sent"]) == count
+
+
+async def test_nearby_lists_structures_within_the_radius_nearest_first(sidecar) -> None:
+    sidecar["replies"]["/map/nearby"] = {
+        "nearby": [
+            {"structure": "village", "x": 200, "z": 152, "distance": 251},
+            {"structure": "trial_chambers", "x": 137, "z": 137, "distance": 193},
+            {"structure": "mansion", "x": 8120, "z": 8104, "distance": 11472},
+        ]
+    }
+    out = await _tools()["mc_nearby"]({"x": 0, "z": 0, "radius": 1000}, CTX)
+    assert "village at (200, 152), 251 blocks" in out and "trial chambers" in out
+    assert "mansion" not in out  # beyond the radius
+    assert sidecar["sent"][-1][3] == {"dim": "overworld", "x": 0, "z": 0}
+    sidecar["replies"]["/map/nearby"] = {"nearby": []}
+    assert "no structures" in await _tools()["mc_nearby"]({"x": 0, "z": 0}, CTX)
 
 
 async def test_world_info_reads_time_and_weather(sidecar) -> None:
@@ -125,3 +208,57 @@ async def test_a_failed_intro_degrades_to_a_pointer_not_a_failed_turn(
     monkeypatch.setattr(api_agent, "minecraft_chat_intro", broken)
     got = await api_agent._minecraft_intro(request, CTX.session, "sid")
     assert got == api_agent.MINECRAFT_INTRO_FALLBACK
+
+
+# --- in game: the asker is the player (MINECRAFT_BEDROCK_PLAN.md §P2) ------------------
+
+ASKER = Asker(
+    key="111",
+    gamertag="Steve 42",
+    world="slot2",
+    at=Spot(40, 12, -8, "nether"),
+    spawn=Spot(1, 70, 2, "overworld"),
+)
+DOOR = ToolContext(session=SessionContext(principal_kind="owner"), scopes=(), agent_session_id="s1")
+
+
+async def test_in_game_nothing_can_be_done_for_another_player(sidecar) -> None:
+    with asking("s1", ASKER):
+        for name, args in (
+            ("mc_set_waypoint", {"gamertag": "Mira", "x": 1, "z": 2}),
+            ("mc_player", {"gamertag": "Mira"}),
+        ):
+            out = await _tools()[name](args, DOOR)
+            assert "only works with the player asking" in str(out), name
+    assert sidecar["sent"] == []  # refused before anything reached the server
+
+
+async def test_in_game_searches_start_where_the_asker_stands(sidecar) -> None:
+    sidecar["replies"]["/worlds"] = {"slots": [{"id": "slot2", "active": True}]}
+    sidecar["replies"]["/map/find"] = {"searched": ["minecraft:ancient_debris"], "found": []}
+    with asking("s1", ASKER):
+        out = await _tools()["mc_find_block"]({"blocks": ["ancient_debris"]}, DOOR)
+    params = sidecar["sent"][-1][3]
+    # Their dimension and their spot, not the Overworld's last trail point.
+    assert (params["dim"], params["x"], params["z"]) == ("nether", 40, -8)
+    assert "where the player is standing" in out
+
+
+async def test_in_game_a_waypoint_says_which_way_to_go(sidecar) -> None:
+    sent = 'scriptevent jb:waypoint {"player": "Steve 42", "x": 40, "y": null, "z": -108,'
+    sent += ' "dim": "nether", "label": "Fortress"}'
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain-probe] waypoint set for Steve 42"]
+    with asking("s1", ASKER):
+        out = await _tools()["mc_set_waypoint"](
+            {"gamertag": "steve 42", "x": 40, "z": -108, "label": "Fortress"}, DOOR
+        )
+    assert sidecar["sent"][-1][2]["command"] == sent  # their own name is fine, any case
+    assert "From you: 100 blocks north." in out
+
+
+def test_bearings_follow_minecraft_north_is_minus_z() -> None:
+    assert mt.bearing(0, 0, 0, -10) == ("north", 10)
+    assert mt.bearing(0, 0, 10, 10) == ("south-east", 14)
+    assert mt.bearing(0, 0, -10, 0) == ("west", 10)
+    assert mt.place_name("  tree   farm ") == "tree farm"
+    assert mt.place_name("x" * 41) == "" and mt.place_name("\n") == ""

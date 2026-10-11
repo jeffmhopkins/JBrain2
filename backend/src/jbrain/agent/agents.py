@@ -402,6 +402,53 @@ MINECRAFT_DAVE_TOOLS = WEB_TOOLS | frozenset(
         "mc_play_history",
         "mc_world_info",
         "mc_locate",
+        "mc_what_is_at",
+        "mc_nearby",
+        "mc_find_block",
+        "mc_set_waypoint",
+        "mc_place_save",
+        "mc_places",
+        "mc_place_remove",
+        "mc_command",
+        "mc_server_action",
+        "mc_server_log",
+        "mc_worlds",
+        "mc_backups",
+        "mc_server_config",
+        "mc_goals",
+        "mc_goal_create",
+        "mc_goal_update",
+        "mc_log",
+        "mc_log_read",
+        "mc_memory_read",
+        "mc_memory_add",
+        "mc_memory_replace",
+        "mc_memory_remove",
+    }
+)
+
+# What Minecraft_Dave holds when a PLAYER asks in game (`/jb:dave`, MINECRAFT_BEDROCK_PLAN.md
+# "One persona, two ways in": the player tier). Named, not subtracted, so a tool added to
+# the owner's set later stays out of the game until someone decides it belongs here. Held
+# back: the web (any player could have the box fetch pages, with children playing), every
+# admin tool and the server's raw log and config, and `mc_player` — in game the session's
+# player is whoever the server says typed the command, never a name anyone passes.
+MINECRAFT_DAVE_INGAME_TOOLS = frozenset(
+    {
+        *MATH_TOOLS,
+        "current_time",
+        "mc_server_status",
+        "mc_players",
+        "mc_play_history",
+        "mc_world_info",
+        "mc_locate",
+        "mc_what_is_at",
+        "mc_nearby",
+        "mc_find_block",
+        "mc_set_waypoint",
+        "mc_place_save",
+        "mc_places",
+        "mc_place_remove",
         "mc_goals",
         "mc_goal_create",
         "mc_goal_update",
@@ -1181,6 +1228,14 @@ def narrow_for_third_party_note(profile: AgentProfile) -> AgentProfile:
         # reachable the safe reading is the third-party ceiling, not "narrow nothing".
         return replace(profile, tools=NOTE_INGEST_THIRD_PARTY_TOOLS)
     return replace(profile, tools=profile.tools & NOTE_INGEST_THIRD_PARTY_TOOLS)
+
+
+def narrow_for_ingame(profile: AgentProfile) -> AgentProfile:
+    """Minecraft_Dave as a player reaches it in game: the owner's allowlist INTERSECTED
+    with the player tier, so it can only ever shrink. The tool handlers are the second
+    lock — during a door turn they refuse any other player's name (`minecraft/asker.py`)."""
+    tools = profile.tools if profile.tools is not None else MINECRAFT_DAVE_INGAME_TOOLS
+    return replace(profile, tools=tools & MINECRAFT_DAVE_INGAME_TOOLS)
 
 
 def narrow_for_emr(profile: AgentProfile) -> AgentProfile:

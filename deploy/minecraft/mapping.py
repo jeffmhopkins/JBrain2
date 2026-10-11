@@ -7,8 +7,8 @@ is everything a hillshaded biome map needs, and is read straight off the world's
 
 Ground nobody has been to is **predicted from the seed** (`Predictor`, the owner's
 "satellite from orbit"), then the real chunks are drawn over it wherever they exist.
-Only the Overworld is predicted: Bedrock's Nether did not match the prediction when
-checked, so ungenerated Nether and End ground stays transparent.
+All three dimensions are predicted; the End's void is predicted as nothing, so it stays
+transparent like ground nobody has generated.
 
 A tile is 256×256 pixels. At zoom 0 it is 256×256 blocks, one pixel per block; each zoom
 out doubles the blocks per pixel, down to one pixel per chunk. Zoomed-out pixels each
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import struct
 import subprocess
 import time
@@ -78,6 +79,60 @@ BIOME_COLORS: dict[int, tuple[int, int, int]] = {
     191: (44, 204, 142), 192: (255, 145, 200), 193: (110, 120, 110),
 }
 _UNKNOWN = (128, 128, 128)
+# Bedrock biome ids → (the id `locate biome` takes, the name a player knows it by). The
+# ids are Bedrock's own, several still the pre-1.18 names (`extreme_hills` is Windswept
+# Hills, `hell` the Nether Wastes).
+BIOME_NAMES: dict[int, tuple[str, str]] = {
+    0: ("ocean", "Ocean"), 1: ("plains", "Plains"), 2: ("desert", "Desert"),
+    3: ("extreme_hills", "Windswept Hills"), 4: ("forest", "Forest"), 5: ("taiga", "Taiga"),
+    6: ("swampland", "Swamp"), 7: ("river", "River"), 8: ("hell", "Nether Wastes"),
+    9: ("the_end", "The End"), 10: ("legacy_frozen_ocean", "Frozen Ocean"),
+    11: ("frozen_river", "Frozen River"), 12: ("ice_plains", "Snowy Plains"),
+    13: ("ice_mountains", "Snowy Mountains"), 14: ("mushroom_island", "Mushroom Fields"),
+    15: ("mushroom_island_shore", "Mushroom Fields Shore"), 16: ("beach", "Beach"),
+    17: ("desert_hills", "Desert Hills"), 18: ("forest_hills", "Wooded Hills"),
+    19: ("taiga_hills", "Taiga Hills"), 20: ("extreme_hills_edge", "Windswept Hills Edge"),
+    21: ("jungle", "Jungle"), 22: ("jungle_hills", "Jungle Hills"),
+    23: ("jungle_edge", "Sparse Jungle"), 24: ("deep_ocean", "Deep Ocean"),
+    25: ("stone_beach", "Stony Shore"), 26: ("cold_beach", "Snowy Beach"),
+    27: ("birch_forest", "Birch Forest"), 28: ("birch_forest_hills", "Birch Forest Hills"),
+    29: ("roofed_forest", "Dark Forest"), 30: ("cold_taiga", "Snowy Taiga"),
+    31: ("cold_taiga_hills", "Snowy Taiga Hills"), 32: ("mega_taiga", "Old Growth Pine Taiga"),
+    33: ("mega_taiga_hills", "Old Growth Pine Taiga Hills"),
+    34: ("extreme_hills_plus_trees", "Windswept Forest"), 35: ("savanna", "Savanna"),
+    36: ("savanna_plateau", "Savanna Plateau"), 37: ("mesa", "Badlands"),
+    38: ("mesa_plateau_stone", "Wooded Badlands"), 39: ("mesa_plateau", "Badlands Plateau"),
+    40: ("warm_ocean", "Warm Ocean"), 41: ("deep_warm_ocean", "Deep Warm Ocean"),
+    42: ("lukewarm_ocean", "Lukewarm Ocean"), 43: ("deep_lukewarm_ocean", "Deep Lukewarm Ocean"),
+    44: ("cold_ocean", "Cold Ocean"), 45: ("deep_cold_ocean", "Deep Cold Ocean"),
+    46: ("frozen_ocean", "Frozen Ocean"), 47: ("deep_frozen_ocean", "Deep Frozen Ocean"),
+    48: ("bamboo_jungle", "Bamboo Jungle"), 49: ("bamboo_jungle_hills", "Bamboo Jungle Hills"),
+    129: ("sunflower_plains", "Sunflower Plains"), 130: ("desert_mutated", "Desert Lakes"),
+    131: ("extreme_hills_mutated", "Windswept Gravelly Hills"),
+    132: ("flower_forest", "Flower Forest"), 133: ("taiga_mutated", "Taiga Mountains"),
+    134: ("swampland_mutated", "Swamp Hills"), 140: ("ice_plains_spikes", "Ice Spikes"),
+    149: ("jungle_mutated", "Modified Jungle"), 151: ("jungle_edge_mutated", "Modified Jungle Edge"),
+    155: ("birch_forest_mutated", "Old Growth Birch Forest"),
+    156: ("birch_forest_hills_mutated", "Tall Birch Hills"),
+    157: ("roofed_forest_mutated", "Dark Forest Hills"),
+    158: ("cold_taiga_mutated", "Snowy Taiga Mountains"),
+    160: ("redwood_taiga_mutated", "Old Growth Spruce Taiga"),
+    161: ("redwood_taiga_hills_mutated", "Giant Spruce Taiga Hills"),
+    162: ("extreme_hills_plus_trees_mutated", "Modified Windswept Forest"),
+    163: ("savanna_mutated", "Windswept Savanna"),
+    164: ("savanna_plateau_mutated", "Shattered Savanna Plateau"),
+    165: ("mesa_bryce", "Eroded Badlands"),
+    166: ("mesa_plateau_stone_mutated", "Modified Wooded Badlands Plateau"),
+    167: ("mesa_plateau_mutated", "Modified Badlands Plateau"),
+    178: ("soulsand_valley", "Soul Sand Valley"), 179: ("crimson_forest", "Crimson Forest"),
+    180: ("warped_forest", "Warped Forest"), 181: ("basalt_deltas", "Basalt Deltas"),
+    182: ("jagged_peaks", "Jagged Peaks"), 183: ("frozen_peaks", "Frozen Peaks"),
+    184: ("snowy_slopes", "Snowy Slopes"), 185: ("grove", "Grove"), 186: ("meadow", "Meadow"),
+    187: ("lush_caves", "Lush Caves"), 188: ("dripstone_caves", "Dripstone Caves"),
+    189: ("stony_peaks", "Stony Peaks"), 190: ("deep_dark", "Deep Dark"),
+    191: ("mangrove_swamp", "Mangrove Swamp"), 192: ("cherry_grove", "Cherry Grove"),
+    193: ("pale_garden", "Pale Garden"),
+}
 WATER_BIOMES = frozenset({0, 7, 10, 11, 24, 40, 41, 42, 43, 44, 45, 46, 47})
 
 
@@ -267,6 +322,18 @@ class WorldIndex:
                     continue  # one corrupt chunk is a hole in the map
         return out
 
+    def point(self, dim: int, x: int, z: int) -> tuple[int, int] | None:
+        """(height above the floor, biome) of one explored column, or None if unexplored."""
+        cell = (dim, x // 16, z // 16)
+        value = self._raw.get(cell)
+        if value is None:
+            return None
+        sample = sample_data2d if cell in self._legacy else surface_sample
+        try:
+            return sample(value, x % 16, z % 16)
+        except (struct.error, IndexError):
+            return None
+
     def extent(self, dim: int) -> dict[str, int] | None:
         """The block rectangle the world has generated in a dimension, or None."""
         cells = [(cx, cz) for (d, cx, cz) in self._raw if d == dim]
@@ -360,11 +427,13 @@ JAVA_TO_BEDROCK = {
     183: 190, 184: 191, 185: 192, 186: 193,
 }
 PREDICT_BIN = Path(os.environ.get("MC_PREDICT_BIN", "/app/jbrain-predict"))
+# The height jbrain-predict gives a column with no ground at all: the End's void.
+PREDICT_VOID = -1
 _PREDICT_TIMEOUT_S = 30
 
 
 class Predictor:
-    """The Overworld's surface from its seed alone, by the `jbrain-predict` binary
+    """A dimension's surface from the world's seed alone, by the `jbrain-predict` binary
     (deploy/minecraft/predict/). A seed always predicts the same ground, so a tile's
     prediction is kept (compressed) across the re-reads that drop the rendered tiles."""
 
@@ -373,13 +442,14 @@ class Predictor:
         self._cache: OrderedDict[tuple, bytes] = OrderedDict()
 
     def available(self, dim: int) -> bool:
-        return dim == 0 and self.binary.is_file()
+        return dim in _FLOOR and self.binary.is_file()
 
     def grid(
         self, seed: str, dim: int, x0: int, z0: int, n: int, step: int
     ) -> dict[tuple[int, int], tuple[int, int]]:
         """(height, Bedrock biome) every `step` blocks over an n×n grid from (x0, z0),
-        keyed by block position; {} when nothing can be predicted there."""
+        keyed by block position; {} when nothing can be predicted there. The End's void
+        has no entry, so it draws as nothing."""
         if not self.available(dim):
             return {}
         key = (seed, dim, x0, z0, n, step)
@@ -403,13 +473,15 @@ class Predictor:
         else:
             self._cache.move_to_end(key)
         values: tuple[int, ...] = struct.unpack(f"<{n * n * 2}h", zlib.decompress(packed))
+        # Only the Overworld speaks Java's ids; the Nether's and End's are Bedrock's
+        # already, and Java's numbers for 178-181 are other biomes entirely.
+        ids = JAVA_TO_BEDROCK if dim == 0 else {}
         grid: dict[tuple[int, int], tuple[int, int]] = {}
         for k in range(n * n):
-            biome = values[2 * k + 1]
-            grid[(x0 + (k % n) * step, z0 + (k // n) * step)] = (
-                values[2 * k],
-                JAVA_TO_BEDROCK.get(biome, biome),
-            )
+            height, biome = values[2 * k], values[2 * k + 1]
+            if height == PREDICT_VOID:
+                continue
+            grid[(x0 + (k % n) * step, z0 + (k // n) * step)] = (height, ids.get(biome, biome))
         return grid
 
 
@@ -468,6 +540,30 @@ def tile(
         return png(real)
     survey = _as_survey(render_sampled(predicted, cx0 * 16, cz0 * 16, TILE, step))
     return png(_over(survey, real))
+
+
+# What `locate structure` finds, per dimension, as Bedrock names them (each checked on a
+# 1.26 server). `temple` is any desert or jungle temple, witch hut or igloo; `ruins` is
+# ocean ruins.
+STRUCTURES: dict[int, tuple[str, ...]] = {
+    0: (
+        "village", "mansion", "monument", "pillager_outpost", "ancient_city", "trail_ruins",
+        "trial_chambers", "stronghold", "temple", "ruins", "shipwreck", "buried_treasure",
+        "ruined_portal", "mineshaft",
+    ),
+    1: ("fortress", "bastion_remnant", "ruined_portal"),
+    2: ("end_city",),
+}
+DIMENSION_NAMES = {v: k for k, v in DIMENSIONS.items()}
+_LOCATED = re.compile(r"nearest minecraft:(\w+) is at block (-?\d+), \(y\?\), (-?\d+)")
+
+
+def parse_located(lines: list[str]) -> tuple[str, int, int] | None:
+    """`locate structure`'s answer as (structure, x, z); None when it found none."""
+    for line in lines:
+        if m := _LOCATED.search(line):
+            return m.group(1), int(m.group(2)), int(m.group(3))
+    return None
 
 
 def floor_of(dim: int) -> int:
