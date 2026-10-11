@@ -82,6 +82,28 @@ async def test_what_is_at_names_the_biome_and_says_where_the_answer_came_from(
         assert len(sidecar["sent"]) == sent, bad  # refused before asking the box
 
 
+async def test_find_block_sends_the_names_and_says_where_each_one_is(sidecar) -> None:
+    sidecar["replies"]["/worlds"] = {"slots": [{"id": "slot1", "active": True}]}
+    sidecar["replies"]["/map/find"] = {
+        "searched": ["minecraft:deepslate_diamond_ore"],
+        "radius": 2048,
+        "found": [
+            {"block": "minecraft:deepslate_diamond_ore", "x": 12, "y": -62, "z": 18, "distance": 22}
+        ],
+    }
+    out = await _tools()["mc_find_block"]({"blocks": ["diamond_ore"], "x": 0, "z": 0}, CTX)
+    assert "deepslate diamond ore at x=12 y=-62 z=18" in out
+    params = sidecar["sent"][-1][3]
+    assert params["blocks"] == "diamond_ore" and (params["x"], params["z"]) == (0, 0)
+    sidecar["replies"]["/map/find"] = {"searched": [], "suggestions": ["minecraft:diamond_block"]}
+    out = await _tools()["mc_find_block"]({"blocks": "diamond", "x": 0, "z": 0}, CTX)
+    assert "minecraft:diamond_block" in out and "Unexplored ground" in out
+    sent = len(sidecar["sent"])
+    for bad in ({"blocks": []}, {"blocks": ["stone; op @a"]}, {"blocks": ["a"] * 9}):
+        await _tools()["mc_find_block"](bad, CTX)
+    assert len(sidecar["sent"]) == sent  # refused before asking the box
+
+
 async def test_nearby_lists_structures_within_the_radius_nearest_first(sidecar) -> None:
     sidecar["replies"]["/map/nearby"] = {
         "nearby": [

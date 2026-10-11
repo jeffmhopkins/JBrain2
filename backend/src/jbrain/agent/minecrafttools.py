@@ -554,6 +554,68 @@ def build_minecraft_handlers(
             result_brief=str(got["biome"]),
         )
 
+    async def mc_find_block(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        dim = str(arguments.get("dimension") or "overworld")
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        raw = arguments.get("blocks")
+        names = [str(b).strip().lower() for b in (raw if isinstance(raw, list) else [raw]) if b]
+        if not names or len(names) > 8 or not all(_GAME_ID.fullmatch(n) for n in names):
+            return 'blocks is a list of Bedrock block ids, e.g. ["diamond_ore"].'
+        limit = _int(arguments.get("limit"), 5, 1, 20)
+        radius = _int(arguments.get("radius"), 2048, 16, 16384)
+        if limit is None or radius is None:
+            return "limit and radius must be numbers."
+        at = await where(arguments, ctx)
+        if isinstance(at, str):
+            return at
+        xi, zi, origin = at
+        worlds = await sidecar("GET", "/worlds")
+        if isinstance(worlds, str):
+            return worlds
+        slot = next((w["id"] for w in worlds.get("slots", []) if w.get("active")), "slot1")
+        got = await sidecar(
+            "GET",
+            "/map/find",
+            params={
+                "slot": slot,
+                "dim": dim,
+                "x": xi,
+                "z": zi,
+                "blocks": ",".join(names),
+                "limit": limit,
+                "radius": radius,
+            },
+        )
+        if isinstance(got, str):
+            return got
+        head = f"From ({xi}, {zi}) in the {_DIMENSION_NAMES[dim]}, {origin}"
+        if not got.get("searched"):
+            hint = got.get("suggestions") or []
+            return ToolOutput(
+                f"{head}: no {', '.join(names)} anywhere in explored ground."
+                + (f" Block ids that are there: {', '.join(hint)}." if hint else "")
+                + " Unexplored ground can't be searched — blocks don't exist until the game"
+                " generates the chunk.",
+                result_brief="none explored",
+            )
+        found = got.get("found") or []
+        if not found:
+            return ToolOutput(
+                f"{head}: none within {got.get('radius')} blocks in the"
+                f" {got.get('explored_chunks_in_range', 0)} explored chunks there.",
+                result_brief="none in range",
+            )
+        lines = [
+            f"- {h['block'].removeprefix('minecraft:').replace('_', ' ')} at x={h['x']}"
+            f" y={h['y']} z={h['z']}, {h['distance']} blocks away (across, not counting depth)"
+            for h in found
+        ]
+        return ToolOutput(
+            f"{head}, nearest first, explored ground only:\n" + "\n".join(lines),
+            result_brief=f"{len(found)} found",
+        )
+
     async def mc_nearby(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         dim = str(arguments.get("dimension") or "overworld")
         if dim not in _DIMENSIONS:
@@ -836,6 +898,7 @@ def build_minecraft_handlers(
         "mc_locate": mc_locate,
         "mc_what_is_at": mc_what_is_at,
         "mc_nearby": mc_nearby,
+        "mc_find_block": mc_find_block,
         "mc_goals": mc_goals,
         "mc_goal_create": mc_goal_create,
         "mc_goal_update": mc_goal_update,

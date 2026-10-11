@@ -1553,6 +1553,18 @@ screen's "Maps" section (M8) reuses the same component.
     height at a spot (explored ground, else the satellite's survey), and one for the
     nearest structure of every kind around a spot (the server's own `locate`, swept
     over Bedrock's structure ids checked on 1.26).
+  - `mc_find_block` (owner, 2026-10-11: "can you point me to the nearest diamond"): the
+    nearest blocks of any kind in **explored** ground, with exact x, y, z
+    (`deploy/minecraft/blocks.py`). It reads each section's palette from its
+    `SubChunkPrefix` record (tag 47; version 9, little-endian NBT palette, 4096 packed
+    x,z,y indices), keeps only which block names each section holds — names, not
+    blocks, so a big world's index stays small — and decodes positions only in the
+    sections that hold a wanted block, nearest chunk first, reading just those records
+    through each table's index (`leveldb.read_keys`). An ore name brings its deepslate
+    twin. Checked on a real 1.26 world: the game's own `testforblock` confirmed every
+    find it was asked about (two diamond ores, a spawner, a chest), and the block above
+    a find reads as what it really is. Unexplored ground can't be searched — ore
+    placement doesn't exist until the game generates the chunk.
   - **The whole server** (owner, 2026-10-11: "expose ALL raw server tools to Dave, so
     he has everything needed"; `agent/minecraftadmin.py`). Reads run at once:
     `mc_server_log`, `mc_worlds` (slots, or one slot's rules), `mc_backups`,

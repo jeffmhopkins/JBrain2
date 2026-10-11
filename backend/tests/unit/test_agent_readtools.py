@@ -1777,6 +1777,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "c22563fc12d61589cccc3f6aa033380a3aa5367c2ed97f3d7565236141a4b42b",
         ),
+        "mc_find_block.tool": (
+            "mc_find_block",
+            1,
+            "739ba8520c3a7507d632d8c5254e6d083b55a770b59d090a58fa9b2af2737bb3",
+        ),
         "mc_goals.tool": (
             "mc_goals",
             1,

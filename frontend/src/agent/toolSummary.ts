@@ -211,6 +211,7 @@ const STEP_LABELS: Record<string, string> = {
   mc_locate: "Searched for the nearest",
   mc_what_is_at: "Looked at a spot",
   mc_nearby: "Checked what's nearby",
+  mc_find_block: "Searched for blocks",
   mc_command: "Ran a server command",
   mc_server_action: "Asked to change the server",
   mc_server_log: "Read the server log",
@@ -358,6 +359,7 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   // A spot is its coordinates; "around me" (none given) shows nothing.
   mc_what_is_at: ["x", "z"],
   mc_nearby: ["x", "z"],
+  mc_find_block: ["blocks"],
   mc_command: ["command"],
   mc_server_action: ["action"],
   mc_worlds: ["slot"],

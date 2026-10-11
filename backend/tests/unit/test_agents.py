@@ -947,8 +947,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "minecraft_dave": (
-            "agent-minecraft-dave-v4",
-            "2286e87611f6b5d25c989c5ecc87e8026c2d1b31163133ab77a4869626f606aa",
+            "agent-minecraft-dave-v5",
+            "9044ff7bed1c4067ac17a3484785be1a39b79c1161f51fbf4c0857c2c6a156b9",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

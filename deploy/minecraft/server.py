@@ -32,6 +32,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
+import blocks
 import bds
 import install
 import mapping
@@ -140,6 +141,7 @@ class Rig:
         # both dropped when that world's database files change.
         self._map_lock = threading.Lock()
         self._map_index: dict[str, mapping.WorldIndex] = {}
+        self._block_index: dict[str, blocks.BlockIndex] = {}
         self._map_seed: dict[str, str | None] = {}
         self._predictor = mapping.Predictor()
         self._tiles: dict[tuple, bytes] = {}
@@ -1133,6 +1135,56 @@ class Rig:
             "y": height + mapping.floor_of(d) - 1,
         }
 
+    def map_find(
+        self, slot_id: str, dim: str, x: int, z: int, names: list[str], limit: int, radius: int
+    ) -> dict[str, Any]:
+        """The nearest blocks of the named kinds in explored ground around (x, z): "where's
+        the nearest diamond". An ore name brings its deepslate twin along, since a player
+        asking for diamonds means both."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+            raise ValueError("that point is outside the world")
+        wanted: set[str] = set()
+        for raw in names:
+            name = raw.strip().lower()
+            if not _BLOCK_NAME.fullmatch(name):
+                raise ValueError(f"`{raw}` isn't a block id")
+            name = name if name.startswith("minecraft:") else f"minecraft:{name}"
+            wanted.add(name)
+            if name.endswith("_ore") and "deepslate_" not in name:
+                wanted.add(name.replace("minecraft:", "minecraft:deepslate_", 1))
+        if not wanted:
+            raise ValueError("name at least one block")
+        d = mapping.DIMENSIONS[dim]
+        with self._map_lock:
+            rec = self.slots.get(slot_id)
+            if not rec["exists"]:
+                raise ValueError(f"{slot_id} has no world yet")
+            folder = rec["folder"]
+            index = self._block_index.get(folder)
+            if index is None:
+                index = self._block_index[folder] = blocks.BlockIndex(self.world_dir(folder) / "db")
+            index.refresh()
+            known = index.names(d)
+            hits, searched = index.find(d, x, z, wanted & known, limit, radius)
+        missing = sorted(wanted - known)
+        bare = {n.removeprefix("minecraft:").removeprefix("deepslate_") for n in missing}
+        suggestions = sorted(
+            n for n in known if any(b in n for b in bare)
+        )[:12] if missing and not (wanted & known) else []
+        return {
+            "dimension": dim,
+            "x": x,
+            "z": z,
+            "searched": sorted(wanted & known),
+            "not_in_explored_ground": missing,
+            "suggestions": suggestions,
+            "explored_chunks_in_range": searched,
+            "radius": radius,
+            "found": hits,
+        }
+
     def map_nearby(self, dim: str, x: int, z: int) -> dict[str, Any]:
         """The nearest structure of each kind the dimension has, from (x, z), by the
         running server's own `locate` — exact, and it generates nothing."""
@@ -1303,6 +1355,29 @@ class Handler(BaseHTTPRequestHandler):
                     200,
                     rig.map_info(
                         query.get("slot", ["slot1"])[0], query.get("dim", ["overworld"])[0]
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/find":
+            try:
+                x, z = int(query.get("x", [""])[0]), int(query.get("z", [""])[0])
+                limit = max(1, min(int(query.get("limit", ["5"])[0]), 20))
+                radius = max(16, min(int(query.get("radius", ["2048"])[0]), 16384))
+            except ValueError:
+                self._send(400, {"detail": "x, z, limit and radius are whole numbers"})
+                return
+            try:
+                self._send(
+                    200,
+                    rig.map_find(
+                        query.get("slot", ["slot1"])[0],
+                        query.get("dim", ["overworld"])[0],
+                        x,
+                        z,
+                        query.get("blocks", [""])[0].split(","),
+                        limit,
+                        radius,
                     ),
                 )
             except ValueError as exc:
@@ -1544,6 +1619,7 @@ _SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
 _WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
 _WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
+_BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
 _MAP_TILE = re.compile(r"^/map/tile/(overworld|nether|the_end)/(\d)/(-?\d+)/(-?\d+)\.png$")
 
 
