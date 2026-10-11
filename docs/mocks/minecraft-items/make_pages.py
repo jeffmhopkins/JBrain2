@@ -1,6 +1,7 @@
-"""Builds the three variant pages from the PNGs make_icons.py drew (README.md here).
+"""Builds variant A's page (revision 2) from the PNGs make_icons.py drew (README.md here).
 
-Each page embeds its PNGs as data URIs so it opens offline as a single file.
+The page embeds its PNGs as data URIs so it opens offline as a single file. B's and C's
+pages are revision 1's record: they are kept as they were and no longer rebuilt.
 
     python3 make_icons.py && python3 make_pages.py
 """
@@ -10,44 +11,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-VARIANTS = {
-    "a": {
-        "file": "a-salvaged-copper.html",
-        "name": "Salvaged copper",
-        "thesis": "Hardware pulled from the wreck: warm copper with a verdigris bloom, "
-        "amethyst for anything that carries a signal, the Replicator in tuff.",
-        "tricorder": "A copper handheld with an amethyst antenna crystal, its screen showing "
-        "the waypoint arrow.",
-        "pack": "A copper-capped glass cell: a battery silhouette with the eye's green "
-        "sealed inside.",
-        "rep": "A tuff furnace in a copper frame. The program window is dark amethyst until "
-        "it's taught; the two side lights go from dim to lit green.",
-    },
-    "b": {
-        "file": "b-deep-dark.html",
-        "name": "Deep dark",
-        "thesis": "Tech from the ancient cities: deepslate housings, sculk-teal glow and "
-        "echo-shard trim. Cold, dark and luminous.",
-        "tricorder": "A slim deepslate slab under a glowing sculk lens, which is Dave's eye. "
-        "Its screen shows a cyan arrow.",
-        "pack": "The eye set in a deepslate-and-echo diamond, with sculk glow at its four "
-        "points.",
-        "rep": "Deepslate tiles with an echo-shard frame. The furnace mouth glows teal; the "
-        "side lights go from dark to bright sculk.",
-    },
-    "c": {
-        "file": "c-ship-quartz.html",
-        "name": "Ship's quartz",
-        "thesis": "The ship as it was built: pale quartz casings, gold contacts and redstone "
-        "status lights. Clean and bright, from the ore table's parts list.",
-        "tricorder": "A flip-open case, gold grille lid up, with a redstone arrow on the "
-        "screen.",
-        "pack": "An octagonal quartz cell: a gold-ringed eye lens, four rivets and a red "
-        "status light.",
-        "rep": "Polished quartz with a gold frame. The side lights are redstone: dark red "
-        "when blank, bright once programmed.",
-    },
-}
+PAGE_FILE = "a-copper-amethyst.html"
+NAV = (
+    '<a href="a-copper-amethyst.html" aria-current="page">A · Copper and amethyst (rev. 2)</a>'
+    '<a href="b-deep-dark.html">B · Deep dark (rev. 1)</a>'
+    '<a href="c-ship-quartz.html">C · Ship\'s quartz (rev. 1)</a>'
+)
 
 
 def uri(path):
@@ -59,7 +28,7 @@ PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Old Maker Items · __V__ — __NAME__</title>
+<title>Old Maker Items · A</title>
 <!-- GUI gate mock — docs/mocks/minecraft-items/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md
      §M9, §M10, §DW1; canon: Bleepbloop_City notes/lore.md. Self-contained and offline; the icons are
      the 16x16 PNGs beside this file, embedded. The vanilla neighbours are our own stand-ins. -->
@@ -130,7 +99,7 @@ PAGE = r"""<!doctype html>
   .blk .l{background-image:var(--front);transform:scale(var(--s,1)) matrix(.5,.25,0,.5,0,4) scale(1.02);filter:brightness(.82);}
   .blk .r{background-image:var(--side);transform:scale(var(--s,1)) matrix(.5,-.25,0,.5,8,8) scale(1.02);filter:brightness(.62);}
   .rep{--top:url(__rep_top__);--front:url(__rep_front__);--side:url(__rep_side__);}
-  .rep.iron{--front:url(__rep_front_iron__);}
+  .rep.on{--top:url(__rep_top_on__);--front:url(__rep_front_on__);}
   .fur{--top:url(__fur_top__);--front:url(__fur_front__);--side:url(__fur_side__);}
 
   /* in-game pieces: part of the picture, not page chrome */
@@ -159,9 +128,8 @@ PAGE = r"""<!doctype html>
   @media (max-width:360px){ .inv img,.inv canvas{width:16px;height:16px;} .inv .blk{--s:1 !important;} .inv .cnt{font-size:9px;} }
   .invwrap{display:flex;flex-direction:column;gap:8px;align-items:center;}
 
-  .tip{background:rgba(16,8,24,.94);border:2px solid #2a0f5c;outline:1px solid #100818;padding:6px 8px;font-family:var(--font-mono);color:#fff;font-size:13px;line-height:1.45;align-self:flex-start;max-width:100%;}
+  .tip{background:rgba(12,12,12,.9);padding:6px 9px;font-family:var(--font-mono);color:#fff;font-size:13px;line-height:1.45;align-self:flex-start;max-width:100%;}
   .tip .lo{color:#c4b0ec;font-style:italic;}
-  .tip .id{color:#9a9da3;font-size:11px;}
   .tips{display:flex;flex-wrap:wrap;gap:8px;}
 
   .faces{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
@@ -176,6 +144,13 @@ PAGE = r"""<!doctype html>
   .hand .xh::before{left:6px;top:0;width:2px;height:14px;} .hand .xh::after{top:6px;left:0;width:14px;height:2px;}
   .hand .held{position:absolute;right:14px;bottom:-18px;width:96px;height:96px;transform:rotate(-12deg);}
   .hand .ab{position:absolute;z-index:2;left:50%;top:58%;transform:translateX(-50%);font-family:var(--font-mono);font-weight:700;color:#fff;text-shadow:2px 2px 0 #3f3f3f;font-size:13px;white-space:nowrap;}
+  .w-only{display:inline;} .n-only{display:none;}
+  @media (max-width:380px){ .w-only{display:none;} .n-only{display:inline;} }
+  @media (max-width:360px){ .inv-w{display:none;} .inv-n{display:inline;} }
+  .inv-n{display:none;}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .pair .tile{padding:8px;}
+  @media (max-width:360px){ .pair img{width:112px;height:112px;} .pair .tile{padding:6px;} .pair .blk{--s:6 !important;} }
   .seg{display:flex;gap:6px;flex-wrap:wrap;}
   .seg button{border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:var(--fs-secondary);padding:0 12px;min-height:44px;border-radius:var(--r-pill);}
   .seg button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
@@ -183,12 +158,18 @@ PAGE = r"""<!doctype html>
 </head>
 <body>
   <div class="caption">
-    <span class="tag">GUI gate · Minecraft items · __V__</span><br />
-    <b>__V__ — __NAME__.</b> __THESIS__ Every icon is a real 16×16 PNG; tap a slot to select it.
+    <span class="tag">GUI gate · Minecraft items · A, revision 2</span><br />
+    <b>A — Copper and amethyst.</b> Bright copper and amethyst over tuff. Revision 2 answers the
+    review: a ping glyph on the Tricorder (or A2's lens), the Replicator as a placer item with its
+    own flat sprite, one programmed look, and a calmer top. Every icon is a real 16×16 PNG; tap a
+    slot to select it.
   </div>
   <div class="sim" aria-label="Mock controls">
     <div class="stitle">Mock controls</div>
     <div class="srow"><span class="sl">Variant</span>__NAV__</div>
+    <div class="srow"><span class="sl">Tricorder</span>
+      <button data-tri="a" aria-pressed="true">A · ping</button>
+      <button data-tri="lens" aria-pressed="false">A2 · lens</button></div>
     <div class="srow"><span class="sl">Theme</span>
       <button data-theme-btn="system" aria-pressed="true">System</button>
       <button data-theme-btn="dark" aria-pressed="false">Dark</button>
@@ -198,22 +179,27 @@ PAGE = r"""<!doctype html>
   </div>
 
   <div class="phone"><div class="screen">
-    <div class="hd"><h1>Old Maker items</h1><p>Variant __V__ · __NAME__</p></div>
+    <div class="hd"><h1>Old Maker items</h1><p>Variant A · Copper and amethyst · revision 2</p></div>
 
     <section class="card" aria-labelledby="h-set">
       <h2 id="h-set">The set at 1×, 2× and 8×</h2>
       <div class="item">
-        <div class="nm">Tricorder</div>
-        <div class="ds">__D_TRICORDER__</div>
+        <div class="nm">Tricorder · A or A2</div>
+        <div class="ds">New copper, beamed down: an amethyst antenna crystal over the face. A shows a ping on its screen, a ring round a dot that points nowhere, since the arrow is in the actionbar. A2 puts Dave's eye on the face instead, an amethyst lens. The owner picks one; the switch above swaps it everywhere on this page.</div>
+        <div class="pair">
+          <div class="sc"><div class="tile"><img src="__tricorder__" width="128" height="128" alt="Tricorder A at 8×" /></div><span>A · ping</span></div>
+          <div class="sc"><div class="tile"><img src="__tricorder_lens__" width="128" height="128" alt="Tricorder A2 at 8×" /></div><span>A2 · lens</span></div>
+        </div>
         <div class="scales">
-          <div class="sc"><div class="tile"><img src="__tricorder__" width="16" height="16" alt="Tricorder at 1×" /></div><span>1×</span></div>
-          <div class="sc"><div class="tile"><img src="__tricorder__" width="32" height="32" alt="Tricorder at 2×" /></div><span>2×</span></div>
-          <div class="sc"><div class="tile"><img src="__tricorder__" width="128" height="128" alt="Tricorder at 8×" /></div><span>8×</span></div>
+          <div class="sc"><div class="tile"><img src="__tricorder__" width="16" height="16" alt="A at 1×" /></div><span>A 1×</span></div>
+          <div class="sc"><div class="tile"><img src="__tricorder__" width="32" height="32" alt="A at 2×" /></div><span>A 2×</span></div>
+          <div class="sc"><div class="tile"><img src="__tricorder_lens__" width="16" height="16" alt="A2 at 1×" /></div><span>A2 1×</span></div>
+          <div class="sc"><div class="tile"><img src="__tricorder_lens__" width="32" height="32" alt="A2 at 2×" /></div><span>A2 2×</span></div>
         </div>
       </div>
       <div class="item">
         <div class="nm">Power Pack</div>
-        <div class="ds">__D_PACK__ With the enchant glint.</div>
+        <div class="ds">A copper-capped glass cell: a battery silhouette with the eye's green sealed inside. With the enchant glint, which is the item's own, not drawn into the texture.</div>
         <div class="scales">
           <div class="sc"><div class="tile"><canvas class="pk" width="128" height="128" style="width:16px;height:16px" aria-label="Power Pack at 1×"></canvas></div><span>1×</span></div>
           <div class="sc"><div class="tile"><canvas class="pk" width="128" height="128" style="width:32px;height:32px" aria-label="Power Pack at 2×"></canvas></div><span>2×</span></div>
@@ -221,28 +207,32 @@ PAGE = r"""<!doctype html>
         </div>
       </div>
       <div class="item">
-        <div class="nm">Replicator</div>
-        <div class="ds">__D_REP__ The block is drawn from its faces, as the game draws a block in a slot.</div>
+        <div class="nm">Replicator · the item</div>
+        <div class="ds">What the inventory and hotbar show: a placer item with its own flat sprite, not the block's cube. Blank, then programmed: the window lit and the lights on. The target is only in the name ("Iron Replicator"), so there's one programmed sprite for every target.</div>
+        <div class="pair">
+          <div class="sc"><div class="tile"><img src="__rep_item__" width="128" height="128" alt="Replicator item, blank, at 8×" /></div><span>Blank</span></div>
+          <div class="sc"><div class="tile"><img src="__rep_item_on__" width="128" height="128" alt="Replicator item, programmed, at 8×" /></div><span>Programmed</span></div>
+        </div>
         <div class="scales">
-          <div class="sc"><div class="tile"><span class="blk rep" style="--s:1" role="img" aria-label="Replicator at 1×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>1×</span></div>
-          <div class="sc"><div class="tile"><span class="blk rep" style="--s:2" role="img" aria-label="Replicator at 2×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>2×</span></div>
-          <div class="sc"><div class="tile"><span class="blk rep" style="--s:8" role="img" aria-label="Replicator at 8×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>8×</span></div>
+          <div class="sc"><div class="tile"><img src="__rep_item__" width="16" height="16" alt="Blank at 1×" /></div><span>1×</span></div>
+          <div class="sc"><div class="tile"><img src="__rep_item__" width="32" height="32" alt="Blank at 2×" /></div><span>2×</span></div>
+          <div class="sc"><div class="tile"><img src="__rep_item_on__" width="16" height="16" alt="Programmed at 1×" /></div><span>prog. 1×</span></div>
+          <div class="sc"><div class="tile"><img src="__rep_item_on__" width="32" height="32" alt="Programmed at 2×" /></div><span>prog. 2×</span></div>
         </div>
       </div>
       <div class="item">
-        <div class="nm">Iron Replicator</div>
-        <div class="ds">Programmed: the window shows a swatch of iron and the lights come on.</div>
-        <div class="scales">
-          <div class="sc"><div class="tile"><span class="blk rep iron" style="--s:1" role="img" aria-label="Iron Replicator at 1×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>1×</span></div>
-          <div class="sc"><div class="tile"><span class="blk rep iron" style="--s:2" role="img" aria-label="Iron Replicator at 2×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>2×</span></div>
-          <div class="sc"><div class="tile"><span class="blk rep iron" style="--s:8" role="img" aria-label="Iron Replicator at 8×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>8×</span></div>
+        <div class="nm">Replicator · placed</div>
+        <div class="ds">The block in the world, drawn from its faces. The top shows the change too: every cell and the centre light up.</div>
+        <div class="pair">
+          <div class="sc"><div class="tile"><span class="blk rep" style="--s:7" role="img" aria-label="Placed Replicator, blank"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>Blank</span></div>
+          <div class="sc"><div class="tile"><span class="blk rep on" style="--s:7" role="img" aria-label="Placed Replicator, programmed"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>Programmed</span></div>
         </div>
       </div>
     </section>
 
     <section class="card" aria-labelledby="h-hot">
       <h2 id="h-hot">In the hotbar</h2>
-      <p class="note">Next to an Eye of Ender, an Ender Pearl, a compass, a spyglass and a furnace. The top bar is true size (1×); the lower one is a phone's GUI scale.</p>
+      <p class="note">Next to an Eye of Ender, an Ender Pearl, a compass, a spyglass and a furnace. The top bar is true size: 16 px icons in 20 px slots. The lower one draws icons at <span class="w-only">2× (32 px) in 35 px slots, where the game's would be 40</span><span class="n-only">1.5× (24 px) in 29 px slots, where the game's would be 30</span>, so nine fit this screen.</p>
       <div class="scene" id="scene">
         <div class="mcname" id="hbName" aria-live="polite"></div>
         <div class="hotbar k1" role="group" aria-label="Hotbar at 1×" data-hb></div>
@@ -258,7 +248,7 @@ PAGE = r"""<!doctype html>
 
     <section class="card" aria-labelledby="h-inv">
       <h2 id="h-inv">In the inventory</h2>
-      <p class="note">The light-grey Bedrock panel and the dark one. Tap an item to see its tooltip.</p>
+      <p class="note">The light-grey Bedrock panel and the dark one, with icons at <span class="inv-w">2× (32 px)</span><span class="inv-n">1× (16 px)</span>. Tap an item to see its tooltip.</p>
       <div class="invwrap">
         <div class="inv lite" role="group" aria-label="Inventory, light panel" data-inv></div>
         <div class="tip" id="invTip"></div>
@@ -269,22 +259,23 @@ PAGE = r"""<!doctype html>
     <section class="card" aria-labelledby="h-tip">
       <h2 id="h-tip">Tooltips</h2>
       <div class="tips">
-        <div class="tip">BlockyFox's Tricorder<br /><span class="lo">Points where Dave says</span><br /><span class="id">jbrain:tricorder</span></div>
-        <div class="tip">Power Pack<br /><span class="lo">Keeps your things, or takes you somewhere</span><br /><span class="id">jbrain:power_pack</span></div>
+        <div class="tip">BlockyFox's Tricorder<br /><span class="lo">Points where Dave says</span></div>
+        <div class="tip">Power Pack<br /><span class="lo">Keeps your things, or takes you somewhere</span></div>
         <div class="tip">Replicator<br /><span class="lo">Ask Dave to program it</span></div>
         <div class="tip">Iron Replicator<br /><span class="lo">Burns any block into iron</span></div>
       </div>
-      <p class="note">The Tricorder and Power Pack lore lines are M9's and M10's. The two Replicator lines are placeholders.</p>
+      <p class="note">The Tricorder and Power Pack lore lines are M9's and M10's. The two Replicator lines are placeholders. Bedrock shows the name and lore only: no item id, and no count in the name.</p>
     </section>
 
     <section class="card" aria-labelledby="h-face">
       <h2 id="h-face">The Replicator's faces</h2>
-      <p class="note">Each 16×16 at 8×. The top is the recipe seen from above: eight Power Packs around the furnace.</p>
+      <p class="note">Each 16×16 at 8×. The top is the recipe seen from above: eight of A's own Power Pack cells round the furnace, standing in one tuff panel. Programmed is one look for every target.</p>
       <div class="faces">
         <figure><img src="__rep_front__" alt="Front, blank" /><figcaption>Front · blank</figcaption></figure>
-        <figure><img src="__rep_front_iron__" alt="Front, programmed for iron" /><figcaption>Front · Iron Replicator</figcaption></figure>
-        <figure><img src="__rep_side__" alt="Side" /><figcaption>Side</figcaption></figure>
-        <figure><img src="__rep_top__" alt="Top" /><figcaption>Top</figcaption></figure>
+        <figure><img src="__rep_front_on__" alt="Front, programmed" /><figcaption>Front · programmed</figcaption></figure>
+        <figure><img src="__rep_top__" alt="Top, blank" /><figcaption>Top · blank</figcaption></figure>
+        <figure><img src="__rep_top_on__" alt="Top, programmed" /><figcaption>Top · programmed</figcaption></figure>
+        <figure><img src="__rep_side__" alt="Side" /><figcaption>Sides (and the bottom)</figcaption></figure>
       </div>
     </section>
 
@@ -293,26 +284,27 @@ PAGE = r"""<!doctype html>
       <div class="hand" role="img" aria-label="First-person view holding the Tricorder, with the waypoint arrow in the actionbar">
         <div class="xh"></div>
         <div class="ab">↖ Home · 412 blocks</div>
-        <img class="held" src="__tricorder__" alt="" />
+        <img class="held" data-tri-img src="__tricorder__" alt="" />
       </div>
       <p class="note">Held, it shows the waypoint arrow (M9). Anyone but its owner gets static.</p>
     </section>
   </div></div>
 
 <script>
-const IMG = {tricorder:"__tricorder__", pack:"__power_pack__", eye:"__eye__", pearl:"__pearl__", compass:"__compass__", spyglass:"__spyglass__"};
+const TRI = {a:"__tricorder__", lens:"__tricorder_lens__"};
+const IMG = {tricorder:"__tricorder__", pack:"__power_pack__", rep:"__rep_item__", iron:"__rep_item_on__", eye:"__eye__", pearl:"__pearl__", compass:"__compass__", spyglass:"__spyglass__"};
 const NAMES = {tricorder:"BlockyFox's Tricorder", pack:"Power Pack", eye:"Eye of Ender", pearl:"Ender Pearl", compass:"Compass", spyglass:"Spyglass", furnace:"Furnace", rep:"Replicator", iron:"Iron Replicator"};
 const LORE = {tricorder:"Points where Dave says", pack:"Keeps your things, or takes you somewhere", rep:"Ask Dave to program it", iron:"Burns any block into iron"};
 
 function icon(kind, k){
   if (kind === "pack"){ const c = document.createElement("canvas"); c.width = c.height = 128; c.className = "pk"; return c; }
-  if (kind === "rep" || kind === "iron" || kind === "furnace"){
+  if (kind === "furnace"){
     const s = document.createElement("span");
-    s.className = "blk " + (kind === "furnace" ? "fur" : "rep" + (kind === "iron" ? " iron" : ""));
+    s.className = "blk fur";
     s.style.setProperty("--s", k); s.innerHTML = '<i class="t"></i><i class="l"></i><i class="r"></i>';
     return s;
   }
-  const i = new Image(); i.src = IMG[kind]; i.alt = ""; return i;
+  const i = new Image(); i.src = IMG[kind]; i.alt = ""; if (kind === "tricorder") i.dataset.triImg = ""; return i;
 }
 function slot(kind, count, k){
   const b = document.createElement("button"); b.className = "sl"; b.type = "button";
@@ -345,7 +337,7 @@ function tip(kind, count){
   const t = document.getElementById("invTip");
   if (!kind){ t.textContent = "Empty slot"; return; }
   t.innerHTML = "";
-  t.append(NAMES[kind] + (count ? " (" + count + ")" : ""));
+  t.append(NAMES[kind]);
   if (LORE[kind]){ t.append(document.createElement("br")); const l = document.createElement("span"); l.className = "lo"; l.textContent = LORE[kind]; t.append(l); }
 }
 document.querySelectorAll("[data-inv]").forEach(g => [...g.children].forEach((b, j) => b.addEventListener("click", () => {
@@ -372,11 +364,12 @@ function drawPack(c, t){
   x.imageSmoothingEnabled = false; x.globalCompositeOperation = "source-over";
   x.clearRect(0, 0, 128, 128); x.drawImage(packImg, 0, 0, 128, 128);
   gx.globalCompositeOperation = "source-over"; gx.clearRect(0, 0, 128, 128);
-  const off = (t / 3200 % 1) * 384 - 192;
+  const off = (t / 2400 % 1) * 384 - 192;
   const g = gx.createLinearGradient(off, off * .4, off + 128, off * .4 + 128);
-  g.addColorStop(0, "rgba(128,64,204,0)"); g.addColorStop(.45, "rgba(150,90,230,.32)");
-  g.addColorStop(.55, "rgba(180,120,255,.4)"); g.addColorStop(1, "rgba(128,64,204,0)");
-  gx.fillStyle = "rgba(110,60,190,.07)"; gx.fillRect(0, 0, 128, 128);
+  g.addColorStop(0, "rgba(140,60,255,0)"); g.addColorStop(.38, "rgba(150,70,255,.55)");
+  g.addColorStop(.5, "rgba(190,120,255,.95)"); g.addColorStop(.62, "rgba(150,70,255,.55)");
+  g.addColorStop(1, "rgba(140,60,255,0)");
+  gx.fillStyle = "rgba(120,50,220,.2)"; gx.fillRect(0, 0, 128, 128);
   gx.fillStyle = g; gx.fillRect(0, 0, 128, 128);
   gx.globalCompositeOperation = "destination-in"; gx.imageSmoothingEnabled = false;
   gx.drawImage(packImg, 0, 0, 128, 128);
@@ -393,6 +386,11 @@ function setMoving(m){ moving = m; glintBtn.setAttribute("aria-pressed", m ? "tr
 glintBtn.addEventListener("click", () => setMoving(!moving));
 reduce.addEventListener("change", () => setMoving(!reduce.matches));
 packImg.onload = () => setMoving(moving);
+
+document.querySelectorAll("[data-tri]").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-tri]").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  document.querySelectorAll("[data-tri-img]").forEach(i => { i.src = TRI[b.dataset.tri]; });
+}));
 
 const sys = matchMedia("(prefers-color-scheme: light)");
 let themePick = "system";
@@ -411,41 +409,32 @@ applyTheme();
 
 
 def build():
-    van = HERE / "vanilla"
-    for v, meta in VARIANTS.items():
-        d = HERE / v
-        subs = {
-            "__tricorder__": uri(d / "tricorder.png"),
-            "__power_pack__": uri(d / "power_pack.png"),
-            "__rep_front__": uri(d / "replicator_front.png"),
-            "__rep_front_iron__": uri(d / "replicator_front_iron.png"),
-            "__rep_side__": uri(d / "replicator_side.png"),
-            "__rep_top__": uri(d / "replicator_top.png"),
-            "__fur_front__": uri(van / "furnace_front.png"),
-            "__fur_side__": uri(van / "furnace_side.png"),
-            "__fur_top__": uri(van / "furnace_top.png"),
-            "__eye__": uri(van / "ender_eye.png"),
-            "__pearl__": uri(van / "ender_pearl.png"),
-            "__compass__": uri(van / "compass.png"),
-            "__spyglass__": uri(van / "spyglass.png"),
-            "__V__": v.upper(),
-            "__NAME__": meta["name"],
-            "__THESIS__": meta["thesis"],
-            "__D_TRICORDER__": meta["tricorder"],
-            "__D_PACK__": meta["pack"],
-            "__D_REP__": meta["rep"],
-            "__NAV__": "".join(
-                f'<a href="{m["file"]}"'
-                + (' aria-current="page"' if k == v else "")
-                + f">{k.upper()} · {m['name']}</a>"
-                for k, m in VARIANTS.items()
-            ),
-        }
-        page = PAGE
-        for key, val in subs.items():
-            page = page.replace(key, val)
-        assert "__" not in page.replace("__file__", ""), "unfilled placeholder"
-        (HERE / meta["file"]).write_text(page)
+    a, van = HERE / "a", HERE / "vanilla"
+    subs = {
+        "__tricorder__": uri(a / "tricorder.png"),
+        "__tricorder_lens__": uri(a / "tricorder_lens.png"),
+        "__power_pack__": uri(a / "power_pack.png"),
+        "__rep_item__": uri(a / "replicator.png"),
+        "__rep_item_on__": uri(a / "replicator_programmed.png"),
+        "__rep_front__": uri(a / "replicator_front.png"),
+        "__rep_front_on__": uri(a / "replicator_front_programmed.png"),
+        "__rep_side__": uri(a / "replicator_side.png"),
+        "__rep_top__": uri(a / "replicator_top.png"),
+        "__rep_top_on__": uri(a / "replicator_top_programmed.png"),
+        "__fur_front__": uri(van / "furnace_front.png"),
+        "__fur_side__": uri(van / "furnace_side.png"),
+        "__fur_top__": uri(van / "furnace_top.png"),
+        "__eye__": uri(van / "ender_eye.png"),
+        "__pearl__": uri(van / "ender_pearl.png"),
+        "__compass__": uri(van / "compass.png"),
+        "__spyglass__": uri(van / "spyglass.png"),
+        "__NAV__": NAV,
+    }
+    page = PAGE
+    for key, val in subs.items():
+        page = page.replace(key, val)
+    assert "__" not in page, "unfilled placeholder"
+    (HERE / PAGE_FILE).write_text(page)
 
 
 if __name__ == "__main__":

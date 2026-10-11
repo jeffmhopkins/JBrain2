@@ -2,10 +2,21 @@
 
 > **Status:** Living · **Last verified:** 2026-10-11
 >
-> **Open: the owner picks.** These are three variants, A, B and C. Each is a whole set: the
-> Tricorder, the Power Pack, and the Replicator, blank and programmed. No variant is chosen yet.
+> **Open: the owner picks.**
+>
+> - **Revision 2 takes A forward.** It answers the independent review in `REVIEW.md`, which
+>   recommended A with conditions.
+> - B and C stay as the record of what was weighed, and get no more work: the review found that
+>   B's Tricorder reads as a soul lantern, C's as a first-aid kit, and C's Power Pack as an
+>   eyeball.
+> - Still for the owner: the Tricorder, **A** (ping) or **A2** (lens); then the set as a whole.
+> - The Replicator's placer-item design (below) is the coordinator's decision, and the owner can
+>   overrule it.
+>
 > Story source: Bleepbloop_City `notes/lore.md` ("Dave, the crew and the Tricorder" and "The
 > Replicator"). Behaviour source: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M9, §M10 and §DW1.
+> **The Replicator has no plan section yet**, so its icon is ahead of its spec. The wave that
+> builds it should take this page's facts in.
 
 The items get final icons in place of the probe kit's placeholders
 (`deploy/minecraft/probe-rp/textures/items/{tricorder,power_pack}.png`). The placeholder
@@ -13,157 +24,187 @@ Tricorder is a grey slab with green bars, and the placeholder Power Pack is clos
 Ender. Each variant gives all three items one look, so the Old Makers' tech reads as made by one
 people:
 
-- the **Tricorder** (`jbrain:tricorder`, stacks to 1, held in hand). It's how Dave sees and speaks
-  to one crew member, and shows a waypoint arrow while held;
-- the **Power Pack** (`jbrain:power_pack`, stacks to 16, with glint). It's crafted from nine Eyes
-  of Ender. It must look related to an Eye of Ender but never be mistaken for one, or for an
-  Ender Pearl, in the hotbar;
-- the **Replicator**, a block: a furnace surrounded by eight Power Packs. Programmed, it becomes
-  an "Iron Replicator" or similar. The variants give its inventory icon and its faces, blank and
-  programmed.
+- the **Tricorder** (`jbrain:tricorder`, stacks to 1, held in hand). It's how Dave sees and
+  speaks to one crew member, and the actionbar shows the waypoint arrow while it's held;
+- the **Power Pack** (`jbrain:power_pack`, stacks to 16, with glint). It's crafted from nine
+  Eyes of Ender. It must look related to an Eye of Ender but never be mistaken for one, or for
+  an Ender Pearl, in the hotbar;
+- the **Replicator**: a furnace surrounded by eight Power Packs. It's a block in the world, and
+  in the inventory a placer item (see "Facts"). Programmed, it's named after its target, for
+  example "Iron Replicator".
 
 ## What's here
 
 | Path | What |
 |---|---|
-| `a-salvaged-copper.html`, `b-deep-dark.html`, `c-ship-quartz.html` | One page per variant |
-| `{a,b,c}/tricorder.png`, `power_pack.png` | The item icons, 16×16 RGBA |
-| `{a,b,c}/replicator_front.png`, `replicator_front_iron.png`, `replicator_side.png`, `replicator_top.png` | The Replicator's block faces, 16×16 |
-| `{a,b,c}/replicator.png`, `replicator_iron.png` | A 16×16 flat preview of the block as a slot shows it (see "Facts") |
+| `a-copper-amethyst.html` | **A, revision 2**: the current page |
+| `b-deep-dark.html`, `c-ship-quartz.html` | B and C, revision 1, kept as the record. Only their links to A were updated. |
+| `a/tricorder.png`, `a/tricorder_lens.png` | A's Tricorder (ping) and A2's (lens), 16×16 RGBA |
+| `a/power_pack.png` | A's Power Pack |
+| `a/replicator.png`, `a/replicator_programmed.png` | The Replicator **item**'s flat sprite, blank and programmed |
+| `a/replicator_front.png`, `a/replicator_front_programmed.png`, `a/replicator_top.png`, `a/replicator_top_programmed.png`, `a/replicator_side.png` | The placed block's faces. The side also serves as the bottom. |
+| `{b,c}/*.png` | Revision 1's B and C sets, unchanged. Their `replicator.png` and `replicator_iron.png` are flat previews of the block cube. |
 | `vanilla/*.png` | Our own rough stand-ins for an Eye of Ender, Ender Pearl, compass, spyglass and furnace, there for contrast only. They are not Mojang textures. |
-| `make_icons.py`, `make_pages.py` | Draw every PNG from pixel grids, and build the pages from them. To revise, edit a grid and run both. |
+| `make_icons.py`, `make_pages.py` | Draw every PNG from pixel grids, and build A's page from them. To revise, edit a grid and run both. B and C still draw byte-identical; their pages aren't rebuilt. |
+| `REVIEW.md` | The independent review of revision 1 |
 
-Each page:
+A's page:
 
 - is self-contained and works offline, with the PNGs embedded as data URIs;
 - is phone-framed: 390 px wide, 560 px on desktop, and full-bleed under 430 px. It holds at
   320 × 568;
-- follows the system theme for its chrome, and the mock controls can override it;
+- follows the system theme for its chrome, and the mock controls can override it. They also
+  switch the Tricorder between A and A2 everywhere on the page;
 - shows every icon at 1× (16 px), 2× and 8×, with nearest-neighbour scaling;
-- shows a **hotbar** at 1× and at a phone's GUI scale, next to the vanilla stand-ins, on a day
-  or a night scene. Tap a slot to select it, and its name shows above, as in game;
-- shows an **inventory** on the light-grey Bedrock panel and the dark one, with stack counts
-  (Power Pack 16 and 3). Tap an item for its tooltip;
-- shows the **tooltips**: *BlockyFox's Tricorder*, *Power Pack*, *Replicator* and *Iron
-  Replicator*;
-- glints the Power Pack with an animated band. It holds still under `prefers-reduced-motion`,
-  and the mock controls can pause it;
-- draws the Replicator in a slot from its three faces, as the game draws a block. It also shows
-  each face at 8×;
+- shows a **hotbar** next to the vanilla stand-ins, on a day or a night scene. The top bar is
+  true size: 16 px icons in 20 px slots. The lower bar puts 2× icons in 35 px slots, or 1.5×
+  icons in 29 px slots under 380 px. The page states which, since the game's slots would be
+  20 × the scale. Tap a slot to select it, and its name shows above, as in game;
+- shows an **inventory** on the light-grey Bedrock panel and the dark one, with Power Pack
+  counts of 16 and 3. The icons are 2×, or 1× under 360 px. Tap an item for its tooltip;
+- shows **Bedrock-style tooltips**: the name and the lore line, with no item id and no count;
+- glints the Power Pack with a strong purple sweep, like Bedrock's. It holds still under
+  `prefers-reduced-motion`, and the mock controls can pause it;
+- shows the Replicator item's flat sprite in every slot, which is what the game would draw. The
+  placed block appears separately, drawn from its faces, with each face at 8×;
 - shows the Tricorder held, with M9's actionbar arrow.
 
-## The three variants
+## A — Copper and amethyst (revision 2)
 
-All three keep the Eye of Ender's green and dark pupil at the Power Pack's core, because that's
-its recipe. Each variant tells it apart from a loose eye by its **silhouette and housing**. An eye
-and a pearl are both round green-teal balls, so a round pack would get lost.
+Copper is the Old Makers' wiring, amethyst their signal, and tuff the trial chambers' stone:
+the most strongly canon materials of the three.
 
-| Variant | File | Materials | Power Pack shape |
-|---|---|---|---|
-| **A — Salvaged copper** | `a-salvaged-copper.html` | Copper and verdigris, amethyst, tuff | A tall capped cell, like a battery |
-| **B — Deep dark** | `b-deep-dark.html` | Deepslate, sculk-teal glow, echo shard | A diamond |
-| **C — Ship's quartz** | `c-ship-quartz.html` | Quartz, gold contacts, redstone | An octagonal disc |
+- **Tricorder.** Bright copper, because Dave beams it down new, with an amethyst antenna
+  crystal. It sits in x 2–13, as vanilla items do.
+  - **A, ping:** a lit amethyst screen showing a ring round a dot. It points nowhere, because
+    a texture can't follow a bearing; the real arrow is in the actionbar.
+  - **A2, lens:** Dave's eye, an amethyst lens set into the copper face. This is B's idea,
+    redrawn on the face rather than as a glowing cap, which is what made B read as a lantern.
+- **Power Pack.** Unchanged in shape: a copper-capped glass cell, with the eye's green and dark
+  pupil sealed inside. Its upright, capped silhouette is what passed the review's hotbar test
+  best. The teal edges of the glass are glass, not verdigris.
+- **Replicator.** A tuff machine in a copper frame.
+  - **Item:** a face-on sprite with three pack lights along its top, the program window and
+    the barred furnace mouth.
+  - **Front:** the program window is dark amethyst when blank and lit amethyst when
+    programmed. The two side lights go from dim to lit green.
+  - **Top:** eight of A's own capped cells stand in one tuff panel round the furnace. That's
+    the recipe seen from above. Programmed, every core and the centre light up.
 
-### A — Salvaged copper
+**Tricorder, A or A2:**
 
-Hardware pulled from the wreck. The canon calls copper the Old Makers' wiring, amethyst their
-signal, and tuff the trial chambers' stone. The **Tricorder** is a copper handheld with an
-amethyst antenna crystal and a lit amethyst screen showing the arrow. The **Power Pack** is a
-copper-capped glass cell with the eye's green sealed inside. The **Replicator** is a tuff
-furnace in a copper frame. Its program window is dark amethyst until it's taught, and two side
-lights go from dim to lit green.
+- **For A:** a screen is the plainest "device you look at", and the ping says "signal" without
+  promising a direction.
+- **Against A:** at 1× the ring and dot read as a lit screen, nothing more.
+- **For A2:** it says what the canon says the Tricorder is: the eye Dave sees through.
+- **Against A2:** at 1× it's a copper square with a purple dot, close to a compass in weight.
 
-- **For:** it's the most distinct Power Pack at 1×. An orange-capped upright cell can't be read
-  as a round green ball, and it says "fuel" at a glance. The materials are the most strongly
-  canon (copper, amethyst, tuff). It's warm, and sits well in a survival hotbar.
-- **Against:** the cell reads more "battery" than "Old Maker". At 1× the Tricorder's arrow is a
-  couple of pixels and reads as "a screen". The tuff-grey Replicator is the least showy of the
-  three on a grey inventory panel.
+**The set:**
 
-### B — Deep dark
+- **For:** the Power Pack is the hardest of all the candidates to mistake for an Eye of Ender
+  or an Ender Pearl. The materials are canon. The programmed Replicator now differs on its
+  front, its top and its item sprite.
+- **Against:** the bright copper Tricorder and the copper-capped Power Pack share a palette, so
+  side by side in a hotbar they read as a family. That's intended, but it's less contrast than
+  between unrelated items. The tuff side is flat on the light panel; the copper frame carries
+  it.
 
-Tech from the ancient cities: deepslate housings, sculk-teal glow and echo-shard trim. The
-**Tricorder** is a slim slab under a glowing sculk lens, which is Dave's eye looking out, with a
-cyan arrow on its screen. The **Power Pack** sets the eye in a deepslate-and-echo diamond with
-sculk glow at its four points. The **Replicator** is deepslate tiles in an echo-shard frame,
-with a teal-lit mouth and side lights that brighten when it's programmed.
+## B and C (revision 1, the record)
 
-- **For:** the strongest story read. A lens through which Dave sees is exactly what the canon
-  says the Tricorder is. It glows the most on a night scene and the dark panel, and the four
-  cyan points make the Power Pack sparkle even before its glint.
-- **Against:** its Power Pack is the closest of the three to the eye's colours. The diamond and
-  the cyan points carry it, so check it at 1× on the hotbar. The dark items sink on the dark
-  inventory panel. The ancient cities are a "sculk took them" proposal on the lore page, not
-  canon, so the look leans on an unpicked ending.
+- **B — Deep dark:** deepslate, sculk-teal glow and echo shard. Its Tricorder is a slim slab
+  under a sculk lens, and its Power Pack is the eye in a diamond. The review found:
+  - the Tricorder reads as a soul lantern;
+  - the Power Pack is told apart from an eye only by four cyan pixels;
+  - the Replicator is near-black, and blank and programmed are about 4 px apart;
+  - Dave's eye in sculk contradicts the "sculk took them" proposal.
+- **C — Ship's quartz:** quartz, gold and redstone. Its Tricorder is a flip-open case, and its
+  Power Pack an octagonal cell. The review found:
+  - the Tricorder reads as a first-aid kit;
+  - the Power Pack reads as a bloodshot eyeball.
+  - Its redstone status lights, which made blank and programmed the easiest to tell apart, were
+    carried over to A as the lit-green lights.
 
-### C — Ship's quartz
+## Revision 2 — what changed since the review
 
-The ship as it was built: pale quartz casings, gold contacts and redstone status lights, from
-the lore page's ore table (gold the contacts, quartz the sensing parts, redstone the power). The
-**Tricorder** is a flip-open case, its gold grille lid up, with a red arrow on its screen. The
-**Power Pack** is an octagonal quartz cell, a gold-ringed eye lens with four rivets and a red
-status light. The **Replicator** is polished quartz in a gold frame, and its redstone side
-lights go from dark to bright red once programmed.
+| Review finding | Revision 2 |
+|---|---|
+| **F1** A block's item draws from its default permutation, and breaking it drops the plain block, so a permutation can't show a programmed Replicator in a slot. | Decided (coordinator; the owner can overrule): a **custom placer item**, using `minecraft:block_placer` with `replace_block_item`. The item's name and lore carry the target, and a script sets the block's state when it's placed. The item has its own **flat 16×16 sprite**, blank and programmed, and the page's slots show exactly that. |
+| **F2** Canon allows hundreds of targets, so per-target fronts don't scale. | **One generic programmed look** on the item, the front and the top. The target appears only in the name and tooltip ("Iron Replicator"). The iron swatch is gone. |
+| **F3** There's no Replicator plan section. | Said in the header: the icon is ahead of its spec. |
+| **F4** Facing, the GUI cube, and the bottom face. | In "Facts": `minecraft:placement_direction` with transformation permutations, a box check of which face the cube shows, and the bottom face. |
+| **F5** §M10 says "an Eye of Ender look with a glow". | Noted in "Facts", to reconcile in the build PR. |
+| Cross 2: the top drew eight eyes, a checkerboard at 1×. | A's top now has eight of A's own capped cells, with no outlines between them, on one tuff panel. |
+| Cross 3: blank and programmed looked the same at 1×. | Programmed now shows on the **top**, the face a cube shows largest: every core and the centre light up. It also shows on the item sprite (the lights and the window) and on the front (the window and the side lights). |
+| Up-arrow fights M9 and reads as a plus. | Replaced by a non-directional ping (A), with A2's lens offered beside it. |
+| Java-style tooltips. | Bedrock style: name and lore only, with no id line and no "(16)". |
+| "2× GUI scale" was really 1.75×. | The page states the real sizes, for each width. |
+| Glint toned down too far. | A strong purple sweep, as in Bedrock. It also sets the pack apart from a loose eye. |
+| Flat `replicator.png` was mush. | Replaced by a drawn item sprite. |
+| A's Tricorder was too big: x 1–14. | Trimmed to x 2–13. |
+| A3: "verdigris bloom" was 2 px. | Claim dropped. The Tricorder is bright new copper, and the pack's teal is glass. |
+| A4: keep the Tricorder's copper bright. | Done. The copper is brighter across the set. |
+| Vanilla stand-ins are rough. | Kept as stand-ins. The pick still needs checking in game against the real Eye of Ender and Ender Pearl, at GUI scale 2 and 3. |
 
-- **For:** it's the brightest set, and clearest on the dark panel and a night hotbar. The
-  flip-open Tricorder is the most recognisably "a tricorder" of the three. The red arrow and
-  lights tie straight to redstone, which players already read as "powered".
-- **Against:** at 1× the Power Pack reads as a round pale disc, almost an eyeball. It doesn't
-  read as an eye of ender, but nor does it read as fuel. Pale quartz loses contrast on the
-  light-grey Bedrock panel. Gold-and-white is the least "ancient" of the three and looks closer
-  to new.
+## Render check (2026-10-11, revision 2)
 
-## Render check (2026-10-11)
-
-Every page was rendered in headless Chromium at 390 × 844 and 320 × 568, in dark and in light:
+A's page was rendered in headless Chromium at 390 × 844 and 320 × 568, in dark and in light:
 
 - **Overflow:** none, either from the page or from any card, hotbar or inventory.
 - **Script errors:** none in the console.
 - **Contrast:** every piece of page text is 4.5:1 or better. The in-game pieces are part of the
-  picture and were not counted: the counts, tooltips and actionbar use Minecraft's own
-  white-with-shadow text.
+  picture and were not counted.
 
-Telling the Power Pack apart at 1× in the hotbar, next to the eye and the pearl: A is clearest,
-as an orange upright cell. C is clear, as a pale disc. B is clear by its shape and cyan points,
-but it's the closest in colour. At the 2× GUI scale, all three are unmistakable.
+That check caught one problem, and it's fixed: the A/A2 pair overflowed its card at 320 px.
 
-The first render's glint was so strong it turned the pack lilac, so it was toned down. The 2×
-hotbar overflowed its card, so it was sized to fit.
+Telling the Power Pack apart at 1× in the hotbar, next to the eye and the pearl: it reads as an
+orange-capped upright cell. With the glint on, it's purple-washed as well. Blank and programmed
+Replicator items differ at 1× by the lit window and the green lights.
 
 ## Recommendation
 
-**A, with B's Tricorder lens as an option to weigh.** A's Power Pack is the one a player can't
-mix up with an Eye of Ender at hotbar size, which is the hard requirement. Its copper, amethyst
-and tuff are the most canon materials. If the owner wants the Tricorder to say "Dave's eye" more
-plainly, B's sculk lens can be drawn in copper and amethyst. The owner picks.
+**A.** For the Tricorder, **A2** if the owner wants it to say "Dave's eye", and **A** if a
+screen reads better to the kids. Before the build PR, check the pick in game against the real
+Eye of Ender and Ender Pearl. The owner picks.
 
 ## Facts (for the build)
 
-- **Size:** every texture is 16×16 RGBA, drawn on a 16-pixel grid with no anti-aliasing.
+- **Size:** every texture is 16×16 RGBA, with hard alpha and no anti-aliasing.
 - **Items, in the `jbrain` resource pack:**
   - The icons go in `textures/items/tricorder.png` and `textures/items/power_pack.png`.
-  - `textures/item_texture.json` maps them under the keys `jbrain_tricorder` and
+    `textures/item_texture.json` maps them under the keys `jbrain_tricorder` and
     `jbrain_power_pack`, as the probe kit's `deploy/minecraft/probe-rp/textures/item_texture.json`
     already does.
   - The behavior pack's item JSON points `minecraft:icon` at those keys.
   - The Power Pack's glint is the item's `minecraft:glint`, not part of the texture.
-- **The Replicator** is a block:
-  - Its faces go in `textures/blocks/`, named for example `replicator_front.png`,
-    `replicator_front_iron.png`, `replicator_side.png` and `replicator_top.png`.
-  - `textures/terrain_texture.json` maps them, and `blocks.json` or the block's
-    `minecraft:material_instances` puts them on the faces: `north` for the front, `up` for the
-    top, and `*` for the sides.
-  - A programmed Replicator needs its own front: a block state or permutation that swaps the
-    front's material instance. Showing *what* it's programmed for, as an iron swatch, means one
-    front texture per target.
-  - The inventory draws a block from its faces, so the 16×16 `replicator.png` here is only a
-    preview. The one way to get a flat icon instead is to give the block its own item with
-    `minecraft:block_placer`, which takes an `item_texture.json` icon like the others.
+  - **§M10** describes the Power Pack as "an Eye of Ender look with a glow". The chosen icon is
+    a related cell, not an eye look, so the build PR updates §M10 to match.
+- **The Replicator item** is a custom item, for example `jbrain:replicator`:
+  - It uses `minecraft:block_placer` with `replace_block_item: true`, so it is the block's item.
+  - It has a flat icon under the keys `jbrain_replicator` and `jbrain_replicator_programmed`,
+    from `textures/items/replicator.png` and `textures/items/replicator_programmed.png`.
+  - Its name and lore carry the target ("Iron Replicator"). Being picked up keeps the
+    programming, as canon requires: the script reads the block's state when it's broken and
+    gives back the named item.
+  - When it's placed, a script reads the item's target and sets the block's state.
+  - The programmed sprite is the same for every target.
+- **The Replicator block:**
+  - Its faces go in `textures/blocks/`: `replicator_front`, `replicator_front_programmed`,
+    `replicator_top`, `replicator_top_programmed` and `replicator_side`.
+  - `textures/terrain_texture.json` maps them, and `minecraft:material_instances` puts them on
+    the faces.
+  - A `programmed` state swaps the front and the top. The **bottom** uses the side texture, so
+    the barred vent shows underneath; give it its own plain tuff texture if that matters.
+  - **Facing:** like a furnace, it needs `minecraft:placement_direction` (`cardinal_direction`)
+    and a permutation per direction, each carrying a `minecraft:transformation` rotation, so
+    the front faces the player who placed it.
+  - **Box check:** which face the GUI cube shows if the block item ever appears; with the
+    placer item, it shouldn't. Also check that the front shows the right way round in every
+    direction.
 - **Names:**
   - Each Tricorder is named "<Player>'s Tricorder" when Dave gives it (M9), so its tooltip
     reads, for example, *BlockyFox's Tricorder*.
   - The Power Pack is "Power Pack", and stacks to 16.
-  - A blank Replicator is "Replicator", and a programmed one is, for example, "Iron Replicator".
+  - A blank Replicator is "Replicator", and a programmed one is "<Target> Replicator".
 - **Lore lines:**
   - The Tricorder's *Points where Dave says* is from M9.
   - The Power Pack's *Keeps your things, or takes you somewhere* is from M10.

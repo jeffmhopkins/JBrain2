@@ -64,9 +64,9 @@ EYE = {"e": "#2f9a6a", "E": "#8fe8b0", "g": "#16583c", "k": "#0a1712", "w": "#e9
 
 # ---- variant palettes -----------------------------------------------------------------
 PAL = {
-    "a": {  # salvaged copper, verdigris and amethyst over tuff
+    "a": {  # bright copper and amethyst over tuff
         ".": None,
-        "K": "#2b1a14", "C": "#e59a6e", "c": "#b8684a", "d": "#7c3d2b",
+        "K": "#2b1a14", "C": "#f4ab7c", "c": "#d6855a", "d": "#9a5136",
         "v": "#4fae8f", "V": "#8fdcbc",
         "A": "#d7b0ff", "a": "#9a72d6", "p": "#5b3d93",
         "S": "#22183a", "s": "#3a2a5c", "W": "#ead6ff",
@@ -94,23 +94,44 @@ PAL = {
 }
 
 # ---- Tricorders -----------------------------------------------------------------------
+# A2: A's Tricorder with B's lens idea redrawn in amethyst on the copper face: Dave's eye.
+TRICORDER_LENS = [
+    ".........KK.....",
+    "........KAaK....",
+    "........KapK....",
+    "..KKKKKKKdKKKK..",
+    "..KCCCCCCCCCcK..",
+    "..KCCCKKKKCCcK..",
+    "..KCCKWAaaKCcK..",
+    "..KCCKASSaKCcK..",
+    "..KCCKaSSpKCcK..",
+    "..KCCKaappKCcK..",
+    "..KCCCKKKKCCcK..",
+    "..KCccccccccdK..",
+    "..KcAccccccAdK..",
+    "..KccccccccddK..",
+    "..KddddddddddK..",
+    "...KKKKKKKKKK...",
+]
+
 TRICORDER = {
-    # A: a copper handheld with an amethyst antenna crystal; the screen shows the arrow.
+    # A: bright copper (beamed down new) with an amethyst antenna crystal. The screen shows a
+    # ping, a ring round a dot, which points nowhere: the real arrow lives in the actionbar.
     "a": [
-        "..........KK....",
-        ".........KAaK...",
-        ".........KapK...",
-        "..KKKKKKKKdKKK..",
-        ".KCCCCCCCCCCcK..",
-        ".KCKKKKKKKKKcdK.",
-        ".KCKSsSWSSSKcdK.",
-        ".KCKSSWWWSSKcdK.",
-        ".KCKSWWWWWSKcdK.",
-        ".KCKSSSWSSSKcdK.",
-        ".KCKSSSWSSSKcdK.",
-        ".KcKKKKKKKKKcdK.",
-        ".KcvcAccvcAcddK.",
-        ".KccccccccccddK.",
+        ".........KK.....",
+        "........KAaK....",
+        "........KapK....",
+        "..KKKKKKKdKKKK..",
+        "..KCCCCCCCCCcK..",
+        "..KCKKKKKKKKcK..",
+        "..KCKsASSASKcK..",
+        "..KCKASSSSAKcK..",
+        "..KCKASWWSAKcK..",
+        "..KCKASWWSAKcK..",
+        "..KCKASSSSAKcK..",
+        "..KCKSASSASKcK..",
+        "..KCKKKKKKKKcK..",
+        "..KcAcccAcccdK..",
         "..KddddddddddK..",
         "...KKKKKKKKKK...",
     ],
@@ -362,6 +383,93 @@ def half(im):
     return out
 
 
+def a_front(on):
+    """A's front. Programmed is one look for every target: the window lit, the lights on."""
+    c = body("a", 11)
+    frame(c, "a")
+    box(c, 4, 2, 11, 7, "K")
+    if on:
+        box(c, 5, 3, 10, 6, "a")
+        box(c, 6, 4, 9, 5, "A")
+        c[4][7] = c[4][8] = "W"
+    else:
+        box(c, 5, 3, 10, 6, "S")
+        for x in range(5, 11):
+            for y in range(3, 7):
+                if (x + y) % 3 == 0:
+                    c[y][x] = "s"
+    for y in (3, 4, 5):
+        c[y][2] = c[y][13] = "E" if on else "g"
+    box(c, 3, 9, 12, 13, "K")
+    box(c, 4, 10, 11, 12, "k")
+    for x in (5, 8, 10):
+        box(c, x, 10, x, 12, "d")
+    return rows(c)
+
+
+def a_cell(c, x0, y0, on):
+    # A's own Power Pack, shrunk to 2x4 and standing in the tuff: caps over a green core.
+    c[y0][x0 + 1:x0 + 3] = list("Cc")
+    c[y0 + 1][x0 + 1:x0 + 3] = list("Ee" if on else "eg")
+    c[y0 + 2][x0 + 1:x0 + 3] = list("ew" if on else "gg")
+    c[y0 + 3][x0 + 1:x0 + 3] = list("cd")
+
+
+def a_top(on):
+    """The recipe from above: eight of A's cells round the furnace, on one tuff panel.
+
+    No outlines between cells, so at 1x the top reads as one panel; programmed, every core
+    and the centre light up, since the top is the face a slot shows largest.
+    """
+    c = body("a", 37)
+    frame(c, "a")
+    for gy, y0 in enumerate((1, 6, 11)):
+        for gx, x0 in enumerate((1, 6, 11)):
+            if gx == gy == 1:
+                box(c, x0, y0, x0 + 3, y0 + 3, "d")
+                box(c, x0 + 1, y0 + 1, x0 + 2, y0 + 2, "W" if on else "S")
+                if on:
+                    c[y0][x0 + 1] = c[y0 + 3][x0 + 2] = "A"
+            else:
+                a_cell(c, x0, y0, on)
+    return rows(c)
+
+
+def a_item(on):
+    """The placer item's flat sprite: the machine face-on, pack lights along its top."""
+    c = blank()
+    box(c, 1, 1, 14, 15, "t")
+    for y in range(1, 16):
+        for x in range(1, 15):
+            if x + y < 9:
+                c[y][x] = "T"
+            elif x + y > 22:
+                c[y][x] = "u"
+    box(c, 1, 1, 14, 4, "c")
+    box(c, 1, 1, 14, 1, "C")
+    for x0 in (3, 7, 11):
+        c[2][x0] = "E" if on else "g"
+        c[2][x0 + 1] = "e" if on else "g"
+        c[3][x0] = c[3][x0 + 1] = "e" if on else "x"
+    box(c, 1, 4, 14, 4, "d")
+    box(c, 4, 6, 11, 9, "K")
+    if on:
+        box(c, 5, 7, 10, 8, "a")
+        box(c, 6, 7, 9, 7, "A")
+        c[7][7] = c[7][8] = "W"
+    else:
+        box(c, 5, 7, 10, 8, "S")
+        c[7][5] = "s"
+    box(c, 3, 11, 12, 14, "K")
+    box(c, 4, 12, 11, 13, "k")
+    for x in (5, 8, 10):
+        box(c, x, 12, x, 13, "d")
+    for y in (6, 7, 8):
+        c[y][2] = c[y][13] = "E" if on else "g"
+    c = outline(c)
+    return rows(c)
+
+
 def iso(front_im, side_im, top_im):
     """A 16-px block icon the way the inventory shows a block: top, front-left, right side."""
     big = Image.new("RGBA", (N, N), (0, 0, 0, 0))
@@ -476,7 +584,26 @@ def furnace_faces():
 # ---- build ----------------------------------------------------------------------------
 def build():
     out = {}
-    for v in "abc":
+    pal = PAL["a"]
+    d = HERE / "a"
+    d.mkdir(exist_ok=True)
+    f0, f1 = render(a_front(False), pal), render(a_front(True), pal)
+    out["a"] = {
+        "tricorder": render(TRICORDER["a"], pal),
+        "tricorder_lens": render(TRICORDER_LENS, pal),
+        "power_pack": render(PACK["a"], pal),
+        "replicator": render(a_item(False), pal),
+        "replicator_programmed": render(a_item(True), pal),
+        "replicator_front": f0,
+        "replicator_front_programmed": f1,
+        "replicator_side": render(side("a"), pal),
+        "replicator_top": render(a_top(False), pal),
+        "replicator_top_programmed": render(a_top(True), pal),
+    }
+    for name, im in out["a"].items():
+        im.save(d / f"{name}.png")
+    # B and C are revision 1's record, drawn exactly as they were.
+    for v in "bc":
         pal = PAL[v]
         d = HERE / v
         d.mkdir(exist_ok=True)
@@ -512,38 +639,51 @@ def build():
 
 
 def contact(out, van, dest):
-    names = ["tricorder", "power_pack", "replicator", "replicator_iron",
-             "replicator_front", "replicator_front_iron", "replicator_side", "replicator_top"]
+    """Revision 2's sheet: A and A2 at 8x, our vanilla stand-ins, then a 1x / 2x strip."""
+    A = out["a"]
+    cols = ["tricorder", "power_pack", "replicator", "replicator_programmed",
+            "replicator_front", "replicator_front_programmed", "replicator_top",
+            "replicator_top_programmed"]
+    heads = ["tricorder", "power pack", "item", "item, prog.", "front", "front, prog.",
+             "top", "top, prog."]
     s, pad, lab = 8, 12, 110
     cw = N * s + pad
     font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
-    rows_ = [(f"Variant {v.upper()}", [out[v][n] for n in names]) for v in "abc"]
-    rows_.append(("Vanilla (ours)", list(van.values())))
-    W = lab + cw * len(names) + pad
+    rows_ = [
+        ("A", [A[n] for n in cols]),
+        ("A2 (lens)", [A["tricorder_lens"], None, None, None, A["replicator_side"]]),
+        ("Vanilla (ours)", list(van.values())),
+    ]
+    W = lab + cw * len(cols) + pad
     H = 28 + len(rows_) * (N * s + 34) + 70
     sheet = Image.new("RGBA", (W, H), (40, 42, 46, 255))
     dr = ImageDraw.Draw(sheet)
-    for i, n in enumerate(names):
-        dr.text((lab + i * cw, 8), n.replace("replicator_", "rep. "), fill="#e6e7e9", font=font)
+    for i, n in enumerate(heads):
+        dr.text((lab + i * cw, 8), n, fill="#e6e7e9", font=font)
     y = 28
     for title, ims in rows_:
         dr.text((8, y + 56), title, fill="#e6e7e9", font=font)
         for i, im in enumerate(ims):
+            if im is None:
+                continue
             x = lab + i * cw
             dr.rectangle([x, y, x + N * s - 1, y + N * s - 1], fill=(139, 139, 139, 255))
             sheet.alpha_composite(im.resize((N * s, N * s), Image.Resampling.NEAREST), (x, y))
+            if title.startswith("A2") and i == 4:
+                dr.text((x, y + N * s + 4), "side", fill="#e6e7e9", font=font)
         y += N * s + 34
-    # A 1x strip: each variant's pack between the eye and the pearl, as a hotbar meets them.
+    # As a hotbar meets them: the pack between an eye and a pearl, then the rest of A.
     dr.text((8, y + 2), "1x / 2x", fill="#e6e7e9", font=font)
+    strip = [van["ender_eye"], A["power_pack"], van["ender_pearl"], A["tricorder"],
+             A["tricorder_lens"], A["replicator"], A["replicator_programmed"]]
     x = lab
     for scale in (1, 2):
-        for v in "abc":
-            for im in (van["ender_eye"], out[v]["power_pack"], van["ender_pearl"]):
-                sheet.alpha_composite(im.resize((N * scale,) * 2, Image.Resampling.NEAREST),
-                                      (x, y))
-                x += N * scale + 4
-            x += 14
-        x += 20
+        dr.rectangle([x - 4, y - 4, x + len(strip) * (N * scale + 4), y + N * scale + 3],
+                     fill=(139, 139, 139, 255))
+        for im in strip:
+            sheet.alpha_composite(im.resize((N * scale,) * 2, Image.Resampling.NEAREST), (x, y))
+            x += N * scale + 4
+        x += 40
     sheet.save(Path(dest) / "contact.png")
 
 
