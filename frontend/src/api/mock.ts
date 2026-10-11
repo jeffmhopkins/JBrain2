@@ -62,6 +62,8 @@ const mockRebuild = { state: "none" as "none" | "running" | "exited", ticks: 0 }
 const mockExport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockImport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockReset = { state: "none" as "none" | "running" | "exited", ticks: 0 };
+/** Each Minecraft world's Power Pack switch and saved keepInventory, per page load. */
+const mcKeep: Record<string, { pack: boolean; keep: boolean }> = {};
 
 const CONTAINERS: ContainerStatus[] = [
   {
@@ -3896,6 +3898,29 @@ export const mockFetch: typeof fetch = async (input, init) => {
     );
     const running = scenario.status.server?.state === "running";
     const slotOf = (id: string | undefined) => w.worlds.slots.find((s) => s.id === id);
+    // Keep inventory (§M10) is the one rule the mock remembers, with the Power Pack switch, so
+    // the row's Off · On · Power Pack can be walked. `?mckeep=` (comma-separated): `pack` starts
+    // Castle Hill on Power Pack over a saved On; `hold` never answers a keep write; `busy`
+    // refuses it (409); `after-off` lets the switch off land and refuses the rule after it;
+    // `drop` answers 503.
+    const keepKnobs = (new URLSearchParams(globalThis.location?.search ?? "").get("mckeep") ?? "")
+      .split(",")
+      .filter(Boolean);
+    const keepOf = (slot: string) => {
+      if (!mcKeep[slot]) {
+        const pack = slot === "slot2" && keepKnobs.includes("pack");
+        mcKeep[slot] = { pack, keep: pack || slot === "slot4" };
+      }
+      return mcKeep[slot];
+    };
+    const keepWrite = async (kind: "pack" | "rule") => {
+      if (keepKnobs.includes("hold")) await new Promise(() => {});
+      if (keepKnobs.includes("drop")) return json({ detail: "upstream unavailable" }, 503);
+      if (keepKnobs.includes("busy") || (kind === "rule" && keepKnobs.includes("after-off"))) {
+        return json({ detail: "busy: restoring a backup" }, 409);
+      }
+      return null;
+    };
     if (path === "/api/minecraft" && scenario.status.server) {
       // `?mcw=pending`: restart-bound settings saved since the last start.
       const pending =
@@ -3907,7 +3932,20 @@ export const mockFetch: typeof fetch = async (input, init) => {
         server: { ...scenario.status.server, job: w.job, pending_restart: pending },
       });
     }
-    if (path === "/api/minecraft/worlds") return json(w.worlds);
+    if (path === "/api/minecraft/worlds") {
+      return json({
+        ...w.worlds,
+        slots: w.worlds.slots.map((s) =>
+          s.exists || s.name
+            ? {
+                ...s,
+                power_pack_keep: keepOf(s.id).pack,
+                rules: { keepInventory: keepOf(s.id).keep },
+              }
+            : s,
+        ),
+      });
+    }
     if (path === "/api/minecraft/timeline") {
       const m = await import("../minecraftMapFixtures");
       const q = url.searchParams;
@@ -3943,22 +3981,50 @@ export const mockFetch: typeof fetch = async (input, init) => {
     if (path === "/api/minecraft/worlds/new-seed") {
       return json({ seed: String(Math.floor(Math.random() * 9e15) - 4.5e15) });
     }
+    const powerPack = path.match(/^\/api\/minecraft\/worlds\/(slot\d+)\/power-pack$/);
+    if (powerPack?.[1] && method === "PUT") {
+      const k = keepOf(powerPack[1]);
+      const refused = await keepWrite("pack");
+      if (refused) return refused;
+      k.pack = !!JSON.parse(String(init?.body ?? "{}")).on;
+      const s = slotOf(powerPack[1]);
+      return json({
+        ...s,
+        power_pack_keep: k.pack,
+        rules: { keepInventory: k.keep },
+        applies: s?.active && running ? "now" : "next load",
+      });
+    }
     const rules = path.match(/^\/api\/minecraft\/worlds\/(slot\d+)\/rules$/);
-    if (rules) {
+    if (rules?.[1]) {
       const s = slotOf(rules[1]);
+      const k = keepOf(rules[1]);
       const live = !!s?.active && running;
       const own: Record<string, Record<string, boolean>> = {
         slot3: { doDayLightCycle: false, doWeatherCycle: false, doMobSpawning: false },
-        slot4: { keepInventory: true },
       };
       const set = method === "PUT" ? (JSON.parse(String(init?.body ?? "{}")).set ?? {}) : {};
+      if ("keepInventory" in set) {
+        if (k.pack) {
+          return json(
+            { detail: "keepInventory is managed by the Power Pack charm while it is on" },
+            400,
+          );
+        }
+        const refused = await keepWrite("rule");
+        if (refused) return refused;
+        k.keep = !!set.keepInventory;
+      }
       const pending = live ? [] : [...(rules[1] === "slot4" ? ["keepInventory"] : [])];
-      return json(
-        mc.mcRules(rules[1], live, { ...own[rules[1] ?? ""], ...set }, [
-          ...pending,
-          ...(live ? [] : Object.keys(set)),
-        ]),
-      );
+      return json({
+        ...mc.mcRules(
+          rules[1],
+          live,
+          { ...own[rules[1]], ...set, keepInventory: k.pack || k.keep },
+          [...new Set([...pending, ...(live ? [] : Object.keys(set))])],
+        ),
+        managed: k.pack ? { keepInventory: true } : {},
+      });
     }
     const world = path.match(/^\/api\/minecraft\/worlds\/(slot\d+)(?:\/(\w+))?$/);
     if (world && (method === "POST" || method === "PATCH")) {

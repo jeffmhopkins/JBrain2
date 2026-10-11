@@ -1314,19 +1314,28 @@ inventory"**.
 and its recipe are in the `jbrain` pack (out of the kit), and the switch is
 built: the slot's `power_pack_keep`, **off by default**, set by
 `PUT /api/minecraft/worlds/{slot}/power-pack` (owner) or
-`PUT /api/debug/minecraft/worlds/{slot}/power-pack` (until the PWA has the toggle). The
+`PUT /api/debug/minecraft/worlds/{slot}/power-pack`. The
 sidecar holds `keepInventory` on while it's on (the rules view reports it under
-`managed` and refuses a change to it; off hands it back to the owner's saved choice, or
-off), and tells the pack with `scriptevent jb:config {"power_pack_keep": …}` after the
+`managed` and refuses a change to it). Turning it on pins the value the world had as the
+owner's saved choice when none is saved (an import, a reset), so turning it off hands back
+exactly that, saved so a later load agrees. It tells the pack with `scriptevent jb:config {"power_pack_keep": …}` after the
 rules at every start and at once on the loaded world; the pack keeps it as a world
 dynamic property. On a player's death with the switch on and the rule on: a Power Pack
 (inventory, armor or off-hand) and their own Tricorder burn one pack, smallest stack
 first, keep everything, and tell them on respawn with a fizz; anything less drops the
 inventory, armor and off-hand at the spot (the last place they stood for a void
 death), skipping keepOnDeath items, destroying Curse of Vanishing, and resetting XP with
-7 orbs a level up to 100. A fault in the charm leaves everyone keeping (logged). Not
-built: the PWA toggle on the world's page and its "managed by the Power Pack charm" row
-(next, through the mock gate), the Power Pack's lore (a crafted item gets none from a
+7 orbs a level up to 100. A fault in the charm leaves everyone keeping (logged).
+
+**Shipped (wave mc-keep-inventory, 2026-10-11): the PWA toggle.** Through the GUI gate
+(`docs/mocks/minecraft-keep-inventory/`, owner pick **A** with the review's conditions)
+the rules editor's **Keep inventory on death** row is a segmented **Off · On · Power Pack**
+rather than a switch on the world's page: Off and On write the plain rule, Power Pack writes
+the slot's switch, and leaving Power Pack turns the switch off before any rule write. While
+it's on, the rule is excluded from every changed count and reset. The New world form offers
+Off · On only. DESIGN.md "Worlds and backups" has the rest.
+
+Not built: the Power Pack's lore (a crafted item gets none from a
 script without a hook; left out rather than faked), and transport. **Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
 `entityDie`, `spawnItem` keeping enchantments, names and durability, and what one

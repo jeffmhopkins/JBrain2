@@ -1670,6 +1670,35 @@ def test_an_owners_saved_keep_inventory_survives_the_charm(
     assert rig.slots.get("slot2")["rules"] == {"keepInventory": True, "pvp": False}
 
 
+def test_turning_the_charm_off_returns_to_the_value_it_was_turned_on_over(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An import whose file kept inventory has no saved choice, only what it last
+    loaded with; the switch pins that on the way in, so off hands back On, not Off."""
+    rig, _sent = _running_rig(monkeypatch, tmp_path)
+    known = {**worlds.DEFAULT_RULES, "keepInventory": True}
+    rig.slots.update("slot2", rules={}, rules_known=known)
+    assert rig.rules_view("slot2")["rules"]["keepInventory"] is True
+    rig.set_power_pack("slot2", True)
+    assert rig.slots.get("slot2")["rules"] == {"keepInventory": True}
+    rig.set_power_pack("slot2", True)  # again: the held value never becomes the choice
+    rig.set_power_pack("slot2", False)
+    assert rig.slots.get("slot2")["rules"] == {"keepInventory": True}
+    assert rig.rules_view("slot2")["rules"]["keepInventory"] is True
+
+
+def test_a_second_switch_on_does_not_overwrite_the_saved_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, _sent = _running_rig(monkeypatch, tmp_path)
+    rig.slots.update("slot2", rules={})
+    rig.set_power_pack("slot2", True)
+    # The view now reads the held True; a repeat on must not capture it as the choice.
+    rig.slots.update("slot2", rules={}, rules_known={"keepInventory": True})
+    rig.set_power_pack("slot2", True)
+    assert rig.slots.get("slot2")["rules"] == {}
+
+
 def test_keep_inventory_is_managed_by_the_charm_while_it_is_on(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

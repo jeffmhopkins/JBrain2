@@ -2,10 +2,22 @@
 
 > **Status:** Living · **Last verified:** 2026-10-11
 >
-> Open — waiting for the owner's pick. Three variants are below. The chosen one becomes the
-> binding spec for the PWA side of M10's keep-inventory charm (the toggle and the "managed"
-> row the plan lists as *not built*), and its reasoning lands in `docs/reference/DESIGN.md`
-> ("Minecraft server screen") in the implementing PR.
+> **Decision (binding, owner 2026-10-11): A — segmented in the row, with the conditions of
+> the independent review (`REVIEW.md` in this folder, "Recommendation").** Those conditions
+> supersede this README where they differ: the help line states the mode (*Power Pack:
+> players keep their things only while carrying a Power Pack and their own Tricorder; one
+> pack burns each time. Without both, they drop everything.*), no *vanilla* or
+> *keepInventory* in user copy, *their own Tricorder*; refusals name the sidecar's real
+> reason, and after any failure the row re-reads and words what the server now reports
+> (*nothing changed* only when that confirms it; never after a 503 or a dropped
+> connection); the sidecar pins the current value as the saved choice when the switch turns
+> on, so off hands back what the owner saw; the held rule is left out of every changed
+> count, the group reset and Reset all; *pending* is the API's own, and the toast words live
+> or next load from the slot; the New world form offers Off · On only; the shared segmented
+> control is extended (a wider share for Power Pack, a busy segment), not forked, with no
+> icon and no bespoke type size. B and C stay here as the record. The build is
+> `frontend/src/screens/MinecraftWorlds.tsx` (`KeepRow`, `Seg`) and DESIGN.md "Worlds and
+> backups" carries the reasoning.
 > Behaviour source: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M10, "Keep your inventory, once per
 > Power Pack" and "Shipped (wave mc-items, 2026-10-11)".
 

@@ -1088,13 +1088,20 @@ class Rig:
         """The world's "Power Pack keeps inventory" switch (§M10). Saved on the slot and
         applied at every start; on the loaded, running world also at once: the rule,
         then the pack's own copy of the switch. Turning it off hands keepInventory back
-        to the owner's saved choice, or vanilla's off, saved so a later load agrees."""
+        to the owner's saved choice, saved so a later load agrees."""
         if not isinstance(on, bool):
             raise ValueError("`on` is true or false")
         with self._locked():
             rec = self.slots.get(slot_id)
             rules = dict(rec.get("rules") or {})
-            if not on:
+            if on and not rec.get("power_pack_keep"):
+                # A world with no saved choice (an import, a reset, a new world made
+                # without the rule) runs whatever it last loaded with; pin that as the
+                # saved choice so turning the switch off returns to what the owner saw,
+                # not to vanilla's off.
+                known = rec.get("rules_known") or worlds.DEFAULT_RULES
+                rules.setdefault("keepInventory", bool(known.get("keepInventory")))
+            elif not on:
                 rules.setdefault("keepInventory", False)
             rec = self.slots.update(slot_id, power_pack_keep=on, rules=rules)
             live = rec["folder"] == self.active_folder() and self.bds.state == "running"

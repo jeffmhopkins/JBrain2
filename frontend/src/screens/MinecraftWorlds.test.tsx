@@ -326,16 +326,17 @@ describe("Minecraft worlds and backups", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Find a game rule" }), {
       target: { value: "inventory" },
     });
-    const sw = screen.getByRole("switch", { name: "Keep inventory on death" });
-    expect(sw).toHaveAttribute("aria-checked", "true");
+    const keep = screen.getByRole("radiogroup", { name: "Keep inventory on death" });
+    expect(within(keep).getByRole("radio", { name: "On" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("pending")).toBeInTheDocument();
     expect(screen.getByText("changed · default off")).toBeInTheDocument();
-    fireEvent.click(sw);
+    fireEvent.click(within(keep).getByRole("radio", { name: "Off" }));
     expect(
-      await screen.findByText(
-        "Saved — keep inventory on death changes when Skyblock run next loads",
-      ),
+      await screen.findByText("Saved — keep inventory Off from Skyblock run's next load"),
     ).toBeInTheDocument();
+    expect(writes()).toContain(
+      'PUT /api/minecraft/worlds/slot4/rules {"set":{"keepInventory":false}}',
+    );
   });
 
   it("the playerWaypoints choice is the reported value plus everyone", async () => {
@@ -824,12 +825,278 @@ describe("Minecraft worlds and backups", () => {
     fireEvent.change(await screen.findByRole("searchbox", { name: "Find a game rule" }), {
       target: { value: "inventory" },
     });
-    const sw = screen.getByRole("switch", { name: "Keep inventory on death" });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Find a game rule" }), {
+      target: { value: "hurt each other" },
+    });
+    const sw = screen.getByRole("switch", { name: "Players can hurt each other" });
     fireEvent.click(sw);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Couldn't save the rule — busy: importing a world.",
     );
-    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+  });
+
+  // ---- keep inventory: Off · On · Power Pack (§M10) ----
+
+  /** A sidecar stand-in for one world's switch and saved choice: the rules view reports the
+   *  held rule as managed, refuses a write to it, and the slot carries both. */
+  function keepWorld(slot: string, start: { pack: boolean; keep: boolean; live: boolean }) {
+    const k = { ...start };
+    const base = world.rules;
+    world.rules = (id) => {
+      const view = base(id);
+      if (id !== slot) return view;
+      return {
+        ...view,
+        live: k.live,
+        rules: { ...view.rules, keepInventory: k.pack || k.keep },
+        managed: k.pack ? { keepInventory: true } : {},
+      };
+    };
+    const slots = () =>
+      mcWorlds(
+        mcSlots().map((s) =>
+          s.id === slot ? { ...s, power_pack_keep: k.pack, rules: { keepInventory: k.keep } } : s,
+        ),
+      );
+    world.worlds = slots();
+    world.read = (path) => (path === "/api/minecraft/worlds" ? json(slots()) : undefined);
+    return k;
+  }
+
+  async function openKeep(name: RegExp) {
+    await openWorld(name);
+    fireEvent.click(await screen.findByRole("button", { name: /^Game rules/ }));
+    fireEvent.change(await screen.findByRole("searchbox", { name: "Find a game rule" }), {
+      target: { value: "inventory" },
+    });
+    return screen.getByRole("radiogroup", { name: "Keep inventory on death" });
+  }
+
+  it("keep inventory is Off · On · Power Pack, explained before a pick", async () => {
+    keepWorld("slot2", { pack: false, keep: false, live: true });
+    const keep = await openKeep(/^Castle Hill/);
+    expect(
+      within(keep)
+        .getAllByRole("radio")
+        .map((r) => r.textContent),
+    ).toEqual(["Off", "On", "Power Pack"]);
+    expect(within(keep).getByRole("radio", { name: "Off" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByText("Everyone drops their things where they die.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/^Power Pack: players keep their things only while carrying/),
+    ).toHaveTextContent("their own Tricorder; one pack burns each time");
+  });
+
+  it("Power Pack on the loaded, running world is the switch, applied live", async () => {
+    const k = keepWorld("slot2", { pack: false, keep: false, live: true });
+    world.write = (_method, path, body) => {
+      if (path.endsWith("/power-pack")) {
+        k.pack = (body as { on: boolean }).on;
+        return json({ ...mcSlots()[1], power_pack_keep: k.pack, applies: "now" });
+      }
+      return undefined;
+    };
+    const keep = await openKeep(/^Castle Hill/);
+    fireEvent.click(within(keep).getByRole("radio", { name: "Power Pack" }));
+    expect(await screen.findByText("Applied live — keep inventory Power Pack")).toBeInTheDocument();
+    expect(writes()).toEqual(['PUT /api/minecraft/worlds/slot2/power-pack {"on":true}']);
+    expect(within(keep).getByRole("radio", { name: "Power Pack" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByText("held on by the Power Pack")).toBeInTheDocument();
+    expect(
+      screen.getByText("Underneath it's Off — that comes back if Power Pack is turned off."),
+    ).toBeInTheDocument();
+  });
+
+  it("leaving Power Pack is the switch off, then the rule; each step shows while it runs", async () => {
+    const k = keepWorld("slot4", { pack: true, keep: false, live: false });
+    let release: () => void = () => {};
+    world.write = (_method, path, body) => {
+      if (path.endsWith("/power-pack")) {
+        return new Promise<Response>((done) => {
+          release = () => {
+            k.pack = (body as { on: boolean }).on;
+            done(json({ ...mcSlots()[3], power_pack_keep: k.pack, applies: "next load" }));
+          };
+        });
+      }
+      if (path.endsWith("/rules"))
+        k.keep = (body as { set: { keepInventory: boolean } }).set.keepInventory;
+      return undefined;
+    };
+    const keep = await openKeep(/^Skyblock run/);
+    fireEvent.click(within(keep).getByRole("radio", { name: "On" }));
+    expect(
+      await screen.findByText(
+        "Turning Power Pack off — keep inventory goes back to your saved Off…",
+      ),
+    ).toBeInTheDocument();
+    expect(within(keep).getByRole("radio", { name: "On" })).toHaveAttribute("aria-busy", "true");
+    expect(within(keep).getByRole("radio", { name: "Off" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    act(() => release());
+    expect(
+      await screen.findByText(
+        "Saved — Power Pack off, keep inventory On from Skyblock run's next load",
+      ),
+    ).toBeInTheDocument();
+    expect(writes()).toEqual([
+      'PUT /api/minecraft/worlds/slot4/power-pack {"on":false}',
+      'PUT /api/minecraft/worlds/slot4/rules {"set":{"keepInventory":true}}',
+    ]);
+  });
+
+  it("a refused pick names the real reason and says nothing changed only once re-read", async () => {
+    keepWorld("slot2", { pack: false, keep: false, live: true });
+    world.write = (_method, path) =>
+      path.endsWith("/power-pack") ? json({ detail: "busy: restoring a backup" }, 409) : undefined;
+    const keep = await openKeep(/^Castle Hill/);
+    fireEvent.click(within(keep).getByRole("radio", { name: "Power Pack" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't set keep inventory to Power Pack — the server is restoring a backup. Nothing changed.",
+    );
+    expect(within(keep).getByRole("radio", { name: "Off" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("a write saved before the console failed reads back as saved, not as nothing changed", async () => {
+    const k = keepWorld("slot2", { pack: false, keep: false, live: true });
+    world.write = (_method, path) => {
+      if (!path.endsWith("/power-pack")) return undefined;
+      k.pack = true; // the sidecar saves the slot first, then the console refuses
+      return json({ detail: "server is not running" }, 409);
+    };
+    const keep = await openKeep(/^Castle Hill/);
+    fireEvent.click(within(keep).getByRole("radio", { name: "Power Pack" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Keep inventory reads Power Pack now, but the server reported a problem — the server isn't running.",
+    );
+    expect(within(keep).getByRole("radio", { name: "Power Pack" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("a dropped connection never says nothing changed", async () => {
+    keepWorld("slot2", { pack: false, keep: false, live: true });
+    world.write = (_method, path) =>
+      path.endsWith("/rules") ? json({ detail: "upstream unavailable" }, 503) : undefined;
+    const keep = await openKeep(/^Castle Hill/);
+    fireEvent.click(within(keep).getByRole("radio", { name: "On" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Couldn't set keep inventory to On — the server didn't answer. It still reads Off. The server may still be working on it.",
+    );
+    expect(alert).not.toHaveTextContent("Nothing changed");
+  });
+
+  it("the rule refused after the switch went off says where it now stands", async () => {
+    const k = keepWorld("slot2", { pack: true, keep: true, live: true });
+    world.write = (_method, path) => {
+      if (path.endsWith("/power-pack")) {
+        k.pack = false;
+        return json({ ...mcSlots()[1], power_pack_keep: false, applies: "now" });
+      }
+      return json({ detail: "busy: restart" }, 409);
+    };
+    const keep = await openKeep(/^Castle Hill/);
+    fireEvent.click(within(keep).getByRole("radio", { name: "Off" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't set keep inventory to Off — the server is restarting. Power Pack is off and it reads On for now.",
+    );
+  });
+
+  it("a stale device's pick is refused as managed, and the row shows Power Pack", async () => {
+    const k = keepWorld("slot2", { pack: false, keep: false, live: true });
+    world.write = (_method, path) =>
+      path.endsWith("/rules")
+        ? json({ detail: "keepInventory is managed by the Power Pack charm while it is on" }, 400)
+        : undefined;
+    const keep = await openKeep(/^Castle Hill/);
+    k.pack = true; // turned on elsewhere (the debug API) since this page read the rules
+    fireEvent.click(within(keep).getByRole("radio", { name: "On" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't set keep inventory to On — Power Pack is holding it on. It reads Power Pack for now.",
+    );
+    expect(within(keep).getByRole("radio", { name: "Power Pack" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("the held rule is never counted as changed nor sent by a reset", async () => {
+    keepWorld("slot2", { pack: true, keep: false, live: true });
+    const base = world.rules;
+    world.rules = (id) => {
+      const v = base(id);
+      return id === "slot2" ? { ...v, rules: { ...v.rules, pvp: false } } : v;
+    };
+    // The reset answers with pvp still off, so both resets stay on screen to be tried.
+    world.write = (_method, path) =>
+      path.endsWith("/slot2/rules") ? json(world.rules("slot2")) : undefined;
+    await openWorld(/^Castle Hill/);
+    expect(await screen.findByText(/1 changed from default/)).toHaveTextContent(
+      "keep inventory Power Pack",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Game rules/ }));
+    const players = (await screen.findByText("Players", { selector: ".mc-gt" })).closest(
+      "summary",
+    ) as HTMLElement;
+    expect(players).toHaveTextContent("1 changed · Power Pack");
+    fireEvent.click(players);
+    fireEvent.click(screen.getByRole("button", { name: "Reset players to defaults" }));
+    await waitFor(() =>
+      expect(writes()).toEqual(['PUT /api/minecraft/worlds/slot2/rules {"set":{"pvp":true}}']),
+    );
+    expect(screen.getByText(/Reset all leaves alone/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reset all" }));
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]).toBe('PUT /api/minecraft/worlds/slot2/rules {"set":{"pvp":true}}');
+  });
+
+  it("the segments are one tab stop; arrows move between them", async () => {
+    keepWorld("slot2", { pack: false, keep: false, live: true });
+    const keep = await openKeep(/^Castle Hill/);
+    const [off, on, pack] = within(keep).getAllByRole("radio") as HTMLElement[];
+    expect([off, on, pack].map((b) => b?.tabIndex)).toEqual([0, -1, -1]);
+    off?.focus();
+    fireEvent.keyDown(off as HTMLElement, { key: "ArrowLeft" });
+    expect(pack).toHaveFocus();
+    fireEvent.keyDown(pack as HTMLElement, { key: "Home" });
+    expect(off).toHaveFocus();
+    fireEvent.keyDown(off as HTMLElement, { key: "ArrowRight" });
+    expect(on).toHaveFocus();
+    expect(writes()).toEqual([]);
+  });
+
+  it("New world's rules offer keep inventory Off · On only — no Power Pack", async () => {
+    await openWorlds();
+    fireEvent.click(await screen.findByRole("button", { name: "New world" }));
+    const sheet = await screen.findByRole("dialog", { name: "New world" });
+    fireEvent.click(within(sheet).getByText("World rules"));
+    fireEvent.change(within(sheet).getByRole("searchbox", { name: "Find a game rule" }), {
+      target: { value: "inventory" },
+    });
+    const keep = within(sheet).getByRole("radiogroup", { name: "Keep inventory on death" });
+    expect(
+      within(keep)
+        .getAllByRole("radio")
+        .map((r) => r.textContent),
+    ).toEqual(["Off", "On"]);
+    expect(within(sheet).queryByText(/Power Pack/)).toBeNull();
+    fireEvent.click(within(keep).getByRole("radio", { name: "On" }));
+    expect(within(keep).getByRole("radio", { name: "On" })).toHaveAttribute("aria-checked", "true");
+    expect(within(sheet).getByText("1 rule changed")).toBeInTheDocument();
   });
 
   it("closing Game rules mid-tap still sends one save with the final value", async () => {

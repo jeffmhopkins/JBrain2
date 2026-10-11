@@ -525,7 +525,16 @@ export interface MinecraftSlot {
   /** Made over the debug API to test the crash site; cleared once the owner resets,
    *  imports or restores over it. */
   test?: boolean;
+  /** The world's "Power Pack keeps inventory" switch (plan §M10); absent from older sidecars. */
+  power_pack_keep?: boolean;
+  /** The owner's saved rule choices, re-applied at every load. While the Power Pack switch is
+   *  on, `keepInventory` here is the plain choice it hands back when turned off. */
+  rules?: Record<string, MinecraftRuleValue>;
 }
+
+/** PUT /worlds/{slot}/power-pack: the slot as saved, and whether it reached the running
+ *  world ("now") or waits for a start or load ("next load"). */
+export type MinecraftPowerPackResult = MinecraftSlot & { applies: "now" | "next load" };
 
 export type MinecraftWreck = "armed" | "done" | "skipped" | null;
 
@@ -718,6 +727,9 @@ export interface MinecraftRules {
   rules: Record<string, MinecraftRuleValue>;
   defaults: Record<string, MinecraftRuleValue>;
   pending: string[];
+  /** Rules a box feature holds, e.g. `{keepInventory: true}` while the Power Pack switch is
+   *  on; a write to one is refused. Absent from older sidecars. */
+  managed?: Record<string, MinecraftRuleValue>;
 }
 
 export interface MinecraftNewWorld {
@@ -5114,6 +5126,14 @@ export const api = {
   ): Promise<MinecraftRules> {
     const response = await request(`/api/minecraft/worlds/${slot}/rules`, jsonInit("PUT", { set }));
     return (await response.json()) as MinecraftRules;
+  },
+
+  async minecraftSetPowerPack(slot: string, on: boolean): Promise<MinecraftPowerPackResult> {
+    const response = await request(
+      `/api/minecraft/worlds/${slot}/power-pack`,
+      jsonInit("PUT", { on }),
+    );
+    return (await response.json()) as MinecraftPowerPackResult;
   },
 
   async minecraftBackups(slot?: string): Promise<MinecraftBackup[]> {

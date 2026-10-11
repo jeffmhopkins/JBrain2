@@ -10,6 +10,9 @@ import {
 } from "./minecraftFixtures";
 import {
   DEFAULT_RULES,
+  DRAFT_KEEP_MODES,
+  KEEP_HELP,
+  KEEP_MODES,
   MAX_IMPORT_BYTES,
   PINNED_DELETE_WHY,
   RULE_GROUPS,
@@ -27,9 +30,16 @@ import {
   importOverConfirm,
   isRefusal,
   jobLine,
+  keepFailText,
+  keepMeaning,
+  keepMode,
+  keepSaved,
+  keepSavedToast,
+  keepSteps,
   loadConfirm,
   nextToGo,
   originText,
+  refusalReason,
   resetConfirm,
   resetOptions,
   restoreConfirm,
@@ -83,6 +93,12 @@ describe("game rules: live or pending", () => {
     expect(changedRules(mcRules("slot3", false, { doDayLightCycle: false, pvp: true }))).toEqual([
       "doDayLightCycle",
     ]);
+  });
+
+  it("never counts a rule the Power Pack holds as changed", () => {
+    const view = mcRules("slot2", true, { keepInventory: true, pvp: false });
+    expect(changedRules(view)).toEqual(["keepInventory", "pvp"]);
+    expect(changedRules({ ...view, managed: { keepInventory: true } })).toEqual(["pvp"]);
   });
 
   it("groups every reported rule, and a new one lands in Other rather than vanishing", () => {
@@ -305,5 +321,91 @@ describe("jobs", () => {
       /^test world, \w+ \d+ — made over the debug API$/,
     );
     expect(originText(creative)).toMatch(/^new world, /);
+  });
+});
+
+describe("keep inventory: Off · On · Power Pack", () => {
+  const slots = mcSlots();
+  const castle = slots[1] as MinecraftSlot;
+  const sky = slots[3] as MinecraftSlot;
+
+  it("a saved world offers Power Pack; the New world draft doesn't", () => {
+    expect(KEEP_MODES).toEqual(["off", "on", "pack"]);
+    expect(DRAFT_KEEP_MODES).toEqual(["off", "on"]);
+  });
+
+  it("reads the mode from the managed rule first", () => {
+    const view = mcRules("slot2", true, { keepInventory: true });
+    expect(keepMode(view)).toBe("on");
+    expect(keepMode({ ...view, managed: { keepInventory: true } })).toBe("pack");
+    expect(keepMode(mcRules("slot2", true))).toBe("off");
+  });
+
+  it("the saved choice underneath is the slot's rule, else Off", () => {
+    expect(keepSaved(castle)).toBe(false);
+    expect(keepSaved({ ...castle, rules: { keepInventory: true } })).toBe(true);
+    expect(keepMeaning("pack", true)).toBe(
+      "Underneath it's On — that comes back if Power Pack is turned off.",
+    );
+  });
+
+  it("the help line states the mode in plain words", () => {
+    expect(KEEP_HELP).toMatch(/only while carrying a Power Pack and their own Tricorder/);
+    expect(KEEP_HELP).toMatch(/one pack burns each time/);
+    expect(KEEP_HELP).toMatch(/Without both, they drop everything/);
+    expect(KEEP_HELP).not.toMatch(/vanilla|keepInventory/i);
+  });
+
+  it("leaving Power Pack turns the switch off first, and sets the rule only if it differs", () => {
+    expect(keepSteps("off", "on", false).map((s) => [s.kind, s.on])).toEqual([["rule", true]]);
+    expect(keepSteps("on", "pack", true).map((s) => [s.kind, s.on])).toEqual([["pack", true]]);
+    expect(keepSteps("pack", "on", true).map((s) => [s.kind, s.on])).toEqual([["pack", false]]);
+    const two = keepSteps("pack", "off", true);
+    expect(two.map((s) => [s.kind, s.on])).toEqual([
+      ["pack", false],
+      ["rule", false],
+    ]);
+    expect(two[0]?.msg).toBe("Turning Power Pack off — keep inventory goes back to your saved On…");
+    expect(keepSteps("on", "on", true)).toEqual([]);
+  });
+
+  it("words the sidecar's refusals plainly", () => {
+    expect(refusalReason("busy: restoring a backup")).toBe("the server is restoring a backup");
+    expect(refusalReason("busy: restart")).toBe("the server is restarting");
+    expect(refusalReason("busy: another action")).toBe("the server is busy with another action");
+    expect(refusalReason("server is not running")).toBe("the server isn't running");
+    expect(refusalReason("keepInventory is managed by the Power Pack charm while it is on")).toBe(
+      "Power Pack is holding it on",
+    );
+    expect(refusalReason("something else.")).toBe("something else");
+  });
+
+  it("says nothing changed only for a refusal the re-read confirms", () => {
+    const base = { to: "pack" as const, from: "off" as const, reason: "the server is updating" };
+    expect(keepFailText({ ...base, now: "off", refused: true })).toBe(
+      "Couldn't set keep inventory to Power Pack — the server is updating. Nothing changed.",
+    );
+    expect(keepFailText({ ...base, now: "off", refused: false })).not.toMatch(/Nothing changed/);
+    expect(keepFailText({ ...base, now: null, refused: true })).toMatch(
+      /Couldn't read it back\. The server may still be working on it\.$/,
+    );
+    expect(keepFailText({ ...base, now: "pack", refused: true })).toMatch(
+      /^Keep inventory reads Power Pack now, but the server reported a problem/,
+    );
+    expect(keepFailText({ to: "off", from: "pack", now: "on", refused: true, reason: "x" })).toBe(
+      "Couldn't set keep inventory to Off — x. Power Pack is off and it reads On for now.",
+    );
+  });
+
+  it("the toast says live, at the start, or at the next load from the slot", () => {
+    expect(keepSavedToast("pack", "off", castle, true)).toBe(
+      "Applied live — keep inventory Power Pack",
+    );
+    expect(keepSavedToast("pack", "off", castle, false)).toBe(
+      "Saved — keep inventory Power Pack when the server starts",
+    );
+    expect(keepSavedToast("off", "pack", sky, false)).toBe(
+      "Saved — Power Pack off, keep inventory Off from Skyblock run's next load",
+    );
   });
 });
