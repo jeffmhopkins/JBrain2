@@ -227,7 +227,8 @@ class BlockIndex:
             }
             for key, value in leveldb.read_keys(self.db, keys).items():
                 _, cx, cz = _where(key)
-                hits.extend(_section_hits(value, cx, cz, x, z, wanted))
+                sy = struct.unpack_from("<b", key, len(key) - 1)[0]
+                hits.extend(_section_hits(value, cx, cz, sy, x, z, wanted))
             hits.sort(key=lambda h: h["distance"])
         return [h for h in hits if h["distance"] <= radius][:limit], len(in_range)
 
@@ -238,11 +239,13 @@ def _key(dim: int, cx: int, cz: int, sy: int) -> bytes:
 
 
 def _section_hits(
-    value: bytes, cx: int, cz: int, x: int, z: int, wanted: set[str]
+    value: bytes, cx: int, cz: int, section: int, x: int, z: int, wanted: set[str]
 ) -> list[dict]:
-    """The nearest block of each wanted kind in one section."""
+    """The nearest block of each wanted kind in one section. `section` comes from the
+    record's key, the one place every version stores it: a version-8 value has no y of
+    its own, so taking it from the value put an old world's deep ores at y 0-15 (#1616)."""
     try:
-        section, found = layers(value)
+        _, found = layers(value)
     except (ValueError, struct.error, IndexError, UnicodeDecodeError):
         return []
     best: dict[str, dict] = {}
