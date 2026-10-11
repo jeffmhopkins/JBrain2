@@ -82,6 +82,8 @@ def sidecar(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             command = kw["json"]["command"]
             state["commands"].append(command)
             return {"lines": WAYPOINT_SET if command.startswith("scriptevent") else []}
+        if path == "/status":
+            return {"players": state.get("online", [])}
         return {}
 
     monkeypatch.setattr(mc, "call", call)
@@ -382,3 +384,144 @@ async def test_a_question_runs_in_the_askers_own_continuing_session(maker, sidec
         )
     await door.answer(q)
     assert executor.calls[2]["agent_session_id"] != sid
+
+
+# --- §M18: the fast path, through the real tools and the real session ----------------
+
+
+class NoModel:
+    """A turn executor that records whether the model was needed at all."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def run_turn(self, **kw: Any) -> ExecutedTurn:
+        self.calls.append(kw)
+        return ExecutedTurn(
+            result=AgentResult(
+                text="It's 100 blocks.", stop_reason="end_turn", steps=0, cost_tokens=1
+            )
+        )
+
+
+def _ask(i: int, said: str, x: float, z: float) -> door_mod.Question:
+    q = door_mod.parse_question(
+        {
+            "id": i,
+            "kind": "dave",
+            "name": "Steve 42",
+            "xuid": "111",
+            "world": "slot2",
+            "text": said,
+            "x": x,
+            "y": 64.0,
+            "z": z,
+            "dim": "overworld",
+            "known": ["tricorder"],
+        }
+    )
+    assert q is not None
+    return q
+
+
+async def test_the_fast_path_acts_through_the_tools_and_is_part_of_the_session(
+    maker, sidecar
+) -> None:
+    owner = await _owner(maker)
+    await _seen(maker, owner, "111", "Steve 42")
+    executor = NoModel()
+    door = door_mod.DaveDoor(
+        maker,
+        object(),
+        sessions=AgentSessionRepo(maker),
+        runlog=AgentRunLog(maker),
+        transcript=AgentTranscript(maker),
+        executor=executor,
+        owner_principal_id=lambda: _pid(owner),
+        tools=_tools(maker),
+    )
+    await door.answer(_ask(1, "Dave, save this place as Tree Farm", 120.5, -39.5))
+    await door.answer(_ask(2, "navigate to tree farm", 120.0, 60.0))
+    await door.answer(_ask(3, "navigate to the moon", 0.0, 0.0))
+    assert executor.calls == []  # all three answered without the model
+    said = [c for c in sidecar["commands"] if c.startswith("tellraw")]
+    assert [json.loads(c[c.index("{") :])["rawtext"][0]["text"] for c in said] == [
+        "<Dave> Marked: Tree Farm, right where you're standing.",
+        "<Dave> Locked on: Tree Farm, 100 blocks north. Hold your Tricorder and follow the arrow.",
+        "<Dave> I don't have a place called the moon for you. Stand there and say \"save this"
+        ' place as the moon".',
+    ]
+    async with scoped_session(maker, owner) as s:
+        place = (await s.execute(text("SELECT name, x, z FROM app.mc_places"))).one()
+        sid = (
+            await s.execute(text("SELECT agent_session_id FROM app.mc_chat_player WHERE door"))
+        ).scalar()
+        turns = (
+            await s.execute(
+                text(
+                    "SELECT role, content, run_id, tools FROM app.agent_turns"
+                    " WHERE session_id = :s ORDER BY seq"
+                ),
+                {"s": sid},
+            )
+        ).all()
+        runs = (
+            await s.execute(text("SELECT count(*) FROM app.runs WHERE session_id = :s"), {"s": sid})
+        ).scalar()
+    assert tuple(place) == ("Tree Farm", 120, -40)
+    assert [(t.role, t.content) for t in turns][:2] == [
+        ("user", "save this place as Tree Farm"),
+        ("assistant", "Marked: Tree Farm, right where you're standing."),
+    ]
+    assert len(turns) == 6 and all(t.run_id is None for t in turns) and runs == 0
+    assert turns[1].tools[0]["name"] == "mc_place_save" and turns[1].tools[0]["ok"] is True
+    # A follow-up the fast path doesn't take is a model turn in the same session, which
+    # sees the fast exchanges as history.
+    await door.answer(_ask(4, "how far is it now?", 120.0, 50.0))
+    (call,) = executor.calls
+    assert call["agent_session_id"] == str(sid)
+    history = "\n".join(getattr(m, "text", "") for m in call["conversation"])
+    assert "navigate to tree farm" in history and "Locked on: Tree Farm" in history
+
+
+async def _pid(owner: SessionContext) -> str | None:
+    return owner.principal_id
+
+
+async def test_where_is_a_player_live_or_last_seen(maker, sidecar) -> None:
+    """mc_players with a gamertag (§M18's "where is <player>"): the owner decided Dave may
+    say where other players are, so it answers in game for anyone."""
+    owner = await _owner(maker)
+    await _seen(maker, owner, "111", "Steve 42")
+    await _seen(maker, owner, "222", "Mira P")
+    ctx = await _chat(maker, owner)
+    assert ctx.agent_session_id is not None
+    tools = _tools(maker)
+    async with scoped_session(maker, owner) as s:
+        for world, x, age in (("slot2", -280.4, 30), ("slot2", -40.0, 900), ("other", 9.0, 1)):
+            await s.execute(
+                text(
+                    "INSERT INTO app.mc_player_track (world, xuid, gamertag, boot_id,"
+                    " sample_id, at, dim, x, y, z) VALUES (:w, '222', 'Mira P', :b, 1,"
+                    " now() - make_interval(secs => :age), 'overworld', :x, 64, 0.5)"
+                ),
+                {"w": world, "b": str(uuid.uuid4()), "x": x, "age": age},
+            )
+    me = _asker(Spot(0, 64, 0, "overworld"))
+    sidecar["online"] = [{"name": "Mira P", "xuid": "222"}]
+    with asking(ctx.agent_session_id, me):
+        live = await tools["mc_players"]({"gamertag": "mira p"}, ctx)
+    assert isinstance(live, mt.Found) and live.found["online"] is True
+    assert live.found["spot"] == Spot(-281, 64, 0, "overworld")  # the newest sample here
+    assert "online now" in live and "From you: 281 blocks west." in live
+    sidecar["online"] = []
+    with asking(ctx.agent_session_id, me):
+        gone = await tools["mc_players"]({"gamertag": "Mira P"}, ctx)
+        nobody = await tools["mc_players"]({"gamertag": "Nobody"}, ctx)
+        bad = await tools["mc_players"]({"gamertag": "x; op @a"}, ctx)
+    assert isinstance(gone, mt.Found) and gone.found["online"] is False
+    assert "isn't online. Last seen at" in gone
+    assert "Nobody called" in nobody and getattr(nobody, "result_brief", "") == "unknown"
+    assert "isn't a gamertag" in bad
+    # Without a gamertag it is still the roster.
+    assert "Mira P" in await tools["mc_players"]({}, ctx)

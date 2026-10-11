@@ -6,7 +6,8 @@
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
 import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, parseConfig,
-  parseWaypoint, slotFate, trackerLine, tricorderStatus, xpToDrop } from "./rules.js";
+  parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
+  xpToDrop } from "./rules.js";
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",
@@ -38,6 +39,9 @@ const where = (entity) => {
 const serialKey = (id) => `jb:tricorder:${id}`;
 const waypointKey = (name) => `jb:waypoint:${name.toLowerCase()}`;
 const KEEP_SWITCH = "jb:power_pack_keep";
+// Each player's Old Maker unlocks in this world (§M19), keyed by their id like the
+// Tricorder's serial, so the pack needs no backend for them.
+const knownKey = (id) => `jb:known:${id}`;
 // A player property: packs left after a burn, told on the respawn that follows.
 const BURNT = "jb:burnt";
 const EQUIPMENT = [EquipmentSlot.Head, EquipmentSlot.Chest, EquipmentSlot.Legs,
@@ -156,6 +160,19 @@ const onWaking = (player) => {
   if (tricorderOn(player) === "own") return;
   beam(player);
   player.sendMessage(DAVE + LINES.rebeamed);
+};
+
+// --- the item guide's unlocks (§M19) ----------------------------------------------------
+
+// What the player has unlocked, after a look at what they carry now; written back only
+// when something new was unlocked.
+const learn = (player) => {
+  const before = parseKnown(world.getDynamicProperty(knownKey(player.id)));
+  const after = unlocksFrom(before, carried(player).map((c) => c.item.typeId));
+  if (after.join() !== [...before].sort().join()) {
+    world.setDynamicProperty(knownKey(player.id), JSON.stringify(after));
+  }
+  return after;
 };
 
 // --- deaths: the travel log, and the Power Pack charm -----------------------------------
@@ -305,12 +322,18 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 
 // --- the Tricorder's arrow, about four times a second -----------------------------------
 
+// Unlocks are looked for once a second, not every frame: the whole inventory is read.
+const LEARN_EVERY = 4;
+let frame = 0;
+
 system.runInterval(() => {
+  frame = (frame + 1) % LEARN_EVERY;
   for (const player of world.getAllPlayers()) {
     try {
       if (player.isOnGround && player.location.y >= player.dimension.heightRange.min) {
         lastSafe.set(player.id, { ...player.location, dim: player.dimension.id });
       }
+      if (frame === 0) learn(player);
       const inv = player.getComponent("minecraft:inventory")?.container;
       const slot = player.selectedSlotIndex;
       const held = inv?.getItem(slot);
@@ -376,7 +399,20 @@ const askDave = (player, text) => {
   }
   // The name is the entity's own, never typed. The wrapper attaches the xuid BDS logged
   // when this player connected, so the backend files the question under that account.
-  emit({ ev: "dave", name: player.name, text: text.slice(0, QUESTION_MAX), ...where(player), spawn });
+  let known = ["tricorder"];
+  try {
+    known = learn(player);
+  } catch {
+    // Unreadable unlocks cost only the guide's later entries, never the question.
+  }
+  emit({
+    ev: "dave",
+    name: player.name,
+    text: text.slice(0, QUESTION_MAX),
+    ...where(player),
+    spawn,
+    known,
+  });
   player.sendMessage("§7Dave is thinking…");
 };
 

@@ -123,6 +123,7 @@ from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.llm.slot_roles import SlotRole
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
+from jbrain.minecraft import guide as minecraft_guide
 from jbrain.models.agent import TURN_WALL_CLOCK
 from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.models.plan import PlanRepo
@@ -292,6 +293,13 @@ async def _minecraft_intro(request: Request, owner_ctx: SessionContext, session_
     except Exception as exc:  # noqa: BLE001 — see above: degrade, don't fail the turn
         log.warning("minecraft_dave.intro_failed", error=repr(exc))
         return MINECRAFT_INTRO_FALLBACK
+
+
+def minecraft_prompt(persona: str, intro: str) -> str:
+    """Minecraft_Dave's system prompt in the owner's chats: the persona, then the whole
+    item guide (§M19: only the game gates items, by what each player has unlocked), then
+    whose chat it is. The guide is fixed text, so the prompt's head stays cache-stable."""
+    return f"{persona}\n\n{minecraft_guide.for_owner()}\n\n{intro}"
 
 
 async def _standing_instructions(request: Request, owner_ctx: SessionContext) -> list[str]:
@@ -1098,7 +1106,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # a failed read degrades to "call mc_player" rather than a 503.
     if session.agent == MINECRAFT_DAVE_AGENT:
         intro = await _minecraft_intro(request, owner_ctx, str(session.id))
-        profile = replace(profile, prompt=f"{profile.prompt}\n\n{intro}")
+        profile = replace(profile, prompt=minecraft_prompt(profile.prompt, intro))
     # D15: the owner's standing instructions go into EVERY note conversation's system
     # prompt, ahead of the note. `analysis/converse.py` does it for the unattended pass,
     # and this is the other half — which was missing, with a sharp consequence: the

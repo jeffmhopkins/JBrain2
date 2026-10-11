@@ -206,3 +206,42 @@ test("the rule off while the switch says on: the game drops, the pack doesn't do
   sim.die(p);
   assert.equal(sim.overworld.spawned.length, 0);
 });
+
+const knownOf = (line) => JSON.parse(line.slice(line.indexOf("{"))).known;
+
+test("each /jb:dave question carries the asker's unlocks, first held and then kept", () => {
+  const p = sim.player("Learner", "-80");
+  sim.spawn(p, true);
+  ask(p, "hello");
+  assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
+
+  // The loop notices a first Ender Pearl within a second (every fourth frame).
+  p.inventory.setItem(4, new ItemStack("minecraft:ender_pearl", 3));
+  for (let i = 0; i < 4; i++) sim.tick();
+  assert.equal(sim.props.get("jb:known:-80"), JSON.stringify(["power_pack", "tricorder"]));
+
+  // Asking checks too, so a pack made a moment ago counts at once.
+  p.inventory.setItem(4, new ItemStack("jbrain:power_pack", 1));
+  ask(p, "hello");
+  assert.deepEqual(knownOf(daveEvents().at(-1)), ["power_pack", "power_pack_uses", "tricorder"]);
+
+  // Once unlocked, always: spending the pack forgets nothing.
+  p.inventory.setItem(4, undefined);
+  ask(p, "hello");
+  assert.deepEqual(knownOf(daveEvents().at(-1)), ["power_pack", "power_pack_uses", "tricorder"]);
+
+  // Per player: someone else's pearl unlocks nothing for this one.
+  const other = sim.player("Other", "-81");
+  sim.spawn(other, true);
+  ask(other, "hello");
+  assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
+});
+
+test("a pearl in a shulker box isn't held; an unreadable record starts fresh", () => {
+  const p = sim.player("Boxed", "-82");
+  sim.spawn(p, true);
+  sim.props.set("jb:known:-82", "not json");
+  p.inventory.setItem(6, new ItemStack("minecraft:shulker_box", 1));
+  ask(p, "hello");
+  assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
+});

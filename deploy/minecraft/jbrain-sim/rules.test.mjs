@@ -93,3 +93,15 @@ test("Dave's lines are the canon's, verbatim", () => {
   assert.equal(r.LINES.burnt(1), "Your Power Pack burnt out — you kept your things. 1 pack left.");
   assert.equal(r.LINES.burnt(0), "Your Power Pack burnt out — you kept your things. No packs left.");
 });
+
+test("unlocks come from the key ingredient held, never shrink, and stay sorted", () => {
+  assert.deepEqual(r.unlocksFrom([], []), ["tricorder"]);
+  assert.deepEqual(r.unlocksFrom([], ["minecraft:dirt", "minecraft:ender_eye"]), ["tricorder"]);
+  assert.deepEqual(r.unlocksFrom(["tricorder"], ["minecraft:ender_pearl"]), ["power_pack", "tricorder"]);
+  assert.deepEqual(r.unlocksFrom([], ["jbrain:power_pack"]), ["power_pack_uses", "tricorder"]);
+  assert.deepEqual(r.unlocksFrom(["power_pack", "tricorder"], []), ["power_pack", "tricorder"]);
+  assert.deepEqual(r.parseKnown('["power_pack", 3, "tricorder"]'), ["power_pack", "tricorder"]);
+  assert.deepEqual(r.parseKnown("{oops"), []);
+  assert.deepEqual(r.parseKnown('{"a": 1}'), []);
+  assert.deepEqual(r.parseKnown(undefined), []);
+});

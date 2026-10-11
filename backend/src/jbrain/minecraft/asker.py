@@ -39,6 +39,8 @@ class Asker:
     at: Spot  # the block they stand in
     # Their bed or respawn anchor, when the event carried one.
     spawn: Spot | None = None
+    # The Old Maker items they have unlocked in this world (§M19, `minecraft/guide.py`).
+    known: frozenset[str] = frozenset({"tricorder"})
 
 
 _ASKERS: dict[str, Asker] = {}

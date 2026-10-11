@@ -17,13 +17,14 @@ import pytest
 from fastapi import HTTPException
 
 from jbrain.agent.agents import MINECRAFT_DAVE_INGAME_TOOLS
-from jbrain.agent.loop import AgentResult
+from jbrain.agent.loop import AgentResult, ToolOutput
+from jbrain.agent.minecrafttools import Found
 from jbrain.agent.transcript_store import TurnRecord
 from jbrain.llm import UserMessage
 from jbrain.llm.types import AssistantMessage
 from jbrain.minecraft import client as mc
 from jbrain.minecraft import door as door_mod
-from jbrain.minecraft.asker import asker_for
+from jbrain.minecraft.asker import Spot, asker_for
 from jbrain.tasks.runner import ExecutedTurn
 
 NOW = 1_000_000.0
@@ -168,6 +169,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                 "boot_id": state["boot"],
                 "events": [e for e in state["events"] if e["id"] > after],
             }
+        if path == "/worlds":
+            return state.get("worlds", {"slots": []})
         assert (method, path) == ("POST", "/command")
         state["sent"].append(kw["json"]["command"])
         return {"lines": []}
@@ -180,7 +183,11 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return state
 
 
-def _door(executor: FakeExecutor, transcript: FakeTranscript | None = None) -> door_mod.DaveDoor:
+def _door(
+    executor: FakeExecutor,
+    transcript: FakeTranscript | None = None,
+    tools: dict[str, Any] | None = None,
+) -> door_mod.DaveDoor:
     async def owner() -> str:
         return "00000000-0000-0000-0000-0000000000aa"
 
@@ -192,6 +199,7 @@ def _door(executor: FakeExecutor, transcript: FakeTranscript | None = None) -> d
         transcript=transcript or FakeTranscript(),  # type: ignore[arg-type]
         executor=executor,
         owner_principal_id=owner,
+        tools=tools,
         clock=lambda: NOW,
     )
 
@@ -296,3 +304,119 @@ async def test_a_question_from_before_a_restart_is_not_answered_late(world) -> N
 async def test_a_stopped_server_is_a_quiet_no_op(world) -> None:
     world["down"] = True
     assert await _door(FakeExecutor()).tick() == 0
+
+
+# --- the fast path (§M18) and the item guide (§M19) -----------------------------------
+
+
+class FakeWaypoint:
+    """The in-game `mc_set_waypoint`, answering as the real one does for a saved home."""
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[dict[str, Any], Any]] = []
+
+    async def __call__(self, args: dict[str, Any], ctx: Any) -> str:
+        # The handler sees the asker, exactly as during a model turn.
+        self.seen.append((args, asker_for(ctx.agent_session_id)))
+        if args.get("place") == "nowhere":
+            return ToolOutput("no place", result_brief="no such place")
+        return Found("set", "home", target=Spot(10, 64, -100, "overworld"))
+
+
+async def test_a_fixed_request_is_answered_without_the_model_and_kept_in_the_session(
+    world,
+) -> None:
+    executor = FakeExecutor()
+    transcript = FakeTranscript()
+    waypoint = FakeWaypoint()
+    door = _door(executor, transcript, tools={"mc_set_waypoint": waypoint})
+    world["events"] = [_event(1, "Dave, point me home")]
+    await door.tick()
+    await door.drain()
+    assert executor.calls == []  # no model turn
+    assert _said(world) == [
+        "<Dave> Locked on: home, 96 blocks north. Hold your Tricorder and follow the arrow."
+    ]
+    ((args, asker),) = waypoint.seen
+    assert args == {"place": "home"} and asker is not None and asker.key == "111"
+    assert asker_for("session-of-111") is None  # released after
+    # An ordinary exchange in the player's own session, so a later turn follows on.
+    turns = transcript.turns["session-of-111"]
+    assert [(t.role, t.content) for t in turns] == [
+        ("user", "point me home"),
+        ("assistant", _said(world)[0].removeprefix("<Dave> ")),
+    ]
+    world["events"].append(_event(2, "how far is it now?"))
+    await door.tick()
+    await door.drain()
+    (call,) = executor.calls
+    earlier = call["conversation"][1:-1]
+    assert "point me home" in earlier[0].text
+    assert isinstance(earlier[1], AssistantMessage) and "Locked on: home" in earlier[1].text
+
+
+async def test_no_match_or_no_line_for_the_outcome_goes_to_the_model(world) -> None:
+    executor = FakeExecutor()
+    transcript = FakeTranscript()
+    door = _door(executor, transcript, tools={"mc_set_waypoint": FakeWaypoint()})
+    world["events"] = [_event(1, "take me home but avoid the river")]
+    await door.tick()
+    await door.drain()
+    assert len(executor.calls) == 1
+    # A tool that breaks mid-way is the model's to explain.
+
+    async def broken(args: dict[str, Any], ctx: Any) -> str:
+        raise RuntimeError("boom")
+
+    door = _door(executor, transcript, tools={"mc_set_waypoint": broken})
+    world["events"] = [_event(2, "point me home")]
+    await door.tick()
+    await door.drain()
+    assert len(executor.calls) == 2
+    assert "point me home" in executor.calls[-1]["conversation"][-1].text
+
+
+async def test_without_tools_every_question_is_a_model_turn(world) -> None:
+    executor = FakeExecutor()
+    door = _door(executor)
+    world["events"] = [_event(1, "point me home")]
+    await door.tick()
+    await door.drain()
+    assert len(executor.calls) == 1
+
+
+async def test_the_turn_gets_only_the_askers_unlocked_items(world) -> None:
+    executor = FakeExecutor()
+    door = _door(executor)
+    world["events"] = [_event(1, "what's a power pack?")]  # an older pack: no `known`
+    await door.tick()
+    await door.drain()
+    prompt = executor.calls[-1]["profile"].prompt
+    assert "### The Tricorder" in prompt
+    assert "Power Pack" not in prompt.split("## The Old Makers' items this player can make")[1]
+    assert "Blaze Powder" not in prompt and "Ender Pearl" not in prompt
+
+    world["events"].append(_event(2, "what's a power pack?", known=["power_pack"]))
+    await door.tick()
+    await door.drain()
+    prompt = executor.calls[-1]["profile"].prompt
+    assert "### The Power Pack" in prompt and "Blaze Powder" in prompt
+    assert "keeping your things" not in prompt
+
+    # Made one, but this world's switch is off: no use is described.
+    world["events"].append(_event(3, "what does it do?", known=["power_pack_uses"]))
+    await door.tick()
+    await door.drain()
+    prompt = executor.calls[-1]["profile"].prompt
+    assert "Nothing in this world yet" in prompt and "keeping your things" not in prompt
+
+    world["worlds"] = {"slots": [{"folder": "slot2", "power_pack_keep": True}]}
+    world["events"].append(_event(4, "what does it do?", known=["power_pack_uses", "bogus"]))
+    await door.tick()
+    await door.drain()
+    call = executor.calls[-1]
+    assert "keeping your things" in call["profile"].prompt
+    assert call["asker_during"].known == {"tricorder", "power_pack_uses"}
+    # The guide sits before the chat intro, so the prompt's head stays the same.
+    prompt = call["profile"].prompt
+    assert prompt.index("### The Tricorder") < prompt.index("intro for session-of-111")
