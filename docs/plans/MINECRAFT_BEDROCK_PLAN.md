@@ -1,12 +1,19 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
 that, they want a **chat companion** that players talk to from inside the game and that
 answers from the world's real data: "where's the nearest pig?", "where's the nearest woodland
 mansion?", "where did I die?".
+
+**The story is not kept here.** The world's lore is canon in the Bleepbloop_City repo's
+[`notes/lore.md`](https://github.com/jeffmhopkins/Bleepbloop_City/blob/main/notes/lore.md):
+the Old Makers, Dave the satellite AI, the crew, the Tricorder, death as the transporter,
+and the words Dave says. That page is the **source of truth** (owner, 2026-10-11). This
+plan only says how jbrain2 implements it. When they disagree, the lore page wins and this
+plan and the code are fixed to match.
 
 This doc records the plan in phases. **M0a (the debug-driven rig) is built**; everything
 else is not. Promoted out of `../proposed/` on 2026-10-10, when the owner asked for M0a
@@ -1151,20 +1158,22 @@ Dave handing one over.
 - **One target per player.** A new `guide_me` replaces the old one. "Dave, clear my
   tricorder" removes it. Targets are the player's own: a sibling's tricorder points
   where *their* Dave said.
-- **Getting one:** Dave hands it over (`give` from the pack) the first time he sets a
-  target for a player who has none. Optionally there is a crafting recipe too (owner's
-  call).
+- **Getting one:** ~~Dave hands it over the first time he sets a target; optionally a
+  crafting recipe~~. **Superseded by the canon (DW1):** it's beamed down in the welcome,
+  and again at a respawn without one. It can't be crafted.
 - **It's personal (owner, 2026-10-10).** It is named **"<Player>'s Tricorder"** (e.g.
   "Steve42's Tricorder") and points to **its owner's** target, whoever holds it, so a
-  sibling can carry it to lead the way. The owner's id is an item dynamic property (the
+  sibling can carry it to lead the way. **Canon (DW1):** only its owner reaches Dave
+  through it; anyone else gets static. Whether a sibling still sees the owner's arrow is
+  open (owner). The owner's id is an item dynamic property (the
   item doesn't stack, so it can hold one).
   - Each player has one at a time. A replacement from Dave retires the old one, which
     then reads "This tricorder is retired".
 - **Never dropped on death (owner, 2026-10-10).** The item is created with
   `ItemStack.keepOnDeath = true` (stable API), so it stays in the inventory through a
   death even when everything else drops. M10's drop path skips it too.
-  - It can still be thrown away, put in a chest, or burnt in lava like any item. Dave
-    replaces a lost one on request.
+  - It can still be thrown away, put in a chest, or burnt in lava like any item.
+    **Canon (DW1):** a lost one comes back at the player's next respawn, not on request.
 
 **The item itself: a true custom item, `jbrain:tricorder`** (owner, 2026-10-10: a small
 pack that downloads automatically on join is fine, §3c rule 2).
@@ -1225,7 +1234,9 @@ Plain Eyes of Ender do nothing special; they stay the End-portal key and nothing
 #### Keep your inventory, once per Power Pack
 
 **The rule.** A player who dies with a **Power Pack** anywhere in their inventory keeps
-everything, and **one pack is used up**. Without one, the death is a normal Survival death:
+everything, and **one pack is used up**. **Canon (DW1, owner 2026-10-11):** they also need
+**their own Tricorder** anywhere on them. In the story, the Tricorder draws on the pack to
+hold a field the transporter locks onto. Without one, the Power Pack does nothing. Without one, the death is a normal Survival death:
 items and XP drop at the spot. The tricorder (M9) is kept either way.
 
 **This decides "Per-player keep inventory" (§4).** It uses the fail-safe direction worked
@@ -1277,7 +1288,8 @@ safety net (owner, 2026-10-10).
 
 **The rule.** A player who has settled a place with Dave can ask to be **teleported there**.
 It costs **one Power Pack** from their inventory. With none, Dave says so, and offers
-the tricorder (M9) instead.
+the tricorder (M9) instead. **Canon (DW1):** it also needs their own Tricorder anywhere on
+them, which in game it always is, since Dave is only reachable through one.
 
 **"Known" means a coordinate that has been pinned down, not a guess.** These count:
 - **Saved places:** `waypoint_save` ("Dave, remember this as *home*"), set while standing
@@ -1744,6 +1756,73 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   ticks. A build that will be retried keeps its areas, so its 30-second retry doesn't
   take hours either. In the simulator, removing a missing area no longer throws, which
   matches the box, and a build fails if it spends a tick with no area up.
+
+### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; not built)
+
+**What and why.** The story is canon in Bleepbloop_City's
+[`notes/lore.md`](https://github.com/jeffmhopkins/Bleepbloop_City/blob/main/notes/lore.md#dave-the-crew-and-the-tricorder).
+That page is the source of truth for the story and for Dave's exact words; this section
+is only how jbrain2 builds it. In short: Dave is the Old Makers' satellite AI in orbit, and
+every player is crew who woke beside their crashed pod. Dave reaches them only through
+their Tricorder, and death is his transporter. Dave's lines are still a draft, waiting
+for the owner's sign-off on the lore page, and DW1 isn't built until they're signed off.
+
+**Where it lives.**
+- **The Tricorder** moves from the home-test kit into the always-installed `jbrain`
+  pack, with its icon in a `jbrain` resource pack. Every world gets it, Bleepbloop City
+  included.
+- **It keeps M9's arrow:** held in hand, it points at the player's waypoint, or at spawn,
+  which in a crash-site world is the pod's hatch.
+
+**Rules, as the pack enforces them:**
+- **No Tricorder, no Dave.** The `/jb:dave` handler looks for **the asker's own**
+  Tricorder anywhere in their inventory before the question reaches the backend. That's
+  the item's owner xuid, an item dynamic property, as M9 planned. Without one, a fixed
+  static line answers, with no AI turn. Someone else's Tricorder gets the "not tuned to
+  you" line.
+- **Never dropped:** created with `ItemStack.keepOnDeath = true`, as M9 planned.
+- **Replaced at respawn:** on `playerSpawn` after a death, a player with no Tricorder of
+  their own gets a new one, beamed in. It's retired only if the old one turns up again,
+  following M9's one-at-a-time rule.
+- **Power Pack uses (M10)** need the player's own Tricorder on them too, above.
+
+**First-time beats.** Each is once per player per world. A world dynamic property keyed
+by xuid records which beats each player has had, so the pack needs no backend for them.
+- **Waking** (first `playerSpawn` with `initialSpawn` in this world). The sequence, timed
+  with `system.runTimeout`:
+  1. Darkness;
+  2. a "…where am I?" actionbar;
+  3. particles falling onto the player, with sounds;
+  4. "…what's this?";
+  5. the Tricorder goes into their hand;
+  6. the title;
+  7. Dave's lines.
+  - The lines are scripted, not an AI turn: instant, the same for everyone, and safe
+    for kids. Only the gamertag fills in.
+  - A crash-site world (the slot's `wreck` record, or the wreck pack's own record) swaps
+    the two lines that point at the pod and ship.
+- **First death** (`playerSpawn` after `entityDie`). **First Eye of Ender**, from an
+  inventory check on the 5-tick loop M9 already runs.
+- **First Power Pack** only once M10's uses ship. Chests (M11) and wormholes (M12) get
+  their beats with those waves. A beat never describes what isn't built in that world.
+- `/jb:dave hello` replays the welcome's Dave lines, without a second Tricorder.
+
+**Dave's voice.** `minecraft_dave.prompt` gains a short story section copied from the
+canon: who Dave is, the crew, the Tricorder, the transporter.
+- **Light flavor:** answers and coordinates first, with at most one small in-character
+  touch.
+- **Lore** only from the canon, never invented.
+- **No false claims:** never that the ship or the Tricorder can do something the tools
+  can't.
+- When the canon changes, the prompt is updated to match, in the same PR as any code it
+  affects.
+
+**Open (owner):**
+- Sign-off on Dave's draft lines (on the lore page).
+- Whether a sibling holding someone else's Tricorder still sees its owner's arrow.
+
+**Tests.** The pack's beat bookkeeping and the Tricorder checks get node tests against
+the fake server, as the wreck pack's do. The prompt change gets a prompt test.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
