@@ -1766,8 +1766,8 @@ model stays for real questions.
   for near-misses that must fall through to the model.
 - A fast-path action goes through the same tool handlers, with the same checks (the asker's
   own places, the scan limit, fair play), as a model turn would.
-- The reply lines are drafts on the Bleepbloop_City lore page until the owner signs them off,
-  like Dave's other lines.
+- The reply lines are on the Bleepbloop_City lore page, signed off by the owner
+  (2026-10-11) with Dave's other lines.
 
 **Order:** after the Tricorder and Power Pack wave and M17, since all three touch the door.
 
@@ -2068,8 +2068,8 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
 That page is the source of truth for the story and for Dave's exact words; this section
 is only how jbrain2 builds it. In short: Dave is the Old Makers' satellite AI in orbit, and
 every player is crew who woke beside their crashed pod. Dave reaches them only through
-their Tricorder, and death is his transporter. Dave's lines are still a draft, waiting
-for the owner's sign-off on the lore page, and DW1 isn't built until they're signed off.
+their Tricorder, and death is his transporter. The owner signed off Dave's lines on the
+lore page (2026-10-11), so DW1 can be built from them.
 
 **Where it lives.**
 - **The Tricorder** moves from the home-test kit into the always-installed `jbrain`
@@ -2128,8 +2128,6 @@ canon: who Dave is, the crew, the Tricorder, the transporter.
   can't.
 - When the canon changes, the prompt is updated to match, in the same PR as any code it
   affects.
-
-**Open (owner):** sign-off on Dave's draft lines (on the lore page).
 
 **Tests.** The pack's beat bookkeeping and the Tricorder checks get node tests against
 the fake server, as the wreck pack's do. The prompt change gets a prompt test.
