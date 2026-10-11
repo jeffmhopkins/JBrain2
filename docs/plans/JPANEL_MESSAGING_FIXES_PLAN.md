@@ -21,6 +21,7 @@ mid-message, holding the pet while a message waits, talking over a TV, and a USB
 | Cold review, round 7 | 6 blocking + 34 non-blocking |
 | Cold review, round 8 | 7 blocking + 33 non-blocking |
 | Cold review, round 9 | 5 blocking + 33 non-blocking |
+| Cold review, round 10 | 2 blocking + 44 non-blocking (backend and firmware GREEN) |
 
 **What has held since round 3**
 
@@ -78,9 +79,16 @@ Each item is testable and is cited in §3 and in the tests.
   - Today's rim, maintenance-tap and swipe guards stay.
   - **In a pair younger than 10 s, a hold opens nothing**, as today (0.3.35). The press belongs
     to whatever it landed on:
-    - on the reply quadrant (the lower half) it opens a reply recording, which shows the
+    - on the reply quadrant (lower right) it opens a reply recording, which shows the
       recipient's face and can be cancelled with the cross;
-    - on the upper pet it does nothing.
+    - on the again quadrant (lower left) it replays;
+    - on the exit quadrant (upper right, `x ≥ 184, y < 224`) it dismisses the pair with
+      `CUE_STOP`;
+    - on the rest of the upper pet it does nothing.
+  - **With a standing pair**, the exit quadrant stays live: about a quarter of the pet lies in
+    it, so a hold that lands there dismisses the pair and a second hold opens the menu. Only a
+    hold outside the exit quadrant and the disc reach opens the menu at once. The tests use
+    coordinates on both sides of that line.
 
 **J2 — a child receives, plays, stops, replies**
 
@@ -162,13 +170,15 @@ Each item is testable and is cited in §3 and in the tests.
 - **E3.7** A stale poll never removes a bubble that was just sent.
 - **E3.8** Errors read as sentences. The composer shows its limit and a hint. A recording made at
   the cap is still sent.
-- **E3.9** The launcher badge equals what the screen renders.
+- **E3.9** The launcher badge equals what the screen renders: both come from W1's
+  `GET /api/jpanel/summary` → `{"unread": int, "threads": [{"device_id": str, "unread": int}]}`,
+  computed by the same query function as the thread list (C6).
 - **E3.10** iOS Safari can play the audio. A malformed id answers 404.
 
 **J4 — re-flash**
 
-- **E4.1** Unplayed mail follows a re-flash or a rotation to the new key, including mail
-  inserted concurrently. History stays in one thread.
+- **E4.1** Unplayed mail created within `READDRESS_WINDOW_DAYS` follows a re-flash or a rotation
+  to the new key, including mail inserted concurrently. History stays in one thread.
 - **E4.2** From P1, retired panels are visible and clearable, and the owner can merge them
   explicitly; the debug API can merge them from W2. Until P1 they stay hidden, as today. Nothing
   merges automatically.
@@ -216,7 +226,7 @@ the table.
 | C3 | ✓ | Retry gave-up rows; discard any unplayed row (owner act) | W2, W3, P1 | `test_unheard_to_retired_panel_is_discardable`, `test_debug_discard_route` |
 | C4 | ✓ | `heard_ms`, `offered_at` | W3, F3, P1 | `test_played_records_heard_ms` |
 | C5 | ✓ | Between rows in both threads | W1, P1 | `test_between_message_in_both_threads` |
-| C6 | ✓ | Per-thread limit + every unplayed owner row | W1 | `test_every_unplayed_owner_row_is_returned` |
+| C6 | ✓ | Per-thread limit + every unplayed owner row | W1, W2 | `test_every_unplayed_owner_row_is_returned` (live keys, W1; dead keys, W2) |
 | C7 | ✓ (Range plausible) | 206; uuid → 404 | W1, W3 | `test_audio_range_206`, `test_non_uuid_is_404` |
 | C8 | ✓ | `errorDetail`; `maxLength`; TTS timeout 60 s | W1, P1 | `client.test` |
 | C9 | ✓ | `kept_for` | W1 | `test_clear_kept_names_recipient` |
@@ -260,7 +270,8 @@ changes it.
 - **The notice clock** counts from first visibility (B4).
 - **A returned message reappears as a badge**, not a big box. The child has just dismissed it;
   a wait starts big only if one of its ids is still owed a chime (§8.4).
-- **The selection goes home on an unseen id seen in PET, not on any count change.** This narrows
+- **The selection goes home on an unseen id seen in PET, not on any count change** (on a box
+  that sends ids; without ids, today's count rule stays). This narrows
   today's rule: a count drop from playing no longer moves a selection that still resolves (A6),
   and a message she picked with the face during playback stays picked (§8.2).
 - **The transport is ignored until ON**, longer than JP 0.3.36's "while the press is pending":
@@ -280,8 +291,9 @@ changes it.
   gave-up row inside the window that is re-addressed by a re-flash is **offered again** with
   `deliveries = 0`: its attempts were spent on a key the panel no longer holds. W2 updates JP
   Part B "### Data" and the cross-reference in `sweep.py`'s docstring.
-- **Tick and cross after a REPLY press** are ignored for `EXIT_GRACE_MS`, so a bounce of the reply
-  press cannot send or drop the recording.
+- **A press that changes the mode gives the new mode's targets a grace** of `EXIT_GRACE_MS`
+  (§8.2): the tick and cross after REPLY or any grid cell, and FACE after the notice press. A
+  bounce of the press can no longer send, drop or skip anything.
 - **Two press cues now actually sound (F3).** On 0.3.39 each is followed in the same frame by
   `jpanel_stop()` → `audio_stop()`, which sets `s_play_pos = s_play_len` and cuts it:
   - the button's standby `CUE_STOP` (`display.c`'s standby path);
@@ -326,7 +338,7 @@ is missing.
 | Change | New box + 0.3.39 | Old code + new firmware |
 |---|---|---|
 | `/send` ceiling = cap + 0.5 s | A3 fixed for every panel in the field | 413 → `FAILED("too-long")` |
-| `/waiting` `queue[].id` | ignored. `test_waiting_body_fits_0_3_39_buffer` (W3) pins the worst case against 0.3.39's 1,023-byte cap: 8 entries with ids, `from_owner=false`, names at **31 bytes**, a 4-digit `count`, and a sibling — about 1,021 B. The bound is real because W1 gives `FlashIn.name` the rename rule (`MAX_PANEL_NAME` = 14 and `_panel_name`'s charset, none of which grows under JSON escaping) **and** `/waiting` cuts every name so its **JSON-escaped** form is at most 31 bytes, on a character boundary — so a name stored before W1, quotes or control characters included, cannot overflow it. `/next`'s `X-Jpanel-From` gets the same cut, and `test_next_head_fits_link_head_max` assumes it. | positional `?at=`; "new" means a count rise |
+| `/waiting` `queue[].id` | ignored. `test_waiting_body_fits_0_3_39_buffer` (W3) pins the worst case against 0.3.39's 1,023-byte cap: 8 entries with ids, `from_owner=false`, names at **31 bytes**, a 4-digit `count`, and a sibling — about 1,021 B. The bound is real because W1 gives `FlashIn.name` the rename rule (`MAX_PANEL_NAME` = 14 and `_panel_name`'s charset, none of which grows under JSON escaping) **and** `/waiting` cuts every name so its JSON-escaped form **with `ensure_ascii=True`** (the worst case, and what `panel_ws.py` sends) is at most 31 bytes, on a character boundary — so a name stored before W1, quotes, control or non-ASCII characters included, cannot overflow it. `/next`'s `X-Jpanel-From` gets the same cut and is made printable ASCII (anything else becomes `?`; Starlette refuses a header it cannot encode), and `test_next_head_fits_link_head_max` assumes both. | positional `?at=`; "new" means a count rise |
 | `/next?id=` (still `recipient_device = :me`) + `X-Jpanel-Duration-Ms` / `X-Jpanel-Delivery` (`UPDATE … RETURNING`) | not sent | the firmware also sends `at`, which a rolled-back box honours; with no delivery header a stop acks as today. The head frame stays ≤ 0.3.39's `LINK_HEAD_MAX` (1024 B), pinned by `test_next_head_fits_link_head_max`. |
 | `/played {id, heard_ms}` | `heard_ms` NULL | extra field ignored |
 | `/returned` (tunnelled through `_ALLOWED`) | never called | F3 with no delivery header never calls it. If it is called, the tunnel answers 404 for a path it does not allow: counted `no_refund`, slot cleared. |
@@ -374,6 +386,8 @@ eng_view {
   cur  { seq, stream_id, id, from[32], from_dad, replay, run_continues, pos, in_waiting }
   play_outcome { seq, id, kind heard|heard_unacked|stopped_heard|returned|short|empty
                                 |cancelled|failed, reason }  // a replay uses heard|short|cancelled|failed
+                                // heard_unacked: heard whole, but there is no id to acknowledge
+                                // (an old box's positional fetch), so no ack slot is armed
   send_outcome { seq, kind SENT|NOBODY|EMPTY|FAILED, reason }
   waiting { count, known, q[8]{ id, from, from_dad }, sibling }
   ack_owed, hb
@@ -451,17 +465,22 @@ copy. All large structs are static: the stacks are 8 KB (face) and 6 KB (engine)
   already attempted.
 - **Between messages, if the poll flag is set, the engine polls first** (under the poll's own
   deadline), so an id that arrived mid-run joins it (`test_message_arriving_mid_run_joins_it`).
-  This is the only poll a run makes.
+  This is the only poll a run makes. `run_continues` is decided before it, so an arrival during
+  the run's **last** message does not join — as in 0.3.39; it is announced as a new message.
 - The run continues only while `cur.gen == s_stop_gen`.
 - With no ids from the box, the engine fetches `?at=0`.
 - A RETURNED message goes back into the local `waiting` at its old position, and a poll is
   flagged.
 
 **4. Dequeue.**
-- A stale-gen PLAY or REPLAY, or any command past its expiry, ends at once.
+- A stale-gen PLAY or REPLAY, or any command at or past `expires_at − UI_MARGIN_MS` (§7.1), ends
+  at once.
 - A claimed SEND is never re-checked against its expiry.
 
-**5. Poll** when due or flagged. A queued command cancels the poll.
+**5. Poll** when due or flagged, and only while the arbiter reports `!speaker_busy` — today's
+guard (`jpanel.c`: a poll is a round trip, a TLS handshake on the HTTPS fallback, and the audio
+task feeds I2S from the same core's spare cycles). The between-message poll of step 3 keeps the
+same guard. A queued command cancels the poll.
 
 Every exit publishes `done_seq` and its outcome in one write.
 
@@ -478,7 +497,11 @@ assumes either; it works over the ordered selection set of §8.2.
 
 - A SEND holds lease 1 through its upload and the box's transcription, because a 422 retry needs
   the buffer. On a 10 KB/s link a 35 s capture (1.1 MB) uploads for ~112 s before the 75 s head,
-  so the pet can answer "busy" for **about three minutes** (§13).
+  so the pet can answer "busy" for **about three minutes**, and about six if the box answers 422
+  and the retry uploads again (§13).
+- **Talk and `s_reply`.** `talk.c` sets SPOKE as soon as it submits the reply slot, so its next
+  turn waits for `reply_done == last id` before its `link_request`, and only then reads into
+  `s_reply`.
 
 **Outcomes, by wave**
 
@@ -514,6 +537,10 @@ slot words.
   counter, which moves from `audio.c` to the render side.
 - It renders into a buffer **it owns, one per slot**: 800 ms, 25.6 KB of PSRAM each, about 128 KB
   in total.
+- Each slot buffer starts with the rendered length `n`: lengths vary by variant (`CUE_FART`
+  170–749 ms, the others ±7 %), so the arbiter copies exactly `n` samples, never a fixed
+  `cue_samples(c)` that could splice an older, longer render's tail. `n` is covered by the same
+  seq re-read as the samples.
 - The arbiter **only copies samples**: on start it copies the whole cue into `s_play`.
 - There is no peak table, no chunked rendering and no oscillator state on the audio task, and the
   render task does the CPU work it does today.
@@ -531,7 +558,8 @@ has a single writer: render.
   3. if the word was odd or changed, it **skips that slot until the next tick** — bounded, so the
      arbiter (priority 5) never spins against render (priority 4).
 - A cue therefore never pairs one seq with another's samples.
-- The arbiter writes only its own `*_done` words.
+- The arbiter writes only its own `*_done` words, and writes `*_done = seq` on **every**
+  disposal of a slot's cue: played, dropped, cut or expired.
 
 **Processing order on every tick**
 
@@ -548,7 +576,7 @@ is about to cut.
 
 | Slot | Writer | Rule |
 |---|---|---|
-| `silence` | render | Cuts whatever is **sounding** — any cue or reply — and every **pending** `press`, `refusal` and `chime` cue whose seq is before this one, and every pending reply whose stamp is before it. Discards the stream once. **Pending outcome slots (`send_result`, `fail`) survive** and play after it (E1.2). Anything later survives. |
+| `silence` | render | Cuts whatever is **sounding** — any cue or reply, a SENT already sounding included — and every **pending** `press`, `fail`, `refusal` and `chime` cue whose seq is before this one, and every pending reply whose stamp is before it. Discards the stream once. **Only a pending `send_result` survives** and plays after it (E1.2): a failed pet turn's OOPS must not sound in the dark after a stop. Anything later survives. |
 | `reply {ptr, len, stamp, id}` | talk | `stamp` is the `silence` seq talk read when it submitted; talk writes `ptr`, `len`, `stamp`, then `id` **last**, with release ordering, and the arbiter reads `id` first with acquire. So "a reply submitted after a silence plays, as today" is decidable within one tick. Played from talk's own `s_reply` without a copy, at the highest priority. Talk must not reuse `s_reply`, or rewrite the slot, until `reply_done == id`. Waits out a cue already sounding (≤ 749 ms). Never refused. `reply_done = id` on every disposal. |
 | `send_result` | render | Latest wins. Eligible once no reply is pending or sounding; played before `fail`. Expires 15 s after it first becomes eligible. |
 | `fail` (play/replay failure, failed pet turn) | render | Latest wins, same eligibility. A failure therefore never overwrites a pending SENT. |
@@ -582,6 +610,11 @@ is about to cut.
     `audio_playing()`, which includes the stream;
   - `clip_busy` = a cue or a reply is sounding — the press-drop rule and the mic gate use it;
   - `reply_busy` = a reply is pending or sounding;
+
+  Render's copies, which the machine reads, also count what the arbiter has **not yet picked
+  up**: `speaker_busy` and `clip_busy` include any slot seq render wrote that its `*_done` word
+  has not reached, and `reply_busy` includes `reply.id != reply_done`. So a PLAY is never posted in
+  the frame of its own `CUE_PLAY`, and a reply talk wrote in the last 40 ms counts at once.
   - `stream_live` = the stream is open or the ring is undrained — today's
     `audio_stream_active()`.
 - `PLAY_BUF_MS` and `CAPTURE_MAX_MS` move from `audio.c` to `stream.h` in F1, so
@@ -590,8 +623,9 @@ is about to cut.
 **Capture.** `capture_open()` returns a bool and refuses while either lease is held. Every opener
 handles the refusal.
 
-**No codec.** When `audio_start()` failed there is no arbiter, so `stream_begin` refuses at once
-and the PLAY ends `failed("no-audio")` instead of waiting for `r == w` until the backstop.
+**No codec.** When `audio_start()` failed there is no arbiter — or the codec answered but the
+ring or `s_play` PSRAM allocation failed — so `stream_begin` refuses at once and the PLAY ends
+`failed("no-audio")` instead of waiting for `r == w` until the backstop.
 
 ### 7.5 Deadlines are true by construction
 
@@ -628,7 +662,9 @@ bool (*cancelled)(void *ctx);
 
 - Slop is at most one `LINK_STEP_MS`, **except** DNS and the TLS handshake's internal reads inside
   `esp_http_client_open`, which cannot be clamped (§13).
-- Every caller migrates from `timeout_ms` with unchanged semantics, in ABSOLUTE mode:
+- Every caller migrates from `timeout_ms` in ABSOLUTE mode. On WebSocket the semantics are
+  unchanged; on HTTPS a per-operation timeout becomes a total for the request, which aligns the
+  two transports:
   - jpanel's other requests;
   - `talk.c` — head at `TALK_HTTP_TIMEOUT_MS`, body on the stall rule;
   - `ota.c`, three sites.
@@ -669,6 +705,8 @@ On firing:
     reboot loop every 10 s that the owner cannot reach. So the watchdog arms only when `sound` is
     true, and its 10 s counts from the **first observed** `arb_hb` change, not from boot.
     Test: `test_no_codec_never_arms_arbiter_watchdog`.
+- **Both watchdogs are suspended while an OTA runs**: the partition erase in `esp_https_ota` can
+  starve the audio task, and the OTA has its own rollback gate.
 - Reboot releases any lease.
 
 **Tests**
@@ -725,6 +763,8 @@ On firing:
 |---|---|
 | `jpanel_state()` / `jpanel_clear()` | derived from the phase and unseen outcome seqs / marks an outcome seen |
 | `jpanel_running`, `jpanel_fetching`, `jpanel_in_from` | read `cur` |
+| `jpanel_waiting`, `jpanel_waiting_at`, `jpanel_waiting_from_dad`, `jpanel_sibling` | read `snap.waiting` (`count`, `q[i]`, `q[i].from_dad`, `sibling`) |
+| `jpanel_message_stats` (`main.c`'s report) | the telemetry counters of this section |
 | `jpanel_play_at(at)` | posts PLAY (with id, `at`, gen); refused while lease 1 is held |
 | `jpanel_replay()` | posts REPLAY with `{id, from, from_dad}` from the last heard `play_outcome` |
 | `jpanel_stop()` | `silence` + `stream_stop()` — today's `audio_stop()`, so a sounding cue or pet reply is still cut, as on 0.3.39 |
@@ -778,6 +818,8 @@ device and in the tests.
 - the mode goes to PET, with `CAPTURE_DROP`, `PAUSE(0)` and `STOP`. An open recording is
   dropped silently: calibration is the owner's maintenance act, not the child's;
 - **the offer is kept**, and any send continues;
+- the pet turn is left as it is: talk runs on, and the machine reads its edge on the first frame
+  back;
 - the machine is not stepped during calibration;
 - on the first frame back, outcomes are processed before backstops.
 
@@ -805,6 +847,7 @@ sm_t {
   turn { state NONE|THINKING|FAILED, since }         // the pet turn in flight; NOT a mode
   grid_until; send { seq, posted_at, expires_at }; notice { first_visible, big }
   chime_ids[8]; sel { id, index }; seen_ids[16]; down { at, x, y, on_pet, target, swiped }
+  mode_press_at                                      // the press that last changed the mode
 }
 ```
 
@@ -832,6 +875,32 @@ matters in a run's gap: `{stream_id, out_ms}` keeps its last value after the rin
 the ack and the next fetch, so without it a PAUSE in the gap would arm `pause_req` for a stream
 that has ended and break I5 when the next one begins (`test_pause_in_run_gap_is_ignored`).
 
+**Two general rules about the frame boundary**
+
+1. **Nothing entered this frame is judged by this frame's inputs.** `in` is sampled before
+   `sm_step` and the executor runs its effects after it, so `net`, `hearing`, `capture_ms` and the
+   audio facts describe the world **before** anything the machine did this frame. Every timer and
+   edge rule therefore skips state whose `since`/`opened_at == now`:
+   - the pet turn's IDLE → clear does not fire on the frame `turn.state` became THINKING (the
+     executor's `talk_send` sets `net = BUSY` only after the step);
+   - the LISTEN/RECORD hush, cap and lead timers read `capture_ms` and `hearing` only for a
+     capture opened in an earlier frame, and the executor's `capture_open` resets the count, so
+     a LISTEN opened right after a recording ended at the cap is never sent at once;
+   - I1 is checked against the capture the machine has **committed** to (the `CAPTURE_OPEN` and
+     `CAPTURE_DROP` it emitted), not the frame-start input, so an entry frame cannot trip recovery.
+
+   Tests: `test_turn_entered_this_frame_survives_stale_net`,
+   `test_cap_not_read_from_previous_capture`.
+2. **A press that changes the mode gives the new mode's targets a grace.** Touch reports every
+   down edge without debounce, so a bounce of the press lands on whatever the new mode drew under
+   it. For `EXIT_GRACE_MS` after `mode_press_at`, every target of the new mode is *ignored*. This
+   one rule covers: the tick and cross after any touch that opened LISTEN or RECORD — a grid cell
+   (the pet cell shares the tick's lower-right quadrant, `confirm.c`) or REPLY; the notice after a
+   press that left PLAY; and FACE and the transport after the notice press that entered PLAY.
+   PLAY's EXIT grace (`play.since` is that press) is the same rule. A mode entered without a press
+   (voice, a timer, an outcome) has no grace. Tests: `test_pet_cell_bounce_does_not_drop_listen`,
+   `test_notice_bounce_does_not_hit_face`.
+
 **The selection set `S`** is what the face, the swipe and the counter range over:
 
 - `waiting.q` in the box's order, plus `cur` — while claimed and not a replay — at `cur.pos` if
@@ -844,17 +913,22 @@ that has ended and break I5 when the next one begins (`test_pause_in_run_gap_is_
 - **In a replay, FACE and swipe are *ignored*.** The replayed message is not in `S` (the pair was
   only pressable with nothing waiting), so there is nothing for the selection to move from.
 - **Re-resolve, every frame:** `sel` is looked up by `sel.id` in `S`; if the id has left `S`, it
-  keeps `sel.index`, clamped to `|S| − 1`, and takes that entry's id.
+  keeps `sel.index`, clamped to `|S| − 1`, and takes that entry's id. **Except while a stop's
+  outcome is pending** (`done_seq` has not reached `play.seq`): then `sel.id` is held, so a message
+  she stopped, which is in neither `waiting` nor `S` until it comes back RETURNED, keeps the
+  selection instead of handing it to the message behind it.
 - **Home** (`sel` to index 0) happens only on an unseen-id edge observed **in PET** (§8.4). Every
   mode marks ids seen, so a message that arrived during playback and that she then picked with
   the face stays picked when PLAY ends
   (`test_face_select_of_mid_play_arrival_survives_return_to_pet`).
 - The box describes at most 8 ids. `S` covers only those (plus `cur`); the swipe clamps at the
   last described entry, and the counter adds the undescribed rest, `waiting.count − |waiting.q|`.
+  An id that scrolls into the described eight as older ones leave is not an arrival (§8.4).
 - With no ids from the box (an old box after rollback): `|S| = waiting.count − (cur.in_waiting ?
   1 : 0) + (claimed ? 1 : 0)`, and the counter adds nothing more — the count already includes the
   undescribed rest. The engine knows which side of `fetch_head`'s removal it is on, so a single
-  message is never counted twice.
+  message is never counted twice. The selection is an index only, so today's rule stays: any
+  count change sends it home.
 
 **Order within a frame**
 
@@ -867,7 +941,9 @@ that has ended and break I5 when the next one begins (`test_pause_in_run_gap_is_
    `SENDTO_MS`, and the recording's hush, cap and lead-silence;
 5. posting a pending PLAY once `!speaker_busy`;
 6. the pet turn;
-7. the follow-up decision on the reply-end edge, which reads `chime_ids` **before** step 8;
+7. the follow-up decision on the reply-end edge — `reply_busy` falling, not "the speaker went
+   quiet", so an EXIT that cut the reply never opens a follow-up — which reads `chime_ids`
+   **before** step 8;
 8. new ids (§8.4), the chime, and the notice clock.
 
 So a natural finish and an EXIT press in the same frame are the one-press exit: the EXIT leaves
@@ -904,14 +980,16 @@ speaker wrong — recovers, to PET with `CAPTURE_DROP`, `PAUSE(0)` and `STOP`, p
 recording was dropped. A violation of I2, I3, I4 or I7 is **counted only**: recovery never drops
 a child's recording over a drawing or a missing cue.
 
-- **I1:** exactly one mode; the mic is open if and only if the mode is LISTEN or RECORD.
+- **I1:** exactly one mode; the committed capture is open if and only if the mode is LISTEN or
+  RECORD (frame-boundary rule 1).
 - **I2:** `sm_face(sm, snap)` both draws the top-left face and addresses reply. It returns:
   - in PLAY, claimed: `snap.cur` (for a replay, seeded from the offer);
   - in PLAY, not yet claimed: `play.target`;
   - in RECORD: `rec.to`; in LISTEN: the pet (`draw_who`, as today);
   - in GRID: none — the cells are the faces;
   - in PET (THINK included) with a visible offer: the offer;
-  - in PET otherwise: the selected entry of `S`.
+  - in PET with the notice drawn: the selected entry of `S`;
+  - otherwise (THINK with no offer, or nothing waiting): none.
 
   The drawn face is asserted every frame.
 - **I3:** the drawn controls are exactly the mode's targets.
@@ -952,7 +1030,7 @@ a child's recording over a drawing or a missing cue.
     **A send continues.**
 
   The arbiter processes `silence` first. It cuts what is sounding and what is pending from before
-  *n* (pending send outcomes excepted, §7.4), so the newer `CUE_STOP` sounds before the dark, as
+  *n* (only a pending `send_result` survives, §7.4), so the newer `CUE_STOP` sounds before the dark, as
   the owner asked: *"IT BLINKS FIRST"*.
 
   - **This is a fix, too (F3; F2 keeps today's cut, §4).** On 0.3.39, `display.c` calls
@@ -996,13 +1074,13 @@ WHILE WE ARE SPEAKING"*.
 
 | Mode | Targets | Hold |
 |---|---|---|
-| PET (offer hidden or none) | NOTICE (big box, or the badge quadrant; *ignored* for `EXIT_GRACE_MS` after any press that left PLAY — EXIT, FACE or swipe — so a bounce cannot play a message) · PET | `down.target == PET` (the down edge itself landed on the pet, so a finger left over from EXIT, FACE or an ignored notice press never counts), `on_pet`, free taps, not swiped, and `net != BUSY` (today's guard) → GRID |
+| PET (offer hidden or none) | NOTICE (big box, or the badge quadrant; *ignored* in the press grace of §8.2 — e.g. after a press that left PLAY, so a bounce cannot play a message) · PET | `down.target == PET` (the down edge itself landed on the pet, so a finger left over from EXIT, FACE or an ignored notice press never counts), `on_pet`, free taps, not swiped, and `net != BUSY` (today's guard) → GRID |
 | PET, fresh offer | EXIT · AGAIN quadrant · REPLY quadrant · PET | **none**: the press belongs to the target it landed on, as today (0.3.35, `ui_menu_up`) |
-| PET, standing offer | EXIT · AGAIN/REPLY disc reach (r 82 at (92 \| 276, `confirm_cy`)) · PET | `down.target == PET` at the pet centre → GRID |
+| PET, standing offer | EXIT (the upper-right quadrant, as with a fresh offer) · AGAIN/REPLY disc reach (r 82 at (92 \| 276, `confirm_cy`)) · PET | `down.target == PET` → GRID; a hold that lands in the exit quadrant is an EXIT (E1.6) |
 | GRID | four cells · swallow (flinches; the grid stays up, as today) | — |
-| LISTEN (voice), RECORD | CROSS · TICK quadrants (both *ignored* for `EXIT_GRACE_MS` after a **REPLY** press opened the recording — the reply disc and the tick share a quadrant; grid cells do not) · a miss is *ignored*: no flinch, logged `tap_missed`, as today (a pet that twitches mid-sentence invites the next poke) | — |
-| PET while THINK | the offer's targets, if it is visible (as today) · PET (flinch) | — |
-| PLAY | EXIT (*ignored* until `play.since + EXIT_GRACE_MS`, every phase) · FACE (live while \|`S`\| > 1 in a non-replay PLAY; *ignored* in a replay) · PAUSE/REPLY quadrants (*ignored* until ON) · swallow (flinches, as today's off-disc transport press) | — |
+| LISTEN (voice), RECORD | CROSS · TICK quadrants (both *ignored* in the press grace when a touch opened the mode — REPLY, or any grid cell, whose lower-right pet cell shares the tick's quadrant) · a miss is *ignored*: no flinch, logged `tap_missed`, as today (a pet that twitches mid-sentence invites the next poke) | — |
+| PET while THINK | the offer's targets, if it is visible (as today) · PET (today's poke; `display.c`'s guard turns it into a flinch only while a reply sounds) | — |
+| PLAY | EXIT (*ignored* until `play.since + EXIT_GRACE_MS`, every phase) · FACE (live while \|`S`\| > 1 in a non-replay PLAY, after the press grace; *ignored* in a replay) · PAUSE/REPLY quadrants (*ignored* until ON) · swallow (flinches, as today's off-disc transport press) | — |
 
 `sm_target()` reports an *ignored* target as `TARGET_IGNORED`, distinct from the target itself.
 So "a press in the grace is not the exit" stays literally true, and Appendix A #9 holds.
@@ -1052,7 +1130,7 @@ with a snapshot that still lists `cur.id`; `test_old_box_single_message_face_dea
 - **A swipe in the press that opened the recording** → drop it silently, then apply the swipe.
 
 **LISTEN / the pet turn** — today's behaviour, with one change. The follow-up opens on the
-reply-end edge only in PET, and only through the mic gate. If the mode is anything else (PLAY,
+reply-end edge (`reply_busy` falling) only in PET, and only through the mic gate. If the mode is anything else (PLAY,
 GRID, RECORD), a chime is owed, or the gate refuses, it is **disarmed**, not deferred: the
 child's attention has moved.
 
@@ -1085,7 +1163,7 @@ is dead code in 0.3.39 and is not ported.
   `PAUSE(0)`, `STOP`, then its cue at a later seq. So whatever is sounding — a pet reply that
   pre-empted a replay, a `CUE_PAUSE` — is cut, as `audio_stop()` does today, and the stop's own cue
   is never dropped behind it (`test_exit_during_pet_reply_silences_it_then_sounds_stop`). A pending
-  send outcome survives (§7.4).
+  `send_result` survives (§7.4).
 - **EXIT** → that pattern with `CUE_STOP`, clear the offer, PET (owner).
 - **FACE / swipe:**
   - if the selection over `S` moves → that pattern with `CUE_HEARD`, clear the offer, PET
@@ -1118,7 +1196,9 @@ is dead code in 0.3.39 and is not ported.
   and `chime_ids` becomes a `chime_owed` flag. The flag is dropped when the count falls to 0; it
   covers #22, #46 and #48.
   - **In every mode**, an id not in `seen_ids` joins `seen_ids` and `chime_ids` on the frame it
-    first appears.
+    first appears — unless it **scrolled in**: the previous snapshot had undescribed entries
+    (`count > |q|`) and the count did not rise. Then it joins `seen_ids` silently, with no chime,
+    no selection home and no `arrived` wake (`test_more_than_eight_waiting`).
   - `seen_ids[16]` evicts its oldest entry that is **not** in `waiting` and is not `cur.id`.
   - `waiting` describes at most 8 ids, so there is always one to evict, and an id still waiting is
     never forgotten.
@@ -1188,7 +1268,13 @@ is dead code in 0.3.39 and is not ported.
   - `test_stray_touch_in_record_is_ignored_and_never_drops`;
   - `test_wake_phrase_refused_during_failed_dash`;
   - `test_reply_under_heard_min_counts_as_heard`;
-  - `test_face_ignored_during_replay`.
+  - `test_face_ignored_during_replay`;
+  - `test_turn_entered_this_frame_survives_stale_net`, `test_cap_not_read_from_previous_capture`;
+  - `test_pet_cell_bounce_does_not_drop_listen`, `test_notice_bounce_does_not_hit_face`;
+  - `test_hold_in_exit_quadrant_of_standing_offer_dismisses`;
+  - `test_selection_held_while_stop_outcome_pending`;
+  - `test_exit_cutting_reply_opens_no_follow_up`;
+  - `test_play_not_posted_in_frame_of_its_press_cue`.
 - **`test_storm`** — 300k seeded frames:
   - snapshots dropped, delayed (at most 2 s, below the `UI_MARGIN_MS` budget of §7.5c) or
     duplicated;
@@ -1340,21 +1426,26 @@ applies it through Ops → Update, and the panels OTA on the differing version.
     `test_retry_refused_without_live_key`, `test_gave_up_row_kept_by_clear_and_retryable`.
 - **C4** — columns `heard_ms` and `offered_at`. The copy says "Played".
   - `/waiting` reads the panel names (`_panel_names`, its own pooled connection) **before** it
-    opens its session, then stamps `offered_at` in that session. No row-exclusive lock is ever
-    held while waiting for a second connection.
+    opens its session, then stamps `offered_at` in that session. W3 moves `/next`'s
+    `_panel_names` call out of its open session the same way. No row-exclusive lock is ever held
+    while waiting for a second connection.
 - **C5** — a between row is listed in both threads.
   - Clearing either thread deletes the rows it shows, except unheard rows that are not keyless.
     Gave-up rows are kept, as today.
   - Keyless rows (E3.3) are deleted from W2; waiting-for-re-flash rows are kept
     (`test_clear_keeps_in_window_mail_of_revoked_panel`). The clear's SQL uses one predicate,
     `_KEYLESS_SQL` (a fragment in `jpanel.py`, not a database function, so W2 stays
-    data-only), shared with the status in `messages()`.
+    data-only, and restricted to `recipient_kind = 'panel'` — owner-inbox rows have no
+    `recipient_device`), shared with the status in `messages()`.
   - Until P1, a clear reports what it deleted and kept only through its counts (`kept_for`); the
     confirm copy that names keyless rows is P1's.
   - **A clear releases the deleted rows' blobs** through `blob_referenced` (W1). Today
     `clear_history` deletes rows and orphans their audio (`test_clear_releases_blobs`).
 - **C6** — a per-thread `row_number()` limit, a UNION with every unplayed owner row, and
-  `?before=`. **W1 owns the query function and `/summary`.**
+  `?before=`. **W1 owns the query function and `/summary`** (E3.9). W1's
+  `test_every_unplayed_owner_row_is_returned` covers rows on live keys; before W2's grouping a
+  dead-key row has no thread to land in (today's `messages()` drops non-roster ids), so that case
+  is W2's.
 - **C7** — 206/416 with `Accept-Ranges`. uuid guards on: the audio route, owner read, the C3
   routes, `/next?id=`, `/returned`, and panel `/played`. On the firmware side, a 404 from
   `/played` means "row gone", so it clears.
@@ -1399,7 +1490,9 @@ so they are exempt from the GUI gate.
    - yield hooks.
 5. Characterisation tests assert 0.3.39's behaviour — bugs included, each named by finding. F2
    inverts them.
-6. The hooks reach engine-side code only; cross-core ordering is reviewed, not tested.
+6. The hooks reach engine-side code and the render-side slot writer in `stream.c` (needed by
+   `test_slot_seqlock_never_pairs_seq_with_other_samples`); cross-core ordering is otherwise
+   reviewed, not tested.
 7. `PLAY_BUF_MS` and `CAPTURE_MAX_MS` move to `stream.h` (§7.4).
 
 **Backend tests that read firmware.** Found with
@@ -1434,8 +1527,8 @@ hit is `test_web.py` `"a.c"`. The census was independently verified complete in 
 the old key is stranded.
 
 **What stays unchanged:** RLS, nudge keys, `_waiting_count`, `/converse`, rename and revoke.
-Panel routes change in one way only in W2: after an insert, `send` runs `readdress_orphans` in an
-internal owner context. That is a context escalation inside a panel route, so it is named in W2's
+Panel routes change in one way only in W2: after an insert commits, `send` runs
+`readdress_orphans` in its own internal owner-context transaction. That is a context escalation inside a panel route, so it is named in W2's
 red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 
 ### 11.1 Design
@@ -1466,7 +1559,11 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 - **Called from:**
   - `reflash` and `rotate`, and `merge_subject` (same window);
   - the retention loop (`sweep.py`), whose first pass runs at start-up;
-  - right after each insert in `send`, `send_text` and `send_audio`.
+  - after each insert in `send`, `send_text` and `send_audio` — **in its own owner transaction,
+    after the insert has committed** (today's `send` already commits before it nudges). Running it
+    inside the panel's transaction would deadlock without Postgres seeing it: the INSERT holds
+    `ROW EXCLUSIVE`, a re-flash queues `SHARE ROW EXCLUSIVE` behind it, and a second session's
+    `ROW EXCLUSIVE` would queue behind the re-flash while the first waits on it in Python.
 
 **2. Serialisation and lock order.**
 
@@ -1477,7 +1574,8 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 - **Rule:** any transaction that writes `jpanel_message` and locks `principals` rows takes the
   table lock — or writes `jpanel_message` — **before** touching `principals`. That covers
   `merge_subject`, C3's retry, and the W2 migration. One lock order means no deadlock.
-- Test `test_send_racing_reflash_is_carried` uses two real connections with a forced interleave.
+- Test `test_send_racing_reflash_is_carried` uses real connections with forced interleaves,
+  including a re-flash that queues between the send's commit and its re-address.
   `test_merge_and_reflash_do_not_deadlock` checks the lock order, and
   `test_concurrent_sends_readdress_without_deadlock` checks that the send path takes no table
   lock.
@@ -1490,7 +1588,10 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 **3. `reflash` picks a subject** in this order (W2 rewrites the "oldest wins" comment and
 docstring in `repo.py` to match):
 
-1. the one owning the most recent key (live or revoked) for this name and role;
+1. the one owning the most recent key (live or revoked) among subjects whose
+   **`subjects.display_name`** matches this name, with this role — as `repo.py` matches today. Not
+   `principals.label`: a rename relabels only live keys, so a revoked key keeps the old label and
+   would steer a flash under an old name onto a renamed subject;
 2. otherwise the oldest;
 3. otherwise a new one.
 
@@ -1517,7 +1618,7 @@ principals. Display-role turns get their own group, "Displays", returned **only 
   hard-deleted or tombstoned subject. A thread clear deletes it.
 
 A waiting-for-re-flash row becomes keyless as it ages out. One SQL fragment, `_KEYLESS_SQL` in
-`jpanel.py`, defines it for the clear and for the status.
+`jpanel.py` (panel-addressed rows only), defines it for the clear and for the status.
 
 - This, and the owner's per-message discard of any unplayed row (C3), narrow JP Part B
   "### Data" (*"unplayed messages are kept indefinitely"*). Both are recorded in §4 and
@@ -1579,7 +1680,7 @@ No tables or policies change, so the existing RLS tests stand. New tests:
 | | `test_readdress_orphans_idempotent` and `…_nudges_new_recipient` |
 | | `test_sweep_and_send_readdress_respect_cutoff` (a 15-day-old row on a revoked key stays put after a sweep pass and after a send) |
 | | `test_concurrent_sends_readdress_without_deadlock` |
-| | `test_reflash_after_revoke_lands_on_last_used_subject` |
+| | `test_reflash_after_revoke_lands_on_last_used_subject`, `test_reflash_matches_display_name_not_revoked_label` |
 | | `test_owner_threads_group_by_subject_across_reflash` |
 | | `test_unknown_panel_group_clearable` |
 | | `test_retired_listed_only_with_rows` |
@@ -1612,8 +1713,11 @@ Each wave is one PR. Each package runs its **whole** gate set, from its own dire
 - **backend:** `ruff check .`, `ruff format --check .`, `pyright`, `pytest` — including the testcontainers integration suite and the combined 80% coverage gate, which W2 and W3 especially depend on. It also runs on
   every firmware wave, because its path filter covers `firmware/main/**`.
 - **frontend:** `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`.
+- **W1 edits `ci.yml`**, which trips every package's path filter, so W1 also runs the supervisor,
+  `jcode` and `jlaunch` gates.
 - **supervisor:** its full set, triggered by `firmware/dist/**`.
-- **firmware:** `make -C firmware/host test`.
+- **firmware:** `make -C firmware/host test`, plus the job's ESP-IDF build and its `dist/`
+  byte-compare. F3 replaces `run_ui_tests` with `run_sm_tests` in the host target.
 
 **Every firmware wave also:**
 
@@ -1633,7 +1737,7 @@ F3 also updates JP's text on exit, the pair, and refusals.
 
 | Wave | Contents | Depends on | Gates |
 |---|---|---|---|
-| **W1** box/PWA, invisible | A3 box (+ `asyncio.wait_for` inside `_transcribe`'s `try`); C2; C5 (+ a clear releases blobs); C6 (query function + backend `/summary` only — **no badge UI**, which is P1's); C7 audio route; C8 (non-visual); C9; C10; C11; `FlashIn.name` takes the rename rule — a longer stored name answers 422 "That name is too long for the panel's screen: rename the panel to 14 characters or fewer, then flash it" — and names are cut to 31 escaped bytes on the wire; skew pins; revision-delete CI check | — | backend, frontend, docs |
+| **W1** box/PWA, invisible | A3 box (+ `asyncio.wait_for` inside `_transcribe`'s `try`); C2; C5 (+ a clear releases blobs); C6 (query function + backend `/summary` only — **no badge UI**, which is P1's); C7 audio route; C8 (non-visual); C9; C10; C11; the flash name takes the rename rule inside `build_flash`, so the debug `PanelFlashIn` gets it too: empty stays valid (an unnamed unit); a bad character answers `_panel_name`'s own 422; a name over 14 answers 422 "That name is too long for the panel's screen. Flash it under a name of 14 characters or fewer; to keep its history, merge the old panel into the new one afterwards" (merge is the debug API from W2, the PWA from P1 — a revoked panel cannot be renamed); names are cut to 31 escaped bytes on the wire; `ci.yml` edits (the revision-delete job, unfiltered); skew pins; revision-delete CI check | — | backend, frontend, docs |
 | **W2** identity | §11 (one-statement `readdress_orphans` with its 14-day window and lock order, grouping, keyless rows cleared by a thread clear (waiting-for-re-flash rows kept), `discard_message` + debug discard, owner and debug merge, listing, tombstones hidden in `SqlDeviceRepo.list`, `whoami` scopes, inline-SQL migration with a pre-merge count); retired chips hidden; JP §3b, §5 and Part B "### Data" updated for the retention change. **Escalation + red-team review.** | W1 | backend, frontend, docs |
 | **W3** contract | `/waiting` ids + `offered_at`; `/next?id=` + headers; `/played {heard_ms}`; `/returned` + `_ALLOWED` + tunnel test; C3 owner routes; uuid guards; columns `heard_ms`, `offered_at`, `returns NOT NULL DEFAULT 0`; `readdress_orphans` also resets `returns` and `offered_at`; head and buffer pins. **Red-team review**: it adds panel-reachable writes (`/returned`, the `offered_at` stamp, an `_ALLOWED` row). | W2 | backend, docs |
 | **F1** host foundations | §10, no behaviour change | — (parallel) | firmware, backend, supervisor, docs |
@@ -1654,7 +1758,8 @@ parallel with the W waves.
   covered only through the `wsproto.c` helpers (`wsp_wait_step`, `link_left`, the `open` split),
   not the real socket and HTTP calls.
 - **A PLAY behind a long SEND expires.** A SEND is never cancelled and can hold the serial
-  engine for about three minutes on a slow link (upload, then the 75 s head) without its own
+  engine for about three minutes on a slow link (upload, then the 75 s head), about six with a
+  422 retry, without its own
   backstop firing, since its deadline moves with progress. A PLAY posted behind it passes its
   35 s expiry before claim and ends with `CUE_OOPS`. That is audible and the child can press
   again, so it is accepted.
@@ -1677,10 +1782,12 @@ parallel with the W waves.
 - A stop under 2 s returns the message (as a badge), unless the stop was a REPLY.
 - During her own upload the notice is drawn, but pressing it or AGAIN answers "busy".
 - The microphone stays leased through a send's upload and the box's transcription — up to about
-  three minutes for a 35 s message on a 10 KB/s link — so the pet answers "busy" to its wake word
+  three minutes for a 35 s message on a 10 KB/s link, about six if the box asks for a retry — so the pet answers "busy" to its wake word
   for that long.
 - A cancel before the head can cost one attempt.
 - Each duplicate subject left by re-flashes before W2 needs one explicit merge.
+- Between W2 and P1, display-role pet chats (today drawn as "panel xxxxxxxx" chips) disappear
+  from the PWA: their "Displays" group needs `?include_retired=1`, which only P1 sends.
 - An ack given up after 10 minutes may replay within the cap.
 - An arrival during an upload is announced only after it.
 - **The pair hides while any message waits.** So once Dad's message arrives, the child can no
@@ -1701,7 +1808,7 @@ parallel with the W waves.
 
 ## 14. Review log
 
-Every item in nine rounds of cold review was checked against the code before it was accepted.
+Every item in ten rounds of cold review was checked against the code before it was accepted.
 None was rejected. The per-round counts are in the intro.
 
 **Mechanisms introduced and later removed**, because each kept producing defects:
@@ -1745,9 +1852,35 @@ None was rejected. The per-round counts are in the intro.
 |---|---|---|
 | BE-1: "keyless" deleted mail that a re-flash would still deliver | `revoke` (`repo.py:170`) is unchanged and separate from re-flash; reflash, rotate and merge re-address in-window mail | Keyless = no future re-address can deliver it; a new **waiting-for-re-flash** status is kept by a clear; one `_KEYLESS_SQL` predicate; `test_clear_keeps_in_window_mail_of_revoked_panel` |
 | FW-1: the UI backstop margins were smaller than snapshot delay plus step slop | the storm delays snapshots up to 2 s; a step may overrun by `LINK_STEP_MS` | `UI_MARGIN_MS = 3000` for both backstops and the watchdog; the engine stops claiming at `expires_at − UI_MARGIN_MS`; storm delays capped below the margin |
-| FW-2: F3's EXIT, FACE and swipe no longer cut a sounding pet reply or cue | `audio_stop()` sets `s_play_pos = s_play_len` on every stop today | Every child-chosen stop emits `SILENCE` then its cue; pending outcome slots survive a silence (E1.2) |
+| FW-2: F3's EXIT, FACE and swipe no longer cut a sounding pet reply or cue | `audio_stop()` sets `s_play_pos = s_play_len` on every stop today | Every child-chosen stop emits `SILENCE` then its cue; a pending send outcome survives a silence (E1.2; narrowed to `send_result` alone in round 10) |
 | UX-1: I4 contradicted LISTEN/RECORD's silent miss, and recovery could drop a recording | `ui.c`'s CONFIRM miss sets only `tap_missed`; #36 asserts no flinch | The miss is *ignored* (logged); only I1, I5 and I6 recover, and the rest are counted |
 | UX-2: arrivals outside PET were never marked seen, so the selection jumped home after a face pick | the unseen-id rule was scoped to PET | Ids are marked seen in every mode; home only on an unseen edge in PET; re-resolve by id, then clamped index |
+
+**Round 10** — backend and firmware GREEN; 2 blocking items (UX):
+
+| Item | Evidence checked | Resolution |
+|---|---|---|
+| UX-1: a pet turn was cleared on the frame it started, and a new LISTEN read the last capture's length | `in` is sampled before `sm_step`; `talk_send` sets `BUSY` after it (`talk.c:166`); `audio_capture_ms()` is not reset on close; #38's harness sets `net` in `perform()` | Frame-boundary rule 1 (§8.2): nothing entered this frame is judged by this frame's inputs; `capture_open` resets the count; I1 checks the committed capture; #38 → R |
+| UX-2: "grid cells do not share the tick's quadrant" was false | `sendto_hit` puts the pet cell lower right; `confirm_hit` makes that the tick; touch has no debounce | Frame-boundary rule 2: any press that changes the mode gives the new mode's targets `EXIT_GRACE_MS`; also covers the notice → FACE bounce; #42 → R |
+
+**Round-10 non-blocking items, all taken** (44): backend — the send-path re-address in its own
+transaction after commit, with the race test extended; re-flash matches `subjects.display_name`;
+the flash-name rule in `build_flash` (empty valid; charset and length copy; merge, not rename,
+for a revoked unit); `ensure_ascii` length and an ASCII-safe `X-Jpanel-From`; `_KEYLESS_SQL`
+panel rows only; the Displays loss; E4.1's window; the W1/W2 split of the owner-row test;
+`/summary`'s path and shape; `ci.yml` trips every package; `/next` moves `_panel_names` too.
+Firmware — slot buffers carry their length; only `send_result` survives a silence;
+`heard_unacked` defined; the F2 wrapper rows completed; the hooks reach the slot writer; step 4
+uses the claim margin; render-side busy facts count unconsumed seqs; talk waits on
+`reply_done`; the no-poll-while-busy guard kept; both watchdogs suspended during OTA; HTTPS
+ABSOLUTE semantics stated; the 422 retry doubles the busy window; the firmware gate names the
+IDF build and the `dist/` compare; a PSRAM failure refuses at once; mid-run arrivals join only
+while another message remains. UX — E1.6's exit quadrant on a standing pair; FACE grace;
+`sm_face` none with no notice; today's poke kept in THINK; Appendix B relabels; `speaker_busy`
+counts unconsumed seqs; the selection held while a stop's outcome is pending; scroll-in ids
+beyond 8 are not arrivals; the old box keeps today's count rule; Appendix A #1, #7, #15, #40
+relabelled; I1 on the committed capture; `mode_press_at`; calibration leaves the turn; the
+follow-up edge is `reply_busy` falling.
 
 **Round-9 non-blocking items, all taken:**
 - **Firmware:**
@@ -1852,13 +1985,13 @@ the test protects. No test is deleted.
 
 | # | Test | Disp. | Note / new assertion (property protected) |
 |---|---|---|---|
-| 1 | `test_the_order_is_a_list_and_ends_with_the_pet` | R | Each mode's target table asserted literally; each ends in PET or swallow (*every press reaches something*). |
+| 1 | `test_the_order_is_a_list_and_ends_with_the_pet` | R | Each mode's target table asserted literally; each ends in PET, a swallow, or LISTEN/RECORD's *ignored* miss (*every press reaches something or is logged*). |
 | 2 | `test_the_grid_is_modal_and_outranks_everything` | R | In GRID, every point (quadrants and centre) resolves to a cell or swallow, with a notice waiting and an offer standing. A run cannot coexist with GRID, so that part becomes "a hold during PLAY is swallowed" (*the menu is modal*). |
 | 3 | `test_the_notice_is_tappable_only_in_one_quadrant_today` | R | Geometry and the "standing offer does not swallow a notice press" checks as before (offer hidden, still kept). The last step drives a real press into PLAY and, after grace, the top right → EXIT (*the exit returns once a message actually runs*). |
 | 4 | `test_a_cue_no_longer_decides_what_a_press_means` | R | With `speaker_busy` from a cue, PET/GRID targets equal the quiet ones, and PLAY's targets do not change while a cue sounds (*a cue does not take the table away*). The table-length literal is dropped. |
 | 5 | `test_the_exit_ends_a_message_while_it_is_audible` | R | Press into PLAY, run past grace, top right → EXIT ends the run with STOP (*the corner is the exit while a message is audible*). The `UI_TAP_ORDER*` literals become PLAY-table literals. |
 | 6 | `test_the_notice_is_painted_through_its_own_arrival_cue` | R | Notice drawn while its own chime sounds; then a **press** into PLAY hides it (*a playing message owns the screen*), instead of setting a bare `stream_active`. |
-| 7 | `test_a_hold_after_a_poke_still_opens_the_menu` | U | The hold needs no quiet speaker. The port drives a real down edge on the pet (the harness set hold state directly), so `down.target == PET`. |
+| 7 | `test_a_hold_after_a_poke_still_opens_the_menu` | R | Same assertions; the hold needs no quiet speaker. The port drives a real down edge on the pet (the harness set hold state directly), so `down.target == PET`. |
 | 8 | `test_the_controls_are_pressable_for_as_long_as_they_are_drawn` | R | From the press: controls drawn, transport claimed (ignored) through pending/waiting/claimed-not-ON; a replay likewise (*drawn ⇔ pressable*). Bare `jfetching`/`stream_active` inputs are not used. |
 | 9 | `test_a_second_press_cannot_cancel_what_the_first_one_started` | U | Exit grace from the press, every phase. |
 | 10 | `test_the_face_follows_the_message_that_is_playing` | U | `cur` is seeded across the chain; plus the every-frame assertion. |
@@ -1866,14 +1999,14 @@ the test protects. No test is deleted.
 | 12 | `test_a_swipe_changes_which_waiting_message_is_offered` | U | |
 | 13 | `test_one_waiting_message_cannot_be_swiped_away` | U | Stops only if the selection moved. |
 | 14 | `test_a_swipe_stops_the_message_it_moves_off` | R | `sel` now indexes the selection set `S` of §8.2 (`waiting.q` in box order with `cur` at `cur.pos`, de-duplicated), not a bare index into `waiting`. The swipe that "moves to the next one" asserts that the **selected id** is the entry of `S` after the playing one — the same id whether or not the snapshot still lists `cur.id`; `stop == 1` and `pause_off == 1` are kept, and "at the end stops nothing" is kept (*a swipe moves on and stops what it left*). |
-| 15 | `test_a_swipe_is_not_also_a_hold` | U | |
+| 15 | `test_a_swipe_is_not_also_a_hold` | R | The harness drove a tap and a swipe in one frame; the port drives one gesture, since a release that ends a swipe is not a tap (§8.2). Same assertions: no grid, the swipe acts (*a swipe is not also a hold*). |
 | 16 | `test_a_long_press_on_a_menu_is_just_a_press` | U | Fresh offer: no grid. Standing case is a new test. |
 | 17 | `test_the_selected_message_is_the_one_that_plays` | R | The posted command carries the selected **id** (index on an old box); `sm_face` before the claim = the sister (*the selected message plays, and its face shows from the press*). |
 | 18 | `test_the_numeral_says_which_of_how_many` | U | The swipe during pending stops and returns to PET with sel moved; `sel_shown == 3` on the notice. |
 | 19 | `test_a_new_message_sends_the_selection_home` | U | The harness sends no ids → the count-rise fallback; same results. |
 | 20 | `test_every_playback_control_answers_the_finger` | R | Reply mid-message → `mode == RECORD` with `CUE_REPLY` (was `pending == UI_PEND_REPLY`); the other cue assertions stay (*every control answers with its own sound*). |
 | 21 | `test_the_draw_layers_are_a_list` | R | Per-mode view composition; grid on top (*a menu is never covered*). |
-| 22 | `test_a_notification_arrives_and_a_tap_plays_it` | U | Posted after the speaker is free. |
+| 22 | `test_a_notification_arrives_and_a_tap_plays_it` | U | Posted after the speaker is free; `play_next == 0` on the press frame holds because render's `speaker_busy` counts the unconsumed `CUE_PLAY` (§7.4). |
 | 23 | `test_a_press_does_not_evaporate_behind_its_own_cue` | U | Larger `PENDING_MS`. |
 | 24 | `test_a_press_during_the_arrival_cue_plays_the_message` | U | |
 | 25 | `test_the_run_controls_appear_from_the_press_not_the_stream` | U | The pause glyph is drawn while ignored. |
@@ -1889,11 +2022,11 @@ the test protects. No test is deleted.
 | 35 | `test_a_tick_pressed_into_silence_refuses_to_send` | U | `CUE_OOPS`. |
 | 36 | `test_the_cross_discards_and_the_pet_is_not_poked` | U | The top-half miss in LISTEN stays *ignored*: no flinch, `tap_missed` logged, and the turn survives (I4's exception; no recovery). |
 | 37 | `test_a_named_turn_with_nobody_speaking_costs_nothing` | U | |
-| 38 | `test_a_failed_turn_says_so_rather_than_going_quiet` | U | |
+| 38 | `test_a_failed_turn_says_so_rather_than_going_quiet` | R | The harness sets `net = BUSY` in `perform()` after the step; the port keeps `CHECK(turn == THINKING)` on the entry frame because of frame-boundary rule 1 (§8.2), then the same failure, dash and OOPS assertions (*a failed turn says so*). |
 | 39 | `test_every_dash_is_counted_and_its_two_causes_told_apart` | U | |
-| 40 | `test_a_reply_arms_a_follow_up_and_the_cap_ends_it` | U | |
+| 40 | `test_a_reply_arms_a_follow_up_and_the_cap_ends_it` | R | The harness modelled the reply as a stream; the port drives `reply_busy` and its falling edge. Same assertions on arming and the cap of 6 (*a reply arms a follow-up, and the cap ends it*). |
 | 41 | `test_stop_said_out_loud_leaves_every_state` | U | Today's handler, including the RECORD drop. |
-| 42 | `test_pressing_the_face_cycles_through_the_waiting_messages` | U | The face moves the selection → stop → PET (menu down). |
+| 42 | `test_pressing_the_face_cycles_through_the_waiting_messages` | R | Face presses are spaced past the press grace of the notice press that started the playback (§8.2); then, as before, the face moves the selection → stop → PET (menu down) (*the face cycles*). |
 | 43 | `test_the_face_is_not_a_control_with_one_message` | U | Holds because the harness leaves `waiting = 1` before the claim (1 + 0) and 0 after (0 + 1). With one message playing **and** one waiting, the face is live — a deliberate rule change, covered by `test_face_cycles_without_skipping`. |
 | 44 | `test_pressing_replay_twice_does_not_pause_what_never_started` | R | The literal `== UI_TARGET_TRANSPORT` becomes `== TARGET_IGNORED` while the replay is pending: the press is **claimed and not PET** (no poke, no hold). The second press still does not pause; once ON the same disc pauses (*a press cannot pause what never started*). |
 | 45 | `test_a_held_stream_resumes_rather_than_being_thrown_away` | U | |
@@ -1925,12 +2058,12 @@ the finding (†).
 | `ui.h`/`display.c` "very large … 15 seconds … smaller one top left" | Big for 15 s, then a badge; a second arrival does not restore it | K (clock from first visible †; a returned message starts as a badge †) |
 | `display.c` "capture everything in that top left quadrant" | The badge's hit area is the whole quadrant | K |
 | JP sleep rules; dark wake | Big box after dark; waiting does not hold the screen awake | K |
-| JP "multiple messages are one press, and a finger gets out" | One tap plays all; a finger stops it | K (mid-run arrivals join) |
+| JP "multiple messages are one press, and a finger gets out" | One tap plays all; a finger stops it | K (a mid-run arrival joins while another waiting message remains) |
 | JP 0.3.33 "the count became a position" | `n/m` and swipe | K (counts the playing message †) |
 | `ui.h`/`display.c` "replay button … 10 seconds"; 0.3.25 "no more waiting for it to time out" | The pair never expires | K; **standing after 10 s ★** |
 | `confirm.h` "the pair never moves between the two states" | Disc positions fixed | K (standing changes the hit area, not the drawing) |
 | 0.3.25 "the face stays for the whole exchange" | Sender's face with the pair | K |
-| 0.3.25 "the new message takes the corner" | A waiting message takes the corner | K (offer hidden) |
+| 0.3.25 "the new message takes the corner" | A waiting message takes the corner | **C †** (B3): the pair now hides while anything waits, which today it did not (§13) |
 | `display.c` "top right where there's no icon" | Exit corner | K; **one press during playback ★** |
 | 0.3.29 "pause icon for half a second" | Exit grace 700 ms from the press | K, every phase |
 | 0.3.28 "exit swallowed presses aimed at the notification" | The notice outranks the exit | K |
@@ -1962,7 +2095,7 @@ the finding (†).
 | `display.c` "long press seems to just reset the device" | Release-based button | K |
 | JP PWA decisions (male voice, PWA audio, one child one conversation, two clears, clear history, picker) | PWA/box | K |
 | `jpanel.c` ack-on-stop | A stop acknowledges | C † (F3, with a delivery header only); a REPLY stop still acknowledges (§4) |
-| `display.c` exit corner: `jpanel_stop()` → `audio_stop()`, then `CUE_STOP` | A stop cuts whatever is sounding, then sounds its own cue | K for EXIT, FACE, swipe and the button: `SILENCE` then the cue (§8.3). A pending send outcome now survives (†, E1.2) |
+| `display.c` exit corner: `jpanel_stop()` → `audio_stop()`, then `CUE_STOP` | A stop cuts whatever is sounding, then sounds its own cue | K for EXIT, FACE and swipe: `SILENCE` then the cue (§8.3). The button's cue was cut today and now sounds (the "IT BLINKS FIRST" row, †). A pending `send_result` now survives (†, E1.2) |
 | — | Refusal sound — including a refused wake phrase or "tell sister", which today keeps `CUE_HEARD` | **C ★** (`CUE_BUSY`) |
 | `confirm.c` *"split the [screen] into quarters … the children's press accuracy is not great"* | Disc controls hit by quadrants | K for playback, recording and a fresh pair. **C ★** for a standing pair: disc reach only (Q1) |
 | `ui.h`/`display.c` `TALK_MARGIN_PX` rim guard (a hold that starts on the rim is not a hold) | Rim guard | K |
@@ -1970,8 +2103,8 @@ the finding (†).
 | 0.3.32 "every playback control answers the finger" — the reply press | `CUE_REPLY` at the reply press | K. Made true in F3: on 0.3.39 (and in F2) `jpanel_stop()` cuts it in the same frame (†) |
 | `display.c` wake from standby | A press in standby wakes with `CUE_HEARD` | K |
 | `display.c` standby path (resets `s_talk` to idle) | A pet reply still in flight when the button is pressed plays when it arrives, and nothing follows it | K: `turn.state = NONE` with no `TALK_CLEAR`, `follow_turns = MAX` (§8.3). A reply already sounding is cut, as `audio_stop()` does today |
-| — | Tick and cross right after a reply press | **C †**: ignored for `EXIT_GRACE_MS`, so a bounce cannot send or drop the recording |
+| — | The new mode's targets right after the press that opened it (tick and cross after REPLY or a grid cell; FACE after the notice) | **C †**: ignored for `EXIT_GRACE_MS`, so a bounce cannot send, drop or skip anything (§8.2) |
 | `display.c` hush/cap auto-send | No cue on auto-send; `CUE_SENT` follows | K |
-| `ui.c` tap order (pair live during THINK) | AGAIN works mid-turn, and the turn still resolves (dash, follow-up). REPLY mid-turn was refused (`start_record` needs talk idle) with OOPS. | K; REPLY's refusal now sounds `CUE_BUSY` (★). The pair is not live in LISTEN or RECORD (B1 †). |
+| `ui.c` tap order (pair live during THINK) | AGAIN works mid-turn, and the turn still resolves (dash, follow-up). REPLY mid-turn was refused (`start_record` needs talk idle) with OOPS. | K; REPLY's refusal now sounds `CUE_BUSY` (★). The pair is not live in LISTEN or RECORD (B1 †). **C †:** a follow-up whose reply ends while she is in PLAY is disarmed, not opened (§8.3). |
 | JP *"unplayed messages are kept indefinitely"*; 0209 *"DELETE /messages deliberately preserves exactly that row"* | Unheard rows survive a clear | K, except: keyless rows (no future re-address can deliver them, E3.3) are deleted by a clear (**C †**) — waiting-for-re-flash rows are kept; and the owner can discard any unplayed row one at a time, an explicit act (**C †**). Both written into JP Part B "### Data" by W2 (§11.1) |
 | JP 0.3.36 replay re-arms the pair | The pair after a replay | K (`offer.since` re-stamped) |
