@@ -116,6 +116,20 @@
       "w": 720,
       "h": 720,
       "title": "14 \u00b7 Night clock (dim red, bedtime hours)"
+    },
+    "NotifyInfo.dc.html": {
+      "x": 800,
+      "y": 4423,
+      "w": 720,
+      "h": 720,
+      "title": "15 \u00b7 Push message from the box"
+    },
+    "NotifyQuestion.dc.html": {
+      "x": 1600,
+      "y": 4423,
+      "w": 720,
+      "h": 720,
+      "title": "16 \u00b7 Push question \u2014 answer goes back (1 of 2)"
     }
   },
   "order": [
@@ -133,7 +147,9 @@
     "ClockAlarms.dc.html",
     "Ringing.dc.html",
     "PwaAlarms.dc.html",
-    "ClockNight.dc.html"
+    "ClockNight.dc.html",
+    "NotifyInfo.dc.html",
+    "NotifyQuestion.dc.html"
   ],
   "notes": {
     "states": {

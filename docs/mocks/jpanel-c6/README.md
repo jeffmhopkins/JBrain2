@@ -50,3 +50,8 @@ panel, the others import it at a fixed `start` state).
   disruptive to dark-adapted eyes, and on an AMOLED it lights almost nothing else.
 - **Firmware shape:** each of these screens is its own app module over a shared UI kit —
   `../../plans/JPANEL_C6_PLAN.md` §1.
+- **Push messages from the box:** a full-screen pop-up over any app (an alarm outranks it):
+  sender, title, short body, and either OK or up to four answer buttons whose tap goes back
+  to the sender. Queues as "1 of N"; BOOT dismisses without answering. Settings → Notifications:
+  allow (off = the box is told `refused`), chime, silent during night hours (urgent always
+  chimes). Box side: `../../plans/JPANEL_C6_PLAN.md` §2.
