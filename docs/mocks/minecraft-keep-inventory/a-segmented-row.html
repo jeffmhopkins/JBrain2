@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Minecraft Keep Inventory · A — segmented in the row</title>
+<!-- GUI gate mock — docs/mocks/minecraft-keep-inventory/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M10
+     ("Shipped (wave mc-items)"). Built on the binding Worlds mock (docs/mocks/minecraft-worlds/b-worlds-subscreen.html),
+     whose tokens and component styles are copied verbatim. Self-contained and offline; tokens per docs/reference/DESIGN.md.
+     The Power Pack icon is docs/mocks/minecraft-items/a/power_pack.png, embedded. -->
+<style>
+  /* ===== tokens — DESIGN.md "Color tokens" (drawn at 100% text size) ===== */
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66; --surface-composer:#141518;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px; --fs-hero:28px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+    /* Accent TEXT tokens. Dark uses the accents as-is; light deepens each toward --text, the
+       pattern DESIGN.md "Syntax tokens" already sets, because the pastels sit near 2:1 as words
+       on light surfaces. Dots, tints and rules keep the pastel. */
+    --ok-text:var(--green); --warn-text:var(--amber); --danger-text:var(--rose); --steel-text:var(--steel);
+    --frame:#2A2C30; --page:#000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF;
+    --scrim:rgba(247,247,245,.6); --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --ok-text:color-mix(in srgb, var(--green) 46%, var(--text));
+    --warn-text:color-mix(in srgb, var(--amber) 50%, var(--text));
+    --danger-text:color-mix(in srgb, var(--rose) 54%, var(--text));
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --frame:#C9C9C4; --page:#DADAD6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;width:20px;height:20px;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  a{color:var(--steel-text);text-decoration:none;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .num{font-variant-numeric:tabular-nums;}
+  .mono{font-family:var(--font-mono);}
+
+  /* ===== reviewer chrome — OUTSIDE the design ===== */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel-text);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;background:transparent;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);display:flex;justify-content:space-between;}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);width:62px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+
+  /* ===== the phone ===== */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  @media (max-width:430px){
+    body{padding-top:12px;}
+    .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;}
+  }
+  @media (min-width:900px){ .phone{width:560px;} .caption,.sim{max-width:560px;} }
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px 0 4px;border-bottom:1px solid var(--border);flex:none;padding-top:env(safe-area-inset-top);}
+  .bar .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+  .bar .ttl{font-size:var(--fs-screen);font-weight:500;}
+  .vitals{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:11px;}
+  .vitals .cols{display:flex;align-items:flex-end;gap:2px;height:20px;width:48px;}
+  .vitals .cols i{display:block;width:2px;background:var(--text-3);border-radius:1px;}
+  .vitals b{color:var(--text-2);font-weight:500;}
+  .scroll{flex:1;overflow-y:auto;padding:12px 16px 28px;}
+  .ops-header{display:flex;align-items:center;gap:8px;margin:2px 0 12px;}
+  .ops-header h2{font-size:var(--fs-title);font-weight:500;}
+  .ops-actions{margin-left:auto;display:flex;gap:6px;}
+  .ops-actions button{appearance:none;font-size:var(--fs-micro);font-weight:500;border-radius:var(--r-pill);padding:7px 12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);min-height:32px;}
+
+  /* ===== Ops atoms — mirrored from frontend/src/styles.css ===== */
+  .ops-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow-card);}
+  .ops-card-head{width:100%;display:flex;align-items:center;gap:10px;background:transparent;border:0;padding:14px;min-height:48px;text-align:left;}
+  .ops-card-title{font-size:var(--fs-secondary);font-weight:500;display:flex;align-items:center;gap:8px;}
+  .ops-card-right{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;}
+  .ops-card-summary{font-size:var(--fs-micro);color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ops-card-summary.warn{color:var(--warn-text);} .ops-card-summary.bad{color:var(--danger-text);}
+  .ops-card-caret{color:var(--text-3);transition:transform .18s ease-out;flex:none;}
+  .ops-card-head.open .ops-card-caret{transform:rotate(90deg);}
+  .ops-card-body{border-top:1px solid var(--border);}
+  .ops-gcount{font-size:var(--fs-micro);color:var(--text-3);}
+  .ops-gstate{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);white-space:nowrap;}
+  .ops-gdot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .ops-gstate-ok{color:var(--ok-text);} .ops-gstate-ok .ops-gdot{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-gstate-warn{color:var(--warn-text);} .ops-gstate-warn .ops-gdot{background:var(--warn);box-shadow:0 0 0 3px var(--amber-tint);}
+  .ops-gstate-bad{color:var(--danger-text);} .ops-gstate-bad .ops-gdot{background:var(--danger);box-shadow:0 0 0 3px var(--rose-tint);}
+  .ops-gstate-off{color:var(--text-2);} .ops-gstate-off .ops-gdot{background:var(--text-3);}
+  .ops-vrow{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border-top:1px solid var(--border);}
+  .ops-card-body > .ops-vrow:first-child{border-top:0;}
+  .ops-vk{width:74px;flex:none;font-size:var(--fs-secondary);font-weight:500;padding-top:1px;}
+  .ops-vmid{flex:1;min-width:0;}
+  .ops-vv{font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .ops-vsub{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:3px;}
+  .ops-update-bar{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;}
+  .ops-update-dot{width:8px;height:8px;flex:none;border-radius:999px;background:var(--steel);box-shadow:0 0 0 3px var(--steel-tint);}
+  .ops-update-dot.warn{background:var(--warn);box-shadow:0 0 0 3px var(--amber-tint);}
+  .ops-update-dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-update-dot.bad{background:var(--danger);box-shadow:0 0 0 3px var(--rose-tint);}
+  .ops-update-text{font-size:var(--fs-micro);color:var(--text-2);min-width:0;}
+  .ops-update-text b{color:var(--text);font-weight:500;}
+  .ops-update-btn{margin-left:auto;flex:none;font-size:var(--fs-micro);font-weight:500;border-radius:999px;padding:7px 14px;min-height:32px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel-text);position:relative;}
+  .ops-update-btn::after{content:"";position:absolute;inset:-6px;}
+  .ops-update-btn.danger{background:var(--rose-tint);color:var(--danger-text);}
+  .ops-update-btn.warn{background:var(--amber-tint);color:var(--warn-text);}
+  .ops-update-btn:disabled{background:var(--surface-2);color:var(--text-3);border-color:var(--border);cursor:default;}
+  .ops-srow{border-top:1px solid var(--border);}
+  .ops-shead{width:100%;display:flex;align-items:center;gap:11px;background:transparent;border:0;padding:11px 14px;min-height:48px;text-align:left;}
+  .ops-sdot{width:9px;height:9px;flex:none;border-radius:999px;}
+  .ops-sdot-ok{background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);}
+  .ops-sinfo{flex:1;min-width:0;}
+  .ops-snm{font-size:var(--fs-secondary);font-weight:500;}
+  .ops-smeta{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:3px;}
+  .ops-kv{display:flex;justify-content:space-between;gap:12px;font-size:var(--fs-micro);color:var(--text-2);padding:3px 0;}
+  .ops-kv span:first-child{color:var(--text-2);}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-micro);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+  .badge.ok{color:var(--ok-text);background:var(--green-tint);} .badge.warn{color:var(--warn-text);background:var(--amber-tint);}
+  .badge.bad{color:var(--danger-text);background:var(--rose-tint);} .badge.info{color:var(--steel-text);background:var(--steel-tint);}
+  .badge.off{color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);}
+
+  /* buttons (44px floor in px — never scaled) */
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 14px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;}
+  .btn svg{width:18px;height:18px;}
+  .btn.primary{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+  .btn.go{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+  .btn.warn{background:var(--amber-tint);border-color:transparent;color:var(--warn-text);}
+  .btn.danger{background:var(--rose-tint);border-color:transparent;color:var(--danger-text);}
+  .btn:disabled{background:var(--surface-2);border-color:var(--border);color:var(--text-3);cursor:default;}
+  .btn.grow{flex:1;}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;}
+  .link{appearance:none;background:none;border:none;color:var(--steel-text);font-size:inherit;font-weight:500;padding:0;display:inline-flex;align-items:center;gap:4px;min-height:32px;}
+  .link svg{width:14px;height:14px;}
+
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);}
+  .muted{color:var(--text-2);} .faint{color:var(--text-2);}
+  .note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .note b{color:var(--text);font-weight:500;}
+
+  /* meter — DESIGN "Meters" */
+  .meter{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .meter i{display:block;height:100%;background:var(--steel);border-radius:999px;transition:width .3s ease-out;}
+
+  /* notice strips inside a card */
+  .notice{display:flex;gap:9px;align-items:flex-start;border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-micro);line-height:1.45;}
+  .notice svg{width:16px;height:16px;margin-top:1px;}
+  .notice b{font-weight:500;}
+  .notice.warn{background:var(--amber-tint);color:var(--text);} .notice.warn svg{color:var(--warn-text);}
+  .notice.bad{background:var(--rose-tint);color:var(--text);} .notice.bad svg{color:var(--danger-text);}
+  .notice.info{background:var(--steel-tint);color:var(--text);} .notice.info svg{color:var(--steel-text);}
+  .notice.ok{background:var(--green-tint);color:var(--text);} .notice.ok svg{color:var(--ok-text);}
+  .errtext{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);background:var(--surface-composer);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-top:8px;word-break:break-word;}
+
+  /* changelog quote — verbatim lines, so it reads as a quotation, not as our prose */
+  .clog{border-left:2px solid var(--border);padding:2px 0 2px 12px;margin-top:8px;}
+  .clog .src{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);margin-bottom:4px;}
+  .clog ul{list-style:none;display:flex;flex-direction:column;gap:5px;}
+  .clog li{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;padding-left:12px;position:relative;}
+  .clog li::before{content:"";position:absolute;left:0;top:7px;width:4px;height:4px;border-radius:999px;background:var(--text-3);}
+
+  /* step list — Backing up → Downloading → Restarting → Done (the Server-update register) */
+  .steps{list-style:none;display:flex;flex-direction:column;gap:2px;margin-top:8px;}
+  .steps li{display:flex;align-items:center;gap:10px;font-size:var(--fs-micro);color:var(--text-2);min-height:26px;}
+  .steps .sd{width:16px;height:16px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;display:flex;align-items:center;justify-content:center;}
+  .steps .sd svg{width:11px;height:11px;stroke-width:2.2;}
+  .steps li.done{color:var(--text-2);} .steps li.done .sd{border-color:var(--ok);background:var(--ok);color:var(--bg);}
+  .steps li.now{color:var(--text);font-weight:500;} .steps li.now .sd{border-color:var(--warn);border-top-color:transparent;animation:spin .9s linear infinite;}
+  .steps li.fail{color:var(--danger-text);} .steps li.fail .sd{border-color:var(--danger);background:var(--danger);color:var(--bg);}
+  .steps .at{margin-left:auto;color:var(--text-2);font-variant-numeric:tabular-nums;font-weight:400;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .spin{animation:spin .9s linear infinite;}
+
+  /* switch row (Ops' settings-switch) */
+  .sw-row{display:flex;align-items:center;gap:10px;}
+  .sw-row .sw-l{font-size:var(--fs-micro);color:var(--text-2);flex:1;min-width:0;}
+  .sw-row .sw-l b{color:var(--text);font-weight:500;}
+  .switch{appearance:none;width:44px;height:26px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);position:relative;flex:none;}
+  .switch::after{content:"";position:absolute;inset:-9px -0px;}
+  .switch .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:var(--text-3);transition:left .15s ease-out,background .15s ease-out;}
+  .switch.on{background:var(--steel-tint);border-color:transparent;} .switch.on .knob{left:21px;background:var(--steel);}
+
+  /* player avatar initial — a neutral disc, no faces/skins */
+  .pav{width:28px;height:28px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--text-2);flex:none;}
+  .pav.on{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+
+  /* stat tiles (lifetime stats) */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .stat{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:8px 10px;min-width:0;}
+  .stat .sv{font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;}
+  .stat .sk{font-size:11px;color:var(--text-2);margin-top:1px;}
+  .stat.ph .sv{color:var(--text-2);}
+  .preview-tag{display:inline-flex;align-self:flex-start;font-size:11px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:2px 9px;}
+
+  /* ===== modal shells — one Dialog, one Sheet (DESIGN "Modal system") ===== */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .16s ease-out;z-index:20;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .dialog{position:absolute;left:24px;right:24px;top:50%;transform:translateY(-46%);opacity:0;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px 18px 14px;z-index:22;transition:opacity .15s ease-out,transform .15s ease-out;}
+  .dialog.show{opacity:1;transform:translateY(-50%);pointer-events:auto;}
+  .dialog h3{font-size:var(--fs-title);font-weight:500;margin-bottom:6px;}
+  .dialog p{font-size:var(--fs-secondary);color:var(--text-2);line-height:1.45;}
+  .dialog .btnrow{margin-top:16px;justify-content:flex-end;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;transform:translateY(100%);transition:transform .18s ease-out;z-index:21;padding:0 16px calc(16px + env(safe-area-inset-bottom));max-height:88%;overflow:auto;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:32px;height:4px;border-radius:999px;background:var(--border);margin:10px auto 14px;}
+  .sheet h3{font-size:var(--fs-title);font-weight:500;}
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(16px);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 16px;font-size:12.5px;color:var(--text);opacity:0;pointer-events:none;transition:.18s ease-out;max-width:88%;z-index:30;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important;}
+  }
+
+  /* ===== revision 2 additions ===== */
+  .link{position:relative;}
+  .link::after{content:"";position:absolute;inset:-6px -4px;}
+  .clog-title{font-size:var(--fs-micro);color:var(--text);margin-bottom:6px;}
+  .note.why{color:var(--text-2);font-style:normal;}
+  .ops-actions button.danger{color:var(--danger-text);}
+  .link[data-act="copyAddr"]{font-size:var(--fs-micro);}
+  .steps .at{white-space:nowrap;}
+
+  /* ===================== variant-specific ===================== */
+  .b-navrow{appearance:none;width:100%;display:flex;align-items:center;gap:12px;background:none;border:0;padding:12px 14px;min-height:56px;text-align:left;}
+  .b-navrow > svg{color:var(--text-3);width:18px;height:18px;}
+  .b-navtx{min-width:0;flex:1;}
+  .b-ico{width:36px;height:36px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;}
+  .b-ico svg{width:20px;height:20px;}
+  .b-entry .meta{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;font-weight:400;}
+  .b-entry .meta.warn{color:var(--warn-text);} .b-entry .meta.bad{color:var(--danger-text);}
+  .b-banner{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:var(--fs-micro);line-height:1.4;border-bottom:1px solid var(--border);}
+  .b-banner.warn{background:var(--amber-tint);color:var(--text);} .b-banner.warn svg{color:var(--warn-text);}
+  .b-banner.bad{background:var(--rose-tint);} .b-banner.bad svg{color:var(--danger-text);}
+  .b-banner svg{width:16px;height:16px;}
+  .b-banner .link{margin-left:auto;flex:none;font-size:var(--fs-micro);}
+  .b-hero{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:16px;margin-bottom:20px;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-card);}
+  .b-state{display:flex;align-items:center;gap:10px;}
+  .b-state .ops-sdot{width:10px;height:10px;}
+  .b-state .w{font-size:var(--fs-title);font-weight:500;}
+  .b-state .sub{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-align:right;}
+  .b-facts{display:flex;gap:8px;}
+  .b-fact{flex:1;background:var(--surface-2);border-radius:10px;padding:8px 10px;min-width:0;}
+  .b-fact .v{font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+  .b-fact .k{font-size:11px;color:var(--text-2);}
+  .b-sect{display:flex;align-items:baseline;gap:8px;margin:0 2px 8px;}
+  .b-sect .r{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-transform:none;letter-spacing:0;}
+  .b-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:20px;overflow:hidden;box-shadow:var(--shadow-card);}
+  .b-pad{padding:14px;display:flex;flex-direction:column;gap:10px;}
+  .b-row{appearance:none;width:100%;display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:56px;background:none;border:0;border-top:1px solid var(--border);text-align:left;}
+  .b-row:first-child{border-top:0;}
+  .b-row .nm{font-size:var(--fs-body);font-weight:500;}
+  .b-row .sm{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:1px;}
+  .b-row .rt{margin-left:auto;text-align:right;font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .b-row .rt .sm{margin:0;}
+  .b-row > svg{color:var(--text-3);width:18px;height:18px;}
+  .b-empty{padding:16px 14px;font-size:var(--fs-secondary);color:var(--text-2);}
+  .b-ver{display:flex;align-items:baseline;gap:10px;}
+  .b-ver .big{font-size:var(--fs-title);font-weight:500;font-variant-numeric:tabular-nums;}
+  .b-ver .arrow{color:var(--text-2);}
+  .b-ver .nw{font-size:var(--fs-title);font-weight:500;color:var(--warn-text);font-variant-numeric:tabular-nums;}
+  .b-foot{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);border-top:1px solid var(--border);padding:4px 14px;}
+  .b-foot .link{margin-left:auto;font-size:var(--fs-micro);}
+  .b-lead{display:flex;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid var(--border);min-height:48px;}
+  .b-lead:first-child{border-top:0;}
+  .b-lead .k{font-size:var(--fs-secondary);flex:1;}
+  .b-lead .who{font-size:var(--fs-micro);color:var(--text-2);}
+  .b-lead .v{font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;min-width:56px;text-align:right;}
+  .b-lead.ph .v,.b-lead.ph .who{color:var(--text-2);}
+  .b-addon{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);}
+  .b-addon svg{color:var(--violet);width:18px;height:18px;margin-top:1px;}
+  .b-kv{display:flex;justify-content:space-between;padding:10px 14px;border-top:1px solid var(--border);font-size:var(--fs-secondary);gap:12px;}
+  .b-kv:first-child{border-top:0;}
+  .b-kv span:first-child{color:var(--text-2);}
+  .b-sheet-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+  .b-sheet-head .pav{width:40px;height:40px;font-size:16px;}
+  .b-sheet-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;}
+
+  .b-rn{min-width:0;flex:1;}
+  .b-rn .nm,.b-rn h3{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .b-row .rt{flex:none;}
+  .b-on{color:var(--ok-text);}
+  .b-ver .nw.ok{color:var(--ok-text);}
+  .b-label{font-size:var(--fs-micro);color:var(--text-2);font-weight:500;}
+  .b-sheet-head .btn{margin-left:auto;padding:0;width:44px;flex:none;}
+  .b-launch{padding:4px 0 24px;}
+  .b-lhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+  .b-lhead .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+  .b-lsect{margin:14px 2px 8px;}
+  .b-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  .b-tile{appearance:none;position:relative;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);min-height:96px;padding:12px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:var(--fs-micro);color:var(--text);}
+  .b-tile:disabled{color:var(--text-2);cursor:default;}
+  .b-tico svg{width:24px;height:24px;color:var(--text-2);}
+  .b-tsub{font-size:11px;color:var(--text-2);}
+  .b-tdot{position:absolute;top:10px;right:10px;width:8px;height:8px;border-radius:999px;}
+  .b-tdot.ok{background:var(--ok);} .b-tdot.warn{background:var(--warn);} .b-tdot.bad{background:var(--danger);} .b-tdot.off{background:var(--text-3);}
+
+
+  /* ===================== M2/M3 additions — shared by A, B and C ===================== */
+  .sim .srow + .srow{margin-top:0;}
+  .b-sect h3{font:inherit;}
+
+  /* inputs — DESIGN "Inputs" (16px text, 12px radius, 44px floor) */
+  .fld{display:flex;flex-direction:column;gap:6px;}
+  .fld > label,.fld > .fl{font-size:var(--fs-micro);color:var(--text-2);font-weight:500;}
+  .inp{width:100%;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:0 12px;font:inherit;font-size:var(--fs-body);color:var(--text);}
+  .inp::placeholder{color:var(--text-2);}
+  .inp.mono{font-family:var(--font-mono);font-size:15px;}
+  .inp-row{display:flex;gap:8px;}
+  .inp-row .inp{flex:1;min-width:0;}
+  .hint{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .hint.bad{color:var(--danger-text);}
+
+  /* segmented control — DESIGN "Segmented control"; a real 44px per segment */
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;gap:2px;}
+  .seg button{appearance:none;flex:1;min-width:0;min-height:44px;border:0;border-radius:9px;background:transparent;color:var(--text-2);font-size:13px;font-weight:500;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .seg button[aria-checked="true"],.seg button[aria-selected="true"]{background:var(--steel-tint);color:var(--text);}
+  .seg button:disabled{color:var(--text-3);cursor:default;}
+  .seg .cnt{display:inline-block;margin-left:5px;font-size:11px;color:var(--text-2);font-variant-numeric:tabular-nums;}
+
+  /* option cards (radio list) */
+  .opts{display:flex;flex-direction:column;gap:8px;}
+  .opt{appearance:none;width:100%;display:flex;align-items:flex-start;gap:12px;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:11px 12px;min-height:52px;}
+  .opt .rad{width:18px;height:18px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;margin-top:1px;position:relative;}
+  .opt[aria-checked="true"]{border-color:var(--steel);background:var(--steel-tint);}
+  .opt[aria-checked="true"] .rad{border-color:var(--steel);}
+  .opt[aria-checked="true"] .rad::after{content:"";position:absolute;inset:3px;border-radius:999px;background:var(--steel);}
+  .opt .ot{display:block;font-size:var(--fs-secondary);font-weight:500;color:var(--text);}
+  .opt .os{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;line-height:1.4;}
+  .opt.danger[aria-checked="true"]{border-color:var(--rose);background:var(--rose-tint);}
+  .opt.danger[aria-checked="true"] .rad{border-color:var(--rose);} .opt.danger[aria-checked="true"] .rad::after{background:var(--rose);}
+  .opt:disabled{cursor:default;background:transparent;}
+  .opt:disabled .ot{color:var(--text-2);}
+  .opt:disabled .rad{border-style:dashed;}
+  .opt .omin{min-width:0;flex:1;}
+
+  /* a world slot row */
+  .w-row{appearance:none;width:100%;display:flex;align-items:flex-start;gap:12px;padding:12px 14px;min-height:64px;background:none;border:0;border-top:1px solid var(--border);text-align:left;color:var(--text);}
+  .w-row:first-child,.w-first{border-top:0;}
+  .w-disc{width:36px;height:36px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;}
+  .w-disc svg{width:18px;height:18px;}
+  .w-disc.on{background:var(--green-tint);border-color:transparent;color:var(--ok-text);}
+  .w-disc.empty{background:transparent;border-style:dashed;}
+  .w-tx{flex:1;min-width:0;}
+  .w-nm{display:flex;align-items:center;gap:8px;min-width:0;}
+  .w-nm .t{font-size:var(--fs-body);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  .w-nm .t.dim{color:var(--text-2);font-weight:400;}
+  .w-nm .badge{flex:none;}
+  .w-meta{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;line-height:1.45;}
+  .w-meta .sep{padding:0 4px;}
+  .w-row > svg{color:var(--text-3);width:18px;height:18px;margin-top:9px;flex:none;transition:transform .15s ease-out;}
+  .w-row[aria-expanded="true"] > svg{transform:rotate(90deg);}
+  .w-body{padding:2px 14px 14px 62px;display:flex;flex-direction:column;gap:12px;}
+  @media (max-width:360px){ .w-body{padding-left:14px;} }
+  .w-facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:var(--fs-micro);}
+  .w-facts dt{color:var(--text-2);} .w-facts dd{color:var(--text);min-width:0;overflow-wrap:anywhere;}
+  .w-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .w-actions .btn{padding:0 8px;}
+  .w-actions .full{grid-column:1 / -1;}
+
+  /* a backup row */
+  .k-row{appearance:none;width:100%;display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:60px;background:none;border:0;border-top:1px solid var(--border);text-align:left;color:var(--text);}
+  .k-first{border-top:0;}
+  .k-ico{width:28px;height:28px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);}
+  .k-ico svg{width:14px;height:14px;}
+  .k-ico.mine{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+  .k-tx{flex:1;min-width:0;}
+  .k-l{display:block;font-size:var(--fs-secondary);font-weight:500;overflow-wrap:anywhere;}
+  .k-l.auto{font-weight:400;color:var(--text);}
+  .k-s{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:1px;}
+  .k-rt{flex:none;display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);}
+  .k-pin{display:inline-flex;align-items:center;gap:3px;color:var(--steel-text);font-size:11px;}
+  .k-pin svg{width:13px;height:13px;}
+  .k-row > svg{color:var(--text-3);width:18px;height:18px;flex:none;transition:transform .15s ease-out;}
+  .k-row[aria-expanded="true"] > svg{transform:rotate(90deg);}
+  .k-row.pending .k-l{color:var(--text-2);}
+  .k-body{padding:0 14px 14px 54px;display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  @media (max-width:360px){ .k-body{padding-left:14px;} }
+  .k-body .btn{padding:0 8px;}
+
+  /* off-box + retention lines */
+  .offbox{display:flex;gap:9px;align-items:flex-start;font-size:var(--fs-micro);line-height:1.45;color:var(--text-2);}
+  .offbox svg{width:16px;height:16px;margin-top:1px;flex:none;}
+  .offbox b{color:var(--text);font-weight:500;}
+  .offbox.warn svg{color:var(--warn-text);}
+  .offbox.ok svg{color:var(--ok-text);}
+  .retain{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .retain b{color:var(--text);font-weight:500;}
+  .retain .meter{margin:6px 0 4px;}
+  .retain .meter i{background:var(--steel);}
+
+  /* job card: an import / load / reset / restore in flight */
+  .job{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:14px;margin-bottom:20px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--shadow-card);}
+  .job.inset{margin:0;border-radius:var(--r-input);background:var(--surface-2);}
+  .job-h{display:flex;align-items:center;gap:8px;font-size:var(--fs-secondary);font-weight:500;}
+  .job-h .spin{display:flex;color:var(--warn-text);}
+  .job-h .spin svg{width:16px;height:16px;}
+  .job .steps{margin-top:2px;}
+  .job .meter i{background:var(--steel);}
+  .file{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-secondary);min-width:0;}
+  .file svg{color:var(--text-2);width:18px;height:18px;}
+  .file .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .file .fs{font-size:var(--fs-micro);color:var(--text-2);flex:none;}
+
+  /* allowlist */
+  .al-row{display:flex;align-items:center;gap:12px;padding:6px 6px 6px 14px;min-height:52px;border-top:1px solid var(--border);}
+  .al-row .nm{flex:1;min-width:0;font-size:var(--fs-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .al-row .sm{display:block;font-size:var(--fs-micro);color:var(--text-2);}
+  .icon-btn{appearance:none;width:44px;height:44px;flex:none;display:flex;align-items:center;justify-content:center;border:0;background:none;color:var(--text-2);border-radius:var(--r-input);}
+  .icon-btn svg{width:18px;height:18px;}
+  .switch{min-width:44px;}
+  .switch::after{inset:-9px 0;}
+
+  /* settings rows */
+  .set{display:flex;flex-direction:column;gap:6px;}
+  .set-l{font-size:var(--fs-micro);color:var(--text-2);font-weight:500;display:flex;justify-content:space-between;gap:8px;}
+  .set-l span:last-child{font-weight:400;}
+  .stepper{display:flex;align-items:center;gap:8px;}
+  .stepper .btn{width:44px;padding:0;flex:none;}
+  .stepper .sv{flex:1;text-align:center;font-size:var(--fs-body);font-weight:500;font-variant-numeric:tabular-nums;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);min-height:44px;display:flex;align-items:center;justify-content:center;}
+  .help{background:var(--surface-2);border-radius:var(--r-input);padding:10px 12px;}
+  .help summary{font-size:var(--fs-micro);font-weight:500;color:var(--steel-text);min-height:32px;display:flex;align-items:center;cursor:pointer;list-style:none;position:relative;}
+  .help summary::after{content:"";position:absolute;inset:-6px -12px;}
+  .help summary::-webkit-details-marker{display:none;}
+  .help ol{margin:6px 0 2px 18px;font-size:var(--fs-micro);color:var(--text-2);line-height:1.5;}
+  .help ol b{color:var(--text);font-weight:500;}
+
+  .sheet .sh-body{display:flex;flex-direction:column;gap:14px;}
+  .sheet .sh-head{display:flex;align-items:center;gap:12px;margin-bottom:4px;}
+  .sheet .sh-head .b-rn{min-width:0;flex:1;}
+  .sheet .sh-head .btn{margin-left:auto;padding:0;width:44px;flex:none;}
+  .sheet .sh-sub{font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;}
+  .sheet .sh-foot{display:flex;gap:8px;padding-top:2px;}
+  .sheet .sh-foot .btn{flex:1;}
+  .dialog .fld{margin-top:12px;}
+  .dialog .btnrow .btn{min-width:92px;}
+
+  .err-line{display:flex;gap:9px;align-items:flex-start;background:var(--rose-tint);border-radius:var(--r-input);padding:10px 12px;font-size:var(--fs-micro);line-height:1.45;margin-bottom:12px;}
+  .err-line svg{width:16px;height:16px;color:var(--danger-text);margin-top:1px;flex:none;}
+  .err-line .x{margin-left:auto;margin-top:-12px;margin-right:-10px;}
+
+  /* game rules editor */
+  .pend,.chg{display:inline-flex;align-items:center;font-size:11px;border-radius:999px;padding:1px 7px;font-weight:500;white-space:nowrap;}
+  .pend{color:var(--warn-text);background:var(--amber-tint);}
+  .chg{color:var(--steel-text);background:var(--steel-tint);font-weight:400;}
+  .pend-t{color:var(--warn-text);} .chg-t{color:var(--steel-text);}
+  .hint.live{color:var(--ok-text);}
+  .rules{display:flex;flex-direction:column;gap:10px;}
+  .rsearch .inp{appearance:none;}
+  .rgroups{display:flex;flex-direction:column;gap:8px;}
+  .rgrp{border:1px solid var(--border);border-radius:var(--r-input);background:var(--surface);overflow:hidden;}
+  .rgrp > summary{list-style:none;display:flex;align-items:center;gap:8px;min-height:48px;padding:6px 12px;cursor:pointer;}
+  .rgrp > summary::-webkit-details-marker{display:none;}
+  .rgrp > summary .gt{font-size:var(--fs-secondary);font-weight:500;}
+  .rgrp > summary .gm{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-align:right;}
+  .rgrp > summary svg{width:16px;height:16px;color:var(--text-3);transition:transform .15s ease-out;}
+  .rgrp[open] > summary svg{transform:rotate(90deg);}
+  .rbody{border-top:1px solid var(--border);}
+  .rule{display:flex;align-items:center;gap:12px;padding:10px 12px;border-top:1px solid var(--border);min-height:56px;}
+  .rbody > .rule:first-child{border-top:0;}
+  .rule .rl{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .rule .rt{font-size:var(--fs-secondary);color:var(--text);}
+  .rule .rs{font-size:var(--fs-micro);color:var(--text-2);}
+  .rule .rid{font-size:11px;color:var(--text-2);overflow-wrap:anywhere;}
+  .rule .rtags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;}
+  .rule.num,.rule.choice{flex-wrap:wrap;}
+  .rule.num .rl,.rule.choice .rl{flex-basis:100%;}
+  .rule.num .stepper,.rule.choice .sel{flex:1;}
+  .inp-num{font:inherit;font-size:var(--fs-body);color:var(--text);min-width:0;width:100%;padding:0 8px;}
+  .sel{appearance:auto;}
+  .rreset{margin:4px 12px 8px;}
+  .rfoot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .rfoot .hint{flex:1;min-width:140px;}
+  details.rules-new{border:1px solid var(--border);border-radius:var(--r-input);}
+  details.rules-new > summary{list-style:none;display:flex;align-items:center;gap:8px;min-height:48px;padding:6px 12px;cursor:pointer;font-size:var(--fs-secondary);font-weight:500;}
+  details.rules-new > summary::-webkit-details-marker{display:none;}
+  details.rules-new > summary .hint{margin-left:auto;font-weight:400;}
+  details.rules-new > summary svg{width:16px;height:16px;color:var(--text-3);transition:transform .15s ease-out;}
+  details.rules-new[open] > summary svg{transform:rotate(90deg);}
+  .rules-in{padding:0 10px 10px;}
+  .seedbox{display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;}
+  .rules-entry{border-top:1px solid var(--border);}
+
+  /* world chips (A's backup filter, C's switcher) */
+  .chips{display:flex;gap:8px;overflow-x:auto;margin:0 -16px 12px;padding:2px 16px;scrollbar-width:none;}
+  .chips::-webkit-scrollbar{display:none;}
+  .chip{appearance:none;min-height:44px;flex:none;padding:0 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:7px;max-width:200px;}
+  .chip span.n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chip[aria-pressed="true"],.chip[aria-selected="true"]{background:var(--steel-tint);color:var(--text);border-color:var(--steel);}
+  .chip .dot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .chip .dot.ok{background:var(--ok);} .chip .dot.warn{background:var(--warn);} .chip .dot.off{border:1.5px dashed var(--text-3);width:9px;height:9px;}
+  .chip.empty{border-style:dashed;}
+
+  /* C */
+  .c-switch{position:sticky;top:-12px;z-index:2;background:var(--bg);margin:-12px -16px 8px;padding:12px 16px 0;border-bottom:1px solid var(--border);}
+  .c-switch .chips{margin-bottom:10px;}
+  .c-tabs{margin-bottom:14px;}
+  .c-scope{display:flex;gap:8px;align-items:flex-start;margin:0 2px 14px;}
+  .c-scope svg{width:16px;height:16px;flex:none;margin-top:1px;color:var(--steel-text);}
+  .c-busy{display:flex;gap:8px;align-items:center;margin:0 2px 12px;}
+  .c-busy svg{width:16px;height:16px;flex:none;}
+  .w-facts .link::after{inset:-6px -8px;}
+
+  /* revision 2 (review) */
+  .b-world .v{font-size:var(--fs-body);}
+  @media (max-width:360px){ .seg.four{display:grid;grid-template-columns:1fr 1fr;} }
+  .rules-note{position:sticky;top:0;z-index:1;background:var(--bg);padding:10px 2px;border-bottom:1px solid var(--border);margin:0 -2px;}
+  .sheet .rules-note,.rules-in .rules-note{background:var(--surface);}
+  .c-panel .rules-note{top:var(--c-sw, 59px);}
+  .rstatic{flex:1;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;padding:6px 12px;min-height:44px;font-size:var(--fs-secondary);}
+  .rstatic .hint{font-size:11px;}
+  .job-h .job-t{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);font-weight:400;}
+  .job-ph{font-size:var(--fs-secondary);color:var(--text-2);}
+  .job-ph b{color:var(--text);font-weight:500;}
+  .hint .hb{color:var(--text);font-weight:500;}
+  /* room under Reset all, so the bottom toast never sits on it */
+  .rules .rfoot{padding-bottom:76px;}
+  .rules-in .rules .rfoot{padding-bottom:0;}
+  @media (max-width:360px){ .c-tabs button{font-size:12px;padding:0 2px;} .c-tabs .cnt{margin-left:3px;} }
+  .file .fn{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;}
+  .seedbox{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;font-size:13px;line-height:1.3;padding-top:6px;padding-bottom:6px;}
+  @media (max-width:360px){ .c-tabs button{display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15;text-overflow:clip;} .c-tabs .cnt{margin-left:0;font-size:10.5px;} }
+  .sheet .rules .rfoot{padding-bottom:150px;}
+
+  /* ===================== keep inventory (M10 Power Pack) — shared by A, B and C ===================== */
+  /* Reviewer chrome reads at 4.5:1 too. */
+  .sim .stitle,.sim .sl{color:var(--text-2);}
+  .caption .tag{color:var(--text);}
+  .sim button[aria-pressed="true"]{color:var(--text);}
+  .b-sect.sect,.b-sect .r{color:var(--text-2);}
+  img.pp{width:20px;height:20px;image-rendering:pixelated;flex:none;display:block;}
+  .kin-help{display:flex;gap:9px;align-items:flex-start;font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .kin-help img.pp{margin-top:-1px;}
+  .kin-help b{color:var(--text);font-weight:500;}
+  .kin-now{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .kin-busy{display:flex;gap:7px;align-items:center;font-size:var(--fs-micro);color:var(--text);line-height:1.45;}
+  .kin-busy .spin{display:flex;color:var(--warn-text);}
+  .kin-busy .spin svg{width:14px;height:14px;}
+  .kin-err{margin:0;}
+  .held{color:var(--steel-text);background:var(--steel-tint);display:inline-flex;align-items:center;font-size:11px;border-radius:999px;padding:1px 7px;white-space:nowrap;}
+  .seg button[aria-disabled="true"]{cursor:default;}
+  .rgrp .gm .pp-t{color:var(--steel-text);}
+
+  /* A — the segmented choice in the row */
+  .rule.kin{flex-direction:column;align-items:stretch;gap:8px;}
+  .kin-seg button{display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+  .kin-seg img.pp{width:18px;height:18px;}
+  .kin-seg .spin{display:flex;color:var(--warn-text);}
+  .kin-seg .spin svg{width:14px;height:14px;}
+  .kin-a-help{background:var(--surface-2);border-radius:var(--r-input);padding:8px 10px;}
+
+  /* B — the row's value opens a sheet */
+  .kin-val{appearance:none;min-height:44px;display:inline-flex;align-items:center;gap:6px;padding:0 6px 0 12px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;flex:none;white-space:nowrap;}
+  .kin-val svg{width:16px;height:16px;color:var(--text-2);}
+  .kin-val img.pp{width:18px;height:18px;}
+  .kin-val .spin{display:flex;color:var(--warn-text);}
+  .kin-val .spin svg{width:14px;height:14px;}
+  .kin-b-foot{padding:0 12px 12px;display:flex;flex-direction:column;gap:8px;}
+  .opt img.pp{margin-top:-1px;}
+  .opt .ohead{display:flex;align-items:center;gap:8px;}
+  .opt .orec{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:4px;line-height:1.4;}
+  .opt .orec b{color:var(--text);font-weight:500;}
+  .opt .rad.busy{border-color:var(--warn);border-top-color:transparent;animation:spin .9s linear infinite;}
+  .opt .rad.busy::after{display:none;}
+  .opt[aria-disabled="true"]{cursor:default;}
+  .sheet .kin-sh-note{display:flex;gap:9px;align-items:flex-start;}
+  .sheet .kin-sh-note svg{width:16px;height:16px;flex:none;margin-top:1px;color:var(--text-2);}
+  .sheet .kin-sh-note.live svg{color:var(--ok-text);}
+
+  /* C — a world setting on the world's page; the rules row points there */
+  .kin-c{border-top:1px solid var(--border);padding-top:12px;}
+  .kin-c .opts{gap:6px;}
+  .kin-c .opt{padding:10px 12px;min-height:48px;}
+  .kin-c-rule .btn{flex:none;padding:0 12px;}
+  .kin-c-flash{animation:flash 1.2s ease-out 1;}
+  @keyframes flash{0%{box-shadow:0 0 0 2px var(--steel);}100%{box-shadow:0 0 0 2px transparent;}}
+  @media (max-width:360px){ .kin-seg button:last-child{flex:1.3;} .kin-seg button{gap:4px;font-size:12px;padding:0 2px;} .kin-seg img.pp{width:16px;height:16px;} }
+
+</style>
+</head>
+<body>
+  <div class="caption"><span class="tag">GUI gate · Minecraft keep inventory (M10) · variant A</span><br/>
+<b>A — a three-way choice in the row.</b> The rules editor’s <b>Keep inventory on death</b> row becomes a segmented <b>Off · On · Power Pack</b>, with what the pick means under it and one Power Pack help line. Off and On write the plain rule; Power Pack writes the world’s Power Pack switch.</div>
+  <div class="sim" id="sim" aria-label="Mock controls"></div>
+  <div class="phone" id="phone">
+    <div id="app" style="display:contents"></div>
+    <div class="scrim" id="scrim"></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </div>
+<script>
+const PP = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA+UlEQVR4nMWToW4CQRCGP8hJkiII4jSuokGg4EUQNc0JEhA4AtimGALZ5Jrak5jyAjjAXEAUgbmQFYgTBH2VVF0D7ByQIvqr3czMP9/uzsKdSiUFHu3c4Xi/DvdirpVU7Ksa20ADMF9uUD4HySR1XngD9QmNQeCr2u86JogpAJSvT/LvJkifBwtuF2c6YleuYDXrWM06u3IFZzqi4HYNM8MAwBvPUB99Wi/PANilJ97arkgjGsSqfg/5ynqEixVRoMUc8RnDxYpq1gMgPyle6iETdHoN8pMimfcHokATBZrXz4Fo8P9zYBhshcuKiyUZs33tGEmf6s/6AcDyYS1PpgckAAAAAElFTkSuQmCC';
+const GROUPS = [["world","World",[["doFireTick","Fire spreads",true],["tntExplodes","TNT explodes",true],["mobGriefing","Mobs can change blocks",true,"creepers blow holes, endermen move blocks"],["projectilesCanBreakBlocks","Arrows and tridents can break blocks",true],["respawnBlocksExplode","Beds and respawn anchors can explode",true,"used in the wrong dimension"],["tntExplosionDropDecay","Some blocks blown up by TNT don't drop",false],["randomTickSpeed","Random tick speed",1,"how fast crops grow and leaves decay",{"min":0,"max":4096,"step":1}]]],["time","Time & weather",[["doDayLightCycle","Day and night cycle",true],["doWeatherCycle","Weather changes",true],["doInsomnia","Phantoms come when nobody sleeps",true],["playersSleepingPercentage","Sleepers needed to skip the night",100,"percent of players",{"min":0,"max":100,"step":5,"unit":"%"}]]],["players","Players",[["keepInventory","Keep inventory on death",false],["naturalRegeneration","Health comes back on its own",true],["pvp","Players can hurt each other",true],["fallDamage","Fall damage",true],["fireDamage","Fire damage",true],["drowningDamage","Drowning damage",true],["freezeDamage","Freezing damage",true,"powder snow"],["doImmediateRespawn","Respawn without the death screen",false],["spawnRadius","Spawn radius",10,"blocks around world spawn",{"min":0,"max":128,"step":1}],["showCoordinates","Show coordinates",false],["showDaysPlayed","Show days played",false],["showDeathMessages","Death messages in chat",true],["showTags","Show item tags",true,"\u201ccan place on\u201d and \u201ccan destroy\u201d lines"],["locatorbar","Locator bar",true],["playerWaypoints","Players shown on the locator bar","everyone"]]],["mobs","Mobs & drops",[["doMobSpawning","Mobs spawn naturally",true],["doMobLoot","Mobs drop loot",true],["doEntityDrops","Boats, minecarts and frames drop as items",true],["doTileDrops","Broken blocks drop items",true]]],["crafting","Crafting",[["recipesUnlock","Recipes unlock as you play",true],["doLimitedCrafting","Only unlocked recipes can be crafted",false],["showRecipeMessages","\u201cRecipe unlocked\u201d messages",true]]],["commands","Commands",[["commandBlocksEnabled","Command blocks work",true],["commandBlockOutput","Command blocks report in chat",true],["sendCommandFeedback","Commands reply in chat",true],["maxCommandChainLength","Longest command chain",65535,null,{"min":0,"max":999999,"step":1}],["functionCommandLimit","Most commands per function",10000,null,{"min":0,"max":999999,"step":1}]]],["display","Display",[["showBorderEffect","World border effect",true]]]];
+/* ===================== A — a three-way segmented choice in the row ===================== */
+const VARIANT = 'A · segmented in the row';
+function keepRow() {
+  const m = shown(), b = S.busy;
+  const segs = ['off', 'on', 'pack'].map(k => {
+    const icon = b && k === m ? `<span class="spin">${IC.refresh}</span>` : k === 'pack' ? ppImg() : '';
+    const dis = b && k !== m ? ' aria-disabled="true"' : '';
+    return `<button role="radio" aria-checked="${k === m}" data-act="k:${k}"${dis}${b && k === m ? ' aria-busy="true"' : ''}>${icon}<span>${WORD[k]}</span></button>`;
+  }).join('');
+  return `<div class="rule kin" data-q="keep inventory on death keepinventory power pack">
+    <span class="rl"><span class="rt" id="kin-l">Keep inventory on death</span><span class="rid mono">keepInventory</span>${kinTags()}</span>
+    <div class="seg kin-seg" role="radiogroup" aria-labelledby="kin-l">${segs}</div>
+    ${b ? busyHtml() : `<p class="kin-now">${MEAN[m]}</p>`}
+    ${errHtml('kin-err')}
+    <p class="kin-help kin-a-help">${ppImg()}<span>${HELP}</span></p>
+  </div>`;
+}
+
+const IC = {
+  back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
+  check:'<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  x:'<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  alert:'<svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+  refresh:'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+  plus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
+  minus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
+  undo:'<svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>',
+  sliders:'<svg viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>',
+  play:'<svg viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
+};
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const ppImg = (alt = '') => `<img class="pp" src="${PP}" alt="${alt}" width="20" height="20">`;
+
+/* The rules editor's real catalogue (frontend/src/minecraftWorlds.ts GROUPS), 39 rules. */
+const RULES = {};
+GROUPS.forEach(([g, , rows]) => rows.forEach(([id, label, def, sub, bounds]) => { RULES[id] = {id, label, def, sub, g, ...(bounds || {})}; }));
+
+/* Fixture: the Worlds mock's Castle Hill (loaded) and Skyblock run (not generated yet). */
+const WORLDS = {
+  castle:{name:'Castle Hill', origin:'imported Oct 4 from a .mcworld — settings came from the file', seed:'-6104328617705162911', size:'7.8 MB', mode:'Survival', diff:'Normal', cheats:false},
+  sky:{name:'Skyblock run', origin:'new world, Oct 9', seed:'5127438807419962211', size:'— (not generated)', mode:'Survival', diff:'Hard', cheats:false},
+};
+const WORD = {off:'Off', on:'On', pack:'Power Pack'};
+const MEAN = {
+  off:'Vanilla — everyone drops their things where they die.',
+  on:'Vanilla keepInventory — everyone keeps everything.',
+  pack:'Kept only with a Power Pack and your own Tricorder — one pack burns. Otherwise you drop, as with Off.',
+};
+const SHORT = {off:'everyone drops their things', on:'everyone keeps everything', pack:'kept with a Power Pack and your Tricorder'};
+
+const S = {
+  where:'live',       // live: Castle Hill loaded and running · stopped: loaded, server stopped · other: Skyblock run, not loaded
+  start:'off',
+  rule:false,         // the owner's saved plain keepInventory choice
+  pp:false,           // the slot's power_pack_keep
+  pend:false,         // keepInventory waiting for a start / the next load
+  net:'ok',           // what the next change does: ok · hold · refuse · refuse2
+  busy:null, err:null,
+  screen:'rules', sheet:false, theme:'system',
+  ov:{},              // the other rules — untouched fixture, live toggles only
+  open:{players:true},
+  q:'',
+};
+const W = () => S.where === 'other' ? WORLDS.sky : WORLDS.castle;
+const live = () => S.where === 'live';
+const mode = () => S.pp ? 'pack' : S.rule ? 'on' : 'off';
+const shown = () => S.busy ? S.busy.to : mode();
+const when = () => S.where === 'other' ? `when ${W().name} next loads` : 'when the server starts';
+const statusShort = () => live() ? 'applies live, at once' : S.where === 'stopped' ? 'applies when the server starts' : 'applies when it next loads';
+
+/* ---- the write: Off/On is the plain rule; Power Pack is the switch. Leaving Power Pack is the
+   switch off (keepInventory goes back to the saved choice), then the rule if the pick differs. ---- */
+let timers = [];
+const later = (ms, fn) => timers.push(setTimeout(fn, ms));
+function choose(to) {
+  if (S.busy || to === mode()) return;
+  S.err = null;
+  const from = mode(), want = to === 'on', steps = [];
+  if (to === 'pack') steps.push({msg:'Turning Power Pack on…', go:() => { S.pp = true; }});
+  else {
+    if (from === 'pack') steps.push({msg:`Turning Power Pack off — keep inventory goes back to your saved ${WORD[S.rule ? 'on' : 'off']}…`, go:() => { S.pp = false; }});
+    if (S.rule !== want) steps.push({msg:`Setting keep inventory ${WORD[to]}…`, go:() => { S.rule = want; }});
+  }
+  S.busy = {to, from, i:0, steps, msg:steps[0].msg};
+  render(); step();
+}
+function step() {
+  const b = S.busy; if (!b) return;
+  const st = b.steps[b.i];
+  b.msg = st.msg; render();
+  if (S.net === 'hold') { b.held = true; return; }
+  later(900, () => {
+    if (S.busy !== b) return;
+    if ((S.net === 'refuse' && b.i === 0) || (S.net === 'refuse2' && b.i === 1)) return fail(b);
+    st.go(); b.i++;
+    if (!live()) S.pend = true;
+    if (b.i < b.steps.length) return step();
+    done(b);
+  });
+}
+function fail(b) {
+  const name = W().name;
+  S.busy = null;
+  S.err = b.i === 0
+    ? `Couldn't change keep inventory to ${WORD[b.to]} — wait, the server is backing up ${name}. Nothing changed.`
+    : `Power Pack is off, but keep inventory couldn't be set ${WORD[b.to]} — wait, the server is backing up ${name}. It's on your saved choice, ${WORD[mode()]}, for now.`;
+  render();
+}
+function done(b) {
+  S.busy = null;
+  const what = b.from === 'pack' ? `Power Pack off, keep inventory ${WORD[b.to]}` : `keep inventory: ${WORD[b.to]}`;
+  toast(live() ? `Applied live — ${what}${b.to === 'pack' ? ' · a death costs one pack' : ''}` : `Saved — ${what}, applied ${when()}`);
+  if (typeof onDone === 'function') onDone(b);
+  render();
+}
+
+/* ---- shared fragments ---- */
+function topBar(title, backAct) {
+  const h = [6,9,7,12,15,11,8,6,10,14,9,7,5,8,11,13,9,6];
+  return `<div class="bar"><button class="back" aria-label="Back" ${backAct ? `data-act="${backAct}"` : ''}>${IC.back}</button><span class="ttl">${esc(title)}</span>
+    <div class="vitals" aria-label="GPU 14%, synced"><div class="cols">${h.map(x => `<i style="height:${x}px"></i>`).join('')}</div><b class="num">14%</b></div></div>`;
+}
+function rulesNote() {
+  if (live()) return `<div class="offbox ok rules-note">${IC.check}<span><b>Loaded and running — changes apply live, at once.</b> Saved rules are also re-applied every time the server starts.</span></div>`;
+  if (S.where === 'stopped') return `<div class="offbox rules-note">${IC.info}<span><b>Server stopped — changes are applied when it starts.</b> Until then they’re marked pending. Saved rules are re-applied on every start.</span></div>`;
+  return `<div class="offbox rules-note">${IC.info}<span><b>Not loaded — changes are saved and applied when ${esc(W().name)} next loads.</b> Until then they’re marked pending.</span></div>`;
+}
+function kinTags() {
+  const m = mode(), t = [];
+  if (S.pend) t.push('<span class="pend">pending</span>');
+  if (m === 'on') t.push('<span class="chg">changed · default off</span>');
+  if (m === 'pack') t.push('<span class="held">held on by the Power Pack</span>');
+  return t.length ? `<span class="rtags">${t.join('')}</span>` : '';
+}
+function errHtml(cls = '') {
+  if (!S.err) return '';
+  return `<div class="err-line ${cls}" role="alert">${IC.alert}<span>${esc(S.err)}</span><button class="icon-btn x" data-act="err:x" aria-label="Dismiss">${IC.x}</button></div>`;
+}
+function busyHtml() {
+  return S.busy ? `<p class="kin-busy" role="status"><span class="spin">${IC.refresh}</span><span>${esc(S.busy.msg)}</span></p>` : '';
+}
+const HELP = `<b>Power Pack</b> — 8 Ender Pearls around a Blaze Powder. It only works with the player’s own Tricorder.`;
+
+function ruleVal(id) { return id in S.ov ? S.ov[id] : RULES[id].def; }
+function ruleRow(r) {
+  if (r.id === 'keepInventory') return keepRow();
+  const v = ruleVal(r.id), changed = r.id in S.ov;
+  const tags = changed ? `<span class="rtags">${S.where !== 'live' ? '<span class="pend">pending</span>' : ''}<span class="chg">changed · default ${typeof r.def === 'boolean' ? (r.def ? 'on' : 'off') : r.def}</span></span>` : '';
+  let ctl, kind = 'bool';
+  if (typeof r.def === 'boolean') ctl = `<button class="switch ${v ? 'on' : ''}" role="switch" aria-checked="${v}" aria-label="${esc(r.label)}" data-act="rule:${r.id}"><span class="knob"></span></button>`;
+  else if (typeof r.def === 'string') { kind = 'choice'; ctl = `<span class="sv rstatic">${esc(v)}<span class="hint">the only value this server reports</span></span>`; }
+  else { kind = 'num'; ctl = `<div class="stepper"><button class="btn" data-act="num:${r.id}|-" aria-label="Lower — ${esc(r.label)}" ${v <= r.min ? 'disabled' : ''}>${IC.minus}</button><span class="sv num">${v}${r.unit || ''}</span><button class="btn" data-act="num:${r.id}|+" aria-label="Raise — ${esc(r.label)}" ${v >= r.max ? 'disabled' : ''}>${IC.plus}</button></div>`; }
+  return `<div class="rule ${kind}" data-q="${esc((r.label + ' ' + r.id + ' ' + (r.sub || '')).toLowerCase())}"><span class="rl"><span class="rt">${esc(r.label)}</span>${r.sub ? `<span class="rs">${esc(r.sub)}</span>` : ''}<span class="rid mono">${r.id}</span>${tags}</span>${ctl}</div>`;
+}
+function changedCount() { return Object.keys(S.ov).length + (mode() === 'on' ? 1 : 0); }
+function rulesScreen() {
+  const groups = GROUPS.map(([g, title, rows]) => {
+    const ids = rows.map(r => r[0]);
+    const ch = ids.filter(id => id in S.ov).length + (g === 'players' && mode() === 'on' ? 1 : 0);
+    const pe = (g === 'players' && S.pend ? 1 : 0) + (S.where !== 'live' ? ids.filter(id => id in S.ov).length : 0);
+    const pp = g === 'players' && mode() === 'pack' ? ' · <span class="pp-t">Power Pack</span>' : '';
+    return `<details class="rgrp" data-g="${g}" ${S.open[g] ? 'open' : ''}><summary data-grp="${g}"><span class="gt">${title}</span>
+      <span class="gm">${plural(rows.length, 'rule')}${ch ? ` · <span class="chg-t">${ch} changed</span>` : ''}${pe ? ` · <span class="pend-t">${pe} pending</span>` : ''}${pp}</span>${IC.chev}</summary>
+      <div class="rbody">${rows.map(r => ruleRow(RULES[r[0]])).join('')}</div></details>`;
+  }).join('');
+  const total = changedCount();
+  const foot = total ? `${plural(total, 'rule')} ${total === 1 ? 'differs' : 'differ'} from the defaults` : 'All rules at their defaults';
+  const ppFoot = mode() === 'pack' ? ' · keep inventory is on Power Pack, which Reset all leaves alone' : '';
+  return `${topBar('Game rules', 'scr:world')}<div class="scroll"><h3 class="b-sect sect">${esc(W().name)}<span class="r">${S.where === 'other' ? 'not loaded' : 'loaded'}</span></h3>
+    <div class="rules">${rulesNote()}
+      <div class="rsearch"><input class="inp" type="search" data-rq value="${esc(S.q)}" placeholder="Find a rule — e.g. phantoms" aria-label="Find a game rule" autocomplete="off" spellcheck="false" /></div>
+      <div class="rgroups">${groups}</div>
+      <div class="rfoot"><span class="hint">${foot}${ppFoot}</span>${total ? `<button class="btn" data-act="resetAll">${IC.undo}Reset all</button>` : ''}</div></div></div>`;
+}
+function seg(opts, cur, label) {
+  return `<div class="seg${opts.length > 3 ? ' four' : ''}" role="radiogroup" aria-label="${label}">${opts.map(o => `<button role="radio" aria-checked="${o === cur}" data-act="set:${label}|${o}">${o}</button>`).join('')}</div>`;
+}
+function worldScreen() {
+  const w = W(), loaded = S.where !== 'other';
+  const sub = loaded ? (live() ? '2 players on' : 'server stopped') : 'Castle Hill is loaded';
+  const when = !loaded ? `Not loaded — a change is saved and applied when ${esc(w.name)} next loads.`
+    : !live() ? 'Loaded, server stopped — a change is applied when the server starts.'
+    : 'Loaded and running — difficulty changes live; game mode and cheats apply at the next restart.';
+  const total = changedCount();
+  const sum = `${plural(Object.keys(RULES).length, 'rule')} · ${total ? `${total} changed from default` : 'all at defaults'} · keep inventory ${WORD[mode()]}${S.pend ? ' · <span class="pend-t">1 pending</span>' : ''}`;
+  return `${topBar(w.name, '')}<div class="scroll">
+    <div class="b-hero"><div class="b-state"><span class="ops-sdot" style="background:var(--${loaded ? 'ok' : 'text-3'})"></span><span class="w">${loaded ? 'loaded' : 'not loaded'}</span><span class="sub">${sub}</span></div>
+      <dl class="w-facts"><dt>Origin</dt><dd>${esc(w.origin)}</dd><dt>Seed</dt><dd><span class="mono">${w.seed}</span></dd><dt>Size</dt><dd class="num">${w.size}</dd></dl>
+      ${loaded ? '' : `<button class="btn primary" data-act="noop">${IC.play}Load ${esc(w.name)}</button>`}</div>
+    <h3 class="b-sect sect">Settings<span class="r">this world only</span></h3>
+    <div class="b-card"><div class="b-pad"><p class="hint ${live() ? 'live' : ''}">${when}</p>
+      <div class="set"><div class="set-l"><span>Game mode</span></div>${seg(['Survival','Creative','Adventure'], w.mode, 'Game mode')}</div>
+      <div class="set"><div class="set-l"><span>Difficulty</span></div>${seg(['Peaceful','Easy','Normal','Hard'], w.diff, 'Difficulty')}</div>
+      <div class="sw-row"><span class="sw-l"><b>Cheats</b><br>${w.cheats ? 'on — operators can run commands' : 'off — no commands in game'}</span><button class="switch ${w.cheats ? 'on' : ''}" role="switch" aria-checked="${w.cheats}" aria-label="Cheats in ${esc(w.name)}" data-act="cheats"><span class="knob"></span></button></div>
+      ${typeof worldExtra === 'function' ? worldExtra() : ''}</div>
+      <button class="b-row rules-entry" data-act="scr:rules"><span class="b-ico" aria-hidden="true">${IC.sliders}</span><span class="b-rn"><span class="nm" style="font-size:var(--fs-secondary)">Game rules</span><span class="sm">${sum}</span></span>${IC.chev}</button></div>
+    <p class="note" style="margin:0 2px 20px">Backups and Manage sit below, as in the Worlds mock.</p></div>`;
+}
+
+/* ---- render, focus, modal ---- */
+function render() {
+  renderSim();
+  const app = document.getElementById('app');
+  const sc0 = app.querySelector('.scroll'), keep = sc0 ? sc0.scrollTop : 0;
+  const fa = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.act : null;
+  const inSheet = document.activeElement && document.activeElement.closest && document.activeElement.closest('#sheet');
+  app.innerHTML = S.screen === 'world' ? worldScreen() : rulesScreen();
+  const sc = app.querySelector('.scroll'); if (sc && !S.top) sc.scrollTop = keep; S.top = false;
+  syncSheet();
+  if (fa) { const root = inSheet ? document.getElementById('sheet') : app; const el = root.querySelector(`[data-act="${fa}"]`); if (el) el.focus({preventScroll:true}); }
+  applyFilter();
+  if (typeof afterRender === 'function') afterRender();
+}
+function syncSheet() {
+  const sh = document.getElementById('sheet'), scrim = document.getElementById('scrim');
+  const html = S.sheet && typeof sheetHtml === 'function' ? sheetHtml() : '';
+  sh.classList.toggle('show', !!html); scrim.classList.toggle('show', !!html);
+  if (html) { sh.innerHTML = html; sh.setAttribute('aria-labelledby', 'sh-t'); }
+  document.getElementById('app').inert = !!html;
+}
+function applyFilter() {
+  const q = S.q.trim().toLowerCase(); if (!q) return;
+  document.querySelectorAll('.rgrp').forEach(g => { let any = false; g.querySelectorAll('.rule').forEach(r => { const hit = (r.dataset.q || '').includes(q); r.hidden = !hit; any = any || hit; }); g.hidden = !any; if (any) g.open = true; });
+}
+
+let toastT;
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3400); }
+
+/* ---- mock controls ---- */
+function applyTheme() {
+  const t = S.theme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : S.theme;
+  document.documentElement.dataset.theme = t;
+}
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { if (S.theme === 'system') applyTheme(); });
+function reset() {
+  timers.forEach(clearTimeout); timers = [];
+  Object.assign(S, {busy:null, err:null, pend:false, sheet:false, ov:{}});
+  S.rule = S.start === 'on' || S.start === 'packOn';
+  S.pp = S.start.startsWith('pack');
+}
+function renderSim() {
+  const b = (on, act, label) => `<button aria-pressed="${on}" data-sim="${act}">${label}</button>`;
+  document.getElementById('sim').innerHTML = `
+    <div class="stitle"><span>Mock controls — not part of the design</span><span>${VARIANT}</span></div>
+    <div class="srow"><span class="sl">World</span>${b(S.where === 'live', 'where:live', 'Loaded · running')}${b(S.where === 'stopped', 'where:stopped', 'Loaded · server stopped')}${b(S.where === 'other', 'where:other', 'Not loaded (Skyblock run)')}</div>
+    <div class="srow"><span class="sl">Start at</span>${b(S.start === 'off', 'start:off', 'Off')}${b(S.start === 'on', 'start:on', 'On')}${b(S.start === 'packOff', 'start:packOff', 'Power Pack · saved Off')}${b(S.start === 'packOn', 'start:packOn', 'Power Pack · saved On')}</div>
+    <div class="srow"><span class="sl">Next save</span>${b(S.net === 'ok', 'net:ok', 'Works')}${b(S.net === 'hold', 'net:hold', 'Holds (applying)')}${b(S.net === 'refuse', 'net:refuse', 'Refused (409)')}${b(S.net === 'refuse2', 'net:refuse2', 'Refused after Power Pack off')}</div>
+    <div class="srow"><span class="sl">Screen</span>${b(S.screen === 'world', 'scr:world', 'World page')}${b(S.screen === 'rules', 'scr:rules', 'Game rules')}</div>
+    <div class="srow"><span class="sl">Theme</span>${b(S.theme === 'system', 'theme:system', 'System')}${b(S.theme === 'dark', 'theme:dark', 'Dark')}${b(S.theme === 'light', 'theme:light', 'Light')}</div>`;
+}
+function onSim(k, v) {
+  if (k === 'where') { S.where = v; reset(); }
+  else if (k === 'start') { S.start = v; reset(); }
+  else if (k === 'net') { S.net = v; if (S.busy && S.busy.held && v !== 'hold') { S.busy.held = false; step(); return; } }
+  else if (k === 'scr') { S.screen = v; S.sheet = false; S.top = true; }
+  else if (k === 'theme') { S.theme = v; applyTheme(); }
+  render();
+}
+document.addEventListener('click', e => {
+  const sim = e.target.closest('[data-sim]');
+  if (sim) { const [k, v] = sim.dataset.sim.split(':'); return onSim(k, v); }
+  const sum = e.target.closest('summary[data-grp]');
+  if (sum) { e.preventDefault(); const g = sum.dataset.grp; S.open[g] = !S.open[g]; render(); return; }
+  if (e.target.id === 'scrim') { S.sheet = false; render(); return; }
+  const a = e.target.closest('[data-act]'); if (!a) return;
+  const [k, v] = a.dataset.act.split(/:(.*)/s);
+  if (k === 'k') { if (a.getAttribute('aria-disabled') === 'true') return; return choose(v); }
+  if (k === 'err') { S.err = null; return render(); }
+  if (k === 'scr') { const [scr, anchor] = v.split('|'); S.screen = scr; S.sheet = false; S.top = true; S.anchor = anchor || null; render(); return; }
+  if (k === 'rule') { S.ov[v] = !ruleVal(v); if (S.ov[v] === RULES[v].def) delete S.ov[v]; toast(live() ? `Applied live — ${RULES[v].label.toLowerCase()}: ${ruleVal(v) ? 'on' : 'off'}` : `Saved — ${RULES[v].label.toLowerCase()} changes ${when()}`); return render(); }
+  if (k === 'num') { const [id, d] = v.split('|'), r = RULES[id], n = ruleVal(id) + (d === '+' ? 1 : -1) * (r.step || 1); S.ov[id] = Math.max(r.min, Math.min(r.max, n)); if (S.ov[id] === r.def) delete S.ov[id]; return render(); }
+  if (k === 'resetAll') { S.ov = {}; if (mode() === 'on') return choose('off'); return render(); }
+  if (k === 'set' || k === 'cheats' || k === 'noop') { toast('Unchanged from the Worlds mock — not part of this gate'); return; }
+  if (typeof onAct === 'function') onAct(k, v, a);
+});
+document.addEventListener('input', e => { if (e.target.dataset && 'rq' in e.target.dataset) { S.q = e.target.value; const pos = e.target.selectionStart; render(); const i = document.querySelector('[data-rq]'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.sheet) { S.sheet = false; render(); } });
+
+/* Deep-link for review and screenshots: #where=other&start=packOff&net=hold&scr=world&theme=light */
+function boot() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('where')) S.where = h.get('where');
+  if (h.get('start')) S.start = h.get('start');
+  if (h.get('scr')) S.screen = h.get('scr');
+  if (h.get('theme')) S.theme = h.get('theme');
+  reset();
+  if (h.get('net')) S.net = h.get('net');
+  if (h.get('pend') === '1') S.pend = true;
+  if (h.get('sheet') === '1') S.sheet = true;
+  applyTheme();
+  render();
+}
+
+boot();
+</script>
+</body>
+</html>

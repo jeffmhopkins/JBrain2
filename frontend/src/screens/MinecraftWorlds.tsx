@@ -8,6 +8,7 @@
 // adds is an upload's real byte count, which no other device can know.
 
 import {
+  type KeyboardEvent,
   type ReactNode,
   type TouchEvent,
   createContext,
@@ -60,7 +61,12 @@ import { clockOf, plural, shortDate } from "../minecraft";
 import type { MapIntent } from "../minecraftMapNav";
 import {
   DIFFICULTIES,
+  DRAFT_KEEP_MODES,
   GAMEMODES,
+  KEEP_HELP,
+  KEEP_MODES,
+  KEEP_WORD,
+  type KeepMode,
   PHASE_TEXT,
   RESTART_KEY,
   RULES,
@@ -77,11 +83,18 @@ import {
   isEmptySlot,
   isRefusal,
   jobLine,
+  keepFailText,
+  keepMeaning,
+  keepMode,
+  keepSaved,
+  keepSavedToast,
+  keepSteps,
   nextToGo,
   notGenerated,
   originText,
   pendWhen,
   playedText,
+  refusalReason,
   ruleSavedToast,
   ruleWord,
   rulesNote,
@@ -1068,33 +1081,87 @@ export function WorldsLayer() {
 
 // ---- one world ----
 
+/** A segmented choice: a radiogroup with one tab stop (the picked segment); arrows move between
+ *  segments and Space or Enter picks, because a pick here is a write to the server. */
 export function Seg<T extends string>({
   label,
+  labelledBy,
   options,
   value,
   onPick,
   four,
+  text,
+  weights,
+  busy,
 }: {
   label: string;
+  /** The visible label's id; the group is named by it instead of `label`. */
+  labelledBy?: string;
   options: readonly T[];
   value: T | string;
   onPick: (v: T) => void;
   four?: boolean;
+  /** Words per option, where they aren't the capitalised value. */
+  text?: Partial<Record<T, string>>;
+  /** A wider share of the row for a longer word, so it fits a third of 320 px at full Text size. */
+  weights?: Partial<Record<T, number>>;
+  /** The option a write is in flight for: it spins, and the others take no picks until it lands. */
+  busy?: T | null;
 }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const at = Math.max(
+    0,
+    options.findIndex((o) => o === value),
+  );
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    const i = refs.current.findIndex((b) => b === document.activeElement);
+    if (i < 0) return;
+    let to: number | null = null;
+    if (step) to = (i + step + options.length) % options.length;
+    else if (e.key === "Home") to = 0;
+    else if (e.key === "End") to = options.length - 1;
+    if (to === null) return;
+    e.preventDefault();
+    refs.current[to]?.focus();
+  }
   return (
-    <div className={`mc-seg${four ? " four" : ""}`} role="radiogroup" aria-label={label}>
-      {options.map((o) => (
-        <button
-          type="button"
-          // biome-ignore lint/a11y/useSemanticElements: a styled option card or segment; a native radio can't carry this 44px button layout.
-          role="radio"
-          key={o}
-          aria-checked={o === value}
-          onClick={() => o !== value && onPick(o)}
-        >
-          {cap(o)}
-        </button>
-      ))}
+    <div
+      className={`mc-seg${four ? " four" : ""}`}
+      role="radiogroup"
+      aria-label={labelledBy ? undefined : label}
+      aria-labelledby={labelledBy}
+      onKeyDown={onKeyDown}
+    >
+      {options.map((o, i) => {
+        const spinning = busy === o;
+        const held = !!busy && !spinning;
+        const grow = weights?.[o];
+        return (
+          <button
+            type="button"
+            // biome-ignore lint/a11y/useSemanticElements: a styled option card or segment; a native radio can't carry this 44px button layout.
+            role="radio"
+            key={o}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            tabIndex={i === at ? 0 : -1}
+            aria-checked={o === value}
+            aria-busy={spinning || undefined}
+            aria-disabled={held || undefined}
+            style={grow ? { flexGrow: grow } : undefined}
+            onClick={() => !busy && o !== value && onPick(o)}
+          >
+            {spinning && (
+              <span className="mc-spin" aria-hidden="true">
+                <RefreshIcon size={14} />
+              </span>
+            )}
+            {text?.[o] ?? cap(o)}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1441,6 +1508,7 @@ export function WorldLayer({ slot }: { slot: string }) {
               {plural(ruleCount, "rule")} ·{" "}
               {changed ? `${changed} changed from default` : "all at defaults"}
               {rulePend > 0 && <span className="mc-pend-t"> · {rulePend} pending</span>}
+              {rules && keepMode(rules) === "pack" && " · keep inventory Power\u00a0Pack"}
             </span>
           </span>
           <ChevronRightIcon size={18} />
@@ -1523,6 +1591,8 @@ export function RulesEditor({
   values,
   defaults,
   pending,
+  managed = [],
+  keep,
   note,
   onSet,
   onReset,
@@ -1532,6 +1602,11 @@ export function RulesEditor({
   values: Record<string, MinecraftRuleValue>;
   defaults: Record<string, MinecraftRuleValue>;
   pending: string[];
+  /** Rules a box feature holds: never counted as changed, never sent by a reset. */
+  managed?: string[];
+  /** A saved world's keep-inventory control (Off · On · Power Pack). Absent, as in the New
+   *  world form, the row offers the plain Off · On rule only. */
+  keep?: KeepControl;
   note: ReactNode;
   onSet: (id: string, v: MinecraftRuleValue) => void;
   onReset: (ids: string[], group: string | null) => void;
@@ -1579,7 +1654,9 @@ export function RulesEditor({
     }, debounceMs);
   }
 
-  const changed = (id: string) => id in defaults && shownValue(id) !== defaults[id];
+  const changed = (id: string) =>
+    id in defaults && !managed.includes(id) && shownValue(id) !== defaults[id];
+  const onPack = keep?.mode === "pack";
   const total = Object.keys(values).filter(changed).length;
   let shown = 0;
 
@@ -1620,22 +1697,36 @@ export function RulesEditor({
                   {plural(g.rules.length, "rule")}
                   {ch.length > 0 && <span className="mc-chg-t"> · {ch.length} changed</span>}
                   {pe > 0 && <span className="mc-pend-t"> · {pe} pending</span>}
+                  {onPack && g.rules.some((r) => r.id === "keepInventory") && " · Power\u00a0Pack"}
                 </span>
                 <ChevronRightIcon size={16} />
               </summary>
               <div className="mc-rbody">
-                {rows.map((r) => (
-                  <RuleRow
-                    key={r.id}
-                    r={r}
-                    v={shownValue(r.id) as MinecraftRuleValue}
-                    def={defaults[r.id]}
-                    pending={pending.includes(r.id)}
-                    idPrefix={idPrefix}
-                    onSet={(v) => onSet(r.id, v)}
-                    onStep={(n) => settle(r, n)}
-                  />
-                ))}
+                {rows.map((r) =>
+                  r.id === "keepInventory" ? (
+                    <KeepRow
+                      key={r.id}
+                      r={r}
+                      v={values[r.id] as MinecraftRuleValue}
+                      def={defaults[r.id]}
+                      pending={pending.includes(r.id)}
+                      idPrefix={idPrefix}
+                      keep={keep}
+                      onSet={(v) => onSet(r.id, v)}
+                    />
+                  ) : (
+                    <RuleRow
+                      key={r.id}
+                      r={r}
+                      v={shownValue(r.id) as MinecraftRuleValue}
+                      def={defaults[r.id]}
+                      pending={pending.includes(r.id)}
+                      idPrefix={idPrefix}
+                      onSet={(v) => onSet(r.id, v)}
+                      onStep={(n) => settle(r, n)}
+                    />
+                  ),
+                )}
                 {ch.length > 0 && (
                   <button
                     type="button"
@@ -1661,6 +1752,7 @@ export function RulesEditor({
           {total
             ? `${plural(total, "rule")} ${total === 1 ? "differs" : "differ"} from the defaults`
             : "All rules at their defaults"}
+          {onPack && " · keep inventory is on Power Pack, which Reset all leaves alone"}
         </span>
         {total > 0 && (
           <button
@@ -1673,6 +1765,97 @@ export function RulesEditor({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** What a saved world's keep-inventory row needs from its page. */
+export interface KeepControl {
+  /** What the server reports. */
+  mode: KeepMode;
+  /** The plain choice underneath Power Pack. */
+  saved: boolean;
+  /** A pick in flight and the step it's on. */
+  busy: { to: KeepMode; msg: string } | null;
+  error: string | null;
+  onPick: (to: KeepMode) => void;
+  onDismiss: () => void;
+}
+
+/** Keep inventory: Off · On · Power Pack in the row (binding mock
+ *  docs/mocks/minecraft-keep-inventory/a-segmented-row.html). */
+function KeepRow({
+  r,
+  v,
+  def,
+  pending,
+  idPrefix,
+  keep,
+  onSet,
+}: {
+  r: RuleDef;
+  v: MinecraftRuleValue;
+  def: MinecraftRuleValue | undefined;
+  pending: boolean;
+  idPrefix: string;
+  keep: KeepControl | undefined;
+  onSet: (v: MinecraftRuleValue) => void;
+}) {
+  const mode: KeepMode = keep ? keep.mode : v === true ? "on" : "off";
+  const changed = mode !== "pack" && def !== undefined && (mode === "on") !== def;
+  const labelId = `${idPrefix}-keep-l`;
+  return (
+    <div className="mc-rule mc-keep">
+      <span className="mc-rl">
+        <span className="mc-rtl" id={labelId}>
+          {r.label}
+        </span>
+        <span className="mc-rid mc-mono">{r.id}</span>
+        {(pending || changed || mode === "pack") && (
+          <span className="mc-rtags">
+            {pending && <span className="mc-pend">pending</span>}
+            {changed && def !== undefined && (
+              <span className="mc-chg">changed · default {ruleWord(r, def)}</span>
+            )}
+            {mode === "pack" && <span className="mc-chg">held on by the Power Pack</span>}
+          </span>
+        )}
+      </span>
+      <Seg
+        label={r.label}
+        labelledBy={labelId}
+        options={keep ? KEEP_MODES : DRAFT_KEEP_MODES}
+        value={keep?.busy?.to ?? mode}
+        text={KEEP_WORD}
+        weights={{ pack: 1.6 }}
+        busy={keep?.busy?.to ?? null}
+        onPick={(to) => (keep ? keep.onPick(to) : onSet(to === "on"))}
+      />
+      <output className="mc-keep-now">
+        {keep?.busy ? (
+          <>
+            <Spin />
+            {keep.busy.msg}
+          </>
+        ) : (
+          keepMeaning(mode, keep?.saved ?? false)
+        )}
+      </output>
+      {keep?.error && (
+        <div className="mc-errline mc-keep-err" role="alert">
+          <AlertTriangleIcon size={16} />
+          <span>{keep.error}</span>
+          <button
+            type="button"
+            className="mc-icon-btn"
+            aria-label="Dismiss"
+            onClick={keep.onDismiss}
+          >
+            <XIcon size={18} />
+          </button>
+        </div>
+      )}
+      {keep && <p className="mc-keep-help">{KEEP_HELP}</p>}
     </div>
   );
 }
@@ -1792,7 +1975,44 @@ export function RulesLayer({ slot }: { slot: string }) {
   const w = useW();
   const s = w.slotOf(slot);
   const [view, setView] = useRules(slot, w.rev);
+  const [keepBusy, setKeepBusy] = useState<KeepControl["busy"]>(null);
+  const [keepErr, setKeepErr] = useState<string | null>(null);
   if (!s) return null;
+  const world = s;
+
+  /** Off · On is the plain rule; Power Pack is the slot's switch. Whatever happens, the row
+   *  ends on what the server reports when re-read, not on what was attempted. */
+  async function pickKeep(to: KeepMode) {
+    if (!view || keepBusy) return;
+    const from = keepMode(view);
+    const steps = keepSteps(from, to, keepSaved(world));
+    if (!steps.length) return;
+    setKeepErr(null);
+    let live = view.live;
+    try {
+      for (const st of steps) {
+        setKeepBusy({ to, msg: st.msg });
+        if (st.kind === "pack") {
+          live = (await api.minecraftSetPowerPack(slot, st.on)).applies === "now";
+        } else {
+          live = (await api.minecraftSetRules(slot, { keepInventory: st.on })).live;
+        }
+      }
+      const fresh = await api.minecraftRules(slot).catch(() => null);
+      if (fresh) setView(fresh);
+      w.toast(keepSavedToast(to, from, world, live));
+    } catch (err) {
+      const refused = err instanceof ApiError && isRefusal(err.status);
+      const reason = refused ? refusalReason(err.message) : "the server didn't answer";
+      const fresh = await api.minecraftRules(slot).catch(() => null);
+      if (fresh) setView(fresh);
+      setKeepErr(keepFailText({ to, from, now: fresh ? keepMode(fresh) : null, refused, reason }));
+    } finally {
+      setKeepBusy(null);
+      // The slot carries the switch and the saved choice underneath it.
+      void w.reload();
+    }
+  }
 
   async function save(set: Record<string, MinecraftRuleValue>, done: (v: MinecraftRules) => void) {
     if (!view) return;
@@ -1837,6 +2057,15 @@ export function RulesLayer({ slot }: { slot: string }) {
           values={view.rules}
           defaults={view.defaults}
           pending={view.pending}
+          managed={Object.keys(view.managed ?? {})}
+          keep={{
+            mode: keepMode(view),
+            saved: keepSaved(s),
+            busy: keepBusy,
+            error: keepErr,
+            onPick: (to) => void pickKeep(to),
+            onDismiss: () => setKeepErr(null),
+          }}
           note={note}
           debounceMs={RULE_DEBOUNCE_MS}
           idPrefix={`r-${slot}`}

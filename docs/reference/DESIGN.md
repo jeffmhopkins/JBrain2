@@ -3464,6 +3464,31 @@ Sheet → Dialog.
   `playerWaypoints` offers only the reported value plus *everyone*. Search filters in place;
   each group and the whole set reset to defaults, with room under **Reset all** so a toast
   never covers it.
+- **Keep inventory is Off · On · Power Pack** (M10; settled in a three-way GUI gate — binding
+  mock `docs/mocks/minecraft-keep-inventory/a-segmented-row.html`, owner pick A, 2026-10-11,
+  with the conditions in that folder's `REVIEW.md`). The **Keep inventory on death** row
+  holds the shared segmented control full-width (Power Pack takes a wider share, so it fits a
+  third of 320 px at Text size 100%; no icon), then one line for what the pick means (*Everyone
+  drops their things where they die.* / *Everyone keeps everything when they die.* / with
+  Power Pack, the saved choice underneath and that it comes back), then a fixed help line that
+  states the mode before anyone picks it — a pick can apply live: *Power Pack: players keep
+  their things only while carrying a Power Pack and their own Tricorder; one pack burns each
+  time. Without both, they drop everything.* Off and On write the rule; Power Pack writes the
+  slot's switch (`PUT …/power-pack`); leaving it turns the switch off (back to the saved
+  choice, which the sidecar pins when the switch turns on) and then writes the rule only if
+  the pick differs. While a write runs the picked segment spins, the others take no picks, and
+  the meaning line (one persistent status region) names the step. After **any** failure the
+  rules are re-read and the inline rose line is worded from what the server now reports, with
+  the sidecar's real reason (*the server is restoring a backup*, *restarting*, *isn't
+  running*, *Power Pack is holding it on*); *Nothing changed* only for a 400/409 the re-read
+  confirms. The toast says live from the write's own answer and otherwise *when the server
+  starts* or *from {world}'s next load* from the slot. While Power Pack is on the row is tagged
+  *held on by the Power Pack*, the Players summary and the world page's Game rules line say
+  *Power Pack*, and the rule is left out of every changed count, the group reset and **Reset
+  all** (the footer says so). *pending* is the API's own. The New world form's draft editor
+  offers **Off · On** only — the switch belongs to a saved slot. The segmented control is one
+  radiogroup tab stop; arrows move between segments and Space or Enter picks, since every
+  pick is a write.
 - **Forms are Sheets, consequences are Dialogs** (the shared shells). New world: name (40),
   seed **Random** (the box's roll, shown, with **Re-roll** — so the seed is always known) or
   **Enter a seed** (64, with a counter), game mode, difficulty, cheats, and a collapsed **World
