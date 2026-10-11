@@ -242,7 +242,13 @@ def build(src: Path, pack: Path) -> dict[str, Any]:
             {"id": f"{NAMESPACE}:{name}", "x": t["x"], "z": t["z"], "size": t["size"]}
         )
     data = {
-        "pod": {"id": f"{NAMESPACE}:pod", "size": pod["size"], **pod["meta"]},
+        "pod": {
+            "id": f"{NAMESPACE}:pod",
+            "size": pod["size"],
+            # The hull's own blocks, which the script never grades over.
+            "hull": sorted({p["name"] for p in pod["palette"]} - {"minecraft:air"}),
+            **pod["meta"],
+        },
         "ship": {"size": ship["size"], "tiles": ship_tiles, **ship["meta"]},
     }
     scripts = pack / "scripts"

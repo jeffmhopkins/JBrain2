@@ -1,7 +1,9 @@
 // A stand-in for @minecraft/server, enough of it to run the wreck pack's main.js against
-// a synthetic world (plan §SW2). It is the simulator's world, not a model of the game:
-// every chunk is loaded, generation is a height function, and blocks are what was set.
-// sim.mjs installs it as node_modules/@minecraft/server for the run.
+// a synthetic world (plan §SW2). Generation is a height function and blocks are what was
+// set, but it is as strict as the game where that has bitten: with nobody online, only
+// chunks inside a ticking area can be read or changed (anything else throws), and a
+// run can be stopped dead mid-job, the way a server stops. sim.mjs installs it as
+// node_modules/@minecraft/server for the run.
 
 export class BlockPermutation {
   constructor(id, states) {
@@ -47,7 +49,15 @@ class Block {
   getComponent(name) {
     if (name !== "minecraft:inventory" || !/barrel|chest/.test(this.typeId)) return undefined;
     const items = this.dimension.inventory(this.x, this.y, this.z);
-    return { container: { addItem: (stack) => items.push(stack) } };
+    return {
+      container: {
+        size: 27,
+        get emptySlotsCount() {
+          return 27 - items.length;
+        },
+        addItem: (stack) => items.push(stack),
+      },
+    };
   }
 }
 
@@ -59,6 +69,25 @@ export class Dimension {
     this.items = new Map();
     this.commands = [];
     this.heightRange = { min: -64, max: 320 };
+    this.areas = new Map(); // name -> {box: [cx0, cz0, cx1, cz1] in chunks, at: clock}
+  }
+  loaded(x, z) {
+    const cx = Math.floor(x / 16);
+    const cz = Math.floor(z / 16);
+    // Like the game, an area's chunks come in over several ticks: here a few chunks a
+    // job step, in rows, so a chunk in the middle loads after the corners have.
+    for (const { box, at } of this.areas.values()) {
+      const [x0, z0, x1, z1] = box;
+      if (cx < x0 || cx > x1 || cz < z0 || cz > z1) continue;
+      const order = (cx - x0) * (z1 - z0 + 1) + (cz - z0);
+      const row = Math.floor((z1 - z0 + 1) / 2);
+      const ready = order === 0 || cx === x1 || ((cz === z0 || cz === z1) && order < row) ? 0 : order;
+      if (clock - at >= ready / CHUNKS_PER_STEP) return true;
+    }
+    return false;
+  }
+  check(x, z) {
+    if (!this.loaded(x, z)) throw new Error(`LocationInUnloadedChunkError at ${x} ${z}`);
   }
   idAt(x, y, z) {
     const c = this.cells.get(key(x, y, z));
@@ -67,8 +96,9 @@ export class Dimension {
   statesAt(x, y, z) {
     return this.cells.get(key(x, y, z))?.states ?? {};
   }
-  put(x, y, z, id, states) {
+  put(x, y, z, id, states, viaStructure = false) {
     if (y < this.heightRange.min || y >= this.heightRange.max) throw new Error(`y ${y} out of the world`);
+    if (!viaStructure) this.check(x, z);
     this.cells.set(key(x, y, z), { id: id.startsWith("minecraft:") ? id : `minecraft:${id}`, states });
   }
   inventory(x, y, z) {
@@ -77,9 +107,11 @@ export class Dimension {
     return this.items.get(k);
   }
   getBlock({ x, y, z }) {
+    this.check(Math.floor(x), Math.floor(z));
     return new Block(this, Math.floor(x), Math.floor(y), Math.floor(z));
   }
   getTopmostBlock({ x, z }) {
+    this.check(x, z);
     for (let y = this.heightRange.max - 1; y >= this.heightRange.min; y -= 1) {
       if (this.idAt(x, y, z) !== "minecraft:air") return new Block(this, x, y, z);
     }
@@ -87,15 +119,41 @@ export class Dimension {
   }
   runCommand(text) {
     this.commands.push(text);
+    const words = text.split(/\s+/);
+    if (words[0] === "tickingarea" && words[1] === "remove") {
+      if (!this.areas.delete(words[2])) throw new Error(`no ticking area ${words[2]}`);
+    } else if (words[0] === "tickingarea" && words[1] === "add" && words[2] !== "circle") {
+      const [x0, , z0, x1, , z1] = words.slice(2, 8).map(Number);
+      const box = [Math.floor(Math.min(x0, x1) / 16), Math.floor(Math.min(z0, z1) / 16),
+        Math.floor(Math.max(x0, x1) / 16), Math.floor(Math.max(z0, z1) / 16)];
+      if ((box[2] - box[0] + 1) * (box[3] - box[1] + 1) > 100) throw new Error("ticking area over 100 chunks");
+      if (this.areas.size >= 10) throw new Error("too many ticking areas");
+      this.areas.set(words[8], { box, at: clock });
+    } else if (words[0] === "tickingarea" && words[2] === "circle") {
+      const [x, , z, r] = words.slice(3, 7).map(Number);
+      const cx = Math.floor(x / 16);
+      const cz = Math.floor(z / 16);
+      // Only the inscribed square counts here, so code that leans on the corners of a
+      // circle fails as it would in the game.
+      const k = Math.floor(r / Math.SQRT2);
+      this.areas.set(words[7], { box: [cx - k, cz - k, cx + k, cz + k], at: clock });
+    }
     return { successCount: 1 };
   }
 }
+
+let stopAfterSteps = Infinity;
+let clock = 0; // job steps run so far: the fake's ticks
+let stopped = 0;
+const CHUNKS_PER_STEP = 3;
+const timeouts = [];
 
 const listeners = [];
 const props = new Map();
 let spawn = { x: 0, y: 32767, z: 0 };
 let dim = null;
 let placeHook = null;
+let ticks = 0;
 
 export const world = {
   afterEvents: { worldLoad: { subscribe: (fn) => listeners.push(fn) } },
@@ -106,7 +164,7 @@ export const world = {
   setDefaultSpawnLocation: (loc) => {
     spawn = { ...loc };
   },
-  getAbsoluteTime: () => 0,
+  getAbsoluteTime: () => ticks,
   structureManager: {
     place: (id, d, loc) => placeHook(id, d, loc),
   },
@@ -114,12 +172,24 @@ export const world = {
 
 export const system = {
   runJob(gen) {
-    // The game spreads a job over ticks; here it simply runs to the end.
+    // The game spreads a job over ticks; here it simply runs to the end — or, when the
+    // test stops the "server" mid-job, is dropped there with no cleanup at all.
     let steps = 0;
     while (!gen.next().done) {
-      if (++steps > 5e6) throw new Error("job never finished");
+      clock += 1;
+      if (++steps >= stopAfterSteps) {
+        stopped += 1;
+        timeouts.length = 0; // the "server" is gone: nothing it scheduled runs either
+        return 1; // abandoned: no finally, no catch
+      }
+      if (steps > 5e6) throw new Error("job never finished");
     }
     return 1;
+  },
+  runTimeout(fn, _ticks) {
+    // Run once the current load's work has: sim.load() drains these.
+    timeouts.push(fn);
+    return timeouts.length;
   },
 };
 
@@ -131,11 +201,26 @@ export const sim = {
     spawn = { x: spawnAt.x, y: 32767, z: spawnAt.z };
     dim = new Dimension(terrain);
     placeHook = onPlace;
+    ticks = 0;
+    stopAfterSteps = Infinity;
+    stopped = 0;
+    clock = 0;
+    timeouts.length = 0;
     return dim;
   },
   load() {
     for (const fn of listeners) fn({});
+    for (let i = 0; timeouts.length && i < 20; i += 1) timeouts.shift()();
+  },
+  stopped: () => stopped,
+  clock: () => clock,
+  /** Stop the "server" dead after this many job steps (Infinity: never). */
+  stopAfter(n) {
+    stopAfterSteps = n;
   },
   props,
   spawn: () => spawn,
+  setTime: (t) => {
+    ticks = t;
+  },
 };

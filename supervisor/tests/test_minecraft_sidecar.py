@@ -422,6 +422,9 @@ class _FakeBds:
     def wait_running(self, _timeout_s: float) -> bool:
         return self.starts
 
+    def events_after(self, _after: int) -> list[dict[str, Any]]:
+        return []  # a new world's first-start watch (§SW2) reads these
+
     def stop(self) -> None:
         self.calls.append("stop")
         self.running = False

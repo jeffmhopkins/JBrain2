@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2◻️ SW3◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2✅ SW3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1522,15 +1522,42 @@ lands on a world that was played before it shipped.
 - the `jbrain-wreck` pack skeleton, which only reports `loaded`
 - slot arming, `spawn_wreck`, pre-generation install and the `wreck` event
 
-**SW2 — the build:**
-- the pack's site survey and pod build
-- the terrain fitting and biome materials
-- the parachute, the loot and the spawn point
-- the mothership placement
-- the first-start fallback restart
+**SW2 — the build (shipped):**
+- **Pod stage.** It loads and reads a 128-block square round spawn: one ticking area,
+  under the 100-chunk cap, because with nobody online only ticking-area chunks load. It
+  chooses the site and records it, with the ground it read, in the world before
+  changing anything. Then it runs its steps in order, each recorded as done:
+  1. terrain
+  2. place
+  3. crater
+  4. canopy
+  5. details (the hatch cover, a level apron at the hatch and two campfires)
+  6. kit (only into empty barrels)
+  7. spawn
 
-The pure planning (site choice, materials, column fitting) is a separate module with
-node tests.
+  A resumed build continues at its step, on the first-read heights, so it never digs
+  or places twice.
+- **Ship stage.** It reads the peaks under each candidate spot and keeps a ship that
+  started too high under the build limit. The chosen spot, and each tile placed, is
+  recorded.
+- **Failure.** It waits for every chunk of a box before reading it, because an area
+  loads over several ticks. A failure is reported (`failed`) and retried 30 s later in
+  the same session, before anyone has built at spawn. It is given up after three
+  tries. Ticking areas come out on every exit.
+- **Wrapper.** If a brand-new world's first start shows no sign of the pack, the
+  wrapper restarts it once, as a plain restart under the lifecycle lock (never an
+  update) and only while nobody is on.
+- **Tests.**
+  - `plan.js` is pure and node-tested.
+  - `deploy/minecraft/wreck-sim/` runs the real script against a fake
+    `@minecraft/server` that is as strict as the game about unloaded chunks. It covers
+    plains, forest, jungle, desert, snowy, mountainside, badlands, swamp, mangrove,
+    island, open ocean, a high plateau, peaks under the ship, a placement refused once,
+    and a server stopped dead at 1%, 30%, 60% and 90% of a build. The fake's ticking
+    areas load chunk by chunk.
+  - Every one must come out right, and a resumed build must equal an uninterrupted one
+    block for block.
+  - The supervisor's pytest runs both suites.
 
 **SW3 — operate and prove it.** Until it ships, the default-on `spawn_wreck` setting
 has no PWA or debug-API switch, which is a known rule #10 gap; SW3 closes it.

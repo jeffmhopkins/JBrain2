@@ -41,6 +41,28 @@ TEX = {
     "log_oak_top": "log_oak_top.png",
     "leaves_oak": "leaves_oak.tga",
     "fire_0": "fire_0.png",
+    "sandstone_top": "sandstone_top.png",
+    "sandstone_side": "sandstone_smooth.png",
+    "log_jungle": "log_jungle.png",
+    "log_jungle_top": "log_jungle_top.png",
+    "leaves_jungle": "leaves_jungle.tga",
+    "log_spruce": "log_spruce.png",
+    "log_spruce_top": "log_spruce_top.png",
+    "leaves_spruce": "leaves_spruce.tga",
+    "andesite": "stone_andesite.png",
+    "cobblestone": "cobblestone.png",
+    "ochre_side": "ochre_froglight_side.png",
+    "ochre_top": "ochre_froglight_top.png",
+    "snow": "snow.png",
+    "water": "water_still_grey.png",
+    "moss": "moss_block.png",
+    "sand": "sand.png",
+    "red_sand": "red_sand.png",
+    "mud": "mud.png",
+    "packed_mud": "packed_mud.png",
+    "terracotta_orange": "hardened_clay_stained_orange.png",
+    "red_sandstone_top": "red_sandstone_top.png",
+    "red_sandstone_side": "red_sandstone_smooth.png",
     "ladder": "ladder.png",
     "bookshelf": "bookshelf.png",
     "tnt_side": "tnt_side.png",
@@ -99,6 +121,12 @@ def tint(im, rgb, mask=None):
 for name, f in TEX.items():
     im = Image.open(SRC / f).convert("RGBA")
     im = im.crop((0, 0, 16, 16))  # first frame of animated strips
+    if name in ("leaves_jungle", "leaves_spruce"):
+        im = tint(im, (48, 187, 11) if name == "leaves_jungle" else (97, 153, 97))
+        im.putalpha(255)
+    if name == "water":
+        im = tint(im, (63, 118, 228))
+        im.putalpha(150)
     if name in ("grass_top", "leaves_oak"):
         im = tint(im, GRASS_TINT if name == "grass_top" else (119, 171, 47))
         if name == "leaves_oak":
