@@ -53,9 +53,10 @@ JBRAIN_PACK_ID = json.loads(
 )["header"]["uuid"]
 
 
-JBRAIN_RP_ID = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())[
-    "header"
-]["uuid"]
+_JBRAIN_RP = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())
+JBRAIN_RP_ID = _JBRAIN_RP["header"]["uuid"]
+# Bumped whenever its textures change, so clients re-download it.
+JBRAIN_RP_VERSION = _JBRAIN_RP["header"]["version"]
 # The home-test kit's resource pack, retired when its icons moved to the jbrain one.
 OLD_PROBE_RP_ID = "26d6c250-8ead-4bb8-9dd0-d3805e61d61e"
 
@@ -1631,7 +1632,7 @@ def test_every_world_gets_the_jbrain_resource_pack_and_clients_must_take_it(
     monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
     rig._start()
     rp = json.loads((world / "world_resource_packs.json").read_text())
-    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": [1, 0, 0]}]
+    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": JBRAIN_RP_VERSION}]
     assert not old.exists()
     icons = world / "resource_packs" / "jbrain" / "textures" / "items"
     assert sorted(p.name for p in icons.iterdir()) == [

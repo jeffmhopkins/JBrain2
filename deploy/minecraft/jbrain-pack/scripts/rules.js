@@ -132,11 +132,17 @@ export const dropSpot = (at, minY, lastSafe) => {
 // Dave's item guide, unlocked as each item becomes craftable (§M19; canon: "Dave explains
 // each item only once you can make it"). Like the game's recipe book, an unlock comes the
 // first time the player holds the key ingredient. Only built items are here: the Tricorder
-// from the start, the Power Pack on a first Ender Pearl, its uses on a first Power Pack.
+// from the start, the Power Pack on a first Ender Pearl, its uses on a first Power Pack,
+// the No-Spawn Beacon on a first echo shard once they have made a Power Pack.
 export const UNLOCKED_BY = {
   "minecraft:ender_pearl": "power_pack",
   [POWER_PACK]: "power_pack_uses",
+  "minecraft:echo_shard": "no_spawn_beacon",
 };
+
+// An unlock that also needs an earlier one: an echo shard before any Power Pack teaches
+// nothing, and the same shard held later (or with a pack in the same look) does.
+export const UNLOCK_NEEDS = { no_spawn_beacon: "power_pack_uses" };
 
 // A player's recorded unlocks, from the world property; anything unreadable is a fresh start.
 export const parseKnown = (raw) => {
@@ -154,6 +160,8 @@ export const parseKnown = (raw) => {
 export const unlocksFrom = (known, typeIds) => {
   const out = new Set(known);
   out.add("tricorder");
-  for (const t of typeIds) if (UNLOCKED_BY[t]) out.add(UNLOCKED_BY[t]);
+  const held = typeIds.map((t) => UNLOCKED_BY[t]).filter(Boolean);
+  for (const k of held) if (!UNLOCK_NEEDS[k]) out.add(k);
+  for (const k of held) if (UNLOCK_NEEDS[k] && out.has(UNLOCK_NEEDS[k])) out.add(k);
   return [...out].sort();
 };
