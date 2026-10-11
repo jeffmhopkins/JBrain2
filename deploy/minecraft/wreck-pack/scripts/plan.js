@@ -73,13 +73,16 @@ export const pick = (list, x, z, salt) => list[Math.floor(hash01(x, z, salt) * l
 
 /**
  * Where the pod comes down: the structure's minimum corner (x, z) and the surface y its
- * deck sits on. `ground(x, z)` → {y, top, water} or null (unread). Candidates are every
- * other column within `radius` of spawn. Only a wet footprint rules one out: steep
+ * deck sits on. `ground(x, z)` → {y, top, water, wet} or null (unread); `wet` is the
+ * height of any water standing on dry ground. Candidates are every other column within
+ * `radius` of spawn. Only a wet footprint rules one out: steep
  * ground costs score (the build terraces it), and so does water where the parachute
  * lands (it floats). Flattest wins, then driest, then nearest; with no dry footprint
- * anywhere, the pod splashes down at spawn.
+ * anywhere, the pod splashes down at spawn. A dry site is raised to the highest water
+ * surface within `shore` of it, so the deck and hatch clear it: on the box a swamp's
+ * dry ground sat two below its pools, and they flooded the hatch the moment it opened.
  */
-export function chooseSite(ground, spawn, pod, radius = 24) {
+export function chooseSite(ground, spawn, pod, radius = 24, shore = 12) {
   const [sx, , sz] = pod.size;
   let best = null;
   for (let dx = -radius; dx <= radius; dx += 2) {
@@ -113,7 +116,16 @@ export function chooseSite(ground, spawn, pod, radius = 24) {
       if (!best || score < best.score) best = { x: ox, z: oz, y: median, score, splash: false };
     }
   }
-  if (best) return best;
+  if (best) {
+    for (let x = best.x - shore; x < best.x + sx + shore; x += 1) {
+      for (let z = best.z - shore; z < best.z + sz + shore; z += 1) {
+        const g = ground(x, z);
+        const surface = g?.water ? g.y : g?.wet;
+        if (!g?.lava && surface != null && surface > best.y) best.y = surface;
+      }
+    }
+    return best;
+  }
   const g = ground(spawn.x, spawn.z);
   return {
     x: spawn.x - Math.floor(sx / 2),

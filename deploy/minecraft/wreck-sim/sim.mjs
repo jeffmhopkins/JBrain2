@@ -23,8 +23,11 @@ const cellsOf = (d) => d.blocks.map(([x, y, z, i]) => [x, y, z, d.palette[i]]);
 const podCells = cellsOf(POD);
 const shipCells = cellsOf(SHIP);
 
-/** A world from a height map, a surface block, trees and water up to sea level. */
-function terrain({ h, top = "grass_block", sub = "dirt", cover = null, trees = () => 0, leaves = "oak_leaves", log = "oak_log" }) {
+/**
+ * A world from a height map, a surface block, trees and water up to sea level: in every
+ * low column, or (with `pools`) only in those, the rest dry below the pools' surface.
+ */
+function terrain({ h, top = "grass_block", sub = "dirt", cover = null, trees = () => 0, leaves = "oak_leaves", log = "oak_log", pools = null, roots = false }) {
   return (x, y, z) => {
     const g = Math.floor(h(x, z));
     if (y > g) {
@@ -40,7 +43,9 @@ function terrain({ h, top = "grass_block", sub = "dirt", cover = null, trees = (
         }
       }
       if (cover && y === g + 1 && g >= SEA) return `minecraft:${cover}`;
-      return y <= SEA ? "minecraft:water" : "minecraft:air";
+      // Mangrove roots in the shallows, standing in the sea's surface layer.
+      if (roots && y === g + 1 && g === SEA - 1) return "minecraft:mangrove_roots";
+      return y <= SEA && (!pools || pools(x, z)) ? "minecraft:water" : "minecraft:air";
     }
     if (y === g) return `minecraft:${g < SEA ? "sand" : top}`;
     if (y > g - 4) return `minecraft:${sub}`;
@@ -60,7 +65,9 @@ const SCENARIOS = {
   mountainside: { h: (x, z) => 90 + x * 0.7 + wave(x, z, 2), top: "stone", sub: "stone" },
   badlands: { h: (x, z) => 75 + wave(x, z, 3), top: "red_sand", sub: "orange_terracotta" },
   swamp: { h: (x, z) => 62.6 + wave(x, z, 1.2), trees: every(19, 6) },
-  mangrove: { h: (x, z) => 63 + wave(x, z, 1), top: "mud", sub: "mud", trees: every(9, 7), log: "mangrove_log", leaves: "mangrove_leaves" },
+  // The box's swamp: dry ground two below the surface of the pools beside it.
+  low_swamp: { h: (x, z) => 60.5 + wave(x, z, 0.3), pools: (x, z) => Math.sin(x * 0.3) * Math.cos(z * 0.3) > 0.6 },
+  mangrove: { h: (x, z) => 63 + wave(x, z, 1), top: "mud", sub: "mud", roots: true, trees: every(9, 7), log: "mangrove_log", leaves: "mangrove_leaves" },
   island: { h: (x, z) => (Math.hypot(x - 30, z) < 14 ? 66 - Math.hypot(x - 30, z) * 0.1 : 48) },
   ocean: { h: () => 45, splash: true },
   // A spawn so high the ship's signed-off height would break the build limit.
@@ -186,6 +193,12 @@ async function run(name, spec, n, stopAt = Infinity) {
     const ox = hx + dx * 2;
     const oz = hz + dz * 2;
     checks.hatch_open = open(hx, hy, hz) && open(hx, hy + 1, hz);
+    // Above any water near enough to pour in through it once it's open.
+    let wet = false;
+    for (let x = hx - 16; x <= hx + 16 && !wet; x += 1) {
+      for (let z = hz - 16; z <= hz + 16 && !wet; z += 1) wet = id(x, hy, z) === "water";
+    }
+    checks.hatch_dry = spec.splash || !wet;
     const step = [0, -1, -2, 1].some((d) => solid(ox, hy - 1 + d, oz) && open(ox, hy + d, oz) && open(ox, hy + 1 + d, oz));
     checks.hatch_walkable = spec.splash ? true : step;
     // Spawn stands a player on ground, in the open.

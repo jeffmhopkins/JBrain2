@@ -31,6 +31,11 @@ class Block {
     this.y = y;
     this.z = z;
   }
+  // Mangrove roots at or under the sea's surface stand in water; on the box, a
+  // waterlogged block set to air leaves its water behind.
+  get isWaterlogged() {
+    return this.typeId === "minecraft:mangrove_roots" && this.y <= 62;
+  }
   get location() {
     return { x: this.x, y: this.y, z: this.z };
   }
@@ -41,7 +46,8 @@ class Block {
     return this.y - 1 < this.dimension.heightRange.min ? undefined : new Block(this.dimension, this.x, this.y - 1, this.z);
   }
   setType(id) {
-    this.dimension.put(this.x, this.y, this.z, id, {});
+    const keep = this.isWaterlogged && /^(minecraft:)?air$/.test(id);
+    this.dimension.put(this.x, this.y, this.z, keep ? "water" : id, {});
   }
   setPermutation(p) {
     this.dimension.put(this.x, this.y, this.z, p.id, p.states);
