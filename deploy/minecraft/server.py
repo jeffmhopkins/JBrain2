@@ -102,7 +102,9 @@ JBRAIN_PACK_DIR = "jbrain"
 # armed when it was created; its structures are built into it at image build.
 WRECK_PACK_SRC = Path(__file__).resolve().parent / "wreck-pack"
 WRECK_PACK_DIR = "jbrain_wreck"
-# How long a brand-new armed world's first start waits for its pack to say it loaded.
+# How long a brand-new armed world's first start may take to generate (a slow box), and
+# then how long its pack has to say it loaded.
+WRECK_START_S = 600.0
 WRECK_WAIT_S = 90.0
 # Travel log (§T1): each online player's position, this often, kept only once they have
 # moved this far — standing still costs nothing.
@@ -1085,23 +1087,34 @@ class Rig:
         """A new world's first load is the pack's one chance at an untouched spawn. If
         BDS generated the world without it (it didn't take the pack from the empty
         folder), restart once, now that the folder is a world, before anyone plays."""
-        if not self.bds.wait_running(WRECK_WAIT_S):
+        if not self.bds.wait_running(WRECK_START_S):
             return
         deadline = time.monotonic() + WRECK_WAIT_S
         while time.monotonic() < deadline:
             if any(e["kind"] == "wreck" for e in self.bds.events_after(seen)):
                 return
             time.sleep(1)
-        rec = self.slots.by_folder(folder)
-        if folder != self.active_folder() or not rec or rec.get("wreck") != "armed":
+        # A plain restart under the lifecycle lock (never server_action's, which with
+        # auto-update on would run an update): if anything else holds it, that job
+        # restarts the server itself, and the pack goes in then.
+        if not self._life.acquire(blocking=False):
             return
-        if self.bds.players:
-            return  # someone is already in: a restart now would be worse than no wreck
-        print("[wreck] the pack didn't load on the first start; restarting", flush=True)
         try:
-            self.server_action("restart")
-        except (RuntimeError, ValueError) as exc:
-            print(f"[wreck] restart refused: {exc}", flush=True)
+            rec = self.slots.by_folder(folder)
+            if folder != self.active_folder() or not rec or rec.get("wreck") != "armed":
+                return
+            if self.bds.players:
+                return  # someone's already in: a restart now is worse than no wreck
+            print("[wreck] the pack didn't load on the first start; restarting", flush=True)
+            self._busy = "restart"
+            self.maintenance = True
+            self._stop("The server is restarting to finish setting up this world")
+            self._start()
+        finally:
+            self.maintenance = False
+            self._busy = ""
+            self._phase = ""
+            self._life.release()
 
     def note_wreck(self) -> None:
         """A world whose pack reports the wreck built is marked done, so the pack comes

@@ -515,7 +515,9 @@ def test_the_planning_rules_hold(tmp_path: Path) -> None:
 
 SIM_SCENARIOS = [
     "plains", "forest", "jungle", "desert", "snowy", "mountainside", "badlands",
-    "swamp", "mangrove", "island", "ocean", "peaks_under_ship",
+    "swamp", "mangrove", "island", "ocean", "high_plateau", "place_fails_once",
+    "peaks_under_ship",
+    "resume_after_5", "resume_after_400", "resume_after_2500", "resume_after_6000",
 ]  # fmt: skip
 
 
@@ -534,8 +536,9 @@ def test_the_crash_site_comes_down_right_in_every_kind_of_world(tmp_path: Path) 
         check=True,
         timeout=600,
     ).stdout
-    results = {r["scenario"]: r for r in map(json.loads, out.splitlines())}
-    assert sorted(results) == sorted(SIM_SCENARIOS)
+    runs = [json.loads(line) for line in out.splitlines()]
+    assert [r["scenario"] for r in runs] == SIM_SCENARIOS
+    results = {r["scenario"]: r for r in runs}
     failed = {
         name: [k for k, ok in r["checks"].items() if not ok]
         for name, r in results.items()
@@ -544,45 +547,79 @@ def test_the_crash_site_comes_down_right_in_every_kind_of_world(tmp_path: Path) 
     assert not failed
     assert results["ocean"]["site"]["splash"] is True
     assert not any(r["site"]["splash"] for n, r in results.items() if n != "ocean")
+    # A spawn too high for the ship's usual height: capped under the build limit.
+    assert results["high_plateau"]["ship"]["y"] + 64 <= 319
+    # Stopped dead mid-build and resumed: the same world as an uninterrupted build.
+    for n in ("resume_after_5", "resume_after_400", "resume_after_2500"):
+        assert results[n]["checks"]["same_world_as_uninterrupted"]
     plains = results["plains"]["ship"]["z"]
     assert results["peaks_under_ship"]["ship"]["z"] != plains  # slid clear of the peaks
 
 
-class _WatchBds:
+class _WatchBds(_FakeBds):
     def __init__(self, events: list[dict[str, Any]], players: dict[str, Any]) -> None:
+        super().__init__()
         self._events = events
         self.players = players
+        self.running = True
+        self.calls: list[str] = []
 
     def wait_running(self, _timeout_s: float) -> bool:
         return True
 
-    def events_after(self, after: int) -> list[dict[str, Any]]:
-        return [e for e in self._events if e["id"] > after]
+    def events_after(self, _after: int) -> list[dict[str, Any]]:
+        return [e for e in self._events if e["id"] > _after]
+
+    def stop(self) -> None:
+        self.calls.append("stop")
+
+    def start(self) -> None:
+        self.calls.append("start")
 
 
 @pytest.mark.parametrize(
-    ("events", "players", "restarts"),
+    ("events", "players", "restarted"),
     [
-        ([], {}, 1),  # the pack never reported: restart once, before anyone plays
-        ([{"id": 5, "kind": "wreck", "phase": "loaded"}], {}, 0),
-        ([], {"Steve": {"xuid": "1"}}, 0),  # someone's already in: leave it
+        ([], {}, True),  # the pack never reported: restart once, before anyone plays
+        ([{"id": 5, "kind": "wreck", "phase": "loaded"}], {}, False),
+        ([], {"Steve": {"xuid": "1"}}, False),  # someone's already in: leave it
     ],
 )
 def test_a_new_world_that_came_up_without_its_pack_restarts_once(
     monkeypatch: pytest.MonkeyPatch,
     events: list[dict[str, Any]],
     players: dict[str, Any],
-    restarts: int,
+    restarted: bool,
+) -> None:
+    monkeypatch.setattr(server, "WRECK_WAIT_S", 0.05)
+    monkeypatch.setattr(server, "WARN_S", 0)
+    rig = _rig()
+    rig.set_settings({"auto_update": True})  # a plain restart regardless: no update
+    rig.create_slot("slot2", {"name": "New"})
+    rig._apply_slot(rig.slots.get("slot2"))
+    monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
+    fake = _WatchBds(events, players)
+    rig.bds = fake
+    monkeypatch.setattr(
+        rig, "version_info", lambda **kw: pytest.fail("no update check")
+    )
+    rig._watch_wreck("slot2", 0)
+    assert fake.calls == (["stop", "start"] if restarted else [])
+    assert rig._life.acquire(blocking=False)  # and the lock is free again
+
+
+def test_the_restart_stands_down_while_another_job_holds_the_server(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(server, "WRECK_WAIT_S", 0.05)
     rig = _rig()
     rig.create_slot("slot2", {"name": "New"})
     rig._apply_slot(rig.slots.get("slot2"))
-    rig.bds = _WatchBds(events, players)
-    calls: list[str] = []
-    monkeypatch.setattr(rig, "server_action", lambda action: calls.append(action))
+    fake = _WatchBds([], {})
+    rig.bds = fake
+    assert rig._life.acquire(blocking=False)  # say, a world switch in progress
     rig._watch_wreck("slot2", 0)
-    assert calls == ["restart"] * restarts
+    assert fake.calls == []
 
 
 def test_the_wreck_pack_is_its_own_pack_on_stable_scripting() -> None:

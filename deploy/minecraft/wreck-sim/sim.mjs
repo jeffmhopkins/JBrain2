@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { sim } from "@minecraft/server";
 
@@ -62,15 +63,24 @@ const SCENARIOS = {
   mangrove: { h: (x, z) => 63 + wave(x, z, 1), top: "mud", sub: "mud", trees: every(9, 7), log: "mangrove_log", leaves: "mangrove_leaves" },
   island: { h: (x, z) => (Math.hypot(x - 30, z) < 14 ? 66 - Math.hypot(x - 30, z) * 0.1 : 48) },
   ocean: { h: () => 45, splash: true },
+  // A spawn so high the ship's signed-off height would break the build limit.
+  high_plateau: { h: (x, z) => 200 + wave(x, z, 2), top: "stone", sub: "stone" },
+  // The game refuses a placement once (say, a chunk not ready): reported, then retried.
+  place_fails_once: { h: (x, z) => 68 + wave(x, z, 1.5), failPlaceOnce: true },
   // Spawn on a plain, with a range of peaks where the ship would hang.
   peaks_under_ship: {
     h: (x, z) => (z < -10 && z > -100 && x > -110 && x < 110 ? 230 + wave(x, z, 20) : 68 + wave(x, z, 1)),
   },
 };
 
-async function run(name, spec, n) {
+async function run(name, spec, n, stopAt = Infinity) {
   const placed = [];
+  let refused = false;
   const dim = sim.reset(terrain(spec), { x: 0, z: 0 }, (id, d, loc) => {
+    if (spec.failPlaceOnce && !refused) {
+      refused = true;
+      throw new Error("structure could not be placed");
+    }
     placed.push({ id, loc });
     let cells = podCells;
     if (id !== WRECK.pod.id) {
@@ -80,7 +90,7 @@ async function run(name, spec, n) {
         .filter(([x, , z]) => x >= t.x && x < t.x + sx && z >= t.z && z < t.z + sz)
         .map(([x, y, z, p]) => [x - t.x, y, z - t.z, p]);
     }
-    for (const [x, y, z, p] of cells) d.put(loc.x + x, loc.y + y, loc.z + z, p.name, p.states);
+    for (const [x, y, z, p] of cells) d.put(loc.x + x, loc.y + y, loc.z + z, p.name, p.states, true);
   });
   // A fresh copy of main.js per world: it subscribes to worldLoad when imported.
   await import(`${pathToFileURL(resolve(packDir, "scripts/main.js")).href}?world=${n}`);
@@ -88,6 +98,13 @@ async function run(name, spec, n) {
   const original = console.log;
   console.log = (line) => logs.push(String(line));
   try {
+    if (spec.failPlaceOnce) sim.load(); // the failed attempt; the load below retries
+    if (stopAt !== Infinity) {
+      // The server stops dead mid-build, then starts again: the second load resumes.
+      sim.stopAfter(stopAt);
+      sim.load();
+      sim.stopAfter(Infinity);
+    }
     sim.load();
   } finally {
     console.log = original;
@@ -99,7 +116,14 @@ async function run(name, spec, n) {
   const open = (x, y, z) => ["air"].includes(id(x, y, z));
   const solid = (x, y, z) => !["air", "water"].includes(id(x, y, z)) && !/carpet|snow_layer/.test(id(x, y, z));
 
-  checks.finished = events.map((e) => e.phase).join(",") === "loaded,pod,ship,done";
+  const phases = events.map((e) => e.phase).join(",");
+  // Uninterrupted: the whole story in one load. Resumed: it ends done, never failed.
+  checks.finished =
+    spec.failPlaceOnce
+      ? phases === "loaded,failed,loaded,pod,ship,done"
+      : stopAt === Infinity
+        ? phases === "loaded,pod,ship,done"
+        : phases.endsWith(",done") && !phases.includes("failed");
   const o = state.frame?.origin;
   if (o) {
     // The hull is there, whole.
@@ -164,11 +188,14 @@ async function run(name, spec, n) {
     checks.ship_under_build_limit = s.y + ly - 1 <= 319;
     checks.ship_tiles_placed = placed.filter((p) => p.id !== WRECK.pod.id).length === WRECK.ship.tiles.length;
   }
-  checks.ticking_areas_removed = ["jbrain_wreck_pod", "jbrain_wreck_ship"].every((a) => {
-    const adds = dim.commands.filter((c) => c.startsWith("tickingarea add") && c.includes(a)).length;
-    const removes = dim.commands.filter((c) => c === `tickingarea remove ${a}`).length;
-    return removes >= 1 || adds === 0;
-  });
+  checks.ticking_areas_removed = dim.areas.size === 0;
+  const digest = createHash("sha256");
+  for (const [k, c] of [...dim.cells].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    digest.update(`${k}=${c.id}${JSON.stringify(c.states)};`);
+  }
+  for (const [k, items] of [...dim.items].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    digest.update(`${k}:${items.map((i) => `${i.typeId}x${i.amount}`).join(",")};`);
+  }
   if (process.env.WRECK_SIM_DUMP && o) {
     // The site's blocks, for rendering a scenario (spikes/minecraft-spawn-wreck/render.py).
     const out = [];
@@ -184,6 +211,7 @@ async function run(name, spec, n) {
   }
   return {
     scenario: name,
+    world: digest.digest("hex"),
     ok: Object.values(checks).every(Boolean),
     checks,
     site: state.site && { x: state.site.x, y: state.site.y, z: state.site.z, splash: state.site.splash },
@@ -196,4 +224,15 @@ let n = 0;
 for (const [name, spec] of Object.entries(SCENARIOS)) {
   if (only.length && !only.includes(name)) continue;
   console.log(JSON.stringify(await run(name, spec, n++)));
+}
+// Stopped dead at several points of a plains build, then resumed: the world it ends up
+// with must be exactly the one an uninterrupted build makes.
+if (!only.length || only.includes("resume")) {
+  const clean = await run("plains", SCENARIOS.plains, n++);
+  for (const stopAt of [5, 400, 2500, 6000]) {
+    const r = await run(`resume_after_${stopAt}`, SCENARIOS.plains, n++, stopAt);
+    r.checks.same_world_as_uninterrupted = r.world === clean.world;
+    r.ok = Object.values(r.checks).every(Boolean);
+    console.log(JSON.stringify(r));
+  }
 }

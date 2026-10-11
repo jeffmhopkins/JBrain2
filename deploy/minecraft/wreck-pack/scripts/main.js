@@ -4,9 +4,10 @@
 // ground is there, and the damaged mothership hanging above. Stable @minecraft/server
 // only. The planning is in plan.js (node-tested); this file reads the world and places.
 //
-// Progress lives in a world dynamic property, so a build cut short by a restart resumes
-// at its stage, and a finished one never runs again: that record, not the wrapper's
-// bookkeeping, is the guard.
+// Progress lives in a world dynamic property: the stage, each step done, and the ground
+// as first read. A build cut short (a crash, a restart) resumes at the step it stopped
+// on, from those first heights, so nothing is dug twice or placed twice; a finished one
+// never runs again. That record, not the wrapper's bookkeeping, is the guard.
 import { BlockPermutation, ItemStack, system, world } from "@minecraft/server";
 import { WRECK } from "./data.js";
 import * as plan from "./plan.js";
@@ -17,10 +18,17 @@ const KEY = "jbrain:wreck";
 const FRESH_TICKS = 20 * 60 * 10;
 const POD_AREA = "jbrain_wreck_pod";
 const SHIP_AREA = "jbrain_wreck_ship";
-const SURVEY = 64; // half-width of the ground read round spawn
+// Half-width of the square loaded and read round spawn: 128 blocks is at most 9 × 9
+// chunks, inside a ticking area's 100. The site is chosen within 24 of spawn, and its
+// crater, skid mark and canopy reach about 40 further.
+const SURVEY = 64;
 const LOAD_WAIT_TICKS = 20 * 90;
+const MAX_FAILURES = 3;
+const POD_STEPS = ["terrain", "place", "crater", "canopy", "details", "kit", "spawn"];
 
 const emit = (ev) => console.log(`[jbrain] ${JSON.stringify(ev)}`);
+
+class Unloaded extends Error {}
 
 function load() {
   try {
@@ -34,14 +42,14 @@ function save(state) {
   world.setDynamicProperty(KEY, JSON.stringify(state));
 }
 
-function command(dim, text) {
+function command(dim, text, quiet = false) {
   try {
     dim.runCommand(text);
     return true;
   } catch (err) {
     // `tickingarea add` for an area that survived a crash, `remove` for one already
     // gone: both mean the world is already as wanted.
-    console.warn(`[jbrain-wreck] ${text}: ${err}`);
+    if (!quiet) console.warn(`[jbrain-wreck] ${text}: ${err}`);
     return false;
   }
 }
@@ -65,6 +73,15 @@ function set(dim, x, y, z, id, states) {
   }
 }
 
+function area(dim, name, x0, z0, x1, z1) {
+  command(dim, `tickingarea remove ${name}`, true);
+  command(dim, `tickingarea add ${x0} 0 ${z0} ${x1} 0 ${z1} ${name} true`);
+}
+
+function dropAreas(dim) {
+  for (const name of [POD_AREA, SHIP_AREA]) command(dim, `tickingarea remove ${name}`, true);
+}
+
 /** Wait (as a job: yielding) until every listed column can be read. */
 function* waitLoaded(dim, columns) {
   for (let t = 0; t < LOAD_WAIT_TICKS; t += 1) {
@@ -72,6 +89,12 @@ function* waitLoaded(dim, columns) {
     yield;
   }
   return false;
+}
+
+function* load4(dim, x0, z0, x1, z1) {
+  if (!(yield* waitLoaded(dim, [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]))) {
+    throw new Unloaded(`chunks ${x0},${z0}..${x1},${z1} never loaded`);
+  }
 }
 
 /** The ground of one column: the topmost block that isn't a plant, tree or snow cover. */
@@ -84,19 +107,41 @@ function readGround(dim, x, z) {
   }
   for (let i = 0; b && i < 48 && plan.standsOnGround(b.typeId); i += 1) b = b.below();
   if (!b) return null;
-  return { y: b.y, top: plan.bare(b.typeId), water: plan.isWater(b.typeId) };
+  return { y: b.y, top: plan.bare(b.typeId), water: plan.isWater(b.typeId), lava: plan.isLava(b.typeId) };
 }
 
 function* survey(dim, cx, cz, half) {
   const ground = new Map();
   let n = 0;
-  for (let x = cx - half; x <= cx + half; x += 1) {
-    for (let z = cz - half; z <= cz + half; z += 1) {
+  for (let x = cx - half; x < cx + half; x += 1) {
+    for (let z = cz - half; z < cz + half; z += 1) {
       ground.set(`${x},${z}`, readGround(dim, x, z));
       if (++n % 48 === 0) yield;
     }
   }
   return (x, z) => ground.get(`${x},${z}`) ?? null;
+}
+
+/** Choose the site and keep it, with the ground under it, before anything is changed. */
+function* plan_(dim, state) {
+  const spawn = world.getDefaultSpawnLocation();
+  const cx = Math.floor(spawn.x);
+  const cz = Math.floor(spawn.z);
+  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* load4(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  const ground = yield* survey(dim, cx, cz, SURVEY);
+  const site = plan.chooseSite(ground, { x: cx, z: cz }, WRECK.pod);
+  const frame = plan.podFrame(site, WRECK.pod);
+  const zone = plan.podZone(frame, WRECK.pod);
+  const [sx, , sz] = WRECK.pod.size;
+  state.spawn = { x: cx, z: cz };
+  state.site = site;
+  state.frame = frame;
+  state.top = (ground(frame.origin.x + (sx >> 1), frame.origin.z + (sz >> 1)) || {}).top || "grass_block";
+  state.ground = plan.encodeGround(ground, zone.x0, zone.z0, zone.w, zone.h, site.y);
+  state.stage = "pod";
+  state.steps = [];
+  save(state);
 }
 
 /** Clear plants and trees standing on a column, so nothing hangs over the site. */
@@ -107,122 +152,150 @@ function clearColumn(dim, x, z, g) {
   }
 }
 
-function* buildPod(dim, state, ground) {
+function* podStep(dim, state, step, ground) {
   const pod = WRECK.pod;
   const frame = state.frame;
   const [sx, , sz] = pod.size;
   const o = frame.origin;
-  const mats = plan.materialsFor((ground(o.x + (sx >> 1), o.z + (sz >> 1)) || {}).top);
+  const mats = plan.materialsFor(state.top);
   const inFootprint = (x, z) => x >= o.x && x < o.x + sx && z >= o.z && z < o.z + sz;
   const crater = plan.craterColumns(frame);
-  const canopy = plan.canopyCells(frame);
-  const cover = plan.hatchCover(frame);
-
-  // Clear the site of trees and plants, then shape the footprint to the deck.
-  const zone = new Set();
-  for (const c of [...crater, ...canopy, ...cover]) zone.add(`${c.x},${c.z}`);
-  for (let x = o.x - 2; x < o.x + sx + 2; x += 1) for (let z = o.z - 2; z < o.z + sz + 2; z += 1) zone.add(`${x},${z}`);
   let n = 0;
-  for (const key of zone) {
-    const [x, z] = key.split(",").map(Number);
-    const g = ground(x, z);
-    if (g && !g.water) clearColumn(dim, x, z, g);
-    if (++n % 32 === 0) yield;
-  }
-  const surface = state.site.y;
-  for (let x = o.x; x < o.x + sx; x += 1) {
-    for (let z = o.z; z < o.z + sz; z += 1) {
-      const g = ground(x, z);
-      if (!g || state.site.splash) continue;
-      for (let y = g.y + 1; y <= surface; y += 1) set(dim, x, y, z, mats.fill);
-      for (let y = surface + 1; y <= Math.max(g.y, surface); y += 1) set(dim, x, y, z, "air");
-    }
-    yield;
-  }
 
-  world.structureManager.place(pod.id, dim, o);
-  yield;
-
-  // The crater, the soil it shoved up, and the skid mark, in the local ground's colours.
-  n = 0;
-  for (const c of crater) {
-    const g = ground(c.x, c.z);
-    if (!g || g.water || inFootprint(c.x, c.z)) continue;
-    if (c.dig > 0) {
-      for (let y = g.y - c.dig + 1; y <= g.y; y += 1) set(dim, c.x, y, c.z, "air");
-      set(dim, c.x, g.y - c.dig, c.z, plan.pick(mats.dig, c.x, c.z, 1));
-    } else if (c.raise > 0) {
-      for (let y = g.y + 1; y <= g.y + c.raise; y += 1) set(dim, c.x, y, c.z, mats.rim);
-    } else {
-      set(dim, c.x, g.y, c.z, plan.pick(mats.dig, c.x, c.z, 2));
-    }
-    if (++n % 32 === 0) yield;
-  }
-
-  // The parachute, draped at each column's own height (floating, on water).
-  n = 0;
-  for (const c of canopy) {
-    const g = ground(c.x, c.z);
-    if (!g || inFootprint(c.x, c.z)) continue;
-    const bigger = c.block.replace("_carpet", "_wool");
-    if (g.water) set(dim, c.x, g.y, c.z, bigger);
-    else set(dim, c.x, g.y + 1, c.z, c.block);
-    if (++n % 32 === 0) yield;
-  }
-  for (const c of cover) {
-    const g = ground(c.x, c.z);
-    if (!g || g.water || inFootprint(c.x, c.z)) continue;
-    if (c.block === "iron_trapdoor") {
-      set(dim, c.x, g.y + 1, c.z, c.block, { direction: 0, open_bit: false, upside_down_bit: false });
-    } else {
-      set(dim, c.x, g.y + 1, c.z, c.block);
-    }
-  }
-  // Level ground in front of the hatch, so it opens onto somewhere to stand. Never over
-  // the hull: its frame round the hatch and its belly curve share these columns.
-  if (!frame.splash) {
-    const hull = new Set(pod.hull);
-    const grade = (x, y, z, id) => {
-      const b = blockAt(dim, x, y, z);
-      if (b && !hull.has(b.typeId)) set(dim, x, y, z, id);
-    };
-    for (const a of plan.hatchApron(frame)) {
-      const g = ground(a.x, a.z);
-      const from = g ? Math.min(g.y + 1, a.y) : a.y;
-      for (let y = from; y <= a.y; y += 1) grade(a.x, y, a.z, mats.fill);
-      for (let y = a.y + 1; y <= a.y + 2; y += 1) grade(a.x, y, a.z, "air");
-    }
-  }
-  yield;
-
-  // Two campfires in the crater, smoking, on its dug floor.
-  const dug = new Map(crater.map((c) => [`${c.x},${c.z}`, c.dig]));
-  const [ax, az] = frame.axis;
-  for (const d of [3, 5]) {
-    const x = Math.floor(frame.shield[0] - ax * d);
-    const z = Math.floor(frame.shield[2] - az * d + (d === 3 ? 2 : -2));
-    const g = ground(x, z);
-    if (!g || g.water || inFootprint(x, z)) continue;
-    const floor = g.y - (dug.get(`${x},${z}`) ?? 0);
-    set(dim, x, floor + 1, z, "campfire", { extinguished: false, "minecraft:cardinal_direction": "south" });
-  }
-  yield;
-
-  // The starter kit, and spawn at the hatch.
-  frame.barrels.forEach(([x, y, z], i) => {
-    const kit = plan.STARTER_KIT[i];
-    const inv = blockAt(dim, x, y, z)?.getComponent("minecraft:inventory");
-    if (!kit || !inv?.container) return;
-    for (const [id, count] of kit) {
-      try {
-        inv.container.addItem(new ItemStack(`minecraft:${id}`, count));
-      } catch (err) {
-        console.warn(`[jbrain-wreck] kit ${id}: ${err}`);
+  if (step === "terrain") {
+    // Clear the site of trees and plants, then shape the footprint to the deck.
+    const { x0, z0, w, h } = state.ground;
+    for (let x = x0; x < x0 + w; x += 1) {
+      for (let z = z0; z < z0 + h; z += 1) {
+        const g = ground(x, z);
+        if (g && !g.water) clearColumn(dim, x, z, g);
+        if (++n % 32 === 0) yield;
       }
     }
-  });
-  world.setDefaultSpawnLocation(plan.spawnPoint(frame));
-  command(dim, "gamerule spawnradius 0");
+    for (let x = o.x; x < o.x + sx; x += 1) {
+      for (let z = o.z; z < o.z + sz; z += 1) {
+        const g = ground(x, z);
+        if (!g || frame.splash) continue;
+        for (let y = g.y + 1; y <= state.site.y; y += 1) set(dim, x, y, z, mats.fill);
+        for (let y = state.site.y + 1; y <= Math.max(g.y, state.site.y); y += 1) set(dim, x, y, z, "air");
+      }
+      yield;
+    }
+  } else if (step === "place") {
+    world.structureManager.place(pod.id, dim, o);
+  } else if (step === "crater") {
+    // The crater, the soil it shoved up, and the skid mark, in the local ground's
+    // colours. Heights are the first read's, so a re-run lands on the same blocks.
+    for (const c of crater) {
+      const g = ground(c.x, c.z);
+      if (!g || g.water || inFootprint(c.x, c.z)) continue;
+      if (c.dig > 0) {
+        for (let y = g.y - c.dig + 1; y <= g.y; y += 1) set(dim, c.x, y, c.z, "air");
+        set(dim, c.x, g.y - c.dig, c.z, plan.pick(mats.dig, c.x, c.z, 1));
+      } else if (c.raise > 0) {
+        for (let y = g.y + 1; y <= g.y + c.raise; y += 1) set(dim, c.x, y, c.z, mats.rim);
+      } else {
+        set(dim, c.x, g.y, c.z, plan.pick(mats.dig, c.x, c.z, 2));
+      }
+      if (++n % 32 === 0) yield;
+    }
+  } else if (step === "canopy") {
+    // The parachute, draped at each column's own height; on water it floats as wool,
+    // and it never goes near lava.
+    const raised = new Map(crater.map((c) => [`${c.x},${c.z}`, c.raise - c.dig]));
+    for (const c of plan.canopyCells(frame)) {
+      const g = ground(c.x, c.z);
+      if (!g || g.lava || inFootprint(c.x, c.z)) continue;
+      if (g.water) set(dim, c.x, g.y, c.z, c.block.replace("_carpet", "_wool"));
+      else set(dim, c.x, g.y + 1 + (raised.get(`${c.x},${c.z}`) ?? 0), c.z, c.block);
+      if (++n % 32 === 0) yield;
+    }
+  } else if (step === "details") {
+    for (const c of plan.hatchCover(frame)) {
+      const g = ground(c.x, c.z);
+      if (!g || g.water || inFootprint(c.x, c.z)) continue;
+      if (c.block === "iron_trapdoor") {
+        set(dim, c.x, g.y + 1, c.z, c.block, { direction: 0, open_bit: false, upside_down_bit: false });
+      } else {
+        set(dim, c.x, g.y + 1, c.z, c.block);
+      }
+    }
+    // Level ground in front of the hatch, so it opens onto somewhere to stand. Never
+    // over the hull: its frame round the hatch and its belly curve share these columns.
+    if (!frame.splash) {
+      const hull = new Set(pod.hull);
+      const grade = (x, y, z, id) => {
+        const b = blockAt(dim, x, y, z);
+        if (b && !hull.has(b.typeId)) set(dim, x, y, z, id);
+      };
+      for (const a of plan.hatchApron(frame)) {
+        const g = ground(a.x, a.z);
+        const from = g ? Math.min(g.y + 1, a.y) : a.y;
+        for (let y = from; y <= a.y; y += 1) grade(a.x, y, a.z, mats.fill);
+        for (let y = a.y + 1; y <= a.y + 3; y += 1) grade(a.x, y, a.z, "air");
+      }
+    }
+    // Two campfires smoking on the crater floor (only where it was dug, never a rim).
+    const [ax, az] = frame.axis;
+    const dug = new Map(crater.map((c) => [`${c.x},${c.z}`, c.dig]));
+    for (const d of [3, 5]) {
+      const x = Math.floor(frame.shield[0] - ax * d);
+      const z = Math.floor(frame.shield[2] - az * d + (d === 3 ? 2 : -2));
+      const g = ground(x, z);
+      const depth = dug.get(`${x},${z}`) ?? 0;
+      if (!g || g.water || depth < 1 || inFootprint(x, z)) continue;
+      set(dim, x, g.y - depth + 1, z, "campfire", { extinguished: false, "minecraft:cardinal_direction": "south" });
+    }
+  } else if (step === "kit") {
+    // The starter kit, into barrels still empty, so a re-run doesn't double it.
+    frame.barrels.forEach(([x, y, z], i) => {
+      const kit = plan.STARTER_KIT[i];
+      const container = blockAt(dim, x, y, z)?.getComponent("minecraft:inventory")?.container;
+      if (!kit || !container || container.emptySlotsCount < container.size) return;
+      for (const [id, count] of kit) {
+        try {
+          container.addItem(new ItemStack(`minecraft:${id}`, count));
+        } catch (err) {
+          console.warn(`[jbrain-wreck] kit ${id}: ${err}`);
+        }
+      }
+    });
+  } else if (step === "spawn") {
+    world.setDefaultSpawnLocation(plan.spawnPoint(frame));
+    command(dim, "gamerule spawnradius 0");
+  }
+}
+
+function* buildPod(dim, state) {
+  const { x: cx, z: cz } = state.spawn;
+  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* load4(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  const ground = plan.decodeGround(state.ground);
+  for (const step of POD_STEPS) {
+    if (state.steps.includes(step)) continue;
+    yield* podStep(dim, state, step, ground);
+    state.steps.push(step);
+    save(state);
+    yield;
+  }
+  command(dim, `tickingarea remove ${POD_AREA}`);
+}
+
+function* peakUnder(dim, x0, z0, lx, lz) {
+  let peak = -64;
+  let n = 0;
+  for (let x = x0; x < x0 + lx; x += 6) {
+    for (let z = z0; z < z0 + lz; z += 6) {
+      try {
+        const b = dim.getTopmostBlock({ x, z });
+        if (b) peak = Math.max(peak, b.y);
+      } catch {
+        // an unread column: the others decide
+      }
+      if (++n % 32 === 0) yield;
+    }
+  }
+  return peak;
 }
 
 function* buildShip(dim, state) {
@@ -234,37 +307,31 @@ function* buildShip(dim, state) {
     // keep the Overworld default
   }
   const [lx, ly, lz] = ship.size;
-  const base = plan.shipBase(state.frame, pod, ship);
-  for (const shift of plan.SHIP_SHIFTS) {
-    const x0 = base.x;
-    const z0 = base.z + shift;
-    command(dim, `tickingarea remove ${SHIP_AREA}`);
-    command(dim, `tickingarea add ${x0} 0 ${z0} ${x0 + lx - 1} 0 ${z0 + lz - 1} ${SHIP_AREA} true`);
-    yield* waitLoaded(dim, [[x0, z0], [x0 + lx - 1, z0], [x0, z0 + lz - 1], [x0 + lx - 1, z0 + lz - 1]]);
-    let peak = -64;
-    let n = 0;
-    for (let x = x0; x < x0 + lx; x += 6) {
-      for (let z = z0; z < z0 + lz; z += 6) {
-        try {
-          const b = dim.getTopmostBlock({ x, z });
-          if (b) peak = Math.max(peak, b.y);
-        } catch {
-          // an unread column: the others decide
-        }
-        if (++n % 32 === 0) yield;
+  if (!state.ship) {
+    const base = plan.shipBase(state.frame, pod, ship);
+    for (const shift of plan.SHIP_SHIFTS) {
+      const [x0, z0] = [base.x, base.z + shift];
+      area(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
+      yield* load4(dim, x0, z0, x0 + lx - 1, z0 + lz - 1);
+      const y = plan.shipHeight(base.y, yield* peakUnder(dim, x0, z0, lx, lz), ly, top);
+      if (y !== null) {
+        state.ship = { x: x0, y, z: z0 };
+        break;
       }
     }
-    const y = plan.shipHeight(base.y, peak, ly, top);
-    if (y !== null) {
-      state.ship = { x: x0, y, z: z0 };
-      break;
-    }
+    // Mountains everywhere it could go: hang it as high as it fits, over the base.
+    if (!state.ship) state.ship = { x: base.x, y: top - ly + 1, z: base.z };
+    state.tiles = 0;
+    save(state);
   }
-  // Mountains everywhere it could go: hang it as high as it fits, over the base.
-  if (!state.ship) state.ship = { x: base.x, y: top - ly + 1, z: base.z };
-  save(state);
-  for (const t of ship.tiles) {
-    world.structureManager.place(t.id, dim, { x: state.ship.x + t.x, y: state.ship.y, z: state.ship.z + t.z });
+  const { x, y, z } = state.ship;
+  area(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
+  yield* load4(dim, x, z, x + lx - 1, z + lz - 1);
+  for (let i = state.tiles ?? 0; i < ship.tiles.length; i += 1) {
+    const t = ship.tiles[i];
+    world.structureManager.place(t.id, dim, { x: x + t.x, y, z: z + t.z });
+    state.tiles = i + 1;
+    save(state);
     yield;
   }
   command(dim, `tickingarea remove ${SHIP_AREA}`);
@@ -272,47 +339,46 @@ function* buildShip(dim, state) {
 
 function* build(state) {
   const dim = world.getDimension("overworld");
-  if (!state.stage) {
-    const spawn = world.getDefaultSpawnLocation();
-    const cx = Math.floor(spawn.x);
-    const cz = Math.floor(spawn.z);
-    command(dim, `tickingarea add circle ${cx} 0 ${cz} 4 ${POD_AREA} true`);
-    const ring = [[cx - SURVEY, cz - SURVEY], [cx + SURVEY, cz + SURVEY], [cx - SURVEY, cz + SURVEY], [cx + SURVEY, cz - SURVEY]];
-    if (!(yield* waitLoaded(dim, ring))) {
-      emit({ ev: "wreck", phase: "waiting" }); // retried at the next load
-      return;
+  try {
+    if (!state.stage) yield* plan_(dim, state);
+    if (state.stage === "pod") {
+      yield* buildPod(dim, state);
+      state.stage = "ship";
+      save(state);
+      const o = state.frame.origin;
+      emit({ ev: "wreck", phase: "pod", x: o.x, y: o.y, z: o.z });
     }
-    state.spawn = { x: cx, z: cz };
-    state.stage = "pod";
-    save(state);
+    if (state.stage === "ship") {
+      yield* buildShip(dim, state);
+      state.stage = "done";
+      save(state);
+      emit({ ev: "wreck", phase: "ship", x: state.ship.x, y: state.ship.y, z: state.ship.z });
+    }
+    emit({ ev: "wreck", phase: "done" });
+  } catch (err) {
+    // Retried at the next load from the step it stopped on; a build that keeps failing
+    // is given up rather than left half-trying forever.
+    state.failures = (state.failures ?? 0) + 1;
+    const cause = String(err?.message ?? err).slice(0, 60);
+    if (state.failures >= MAX_FAILURES) {
+      state.stage = "done";
+      state.skipped = true;
+      save(state);
+      emit({ ev: "wreck", phase: "done", cause });
+    } else {
+      save(state);
+      emit({ ev: "wreck", phase: "failed", cause });
+    }
+  } finally {
+    dropAreas(dim);
   }
-  if (state.stage === "pod") {
-    const { x: cx, z: cz } = state.spawn;
-    command(dim, `tickingarea add circle ${cx} 0 ${cz} 4 ${POD_AREA} true`);
-    yield* waitLoaded(dim, [[cx - SURVEY, cz - SURVEY], [cx + SURVEY, cz + SURVEY]]);
-    const ground = yield* survey(dim, cx, cz, SURVEY);
-    const site = state.site ?? plan.chooseSite(ground, state.spawn, WRECK.pod);
-    state.site = site;
-    state.frame = plan.podFrame(site, WRECK.pod);
-    yield* buildPod(dim, state, ground);
-    command(dim, `tickingarea remove ${POD_AREA}`);
-    state.stage = "ship";
-    save(state);
-    emit({ ev: "wreck", phase: "pod", x: state.frame.origin.x, y: state.frame.origin.y, z: state.frame.origin.z });
-  }
-  if (state.stage === "ship") {
-    yield* buildShip(dim, state);
-    state.stage = "done";
-    save(state);
-    emit({ ev: "wreck", phase: "ship", x: state.ship.x, y: state.ship.y, z: state.ship.z });
-  }
-  emit({ ev: "wreck", phase: "done" });
 }
 
 world.afterEvents.worldLoad.subscribe(() => {
   emit({ ev: "wreck", phase: "loaded" });
   const state = load();
   if (state.stage === "done") {
+    dropAreas(world.getDimension("overworld")); // any a crash left behind
     emit({ ev: "wreck", phase: "done" }); // in case the wrapper missed it last time
     return;
   }

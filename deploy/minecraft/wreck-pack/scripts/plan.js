@@ -17,6 +17,9 @@ const PLANTS = new Set([
   "orange_tulip", "white_tulip", "pink_tulip", "oxeye_daisy", "cornflower",
   "lily_of_the_valley", "sunflower", "lilac", "rose_bush", "peony", "torchflower",
   "open_eyeblossom", "closed_eyeblossom", "wildflowers", "cactus_flower", "air",
+  "sea_pickle", "hanging_roots", "pitcher_plant", "pitcher_crop", "cave_vines",
+  "cave_vines_body_with_berries", "cave_vines_head_with_berries", "spore_blossom",
+  "torchflower_crop", "web", "twisting_vines", "weeping_vines", "seagrass_block",
 ]);
 const WATER = new Set([
   "water", "flowing_water", "seagrass", "tall_seagrass", "kelp", "bubble_column",
@@ -36,6 +39,7 @@ export function standsOnGround(id) {
 }
 
 export const isWater = (id) => WATER.has(bare(id));
+export const isLava = (id) => /lava$/.test(bare(id));
 
 // The crater and skid mark in scorched versions of the local ground. `dig` is the
 // crater floor and trail (weighted by repetition), `fill` what goes under the hull
@@ -287,12 +291,14 @@ export const SHIP_SHIFTS = [0, 40, -40, 80, -80, 120, -120];
 
 /**
  * The ship's height over ground whose highest block is `peak`: its signed-off height,
- * raised to clear the peak by `clear`, or null when that would push its top past the
- * build limit (`worldTop`, the highest buildable y).
+ * raised to clear the peak by `clear` (and lowered under the build limit, `worldTop`,
+ * when it started too high), or null when no height clears the peak and fits.
  */
 export function shipHeight(baseY, peak, sizeY, worldTop = 319, clear = 30) {
-  const y = Math.max(baseY, peak + clear);
-  return y + sizeY - 1 <= worldTop ? y : null;
+  // A pod high on a mountain puts the signed-off height past the limit: cap it there.
+  const highest = worldTop - sizeY + 1;
+  const y = Math.max(peak + clear, Math.min(baseY, highest));
+  return y <= highest ? y : null;
 }
 
 /** The pod's starter kit, barrel by barrel (the pod has a few; extras stay empty). */
@@ -300,5 +306,55 @@ export const STARTER_KIT = [
   [["bread", 8], ["apple", 4], ["cooked_beef", 4]],
   [["stone_pickaxe", 1], ["stone_axe", 1], ["stone_sword", 1], ["stone_shovel", 1]],
   [["torch", 16], ["oak_log", 12], ["coal", 6]],
-  [["white_bed", 1], ["water_bucket", 1], ["map", 1]],
+  [["bed", 1], ["water_bucket", 1], ["empty_map", 1]],
 ];
+
+/**
+ * The ground the pod stage was planned on, kept in the world so a build cut short
+ * resumes on the same heights instead of re-reading ground it has already dug: one
+ * character per column over the box (x0, z0, w, h), relative to `baseY`.
+ * Kinds: 0 ground, 1 water, 2 lava; "!" is a column that couldn't be read.
+ */
+export function encodeGround(ground, x0, z0, w, h, baseY) {
+  let out = "";
+  for (let x = x0; x < x0 + w; x += 1) {
+    for (let z = z0; z < z0 + h; z += 1) {
+      const g = ground(x, z);
+      const dy = g ? g.y - baseY : 0;
+      if (!g || dy < -60 || dy > 60) {
+        out += "!";
+        continue;
+      }
+      const kind = g.lava ? 2 : g.water ? 1 : 0;
+      out += String.fromCharCode(0x30 + (dy + 60) * 3 + kind);
+    }
+  }
+  return { x0, z0, w, h, baseY, data: out };
+}
+
+export function decodeGround(saved) {
+  const { x0, z0, w, h, baseY, data } = saved;
+  return (x, z) => {
+    if (x < x0 || z < z0 || x >= x0 + w || z >= z0 + h) return null;
+    const c = data.charCodeAt((x - x0) * h + (z - z0));
+    if (c === 0x21) return null;
+    const v = c - 0x30;
+    const kind = v % 3;
+    return { y: baseY + Math.floor(v / 3) - 60, water: kind > 0, lava: kind === 2 };
+  };
+}
+
+/** Every column the pod stage touches, as a box: its footprint, crater, canopy, cover. */
+export function podZone(frame, pod) {
+  const [sx, , sz] = pod.size;
+  const o = frame.origin;
+  const cols = [...craterColumns(frame), ...canopyCells(frame), ...hatchCover(frame), ...hatchApron(frame)];
+  let [x0, z0, x1, z1] = [o.x - 2, o.z - 2, o.x + sx + 2, o.z + sz + 2];
+  for (const c of cols) {
+    x0 = Math.min(x0, c.x);
+    z0 = Math.min(z0, c.z);
+    x1 = Math.max(x1, c.x + 1);
+    z1 = Math.max(z1, c.z + 1);
+  }
+  return { x0, z0, w: x1 - x0, h: z1 - z0 };
+}

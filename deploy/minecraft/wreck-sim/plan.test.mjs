@@ -125,3 +125,37 @@ test("the stable hash is deterministic and spread over 0..1", () => {
   assert.ok(Math.min(...xs) >= 0 && Math.max(...xs) < 1);
   assert.ok(Math.abs(xs.reduce((a, b) => a + b) / xs.length - 0.5) < 0.05);
 });
+
+test("a pod high on a mountain caps the ship under the build limit", () => {
+  assert.equal(plan.shipHeight(300, 70, 65), 255);
+  assert.equal(plan.shipHeight(300, 230, 65), null);
+});
+
+test("the ground kept in the world reads back exactly, water and lava included", () => {
+  const ground = (x, z) =>
+    x === 3 && z === 3 ? null
+      : { y: 64 + ((x * 7 + z) % 9) - 4, water: x === 1, lava: x === 2 && z === 2 };
+  const saved = plan.encodeGround(ground, 0, 0, 6, 5, 64);
+  assert.equal(saved.data.length, 30);
+  const back = plan.decodeGround(saved);
+  for (let x = 0; x < 6; x += 1) {
+    for (let z = 0; z < 5; z += 1) {
+      const g = ground(x, z);
+      const b = back(x, z);
+      if (!g) assert.equal(b, null);
+      else assert.deepEqual([b.y, b.water, b.lava], [g.y, g.water || g.lava, g.lava]);
+    }
+  }
+  assert.equal(back(9, 9), null); // outside the box
+  assert.ok(JSON.stringify(saved).length < 32767); // fits one dynamic property
+});
+
+test("the zone kept covers the footprint, crater, canopy, cover and apron", () => {
+  const f = plan.podFrame(plan.chooseSite(flat(), { x: 0, z: 0 }, POD), POD);
+  const z = plan.podZone(f, POD);
+  const inside = (c) => c.x >= z.x0 && c.z >= z.z0 && c.x < z.x0 + z.w && c.z < z.z0 + z.h;
+  for (const c of [...plan.craterColumns(f), ...plan.canopyCells(f), ...plan.hatchCover(f), ...plan.hatchApron(f)]) {
+    assert.ok(inside(c), JSON.stringify(c));
+  }
+  assert.ok(z.w * z.h < 10000); // a few KB in the world's record
+});
