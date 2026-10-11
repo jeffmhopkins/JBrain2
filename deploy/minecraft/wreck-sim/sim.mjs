@@ -131,11 +131,12 @@ async function run(name, spec, n, stopAt = Infinity) {
   if (spec.deadChunk) {
     // It can't build, so it must give up within its own waits, never hang.
     checks.gave_up = phases.startsWith("loaded,failed,failed,done") && done.some((e) => e.cause);
-    checks.gave_up_in_time = sim.now() - began <= 3 * 120_000;
+    // Three loads of at most 90 s each, and the two 30-tick-second retries between.
+    checks.gave_up_in_time = sim.now() - began <= 3 * 120_000 + 2 * 600 * (spec.tickMs ?? 50);
   }
   // Every block edit a build tries must land; the box once lost them all silently.
   checks.writes_landed = !logs.some((l) => l.includes("not written"));
-  // A build never waits with no ticking area up (the box's world all but stops then).
+  // A build never waits with no ticking area up, or its chunks go.
   checks.never_idle = sim.idleTicks() === 0;
   const wrote = (step) => {
     const line = logs.find((l) => l.includes(`[jbrain-wreck] step ${step}: `));

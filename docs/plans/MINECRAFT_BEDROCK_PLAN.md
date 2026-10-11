@@ -1825,6 +1825,18 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   still missing every 15 s, so the next run says what's stuck. The simulator's clock
   runs with its ticks, and a new `slow_and_stuck` scenario, a tick every 3 s and a spawn
   chunk that never loads, must give up within its waits.
+- The clock waits still gave up, in jungle and in plains. The pod and the mothership each
+  needed a retry, and the mothership never finished: 19 of its 84 chunks (6 in plains)
+  stayed missing for minutes. The progress lines showed the cause, and it wasn't the
+  empty world. During each 30-second retry, when the build job wasn't running, the world
+  ran 600 ticks a minute. While `loadBox` waited it ran about 1 tick every 15 s. The wait
+  yielded in a tight loop, and a job that never stops yielding gets the rest of every
+  tick, so the server starved itself and its chunks barely loaded. The 0.3 ticks a second
+  above, and the "idle" world before it, were this same spin. Now `loadBox` hands the job
+  back between reads (`system.runTimeout`, one tick) and picks it up on the next tick, so
+  waiting costs the world nothing. In the simulator, every job step now costs wall time
+  and `runTimeout` passes real ticks, so a spinning wait runs out its 90 s before its
+  chunks load: the old pack fails there, as on the box.
 
 ### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; not built)
 
