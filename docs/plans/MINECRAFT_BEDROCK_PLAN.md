@@ -1490,6 +1490,11 @@ screen's "Maps" section (M8) reuses the same component.
   - `mc_server_status`, `mc_players`, `mc_play_history`
   - `mc_world_info`, `mc_locate` (structure or biome, from the player's last trail
     point)
+  - `mc_what_is_at` and `mc_nearby` (2026-10-11, after the owner watched Dave hunt
+    biome by biome for "what biome is at 0,0"): one call for the biome and surface
+    height at a spot (explored ground, else the satellite's survey), and one for the
+    nearest structure of every kind around a spot (the server's own `locate`, swept
+    over Bedrock's structure ids checked on 1.26).
   - `mc_goals`, `mc_goal_create`, `mc_goal_update`, `mc_log`, `mc_log_read`
   - `mc_memory_read`, `mc_memory_add`, `mc_memory_replace`, `mc_memory_remove`
 - **Migration 0226:** `mc_goals`, `mc_goal_log`, `mc_player_memory`, `mc_chat_player`,

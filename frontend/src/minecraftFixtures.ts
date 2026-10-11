@@ -129,12 +129,20 @@ function player(
   };
 }
 
+function hoursSinceYesterdayNoon(): number {
+  const noon = new Date();
+  noon.setDate(noon.getDate() - 1);
+  noon.setHours(12, 0, 0, 0);
+  return (Date.now() - noon.getTime()) / 3_600_000;
+}
+
 export function mcPlayers(statsAvailable = false): MinecraftPlayers {
   return {
     players: [
       player("BlockyFox", 14 * 60 + 5, 19, true, 0),
       player("Mira_P", 9 * 60 + 40, 12, false, 1),
-      player("Steve42", 3 * 60 + 15, 5, false, 30),
+      // Noon yesterday, not "30 h ago": that read as two days ago before 6 am.
+      player("Steve42", 3 * 60 + 15, 5, false, hoursSinceYesterdayNoon()),
       player("Pebble_J", 48, 2, false, 24 * 4),
     ],
     stats_available: statsAvailable,

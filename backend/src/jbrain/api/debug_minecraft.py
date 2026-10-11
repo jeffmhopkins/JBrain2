@@ -249,6 +249,39 @@ async def minecraft_map_info(
     return await _sidecar(settings, "GET", "/map/info", params={"slot": slot, "dim": dim})
 
 
+@router.get("/map/point")
+async def minecraft_map_point(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    x: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    z: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+) -> dict[str, Any]:
+    """The biome and surface height at one column, explored or from the seed's survey —
+    Minecraft_Dave's `mc_what_is_at`."""
+    request.state.debug_detail = f"minecraft map point {slot} {dim} {x},{z}"
+    params = {"slot": slot, "dim": dim, "x": x, "z": z}
+    return await _sidecar(settings, "GET", "/map/point", params=params)
+
+
+@router.get("/map/nearby")
+async def minecraft_map_nearby(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    x: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    z: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+) -> dict[str, Any]:
+    """The nearest structure of each kind, by the running server's own `locate` —
+    Minecraft_Dave's `mc_nearby`. Read-only: `locate` generates nothing."""
+    request.state.debug_detail = f"minecraft map nearby {dim} {x},{z}"
+    params = {"dim": dim, "x": x, "z": z}
+    return await _sidecar(settings, "GET", "/map/nearby", params=params)
+
+
 @router.get("/map/tile/{dim}/{zoom}/{tx}/{tz}.png")
 async def minecraft_map_tile(
     dim: Annotated[str, Path(pattern=r"^(overworld|nether|the_end)$")],

@@ -1103,6 +1103,61 @@ class Rig:
             "predicted": predicted,
         }
 
+    def map_point(self, slot_id: str, dim: str, x: int, z: int) -> dict[str, Any]:
+        """What is at one block column: its biome and surface height, and whether that is
+        explored ground or the satellite's survey (the seed's prediction)."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+            raise ValueError("that point is outside the world")
+        d = mapping.DIMENSIONS[dim]
+        with self._map_lock:
+            folder, index = self._map_for(slot_id)
+            got, source = index.point(d, x, z), "explored"
+            seed = self._map_seed.get(folder)
+            if got is None and seed is not None:
+                got = self._predictor.grid(seed, d, x, z, 1, 1).get((x, z))
+                source = "survey"
+        if got is None:
+            return {"x": x, "z": z, "dimension": dim, "source": "unknown"}
+        height, biome = got
+        bedrock_id, name = mapping.BIOME_NAMES.get(biome, (f"biome {biome}", f"Biome {biome}"))
+        return {
+            "x": x,
+            "z": z,
+            "dimension": dim,
+            "source": source,
+            "biome": name,
+            "biome_id": f"minecraft:{bedrock_id}",
+            # The top block's y; the survey's is an estimate, typically within a few blocks.
+            "y": height + mapping.floor_of(d) - 1,
+        }
+
+    def map_nearby(self, dim: str, x: int, z: int) -> dict[str, Any]:
+        """The nearest structure of each kind the dimension has, from (x, z), by the
+        running server's own `locate` — exact, and it generates nothing."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+            raise ValueError("that point is outside the world")
+        if not self.bds.running:
+            raise RuntimeError("the server isn't running, so it can't search its world")
+        found = []
+        for kind in mapping.STRUCTURES[mapping.DIMENSIONS[dim]]:
+            got = mapping.parse_located(
+                self.bds.command(
+                    f"execute in {dim} positioned {x} 64 {z} run locate structure {kind}",
+                    wait_s=2.0,
+                    quiet_s=0.15,
+                )
+            )
+            if got is not None:
+                _, sx, sz = got
+                distance = round(math.dist((x, z), (sx, sz)))
+                found.append({"structure": kind, "x": sx, "z": sz, "distance": distance})
+        found.sort(key=lambda f: f["distance"])
+        return {"world": self.active_folder(), "dimension": dim, "x": x, "z": z, "nearby": found}
+
     def map_tile(self, slot_id: str, dim: str, zoom: int, tx: int, tz: int) -> bytes:
         if dim not in mapping.DIMENSIONS:
             raise ValueError("dimension must be overworld, nether or the_end")
@@ -1252,6 +1307,22 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
+        elif url.path in ("/map/point", "/map/nearby"):
+            dim = query.get("dim", ["overworld"])[0]
+            try:
+                x, z = int(query.get("x", [""])[0]), int(query.get("z", [""])[0])
+            except ValueError:
+                self._send(400, {"detail": "x and z are whole numbers"})
+                return
+            try:
+                if url.path == "/map/point":
+                    self._send(200, rig.map_point(query.get("slot", ["slot1"])[0], dim, x, z))
+                else:
+                    self._send(200, rig.map_nearby(dim, x, z))
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+            except (RuntimeError, bds.ConsoleError) as exc:
+                self._send(409, {"detail": str(exc)})
         elif m := _MAP_TILE.match(url.path):
             try:
                 image = rig.map_tile(

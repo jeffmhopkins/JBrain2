@@ -27,7 +27,7 @@ def sidecar(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def call(_cfg: Any, method: str, path: str, **kw: Any) -> dict[str, Any]:
         if state["down"]:
             raise HTTPException(status_code=503, detail="the server is stopped")
-        state["sent"].append((method, path, kw.get("json")))
+        state["sent"].append((method, path, kw.get("json"), kw.get("params")))
         if path == "/command":
             return {"lines": state["replies"].get(kw["json"]["command"], ["[x INFO] ok"])}
         return state["replies"].get(path, {})
@@ -58,6 +58,44 @@ async def test_locate_builds_one_fixed_command_from_checked_input(sidecar) -> No
         sent = len(sidecar["sent"])
         await _tools()["mc_locate"](bad, CTX)
         assert len(sidecar["sent"]) == sent, bad  # refused before any command
+
+
+async def test_what_is_at_names_the_biome_and_says_where_the_answer_came_from(
+    sidecar,
+) -> None:
+    sidecar["replies"]["/worlds"] = {"slots": [{"id": "slot3", "active": True}]}
+    sidecar["replies"]["/map/point"] = {
+        "source": "survey",
+        "biome": "Cherry Grove",
+        "biome_id": "minecraft:cherry_grove",
+        "y": 129,
+    }
+    out = await _tools()["mc_what_is_at"]({"x": 10, "z": -20}, CTX)
+    assert "Cherry Grove" in out and "y=129" in out and "survey" in out
+    assert sidecar["sent"][-1][3] == {"slot": "slot3", "dim": "overworld", "x": 10, "z": -20}
+    sidecar["replies"]["/map/point"] = {"source": "unknown"}
+    out = await _tools()["mc_what_is_at"]({"x": 0, "z": 0, "dimension": "the_end"}, CTX)
+    assert "unknown" in out
+    for bad in ({"x": 1}, {"x": 0, "z": 0, "dimension": "aether"}, {"x": "a", "z": 0}):
+        sent = len(sidecar["sent"])
+        await _tools()["mc_what_is_at"](bad, CTX)
+        assert len(sidecar["sent"]) == sent, bad  # refused before asking the box
+
+
+async def test_nearby_lists_structures_within_the_radius_nearest_first(sidecar) -> None:
+    sidecar["replies"]["/map/nearby"] = {
+        "nearby": [
+            {"structure": "village", "x": 200, "z": 152, "distance": 251},
+            {"structure": "trial_chambers", "x": 137, "z": 137, "distance": 193},
+            {"structure": "mansion", "x": 8120, "z": 8104, "distance": 11472},
+        ]
+    }
+    out = await _tools()["mc_nearby"]({"x": 0, "z": 0, "radius": 1000}, CTX)
+    assert "village at (200, 152), 251 blocks" in out and "trial chambers" in out
+    assert "mansion" not in out  # beyond the radius
+    assert sidecar["sent"][-1][3] == {"dim": "overworld", "x": 0, "z": 0}
+    sidecar["replies"]["/map/nearby"] = {"nearby": []}
+    assert "no structures" in await _tools()["mc_nearby"]({"x": 0, "z": 0}, CTX)
 
 
 async def test_world_info_reads_time_and_weather(sidecar) -> None:

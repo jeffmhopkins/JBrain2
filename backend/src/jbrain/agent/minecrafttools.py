@@ -54,6 +54,7 @@ GOAL_TITLE_MAX = 120
 _GAME_ID = re.compile(r"^(minecraft:)?[a-z_]{2,40}$")
 _GOAL_STATUSES = ("open", "done", "abandoned")
 _COORD_MAX = 30_000_000
+_DIMENSIONS = ("overworld", "nether", "the_end")
 
 
 def fence(body: str) -> str:
@@ -455,15 +456,10 @@ def build_minecraft_handlers(
         # gamertag, an add-on's event line — so the reply is fenced like any player text.
         return ToolOutput(fence("\n".join(out)), result_brief="time + weather")
 
-    async def mc_locate(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        kind = str(arguments.get("kind") or "")
-        what = str(arguments.get("id") or "").strip().lower()
-        if kind not in ("structure", "biome"):
-            return "kind must be structure or biome."
-        if not _GAME_ID.fullmatch(what):
-            return "That isn't a Bedrock id — e.g. mansion, village, ancient_city, cherry_grove."
-        if kind == "biome" and not what.startswith("minecraft:"):
-            what = f"minecraft:{what}"  # biomes need the namespace; structures don't (M0b)
+    async def where(arguments: dict, ctx: ToolContext) -> tuple[int, int, str] | str:
+        """The point a search starts from: the x and z given, else this chat's player's
+        last Overworld position in the loaded world, else world spawn. A sentence when
+        the arguments are wrong."""
         x, z = arguments.get("x"), arguments.get("z")
         origin = "the coordinates given"
         if (x is None) != (z is None):
@@ -499,11 +495,90 @@ def build_minecraft_handlers(
             return "x and z must be numbers."
         if abs(xi) > _COORD_MAX or abs(zi) > _COORD_MAX:
             return "Those coordinates are outside the world."
+        return xi, zi, origin
+
+    async def mc_locate(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        kind = str(arguments.get("kind") or "")
+        what = str(arguments.get("id") or "").strip().lower()
+        if kind not in ("structure", "biome"):
+            return "kind must be structure or biome."
+        if not _GAME_ID.fullmatch(what):
+            return "That isn't a Bedrock id — e.g. mansion, village, ancient_city, cherry_grove."
+        if kind == "biome" and not what.startswith("minecraft:"):
+            what = f"minecraft:{what}"  # biomes need the namespace; structures don't (M0b)
+        at = await where(arguments, ctx)
+        if isinstance(at, str):
+            return at
+        xi, zi, origin = at
         got = await console(f"execute positioned {xi} 64 {zi} run locate {kind} {what}")
         if isinstance(got, str):
             return got
         return ToolOutput(
             f"Searching from {origin} ({xi}, {zi}): {fence(_reply(got))}", result_brief=what
+        )
+
+    async def mc_what_is_at(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        dim = str(arguments.get("dimension") or "overworld")
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        at = await where(arguments, ctx)
+        if isinstance(at, str):
+            return at
+        xi, zi, origin = at
+        worlds = await sidecar("GET", "/worlds")
+        if isinstance(worlds, str):
+            return worlds
+        slot = next((w["id"] for w in worlds.get("slots", []) if w.get("active")), "slot1")
+        got = await sidecar(
+            "GET", "/map/point", params={"slot": slot, "dim": dim, "x": xi, "z": zi}
+        )
+        if isinstance(got, str):
+            return got
+        where_ = f"({xi}, {zi}) in the {dim.replace('_', ' ')}, {origin}"
+        if got.get("source") == "unknown":
+            return ToolOutput(
+                f"Nobody has explored {where_} yet, and the satellite's survey doesn't"
+                " reach that dimension, so it's unknown.",
+                result_brief="unknown",
+            )
+        how = (
+            "explored ground"
+            if got["source"] == "explored"
+            else "the satellite's survey (predicted from the seed; the height is within a"
+            " few blocks)"
+        )
+        return ToolOutput(
+            f"{where_}: {got['biome']} ({got['biome_id']}), surface at y={got['y']} — {how}.",
+            result_brief=str(got["biome"]),
+        )
+
+    async def mc_nearby(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        dim = str(arguments.get("dimension") or "overworld")
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        radius = _int(arguments.get("radius"), 2000, 100, 20000)
+        if radius is None:
+            return "radius must be a number of blocks."
+        at = await where(arguments, ctx)
+        if isinstance(at, str):
+            return at
+        xi, zi, origin = at
+        got = await sidecar("GET", "/map/nearby", params={"dim": dim, "x": xi, "z": zi})
+        if isinstance(got, str):
+            return got
+        near = [n for n in got.get("nearby", []) if n["distance"] <= radius]
+        head = f"Within {radius} blocks of ({xi}, {zi}) in the {dim.replace('_', ' ')}, {origin}"
+        if not near:
+            return ToolOutput(f"{head}: no structures.", result_brief="none")
+        lines = [
+            f"- {n['structure'].replace('_', ' ')} at ({n['x']}, {n['z']}), {n['distance']}"
+            " blocks away"
+            for n in near
+        ]
+        return ToolOutput(
+            head + " (nearest of each kind; temple = desert or jungle temple, witch hut or"
+            " igloo; ruins = ocean ruins):\n" + "\n".join(lines),
+            result_brief=f"{len(near)} nearby",
         )
 
     # --- goals and the progress log ---------------------------------------------------
@@ -757,6 +832,8 @@ def build_minecraft_handlers(
         "mc_play_history": mc_play_history,
         "mc_world_info": mc_world_info,
         "mc_locate": mc_locate,
+        "mc_what_is_at": mc_what_is_at,
+        "mc_nearby": mc_nearby,
         "mc_goals": mc_goals,
         "mc_goal_create": mc_goal_create,
         "mc_goal_update": mc_goal_update,
