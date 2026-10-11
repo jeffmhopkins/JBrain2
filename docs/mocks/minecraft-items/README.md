@@ -134,7 +134,7 @@ the most strongly canon materials of the three.
 | **F2** Canon allows hundreds of targets, so per-target fronts don't scale. | **One generic programmed look** on the item, the front and the top. The target appears only in the name and tooltip ("Iron Replicator"). The iron swatch is gone. |
 | **F3** There's no Replicator plan section. | Said in the header; the plan has since gained §M15, the Replicator. |
 | **F4** Facing, the GUI cube, and the bottom face. | In "Facts": `minecraft:placement_direction` with transformation permutations, a box check of which face the cube shows, and the bottom face. |
-| **F5** §M10 says "an Eye of Ender look with a glow". | Noted in "Facts", to reconcile in the build PR. |
+| **F5** §M10 says "an Eye of Ender look with a glow". | Reconciled: §M10 now names set A's icon. Since 2026-10-11 the pack is crafted from nine Ender Pearls, not Eyes of Ender. |
 | Cross 2: the top drew eight eyes, a checkerboard at 1×. | A's top now has eight of A's own capped cells, with no outlines between them, on one tuff panel. |
 | Cross 3: blank and programmed looked the same at 1×. | Programmed now shows on the **top**, the face a cube shows largest: every core and the centre light up. It also shows on the item sprite (the lights and the window) and on the front (the window and the side lights). |
 | Up-arrow fights M9 and reads as a plus. | Replaced by a non-directional ping (A), with A2's lens offered beside it. |
