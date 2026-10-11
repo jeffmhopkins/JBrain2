@@ -57,6 +57,19 @@ A minute between checks, rather than the S3's fifteen, because this panel sits o
 desk and its next dozen images are bring-up steps: an update should land while he is still
 looking at it. That is one TLS handshake a minute against the box, which is nothing.
 
+### The 0.0.3 probe: the board answers what the documents could not
+
+On the board since 0.0.1/0.0.2 (proven 2026-10-11): USB flash from the PWA, Wi-Fi 6, TLS to the
+box, and an OTA kept across a reset. 0.0.3 adds `main/probe.c`, **read-only**, started only
+after the rollback gate: it scans the I2C bus, reads the AXP2101's status and every rail's
+enable/voltage register, and watches GPIO9/10/18 as plain inputs. Its findings ride the
+telemetry `note` (`i2c=… axp=reg:val,… lvl=g9,g10,g18 edges=gN=level@deciseconds …`), and a
+button change wakes the loop so the box hears a press within seconds — which is how the
+left/middle/right order and GPIO18's polarity get settled with nothing but a finger on the
+panel. It writes no register and drives no pin, so it cannot leave the panel dark; it
+releases the bus afterwards because the C2 power service must be that bus's only owner.
+`HARDWARE.md` holds the researched facts these readings confirm or correct.
+
 ### Why the PMIC is left alone
 
 The AXP2101's power-on defaults are what power the ESP32-C6 in the first place — the chip is
