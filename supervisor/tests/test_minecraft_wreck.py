@@ -366,6 +366,27 @@ def test_a_test_world_keeps_its_mark_only_until_the_owner_takes_it_over(
     assert rig.restore_snapshot(snap["name"], "slot2")["test"] is False
 
 
+def test_the_sidecar_never_makes_an_owner_world_a_test_one() -> None:
+    """The debug API checks first; the sidecar refuses too, so a race or a bad check
+    still can't put the owner's world in the token's reach."""
+    _make_world("slot3")
+    rig = _rig()
+    rig.create_slot("slot2", {"name": "Not generated yet"})
+    with pytest.raises(ValueError):
+        rig.create_slot("slot2", {"name": "T", "test": True})
+    assert rig.slots.get("slot2")["name"] == "Not generated yet"
+    rig.slots.update("slot3", name="Mine", seed="7")
+    with pytest.raises(ValueError):
+        rig.reset_slot("slot3", "new_seed", test=True)
+    assert rig.slots.get("slot3")["test"] is False
+
+
+def test_the_owner_changing_a_test_world_makes_it_theirs() -> None:
+    rig = _rig()
+    rig.create_slot("slot4", {"name": "T", "test": True})
+    assert rig.update_slot("slot4", {"name": "Our base"})["test"] is False
+
+
 def test_the_default_is_saved_at_once_and_reported_in_status(tmp_path: Path) -> None:
     rig = _rig()
     rig.bds = bds.Bds(tmp_path)

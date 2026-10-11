@@ -781,6 +781,10 @@ class Rig:
         rec = self.slots.get(slot_id)
         if rec["exists"]:
             raise ValueError("that slot already holds a world — reset it first")
+        if body.get("test") and (rec["name"] or rec["seed"]):
+            # The debug API's guard, kept here too: a test world only goes in an empty
+            # slot, never over a world the owner made and hasn't generated yet.
+            raise ValueError("a test world only goes in an empty slot")
         seed = worlds.check_seed(str(body.get("seed") or "")) or worlds.new_seed()
         rules = worlds.check_rules(dict(body.get("rules") or {}), worlds.DEFAULT_RULES)
         return self.slots.update(
@@ -805,7 +809,8 @@ class Rig:
         fields = {k: body[k] for k in ("name", "gamemode", "difficulty") if k in body}
         if "cheats" in body:
             fields["cheats"] = bool(body["cheats"])
-        rec = self.slots.update(slot_id, **fields)
+        # The owner changing a test world makes it theirs, out of the debug API's reach.
+        rec = self.slots.update(slot_id, **fields, test=False)
         active = rec["folder"] == self.active_folder()
         if active and "difficulty" in fields and self.bds.running:
             with contextlib.suppress(bds.ConsoleError):
@@ -877,6 +882,9 @@ class Rig:
         active = folder == self.active_folder()
         if mode not in ("same_seed", "new_seed", "empty"):
             raise ValueError("reset mode must be same_seed, new_seed or empty")
+        if test and not rec["test"]:
+            # A test reset keeps a mark, never makes one: the owner's world stays theirs.
+            raise ValueError("only a test world can be reset as one")
         if mode == "empty" and active:
             raise ValueError("the loaded world can't be emptied — load another first")
         seed = worlds.check_seed(seed)

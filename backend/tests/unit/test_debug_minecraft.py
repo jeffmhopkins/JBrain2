@@ -383,3 +383,43 @@ async def test_a_load_needs_a_world_and_nobody_playing(sidecar) -> None:
     with pytest.raises(HTTPException) as exc:
         await mc.minecraft_load_world("slot1", req, SETTINGS, PRINCIPAL)
     assert exc.value.status_code == 409 and "BlockyFox" in str(exc.value.detail)
+
+
+async def test_an_idle_test_worlds_reset_doesnt_wait_on_players(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot4", "name": "T", "exists": True, "test": True})
+    replies["/status"] = httpx.Response(200, json={"players": [{"name": "Mira_P"}]})
+    await mc.minecraft_reset_test_world(
+        "slot4",
+        mc.TestResetIn(mode="empty"),
+        _request(FakeSupervisor(RUNNING)),
+        SETTINGS,
+        PRINCIPAL,
+    )
+    # Not loaded, so nobody is put out of the game: the reset goes ahead.
+    assert [r.url.path for r in seen] == ["/worlds", "/worlds/slot4/reset"]
+
+
+async def test_a_slot_the_box_doesnt_have_is_a_404(sidecar) -> None:
+    _, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot1", "name": "World"})
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_load_world(
+            "slot9", _request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL
+        )
+    assert exc.value.status_code == 404
+
+
+async def test_a_made_but_ungenerated_owner_world_is_not_a_free_slot(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot4", "seed": "5127"})  # name blanked
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_make_test_world(
+            "slot4",
+            mc.TestWorldIn(seed="9"),
+            _request(FakeSupervisor(RUNNING)),
+            SETTINGS,
+            PRINCIPAL,
+        )
+    assert exc.value.status_code == 409
+    assert _writes(seen) == []

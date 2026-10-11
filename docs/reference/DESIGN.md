@@ -3455,7 +3455,8 @@ its row line answers "will this one have it?" from the list. The rivals are kept
 - **Import** says *No crash site is added.* Imported and restored worlds are never touched.
 - **A test world** (made over the debug API to prove the crash site, plan §SW4) reads
   *test world, {date} — made over the debug API* as its origin, so the owner can tell it from
-  their own. Resetting, importing or restoring over it makes it theirs.
+  their own. Renaming it, changing its settings, or resetting, importing or restoring over it
+  makes it theirs.
 - **Each world row** has one more line, *Crash site:* followed by its state:
   - *on its way*;
   - *building — the pod*, with its phase, only while that world is loaded and the server is up;

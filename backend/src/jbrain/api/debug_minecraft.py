@@ -272,7 +272,7 @@ async def minecraft_make_test_world(
     (and its crash site built, while `wreck`) the first time it loads."""
     request.state.debug_detail = f"minecraft test world {slot} seed {body.seed}"
     rec = await _slot(settings, slot)
-    if rec.get("exists") or rec.get("name"):
+    if rec.get("exists") or rec.get("name") or rec.get("seed"):
         raise HTTPException(409, f"{slot} holds {rec.get('name') or 'a world'} — not a free slot")
     return await _sidecar(
         settings,
@@ -321,7 +321,9 @@ async def minecraft_load_world(
 ) -> dict[str, Any]:
     """Load a slot's world (the loaded one is backed up first): a test world to check
     it, then the owner's own back. Refused while anyone is playing, and for an empty
-    slot, which a load would generate a world in."""
+    slot. Each load backs up the world it leaves, and automatic backups push out the
+    oldest, so a sweep loads its test worlds back to back and the owner's once, at the
+    end."""
     request.state.debug_detail = f"minecraft load {slot}"
     rec = await _slot(settings, slot)
     if not rec.get("name"):
