@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1582,6 +1582,55 @@ piece is worn.
 **Spike first:** a smithing-transform recipe with a custom result keeps enchantments and
 damage on Bedrock; a custom wearable with an attachable shows on the Xbox; and the
 effect refresh doesn't flicker.
+
+### M15 — The Replicator: a furnace Dave programs to make one thing (owner, 2026-10-11; not built)
+
+**What and why.** The story and rules are canon in Bleepbloop_City's
+[`notes/lore.md`](https://github.com/jeffmhopkins/Bleepbloop_City/blob/main/notes/lore.md#the-replicator).
+A furnace surrounded by 8 Power Packs crafts a blank **Replicator**. Dave programs it from
+8 full stacks of a target, which he takes as the pattern. After that it burns any input
+block into one of the target, about every 10 s, on normal fuel. This section is only how
+jbrain2 builds it. It needs M10's Power Pack item, and it's endgame.
+
+**How it's built** (stable `@minecraft/server` only, in the `jbrain` pack):
+- **The item.** `jbrain:replicator` is a custom item (stack 1, its icon in the `jbrain`
+  resource pack). A shaped recipe in the behavior pack takes a furnace in the centre and
+  `jbrain:power_pack` in the other 8 slots. Each slot takes one, so a normal recipe works.
+  The programmed target is an **item dynamic property** (`target`, an item id). A
+  programmed one is named "<Target> Replicator", for example "Iron Replicator".
+- **Programming** is a Dave tool, `mc_replicator_program(target)`, in game only. It sends
+  a `scriptevent` that the pack handles for the asker alone:
+  - the asker holds a Replicator in the selected slot, blank or programmed;
+  - their inventory holds at least 512 of `target`, and `target`'s max stack size is 64;
+  - then the pack removes the 512, sets the property and renames the item, and Dave
+    confirms;
+  - otherwise nothing changes, and Dave says what's missing.
+  - It's an acting tool like transport on request: the pack checks everything, it only
+    touches the asker's own inventory, and the AI never moves items any other way.
+- **Placing.** On `playerInteractWithBlock` with a Replicator, or its placement, the pack
+  puts a **vanilla furnace** at the target spot. It records `{x, y, z, dim, target}` in a
+  world dynamic property, a list of replicators, and consumes the item.
+  - A vanilla furnace keeps the furnace UI and hopper behaviour for free.
+- **Running.** A `system.runInterval`, with its timing on the clock as the wreck's waits
+  are, visits each recorded replicator whose chunk is loaded, and every ~10 s:
+  - takes one item from the input slot and one fuel item, honouring the fuel's burn time
+    so coal lasts its 8 items;
+  - adds one `target` to the output slot when there's room.
+  - Vanilla smelting may race it for smeltable inputs; the pack drains the input first,
+    and a box check confirms the furnace's container slots behave.
+- **Breaking.** On `playerBreakBlock` of a recorded furnace, the pack cancels the furnace
+  drop, spawns the programmed Replicator item, with its target, at the spot, and forgets
+  the record. An explosion or piston is handled the same way where the API reports it.
+  Otherwise, a missing furnace found on the visit pass forgets the record.
+
+**Open (owner):** none in the canon. To check on the box: the furnace container's slot
+order, cancelling a furnace's drop, and the pace at which an empty server runs the
+interval.
+
+**Tests.** Node tests against the fake server cover the recipe's shape, programming
+(enough, too few, a 16-stack target, an unstackable target, reprogramming), the run loop
+(fuel burn time, a full output, an unloaded chunk) and breaking (the item returns with its
+target). The Dave tool gets the usual tool tests.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
