@@ -280,3 +280,16 @@ async def test_the_debug_block_finder_passes_its_search_through(sidecar) -> None
         "limit": "3",
         "radius": "2048",
     }
+
+
+async def test_the_debug_structure_index_and_sweep_pass_through(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/map/structures"] = httpx.Response(200, json={"structures": [], "stale": None})
+    replies["/map/structures/sweep"] = httpx.Response(202, json={"state": "running"})
+    req = _request(FakeSupervisor([]))
+    got = await mc.minecraft_map_structures(req, SETTINGS, PRINCIPAL, slot="slot2", dim="the_end")
+    assert got["stale"] is None
+    assert dict(seen[0].url.params) == {"slot": "slot2", "dim": "the_end"}
+    started = await mc.minecraft_map_sweep(req, SETTINGS, PRINCIPAL, slot="slot2")
+    assert started == {"state": "running"}
+    assert seen[1].method == "POST" and json.loads(seen[1].content) == {"slot": "slot2"}

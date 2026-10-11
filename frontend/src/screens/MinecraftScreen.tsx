@@ -49,6 +49,7 @@ import {
 } from "../minecraft";
 import { useForeground } from "../visibility";
 import { DaveSection } from "./MinecraftDave";
+import { MapEntry, MapLayer } from "./MinecraftMap";
 import { AllowlistSection, ServerSettingsSection } from "./MinecraftServerSettings";
 import { WorldModals } from "./MinecraftWorldSheets";
 import {
@@ -423,6 +424,7 @@ export function MinecraftScreen({
 
             <ErrLine />
             {installed && server && <WorldsEntry />}
+            {installed && server && <MapEntry />}
 
             <UpdateSection
               state={state}
@@ -516,6 +518,8 @@ export function MinecraftScreen({
           <WorldsLayer key="worlds" />
         ) : p.kind === "world" ? (
           <WorldLayer key={`world-${p.slot}`} slot={p.slot} />
+        ) : p.kind === "map" ? (
+          <MapLayer key="map" slot={p.slot} />
         ) : (
           <RulesLayer key={`rules-${p.slot}`} slot={p.slot} />
         ),

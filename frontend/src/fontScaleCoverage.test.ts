@@ -50,13 +50,14 @@ const SCOPED =
 
 /** Carve-outs, each for a reason that outlives this test:
  *  - tap targets and the visually-hidden clip box are absolutes, not type-relative;
- *  - the map / weather / hurricane / chart tool views draw into canvases and SVG
- *    viewBoxes and lay out on hand-tuned pixel grids (`grid-template-columns:
- *    44px 24px 42px 1fr`), so their cells cannot scale while their tracks do not;
+ *  - the map / weather / hurricane / chart tool views and the Minecraft map's canvas and
+ *    floating chrome (`.mc-map*`) draw into canvases and SVG viewBoxes and lay out on
+ *    hand-tuned pixel grids (`grid-template-columns: 44px 24px 42px 1fr`), so their cells
+ *    cannot scale while their tracks do not;
  *  - `.onbox-*`, `.molt-*`, `.location-screen` and the settings segment rows reuse
  *    `.seg`/`.seg-row` on other screens that this pass did not cover. */
 const EXEMPT =
-  /(tv-wx|tv-hu|tv-cc|tv-bar|tv-plot|loc-map|loc-pc|session-tap|chat-search|fb-lightbox-close|fb-sr-only|onbox|molt-|llm-member-seg|model-effort-row|seg-count|location-screen)/;
+  /(tv-wx|tv-hu|tv-cc|tv-bar|tv-plot|loc-map|mc-map|loc-pc|session-tap|chat-search|fb-lightbox-close|fb-sr-only|onbox|molt-|llm-member-seg|model-effort-row|seg-count|location-screen)/;
 
 /** A hairline and the 44px tap-target floor stay put at every scale. */
 const ABSOLUTE = new Set(["1px", "44px"]);

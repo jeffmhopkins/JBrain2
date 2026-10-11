@@ -633,3 +633,135 @@ export const MonitorIcon = (p: IconProps) => (
     <path d="M8 20h8M12 16v4" />
   </Icon>
 );
+
+// ---- the Minecraft map (docs/mocks/minecraft-map/a-full-bleed.html) ----
+
+export const MapIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z" />
+    <path d="M15 5.764v15M9 3.236v15" />
+  </Icon>
+);
+
+// "Show everyone": a target, the map's re-centre.
+export const LocateIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    <circle cx="12" cy="12" r="6" />
+    <circle cx="12" cy="12" r="1.5" />
+  </Icon>
+);
+
+export const CopyIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect width="14" height="14" x="8" y="8" rx="2" />
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+  </Icon>
+);
+
+export const ChevronUpIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m18 15-6-6-6 6" />
+  </Icon>
+);
+
+export const ChevronDownIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m6 9 6 6 6-6" />
+  </Icon>
+);
+
+export const CrosshairIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M22 12h-4M6 12H2M12 6V2M12 22v-4" />
+  </Icon>
+);
+
+// The satellite survey: ground predicted from the seed, as an orbiting satellite sees it.
+export const SatelliteIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M13 7 9 3 5 7l4 4M17 11l4 4-4 4-4-4M8 12l4 4 6-6-4-4ZM16 8l3-3M9 21a6 6 0 0 0-6-6" />
+  </Icon>
+);
+
+export const UserIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
+  </Icon>
+);
+
+export const CastleIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M22 20v-9H2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2ZM18 11V4H6v7M15 22v-4a3 3 0 0 0-6 0v4M22 11V9M2 11V9M6 4V2M18 4V2M10 4V2M14 4V2" />
+  </Icon>
+);
+
+export const GridIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+  </Icon>
+);
+
+export const RouteIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6" cy="19" r="3" />
+    <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+    <circle cx="18" cy="5" r="3" />
+  </Icon>
+);
+
+export const SkullIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3a8 8 0 0 0-5 14.2V20a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2.8A8 8 0 0 0 12 3z" />
+    <circle cx="9" cy="12" r="1.6" />
+    <circle cx="15" cy="12" r="1.6" />
+    <path d="M10 21v-2M14 21v-2" />
+  </Icon>
+);
+
+export const BedIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2 4v16M2 8h18a2 2 0 0 1 2 2v10M2 17h20M6 8v9" />
+  </Icon>
+);
+
+export const EyeIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+    <circle cx="12" cy="12" r="3" />
+  </Icon>
+);
+
+export const PortalIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="6" y="2" width="12" height="20" rx="1" />
+    <path d="M10 7c2 1 2 3 0 5s-2 4 0 5M14 7c-2 1-2 3 0 5s2 4 0 5" />
+  </Icon>
+);
+
+export const CloudOffIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m2 2 20 20M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.31-.2M21.53 16.82A4.5 4.5 0 0 0 17.5 10h-1.79A7.01 7.01 0 0 0 10.2 5.06" />
+  </Icon>
+);
+
+export const ArrowLeftIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m12 19-7-7 7-7M19 12H5" />
+  </Icon>
+);
+
+export const ArrowUpIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m5 12 7-7 7 7M12 19V5" />
+  </Icon>
+);
+
+export const ArrowDownIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 5v14M19 12l-7 7-7-7" />
+  </Icon>
+);
