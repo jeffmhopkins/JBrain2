@@ -170,6 +170,9 @@ PAGE = r"""<!doctype html>
     <div class="srow"><span class="sl">Tricorder</span>
       <button data-tri="a" aria-pressed="true">A · ping</button>
       <button data-tri="lens" aria-pressed="false">A2 · lens</button></div>
+    <div class="srow"><span class="sl">Pack</span>
+      <button data-pack="pearl" aria-pressed="true">Pearl</button>
+      <button data-pack="ember" aria-pressed="false">Ember (alt.)</button></div>
     <div class="srow"><span class="sl">Theme</span>
       <button data-theme-btn="system" aria-pressed="true">System</button>
       <button data-theme-btn="dark" aria-pressed="false">Dark</button>
@@ -199,7 +202,7 @@ PAGE = r"""<!doctype html>
       </div>
       <div class="item">
         <div class="nm">Power Pack</div>
-        <div class="ds">A copper-capped glass cell: a battery silhouette with the eye's green sealed inside. With the enchant glint, which is the item's own, not drawn into the texture.</div>
+        <div class="ds">A copper-capped glass cell: a battery silhouette with an Ender Pearl sealed inside, since pearls are most of its recipe (8 Ender Pearls around 1 Blaze Powder). The alternate puts a small ember at the pearl's heart for the Blaze Powder; the Pack switch above swaps it everywhere. With the enchant glint, which is the item's own, not drawn into the texture.</div>
         <div class="scales">
           <div class="sc"><div class="tile"><canvas class="pk" width="128" height="128" style="width:16px;height:16px" aria-label="Power Pack at 1×"></canvas></div><span>1×</span></div>
           <div class="sc"><div class="tile"><canvas class="pk" width="128" height="128" style="width:32px;height:32px" aria-label="Power Pack at 2×"></canvas></div><span>2×</span></div>
@@ -269,7 +272,7 @@ PAGE = r"""<!doctype html>
 
     <section class="card" aria-labelledby="h-face">
       <h2 id="h-face">The Replicator's faces</h2>
-      <p class="note">Each 16×16 at 8×. The top is the recipe seen from above: eight of A's own Power Pack cells round the furnace, standing in one tuff panel. Programmed is one look for every target.</p>
+      <p class="note">Each 16×16 at 8×. The top is the recipe seen from above: eight of A's own Power Pack cells, pearl cores and all, round the furnace, standing in one tuff panel. Programmed is one look for every target.</p>
       <div class="faces">
         <figure><img src="__rep_front__" alt="Front, blank" /><figcaption>Front · blank</figcaption></figure>
         <figure><img src="__rep_front_on__" alt="Front, programmed" /><figcaption>Front · programmed</figcaption></figure>
@@ -292,6 +295,7 @@ PAGE = r"""<!doctype html>
 
 <script>
 const TRI = {a:"__tricorder__", lens:"__tricorder_lens__"};
+const PACKS = {pearl:"__power_pack__", ember:"__power_pack_ember__"};
 const IMG = {tricorder:"__tricorder__", pack:"__power_pack__", rep:"__rep_item__", iron:"__rep_item_on__", eye:"__eye__", pearl:"__pearl__", compass:"__compass__", spyglass:"__spyglass__"};
 const NAMES = {tricorder:"BlockyFox's Tricorder", pack:"Power Pack", eye:"Eye of Ender", pearl:"Ender Pearl", compass:"Compass", spyglass:"Spyglass", furnace:"Furnace", rep:"Replicator", iron:"Iron Replicator"};
 const LORE = {tricorder:"Points where Dave says", pack:"Keeps your things, or takes you somewhere", rep:"Ask Dave to program it", iron:"Burns any block into iron"};
@@ -380,12 +384,19 @@ function frame(t){
   if (t - last > 33){ last = t; document.querySelectorAll("canvas.pk").forEach(c => drawPack(c, t)); }
   if (moving) requestAnimationFrame(frame);
 }
-function still(){ document.querySelectorAll("canvas.pk").forEach(c => drawPack(c, 1100)); }
+// Held still, the sweep sits off the icon so only the tint shows and the core stays readable.
+function still(){ document.querySelectorAll("canvas.pk").forEach(c => drawPack(c, 0)); }
 const glintBtn = document.getElementById("glintBtn");
 function setMoving(m){ moving = m; glintBtn.setAttribute("aria-pressed", m ? "true" : "false"); glintBtn.textContent = m ? "Moving" : "Still"; if (m) requestAnimationFrame(frame); else still(); }
 glintBtn.addEventListener("click", () => setMoving(!moving));
 reduce.addEventListener("change", () => setMoving(!reduce.matches));
-packImg.onload = () => setMoving(moving);
+// A pack swap reloads the image; only the first load starts the glint loop.
+let started = false;
+packImg.onload = () => { if (!started){ started = true; setMoving(moving); } else if (!moving) still(); };
+document.querySelectorAll("[data-pack]").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-pack]").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  packImg.src = PACKS[b.dataset.pack];
+}));
 
 document.querySelectorAll("[data-tri]").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll("[data-tri]").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
@@ -414,6 +425,7 @@ def build():
         "__tricorder__": uri(a / "tricorder.png"),
         "__tricorder_lens__": uri(a / "tricorder_lens.png"),
         "__power_pack__": uri(a / "power_pack.png"),
+        "__power_pack_ember__": uri(a / "power_pack_ember.png"),
         "__rep_item__": uri(a / "replicator.png"),
         "__rep_item_on__": uri(a / "replicator_programmed.png"),
         "__rep_front__": uri(a / "replicator_front.png"),

@@ -73,6 +73,9 @@ PAL = {
         "t": "#6e7068", "T": "#83857c", "u": "#5a5c54",
         "i": "#e4e4e4", "I": "#ffffff", "j": "#a9a9a9",
         "x": "#141010",
+        # The pearl sealed in A's Power Pack (revision 3: the recipe is nine Ender Pearls).
+        "m": "#2f8a7f", "M": "#a6ecdc", "z": "#155550", "n": "#0b2f2e",
+        "O": "#ff9a1f", "Y": "#ffe36b",  # the ember alternate's blaze glow
         **EYE,
     },
     "b": {  # deep-dark: deepslate, sculk glow and echo shard
@@ -178,7 +181,8 @@ TRICORDER = {
 
 # ---- Power Packs ----------------------------------------------------------------------
 def pack_a():
-    # A tall copper-capped cell: a battery silhouette, the eye's green sealed in glass.
+    # A tall copper-capped cell: a battery silhouette with an Ender Pearl sealed in glass.
+    # The caps and the upright cell, not the core, are what part it from a loose pearl.
     return [
         "................",
         "......KKKK......",
@@ -186,11 +190,11 @@ def pack_a():
         "...KKKKKKKKKK...",
         "...KCCCcccddK...",
         "...KKKKKKKKKK...",
-        "...KvWEEEEgvK...",
-        "...KvEekkeEvK...",
-        "...KvEekkegvK...",
-        "...KveekkegvK...",
-        "...KvgeeeggvK...",
+        "...KvVzmmzVvK...",
+        "...KvmMMmmzvK...",
+        "...KvmMmmznvK...",
+        "...KvzmmzznvK...",
+        "...KvVznnnVvK...",
         "...KKKKKKKKKK...",
         "...KCCCcccddK...",
         "...KcccccdddK...",
@@ -249,6 +253,15 @@ def pack_c():
     c[2][4] = c[2][11] = "Y"
     c[13][7], c[13][8] = "R", "r"
     return rows(c)
+
+
+def pack_a_ember():
+    # The owner's alternate: the same pearl with an ember at its heart, for the Blaze Powder
+    # at the centre of the recipe.
+    g = pack_a()
+    g[8] = "...KvmMYOznvK..."
+    g[9] = "...KvzOOzznvK..."
+    return g
 
 
 PACK = {"a": pack_a(), "b": pack_b(), "c": pack_c()}
@@ -408,10 +421,10 @@ def a_front(on):
 
 
 def a_cell(c, x0, y0, on):
-    # A's own Power Pack, shrunk to 2x4 and standing in the tuff: caps over a green core.
+    # A's own Power Pack, shrunk to 2x4 and standing in the tuff: caps over a pearl core.
     c[y0][x0 + 1:x0 + 3] = list("Cc")
-    c[y0 + 1][x0 + 1:x0 + 3] = list("Ee" if on else "eg")
-    c[y0 + 2][x0 + 1:x0 + 3] = list("ew" if on else "gg")
+    c[y0 + 1][x0 + 1:x0 + 3] = list("Mm" if on else "zn")
+    c[y0 + 2][x0 + 1:x0 + 3] = list("mM" if on else "nn")
     c[y0 + 3][x0 + 1:x0 + 3] = list("cd")
 
 
@@ -592,6 +605,7 @@ def build():
         "tricorder": render(TRICORDER["a"], pal),
         "tricorder_lens": render(TRICORDER_LENS, pal),
         "power_pack": render(PACK["a"], pal),
+        "power_pack_ember": render(pack_a_ember(), pal),
         "replicator": render(a_item(False), pal),
         "replicator_programmed": render(a_item(True), pal),
         "replicator_front": f0,
@@ -687,7 +701,47 @@ def contact(out, van, dest):
     sheet.save(Path(dest) / "contact.png")
 
 
+def contact_pearl(out, van, dest):
+    """Revision 3's sheet: the pearl-core pack, its ember alternate and the tops at 8x, then
+    both packs between a loose pearl and an eye at 1x, 2x and 3x, on a hotbar-dark and an
+    inventory-grey ground."""
+    A = out["a"]
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
+    big = [("ender pearl (ours)", van["ender_pearl"]), ("pack, pearl", A["power_pack"]),
+           ("pack, ember (alt.)", A["power_pack_ember"]),
+           ("eye of ender (ours)", van["ender_eye"]), ("top", A["replicator_top"]),
+           ("top, prog.", A["replicator_top_programmed"])]
+    s, pad = 8, 16
+    W = pad + len(big) * (N * s + pad)
+    H = 30 + N * s + 40 + 2 * (N * 3 + 40) + 20
+    sheet = Image.new("RGBA", (W, H), (40, 42, 46, 255))
+    dr = ImageDraw.Draw(sheet)
+    for i, (label, im) in enumerate(big):
+        x = pad + i * (N * s + pad)
+        dr.text((x, 8), label, fill="#e6e7e9", font=font)
+        dr.rectangle([x, 28, x + N * s - 1, 28 + N * s - 1], fill=(139, 139, 139, 255))
+        sheet.alpha_composite(im.resize((N * s,) * 2, Image.Resampling.NEAREST), (x, 28))
+    y = 28 + N * s + 30
+    strip = [van["ender_pearl"], A["power_pack"], A["power_pack_ember"], van["ender_eye"]]
+    for ground, name in (((40, 40, 40, 255), "hotbar"), ((139, 139, 139, 255), "inventory")):
+        dr.text((pad, y + 12), f"1x / 2x / 3x, {name}", fill="#e6e7e9", font=font)
+        x = pad + 170
+        for scale in (1, 2, 3):
+            slot = 20 * scale
+            for im in strip:
+                dr.rectangle([x, y, x + slot - 1, y + slot - 1], fill=ground,
+                             outline=(110, 110, 110, 255))
+                o = 2 * scale
+                sheet.alpha_composite(im.resize((N * scale,) * 2, Image.Resampling.NEAREST),
+                                      (x + o, y + o))
+                x += slot
+            x += 24
+        y += N * 3 + 40
+    sheet.save(Path(dest) / "contact-pearl.png")
+
+
 if __name__ == "__main__":
     o, vn = build()
     if len(sys.argv) > 1:
         contact(o, vn, sys.argv[1])
+        contact_pearl(o, vn, sys.argv[1])
