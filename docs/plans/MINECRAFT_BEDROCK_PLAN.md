@@ -1140,8 +1140,10 @@ space), a refused bad dimension, cleared. **Saved places (2026-10-11):** `mc_set
 also takes `place`, a name the player saved with `mc_place_save` (`app.mc_places`,
 migration 0228: per player and world folder, names unique ignoring case, saving again
 moves it; `mc_places` lists them with the way to each from the asker in game,
-`mc_place_remove` forgets one). With no coordinates a place is saved where the in-game
-asker stands, else at the player's last tracked position. **"home"** is their saved home,
+`mc_place_remove` forgets one). A place is saved where the player is right now, never at
+typed coordinates (owner, 2026-10-11): where the in-game asker stands, or from the PWA at
+their position while they're online (a sample under a minute old). Otherwise nothing is
+saved. **"home"** is their saved home,
 else the bed the in-game event reported, else Dave says neither exists and offers to mark
 it. In game the answer also says which way and how far the target is. Still to come from the design below: the
 per-xuid player property, the named and retired "<Player>'s Tricorder", keepOnDeath, and
@@ -1304,9 +1306,11 @@ a place the asker has saved with `mc_place_save` (`app.mc_places`), such as "hom
 another player's place. To go somewhere new, the player saves it first. ~~The earlier
 list of other "known" places (beds, shared waypoints, confirmed `locate` results)~~ is
 superseded.
-- **Open (owner):** `mc_place_save` also takes typed coordinates, so a player could save a
-  place they've never been to and transport there. Should a transport target only places
-  saved while standing there?
+- **Saving marks where the player is standing (owner, 2026-10-11).** `mc_place_save`
+  takes no coordinates. In game it saves where the asker stands. From the PWA it saves
+  the player's current position only while they're online, from a tracker sample less than
+  a minute old, and otherwise refuses. So a saved place, and any transport, is always
+  somewhere they've been.
 
 **The flow (in game):**
 1. "Dave, take me to *market*." Dave names the place, the distance and dimension, and the

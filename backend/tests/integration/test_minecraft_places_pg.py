@@ -179,40 +179,64 @@ async def test_saving_again_moves_and_remove_forgets(maker, sidecar) -> None:
     owner = await _owner(maker)
     ctx = await _chat(maker, owner)
     tools = _tools(maker)
-    await tools["mc_place_save"]({"name": "base", "x": 1, "y": 64, "z": 2}, ctx)
-    moved = await tools["mc_place_save"](
-        {"name": "BASE", "x": 9, "z": 9, "dimension": "nether"}, ctx
-    )
+    with asking(ctx.agent_session_id, _asker(Spot(1, 64, 2, "overworld"))):
+        await tools["mc_place_save"]({"name": "base"}, ctx)
+    with asking(ctx.agent_session_id, _asker(Spot(9, 70, 9, "nether"))):
+        moved = await tools["mc_place_save"]({"name": "BASE"}, ctx)
     assert "moved from (1, 2, y 64) in the Overworld" in moved
     async with scoped_session(maker, owner) as s:
         rows = (await s.execute(text("SELECT name, x, dim, world FROM app.mc_places"))).all()
     assert [tuple(r) for r in rows] == [("BASE", 9, "nether", "slot2")]
-    assert "Removed" in await tools["mc_place_remove"]({"name": "base"}, ctx)
-    assert "no saved place" in await tools["mc_place_remove"]({"name": "base"}, ctx)
-    assert "no saved places" in await tools["mc_places"]({}, ctx)
-    assert "outside the world" in await tools["mc_place_save"](
-        {"name": "x", "x": 0, "z": 0, "y": 999}, ctx
-    )
+    with asking(ctx.agent_session_id, _asker(Spot(9, 70, 9, "nether"))):
+        assert "Removed" in await tools["mc_place_remove"]({"name": "base"}, ctx)
+        assert "no saved place" in await tools["mc_place_remove"]({"name": "base"}, ctx)
+        assert "no saved places" in await tools["mc_places"]({}, ctx)
+    with asking(ctx.agent_session_id, _asker(Spot(0, 999, 0, "overworld"))):
+        assert "outside the world" in await tools["mc_place_save"]({"name": "x"}, ctx)
 
 
-async def test_from_the_pwa_a_place_defaults_to_the_last_tracked_spot(maker, sidecar) -> None:
+async def test_a_place_is_only_ever_where_the_player_stands(maker, sidecar) -> None:
+    """No saving by coordinates (owner, 2026-10-11): a saved place is what a transport
+    may go to, so it must be somewhere the player has stood."""
+    owner = await _owner(maker)
+    ctx = await _chat(maker, owner)
+    tools = _tools(maker)
+    with asking(ctx.agent_session_id, _asker(Spot(5, 64, 6, "overworld"))):
+        out = await tools["mc_place_save"](
+            {"name": "far", "x": 9000, "y": 70, "z": -9000, "dimension": "nether"}, ctx
+        )
+    assert "(5, 6, y 64) in the Overworld" in out
+    async with scoped_session(maker, owner) as s:
+        rows = (await s.execute(text("SELECT x, z, dim FROM app.mc_places"))).all()
+    assert [tuple(r) for r in rows] == [(5, 6, "overworld")]
+
+
+async def test_from_the_pwa_a_place_is_where_the_player_is_right_now(maker, sidecar) -> None:
     owner = await _owner(maker)
     await _seen(maker, owner, "111", "Steve 42")
     ctx = await _chat(maker, owner)
     tools = _tools(maker)
-    assert "no known position" in await tools["mc_place_save"]({"name": "camp"}, ctx)
-    async with scoped_session(maker, owner) as s:
-        for world, x in (("world", 5.0), ("slot2", 300.6)):
+    assert "isn't in this world right now" in await tools["mc_place_save"]({"name": "camp"}, ctx)
+
+    async def sample(world: str, x: float, age_s: int) -> None:
+        async with scoped_session(maker, owner) as s:
             await s.execute(
                 text(
                     "INSERT INTO app.mc_player_track (world, xuid, gamertag, boot_id,"
                     " sample_id, at, dim, x, y, z) VALUES (:w, '111', 'Steve 42', :b, 1,"
-                    " now(), 'overworld', :x, 64.2, -40.5)"
+                    " now() - make_interval(secs => :age), 'overworld', :x, 64.2, -40.5)"
                 ),
-                {"w": world, "b": str(uuid.uuid4()), "x": x},
+                {"w": world, "b": str(uuid.uuid4()), "x": x, "age": age_s},
             )
+
+    # Seen in this world, but not now (logged off minutes ago): not where they are.
+    await sample("slot2", 77.0, 600)
+    assert "isn't in this world right now" in await tools["mc_place_save"]({"name": "camp"}, ctx)
+    await sample("world", 5.0, 0)  # online, but in another world
+    assert "isn't in this world right now" in await tools["mc_place_save"]({"name": "camp"}, ctx)
+    await sample("slot2", 300.6, 5)
     out = await tools["mc_place_save"]({"name": "camp"}, ctx)
-    assert "(300, -41, y 64)" in out and "last known position" in out
+    assert "(300, -41, y 64)" in out and "right now" in out
 
 
 async def test_places_kept_by_name_move_to_the_xuid(maker, sidecar) -> None:
@@ -243,7 +267,8 @@ async def test_places_kept_by_name_move_to_the_xuid(maker, sidecar) -> None:
 async def test_a_non_owner_sees_no_places_and_cannot_write_one(maker, sidecar, ctx_name) -> None:
     owner = await _owner(maker)
     ctx = await _chat(maker, owner)
-    await _tools(maker)["mc_place_save"]({"name": "base", "x": 1, "z": 2}, ctx)
+    with asking(ctx.agent_session_id, _asker(Spot(1, 64, 2, "overworld"))):
+        assert "Saved" in await _tools(maker)["mc_place_save"]({"name": "base"}, ctx)
     other = {"EVERY_SCOPE": EVERY_SCOPE, "UNSCOPED": UNSCOPED}[ctx_name]
     async with scoped_session(maker, other) as s:
         assert (await s.execute(text("SELECT count(*) FROM app.mc_places"))).scalar() == 0
