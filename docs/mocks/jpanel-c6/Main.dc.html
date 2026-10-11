@@ -184,17 +184,18 @@ body{margin:0}
           </div>
         </sc-if>
 
+        <sc-if value="{{isClockFace}}" hint-placeholder-val="{{false}}">
+          <button onClick="{{openAlarms}}" aria-label="{{clock.aria}}" style="position: absolute; inset: 0; border: none; background: #000000; color: #E6E7E9; font-family: inherit; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;">
+            <span style="font-size: 150px; font-weight: 700; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums;">{{clock.hm}}</span>
+          </button>
+        </sc-if>
+
         <sc-if value="{{isClock}}" hint-placeholder-val="{{false}}">
           <div ref="{{clockRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 18px 20px 28px; box-sizing: border-box;">
           <div style="display: flex; flex-direction: column; gap: 14px;">
-            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 10px;">
-              <div style="display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums;">
-                <span style="font-size: 104px; font-weight: 700; line-height: 1; letter-spacing: -0.02em;">{{clock.hm}}</span>
-                <span style="font-size: 30px; font-weight: 600; color: #9A9DA3;">{{clock.ampm}}</span>
-              </div>
-              <span style="font-size: 22px; font-weight: 500; color: #9A9DA3;">{{clock.date}}</span>
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
               <sc-if value="{{hasNext}}" hint-placeholder-val="{{true}}">
-                <span style="margin-top: 8px; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; background: rgba(201,163,106,0.14); color: #C9A36A; font-size: 18px; font-weight: 600;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{nextAlarm}}</span></span>
+                <span style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; background: rgba(201,163,106,0.14); color: #C9A36A; font-size: 18px; font-weight: 600;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{nextAlarm}}</span></span>
               </sc-if>
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 6px 18px; display: flex; flex-direction: column;">
@@ -369,7 +370,7 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","elora","rec-elora","lydian","minecraft","settings","updating","calib","clock","ringing"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","elora","rec-elora","lydian","minecraft","settings","updating","calib","clock","clock-alarms","ringing"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -378,7 +379,7 @@ class Component extends DCLogic {
       lydian: { color: '#6FB6B1', tint: 'rgba(111,182,177,0.16)', name: 'Lydian', initial: 'L' },
       minecraft: { color: '#8FBC9A', tint: 'rgba(143,188,154,0.16)', name: 'Minecraft', initial: '' },
       settings: { color: '#C4C7CC', tint: '#1E2024', name: 'Settings', initial: '' },
-      clock: { color: '#E6E7E9', tint: '#1E2024', name: 'Clock', initial: '' }
+      clock: { color: '#E6E7E9', tint: '#1E2024', name: 'Alarms', initial: '' }
     };
   }
 
@@ -401,7 +402,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null,
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null,
       alarms: [
         { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
@@ -413,6 +414,7 @@ class Component extends DCLogic {
     if (start === 'updating') { s.screen = 'settings'; s.fw = { version: '0.0.1', phase: 'downloading', pct: 64 }; }
     if (start === 'calib') { s.screen = 'settings'; s.calib = { i: 5, taps: 1 }; }
     if (start === 'clock') { s.screen = 'clock'; s.page = 1; }
+    if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
     if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
     if (start === 'rec-elora') { s.screen = 'elora'; s.rec = { to: 'elora', secs: 4.1, frozen: true }; }
@@ -445,8 +447,7 @@ class Component extends DCLogic {
   }
 
   hm(h, m) {
-    const h12 = h % 12 === 0 ? 12 : h % 12;
-    return { hm: h12 + ':' + String(m).padStart(2, '0'), ampm: h < 12 ? 'AM' : 'PM' };
+    return { hm: String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'), ampm: '' };
   }
 
   speakDone(id) {
@@ -460,7 +461,7 @@ class Component extends DCLogic {
     const t = s.ring.h * 60 + s.ring.m + 9;
     const when = this.hm(Math.floor(t / 60) % 24, t % 60);
     this.put({ ring: null });
-    this.say('Snoozed until ' + when.hm + ' ' + when.ampm);
+    this.say('Snoozed until ' + when.hm);
   }
 
   toggleWifi() {
@@ -578,7 +579,7 @@ class Component extends DCLogic {
     if (s.off || s.rec || s.calib) return null;
     if (s.ring) return null;
     if (s.screen === 'settings') return this.settingsEl || null;
-    if (s.screen === 'clock') return this.clockEl || null;
+    if (s.screen === 'clock') return s.clockView === 'alarms' ? this.clockEl || null : null;
     if (s.threads[s.screen]) return this.listEl || null;
     return null;
   }
@@ -749,7 +750,7 @@ class Component extends DCLogic {
       dot1: s.page === 1 ? '#E6E7E9' : '#3A3D42',
       tiles: [tile('jerv'), tile('minecraft'), tile('elora'), tile('lydian')],
       emptySlots: [{ label: 'Empty' }, { label: 'Empty' }],
-      isPage: isPage && !s.rec && !s.calib && !s.ring && s.fw.phase !== 'restarting',
+      isPage: isPage && !s.rec && !s.calib && !s.ring && s.fw.phase !== 'restarting' && !(s.screen === 'clock' && s.clockView === 'face'),
       isSettings: isPage && s.screen === 'settings' && !s.calib && s.fw.phase !== 'restarting',
       isCalib: on && !!s.calib,
       isRestart: on && s.fw.phase === 'restarting',
@@ -759,8 +760,10 @@ class Component extends DCLogic {
       toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
       ttsOn: s.tts ? 'true' : 'false',
       clockRef: (el) => { this.clockEl = el; },
-      openClock: () => { if (!this.swiped) this.put({ screen: 'clock', playing: null }); },
-      isClock: isPage && s.screen === 'clock' && !s.ring,
+      openClock: () => { if (!this.swiped) this.put({ screen: 'clock', clockView: 'face', playing: null }); },
+      isClock: isPage && s.screen === 'clock' && s.clockView === 'alarms' && !s.ring,
+      isClockFace: on && s.screen === 'clock' && s.clockView === 'face' && !s.ring && !s.rec,
+      openAlarms: () => this.put({ clockView: 'alarms' }),
       isRinging: !!s.ring,
       ring: s.ring ? Object.assign(this.hm(s.ring.h, s.ring.m), { label: s.ring.label || 'Alarm' }) : { hm: '', ampm: '', label: '' },
       snooze: () => this.snooze(),
@@ -768,7 +771,7 @@ class Component extends DCLogic {
       clock: (() => {
         const d = new Date();
         const t = this.hm(d.getHours(), d.getMinutes());
-        return { hm: t.hm, ampm: t.ampm, short: t.hm + ' ' + t.ampm, date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
+        return { hm: t.hm, ampm: t.ampm, short: t.hm, aria: 'The time is ' + t.hm + '. Tap for alarms.', date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
       })(),
       alarms: s.alarms.slice().sort((x, y) => x.h * 60 + x.m - (y.h * 60 + y.m)).map((al, k, arr) => {
         const t = this.hm(al.h, al.m);
@@ -795,7 +798,7 @@ class Component extends DCLogic {
         const t = this.hm(on[0].al.h, on[0].al.m);
         const hrs = Math.floor(on[0].wait / 60);
         const mins = on[0].wait % 60;
-        return 'Next ' + t.hm + ' ' + t.ampm + ' · in ' + (hrs ? hrs + ' h ' : '') + mins + ' min';
+        return 'Next ' + t.hm + ' · in ' + (hrs ? hrs + ' h ' : '') + mins + ' min';
       })(),
       bright: s.bright,
       brightLabel: s.bright + '%',
@@ -855,7 +858,10 @@ class Component extends DCLogic {
         if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
         this.put({ screen: 'home', page: 0, rec: null, playing: null, off: false });
       },
-      goHome: () => this.put({ screen: 'home', playing: null, page: s.screen === 'settings' || s.screen === 'clock' ? 1 : 0 }),
+      goHome: () => {
+        if (s.screen === 'clock' && s.clockView === 'alarms') { this.put({ clockView: 'face' }); return; }
+        this.put({ screen: 'home', playing: null, page: s.screen === 'settings' || s.screen === 'clock' ? 1 : 0 });
+      },
       screenDown: (e) => {
         this.sx = e.clientX;
         this.drag = null;

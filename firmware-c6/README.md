@@ -2,6 +2,9 @@
 
 > **Status:** Living · **Last verified:** 2026-10-11
 
+Plan: `../docs/plans/JPANEL_C6_PLAN.md` — the waves, and the app-module architecture every
+later image follows (§1). Approved screens: `../docs/mocks/jpanel-c6/`.
+
 The firmware for the owner's own panel: a Waveshare **ESP32-C6-Touch-AMOLED-2.16** (sold as
 Kctozo). A separate project from `../firmware/`, which is the twins' ESP32-S3-Touch-AMOLED-1.8
 panels and is not touched by anything here. The two share a protocol with the box, not source:

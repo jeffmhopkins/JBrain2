@@ -86,22 +86,29 @@
       "y": 3583,
       "w": 720,
       "h": 720,
-      "title": "10 \u00b7 Clock (page 2)"
+      "title": "10 \u00b7 Clock \u2014 giant 24-hour face (tap for alarms)"
     },
     "Ringing.dc.html": {
+      "x": 1600,
+      "y": 3583,
+      "w": 720,
+      "h": 720,
+      "title": "12 \u00b7 Alarm ringing"
+    },
+    "PwaAlarms.dc.html": {
+      "x": 2400,
+      "y": 3583,
+      "w": 390,
+      "h": 844,
+      "title": "13 \u00b7 PWA \u2014 set alarms (jpanel \u2192 Panels)",
+      "is_interactive": true
+    },
+    "ClockAlarms.dc.html": {
       "x": 800,
       "y": 3583,
       "w": 720,
       "h": 720,
-      "title": "11 \u00b7 Alarm ringing"
-    },
-    "PwaAlarms.dc.html": {
-      "x": 1600,
-      "y": 3583,
-      "w": 390,
-      "h": 844,
-      "title": "12 \u00b7 PWA \u2014 set alarms (jpanel \u2192 Panels)",
-      "is_interactive": true
+      "title": "11 \u00b7 Clock \u2192 alarms (on/off)"
     }
   },
   "order": [
@@ -116,6 +123,7 @@
     "Updating.dc.html",
     "Calib.dc.html",
     "Clock.dc.html",
+    "ClockAlarms.dc.html",
     "Ringing.dc.html",
     "PwaAlarms.dc.html"
   ],
@@ -125,7 +133,7 @@
       "y": 800,
       "text": "Screens to lock down",
       "kind": "title1",
-      "maxW": 2320
+      "maxW": 2790
     }
   },
   "designSystems": []

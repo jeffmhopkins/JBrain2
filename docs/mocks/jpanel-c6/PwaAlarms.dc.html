@@ -148,8 +148,7 @@ class Component extends DCLogic {
   }
 
   hm(h, m) {
-    const h12 = h % 12 === 0 ? 12 : h % 12;
-    return { hm: h12 + ':' + String(m).padStart(2, '0'), ampm: h < 12 ? 'AM' : 'PM' };
+    return { hm: String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'), ampm: '' };
   }
 
   renderVals() {
@@ -160,9 +159,9 @@ class Component extends DCLogic {
         hm: t.hm, ampm: t.ampm,
         sub: this.daysText(al.days) + (al.label ? ' · ' + al.label : ''),
         dim: al.on ? 1 : 0.55,
-        editLabel: 'Edit alarm ' + t.hm + ' ' + t.ampm,
+        editLabel: 'Edit alarm ' + t.hm,
         checked: al.on ? 'true' : 'false',
-        aria: 'Alarm ' + t.hm + ' ' + t.ampm + (al.on ? ', on' : ', off'),
+        aria: 'Alarm ' + t.hm + (al.on ? ', on' : ', off'),
         track: al.on ? 'rgba(143,188,154,0.22)' : '#1E2024',
         border: al.on ? 'transparent' : '#3A3D42',
         knob: al.on ? '#8FBC9A' : '#9A9DA3',

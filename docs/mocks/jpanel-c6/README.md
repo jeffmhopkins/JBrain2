@@ -37,9 +37,12 @@ panel, the others import it at a fixed `start` state).
   keeps the old map).
 - **Ground is pure black** (an unlit AMOLED pixel is off); colours are `DESIGN.md`'s accents:
   Jerv violet, Elora amber, Lydian teal, Minecraft green, steel for actions.
-- **Clock:** the time large (RTC-backed, PCF85063), the date, the next alarm, and the alarm
-  list with on/off switches only. Alarms are **created and edited in the PWA** (jpanel →
+- **Clock:** opens on a **giant 24-hour time** and nothing else. Tapping it opens the alarm
+  list (next alarm, on/off switches only); back returns to the face. Everything is 24-hour,
+  on the panel and in the PWA editor. Alarms are **created and edited in the PWA** (jpanel →
   Panels → Jeff's, `PwaAlarms.dc.html`): time, repeat days (none = once, then it switches
-  itself off), optional label. The panel keeps its copy and rings from its own clock, so an
-  alarm still sounds with Wi-Fi down. Ringing is full-screen: Snooze 9 min / Stop; KEY
-  snoozes, BOOT stops. Alarms are offered on the owner's panel only — not on the twins' pets.
+  itself off), optional label. The panel keeps its copy and rings from its own clock
+  (PCF85063), so an alarm still sounds with Wi-Fi down. Ringing is full-screen: Snooze 9 min
+  / Stop; KEY snoozes, BOOT stops. Alarms are offered on the owner's panel only.
+- **Firmware shape:** each of these screens is its own app module over a shared UI kit —
+  `../../plans/JPANEL_C6_PLAN.md` §1.
