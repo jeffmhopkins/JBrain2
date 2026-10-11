@@ -253,7 +253,7 @@ def test_unvisited_ground_is_predicted_and_the_real_world_drawn_over_it(
     }
     predictor.grid("123", 0, 0, 0, 2, 4)
     assert (tmp_path / "runs").read_text() == "x"  # a seed always predicts the same
-    assert predictor.grid("123", 1, 0, 0, 2, 4) == {}  # only the Overworld
+    assert predictor.grid("123", 3, 0, 0, 2, 4) == {}  # no such dimension
 
     for zoom in (0, 2):
         image = mapping.tile(index, 0, zoom, 0, 0, predictor, "123")
@@ -266,6 +266,52 @@ def test_unvisited_ground_is_predicted_and_the_real_world_drawn_over_it(
     assert _decode_png(mapping.tile(index, 0, 0, 0, 0, predictor, None))[200][803] == 0
     broken = mapping.Predictor(tmp_path / "missing")
     assert _decode_png(mapping.tile(index, 0, 0, 0, 0, broken, "123"))[200][803] == 0
+
+
+def test_the_nether_is_predicted_in_bedrock_ids_at_its_roof(tmp_path: Path) -> None:
+    # The binary already speaks Bedrock's Nether ids: 179 is crimson forest there, and
+    # would be misread as a mangrove swamp (184) through the Overworld's translation.
+    predictor = mapping.Predictor(_fake_predictor(tmp_path, biome=179, height=128))
+    assert all(predictor.available(dim) for dim in (0, 1, 2))
+    assert not predictor.available(3)
+    assert set(predictor.grid("123", 1, 0, 0, 2, 4).values()) == {(128, 179)}
+    index = mapping.WorldIndex(tmp_path / "empty")
+    rows = _decode_png(mapping.tile(index, 1, 2, 0, 0, predictor, "123"))
+    pixel = rows[100][400:404]
+    assert pixel[3] == 255 and 0 < sum(pixel[:3]) < sum(mapping.BIOME_COLORS[179])
+
+
+def _fake_end(tmp_path: Path) -> Path:
+    """A stand-in for jbrain-predict over the End: even columns land at 60, odd void."""
+    script = tmp_path / "jbrain-predict"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import struct, sys\n"
+        "n = int(sys.argv[5])\n"
+        "for k in range(n * n):\n"
+        "    sys.stdout.buffer.write(struct.pack('<hh', -1 if k % n % 2 else 60, 9))\n"
+    )
+    script.chmod(0o755)
+    return script
+
+
+def test_the_ends_void_is_predicted_as_nothing(tmp_path: Path) -> None:
+    db = tmp_path / "db"
+    db.mkdir()
+    # One real End chunk, explored: drawn in full over the prediction.
+    write_table(
+        db / "000005.ldb",
+        [(mapping.chunk_key(0, 0, 2, mapping.DATA3D), 1, data3d(lambda x, z: 62, 9))],
+    )
+    index = mapping.WorldIndex(db)
+    index.refresh()
+    predictor = mapping.Predictor(_fake_end(tmp_path))
+    assert predictor.grid("123", 2, 0, 0, 2, 4) == {(0, 0): (60, 9), (0, 4): (60, 9)}
+    rows = _decode_png(mapping.tile(index, 2, 0, 0, 0, predictor, "123"))
+    assert tuple(rows[0][4:8]) == (*mapping.BIOME_COLORS[9], 255)  # explored beats void
+    land, void = rows[100][400:404], rows[100][404:408]
+    assert land[3] == 255 and sum(land[:3]) < sum(mapping.BIOME_COLORS[9])
+    assert void[3] == 0  # no ground there, explored or predicted: transparent
 
 
 def _decode_png(data: bytes) -> list[bytes]:

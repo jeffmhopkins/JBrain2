@@ -1,6 +1,6 @@
 ---
 name: mc_what_is_at
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -18,7 +18,7 @@ params:
   required: []
 ---
 What is at one spot: its biome and the height of the ground there. Ground someone has
-explored is read from the world itself; Overworld ground nobody has visited comes from the
-satellite's survey, predicted from the seed (the biome is almost always right, the height
-within a few blocks). Unvisited Nether and End ground is unknown. One call answers "what
+explored is read from the world itself; ground nobody has visited, in any dimension, comes
+from the satellite's survey, predicted from the seed (the biome is almost always right, the
+height within a few blocks). Open void in the End reads as unknown. One call answers "what
 biome is at x, z" — don't search biome by biome with mc_locate for that.

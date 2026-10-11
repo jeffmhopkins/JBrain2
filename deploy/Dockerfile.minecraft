@@ -17,7 +17,9 @@
 #
 # One compiled piece: `jbrain-predict` (deploy/minecraft/predict/), the map's "satellite"
 # layer, built in its own stage against cubiomes (MIT, Cubitect) at a pinned commit, so
-# the runtime image gains a binary and no compiler.
+# the runtime image gains a binary and no compiler. Its Bedrock Nether/End seeding is
+# ported from reedacartwright/cubiomes (branch `bedrock`), whose LICENSE is byte-for-byte
+# cubiomes' own, so licenses/cubiomes.LICENSE covers both.
 FROM debian:trixie-slim AS predict
 ARG CUBIOMES_COMMIT=e61f90580cbdd883214a8054670dacae655e59c0
 COPY deploy/minecraft/predict/predict.c /src/predict.c
@@ -29,7 +31,7 @@ RUN set -eux; \
     git -C /cubiomes checkout "${CUBIOMES_COMMIT}"; \
     make -C /cubiomes libcubiomes; \
     gcc -O2 -Wall -Wextra -Werror -I/cubiomes -o /jbrain-predict /src/predict.c \
-        /cubiomes/libcubiomes.a -lm; \
+        /cubiomes/libcubiomes.a -lm -pthread; \
     cp /cubiomes/LICENSE /cubiomes.LICENSE
 
 FROM debian:trixie-slim
@@ -58,11 +60,16 @@ COPY --from=predict /cubiomes.LICENSE ./licenses/cubiomes.LICENSE
 
 RUN python3 -c "import server, bds, install, worlds, leveldb, mapping"
 # The prediction is only worth drawing if it is right: spots a real 1.26 server generated
-# from this seed — a warm ocean (Java id 44) and a mangrove swamp (184) — must still
-# predict as those biomes on the compiled binary.
+# from this seed must still predict as what it found there on the compiled binary — in
+# the Overworld a warm ocean (Java id 44) and a mangrove swamp (184); in the Nether a
+# warped forest under the roof; in the End an outer island's ground (top block y=61)
+# and the void just off it.
 RUN python3 -c "import mapping; p = mapping.Predictor(); seed = '7353120887189866808'; \
     assert p.grid(seed, 0, 1280, 384, 1, 4)[(1280, 384)][1] == 40; \
-    assert p.grid(seed, 0, 832, 2560, 1, 4)[(832, 2560)][1] == 191"
+    assert p.grid(seed, 0, 832, 2560, 1, 4)[(832, 2560)][1] == 191; \
+    assert p.grid(seed, 1, -1440, -1920, 1, 1)[(-1440, -1920)] == (128, 180); \
+    assert p.grid(seed, 2, 3052, -3052, 1, 1)[(3052, -3052)] == (62, 9); \
+    assert p.grid(seed, 2, 2948, -3020, 1, 1) == {}"
 
 USER mc
 ENV PYTHONUNBUFFERED=1

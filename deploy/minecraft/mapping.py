@@ -7,8 +7,8 @@ is everything a hillshaded biome map needs, and is read straight off the world's
 
 Ground nobody has been to is **predicted from the seed** (`Predictor`, the owner's
 "satellite from orbit"), then the real chunks are drawn over it wherever they exist.
-Only the Overworld is predicted: Bedrock's Nether did not match the prediction when
-checked, so ungenerated Nether and End ground stays transparent.
+All three dimensions are predicted; the End's void is predicted as nothing, so it stays
+transparent like ground nobody has generated.
 
 A tile is 256×256 pixels. At zoom 0 it is 256×256 blocks, one pixel per block; each zoom
 out doubles the blocks per pixel, down to one pixel per chunk. Zoomed-out pixels each
@@ -427,11 +427,13 @@ JAVA_TO_BEDROCK = {
     183: 190, 184: 191, 185: 192, 186: 193,
 }
 PREDICT_BIN = Path(os.environ.get("MC_PREDICT_BIN", "/app/jbrain-predict"))
+# The height jbrain-predict gives a column with no ground at all: the End's void.
+PREDICT_VOID = -1
 _PREDICT_TIMEOUT_S = 30
 
 
 class Predictor:
-    """The Overworld's surface from its seed alone, by the `jbrain-predict` binary
+    """A dimension's surface from the world's seed alone, by the `jbrain-predict` binary
     (deploy/minecraft/predict/). A seed always predicts the same ground, so a tile's
     prediction is kept (compressed) across the re-reads that drop the rendered tiles."""
 
@@ -440,13 +442,14 @@ class Predictor:
         self._cache: OrderedDict[tuple, bytes] = OrderedDict()
 
     def available(self, dim: int) -> bool:
-        return dim == 0 and self.binary.is_file()
+        return dim in _FLOOR and self.binary.is_file()
 
     def grid(
         self, seed: str, dim: int, x0: int, z0: int, n: int, step: int
     ) -> dict[tuple[int, int], tuple[int, int]]:
         """(height, Bedrock biome) every `step` blocks over an n×n grid from (x0, z0),
-        keyed by block position; {} when nothing can be predicted there."""
+        keyed by block position; {} when nothing can be predicted there. The End's void
+        has no entry, so it draws as nothing."""
         if not self.available(dim):
             return {}
         key = (seed, dim, x0, z0, n, step)
@@ -470,13 +473,15 @@ class Predictor:
         else:
             self._cache.move_to_end(key)
         values: tuple[int, ...] = struct.unpack(f"<{n * n * 2}h", zlib.decompress(packed))
+        # Only the Overworld speaks Java's ids; the Nether's and End's are Bedrock's
+        # already, and Java's numbers for 178-181 are other biomes entirely.
+        ids = JAVA_TO_BEDROCK if dim == 0 else {}
         grid: dict[tuple[int, int], tuple[int, int]] = {}
         for k in range(n * n):
-            biome = values[2 * k + 1]
-            grid[(x0 + (k % n) * step, z0 + (k // n) * step)] = (
-                values[2 * k],
-                JAVA_TO_BEDROCK.get(biome, biome),
-            )
+            height, biome = values[2 * k], values[2 * k + 1]
+            if height == PREDICT_VOID:
+                continue
+            grid[(x0 + (k % n) * step, z0 + (k // n) * step)] = (height, ids.get(biome, biome))
         return grid
 
 

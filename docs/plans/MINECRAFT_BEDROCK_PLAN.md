@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -809,7 +809,8 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 
   Checked against a 1.26 server generating the same seed:
   - biomes match at **97%** of 4,311 real columns, and every miss sits on a border
-    between two biomes;
+    between two biomes (re-measured 2026-10-11 over all 122,624 columns of the dev
+    world's 479 chunks: 96.4%, 98% of misses within 4 blocks of a border);
   - heights are off by a median of about 2.5 blocks (90% of points within 9, trees
     included);
   - cubiomes speaks Java's ids; the 1.13+ oceans and every 1.16+ biome are translated
@@ -817,10 +818,67 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
   - the biome is read AT the predicted surface (the height map's own ids came from
     below it: a cave biome under a beach).
 
-  **The Nether did not match** (3 of 4 spots wrong), so only the Overworld is predicted:
-  ungenerated Nether and End ground stays transparent. `map/info` says which
-  (`predicted`). Predicting them is being researched (a Bedrock-specific Nether
-  generator, the End's parity with Java, or the server's own `locate biome`).
+  **The Nether and the End are predicted too**, by Bedrock's own seeding rather than
+  Java's. Bedrock seeds their noise with a Mersenne Twister on the seed's low 32 bits,
+  not with `java.util.Random`, so cubiomes' Java answers were wrong there (3 of 4 Nether
+  spots). `jbrain-predict` ports the seeding from Reed A. Cartwright's Bedrock fork of
+  cubiomes (`reedacartwright/cubiomes`, branch `bedrock`, MIT; its LICENSE is
+  byte-for-byte cubiomes' own). That seeding drives upstream cubiomes' noise, voronoi
+  and End terrain code at the same pin, so there is no second dependency.
+  - **Nether:** a 2D biome. The 4-block cell is read at y=0 from a double-perlin with
+    Bedrock's amplitude, then the 1.14 voronoi seeded with the **full** 64-bit seed (the
+    low 32 bits alone give 99.5%). Bedrock ids come out directly (8, 178–181), and the
+    height is the roof (128), which is what a real Nether map shows.
+  - **Nether accuracy:** **99.994%** of 349,184 sampled columns on seed
+    7353120887189866808 (20 misses, all on borders), and 100% of 7,688 on a negative
+    seed (−3913570224095895553). Of the 364,288 columns in the 1,423 Nether chunks saved
+    in the local test worlds, all but 20 match.
+  - **End:** biome 9 and the terrain's height, as the first air above it to match real
+    chunks. Void is height **−1** (`PREDICT_VOID`): `Predictor.grid` leaves it out, so
+    it draws transparent like ground nobody has generated.
+  - **The End's one Bedrock constant:** the island noise is drawn after skipping
+    **10,360** twister outputs, where the fork's Java-style 17,292 (66 perlins × 262)
+    predicts no better than chance. The skip is 40 perlins (the terrain's 16+16+8
+    octaves) × 259 draws (3 offsets + 256 shuffle swaps). It was found on 2026-10-11 by
+    testing hypotheses against a real 1.26.52.3 world; no published source has it.
+  - **End accuracy, land vs void:** **99.2%** of 10,217 points on the first seed and
+    **98.7%** of 15,376 on the second, out to about 6,400 blocks. The misses are nearly
+    all real land predicted as void: the small floating islets that the End-island
+    *feature* places, which is decoration, not terrain noise.
+  - **End accuracy, height:** 94–95% exact where both say land. On the 20 saved main
+    island chunks, land vs void is 100%. Every height miss there is real ground ABOVE
+    the prediction (the obsidian pillars), never below it.
+
+  The Dockerfile's build-time smoke check now also asserts a warped forest in the
+  Nether, plus an outer island's ground and the void just off it in the End. All are
+  real spots on the first seed, and the Java-seeded binary fails all three. `map/info`
+  says `predicted` in all three dimensions once the seed is known.
+
+  **Overworld: upstream cubiomes stays.** Reed's fork generates the 1.16 *layered*
+  Overworld, which 1.18 replaced with the noise Bedrock now shares with Java. Every
+  column of the 479 real chunks of the dev world (122,624 columns, biome at the surface)
+  was compared:
+
+  | Overworld predictor | Zoom 0 (every column) | Zoom 2 (every 4th) |
+  |---|---|---|
+  | upstream cubiomes | **96.4%** | 96.4% (of 7,664) |
+  | Reed's fork | 3.6% | 3.6% |
+
+  For upstream, 4,304 of the 4,386 misses lie within 4 blocks of a real biome border.
+
+  **Time per 256×256-pixel tile** was measured on a 4-core dev container, as the median
+  of four tiles near and far from the origin. Zoom k samples every 2^k blocks.
+
+  | Dimension | Zoom 0 | Zoom 1 | Zoom 2 | Zoom 3 | Zoom 4 |
+  |---|---|---|---|---|---|
+  | Overworld | 0.15 s | 0.66 s | 2.4 s | 2.3 s | 2.5 s |
+  | Nether | 0.01 s | 0.27 s | 0.24 s | 0.27 s | 0.26 s |
+  | End | 0.05 s | 0.15 s | 0.6 s | 2.3 s | 2.1 s |
+
+  The End's cost is about 40 perlin samples per height cell of every 8-block terrain
+  column. So its columns are split across the cores (single-threaded, zoom 3–4 took
+  about 7 s), and the 625 island-noise reads per column come from one per-tile grid.
+  A seed always predicts the same ground, so each tile is computed once and cached.
 
   **Structures can't come from cubiomes**: Bedrock places them differently from Java.
   The server's own `locate structure` does it exactly instead. It is instant, read-only

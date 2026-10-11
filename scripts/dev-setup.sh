@@ -69,9 +69,13 @@ fi
 # for it, so this is only for rendering real predicted tiles on a workstation
 # (MC_PREDICT_BIN=~/.cache/jbrain/jbrain-predict). The cubiomes commit MUST match the
 # Dockerfile's CUBIOMES_COMMIT. Never fatal: without it the map draws real chunks only.
+# Rebuilt whenever predict.c or the pin changes (the stamp beside it), so a workstation
+# never keeps predicting with an older generator.
 predict_bin="$HOME/.cache/jbrain/jbrain-predict"
 cubiomes_commit=e61f90580cbdd883214a8054670dacae655e59c0
-if [ ! -x "$predict_bin" ] && command -v gcc >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+predict_stamp="$cubiomes_commit $(sha256sum deploy/minecraft/predict/predict.c | cut -d' ' -f1)"
+if { [ ! -x "$predict_bin" ] || [ "$(cat "$predict_bin.stamp" 2>/dev/null)" != "$predict_stamp" ]; } \
+  && command -v gcc >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   log "building jbrain-predict (cubiomes $cubiomes_commit)"
   cub_dir="$(mktemp -d)"
   if git clone -q --filter=blob:none https://github.com/Cubitect/cubiomes "$cub_dir" \
@@ -79,8 +83,8 @@ if [ ! -x "$predict_bin" ] && command -v gcc >/dev/null 2>&1 && command -v git >
     && make -s -C "$cub_dir" libcubiomes >/dev/null 2>&1 \
     && mkdir -p "$(dirname "$predict_bin")" \
     && gcc -O2 -I"$cub_dir" -o "$predict_bin" deploy/minecraft/predict/predict.c \
-      "$cub_dir/libcubiomes.a" -lm; then
-    :
+      "$cub_dir/libcubiomes.a" -lm -pthread; then
+    printf '%s' "$predict_stamp" >"$predict_bin.stamp"
   else
     log "WARNING: could not build jbrain-predict — local map tiles draw real chunks only"
   fi
