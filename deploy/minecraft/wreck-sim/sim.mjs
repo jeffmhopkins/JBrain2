@@ -124,6 +124,14 @@ async function run(name, spec, n, stopAt = Infinity) {
   const phases = events.map((e) => e.phase).join(",");
   // Uninterrupted: the whole story in one load. Resumed: it ends done, never failed.
   const done = events.filter((e) => e.phase === "done");
+  // Every block edit a build tries must land; the box once lost them all silently.
+  checks.writes_landed = !logs.some((l) => l.includes("not written"));
+  const wrote = (step) => {
+    const line = logs.find((l) => l.includes(`[jbrain-wreck] step ${step}: `));
+    return line ? Number(line.split(": ")[1].split(" ")[0]) : 0;
+  };
+  // A step that does nothing at all is as wrong as one whose writes fail.
+  if (!spec.played && !spec.splash) checks.steps_wrote = ["crater", "canopy", "details"].every((s) => wrote(s) > 0);
   checks.finished = spec.played
     ? phases === "loaded,done,loaded,done" && done.every((e) => e.cause) && !placed.length
     : spec.loads === 2
@@ -223,6 +231,7 @@ async function run(name, spec, n, stopAt = Infinity) {
   return {
     scenario: name,
     steps: sim.clock(),
+    wrote: Object.fromEntries(["terrain", "crater", "canopy", "details"].map((st) => [st, wrote(st)])),
     world: digest.digest("hex"),
     ok: Object.values(checks).every(Boolean),
     checks,

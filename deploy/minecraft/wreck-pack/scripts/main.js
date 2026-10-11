@@ -30,6 +30,11 @@ const RETRY_TICKS = 20 * 30;
 const POD_STEPS = ["terrain", "place", "crater", "canopy", "details", "kit", "spawn"];
 
 const emit = (ev) => console.log(`[jbrain] ${JSON.stringify(ev)}`);
+// A warning goes out as a plain log line: on the box a build whose block edits didn't
+// land showed no warnings at all, and log lines are what the console reliably shows.
+const warn = (text) => console.log(`[jbrain-wreck] ${text}`);
+// Each pod step's block writes, and the first reason one didn't land, for its summary.
+const writes = { tried: 0, failed: 0, first: "" };
 
 class Unloaded extends Error {}
 
@@ -52,7 +57,7 @@ function command(dim, text, quiet = false) {
   } catch (err) {
     // `tickingarea add` for an area that survived a crash, `remove` for one already
     // gone: both mean the world is already as wanted.
-    if (!quiet) console.warn(`[jbrain-wreck] ${text}: ${err}`);
+    if (!quiet) warn(`${text}: ${err}`);
     return false;
   }
 }
@@ -66,13 +71,18 @@ function blockAt(dim, x, y, z) {
 }
 
 function set(dim, x, y, z, id, states) {
+  writes.tried += 1;
+  const fail = (why) => {
+    writes.failed += 1;
+    if (!writes.first) writes.first = `${id} at ${x} ${y} ${z}: ${why}`;
+  };
   const b = blockAt(dim, x, y, z);
-  if (!b) return;
+  if (!b) return fail("no block there (chunk not loaded?)");
   try {
     if (states) b.setPermutation(BlockPermutation.resolve(`minecraft:${id}`, states));
     else b.setType(`minecraft:${id}`);
   } catch (err) {
-    console.warn(`[jbrain-wreck] ${id} at ${x} ${y} ${z}: ${err}`);
+    fail(String(err));
   }
 }
 
@@ -270,7 +280,7 @@ function* podStep(dim, state, step, ground) {
         try {
           container.addItem(new ItemStack(`minecraft:${id}`, count));
         } catch (err) {
-          console.warn(`[jbrain-wreck] kit ${id}: ${err}`);
+          warn(`kit ${id}: ${err}`);
         }
       }
     });
@@ -287,7 +297,12 @@ function* buildPod(dim, state) {
   const ground = plan.decodeGround(state.ground);
   for (const step of POD_STEPS) {
     if (state.steps.includes(step)) continue;
+    Object.assign(writes, { tried: 0, failed: 0, first: "" });
     yield* podStep(dim, state, step, ground);
+    // Every step says what it wrote, so one that quietly did nothing (no ground read
+    // for its columns, say) shows up on the box, not only one that failed.
+    const lost = writes.failed ? `; ${writes.failed} not written, first: ${writes.first}` : "";
+    warn(`step ${step}: ${writes.tried - writes.failed} of ${writes.tried} blocks written${lost}`);
     state.steps.push(step);
     save(state);
     yield;
