@@ -507,6 +507,22 @@ container must already reach the internet **outbound** anyway: BDS checks each p
 Live sign-in (`online-mode`) and downloads its own updates. So its network can't be
 `internal: true`.
 
+**Done by hand, 2026-10-11 (owner, over the debug token).** The router app (Spectrum,
+SAX2V1R) showed a public WAN IPv4, so there is no CGNAT. The owner reserved 192.168.1.10
+for the box and added the forwards there: TCP+UDP 19132, and UDP 19140–19144. Over the
+debug API, `server-udp-ports` was set to `<public-ip>:19140-19144:19140-19144`, and the
+server restarted with nobody on. Results:
+- From home, `192.168.1.10:19132` joined. The public address from inside the house
+  didn't, as expected when the router doesn't loop back.
+- A phone on mobile data joined at the public IP, port 19132.
+- The allowlist is on.
+- The PWA's Join card now shows the public IP beside the LAN one, and warns when it no
+  longer matches the announced one.
+
+Still open: the DNS name and the updater (the owner put Cloudflare off), the UPnP helper,
+and the Test button. Until the updater lands, a changed home IP means a debug-API
+`server-udp-ports` update, which the Join card's warning prompts.
+
 **Step 0 — router reachability probe, done first, when R1 is picked up (moved out of M0
 by owner decision, 2026-10-10).** Test the router before anything more drastic.
 

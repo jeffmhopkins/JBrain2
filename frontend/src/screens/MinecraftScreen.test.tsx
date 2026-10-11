@@ -109,6 +109,35 @@ describe("MinecraftScreen", () => {
     expect(screen.getByText("not available yet")).toBeInTheDocument();
   });
 
+  it("Join shows the internet address beside the LAN one, with no warning when they agree", async () => {
+    serve({
+      status: mcStatus(mcServer({ public_ip: "50.88.136.173", announced_ip: "50.88.136.173" })),
+    });
+    render(<MinecraftScreen />);
+    expect(await screen.findByText("50.88.136.173")).toBeInTheDocument();
+    expect(screen.getByText("192.168.1.40")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy internet address" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("Join warns when the server still announces an old public address", async () => {
+    serve({
+      status: mcStatus(mcServer({ public_ip: "50.88.136.173", announced_ip: "50.88.130.9" })),
+    });
+    render(<MinecraftScreen />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Your public address changed");
+    expect(alert).toHaveTextContent("50.88.130.9");
+  });
+
+  it("Join has no internet line on a box that doesn't report one", async () => {
+    serve({ status: mcStatus() });
+    render(<MinecraftScreen />);
+    expect(await screen.findByText("192.168.1.40")).toBeInTheDocument();
+    expect(screen.queryByText(/From the internet/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy internet address" })).not.toBeInTheDocument();
+  });
+
   it("Stop with players on confirms in the Dialog, naming who is disconnected", async () => {
     serve({ status: mcStatus() });
     render(<MinecraftScreen />);

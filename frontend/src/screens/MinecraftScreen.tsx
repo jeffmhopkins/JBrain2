@@ -1388,6 +1388,10 @@ function JoinSection({
   onCopy: (address: string) => void;
 }) {
   const address = installed && server?.lan_ip ? `${server.lan_ip}:${server.port}` : null;
+  const publicIp = installed ? (server?.public_ip ?? null) : null;
+  const announced = server?.announced_ip ?? null;
+  // Internet play breaks when the home's address moves and the server still names the old one.
+  const stale = publicIp !== null && announced !== null && announced !== publicIp;
   let join: ReactNode;
   if (!installed) join = "Not installed yet — join details appear once the server is up.";
   else if (!server) join = "Join details show once the container is back up.";
@@ -1403,6 +1407,13 @@ function JoinSection({
           "this box's LAN address (not known yet)"
         )}{" "}
         · port <b className="mc-mono">{server.port}</b>
+        {publicIp && (
+          <>
+            <br />
+            From the internet: <b className="mc-mono">{publicIp}</b> · port{" "}
+            <b className="mc-mono">{server.port}</b>
+          </>
+        )}
       </>
     );
   }
@@ -1413,9 +1424,24 @@ function JoinSection({
         <div className="mc-pad mc-join">
           <div className="mc-label">How to join</div>
           <p className="mc-note">{join}</p>
+          {stale && (
+            <p className="mc-note mc-danger-t" role="alert">
+              Your public address changed. The server still tells players {announced}, so players
+              outside the house can't join until it's updated.
+            </p>
+          )}
           {address && (
             <button type="button" className="mc-link" onClick={() => onCopy(address)}>
               Copy address
+            </button>
+          )}
+          {publicIp && (
+            <button
+              type="button"
+              className="mc-link"
+              onClick={() => onCopy(`${publicIp}:${server?.port ?? 19132}`)}
+            >
+              Copy internet address
             </button>
           )}
         </div>

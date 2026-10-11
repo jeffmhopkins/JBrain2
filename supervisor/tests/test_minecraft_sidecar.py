@@ -1832,3 +1832,49 @@ def test_the_power_pack_switch_route(monkeypatch: pytest.MonkeyPatch) -> None:
         assert post({})[0] == 400
     finally:
         httpd.shutdown()
+
+
+# ---- the public address, for joining from outside ----
+
+
+@pytest.mark.parametrize(
+    ("body", "want"),
+    [
+        (b"fl=1\nh=1.1.1.1\nip=50.88.136.173\nts=1\n", "50.88.136.173"),
+        # Answered from inside the home, or over IPv6: not an address to hand out.
+        (b"ip=192.168.1.10\n", None),
+        (b"ip=100.72.1.5\n", None),
+        (b"ip=2603:9001:ff00:44::1\n", None),
+        (b"ip=not-an-ip\n", None),
+        (b"<html>captive portal</html>", None),
+    ],
+)
+def test_only_a_public_ipv4_counts_as_the_public_address(
+    body: bytes, want: str | None
+) -> None:
+    assert server.public_ip(lambda: body) == want
+
+
+def test_a_failed_lookup_is_no_address() -> None:
+    def down() -> bytes:
+        raise OSError("network is unreachable")
+
+    assert server.public_ip(down) is None
+
+
+def test_the_watcher_keeps_the_last_address_through_a_failed_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "PUBLIC_IP_S", 0.0)
+    rig = server.Rig(env={})
+    answers = iter(["50.88.136.173", None])
+
+    def lookup() -> str | None:
+        ip = next(answers, None)
+        if ip is None:
+            rig.stopping = True
+        return ip
+
+    server.watch_public_ip(rig, lookup)
+    assert rig.public_ip == "50.88.136.173"
+    assert rig.status()["public_ip"] == "50.88.136.173"

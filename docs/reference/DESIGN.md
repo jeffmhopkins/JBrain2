@@ -3389,6 +3389,10 @@ follows the Data screen's precedent of being lifted off Ops.
   **Online now** with live session timers; **Players** as C's table (player and first seen,
   total and sessions, last seen with the day), a row opening a bottom `<Sheet>` with that
   player's totals; **Lifetime stats**; **Server** (world, mode, allowlist, how to join).
+  How to join gives the LAN address and, once the box knows it, the address **from the
+  internet** (its public IP, looked up every 10 minutes), each with its own copy link. When
+  that IP no longer matches the one the server announces to players (`server-udp-ports`),
+  a red alert says so: players outside the house can't join until it's updated.
   Stop and Start act on the game server inside the container, so a stopped server keeps its
   facts, auto-update and any update readable. A Restart reads as *restarting* through the
   server's own stopping → stopped → starting, not as *stopping*. An update failure has two
