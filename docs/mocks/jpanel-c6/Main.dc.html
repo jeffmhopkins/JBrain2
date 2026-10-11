@@ -66,13 +66,17 @@ body{margin:0}
 
         <sc-if value="{{isHome1}}" hint-placeholder-val="{{false}}">
           <div style="position: absolute; left: 36px; top: 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; width: 408px;">
+            <button onClick="{{openClock}}" aria-label="Clock" style="height: 196px; border-radius: 28px; background: #17181B; border: 1px solid #26282C; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; cursor: pointer; font-family: inherit; padding: 0;">
+              <span style="width: 96px; height: 96px; border-radius: 48px; background: #1E2024; color: #E6E7E9; display: flex; align-items: center; justify-content: center;"><svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="18"></circle><path d="M24 13 L24 24 L31 28"></path></svg></span>
+              <span style="font-size: 24px; font-weight: 600; color: #E6E7E9; font-variant-numeric: tabular-nums;">{{clock.short}}</span>
+            </button>
             <button onClick="{{openSettings}}" aria-label="Settings" style="height: 196px; border-radius: 28px; background: #17181B; border: 1px solid #26282C; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; cursor: pointer; font-family: inherit; padding: 0;">
               <span style="width: 96px; height: 96px; border-radius: 48px; background: #1E2024; color: #C4C7CC; display: flex; align-items: center; justify-content: center;">
                 <svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="6"></circle><circle cx="24" cy="24" r="13"></circle><path d="M24 5 L24 11 M24 37 L24 43 M5 24 L11 24 M37 24 L43 24 M10.6 10.6 L14.8 14.8 M33.2 33.2 L37.4 37.4 M10.6 37.4 L14.8 33.2 M33.2 14.8 L37.4 10.6"></path></svg>
               </span>
               <span style="font-size: 24px; font-weight: 600; color: #E6E7E9;">Settings</span>
             </button>
-            <sc-for list="{{emptySlots}}" as="e" hint-placeholder-count="3">
+            <sc-for list="{{emptySlots}}" as="e" hint-placeholder-count="2">
               <div style="height: 196px; border-radius: 28px; border: 2px dashed #26282C; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: #5C5F66; font-size: 20px; font-weight: 600;">{{e.label}}</div>
             </sc-for>
           </div>
@@ -99,6 +103,9 @@ body{margin:0}
               </sc-if>
               <sc-if value="{{cur.isPerson}}" hint-placeholder-val="{{false}}">
                 <span style="font-size: 22px; font-weight: 700;">{{cur.initial}}</span>
+              </sc-if>
+              <sc-if value="{{cur.isClock}}" hint-placeholder-val="{{false}}">
+                <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="18"></circle><path d="M24 13 L24 24 L31 28"></path></svg>
               </sc-if>
               <sc-if value="{{cur.isGear}}" hint-placeholder-val="{{false}}">
                 <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="6"></circle><circle cx="24" cy="24" r="13"></circle><path d="M24 5 L24 11 M24 37 L24 43 M5 24 L11 24 M37 24 L43 24 M10.6 10.6 L14.8 14.8 M33.2 33.2 L37.4 37.4 M10.6 37.4 L14.8 33.2 M33.2 14.8 L37.4 10.6"></path></svg>
@@ -174,6 +181,37 @@ body{margin:0}
             </span>
             <span style="font-size: 26px; font-weight: 600;">Not built yet</span>
             <span style="font-size: 20px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">This page is reserved. Press BOOT to go home.</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isClock}}" hint-placeholder-val="{{false}}">
+          <div ref="{{clockRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 18px 20px 28px; box-sizing: border-box;">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 10px;">
+              <div style="display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums;">
+                <span style="font-size: 104px; font-weight: 700; line-height: 1; letter-spacing: -0.02em;">{{clock.hm}}</span>
+                <span style="font-size: 30px; font-weight: 600; color: #9A9DA3;">{{clock.ampm}}</span>
+              </div>
+              <span style="font-size: 22px; font-weight: 500; color: #9A9DA3;">{{clock.date}}</span>
+              <sc-if value="{{hasNext}}" hint-placeholder-val="{{true}}">
+                <span style="margin-top: 8px; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; background: rgba(201,163,106,0.14); color: #C9A36A; font-size: 18px; font-weight: 600;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{nextAlarm}}</span></span>
+              </sc-if>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 6px 18px; display: flex; flex-direction: column;">
+              <sc-for list="{{alarms}}" as="al" hint-placeholder-count="2">
+                <div style="display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid {{al.rule}};">
+                  <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px; opacity: {{al.dim}};">
+                    <span style="font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums;">{{al.hm}} <span style="font-size: 18px; font-weight: 600; color: #9A9DA3;">{{al.ampm}}</span></span>
+                    <span style="font-size: 16px; font-weight: 500; color: #9A9DA3;">{{al.sub}}</span>
+                  </div>
+                  <button role="switch" aria-checked="{{al.checked}}" aria-label="{{al.aria}}" onClick="{{al.toggle}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{al.border}}; background: {{al.track}}; cursor: pointer; padding: 0;">
+                    <span style="position: absolute; top: 5px; left: {{al.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{al.knob}};"></span>
+                  </button>
+                </div>
+              </sc-for>
+            </div>
+            <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35; text-align: center; padding: 0 10px;">Add or change alarms in the PWA: jpanel → Panels → Jeff's. Alarms ring from the panel's own clock, even with Wi-Fi off.</span>
+          </div>
           </div>
         </sc-if>
 
@@ -302,6 +340,22 @@ body{margin:0}
           </div>
         </sc-if>
 
+        <sc-if value="{{isRinging}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; inset: 0; background: #000000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;">
+            <span style="color: #C9A36A;"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg></span>
+            <div style="display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums;">
+              <span style="font-size: 92px; font-weight: 700; line-height: 1;">{{ring.hm}}</span>
+              <span style="font-size: 28px; font-weight: 600; color: #9A9DA3;">{{ring.ampm}}</span>
+            </div>
+            <span style="font-size: 24px; font-weight: 600; color: #C9A36A;">{{ring.label}}</span>
+            <div style="display: flex; gap: 14px; margin-top: 22px;">
+              <button onClick="{{snooze}}" style="width: 196px; height: 72px; border-radius: 24px; border: none; background: rgba(127,167,201,0.18); color: #7FA7C9; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer;">Snooze 9 min</button>
+              <button onClick="{{stopAlarm}}" style="width: 150px; height: 72px; border-radius: 24px; border: 1px solid #3A3D42; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer;">Stop</button>
+            </div>
+            <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; margin-top: 6px;">KEY snoozes · BOOT stops</span>
+          </div>
+        </sc-if>
+
         <div style="position: absolute; inset: 0; background: #000000; opacity: {{veil}}; pointer-events: none;"></div>
 
         <sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
@@ -315,7 +369,7 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","elora","rec-elora","lydian","minecraft","settings","updating","calib"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","elora","rec-elora","lydian","minecraft","settings","updating","calib","clock","ringing"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -323,7 +377,8 @@ class Component extends DCLogic {
       elora: { color: '#C9A36A', tint: 'rgba(201,163,106,0.16)', name: 'Elora', initial: 'E' },
       lydian: { color: '#6FB6B1', tint: 'rgba(111,182,177,0.16)', name: 'Lydian', initial: 'L' },
       minecraft: { color: '#8FBC9A', tint: 'rgba(143,188,154,0.16)', name: 'Minecraft', initial: '' },
-      settings: { color: '#C4C7CC', tint: '#1E2024', name: 'Settings', initial: '' }
+      settings: { color: '#C4C7CC', tint: '#1E2024', name: 'Settings', initial: '' },
+      clock: { color: '#E6E7E9', tint: '#1E2024', name: 'Clock', initial: '' }
     };
   }
 
@@ -346,12 +401,19 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', wifi: 'connected', tts: true, speaking: null, bright: 80 };
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null,
+      alarms: [
+        { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
+        { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
+        { id: 3, h: 21, m: 0, days: 'Every day', label: 'Girls to bed', on: true }
+      ] };
     if (start === 'home-p2') s.page = 1;
     if (start === 'jerv' || start === 'elora' || start === 'lydian' || start === 'minecraft') s.screen = start;
     if (start === 'settings') s.screen = 'settings';
     if (start === 'updating') { s.screen = 'settings'; s.fw = { version: '0.0.1', phase: 'downloading', pct: 64 }; }
     if (start === 'calib') { s.screen = 'settings'; s.calib = { i: 5, taps: 1 }; }
+    if (start === 'clock') { s.screen = 'clock'; s.page = 1; }
+    if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
     if (start === 'rec-elora') { s.screen = 'elora'; s.rec = { to: 'elora', secs: 4.1, frozen: true }; }
     return s;
@@ -374,11 +436,31 @@ class Component extends DCLogic {
     clearTimeout(this.toastTimer);
     clearInterval(this.fwTimer);
     clearTimeout(this.speakTimer);
+    clearInterval(this.tick);
+  }
+
+  componentDidMount() {
+    this.measure();
+    this.tick = setInterval(() => this.forceUpdate(), 15000);
+  }
+
+  hm(h, m) {
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return { hm: h12 + ':' + String(m).padStart(2, '0'), ampm: h < 12 ? 'AM' : 'PM' };
   }
 
   speakDone(id) {
     clearTimeout(this.speakTimer);
     this.speakTimer = setTimeout(() => this.put((b) => (b.speaking === id ? { speaking: null } : {})), 2600);
+  }
+
+  snooze() {
+    const s = this.base(this.state);
+    if (!s.ring) return;
+    const t = s.ring.h * 60 + s.ring.m + 9;
+    const when = this.hm(Math.floor(t / 60) % 24, t % 60);
+    this.put({ ring: null });
+    this.say('Snoozed until ' + when.hm + ' ' + when.ampm);
   }
 
   toggleWifi() {
@@ -480,10 +562,6 @@ class Component extends DCLogic {
     };
   }
 
-  componentDidMount() {
-    this.measure();
-  }
-
   // Jump to the newest message only when one arrives or the thread changes: re-pinning on every
   // render would yank the view back down while someone is reading up the history.
   componentDidUpdate() {
@@ -498,7 +576,9 @@ class Component extends DCLogic {
   scroller() {
     const s = this.base(this.state);
     if (s.off || s.rec || s.calib) return null;
+    if (s.ring) return null;
     if (s.screen === 'settings') return this.settingsEl || null;
+    if (s.screen === 'clock') return this.clockEl || null;
     if (s.threads[s.screen]) return this.listEl || null;
     return null;
   }
@@ -506,7 +586,7 @@ class Component extends DCLogic {
   measure() {
     const el = this.scroller();
     const s = this.base(this.state);
-    const next = el ? { top: Math.round(el.scrollTop), h: el.clientHeight, ch: el.scrollHeight, bottomGap: s.screen === 'settings' ? 0 : 60 } : null;
+    const next = el ? { top: Math.round(el.scrollTop), h: el.clientHeight, ch: el.scrollHeight, bottomGap: s.threads[s.screen] ? 60 : 0 } : null;
     const prev = s.scroll || null;
     const same = (!next && !prev) || (next && prev && next.top === prev.top && next.h === prev.h && next.ch === prev.ch && next.bottomGap === prev.bottomGap);
     if (!same) this.put({ scroll: next });
@@ -534,6 +614,7 @@ class Component extends DCLogic {
 
   startRec() {
     const s = this.base(this.state);
+    if (s.ring) { this.snooze(); return; }
     if (s.off) return;
     if (s.screen === 'home' || s.screen === 'minecraft' || s.screen === 'settings') {
       this.say('Open a conversation, then hold KEY');
@@ -661,14 +742,14 @@ class Component extends DCLogic {
       };
     }
     return {
-      isHome: on && s.screen === 'home' && !s.rec,
-      isHome0: on && s.screen === 'home' && s.page === 0 && !s.rec,
-      isHome1: on && s.screen === 'home' && s.page === 1 && !s.rec,
+      isHome: on && s.screen === 'home' && !s.rec && !s.ring,
+      isHome0: on && s.screen === 'home' && s.page === 0 && !s.rec && !s.ring,
+      isHome1: on && s.screen === 'home' && s.page === 1 && !s.rec && !s.ring,
       dot0: s.page === 0 ? '#E6E7E9' : '#3A3D42',
       dot1: s.page === 1 ? '#E6E7E9' : '#3A3D42',
       tiles: [tile('jerv'), tile('minecraft'), tile('elora'), tile('lydian')],
-      emptySlots: [{ label: 'Empty' }, { label: 'Empty' }, { label: 'Empty' }],
-      isPage: isPage && !s.rec && !s.calib && s.fw.phase !== 'restarting',
+      emptySlots: [{ label: 'Empty' }, { label: 'Empty' }],
+      isPage: isPage && !s.rec && !s.calib && !s.ring && s.fw.phase !== 'restarting',
       isSettings: isPage && s.screen === 'settings' && !s.calib && s.fw.phase !== 'restarting',
       isCalib: on && !!s.calib,
       isRestart: on && s.fw.phase === 'restarting',
@@ -677,6 +758,45 @@ class Component extends DCLogic {
       power: this.powerView(this.props.power || 'charging'),
       toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
       ttsOn: s.tts ? 'true' : 'false',
+      clockRef: (el) => { this.clockEl = el; },
+      openClock: () => { if (!this.swiped) this.put({ screen: 'clock', playing: null }); },
+      isClock: isPage && s.screen === 'clock' && !s.ring,
+      isRinging: !!s.ring,
+      ring: s.ring ? Object.assign(this.hm(s.ring.h, s.ring.m), { label: s.ring.label || 'Alarm' }) : { hm: '', ampm: '', label: '' },
+      snooze: () => this.snooze(),
+      stopAlarm: () => { this.put({ ring: null }); this.say('Alarm stopped'); },
+      clock: (() => {
+        const d = new Date();
+        const t = this.hm(d.getHours(), d.getMinutes());
+        return { hm: t.hm, ampm: t.ampm, short: t.hm + ' ' + t.ampm, date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
+      })(),
+      alarms: s.alarms.slice().sort((x, y) => x.h * 60 + x.m - (y.h * 60 + y.m)).map((al, k, arr) => {
+        const t = this.hm(al.h, al.m);
+        return {
+          hm: t.hm, ampm: t.ampm,
+          sub: al.days + (al.label ? ' · ' + al.label : ''),
+          dim: al.on ? 1 : 0.5,
+          rule: k === arr.length - 1 ? 'transparent' : '#26282C',
+          checked: al.on ? 'true' : 'false',
+          aria: 'Alarm ' + t.hm + ' ' + t.ampm + (al.on ? ', on' : ', off'),
+          track: al.on ? 'rgba(143,188,154,0.22)' : '#1E2024',
+          border: al.on ? 'transparent' : '#3A3D42',
+          knob: al.on ? '#8FBC9A' : '#9A9DA3',
+          knobX: al.on ? 34 : 5,
+          toggle: () => { if (!this.swiped) this.put((b) => ({ alarms: b.alarms.map((x) => (x.id === al.id ? Object.assign({}, x, { on: !x.on }) : x)) })); }
+        };
+      }),
+      hasNext: s.alarms.some((al) => al.on),
+      nextAlarm: (() => {
+        const d = new Date();
+        const nowM = d.getHours() * 60 + d.getMinutes();
+        const on = s.alarms.filter((al) => al.on).map((al) => ({ al: al, wait: ((al.h * 60 + al.m - nowM) + 1440) % 1440 })).sort((x, y) => x.wait - y.wait);
+        if (!on.length) return '';
+        const t = this.hm(on[0].al.h, on[0].al.m);
+        const hrs = Math.floor(on[0].wait / 60);
+        const mins = on[0].wait % 60;
+        return 'Next ' + t.hm + ' ' + t.ampm + ' · in ' + (hrs ? hrs + ' h ' : '') + mins + ' min';
+      })(),
       bright: s.bright,
       brightLabel: s.bright + '%',
       veil: Math.round((1 - s.bright / 100) * 0.8 * 100) / 100,
@@ -708,9 +828,9 @@ class Component extends DCLogic {
           return { calib: { i: b.calib.i, taps: taps } };
         });
       },
-      isThread: isPage && !!thread && !s.rec,
+      isThread: isPage && !!thread && !s.rec && !s.ring,
       isMinecraft: isPage && s.screen === 'minecraft' && !s.rec,
-      cur: { name: a.name, color: a.color, tint: a.tint, initial: a.initial, isJerv: s.screen === 'jerv', isCube: s.screen === 'minecraft', isPerson: s.screen === 'elora' || s.screen === 'lydian', isGear: s.screen === 'settings' },
+      cur: { name: a.name, color: a.color, tint: a.tint, initial: a.initial, isJerv: s.screen === 'jerv', isCube: s.screen === 'minecraft', isPerson: s.screen === 'elora' || s.screen === 'lydian', isGear: s.screen === 'settings', isClock: s.screen === 'clock' },
       msgs: msgs,
       isRec: on && !!s.rec,
       rec: rec || { color: '#7FA7C9', tint: 'transparent', title: '', time: '0:00', ring: 170 },
@@ -731,10 +851,11 @@ class Component extends DCLogic {
       boot: () => {
         clearInterval(this.recTimer);
         const b = this.base(this.state);
+        if (b.ring) { this.put({ ring: null, off: false }); this.say('Alarm stopped'); return; }
         if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
         this.put({ screen: 'home', page: 0, rec: null, playing: null, off: false });
       },
-      goHome: () => this.put({ screen: 'home', playing: null, page: s.screen === 'settings' ? 1 : 0 }),
+      goHome: () => this.put({ screen: 'home', playing: null, page: s.screen === 'settings' || s.screen === 'clock' ? 1 : 0 }),
       screenDown: (e) => {
         this.sx = e.clientX;
         this.drag = null;

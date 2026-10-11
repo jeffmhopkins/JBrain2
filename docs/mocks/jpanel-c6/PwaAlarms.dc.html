@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PWA — panel alarms</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #0E0F11; color: #E6E7E9; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #26282C; flex-shrink: 0;">
+    <button aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; border: none; background: transparent; color: #E6E7E9; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5 L8 12 L15 19"></path></svg>
+    </button>
+    <span style="font-size: 18px; font-weight: 600;">jpanel</span>
+  </div>
+
+  <div style="padding: 12px 16px 0; flex-shrink: 0;">
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: #1E2024;">
+      <button style="height: 44px; border-radius: 10px; border: none; background: transparent; color: #9A9DA3; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Messages</button>
+      <button aria-pressed="true" style="height: 44px; border-radius: 10px; border: none; background: rgba(127,167,201,0.13); color: #E6E7E9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Panels</button>
+      <button style="height: 44px; border-radius: 10px; border: none; background: transparent; color: #9A9DA3; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Flash</button>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+    <div style="background: #17181B; border: 1px solid #26282C; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-size: 18px; font-weight: 600;">Jeff's</span>
+          <span style="font-size: 13px; color: #9A9DA3;">C6 · 2.16" · firmware 0.0.1</span>
+        </div>
+        <span style="font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 12px; background: rgba(143,188,154,0.13); color: #8FBC9A;">Online</span>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <span style="font-size: 15px; font-weight: 600; color: #9A9DA3;">Alarms</span>
+        <span style="font-size: 13px; color: #9A9DA3;">{{syncNote}}</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; border-top: 1px solid #26282C;">
+        <sc-for list="{{rows}}" as="r" hint-placeholder-count="3">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #26282C;">
+            <button onClick="{{r.edit}}" aria-label="{{r.editLabel}}" style="flex-grow: 1; min-height: 44px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: none; background: transparent; color: #E6E7E9; font-family: inherit; text-align: left; padding: 0; cursor: pointer; opacity: {{r.dim}};">
+              <span style="font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums;">{{r.hm}} <span style="font-size: 15px; color: #9A9DA3;">{{r.ampm}}</span></span>
+              <span style="font-size: 13px; color: #9A9DA3;">{{r.sub}}</span>
+            </button>
+            <button role="switch" aria-checked="{{r.checked}}" aria-label="{{r.aria}}" onClick="{{r.toggle}}" style="position: relative; flex-shrink: 0; width: 52px; height: 32px; border-radius: 16px; border: 1px solid {{r.border}}; background: {{r.track}}; cursor: pointer; padding: 0;">
+              <span style="position: absolute; top: 4px; left: {{r.knobX}}px; width: 22px; height: 22px; border-radius: 11px; background: {{r.knob}};"></span>
+            </button>
+          </div>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{closed}}" hint-placeholder-val="{{true}}">
+        <button onClick="{{add}}" style="height: 44px; border-radius: 12px; border: none; background: rgba(127,167,201,0.13); color: #7FA7C9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Add alarm</button>
+      </sc-if>
+
+      <sc-if value="{{editing}}" hint-placeholder-val="{{false}}">
+        <div style="background: #1E2024; border: 1px solid #26282C; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 12px;">
+          <span style="font-size: 15px; font-weight: 600;">{{formTitle}}</span>
+          <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+            Time
+            <input type="time" value="{{form.time}}" onChange="{{setTime}}" onInput="{{setTime}}" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid #26282C; background: #17181B; color: #E6E7E9; font-family: inherit; font-size: 20px; padding: 0 12px; color-scheme: dark;">
+          </label>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-size: 13px; color: #9A9DA3;">Repeat</span>
+            <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px;">
+              <sc-for list="{{dayChips}}" as="d" hint-placeholder-count="7">
+                <button aria-pressed="{{d.pressed}}" aria-label="{{d.name}}" onClick="{{d.toggle}}" style="height: 44px; border-radius: 10px; border: 1px solid {{d.border}}; background: {{d.bg}}; color: {{d.color}}; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; padding: 0;">{{d.short}}</button>
+              </sc-for>
+            </div>
+            <span style="font-size: 13px; color: #9A9DA3;">{{repeatNote}}</span>
+          </div>
+          <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+            Label (optional)
+            <input type="text" value="{{form.label}}" onInput="{{setLabel}}" placeholder="Work" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid #26282C; background: #17181B; color: #E6E7E9; font-family: inherit; font-size: 16px; padding: 0 12px;">
+          </label>
+          <div style="display: flex; gap: 8px;">
+            <sc-if value="{{canDelete}}" hint-placeholder-val="{{false}}">
+              <button onClick="{{remove}}" style="height: 44px; padding: 0 14px; border-radius: 12px; border: none; background: rgba(207,138,143,0.13); color: #CF8A8F; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Delete</button>
+            </sc-if>
+            <span style="flex-grow: 1;"></span>
+            <button onClick="{{cancel}}" style="height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid #26282C; background: #17181B; color: #E6E7E9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Cancel</button>
+            <button onClick="{{save}}" style="height: 44px; padding: 0 18px; border-radius: 12px; border: none; background: rgba(127,167,201,0.13); color: #7FA7C9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Save</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <span style="font-size: 13px; color: #9A9DA3; line-height: 1.4;">The panel keeps its alarms and rings from its own clock, so an alarm still goes off if Wi-Fi drops overnight.</span>
+    </div>
+
+    <div style="background: #17181B; border: 1px solid #26282C; border-radius: 16px; padding: 16px; display: flex; align-items: center; justify-content: space-between; opacity: 0.75;">
+      <div style="display: flex; flex-direction: column; gap: 2px;">
+        <span style="font-size: 18px; font-weight: 600;">Elora</span>
+        <span style="font-size: 13px; color: #9A9DA3;">S3 · 1.8" · pet</span>
+      </div>
+      <span style="font-size: 13px; color: #9A9DA3;">no alarms on pets</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  base(prev) {
+    if (prev && prev.ready) return prev;
+    return {
+      ready: true, editing: null, form: null, synced: true, nextId: 10,
+      alarms: [
+        { id: 1, h: 6, m: 45, days: [1, 2, 3, 4, 5], label: 'Work', on: true },
+        { id: 2, h: 8, m: 30, days: [0, 6], label: '', on: false },
+        { id: 3, h: 21, m: 0, days: [0, 1, 2, 3, 4, 5, 6], label: 'Girls to bed', on: true }
+      ]
+    };
+  }
+
+  put(fn) {
+    this.setState((prev) => {
+      const b = this.base(prev);
+      return Object.assign({}, b, typeof fn === 'function' ? fn(b) : fn);
+    });
+  }
+
+  touched() {
+    clearTimeout(this.syncTimer);
+    this.put({ synced: false });
+    this.syncTimer = setTimeout(() => this.put({ synced: true }), 1500);
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this.syncTimer);
+  }
+
+  daysText(days) {
+    const d = days.slice().sort();
+    if (d.length === 0) return 'Once';
+    if (d.length === 7) return 'Every day';
+    if (d.join() === '1,2,3,4,5') return 'Weekdays';
+    if (d.join() === '0,6') return 'Weekends';
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return d.map((k) => names[k]).join(', ');
+  }
+
+  hm(h, m) {
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return { hm: h12 + ':' + String(m).padStart(2, '0'), ampm: h < 12 ? 'AM' : 'PM' };
+  }
+
+  renderVals() {
+    const s = this.base(this.state);
+    const rows = s.alarms.slice().sort((x, y) => x.h * 60 + x.m - (y.h * 60 + y.m)).map((al) => {
+      const t = this.hm(al.h, al.m);
+      return {
+        hm: t.hm, ampm: t.ampm,
+        sub: this.daysText(al.days) + (al.label ? ' · ' + al.label : ''),
+        dim: al.on ? 1 : 0.55,
+        editLabel: 'Edit alarm ' + t.hm + ' ' + t.ampm,
+        checked: al.on ? 'true' : 'false',
+        aria: 'Alarm ' + t.hm + ' ' + t.ampm + (al.on ? ', on' : ', off'),
+        track: al.on ? 'rgba(143,188,154,0.22)' : '#1E2024',
+        border: al.on ? 'transparent' : '#3A3D42',
+        knob: al.on ? '#8FBC9A' : '#9A9DA3',
+        knobX: al.on ? 25 : 4,
+        toggle: () => { this.put((b) => ({ alarms: b.alarms.map((x) => (x.id === al.id ? Object.assign({}, x, { on: !x.on }) : x)) })); this.touched(); },
+        edit: () => this.put({ editing: al.id, form: { time: String(al.h).padStart(2, '0') + ':' + String(al.m).padStart(2, '0'), days: al.days.slice(), label: al.label } })
+      };
+    });
+    const f = s.form || { time: '07:00', days: [], label: '' };
+    const full = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return {
+      rows: rows,
+      syncNote: s.synced ? 'On the panel' : 'Sending to panel…',
+      closed: s.editing === null,
+      editing: s.editing !== null,
+      formTitle: s.editing === 'new' ? 'New alarm' : 'Edit alarm',
+      canDelete: s.editing !== null && s.editing !== 'new',
+      form: f,
+      repeatNote: f.days.length ? this.daysText(f.days) : 'No days picked: rings once, then switches itself off.',
+      dayChips: ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((short, k) => {
+        const on = f.days.indexOf(k) >= 0;
+        return {
+          short: short, name: full[k], pressed: on ? 'true' : 'false',
+          bg: on ? 'rgba(127,167,201,0.18)' : '#17181B',
+          border: on ? 'transparent' : '#26282C',
+          color: on ? '#7FA7C9' : '#9A9DA3',
+          toggle: () => this.put((b) => ({ form: Object.assign({}, b.form, { days: on ? b.form.days.filter((x) => x !== k) : b.form.days.concat([k]) }) }))
+        };
+      }),
+      add: () => this.put({ editing: 'new', form: { time: '07:00', days: [1, 2, 3, 4, 5], label: '' } }),
+      cancel: () => this.put({ editing: null, form: null }),
+      setTime: (e) => { const v = e.target.value; if (v) this.put((b) => ({ form: Object.assign({}, b.form, { time: v }) })); },
+      setLabel: (e) => { const v = e.target.value; this.put((b) => ({ form: Object.assign({}, b.form, { label: v.slice(0, 24) }) })); },
+      remove: () => { this.put((b) => ({ alarms: b.alarms.filter((x) => x.id !== b.editing), editing: null, form: null })); this.touched(); },
+      save: () => {
+        this.put((b) => {
+          const [h, m] = b.form.time.split(':').map(Number);
+          const rec = { h: h, m: m, days: b.form.days.slice(), label: b.form.label.trim(), on: true };
+          if (b.editing === 'new') return { alarms: b.alarms.concat([Object.assign({ id: b.nextId }, rec)]), nextId: b.nextId + 1, editing: null, form: null };
+          return { alarms: b.alarms.map((x) => (x.id === b.editing ? Object.assign({}, x, rec) : x)), editing: null, form: null };
+        });
+        this.touched();
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

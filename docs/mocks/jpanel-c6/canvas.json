@@ -80,6 +80,28 @@
       "w": 720,
       "h": 720,
       "title": "9 \u00b7 Calibrating the touch screen"
+    },
+    "Clock.dc.html": {
+      "x": 0,
+      "y": 3583,
+      "w": 720,
+      "h": 720,
+      "title": "10 \u00b7 Clock (page 2)"
+    },
+    "Ringing.dc.html": {
+      "x": 800,
+      "y": 3583,
+      "w": 720,
+      "h": 720,
+      "title": "11 \u00b7 Alarm ringing"
+    },
+    "PwaAlarms.dc.html": {
+      "x": 1600,
+      "y": 3583,
+      "w": 390,
+      "h": 844,
+      "title": "12 \u00b7 PWA \u2014 set alarms (jpanel \u2192 Panels)",
+      "is_interactive": true
     }
   },
   "order": [
@@ -92,7 +114,10 @@
     "Minecraft.dc.html",
     "Settings.dc.html",
     "Updating.dc.html",
-    "Calib.dc.html"
+    "Calib.dc.html",
+    "Clock.dc.html",
+    "Ringing.dc.html",
+    "PwaAlarms.dc.html"
   ],
   "notes": {
     "states": {

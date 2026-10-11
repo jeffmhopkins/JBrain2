@@ -15,7 +15,7 @@ panel, the others import it at a fixed `start` state).
 
 - **Home, page 1:** Jerv top-left, Minecraft top-right (dimmed, "Soon" — not built), Elora
   bottom-left, Lydian bottom-right. Unplayed messages ride the tile as an amber count.
-- **Home, page 2 (swipe left):** Settings. Kept off page 1 because it is rarely used and the
+- **Home, page 2 (swipe left):** Clock, then Settings. Kept off page 1 because it is rarely used and the
   four main tiles already fill the glass.
 - **Buttons:** KEY (left) is hold-to-talk, PWR (middle) screen on/off, BOOT (right) home /
   cancel. PWR is not the talk key because the AXP2101 shuts down on a long press of it.
@@ -37,3 +37,9 @@ panel, the others import it at a fixed `start` state).
   keeps the old map).
 - **Ground is pure black** (an unlit AMOLED pixel is off); colours are `DESIGN.md`'s accents:
   Jerv violet, Elora amber, Lydian teal, Minecraft green, steel for actions.
+- **Clock:** the time large (RTC-backed, PCF85063), the date, the next alarm, and the alarm
+  list with on/off switches only. Alarms are **created and edited in the PWA** (jpanel →
+  Panels → Jeff's, `PwaAlarms.dc.html`): time, repeat days (none = once, then it switches
+  itself off), optional label. The panel keeps its copy and rings from its own clock, so an
+  alarm still sounds with Wi-Fi down. Ringing is full-screen: Snooze 9 min / Stop; KEY
+  snoozes, BOOT stops. Alarms are offered on the owner's panel only — not on the twins' pets.
