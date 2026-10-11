@@ -145,6 +145,73 @@ TX into an interrupt line. USB-Serial/JTAG is also the only port the connector r
 **Do not rely on it.** On a charger there is no host, and on the S3 opening the port reset the
 chip before the fault could be seen. Telemetry is the channel that works where the panel lives.
 
+## What 0.0.6 adds: touch
+
+The CST9220, under 0.0.4's rules: it starts after the rollback gate, only on a boot that may start
+the display, on a priority-1 task, and a failure to start leaves the panel running on BOOT, KEY
+and PWR with telemetry saying which step failed. 0.0.5 changed nothing but the version, to prove
+an OTA installs with the display running.
+
+| Piece | What it is |
+| --- | --- |
+| `svc_touch` (`esp/svc_touch_cst9220.c`) | Pulses TP_RST (GPIO11, low 20 ms, then 100 ms to boot), checks the chip answers at 0x5A, then **polls** register 0xD000 every 20 ms: a 2-byte write and a 10-byte read with a repeated start, at 400 kHz. `tp_logic.c` (host-tested) decodes the report — byte 6 must be `0xAB`, point 0 pressed is status `0x06` — and maps it to the glass: **x = rawB, y = 479 − rawA**, clamped to the edge. Press, move and release samples reach the UI task through an 8-entry ring in which moves coalesce, so no press or release is lost however late LVGL reads. |
+| The bus | Still `svc_power`'s alone. `svc_power_i2c_attach` / `svc_power_i2c_xfer` run one transaction under its lock with a timeout capped at 50 ms (touch asks for 20); the touch service never holds the bus handle, so it cannot forget the lock. |
+| The shell's pointer | One LVGL pointer, fed by the debug command's synthetic stroke while one runs and by the touch ring otherwise; a press and its release that land inside one read period are both delivered (`continue_reading`). |
+
+**Polled, not interrupt-driven.** TP_INT is GPIO5, a C6 strapping pin, and whether the chip holds
+it low through a touch or pulses it once per report is not known. A poll needs no ISR and cannot
+miss a pulse; Waveshare's own Arduino reader for this board polls the same register the same way.
+GPIO5 is configured as a plain input — never driven, never pulled — and its level is counted
+against the reports (`tp_int=`), so a later image can choose the interrupt from a measurement.
+The vendor drivers' "2 ms" gap between the write and the read is a `vTaskDelay` at their 1 kHz
+tick; this image uses the Arduino reader's repeated start instead.
+
+**A sick touch chip cannot take the PMIC with it.** A transfer holds `svc_power`'s lock for at
+most its 20 ms timeout and is not retried on the spot — the next poll is the retry. Five failed
+reads in a row pulse TP_RST (which also frees SDA if the chip is the one holding it); three pulses
+with no good read between them report `touch=failed:lost` and slow the poll to once every 5 s;
+any good read puts it back to `ok`. Touch errors are counted as `tp_err`, never in the PMIC's
+`i2c_err`.
+
+**What a finger does** — decided in `shell_core.c` (host-tested) and carried out in `shell.c`:
+
+- A **tap** is a stroke that stayed within 20 px (~1.6 mm) of where it went down; on home it
+  opens the tile it started on. LVGL starts a scroll after the same 20 px, so "a tap" and "not yet
+  a scroll" are one number.
+- A **swipe** is at least 60 px and mostly sideways: it turns the home page and opens nothing.
+  Anything between a tap and a swipe does nothing on home, so a short swipe never opens a tile
+  and a mostly-vertical drag turns no page. On a scroll page a vertical drag scrolls (LVGL).
+- **A finger on a dark screen buys the screen and nothing else** (the twins' rule): the stroke
+  that starts dark wakes it, and none of it — press, moves or release — reaches a widget, however
+  long the finger stays. A stroke that started lit is never cut, so its release goes where its
+  press went. This replaces 0.0.4's full-screen "waker", whose deletion under the finger let the
+  rest of the stroke click whatever was beneath it.
+- **A notice that appears under a finger ends that stroke**, so its release cannot open the tile
+  it started on behind the notice. The notice itself is full-screen and swallows presses.
+- **BOOT** is still back, then home; **KEY** and **PWR** are unchanged.
+
+`sim/render.sh` runs `jpanel-sim --touch`, a scripted finger through this exact path (each check
+fails if its rule is removed). Calibration is a later Settings feature (the twins' lesson,
+`../firmware/README.md` "Touch calibration"); 0.0.6 ships the raw mapping and reports raw and
+mapped coordinates so its edges can be judged from real taps.
+
+### Reading 0.0.6 from the box
+
+The touch tokens follow the 0.0.4 ones in the `note` (the whole note stays under its 720-byte
+cap with room to spare):
+
+| Token | Good | Bad, and what it means |
+| --- | --- | --- |
+| `touch=` | `ok` | `failed:<step>` at start — `rst`/`int` (GPIO config), `bus` (no bus to borrow: the PMIC service never opened it), `i2c` (no answer at 0x5A after the reset), `task`: the panel runs without touch. `failed:lost`: it answered, then stopped (read `tp_err`, `tp_rst`). `off`: a fault boot, which starts neither display nor touch. |
+| `taps=` | one more per finger-down (the wake stroke and swipes count too) | stays 0 while tapping: the chip reports no pressed point — read `tp_noack`. |
+| `tp_last=` | `rawA,rawB>x,y` for the last four touch-downs, oldest first | a corner tap that does not land near its corner. Tap top-left, top-right, bottom-right, bottom-left: expect `x,y` near `0,0`, `479,0`, `479,479`, `0,479` (raw `479,0`, `479,479`, `0,479`, `0,0`). A swapped or mirrored pattern is the mapping; corners that stop short (e.g. never below 20) are the edge accuracy calibration will fix. |
+| `tp_err=` / `tp_rst=` | `0` / `0` | climbing: failed reads, and how often the chip was reset. The PMIC's `i2c_err=` must stay 0 whatever these do. |
+| `tp_noack=down/all` | `down` 0 or tiny | `all` counts reads without `0xAB` (normal while idle if the chip only acks fresh reports); `down` counts those inside a stroke — held over, up to 3 in a row. Large `down` with broken drags: strokes are being cut. |
+| `tp_int=down/up` | (a measurement) | polls with GPIO5 low while pressed / while not. `down` near the press polls and `up` near 0: INT is a level, and a later image can sleep on it. |
+| `tp_lat=last/max` | ≲ 35 ms | ms from the poll that saw a press to LVGL reading it; add up to 20 ms for the poll itself. Over ~100: the UI task is starved. |
+| `tp_rd=` | a few hundred µs | the longest transfer, waiting for the lock included. ≥ 20000: timeouts. |
+| `tp_drop=` | `0` | > 0: eight edges piled up unread, the UI task stalled. |
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -204,7 +271,8 @@ the shape of every later wave:
 ## Pin map
 
 From the vendor's listing, corrected by `HARDWARE.md`. 0.0.4 drives the buttons, the I2C bus (the
-AXP2101 only) and the display; the rest are for later waves.
+AXP2101) and the display, and 0.0.6 the touch controller on the same bus; the rest are for later
+waves.
 
 | Function | Pins |
 | --- | --- |
@@ -261,8 +329,8 @@ components/
   shell/            home pages, the one open app, button routing, overlays
                     (shell_core.c: every decision, no LVGL, host-tested; shell.c: carries it out)
   svc_*/            one per chip or box route; in-memory implementations until each driver lands.
-                    svc_power, svc_display and svc_buttons are real: the device builds their
-                    esp/ driver and pure *_logic.c, the sim and host the top-level files
+                    svc_power, svc_display, svc_buttons and svc_touch are real: the device builds
+                    their esp/ driver and pure *_logic.c, the sim and host the top-level files
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
   app_jerv/ app_thread/ app_clock/ app_settings/ app_minecraft/
                     each a descriptor + a pure *_model.c + a view; app_thread is one component
@@ -336,7 +404,7 @@ check a snapshot for the fake provisioning's password, device key and CA.
 
 ```sh
 IDF_TARGETS=esp32c6 scripts/firmware-setup.sh     # once — ESP-IDF v5.5.5 + the RISC-V toolchain
-echo 0.0.5 > firmware-c6/version.txt               # bump FIRST: the version is compiled in
+echo 0.0.6 > firmware-c6/version.txt               # bump FIRST: the version is compiled in
 . ~/esp-idf/export.sh && (cd firmware-c6 && idf.py fullclean && idf.py build)
 scripts/firmware-dist.sh firmware-c6               # copies the built set into dist/ — it ships
 ```
@@ -351,7 +419,8 @@ ELF's hash and the ELF carries line numbers.
 Bring-up image 0.0.1: app 1.08 MB in a 4 MB slot (73% free); 149 KB of the 442 KB of DIRAM used
 statically, before Wi-Fi and TLS allocate at runtime. 0.0.4, with LVGL and the framework: app
 1.74 MB (58% of the slot free); 239 KB of DIRAM static, 64 KB of it LVGL's heap. At runtime the
-UI adds a 38.4 KB strip buffer and a 12 KB task stack.
+UI adds a 38.4 KB strip buffer and a 12 KB task stack. 0.0.6 adds 3.3 KB of app and, at runtime,
+the touch task's 3 KB stack.
 
 ## Recovery
 
