@@ -403,7 +403,7 @@ static volatile int s_form_pending = -1; /* a change for the render task to take
 
 /* TAKEN ON CHANGE, NOT ON EVERY FETCH, and the difference is a child's afternoon. `apply_settings`
    runs every three seconds and the box serves a form unconditionally, so acting on each answer
-   would re-assert the owner's choice twenty times a minute — Elora switches to the robot, and the
+   would re-assert the owner's choice twenty times a minute — Quorra switches to the robot, and the
    panel silently switches her back before she has finished playing with it. Comparing against
    what the box last said means the gesture wins until the OWNER actually changes his mind.
    (This guard was load-bearing at four times an hour; at twenty times a minute it is the only

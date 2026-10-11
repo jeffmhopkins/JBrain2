@@ -98,7 +98,7 @@ static const char *TAG = "audio";
    70 as good at the distance a child holds it. That is the measurement §10.4q said it was
    waiting for — so this number is no longer a guess, and still well under the vendor's 90. */
 /* THE COMPILE-TIME VOLUME, AND IT IS THE ONE THAT HAS BEEN IN FORCE. Measured 2026-09-27: the
-   box's value has never reached Lydian's panel (`levels` empty at 941 s of uptime), so this
+   box's value has never reached Tamsin's panel (`levels` empty at 941 s of uptime), so this
    number — not the slider — is what the room has been hearing, and the owner's verdict on it
    was *"the speaker just is not loud enough."* 95, which is what they asked the box for and
    could not have, because `VOLUME_MAX` clamped the slider at 85.

@@ -104,7 +104,7 @@ async def test_only_the_newest_key_of_a_reflashed_panel_survives(maker) -> None:
 
 
 async def test_a_panel_that_has_never_reported_keeps_its_key(maker) -> None:
-    """THE MISTAKE THIS RULE AVOIDS. Lydian's panel was flashed and had not come up two hours
+    """THE MISTAKE THIS RULE AVOIDS. Tamsin's panel was flashed and had not come up two hours
     later; a cleanup keyed on "has reported telemetry" would have revoked its only credential and
     left a unit on a child's wall unable to authenticate. Quiet is not the same as superseded."""
     only = await _flash(maker, "panel cleanup-silent", role="jpet", age_s=10)

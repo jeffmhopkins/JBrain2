@@ -21,7 +21,7 @@ from jbrain.api import jpanel
 
 class TestDisplayName:
     def test_a_named_panel_keeps_its_name(self) -> None:
-        assert jpanel._display_name("panel Ellie") == "Ellie"
+        assert jpanel._display_name("panel Quorra") == "Quorra"
         assert jpanel._display_name("panel  Rae ") == "Rae"
 
     def test_an_unnamed_panel_is_still_sayable(self) -> None:
@@ -46,7 +46,7 @@ class TestDisplayName:
         asserting is that they compose: whatever `/flash` writes, the addressing reads back.
         """
         # The named branch, and the unnamed one, through the pair as the routes use them.
-        assert jpanel._display_name(endpoint_api.panel_label("Ellie")) == "Ellie"
+        assert jpanel._display_name(endpoint_api.panel_label("Quorra")) == "Quorra"
         assert jpanel._display_name(endpoint_api.panel_label("")) == "the other one"
         assert endpoint_api.panel_label("") == jpanel._UNNAMED_LABEL
         # And `/flash` really does write it through that function rather than its own literal,
@@ -71,7 +71,7 @@ class TestNameOf:
         assert jpanel._name_of({}, "panel", "gone") == "the other one"
 
     def test_a_known_panel_is_named(self) -> None:
-        assert jpanel._name_of({"p1": "Ellie"}, "panel", "p1") == "Ellie"
+        assert jpanel._name_of({"p1": "Quorra"}, "panel", "p1") == "Quorra"
 
 
 class TestMessageShape:
@@ -102,7 +102,7 @@ class TestMessageShape:
     def test_direction_is_relative_to_the_owner(self) -> None:
         """ "in" and "out" are the PWA's axis, and the owner is the other end of MOST
         conversations he can see — so those two are decided by whether a panel sent it."""
-        names = {"p1": "Ellie"}
+        names = {"p1": "Quorra"}
         assert jpanel._row_to_message(self._row("panel", "p1"), names).direction == "in"
         assert jpanel._row_to_message(self._row("owner", None), names).direction == "out"
 
@@ -111,25 +111,25 @@ class TestMessageShape:
         OWNER. So the PWA drew a message from one four-year-old to the other with only its
         sender's name, exactly like one addressed to him, and its unplayed badge counted it as
         something HE had failed to deal with. The owner saw both: *"my pwa is showing messages
-        between the girls ... make sure the pwa is correctly listing that it was lydian to
-        elora, not kid to Dad."*
+        between the girls ... make sure the pwa is correctly listing that it was tamsin to
+        quorra, not kid to Dad."*
 
         `to_name` was already on the wire. Nothing said the message was not his, so nothing
         drew it."""
-        names = {"p1": "Lydian", "p2": "Elora"}
+        names = {"p1": "Tamsin", "p2": "Quorra"}
         msg = jpanel._row_to_message(
             self._row("panel", "p1", recipient_kind="panel", recipient_device="p2"), names
         )
         assert msg.direction == "between"
         # Both ends named, so the PWA can say who it was actually between.
-        assert (msg.from_name, msg.to_name) == ("Lydian", "Elora")
+        assert (msg.from_name, msg.to_name) == ("Tamsin", "Quorra")
 
     def test_an_unplayed_message_reports_no_played_at(self) -> None:
         """`played_at is None` is the entire inbox query and the PWA's unplayed badge; a
         serialisation that turned it into a string would make every message look heard."""
-        msg = jpanel._row_to_message(self._row("panel", "p1"), {"p1": "Ellie"})
+        msg = jpanel._row_to_message(self._row("panel", "p1"), {"p1": "Quorra"})
         assert msg.played_at is None
-        assert msg.from_name == "Ellie"
+        assert msg.from_name == "Quorra"
         assert msg.to_name == "Dad"
 
     def test_a_message_the_box_gave_up_on_is_not_merely_waiting(self) -> None:
@@ -142,12 +142,12 @@ class TestMessageShape:
 
         `played_at` is deliberately NOT written when the box gives up: the row is unplayed
         because it IS unplayed, and stamping it would be the box telling the owner a lie."""
-        waiting = jpanel._row_to_message(self._row("owner", None, deliveries=1), {"p1": "Ellie"})
+        waiting = jpanel._row_to_message(self._row("owner", None, deliveries=1), {"p1": "Quorra"})
         assert waiting.undelivered is False, "one try is a message waiting, not a failure"
 
         gave_up = jpanel._row_to_message(
             self._row("owner", None, deliveries=jpanel.JPANEL_MAX_DELIVERIES),
-            {"p1": "Ellie"},
+            {"p1": "Quorra"},
         )
         assert gave_up.undelivered is True
         assert gave_up.played_at is None, (
@@ -431,7 +431,7 @@ class TestTheHeardRingCrossesThePackageBoundary:
         )
 
     def test_a_repeat_count_past_the_old_ceiling_still_validates(self) -> None:
-        """THE CEILING WAS REACHED IN THE FIELD. Elora's panel reported a run of exactly 255
+        """THE CEILING WAS REACHED IN THE FIELD. Quorra's panel reported a run of exactly 255
         on 2026-09-26 — a saturated `uint8_t`, not a measurement — and the count is widened to
         16 bits precisely because "at least 255" is the reading that matters least. A count
         the box then refused would trade a clipped number for no report at all, which is the

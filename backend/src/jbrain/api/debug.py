@@ -4702,7 +4702,7 @@ async def panel_reach(request: Request, _p: DebugDep) -> PanelReachOut:
     the access log by hand.
 
     THIS ROUTE EXISTS BECAUSE ANSWERING IT ONCE TOOK TWO THOUSAND LINES OF `GET /logs/api`. On
-    2026-09-29 the owner pressed the pet on Lydian's panel, got the failure dash immediately, and
+    2026-09-29 the owner pressed the pet on Tamsin's panel, got the failure dash immediately, and
     asked why. The box's own evidence was entirely negative: no `POST /endpoint/converse` had
     arrived, no `GET /endpoint/settings` for an hour before that, nothing at all for the last
     thirty minutes. All true, all invisible except by paging back through the log and noticing

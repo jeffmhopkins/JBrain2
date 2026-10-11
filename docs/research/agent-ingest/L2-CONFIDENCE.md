@@ -145,7 +145,7 @@ not substring containment, so a `7` does not match inside `$17`, `arbiter.py:239
 | model quote present in note | `arbiter.py:651-658` | the primary path; gated behind `not fact.inferred` |
 | `_object_named` | `arbiter.py:193-213` | the edge's **object** is named verbatim ⇒ the edge is stated even if the quote drifted |
 | `_value_attested` | `arbiter.py:253-267` | the stored **value** appears as a standalone token |
-| `_relationship_object_named` | `arbiter.py:216-229` | fires **even when the model flagged the edge inferred** — enumerated kinship ("daughters named Summer, Lydian…") is systematically under-flagged |
+| `_relationship_object_named` | `arbiter.py:216-229` | fires **even when the model flagged the edge inferred** — enumerated kinship ("daughters named Hazel, Tamsin…") is systematically under-flagged |
 | `_date_phrase_grounded` | `arbiter.py:580-593` | age → birthDate is deterministic arithmetic over a *stated* age |
 | `_gender_grounded` | `arbiter.py:312-329` | "daughter" ⇒ female is a 1:1 implication, not a guess |
 | `_time_grounded` | `arbiter.py:596-614` | a resolved clock time printed in the note (OCR'd appointments) |

@@ -6,7 +6,7 @@
  * the manifest, a talk turn, and all of voice post. Over ONE TLS WebSocket (`/endpoint/ws`)
  * when the box offers it, and over the old one-HTTPS-session-per-request path when it does not.
  *
- * WHY. Measured on Elora's panel, 0.3.38, 2026-10-04: after about two talk turns every request
+ * WHY. Measured on Quorra's panel, 0.3.38, 2026-10-04: after about two talk turns every request
  * failed with "connect" — talk, the settings poll, the jpanel poll, a send. Internal heap was
  * ~75 KB free with a 25.6 KB largest block, and each request was a fresh mbedTLS session
  * (~40 KB internal, 1-2 s of handshake). The main task's three-second settings poll, the jpanel

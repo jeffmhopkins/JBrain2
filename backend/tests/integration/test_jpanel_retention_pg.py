@@ -49,7 +49,7 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
             text(
                 """
                 INSERT INTO app.principals (id, kind, key_hash, label)
-                VALUES (:id, 'device_key', :hash, 'panel Ellie')
+                VALUES (:id, 'device_key', :hash, 'panel Quorra')
                 """
             ),
             {"id": PANEL, "hash": f"hash-{PANEL}"},

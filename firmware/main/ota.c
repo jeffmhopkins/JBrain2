@@ -85,8 +85,8 @@ static esp_err_t attach_auth(esp_http_client_handle_t client)
 
 /* WHY THE SETTINGS FETCH LAST FAILED, AND HOW MANY TIMES IT HAS.
  *
- * MEASURED 2026-09-27: Lydian's panel reported `levels` EMPTY at 941 seconds of uptime while
- * Elora's, on older firmware, reported `70/30`. `levels` is what the codec last ACCEPTED, so an
+ * MEASURED 2026-09-27: Tamsin's panel reported `levels` EMPTY at 941 seconds of uptime while
+ * Quorra's, on older firmware, reported `70/30`. `levels` is what the codec last ACCEPTED, so an
  * empty one means `audio_set_levels` had never run — which means `apply_settings` had never
  * succeeded in a quarter of an hour, on a panel that was otherwise online and carrying
  * messages. The owner saw the same thing from the other end: *"the volume doesn't actually

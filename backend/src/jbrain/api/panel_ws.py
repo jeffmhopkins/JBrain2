@@ -1,6 +1,6 @@
 """One socket per panel: every request a panel makes, over a single TLS WebSocket.
 
-WHY THIS EXISTS. Measured on Elora's panel (firmware 0.3.38, 2026-10-04): after about two
+WHY THIS EXISTS. Measured on Quorra's panel (firmware 0.3.38, 2026-10-04): after about two
 talk turns every request failed with "connect" — talk, the settings poll, the jpanel poll,
 a send. Internal heap sat near 75 KB free with a largest block of 25.6 KB, and every request
 was a fresh mbedTLS session (~40 KB of internal RAM, 1-2 s of handshake). Two handshakes in

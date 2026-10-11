@@ -120,8 +120,8 @@ static vocab_t VOCAB[] = {
      *
      * "sister" HARDCODES A RELATIONSHIP, which is a known cost rather than an oversight. The box
      * already knows each panel's sibling by name — it is what the pop-up says out loud — and
-     * `endpoint_panel` can now carry per-panel strings to the firmware, so "tell Lydian" on one
-     * unit and "tell Elora" on the other is the better shape once there is evidence this one
+     * `endpoint_panel` can now carry per-panel strings to the firmware, so "tell Tamsin" on one
+     * unit and "tell Quorra" on the other is the better shape once there is evidence this one
      * fires at all. That is the next step, not this one.
      *
      * THE ARGUMENT IS A `jpanel_to_t`, not a face or an action, and it is the first entry in

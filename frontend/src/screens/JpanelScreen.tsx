@@ -91,7 +91,7 @@ function unheard(m: JpanelMessage): boolean {
 /* ── ONE CHILD, ONE CONVERSATION ───────────────────────────────────────────────────────────
  *
  * The owner: *"I want there to be a separate selection underneath the top where you can select
- * ... that'll be the panel's names. So if I select lydian or Elora up there it should show
+ * ... that'll be the panel's names. So if I select tamsin or Quorra up there it should show
  * those two as conversations ... kind of like a normal conversation does with jerv or the other
  * ones in the pwa where there's an omnibox at the bottom and a left and right conversation
  * bubble."*

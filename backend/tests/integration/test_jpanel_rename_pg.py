@@ -156,7 +156,7 @@ async def test_renaming_moves_every_key_the_old_label_had(
     old = await _panel(maker, "room endpoint panel", 30)
     older = await _panel(maker, "room endpoint panel", 60)
     live = await _panel(maker, "room endpoint panel", 1)
-    ellie = await _panel(maker, "panel Ellie", 10)
+    quorra = await _panel(maker, "panel Quorra", 10)
 
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
@@ -172,7 +172,7 @@ async def test_renaming_moves_every_key_the_old_label_had(
         )
 
         before = _names(client)
-        assert before == {live: "the other one", ellie: "Ellie"}, (
+        assert before == {live: "the other one", quorra: "Quorra"}, (
             "the three unnamed keys should already collapse to one row — if they do not, the "
             "rename below is not the thing under test"
         )
@@ -184,7 +184,7 @@ async def test_renaming_moves_every_key_the_old_label_had(
         assert done.json()["keys"] == 3
 
         after = _names(client)
-        assert after == {live: "Nora", ellie: "Ellie"}, (
+        assert after == {live: "Nora", quorra: "Quorra"}, (
             "a rename that left the superseded keys behind would show a second, unreachable "
             "panel still called 'the other one'"
         )
@@ -199,14 +199,14 @@ async def test_renaming_moves_every_key_the_old_label_had(
             ).all()
         }
     assert labels[old] == labels[older] == labels[live] == "panel Nora"
-    assert labels[ellie] == "panel Ellie", "the sibling's label must not move"
+    assert labels[quorra] == "panel Quorra", "the sibling's label must not move"
 
 
 async def test_a_panel_learns_its_twin_s_name_from_the_poll_it_already_makes(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """The blue recording indicator said MESSAGE where it should say TO ELORA, and that was an
+    """The blue recording indicator said MESSAGE where it should say TO QUORRA, and that was an
     honest gap rather than a placeholder: a panel is flashed with its OWN name, the box mints
     the other one's at the OTHER unit's flash, and nothing on the device could answer "who is
     my twin". `GET /waiting` carries it now — a poll that was already happening.
@@ -219,7 +219,7 @@ async def test_a_panel_learns_its_twin_s_name_from_the_poll_it_already_makes(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
         mine = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
 
         # Alone on the box: there is no sibling, and saying so is the correct answer.
@@ -245,7 +245,7 @@ async def test_renaming_the_twin_changes_what_the_panel_is_told_to_say(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
         mine = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         client.post("/api/devices", json={"label": "room endpoint panel", "device_role": "jpet"})
         assert _sibling(client, key, mine["key"]) == "the other one"
@@ -264,21 +264,21 @@ async def test_a_name_another_panel_already_has_is_refused(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """The one failure this addressing model has, and it must not be reachable from a text box.
-    `_panel_names` keeps one row per label, so two panels called Ellie become one row and one
+    `_panel_names` keeps one row per label, so two panels called Quorra become one row and one
     twin becomes unreachable — documented where it is caused, refused here."""
     key = await service.rotate_owner_key(SqlAuthRepo(maker))
     unnamed = await _panel(maker, "room endpoint panel", 1)
-    await _panel(maker, "panel Ellie", 10)
+    await _panel(maker, "panel Quorra", 10)
 
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        clash = client.post(f"/api/jpanel/panels/{unnamed}/name", json={"name": "Ellie"})
+        clash = client.post(f"/api/jpanel/panels/{unnamed}/name", json={"name": "Quorra"})
         assert clash.status_code == 409
         assert "unreachable" in clash.json()["detail"]
-        # Case is not a loophole: "ellie" collapses onto "Ellie" just as surely.
+        # Case is not a loophole: "quorra" collapses onto "Quorra" just as surely.
         assert (
-            client.post(f"/api/jpanel/panels/{unnamed}/name", json={"name": "ellie"}).status_code
+            client.post(f"/api/jpanel/panels/{unnamed}/name", json={"name": "quorra"}).status_code
             == 409
         )
         assert _names(client)[unnamed] == "the other one", "a refused rename changes nothing"
@@ -374,7 +374,7 @@ async def test_a_panel_can_re_fetch_a_message_it_has_already_heard(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
         panel = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         pid = next(iter(_names(client)))
         message_id, _ = await _plant(maker, tmp_path, pid, b"\x11\x22")
@@ -422,12 +422,12 @@ async def test_a_panel_cannot_re_fetch_a_message_that_is_not_its_own(
     )
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
-        client.post("/api/devices", json={"label": "panel Ellie", "device_role": "jpet"})
+        client.post("/api/devices", json={"label": "panel Quorra", "device_role": "jpet"})
         snooper = client.post(
             "/api/devices", json={"label": "panel Nora", "device_role": "jpet"}
         ).json()
-        ellie_id = next(pid for pid, name in _names(client).items() if name == "Ellie")
-        hers, _ = await _plant(maker, tmp_path, ellie_id, b"\x33\x44")
+        quorra_id = next(pid for pid, name in _names(client).items() if name == "Quorra")
+        hers, _ = await _plant(maker, tmp_path, quorra_id, b"\x33\x44")
 
         client.cookies.clear()
         head = {"Authorization": f"Bearer {snooper['key']}"}
@@ -457,7 +457,7 @@ async def test_an_upload_that_does_not_match_its_hash_is_refused(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
         panel = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         client.cookies.clear()
         head = {"Authorization": f"Bearer {panel['key']}"}
@@ -502,7 +502,7 @@ async def test_a_panel_that_cannot_prove_itself_is_still_heard(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
         panel = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         client.cookies.clear()
         sent = client.post(
@@ -528,7 +528,7 @@ async def test_a_message_too_long_is_refused_rather_than_cut(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
         panel = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         client.cookies.clear()
         too_long = b"\x10\x20" * (jpanel.MAX_MESSAGE_BYTES // 2 + 1000)
@@ -556,7 +556,7 @@ async def test_the_box_says_what_it_sent_so_the_panel_can_check(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
         panel = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         pid = next(iter(_names(client)))
         message_id, _ = await _plant(maker, tmp_path, pid, b"\x55\x66")

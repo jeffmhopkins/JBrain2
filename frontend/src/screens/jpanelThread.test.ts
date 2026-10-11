@@ -5,7 +5,7 @@ import { atLiveEnd, threadItems, threadPanels } from "./jpanelThread";
 function msg(id: string, at: string, extra: Partial<JpanelMessage> = {}): JpanelMessage {
   return {
     id,
-    from_name: "Lydian",
+    from_name: "Tamsin",
     to_name: "Dad",
     direction: "in",
     transcript: id,
@@ -31,11 +31,11 @@ function turn(id: string, answeredAt: string, totalMs: number): JpanelPetTurn {
 }
 
 function thread(messages: JpanelMessage[]): JpanelThread {
-  return { device_id: "dev-lydian", name: "Lydian", unplayed: 0, messages };
+  return { device_id: "dev-tamsin", name: "Tamsin", unplayed: 0, messages };
 }
 
 function chat(turns: JpanelPetTurn[]): JpanelPetChat {
-  return { device_id: "dev-lydian", label: "Lydian", turns };
+  return { device_id: "dev-tamsin", label: "Tamsin", turns };
 }
 
 describe("who gets a chip on the picker", () => {
@@ -44,30 +44,34 @@ describe("who gets a chip on the picker", () => {
     // for her father — but asks the thing on her wall about fish every afternoon — has no
     // message thread at all, and a picker built from message threads would simply omit her.
     const panels = threadPanels(
-      [{ device_id: "dev-lydian", name: "Lydian", unplayed: 2, messages: [] }],
+      [{ device_id: "dev-tamsin", name: "Tamsin", unplayed: 2, messages: [] }],
       [
-        { device_id: "dev-lydian", label: "Lydian", turns: [] },
-        { device_id: "dev-elora", label: "Elora", turns: [turn("t1", "2026-09-29T10:00:00Z", 0)] },
+        { device_id: "dev-tamsin", label: "Tamsin", turns: [] },
+        {
+          device_id: "dev-quorra",
+          label: "Quorra",
+          turns: [turn("t1", "2026-09-29T10:00:00Z", 0)],
+        },
       ],
     );
-    expect(panels.map((p) => p.name)).toEqual(["Lydian", "Elora"]);
-    expect(panels.map((p) => p.device_id)).toEqual(["dev-lydian", "dev-elora"]);
+    expect(panels.map((p) => p.name)).toEqual(["Tamsin", "Quorra"]);
+    expect(panels.map((p) => p.device_id)).toEqual(["dev-tamsin", "dev-quorra"]);
   });
 
   it("does not list a panel twice when it has both", () => {
     const panels = threadPanels(
-      [{ device_id: "dev-lydian", name: "Lydian", unplayed: 3, messages: [] }],
-      [{ device_id: "dev-lydian", label: "Lydian", turns: [] }],
+      [{ device_id: "dev-tamsin", name: "Tamsin", unplayed: 3, messages: [] }],
+      [{ device_id: "dev-tamsin", label: "Tamsin", turns: [] }],
     );
-    expect(panels).toEqual([{ device_id: "dev-lydian", name: "Lydian", unplayed: 3 }]);
+    expect(panels).toEqual([{ device_id: "dev-tamsin", name: "Tamsin", unplayed: 3 }]);
   });
 
   it("carries the unplayed count, which is what the chip is read for", () => {
     const panels = threadPanels(
-      [{ device_id: "dev-lydian", name: "Lydian", unplayed: 4, messages: [] }],
+      [{ device_id: "dev-tamsin", name: "Tamsin", unplayed: 4, messages: [] }],
       [],
     );
-    expect(panels).toEqual([{ device_id: "dev-lydian", name: "Lydian", unplayed: 4 }]);
+    expect(panels).toEqual([{ device_id: "dev-tamsin", name: "Tamsin", unplayed: 4 }]);
   });
 });
 

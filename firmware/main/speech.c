@@ -134,7 +134,7 @@ typedef struct {
     char raw[DECODE_RAW_CHARS]; /* the decoder's phoneme string, truncated; "" when unknown */
     uint8_t prob;  /* 0..100, because a float in a JSON body buys nothing here */
     /* Consecutive identical decodes, collapsed into this one entry. SIXTEEN BITS, because
-       eight saturated in the field: Elora's panel reported a run of 255 on 2026-09-26, which
+       eight saturated in the field: Quorra's panel reported a run of 255 on 2026-09-26, which
        is not a count but a ceiling — and the number's whole job is to say how long a panel
        went on mis-hearing the same thing, which is exactly the reading that gets clipped. At
        15 minutes a cycle and ~100 ms a decode a genuine run can be thousands. */

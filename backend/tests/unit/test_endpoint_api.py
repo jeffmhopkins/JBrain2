@@ -142,7 +142,7 @@ def _provision_panel(c: TestClient) -> str:
     """
     asyncio.run(
         cast(FastAPI, c.app).state.auth_repo.create_principal(
-            "device_key", keys.hash_key(PANEL_KEY), "panel Elora"
+            "device_key", keys.hash_key(PANEL_KEY), "panel Quorra"
         )
     )
     return PANEL_KEY
@@ -765,7 +765,7 @@ class TestTheSharedFlashBuilder:
                 port="/dev/ttyACM0",
                 ssid="net",
                 password="pw",
-                name="Elora",
+                name="Quorra",
                 erase=False,
             )
 

@@ -666,41 +666,41 @@ describe("mock API", () => {
 
   it("serves jpanel messages grouped by panel, newest first", async () => {
     const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
-    const ellie = out.panels.find((p) => p.name === "Ellie");
+    const quorra = out.panels.find((p) => p.name === "Quorra");
     // BY ID, NOT BY NAME. The second twin's panel is unnamed in the fixture — which is the
     // live box's own state and the case the rename control exists for — and a name is now a
     // thing the owner can change from the screen, so it cannot be an identity here.
     const mabel = out.panels.find((p) => p.device_id === "panel-mabel");
-    expect(ellie?.unplayed).toBe(2);
+    expect(quorra?.unplayed).toBe(2);
     expect(mabel?.messages).toEqual([]);
     expect(mabel?.unplayed).toBe(0);
-    const times = (ellie?.messages ?? []).map((m) => Date.parse(m.created_at));
+    const times = (quorra?.messages ?? []).map((m) => Date.parse(m.created_at));
     expect([...times].sort((a, b) => b - a)).toEqual(times);
-    expect(ellie?.messages.some((m) => m.transcript === "")).toBe(true);
-    expect(ellie?.messages.some((m) => m.transcript.length > 200)).toBe(true);
+    expect(quorra?.messages.some((m) => m.transcript === "")).toBe(true);
+    expect(quorra?.messages.some((m) => m.transcript.length > 200)).toBe(true);
   });
 
   it("clears an unplayed message when the owner has seen it, keeping the first look", async () => {
     const before = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
     const waiting = before.panels
-      .find((p) => p.name === "Ellie")
+      .find((p) => p.name === "Quorra")
       ?.messages.find((m) => !m.played_at);
     expect(waiting).toBeDefined();
     const id = String(waiting?.id);
 
     expect((await call(`/api/jpanel/messages/${id}/played`, { method: "POST" })).status).toBe(204);
     const after = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
-    const ellie = after.panels.find((p) => p.name === "Ellie");
-    const seen = ellie?.messages.find((m) => m.id === id);
+    const quorra = after.panels.find((p) => p.name === "Quorra");
+    const seen = quorra?.messages.find((m) => m.id === id);
     expect(seen?.played_at).not.toBeNull();
-    expect(ellie?.unplayed).toBe(
-      (before.panels.find((p) => p.name === "Ellie")?.unplayed ?? 0) - 1,
+    expect(quorra?.unplayed).toBe(
+      (before.panels.find((p) => p.name === "Quorra")?.unplayed ?? 0) - 1,
     );
 
     // A second look is not a new answer to "when did he see it".
     await call(`/api/jpanel/messages/${id}/played`, { method: "POST" });
     const again = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
-    const twice = again.panels.find((p) => p.name === "Ellie")?.messages.find((m) => m.id === id);
+    const twice = again.panels.find((p) => p.name === "Quorra")?.messages.find((m) => m.id === id);
     expect(twice?.played_at).toBe(seen?.played_at);
   });
 

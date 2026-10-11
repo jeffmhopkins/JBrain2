@@ -2951,7 +2951,7 @@ static void test_vocab_arguments_are_real(void)
  *
  * This replaces a test that pinned the opposite shape. The phrases were "send a message" and
  * "send dad a message", and that test required the recipient BEFORE the noun so a third one
- * ("send ellie a message") could not become a prefix of an existing phrase. The shape was
+ * ("send quorra a message") could not become a prefix of an existing phrase. The shape was
  * sound; the phrases simply never fired — measured on two panels on 0.3.00, alongside `do a
  * dance` firing and `dance` not — and the leading suspicion is that the pair sounded so alike
  * (differing only at `a` against `dad`) that they split the confidence between them.
@@ -3781,7 +3781,7 @@ static void test_a_reason_survives_the_success_that_follows_it(void)
 {
     /* THE WHOLE POINT, AND THE BUG IT FIXES. `s_set_err` was cleared on success so that reports
        described the CURRENT state — but a report only goes out at the end of a cycle, right
-       after a fetch that succeeded, so the string was empty in every report ever sent. Lydian's
+       after a fetch that succeeded, so the string was empty in every report ever sent. Tamsin's
        panel, with the fetch failing for an hour: `set_fails: 3, set_err: ""`. */
     reach_reset_for_test();
     reach_fail(REACH_SETTINGS, "connect", 1000);

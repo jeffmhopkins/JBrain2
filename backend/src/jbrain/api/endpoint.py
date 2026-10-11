@@ -556,7 +556,7 @@ class TelemetryIn(BaseModel):
     # current state rather than the worst thing that ever happened. Sound reasoning, and it made
     # the field useless: a report only goes out at the end of a cycle, right after a fetch that
     # succeeded, so the string was empty in every report any panel has ever sent. On 2026-09-29,
-    # with the fetch failing for an hour, Lydian's panel reported `set_fails: 3, set_err: ""`.
+    # with the fetch failing for an hour, Tamsin's panel reported `set_fails: 3, set_err: ""`.
     #
     # So the name survives now and the AGE says whether it is current — the question clearing was
     # trying to answer, asked the one way that does not destroy the answer.
@@ -610,7 +610,7 @@ class TelemetryIn(BaseModel):
     #
     # `joined` was set once at boot and never cleared, so the firmware's Wi-Fi retry could only
     # ever run on a panel that failed to join in the FIRST place — not on one whose link went
-    # half-open later, which is the case that happens. Lydian's panel was silent from 04:24 on
+    # half-open later, which is the case that happens. Tamsin's panel was silent from 04:24 on
     # 2026-09-29 for eight and a half hours having reported `wifi_drops: 0`: not one disconnect
     # event the whole time, because the radio's own view was that everything was fine.
     #

@@ -154,7 +154,7 @@ async def test_the_settings_poll_also_says_what_firmware_is_served(
     without doubling the handshake rate.
     """
     await SqlAuthRepo(maker).create_principal(
-        "device_key", keys.hash_key(PANEL_KEY_SERVED), "panel Elora"
+        "device_key", keys.hash_key(PANEL_KEY_SERVED), "panel Quorra"
     )
     app = create_app(
         Settings(
@@ -270,7 +270,7 @@ async def test_a_name_no_dictionary_knows_is_served_empty_rather_than_guessed(
 ) -> None:
     """An invented name has no entry, and a guess would be worse than nothing.
 
-    CMUdict knows words; `elora` and `lydian` — the twins' own names, and the obvious thing to
+    CMUdict knows words; `quorra` and `tamsin` — the twins' own names, and the obvious thing to
     call a panel — are not words. Empty means "I could not", the panel keeps converting the
     name itself exactly as it does today, and the wake phrase is no worse than before. A
     half-guess would be: the panel would register a pronunciation nobody says and the failure
@@ -283,7 +283,7 @@ async def test_a_name_no_dictionary_knows_is_served_empty_rather_than_guessed(
         await s.execute(
             text(
                 "INSERT INTO app.endpoint_panel (subject_id, pet_name, form)"
-                " VALUES (CAST(:sid AS uuid), 'elora', 'ostrich')"
+                " VALUES (CAST(:sid AS uuid), 'quorra', 'ostrich')"
                 " ON CONFLICT (subject_id) DO UPDATE SET pet_name = EXCLUDED.pet_name"
             ),
             {"sid": made.device.id},
@@ -301,7 +301,7 @@ async def test_a_name_no_dictionary_knows_is_served_empty_rather_than_guessed(
         resp = client.get("/api/endpoint/settings", headers={"Authorization": f"Bearer {made.key}"})
     assert resp.status_code == 200, resp.text
     got = resp.json()
-    assert got["pet_name"] == "elora", "the name still arrives; only its phonemes are missing"
+    assert got["pet_name"] == "quorra", "the name still arrives; only its phonemes are missing"
     assert got["pet_name_phonemes"] == ""
 
 

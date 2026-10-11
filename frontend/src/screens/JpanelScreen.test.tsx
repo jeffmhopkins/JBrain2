@@ -18,13 +18,13 @@ const GARBLED =
 
 const THREADS = [
   {
-    device_id: "panel-ellie",
-    name: "Ellie",
+    device_id: "panel-quorra",
+    name: "Quorra",
     unplayed: 2,
     messages: [
       {
         id: "jp-1",
-        from_name: "Ellie",
+        from_name: "Quorra",
         to_name: "Dad",
         direction: "in",
         transcript: "There is a joke. There is a joke.",
@@ -35,7 +35,7 @@ const THREADS = [
       },
       {
         id: "jp-2",
-        from_name: "Ellie",
+        from_name: "Quorra",
         to_name: "Dad",
         direction: "in",
         transcript: "",
@@ -46,7 +46,7 @@ const THREADS = [
       },
       {
         id: "jp-3",
-        from_name: "Ellie",
+        from_name: "Quorra",
         to_name: "Dad",
         direction: "in",
         transcript: GARBLED,
@@ -64,7 +64,7 @@ const THREADS = [
  *  flashes before this ever sees them. */
 const PANELS = [
   {
-    device_id: "panel-ellie",
+    device_id: "panel-quorra",
     name: "the other one",
     role: "jpet",
     reported_at: new Date(Date.now() - 40_000).toISOString(),
@@ -86,7 +86,7 @@ const PANELS = [
 const SENT = {
   id: "jp-sent-1",
   from_name: "Dad",
-  to_name: "Ellie",
+  to_name: "Quorra",
   direction: "out",
   transcript: "Five more minutes then teeth.",
   composed: "text",
@@ -101,8 +101,8 @@ const SENT = {
  *  order the thread comes out in is a real assertion rather than a coincidence. */
 const CHATS = [
   {
-    device_id: "panel-ellie",
-    label: "Ellie",
+    device_id: "panel-quorra",
+    label: "Quorra",
     turns: [
       {
         id: "t1",
@@ -160,10 +160,10 @@ function box(
     if (/^\/api\/jpanel\/panels\/[^/]+\/name$/.test(path) && method === "POST") {
       return opts.rename
         ? opts.rename(init)
-        : json({ device_id: "panel-ellie", name: "Elora", keys: 4 });
+        : json({ device_id: "panel-quorra", name: "Quorra", keys: 4 });
     }
     if (/^\/api\/endpoint\/panels\/[^/]+\/revoke$/.test(path) && method === "POST") {
-      return opts.revoke ? opts.revoke() : json({ name: "Ellie", keys: 13 });
+      return opts.revoke ? opts.revoke() : json({ name: "Quorra", keys: 13 });
     }
     if (/^\/api\/endpoint\/panels\/[^/]+\/appearance$/.test(path)) {
       if (method === "PUT") {
@@ -268,7 +268,7 @@ describe("JpanelScreen messages", () => {
 
   it("shows one child at a time, and says on the chip which of them is waiting", async () => {
     /* THE OWNER: *"a separate selection underneath the top ... that'll be the panel's names.
-       So if I select lydian or Elora up there it should show those two as conversations."*
+       So if I select tamsin or Quorra up there it should show those two as conversations."*
 
        What this replaced was every panel stacked down one page. The count rides the CHIP
        because "who is waiting on me?" has to be answerable without opening either of them —
@@ -277,9 +277,9 @@ describe("JpanelScreen messages", () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    const ellie = await screen.findByRole("tab", { name: /Ellie/ });
-    expect(within(ellie).getByText("2")).toBeTruthy();
-    expect(ellie.getAttribute("aria-selected")).toBe("true");
+    const quorra = await screen.findByRole("tab", { name: /Quorra/ });
+    expect(within(quorra).getByText("2")).toBeTruthy();
+    expect(quorra.getAttribute("aria-selected")).toBe("true");
 
     const mabel = screen.getByRole("tab", { name: /Mabel/ });
     expect(within(mabel).queryByText(/\d/)).toBeNull();
@@ -301,7 +301,7 @@ describe("JpanelScreen messages", () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    const picker = (await screen.findByRole("tab", { name: /Ellie/ })).parentElement;
+    const picker = (await screen.findByRole("tab", { name: /Quorra/ })).parentElement;
     expect(picker?.classList.contains("jp-seg")).toBe(true);
     // And it is still its own row, so it can be moved without moving the tabs.
     expect(picker?.classList.contains("jp-who")).toBe(true);
@@ -318,7 +318,7 @@ describe("JpanelScreen messages", () => {
     expect(screen.getByText(/Nothing from Mabel yet/)).toBeTruthy();
     // The composer is not conditional on there being a conversation already.
     expect(screen.getByLabelText("Message Mabel")).toBeTruthy();
-    // And Ellie's thread went with her, rather than both being on screen at once.
+    // And Quorra's thread went with her, rather than both being on screen at once.
     expect(screen.queryByText("There is a joke. There is a joke.")).toBeNull();
   });
 
@@ -365,7 +365,7 @@ describe("JpanelScreen messages", () => {
     // Beside, not below: the play control shares the body row with the words.
     const body = within(row).getByText(GARBLED).parentElement;
     expect(body?.className).toContain("jp-b-row");
-    expect(within(row).getByRole("button", { name: "Play Ellie's message" })).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "Play Quorra's message" })).toBeTruthy();
   });
 
   it("says when the transcriber produced no words at all", async () => {
@@ -380,7 +380,7 @@ describe("JpanelScreen messages", () => {
     render(<JpanelScreen onClose={vi.fn()} />);
 
     const row = rowFor(await screen.findByText("There is a joke. There is a joke."));
-    fireEvent.click(within(row).getByRole("button", { name: "Play Ellie's message" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Play Quorra's message" }));
     expect(FakeAudio.built[0]?.src).toBe("/api/jpanel/messages/jp-1/audio");
 
     const stop = within(row).getByRole("button", { name: "Stop playing" });
@@ -392,22 +392,22 @@ describe("JpanelScreen messages", () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    const input = await screen.findByLabelText("Message Ellie");
+    const input = await screen.findByLabelText("Message Quorra");
     fireEvent.change(input, { target: { value: "Five more minutes then teeth." } });
     // ONE ACTION PER COMPOSE ROW. With words in the box the obvious thing is to send them,
     // and two live buttons side by side is the moment a parent taps the wrong one.
-    expect(screen.queryByRole("button", { name: "Record a message for Ellie" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+    expect(screen.queryByRole("button", { name: "Record a message for Quorra" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send to Quorra" }));
 
     await waitFor(() => expect(screen.getByText("Five more minutes then teeth.")).toBeTruthy());
     const post = fetchMock.mock.calls.find((c) => (c[1]?.method ?? "GET") === "POST");
     expect(post?.[0]).toBe("/api/jpanel/messages");
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({
-      to_device: "panel-ellie",
+      to_device: "panel-quorra",
       text: "Five more minutes then teeth.",
     });
     // And it comes back once the draft is cleared, so the next thing said can be spoken.
-    expect(await screen.findByRole("button", { name: "Record a message for Ellie" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Record a message for Quorra" })).toBeTruthy();
   });
 
   it("clears a panel's history, and says what the box refused to delete", async () => {
@@ -429,9 +429,9 @@ describe("JpanelScreen messages", () => {
     render(<JpanelScreen onClose={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Clear messages" }));
-    expect(await screen.findByText(/Kept 1 Ellie hasn't heard yet/)).toBeTruthy();
+    expect(await screen.findByText(/Kept 1 Quorra hasn't heard yet/)).toBeTruthy();
     const del = fetchMock.mock.calls.find((c) => (c[1]?.method ?? "") === "DELETE");
-    expect(String(del?.[0])).toBe("/api/jpanel/messages?device=panel-ellie");
+    expect(String(del?.[0])).toBe("/api/jpanel/messages?device=panel-quorra");
   });
 
   it("names a panel from here, and says how many device keys moved", async () => {
@@ -447,7 +447,7 @@ describe("JpanelScreen messages", () => {
       const path = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
       if (/^\/api\/jpanel\/panels\/[^/]+\/name$/.test(path) && method === "POST") {
-        return json({ device_id: "panel-ellie", name: "Nora", keys: 3 });
+        return json({ device_id: "panel-quorra", name: "Nora", keys: 3 });
       }
       return box()(input, init);
     });
@@ -456,7 +456,7 @@ describe("JpanelScreen messages", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Rename" }));
     expect(await screen.findByText(/3 device keys moved/)).toBeTruthy();
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/panels/"));
-    expect(String(call?.[0])).toBe("/api/jpanel/panels/panel-ellie/name");
+    expect(String(call?.[0])).toBe("/api/jpanel/panels/panel-quorra/name");
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ name: "Nora" });
   });
 
@@ -469,7 +469,7 @@ describe("JpanelScreen messages", () => {
 
     vi.spyOn(window, "prompt").mockReturnValue(null);
     fireEvent.click(button);
-    vi.spyOn(window, "prompt").mockReturnValue("  Ellie  ");
+    vi.spyOn(window, "prompt").mockReturnValue("  Quorra  ");
     fireEvent.click(button);
 
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/panels/"))).toBe(false);
@@ -516,9 +516,9 @@ describe("JpanelScreen messages", () => {
     );
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    const input = await screen.findByLabelText("Message Ellie");
+    const input = await screen.findByLabelText("Message Quorra");
     fireEvent.change(input, { target: { value: "teeth please" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send to Quorra" }));
 
     await waitFor(() => expect(screen.getByText("teeth please")).toBeTruthy());
     expect(screen.getAllByText(/Not heard yet/).length).toBeGreaterThan(0);
@@ -558,18 +558,18 @@ describe("JpanelScreen messages", () => {
      * who it is from. The PWA still never has to LISTEN; it may now speak. */
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
-    expect(await screen.findByRole("button", { name: "Record a message for Ellie" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Record a message for Quorra" })).toBeTruthy();
     // And the send button is not also live — one action per compose row.
-    expect(screen.queryByRole("button", { name: "Send to Ellie" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send to Quorra" })).toBeNull();
   });
 
   it("keeps the words in the box when the send fails", async () => {
     fetchMock.mockImplementation(box({ post: () => json({ detail: "the box is busy" }, 503) }));
     render(<JpanelScreen onClose={vi.fn()} />);
 
-    const input = await screen.findByLabelText("Message Ellie");
+    const input = await screen.findByLabelText("Message Quorra");
     fireEvent.change(input, { target: { value: "on my way home" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send to Quorra" }));
 
     expect(await screen.findByText(/the box is busy/)).toBeTruthy();
     expect((input as HTMLInputElement).value).toBe("on my way home");
@@ -577,7 +577,7 @@ describe("JpanelScreen messages", () => {
 
   describe("twin-to-twin post is not the owner's", () => {
     // THE OWNER, READING HIS OWN INBOX: *"my pwa is showing messages between the girls ... make
-    // sure the pwa is correctly listing that it was lydian to elora, not kid to Dad."*
+    // sure the pwa is correctly listing that it was tamsin to quorra, not kid to Dad."*
     //
     // The backend reported every panel-sent message as `in` — owner-relative, with no value for
     // the case where he is neither end — so a message between the two girls was drawn with only
@@ -586,8 +586,8 @@ describe("JpanelScreen messages", () => {
     // message was not his, so nothing drew it.
     const BETWEEN = {
       id: "jp-between",
-      from_name: "Lydian",
-      to_name: "Elora",
+      from_name: "Tamsin",
+      to_name: "Quorra",
       direction: "between",
       transcript: "I love you",
       composed: "voice",
@@ -599,13 +599,15 @@ describe("JpanelScreen messages", () => {
     it("names both girls, and is not the owner's to hear", async () => {
       fetchMock.mockImplementation(
         box({
-          threads: [{ device_id: "panel-ellie", name: "Ellie", unplayed: 0, messages: [BETWEEN] }],
+          threads: [
+            { device_id: "panel-quorra", name: "Quorra", unplayed: 0, messages: [BETWEEN] },
+          ],
         }),
       );
       render(<JpanelScreen onClose={vi.fn()} />);
 
       // Both ends named, in the order it happened.
-      expect(await screen.findByText("Lydian → Elora")).toBeTruthy();
+      expect(await screen.findByText("Tamsin → Quorra")).toBeTruthy();
       // And not his: an unplayed message between the girls must not wear the badge that means
       // the OWNER has something waiting.
       expect(document.querySelector("[data-unplayed]")).toBeNull();
@@ -685,7 +687,7 @@ describe("JpanelScreen read tracking", () => {
     render(<JpanelScreen onClose={vi.fn()} />);
 
     const row = rowFor(await screen.findByText("There is a joke. There is a joke."));
-    fireEvent.click(within(row).getByRole("button", { name: "Play Ellie's message" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Play Quorra's message" }));
 
     await waitFor(() => expect(played()).toEqual(["/api/jpanel/messages/jp-1/played"]));
   });
@@ -717,7 +719,7 @@ describe("JpanelScreen read tracking", () => {
 
     // jp-3 carries a played_at, so playing it again is a re-listen, not news for the box.
     const row = rowFor(await screen.findByText(GARBLED));
-    fireEvent.click(within(row).getByRole("button", { name: "Play Ellie's message" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Play Quorra's message" }));
 
     await waitFor(() => expect(FakeAudio.built).toHaveLength(1));
     expect(played()).toEqual([]);
@@ -805,7 +807,7 @@ describe("the Panels tab", () => {
       box({
         rename: (init) => {
           sent.push(JSON.parse(String(init?.body)).name);
-          return json({ device_id: "panel-ellie", name: "Elora", keys: 4 });
+          return json({ device_id: "panel-quorra", name: "Quorra", keys: 4 });
         },
       }),
     );
@@ -814,10 +816,10 @@ describe("the Panels tab", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Rename" })[0] as HTMLElement);
     const input = screen.getByLabelText(/Call it/);
-    fireEvent.change(input, { target: { value: "Elora" } });
+    fireEvent.change(input, { target: { value: "Quorra" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(sent).toEqual(["Elora"]));
+    await waitFor(() => expect(sent).toEqual(["Quorra"]));
   });
 
   it("refuses a name the panel's font cannot draw, before asking the box", async () => {
@@ -833,7 +835,7 @@ describe("the Panels tab", () => {
     fireEvent.change(screen.getByLabelText(/Call it/), { target: { value: "O'Brien" } });
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.change(screen.getByLabelText(/Call it/), { target: { value: "Elora" } });
+    fireEvent.change(screen.getByLabelText(/Call it/), { target: { value: "Quorra" } });
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
@@ -877,7 +879,7 @@ describe("the Panels tab", () => {
         box({
           revoke: () => {
             revoked += 1;
-            return json({ name: "Ellie", keys: 13 });
+            return json({ name: "Quorra", keys: 13 });
           },
         }),
       );
@@ -1253,9 +1255,9 @@ describe("the pet's half of the conversation", () => {
        alone would simply leave her off it. */
     fetchMock.mockImplementation(
       box({
-        threads: [{ device_id: "panel-ellie", name: "Ellie", unplayed: 0, messages: [] }],
+        threads: [{ device_id: "panel-quorra", name: "Quorra", unplayed: 0, messages: [] }],
         chats: [
-          { device_id: "panel-ellie", label: "Ellie", turns: [] },
+          { device_id: "panel-quorra", label: "Quorra", turns: [] },
           {
             device_id: "panel-quiet",
             label: "Wren",
@@ -1300,7 +1302,7 @@ describe("the pet's half of the conversation", () => {
     await screen.findByText("why is the sky blue");
 
     fireEvent.click(screen.getByRole("button", { name: "Clear pet chat" }));
-    await waitFor(() => expect(cleared).toEqual(["/api/jpanel/chats?device=panel-ellie"]));
+    await waitFor(() => expect(cleared).toEqual(["/api/jpanel/chats?device=panel-quorra"]));
     // Scoped to the child whose button it was, never the whole house — the route clears every
     // panel when `device` is omitted, so a missing query string is a silent disaster.
     expect(cleared[0]).toContain("device=");

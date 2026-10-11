@@ -195,7 +195,7 @@ class TestTheVolumeCeilingWasTheBugReport:
         anything — and ESP-IDF fires no disconnect event for it, so the event handler's own
         reconnect never ran either. Both recovery paths idle while every request failed.
 
-        Lydian's panel, 2026-09-29: silent from 04:24 for eight and a half hours, last report
+        Tamsin's panel, 2026-09-29: silent from 04:24 for eight and a half hours, last report
         `wifi_drops: 0`. Not one disconnect the whole time.
 
         So the BOX is the link test now — `reach_quiet_ms`, which already existed for the
@@ -234,7 +234,7 @@ class TestTheVolumeCeilingWasTheBugReport:
         a report that failed to send was never retried — the panel had already recorded that it
         had seen the request, the next poll compared equal, and the box's ask was lost for good.
 
-        MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine. Lydian's had made 122
+        MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine. Tamsin's had made 122
         successful settings polls in the window, the box had asked twice (seq 15 → 16 → 17), and
         its last stored report was 23 minutes old — each ask adopted and then dropped on a POST
         that could not connect. The one surface the owner has for a panel's insides went blind

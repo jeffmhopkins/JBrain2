@@ -643,7 +643,7 @@ quote.
   edge for EACH person, in addition to any attributes about them. A child's grade
   without the children edge leaves a disconnected node. Record only the direction the
   note states; the reciprocal is mirrored for you. An enumerated relationship ("my
-  daughters Summer, Harmony, and Lydian") is one edge per person.
+  daughters Hazel, Opal, and Tamsin") is one edge per person.
 - assertion: asserted, negated, hypothetical, reported, question, or expected.
   Anything FUTURE or planned is expected — "starting next month", "appointment next
   Friday", "I'll start the new job in July". A future start must never be recorded as

@@ -204,9 +204,9 @@ async def resolve(
 
 
 async def seed_rat_graph(maker: async_sessionmaker[AsyncSession]) -> uuid.UUID:
-    """Summer owns Ricky (Animal) whose name fact mentions 'rat'."""
+    """Hazel owns Ricky (Animal) whose name fact mentions 'rat'."""
     note = await seed_note(maker)
-    summer = await seed_entity(maker, "Summer")
+    hazel = await seed_entity(maker, "Hazel")
     ricky = await seed_entity(maker, "Ricky", kind="Animal")
     await seed_fact(
         maker,
@@ -214,15 +214,15 @@ async def seed_rat_graph(maker: async_sessionmaker[AsyncSession]) -> uuid.UUID:
         note_id=note,
         predicate="name",
         kind="attribute",
-        statement="Summer's rat is named Ricky.",
+        statement="Hazel's rat is named Ricky.",
         value_json={"name": "Ricky", "species": "rat"},
     )
     await seed_fact(
         maker,
-        entity_id=summer,
+        entity_id=hazel,
         note_id=note,
         predicate="owns",
-        statement="Summer owns Ricky.",
+        statement="Hazel owns Ricky.",
         object_entity_id=ricky,
     )
     return ricky
@@ -245,7 +245,7 @@ async def test_possessive_hop_resolves_owned_object(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
     ricky = await seed_rat_graph(maker)
-    outcome = await resolve(maker, "Summer's rat", kind_hint="Animal")
+    outcome = await resolve(maker, "Hazel's rat", kind_hint="Animal")
     assert isinstance(outcome, ResolvedEntity)
     assert outcome.id == ricky
     assert outcome.method == "relationship"
@@ -289,16 +289,16 @@ async def test_definite_resolves_only_when_unique(
 async def seed_live_rat_graph(maker: async_sessionmaker[AsyncSession]) -> uuid.UUID:
     """The field-observed shapes, NOT the idealized ones: Ricky's kind came
     back 'pet', he has no facts of his own, and the only rat-evidence is the
-    STATEMENT of Summer's owns edge."""
+    STATEMENT of Hazel's owns edge."""
     note = await seed_note(maker)
-    summer = await seed_entity(maker, "Summer")
+    hazel = await seed_entity(maker, "Hazel")
     ricky = await seed_entity(maker, "Ricky", kind="pet")
     await seed_fact(
         maker,
-        entity_id=summer,
+        entity_id=hazel,
         note_id=note,
         predicate="owns",
-        statement="Summer owns a rat named Ricky.",
+        statement="Hazel owns a rat named Ricky.",
         object_entity_id=ricky,
     )
     return ricky
@@ -321,7 +321,7 @@ async def test_possessive_surface_resolves_through_edge_statement(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
     ricky = await seed_live_rat_graph(maker)
-    outcome = await resolve(maker, "Rat", kind_hint="pet", surface="Summer's rat")
+    outcome = await resolve(maker, "Rat", kind_hint="pet", surface="Hazel's rat")
     assert isinstance(outcome, ResolvedEntity)
     assert outcome.id == ricky
 
@@ -329,17 +329,17 @@ async def test_possessive_surface_resolves_through_edge_statement(
 async def test_negated_object_edge_is_not_noun_evidence(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    # "Summer does not own a rat" must not make Ricky rat-shaped: the mention
+    # "Hazel does not own a rat" must not make Ricky rat-shaped: the mention
     # falls through to provisional creation rather than a wrong silent link.
     note = await seed_note(maker)
-    summer = await seed_entity(maker, "Summer")
+    hazel = await seed_entity(maker, "Hazel")
     ricky = await seed_entity(maker, "Ricky", kind="pet")
     await seed_fact(
         maker,
-        entity_id=summer,
+        entity_id=hazel,
         note_id=note,
         predicate="owns",
-        statement="Summer does not own a rat.",
+        statement="Hazel does not own a rat.",
         object_entity_id=ricky,
         assertion="negated",
     )
@@ -415,7 +415,7 @@ async def test_role_hop_resolves_my_owned_object(
 ) -> None:
     """ "my truck" is role-shaped ("my X") yet denotes a thing Me OWNS, not a
     person filling a role. The implicit-owner hop must consult the ownership
-    edge the same way the named-owner "Summer's rat" form does — its predicate
+    edge the same way the named-owner "Hazel's rat" form does — its predicate
     "owns" denotes no noun, so the role lookup alone always misses it."""
     f150 = await seed_my_truck_graph(maker)
     outcome = await resolve(maker, "my truck", kind_hint="Vehicle")

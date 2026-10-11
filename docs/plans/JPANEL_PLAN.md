@@ -359,7 +359,7 @@ until the owner clears it**, with no expiry and no sweep, because a transcript t
 timer is not a record a parent can rely on — and the Clear button asks before it destroys anything.
 
 **ONE CHILD, ONE CONVERSATION (PWA).** The owner: *"I want there to be a separate selection
-underneath the top ... that'll be the panel's names. So if I select lydian or Elora up there it
+underneath the top ... that'll be the panel's names. So if I select tamsin or Quorra up there it
 should show those two as conversations ... kind of like a normal conversation does with jerv or
 the other ones in the pwa where there's an omnibox at the bottom and a left and right conversation
 bubble."*
@@ -667,7 +667,7 @@ survive a reboot mid-playback instead of being lost by having been handed over.
 ```ts
 type Message = {
   id: string;
-  from_name: string;          // "Ellie", "Dad"
+  from_name: string;          // "Quorra", "Dad"
   to_name: string;
   direction: "in" | "out";    // relative to the OWNER: in = from a panel
   transcript: string;         // STT for a panel's; the typed text for Dad's
@@ -835,7 +835,7 @@ costs two rewrites.
   called", so the blue recording indicator said `TO DAD` or, for the sibling, `MESSAGE`.
   Inventing a word for a child's twin would have been worse.
 
-  `GET /waiting` now carries `sibling`, so it says `TO ELORA`. It rides the poll the panel was
+  `GET /waiting` now carries `sibling`, so it says `TO QUORRA`. It rides the poll the panel was
   already making rather than adding a route, and the box answers only where there is EXACTLY
   ONE other panel — the same rule `send(to="panel")` follows, because with two siblings "the
   other one" is a question rather than a name and a guess puts the wrong child on the glass.
@@ -886,7 +886,7 @@ costs two rewrites.
      `key_hash` included, to answer a question it should never have been asking.
 
   2. **Every `/flash` mints a key and nothing retires the old one.** The live box carried
-     **thirteen** unrevoked principals labelled `panel Elora` — one physical panel, re-flashed
+     **thirteen** unrevoked principals labelled `panel Quorra` — one physical panel, re-flashed
      — plus two unnamed, so the roster held fifteen candidates where `send` needs exactly one.
      The roster now keeps one row per NAME, newest `created_at` winning, which is right rather
      than merely tidy: `/flash` rewrites the unit's NVS, so the newest key for a name is the
@@ -911,7 +911,7 @@ costs two rewrites.
 
   **The cost is naming.** Two physical panels flashed with the SAME name collapse to one row
   and one twin becomes unreachable. Not a regression — a child saying "send a message" could
-  not have picked between two panels called Elora either — but it is now the one thing that
+  not have picked between two panels called Quorra either — but it is now the one thing that
   breaks addressing, so the collapse is logged.
 
 - **A panel can be NAMED from the PWA now, which is not the same as the roster being a

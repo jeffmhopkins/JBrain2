@@ -823,7 +823,7 @@ void app_main(void)
                          * box's ask was lost for good.
                          *
                          * MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine.
-                         * Lydian's had made 122 successful settings polls in the window, the
+                         * Tamsin's had made 122 successful settings polls in the window, the
                          * box had asked twice (`telemetry_seq` 15 → 16 → 17), and its last
                          * stored report was 23 minutes old — because each ask was adopted and
                          * then dropped on a `POST` that could not connect, the same
@@ -862,7 +862,7 @@ void app_main(void)
          * the radio's own view is correct and useless — so `on_event`'s reconnect never runs
          * either, and BOTH recovery paths sit idle while every request fails.
          *
-         * MEASURED, NOT ARGUED: Lydian's panel went silent at 04:24 on 2026-09-29 and was still
+         * MEASURED, NOT ARGUED: Tamsin's panel went silent at 04:24 on 2026-09-29 and was still
          * silent eight and a half hours later, having reported `wifi_drops: 0` — not one
          * disconnect the whole time. A panel in a four-year-old's bedroom that needs an adult to
          * unplug it is the failure this whole file is written against.
