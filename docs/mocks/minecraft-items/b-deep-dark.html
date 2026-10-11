@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Old Maker Items · B — Deep dark</title>
+<!-- GUI gate mock — docs/mocks/minecraft-items/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md
+     §M9, §M10, §DW1; canon: Bleepbloop_City notes/lore.md. Self-contained and offline; the icons are
+     the 16x16 PNGs beside this file, embedded. The vanilla neighbours are our own stand-ins. -->
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --steel-tint:rgba(127,167,201,.13); --steel-text:var(--steel);
+    --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --frame:#2A2C30; --page:#000; --tile:#2a2c31;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --frame:#C9C9C4; --page:#DADAD6; --tile:#e4e4e0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  a{color:inherit;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .num{font-variant-numeric:tabular-nums;}
+  img,canvas,.px{image-rendering:pixelated;image-rendering:crisp-edges;}
+
+  /* reviewer chrome — OUTSIDE the design */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel-text);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);width:62px;flex:none;}
+  .sim button,.sim a{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:12px;padding:5px 10px;border-radius:999px;text-decoration:none;min-height:32px;display:inline-flex;align-items:center;}
+  .sim [aria-pressed="true"],.sim [aria-current="page"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+
+  /* the phone */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;display:flex;flex-direction:column;}
+  .screen{flex:1;overflow-y:auto;overflow-x:hidden;padding:16px 12px 28px;display:flex;flex-direction:column;gap:14px;}
+  @media (max-width:430px){ body{padding-top:12px;} .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;} }
+  @media (min-width:900px){ .phone{width:560px;} .caption,.sim{max-width:560px;} }
+
+  .hd h1{font-size:var(--fs-screen);font-weight:600;letter-spacing:-.01em;}
+  .hd p{color:var(--text-2);font-size:var(--fs-secondary);margin-top:2px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:14px 12px;display:flex;flex-direction:column;gap:10px;}
+  .card h2{font-size:var(--fs-head);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);}
+  .card .note{font-size:var(--fs-secondary);color:var(--text-2);}
+
+  /* the set: 1x, 2x, 8x */
+  .item{display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:end;padding-top:10px;border-top:1px solid var(--border);}
+  .item:first-of-type{border-top:0;padding-top:0;}
+  .item .nm{font-size:var(--fs-body);font-weight:600;}
+  .item .ds{grid-column:1/-1;font-size:var(--fs-secondary);color:var(--text-2);}
+  .scales{grid-column:1/-1;display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;}
+  .sc{display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .sc span{font-size:var(--fs-micro);color:var(--text-2);}
+  .tile{background:var(--tile);border-radius:6px;padding:6px;display:grid;place-items:center;}
+
+  /* a block, drawn from its faces the way the game draws one in a slot */
+  .blk{position:relative;display:inline-block;width:calc(16px * var(--s,1));height:calc(16px * var(--s,1));flex:none;}
+  .blk i{position:absolute;left:0;top:0;width:16px;height:16px;background-size:16px 16px;image-rendering:pixelated;transform-origin:0 0;}
+  .blk .t{background-image:var(--top);transform:scale(var(--s,1)) matrix(.5,.25,-.5,.25,8,0) scale(1.02);}
+  .blk .l{background-image:var(--front);transform:scale(var(--s,1)) matrix(.5,.25,0,.5,0,4) scale(1.02);filter:brightness(.82);}
+  .blk .r{background-image:var(--side);transform:scale(var(--s,1)) matrix(.5,-.25,0,.5,8,8) scale(1.02);filter:brightness(.62);}
+  .rep{--top:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABGElEQVR4nGO06Vv0n4ECwMLAwMBwsioTRdDSypHh+LH9BMXYzO0ZmGCcrgdLGbQmxTMwMDAwvHj2GEMMmzoGBgaEAQs27WJ4vu8SimJkMZih6OpYYIxreQvhghJSsgz3H9whKAY3QFFBhUFCSpbhxbPHcNrSypFBVk6B4fGjB3DbYepg4OzffwwMNn2L/rNycKNgOycfosS47b3+4w1ENnN7BjZze7wBizcQkQHM6UQFIgz8OnkQQwxdHaNN36L/TFtWMcjKKTCcPnEYbhuMjxxo6ODs338QFxw/tp/h+DFUSViqu//gDgMDAyQGYGwYwJkSTS1siRJjYMARiI8fPSBKjIGBQCASI8YC8wsyOPv3H1FiDAwMDAD1M7cQWVvUrQAAAABJRU5ErkJggg==);--front:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABQElEQVR4nKWTzUrDUBCFv0aRrtwmJNySSN9AxB8q4htk33co9EGs4NKN0FVx5xO4KGihFF8gmNCQUF12359FmZubNIuKs5mTmzmTM2duGp3BcMM/4hjg9/kBx1Us8pSLq1sAppOxLpJ3jqtK5NlqvWvguArV8gF4Hb3sfSVOIp2vb+5RLZ90nhQKFnnKbLXG+8kACPw2me3pZ8FxEpVrbQ9LFJhRRzbHMbNVZ0wdObM9RC2gR9YNwuDsIBWOqzg/svY9kM7atCQilgMDm3XY3q5B1QfBstZ0nmg8nYz11rL4u1gjwOfHe6HAVFPB0rTkgSnt5PJuD5tnQi558JfQ9eKBjBAnEadPjwA0u6EmCG52Q5a9vr7aWoF5NZe9/kEqHFeRyb8g5MBvl7YhjSWboy7yFGyPRmcw3Hy9jQ43oBJbvziuRpBTJssAAAAASUVORK5CYII=);--side:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABIklEQVR4nKVSu23DMBB9FrSDCAoUtEIKASqsGdx6KXsAly5TpcgCRpoYgVeQBBEUlIxgwJ/CuPMdk7hI2Bzx7sP3Hm82X28v+MdJASB5fWbAFSUAwA89ptGjqhv4oVdN0+hhrMPhdEYSJ/zQ4+P9jTG60+A4zubr7eVrs/oT/ZDlNwbGOhjrQHeKVd3gUR7AXcI0eqXPFSX80PMQOq4ouVkNIJAapHGkV+KEpfJ1AMrAOBczBXlQ1Q1rjpnEnsgaZkC0KBrrvlGVeckqIcAVpSr+TbNkwwxIe8hy3Z3lCKczAODQtQznn0F7QBOP+x2eFsuH8bjfKR94E411vANEWX4l6aa6qm7w0rX3PYj1S8Pi5ZEmp8Btp0PXKs3KB9L/Q/4Kn0Oqy+WQSgAAAAAASUVORK5CYII=);}
+  .rep.iron{--front:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABUElEQVR4nKWSwUoCURSGP2MIg2jrMHbFoFeIrDGiVVtx67a15Du0zaBlBIEraRH0BC1kSpDoBSQHLzMNLSUIArVF3Tt3xgyjf3P/O/c/Z875z8mUm60p/4AF8Hpxiu0IolCyVdoDoNftaJF6sx2RCH4cT74S2I5AFIoAXLevZv4y8Pv63Nk9QBSKyKEfVxCFkszNJVHpEICP97cfy11eWU1qc/m4gjSCIMDzPFzXBcDzPEyt7QiC8YSl3wxyXVcHKkShBNAtW+ph/fiEF0NoBprcdgTT6hHy+649UJlVr/Ng6rQHZm8mV2OVQ1/zXrejpxYMnpMmPtzfAfHY5nGVFIhNTLSwvT/DzW8qOOHBX6D16T0Y+H3Wzs8AyNYqOkDxbK3CqN7Qq60rMFdzVG8sVIVaJMvsaaO4mZiGSqxOs9UolJDLkyk3W9On2/biBqTwCQWHnjErP8gbAAAAAElFTkSuQmCC);}
+  .fur{--top:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA40lEQVR4nHVT0RXEIAiLvhuIFVjEHVxERmKEspH3lT5Kbb6oaEKibWOMPecEALg7CFWFmUFEoKpwd0QERAQRAQAQEbS11sYB3MzDp7WIQLuua1f1k1LtEd3d4e5Q1XuRG+rBEzqLTJLJKinz4p6uqje7md1kEQFVfVjJPZK0tdYmW82BmHO+gmT9y4eZ7slCtcK6m9ljLIIkX+vs9dykOrOoitWmiKDXq+Lry0Fm//WmembL4VRF3kie7mWhIk9HomqpZzWq8LFExD1NrrNAG2PsynrC10/1CLFeUf6m9xyiu+MPmAnDh2Dpx48AAAAASUVORK5CYII=);--front:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABBUlEQVR4nJVTwW3EMAxjjGzRJbSCgMyRHfTuu78AWiiARrCW6BpNHwEDJfAdcPwYiUiZpuyp934AQEQgMyEiqFBVuDtEZFhv7o5XyExExCV6igGgmdn1UQmZCdZUFZl5c8V16r0fEQFVBVfC3WFm1/HqJuS3apUkd0dEgNlQSDF5qno2IGj5GZiq3mzTFYDzCHUnkph8zaQ2pNNW7VZ7r8SsczrTuq5HDWrfd7zDsiy3Zk1E4O5Q1eGcnzCza6xmhpkB1WN8gpnWOYFt294KnvwZOAOr9+D3pw3FX99/IJ/N5tEDIXEEjpg5zCJyZWBm4PfI9vOfiJwO6KIGWZ93vYV8vaz9A4HQzd6X5YZZAAAAAElFTkSuQmCC);--side:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA80lEQVR4nH1T0a2EMAwzFQN1hYyURchIGQFvdO/j5MpU3MsPgtiJa5fjvu8PAHQ3SGLOCa+IQFVhzvnaH1WFX0US3b1IOxkARmauFweQhHoRAZIPVXoe931/uhsRAT1VVYXMXMfzJcIPlypQVaG7IW9EFFm4iPgOUEnyblhEPGRLFYDvEXyTQHLePfGBUjpcrsv7RVZf6QyfKGBVgeRyPzMfSWghSZwieJy7HyI5Rpyxm+L5746/1an4nKRhTvKr7vjjuq7Pm1n/fdPw7sbwKyqCG7ZH5z2SGHPO1czMRZDznrkvU4wnySXT74Of2bfr71XvD8jR5zsqsP0tAAAAAElFTkSuQmCC);}
+
+  /* in-game pieces: part of the picture, not page chrome */
+  .scene{border-radius:12px;overflow:hidden;background:linear-gradient(#7fb0ff 0 52%, #6aa84f 52% 60%, #8a6a46 60%);padding:14px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;}
+  .scene.night{background:linear-gradient(#0f1830 0 52%, #2f5b2a 52% 60%, #4a3826 60%);}
+  .mcname{font-family:var(--font-mono);font-weight:700;color:#fff;text-shadow:2px 2px 0 #3f3f3f;font-size:13px;min-height:18px;}
+  .hotbar{display:flex;background:rgba(0,0,0,.55);border:2px solid #1b1b1b;outline:1px solid #8b8b8b;}
+  .hotbar .sl{--sz:calc(20px * var(--k));width:var(--sz);height:var(--sz);display:grid;place-items:center;border:1px solid rgba(139,139,139,.6);position:relative;padding:0;background:transparent;}
+  .hotbar .sl[aria-pressed="true"]{outline:calc(2px * var(--k)) solid #f0f0f0;outline-offset:-1px;z-index:1;box-shadow:0 0 0 calc(1px * var(--k)) #000;}
+  .hotbar img,.hotbar canvas{width:calc(16px * var(--k));height:calc(16px * var(--k));}
+  .cnt{position:absolute;right:1px;bottom:0;font-family:var(--font-mono);font-weight:700;color:#fff;text-shadow:1px 1px 0 #3f3f3f;line-height:1;pointer-events:none;}
+  .k1{--k:1;} .k1 .cnt{font-size:8px;}
+  .k2{--k:1.75;} .k2 .sl img,.k2 .sl canvas{width:32px;height:32px;} .k2 .cnt{font-size:13px;right:2px;bottom:1px;text-shadow:2px 2px 0 #3f3f3f;}
+  @media (max-width:380px){ .k2{--k:1.45;} .k2 .sl img,.k2 .sl canvas{width:24px;height:24px;} .k2 .sl .blk{--s:1.5 !important;} .scene{padding-left:0;padding-right:0;} }
+
+  .inv{padding:8px;border-radius:6px;display:grid;grid-template-columns:repeat(9,1fr);gap:0;max-width:340px;width:100%;}
+  .inv.lite{background:#c6c6c6;border:2px solid;border-color:#fff #555 #555 #fff;}
+  .inv.dark{background:#313233;border:2px solid;border-color:#4f5052 #1a1a1b #1a1a1b #4f5052;}
+  .inv .sl{aspect-ratio:1;display:grid;place-items:center;position:relative;padding:0;border:2px solid;}
+  .inv.lite .sl{background:#8b8b8b;border-color:#373737 #fff #fff #373737;}
+  .inv.dark .sl{background:#1e1f20;border-color:#0e0e0f #48494b #48494b #0e0e0f;}
+  .inv .sl[aria-pressed="true"]{background:#c5c5c5;}
+  .inv.dark .sl[aria-pressed="true"]{background:#4a4b4d;}
+  .inv img,.inv canvas{width:32px;height:32px;}
+  .inv .cnt{font-size:12px;text-shadow:1px 1px 0 #3f3f3f;right:1px;}
+  @media (max-width:360px){ .inv img,.inv canvas{width:16px;height:16px;} .inv .blk{--s:1 !important;} .inv .cnt{font-size:9px;} }
+  .invwrap{display:flex;flex-direction:column;gap:8px;align-items:center;}
+
+  .tip{background:rgba(16,8,24,.94);border:2px solid #2a0f5c;outline:1px solid #100818;padding:6px 8px;font-family:var(--font-mono);color:#fff;font-size:13px;line-height:1.45;align-self:flex-start;max-width:100%;}
+  .tip .lo{color:#c4b0ec;font-style:italic;}
+  .tip .id{color:#9a9da3;font-size:11px;}
+  .tips{display:flex;flex-wrap:wrap;gap:8px;}
+
+  .faces{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  .faces figure{display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .faces figcaption{font-size:var(--fs-micro);color:var(--text-2);text-align:center;}
+  .faces img{width:128px;height:128px;}
+  @media (max-width:340px){ .faces img{width:112px;height:112px;} }
+
+  .hand{position:relative;height:200px;border-radius:12px;overflow:hidden;background:linear-gradient(#7fb0ff 0 45%, #6aa84f 45% 55%, #8a6a46 55%);}
+  .hand .xh{position:absolute;left:50%;top:40%;width:14px;height:14px;transform:translate(-50%,-50%);}
+  .hand .xh::before,.hand .xh::after{content:"";position:absolute;background:#fff;mix-blend-mode:difference;}
+  .hand .xh::before{left:6px;top:0;width:2px;height:14px;} .hand .xh::after{top:6px;left:0;width:14px;height:2px;}
+  .hand .held{position:absolute;right:14px;bottom:-18px;width:96px;height:96px;transform:rotate(-12deg);}
+  .hand .ab{position:absolute;z-index:2;left:50%;top:58%;transform:translateX(-50%);font-family:var(--font-mono);font-weight:700;color:#fff;text-shadow:2px 2px 0 #3f3f3f;font-size:13px;white-space:nowrap;}
+  .seg{display:flex;gap:6px;flex-wrap:wrap;}
+  .seg button{border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:var(--fs-secondary);padding:0 12px;min-height:44px;border-radius:var(--r-pill);}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">GUI gate · Minecraft items · B</span><br />
+    <b>B — Deep dark.</b> Tech from the ancient cities: deepslate housings, sculk-teal glow and echo-shard trim. Cold, dark and luminous. Every icon is a real 16×16 PNG; tap a slot to select it.
+  </div>
+  <div class="sim" aria-label="Mock controls">
+    <div class="stitle">Mock controls</div>
+    <div class="srow"><span class="sl">Variant</span><a href="a-copper-amethyst.html">A · Copper and amethyst (rev. 2)</a><a href="b-deep-dark.html" aria-current="page">B · Deep dark</a><a href="c-ship-quartz.html">C · Ship's quartz</a></div>
+    <div class="srow"><span class="sl">Theme</span>
+      <button data-theme-btn="system" aria-pressed="true">System</button>
+      <button data-theme-btn="dark" aria-pressed="false">Dark</button>
+      <button data-theme-btn="light" aria-pressed="false">Light</button></div>
+    <div class="srow"><span class="sl">Glint</span>
+      <button id="glintBtn" aria-pressed="true">Moving</button></div>
+  </div>
+
+  <div class="phone"><div class="screen">
+    <div class="hd"><h1>Old Maker items</h1><p>Variant B · Deep dark</p></div>
+
+    <section class="card" aria-labelledby="h-set">
+      <h2 id="h-set">The set at 1×, 2× and 8×</h2>
+      <div class="item">
+        <div class="nm">Tricorder</div>
+        <div class="ds">A slim deepslate slab under a glowing sculk lens, which is Dave's eye. Its screen shows a cyan arrow.</div>
+        <div class="scales">
+          <div class="sc"><div class="tile"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABEElEQVR4nGNkwAFYObj/o4v9/vGVEV2MCZdmNnN7Br5J/QxWL+4y8E3qZ2Azt8dqKE7bhWfN+m//4cX/R////7f/8OK/8KxZ/7EZwILLkB9LNzBcYWBgiA3zY7iyahPDj6UbsKpD8RPRTmRAhAeGC8IiEvFqfPzoAcPxY/vhfKxeWLViPk4DLK0cUfhYY4GBgYGBzdyegc3cnsHqxV04GxvAaQADAwODycZ5KDRJBqBrwmUIzmg8458E1whjk+QCYgFOF/w6eZCBgYGB4ZiEMmkGPH70gMG8bToD05ZVDPc4OBmUfnxn+OcTxsC0ZRXDi2ePGV48e4yiHiMlKiqoEHT2/Qd34CkRI3sSk5yRszUAXIpfayYC96IAAAAASUVORK5CYII=" width="16" height="16" alt="Tricorder at 1×" /></div><span>1×</span></div>
+          <div class="sc"><div class="tile"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABEElEQVR4nGNkwAFYObj/o4v9/vGVEV2MCZdmNnN7Br5J/QxWL+4y8E3qZ2Azt8dqKE7bhWfN+m//4cX/R////7f/8OK/8KxZ/7EZwILLkB9LNzBcYWBgiA3zY7iyahPDj6UbsKpD8RPRTmRAhAeGC8IiEvFqfPzoAcPxY/vhfKxeWLViPk4DLK0cUfhYY4GBgYGBzdyegc3cnsHqxV04GxvAaQADAwODycZ5KDRJBqBrwmUIzmg8458E1whjk+QCYgFOF/w6eZCBgYGB4ZiEMmkGPH70gMG8bToD05ZVDPc4OBmUfnxn+OcTxsC0ZRXDi2ePGV48e4yiHiMlKiqoEHT2/Qd34CkRI3sSk5yRszUAXIpfayYC96IAAAAASUVORK5CYII=" width="32" height="32" alt="Tricorder at 2×" /></div><span>2×</span></div>
+          <div class="sc"><div class="tile"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABEElEQVR4nGNkwAFYObj/o4v9/vGVEV2MCZdmNnN7Br5J/QxWL+4y8E3qZ2Azt8dqKE7bhWfN+m//4cX/R////7f/8OK/8KxZ/7EZwILLkB9LNzBcYWBgiA3zY7iyahPDj6UbsKpD8RPRTmRAhAeGC8IiEvFqfPzoAcPxY/vhfKxeWLViPk4DLK0cUfhYY4GBgYGBzdyegc3cnsHqxV04GxvAaQADAwODycZ5KDRJBqBrwmUIzmg8458E1whjk+QCYgFOF/w6eZCBgYGB4ZiEMmkGPH70gMG8bToD05ZVDPc4OBmUfnxn+OcTxsC0ZRXDi2ePGV48e4yiHiMlKiqoEHT2/Qd34CkRI3sSk5yRszUAXIpfayYC96IAAAAASUVORK5CYII=" width="128" height="128" alt="Tricorder at 8×" /></div><span>8×</span></div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="nm">Power Pack</div>
+        <div class="ds">The eye set in a deepslate-and-echo diamond, with sculk glow at its four points. With the enchant glint.</div>
+        <div class="scales">
+          <div class="sc"><div class="tile"><canvas class="pk" width="128" height="128" style="width:16px;height:16px" aria-label="Power Pack at 1×"></canvas></div><span>1×</span></div>
+          <div class="sc"><div class="tile"><canvas class="pk" width="128" height="128" style="width:32px;height:32px" aria-label="Power Pack at 2×"></canvas></div><span>2×</span></div>
+          <div class="sc"><div class="tile"><canvas class="pk" width="128" height="128" style="width:128px;height:128px" aria-label="Power Pack at 8×, glinting"></canvas></div><span>8×</span></div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="nm">Replicator</div>
+        <div class="ds">Deepslate tiles with an echo-shard frame. The furnace mouth glows teal; the side lights go from dark to bright sculk. The block is drawn from its faces, as the game draws a block in a slot.</div>
+        <div class="scales">
+          <div class="sc"><div class="tile"><span class="blk rep" style="--s:1" role="img" aria-label="Replicator at 1×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>1×</span></div>
+          <div class="sc"><div class="tile"><span class="blk rep" style="--s:2" role="img" aria-label="Replicator at 2×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>2×</span></div>
+          <div class="sc"><div class="tile"><span class="blk rep" style="--s:8" role="img" aria-label="Replicator at 8×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>8×</span></div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="nm">Iron Replicator</div>
+        <div class="ds">Programmed: the window shows a swatch of iron and the lights come on.</div>
+        <div class="scales">
+          <div class="sc"><div class="tile"><span class="blk rep iron" style="--s:1" role="img" aria-label="Iron Replicator at 1×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>1×</span></div>
+          <div class="sc"><div class="tile"><span class="blk rep iron" style="--s:2" role="img" aria-label="Iron Replicator at 2×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>2×</span></div>
+          <div class="sc"><div class="tile"><span class="blk rep iron" style="--s:8" role="img" aria-label="Iron Replicator at 8×"><i class="t"></i><i class="l"></i><i class="r"></i></span></div><span>8×</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-hot">
+      <h2 id="h-hot">In the hotbar</h2>
+      <p class="note">Next to an Eye of Ender, an Ender Pearl, a compass, a spyglass and a furnace. The top bar is true size (1×); the lower one is a phone's GUI scale.</p>
+      <div class="scene" id="scene">
+        <div class="mcname" id="hbName" aria-live="polite"></div>
+        <div class="hotbar k1" role="group" aria-label="Hotbar at 1×" data-hb></div>
+        <div style="height:6px"></div>
+        <div class="mcname" id="hbName2" aria-hidden="true"></div>
+        <div class="hotbar k2" role="group" aria-label="Hotbar at 2×" data-hb></div>
+      </div>
+      <div class="seg" role="group" aria-label="Scene">
+        <button data-scene="day" aria-pressed="true">Day</button>
+        <button data-scene="night" aria-pressed="false">Night</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-inv">
+      <h2 id="h-inv">In the inventory</h2>
+      <p class="note">The light-grey Bedrock panel and the dark one. Tap an item to see its tooltip.</p>
+      <div class="invwrap">
+        <div class="inv lite" role="group" aria-label="Inventory, light panel" data-inv></div>
+        <div class="tip" id="invTip"></div>
+        <div class="inv dark" role="group" aria-label="Inventory, dark panel" data-inv></div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-tip">
+      <h2 id="h-tip">Tooltips</h2>
+      <div class="tips">
+        <div class="tip">BlockyFox's Tricorder<br /><span class="lo">Points where Dave says</span><br /><span class="id">jbrain:tricorder</span></div>
+        <div class="tip">Power Pack<br /><span class="lo">Keeps your things, or takes you somewhere</span><br /><span class="id">jbrain:power_pack</span></div>
+        <div class="tip">Replicator<br /><span class="lo">Ask Dave to program it</span></div>
+        <div class="tip">Iron Replicator<br /><span class="lo">Burns any block into iron</span></div>
+      </div>
+      <p class="note">The Tricorder and Power Pack lore lines are M9's and M10's. The two Replicator lines are placeholders.</p>
+    </section>
+
+    <section class="card" aria-labelledby="h-face">
+      <h2 id="h-face">The Replicator's faces</h2>
+      <p class="note">Each 16×16 at 8×. The top is the recipe seen from above: eight Power Packs around the furnace.</p>
+      <div class="faces">
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABQElEQVR4nKWTzUrDUBCFv0aRrtwmJNySSN9AxB8q4htk33co9EGs4NKN0FVx5xO4KGihFF8gmNCQUF12359FmZubNIuKs5mTmzmTM2duGp3BcMM/4hjg9/kBx1Us8pSLq1sAppOxLpJ3jqtK5NlqvWvguArV8gF4Hb3sfSVOIp2vb+5RLZ90nhQKFnnKbLXG+8kACPw2me3pZ8FxEpVrbQ9LFJhRRzbHMbNVZ0wdObM9RC2gR9YNwuDsIBWOqzg/svY9kM7atCQilgMDm3XY3q5B1QfBstZ0nmg8nYz11rL4u1gjwOfHe6HAVFPB0rTkgSnt5PJuD5tnQi558JfQ9eKBjBAnEadPjwA0u6EmCG52Q5a9vr7aWoF5NZe9/kEqHFeRyb8g5MBvl7YhjSWboy7yFGyPRmcw3Hy9jQ43oBJbvziuRpBTJssAAAAASUVORK5CYII=" alt="Front, blank" /><figcaption>Front · blank</figcaption></figure>
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABUElEQVR4nKWSwUoCURSGP2MIg2jrMHbFoFeIrDGiVVtx67a15Du0zaBlBIEraRH0BC1kSpDoBSQHLzMNLSUIArVF3Tt3xgyjf3P/O/c/Z875z8mUm60p/4AF8Hpxiu0IolCyVdoDoNftaJF6sx2RCH4cT74S2I5AFIoAXLevZv4y8Pv63Nk9QBSKyKEfVxCFkszNJVHpEICP97cfy11eWU1qc/m4gjSCIMDzPFzXBcDzPEyt7QiC8YSl3wxyXVcHKkShBNAtW+ph/fiEF0NoBprcdgTT6hHy+649UJlVr/Ng6rQHZm8mV2OVQ1/zXrejpxYMnpMmPtzfAfHY5nGVFIhNTLSwvT/DzW8qOOHBX6D16T0Y+H3Wzs8AyNYqOkDxbK3CqN7Qq60rMFdzVG8sVIVaJMvsaaO4mZiGSqxOs9UolJDLkyk3W9On2/biBqTwCQWHnjErP8gbAAAAAElFTkSuQmCC" alt="Front, programmed for iron" /><figcaption>Front · Iron Replicator</figcaption></figure>
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABIklEQVR4nKVSu23DMBB9FrSDCAoUtEIKASqsGdx6KXsAly5TpcgCRpoYgVeQBBEUlIxgwJ/CuPMdk7hI2Bzx7sP3Hm82X28v+MdJASB5fWbAFSUAwA89ptGjqhv4oVdN0+hhrMPhdEYSJ/zQ4+P9jTG60+A4zubr7eVrs/oT/ZDlNwbGOhjrQHeKVd3gUR7AXcI0eqXPFSX80PMQOq4ouVkNIJAapHGkV+KEpfJ1AMrAOBczBXlQ1Q1rjpnEnsgaZkC0KBrrvlGVeckqIcAVpSr+TbNkwwxIe8hy3Z3lCKczAODQtQznn0F7QBOP+x2eFsuH8bjfKR94E411vANEWX4l6aa6qm7w0rX3PYj1S8Pi5ZEmp8Btp0PXKs3KB9L/Q/4Kn0Oqy+WQSgAAAAAASUVORK5CYII=" alt="Side" /><figcaption>Side</figcaption></figure>
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABGElEQVR4nGO06Vv0n4ECwMLAwMBwsioTRdDSypHh+LH9BMXYzO0ZmGCcrgdLGbQmxTMwMDAwvHj2GEMMmzoGBgaEAQs27WJ4vu8SimJkMZih6OpYYIxreQvhghJSsgz3H9whKAY3QFFBhUFCSpbhxbPHcNrSypFBVk6B4fGjB3DbYepg4OzffwwMNn2L/rNycKNgOycfosS47b3+4w1ENnN7BjZze7wBizcQkQHM6UQFIgz8OnkQQwxdHaNN36L/TFtWMcjKKTCcPnEYbhuMjxxo6ODs338QFxw/tp/h+DFUSViqu//gDgMDAyQGYGwYwJkSTS1siRJjYMARiI8fPSBKjIGBQCASI8YC8wsyOPv3H1FiDAwMDAD1M7cQWVvUrQAAAABJRU5ErkJggg==" alt="Top" /><figcaption>Top</figcaption></figure>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-hand">
+      <h2 id="h-hand">In hand</h2>
+      <div class="hand" role="img" aria-label="First-person view holding the Tricorder, with the waypoint arrow in the actionbar">
+        <div class="xh"></div>
+        <div class="ab">↖ Home · 412 blocks</div>
+        <img class="held" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABEElEQVR4nGNkwAFYObj/o4v9/vGVEV2MCZdmNnN7Br5J/QxWL+4y8E3qZ2Azt8dqKE7bhWfN+m//4cX/R////7f/8OK/8KxZ/7EZwILLkB9LNzBcYWBgiA3zY7iyahPDj6UbsKpD8RPRTmRAhAeGC8IiEvFqfPzoAcPxY/vhfKxeWLViPk4DLK0cUfhYY4GBgYGBzdyegc3cnsHqxV04GxvAaQADAwODycZ5KDRJBqBrwmUIzmg8458E1whjk+QCYgFOF/w6eZCBgYGB4ZiEMmkGPH70gMG8bToD05ZVDPc4OBmUfnxn+OcTxsC0ZRXDi2ePGV48e4yiHiMlKiqoEHT2/Qd34CkRI3sSk5yRszUAXIpfayYC96IAAAAASUVORK5CYII=" alt="" />
+      </div>
+      <p class="note">Held, it shows the waypoint arrow (M9). Anyone but its owner gets static.</p>
+    </section>
+  </div></div>
+
+<script>
+const IMG = {tricorder:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABEElEQVR4nGNkwAFYObj/o4v9/vGVEV2MCZdmNnN7Br5J/QxWL+4y8E3qZ2Azt8dqKE7bhWfN+m//4cX/R////7f/8OK/8KxZ/7EZwILLkB9LNzBcYWBgiA3zY7iyahPDj6UbsKpD8RPRTmRAhAeGC8IiEvFqfPzoAcPxY/vhfKxeWLViPk4DLK0cUfhYY4GBgYGBzdyegc3cnsHqxV04GxvAaQADAwODycZ5KDRJBqBrwmUIzmg8458E1whjk+QCYgFOF/w6eZCBgYGB4ZiEMmkGPH70gMG8bToD05ZVDPc4OBmUfnxn+OcTxsC0ZRXDi2ePGV48e4yiHiMlKiqoEHT2/Qd34CkRI3sSk5yRszUAXIpfayYC96IAAAAASUVORK5CYII=", pack:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABH0lEQVR4nLWTMUvDUBSFv5QGAg9KnWK3DHF2dCkEMuYPKGRz8E/opji2o9BBpCBEXFoHhw5Bf0Ghs4iDkDi1FB4IIs9BEpKYFwvimR7v3nPuvefdB/8Jb5Uqb5Wqppy2LmBaQn1ezvLzx7s0Nq5sWkL1B2MlvEAJL1D9wViZlmjspJY8TCdqmE4aRVpV8t75BfNpxPNDlN+7ocN8GmH7AVURo458dnMEwPHuIQA7pwcAPF2/sCUEb/E9mSct+Ha7Sr66m5VaTeIFordmKSW2H5C9TmkEHZJ4oY21AR6720Y2wsn+CDd0apNl0slHeO3eGiUPqj64oVOqXCQXd+LHcpiWULYfsJQS0Vs3kmsFqiKAlqwVKIoAWvKv2OQz/RlfRx+ZCKbU1hIAAAAASUVORK5CYII=", eye:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAvklEQVR4nGNgGNSAV0vpP6+W0n98ahhxaWRgYGCoXd/MwMDAwNAcWMvAwMDA8PnaPQz1GAK8Wkr/YRoZGBgYlmzeB2ffn7cfwxAmYjUzMDAwKCY5MqB7CcUAZLBk8z6GW51rGW51rsWlBNUAZNvRbYaBlydvMnBpS6G4AsMF+DTjdcHna/cYYaGNT/O3q89QApIFqw4oUCsPxmkzhgtgrrg/bz9OZ6PbzsBAICFxaUvBNcIswOscbAYRSsoDDwCIzVTvaETNMwAAAABJRU5ErkJggg==", pearl:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAu0lEQVR4nM2SMQ6CMBSGP4xOXUzP4AZh4gasDCQewPN4AycT78NE6KRx8ADExDA51KlQaGlw0n9q2n7v/9/Lg7+WiBMt4kSH/qznQIDdYQ/A7YIG6FQTTf86FyJOtAEBWnUdzlXtFFn54LLIKYt8BAPILGXa0qiArfPxNPfkb8GOPnU2et0fALzbZ9+KM0QfbMBgApNCZmkQtt0hMIOlGhXoVBO1Vb3YHTx7AMMibeS2B43BV/GWrPLv9QGvzlG51u8emQAAAABJRU5ErkJggg==", compass:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAvklEQVR4nMWSsQnDMBBFf4L7bGHwrWDwAJlDhSFdBjGkCLhQqylcCAJZQYb0HiCtMTiVhaw7KaV/d1/6TzrpgKN1kkwiWiXfOcf2M4OIVmMMC1trobVmkF0Rh+dpAAC8P4X3YshZCs/T4MMAUJcLrv0DAKCU2rXoATld7k98u5u4xgDhyXG4LhcGKJgTqGpajF3+duwG24NVTYvx1YtrSYC1NhlOiX2jUsrXW8+5bxQHKYSE+jtIIUTypVE+Xj8rhVTcYAbnDAAAAABJRU5ErkJggg==", spyglass:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAVklEQVR4nGNgGHLg+ob//69v+P8fxmciRTOvltJ/BgYGhsOHrpNuM6+W0v8dGV7/YYaMah5MmhmROVJSUv8ZGBgYPgtwMHy+do8RuxZUgJGQSNE8TAAAJxY3Jvkz4UQAAAAASUVORK5CYII="};
+const NAMES = {tricorder:"BlockyFox's Tricorder", pack:"Power Pack", eye:"Eye of Ender", pearl:"Ender Pearl", compass:"Compass", spyglass:"Spyglass", furnace:"Furnace", rep:"Replicator", iron:"Iron Replicator"};
+const LORE = {tricorder:"Points where Dave says", pack:"Keeps your things, or takes you somewhere", rep:"Ask Dave to program it", iron:"Burns any block into iron"};
+
+function icon(kind, k){
+  if (kind === "pack"){ const c = document.createElement("canvas"); c.width = c.height = 128; c.className = "pk"; return c; }
+  if (kind === "rep" || kind === "iron" || kind === "furnace"){
+    const s = document.createElement("span");
+    s.className = "blk " + (kind === "furnace" ? "fur" : "rep" + (kind === "iron" ? " iron" : ""));
+    s.style.setProperty("--s", k); s.innerHTML = '<i class="t"></i><i class="l"></i><i class="r"></i>';
+    return s;
+  }
+  const i = new Image(); i.src = IMG[kind]; i.alt = ""; return i;
+}
+function slot(kind, count, k){
+  const b = document.createElement("button"); b.className = "sl"; b.type = "button";
+  b.setAttribute("aria-pressed", "false");
+  if (kind){ b.dataset.kind = kind; b.setAttribute("aria-label", NAMES[kind] + (count ? ", " + count : "")); b.append(icon(kind, k));
+    if (count){ const n = document.createElement("span"); n.className = "cnt num"; n.textContent = count; b.append(n); } }
+  else b.setAttribute("aria-label", "Empty slot");
+  return b;
+}
+
+const HOT = [["eye",12],["pearl",7],["tricorder"],["pack",3],["compass"],["spyglass"],["furnace"],["rep"],["iron"]];
+document.querySelectorAll("[data-hb]").forEach((hb, n) => {
+  const k = n === 0 ? 1 : 2;
+  HOT.forEach(([kind, c]) => hb.append(slot(kind, c, k)));
+});
+function selectHot(i){
+  document.querySelectorAll("[data-hb]").forEach(hb => [...hb.children].forEach((b, j) => b.setAttribute("aria-pressed", j === i ? "true" : "false")));
+  const nm = NAMES[HOT[i][0]] || "";
+  document.getElementById("hbName").textContent = nm;
+  document.getElementById("hbName2").textContent = nm;
+}
+document.querySelectorAll("[data-hb]").forEach(hb => [...hb.children].forEach((b, j) => b.addEventListener("click", () => selectHot(j))));
+selectHot(2);
+
+const INV = [["tricorder"],["pack",16],["pack",3],["eye",12],["pearl",16],["compass"],["spyglass"],["rep"],["iron"],
+             ["furnace",4],["eye",9],[],["pack",16],[],["pearl",3],[],[],[],
+             [],[],[],[],[],[],[],[],[]];
+document.querySelectorAll("[data-inv]").forEach(g => INV.forEach(([kind, c]) => g.append(slot(kind, c, 2))));
+function tip(kind, count){
+  const t = document.getElementById("invTip");
+  if (!kind){ t.textContent = "Empty slot"; return; }
+  t.innerHTML = "";
+  t.append(NAMES[kind] + (count ? " (" + count + ")" : ""));
+  if (LORE[kind]){ t.append(document.createElement("br")); const l = document.createElement("span"); l.className = "lo"; l.textContent = LORE[kind]; t.append(l); }
+}
+document.querySelectorAll("[data-inv]").forEach(g => [...g.children].forEach((b, j) => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-inv] .sl").forEach(x => x.setAttribute("aria-pressed", "false"));
+  document.querySelectorAll("[data-inv]").forEach(gg => gg.children[j].setAttribute("aria-pressed", "true"));
+  tip(INV[j][0], INV[j][1]);
+})));
+document.querySelectorAll("[data-inv]").forEach(g => g.children[1].setAttribute("aria-pressed", "true"));
+tip("pack", 16);
+
+document.querySelectorAll("[data-scene]").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-scene]").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  document.getElementById("scene").classList.toggle("night", b.dataset.scene === "night");
+}));
+
+// The enchant glint: a purple band sweeping across the icon's own pixels only.
+const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+let moving = !reduce.matches;
+const packImg = new Image(); packImg.src = IMG.pack;
+const gl = document.createElement("canvas"); gl.width = gl.height = 128;
+const gx = gl.getContext("2d");
+function drawPack(c, t){
+  const x = c.getContext("2d");
+  x.imageSmoothingEnabled = false; x.globalCompositeOperation = "source-over";
+  x.clearRect(0, 0, 128, 128); x.drawImage(packImg, 0, 0, 128, 128);
+  gx.globalCompositeOperation = "source-over"; gx.clearRect(0, 0, 128, 128);
+  const off = (t / 3200 % 1) * 384 - 192;
+  const g = gx.createLinearGradient(off, off * .4, off + 128, off * .4 + 128);
+  g.addColorStop(0, "rgba(128,64,204,0)"); g.addColorStop(.45, "rgba(150,90,230,.32)");
+  g.addColorStop(.55, "rgba(180,120,255,.4)"); g.addColorStop(1, "rgba(128,64,204,0)");
+  gx.fillStyle = "rgba(110,60,190,.07)"; gx.fillRect(0, 0, 128, 128);
+  gx.fillStyle = g; gx.fillRect(0, 0, 128, 128);
+  gx.globalCompositeOperation = "destination-in"; gx.imageSmoothingEnabled = false;
+  gx.drawImage(packImg, 0, 0, 128, 128);
+  x.globalCompositeOperation = "lighter"; x.drawImage(gl, 0, 0);
+}
+let last = 0;
+function frame(t){
+  if (t - last > 33){ last = t; document.querySelectorAll("canvas.pk").forEach(c => drawPack(c, t)); }
+  if (moving) requestAnimationFrame(frame);
+}
+function still(){ document.querySelectorAll("canvas.pk").forEach(c => drawPack(c, 1100)); }
+const glintBtn = document.getElementById("glintBtn");
+function setMoving(m){ moving = m; glintBtn.setAttribute("aria-pressed", m ? "true" : "false"); glintBtn.textContent = m ? "Moving" : "Still"; if (m) requestAnimationFrame(frame); else still(); }
+glintBtn.addEventListener("click", () => setMoving(!moving));
+reduce.addEventListener("change", () => setMoving(!reduce.matches));
+packImg.onload = () => setMoving(moving);
+
+const sys = matchMedia("(prefers-color-scheme: light)");
+let themePick = "system";
+function applyTheme(){ document.documentElement.dataset.theme = themePick === "system" ? (sys.matches ? "light" : "dark") : themePick; }
+document.querySelectorAll("[data-theme-btn]").forEach(b => b.addEventListener("click", () => {
+  themePick = b.dataset.themeBtn;
+  document.querySelectorAll("[data-theme-btn]").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  applyTheme();
+}));
+sys.addEventListener("change", applyTheme);
+applyTheme();
+</script>
+</body>
+</html>
