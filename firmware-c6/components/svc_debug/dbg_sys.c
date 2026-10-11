@@ -34,6 +34,16 @@ void dbg_sys_crumb(uint32_t stage)
     s_crumb_magic = 0xC6B0071Eu;
 }
 
+uint32_t dbg_sys_crumb_at_boot(void)
+{
+    return s_crumb_at_boot;
+}
+
+uint32_t dbg_sys_crumb_now(void)
+{
+    return s_crumb_magic == 0xC6B0071Eu ? s_crumb : 0;
+}
+
 static const char *reset_name(esp_reset_reason_t r)
 {
     switch (r) {
@@ -76,6 +86,8 @@ static void describe(void *ctx, dbg_json_t *w)
 void dbg_sys_init(void)
 {
     s_crumb_at_boot = s_crumb_magic == 0xC6B0071Eu ? s_crumb : 0;
+    /* Zeroed so the next boot reports this one's stage, never an older boot's. */
+    dbg_sys_crumb(0);
     svc_debug_register("system", describe, NULL);
 }
 
@@ -89,6 +101,16 @@ void dbg_sys_watch_task(void *handle)
 void dbg_sys_crumb(uint32_t stage)
 {
     (void)stage;
+}
+
+uint32_t dbg_sys_crumb_at_boot(void)
+{
+    return 0;
+}
+
+uint32_t dbg_sys_crumb_now(void)
+{
+    return 0;
 }
 
 static void describe(void *ctx, dbg_json_t *w)

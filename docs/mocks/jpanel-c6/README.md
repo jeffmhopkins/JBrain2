@@ -17,8 +17,9 @@ panel, the others import it at a fixed `start` state).
   bottom-left, Tamsin bottom-right. Unplayed messages ride the tile as an amber count.
 - **Home, page 2 (swipe left):** Clock, then Settings. Kept off page 1 because it is rarely used and the
   four main tiles already fill the glass.
-- **Buttons:** KEY (left) is hold-to-talk, PWR (middle) screen on/off, BOOT (right) home /
-  cancel. PWR is not the talk key because the AXP2101 shuts down on a long press of it.
+- **Buttons** (measured order, seen from the front, 0.0.3 probe): BOOT (left) home / cancel,
+  PWR (middle) screen on/off, KEY (right) hold-to-talk. PWR is not the talk key because the
+  AXP2101 shuts down on a long press of it.
 - **Hold-to-talk is the only input for speech**, to Jerv and to the girls alike: hold KEY,
   speak, release to send; a tap on the glass cancels. 1:00 cap. Audio streams to the box as
   it is recorded — the C6 has no PSRAM to hold a clip. Rose ring = Jerv listening, steel

@@ -8,6 +8,27 @@ one is, its mark changes here in the same PR.
 
 Research date: 2026-10-11. Downloaded code was read only. Nothing was built or run.
 
+## Measured on the board (0.0.3 probe, 2026-10-11)
+
+These override anything below that disagrees.
+
+- **I2C bus** (SDA 8, SCL 7) answers at exactly `0x18` ES8311, `0x34` AXP2101, `0x40` ES7210,
+  `0x51` PCF85063, `0x5A` touch, `0x6B` QMI8658. Confirmed.
+- **AXP2101 as it powers up**, before any firmware writes it: chip id `0x4A`; DCDC1-4 on
+  (`0x80=0x0F`), DCDC1 3.3 V (`0x82=0x12`); every ALDO/BLDO/DLDO1 enabled (`0x90=0xFF`) and
+  DLDO2 (`0x91=0x01`); ALDO1-3 3.3 V (`0x1C`), **ALDO4 1.8 V** (`0x0D` — settles §1's
+  conflict), BLDO1 1.2 V, BLDO2 2.8 V. So the LCD reset pull-up (ALDO3) and the speaker
+  amplifier enable (ALDO2) are both **on from power-up**: the amp is live before any codec is
+  configured, and a reset of the panel is ALDO3 off→on. Status `0x00=0x20` / `0x01=0x15`:
+  on USB, no battery fitted, not charging.
+- **Buttons, seen from the front, left → right: BOOT (GPIO9), PWR, KEY (GPIO10)** — the
+  silkscreen order mirrored, as §4 suspected. BOOT and KEY idle high and read low while
+  pressed (~0.4-0.5 s taps seen). Confirmed.
+- **PWR on GPIO18 did not move**: idle 0, and a tap left it at 0 with no internal pull set.
+  §4's 10 kΩ pull-up (R11) is either not fitted or the inverter is wired otherwise; the next
+  image enables GPIO18's internal pull-up and also polls the AXP2101's PEK press flags
+  (`0x48`-`0x4A`) so the reliable source is chosen by measurement. Unconfirmed until then.
+
 ## Sources and short names
 
 | Short name | What it is | Where it is (paths are inside a clone of that source, not this repo) |
@@ -79,7 +100,7 @@ Markers: **[C]** = Confirmed (read directly in a source, or two sources agree). 
 | SCLK | **GPIO0** | [C] SCH J4 pin 5; IDF/ARD/XZ/BSP |
 | D0..D3 | **GPIO1, GPIO2, GPIO3, GPIO4** | [C] SCH J4 pins 7/6/23/22; BSP header `:55-58` |
 | CS | **GPIO15** (see headline 4) | [C] SCH J4 pin 4; XZ `config.h:25`; ARD `user_config.h:19`; BSP header `:59` |
-| Reset | No GPIO; **ALDO3** rail (see §1). BSP also calls `esp_lcd_panel_reset()`. With `reset_gpio_num = NC`, the sh8601 driver then sends SWRESET 0x01 and waits 80 ms. | [C] SCH; BSP `.c:593-595`; sh8601 driver `panel_sh8601_reset` (ARD `src/externLib/esp_lcd_sh8601.c`) |
+| Reset | No GPIO; **ALDO3** rail (see §1). BSP also calls `esp_lcd_panel_reset()`. With `reset_gpio_num = NC`, the sh8601 driver then sends SWRESET 0x01 and waits 80 ms. | [C] SCH; BSP `.c:593-595`; sh8601 driver `panel_sh8601_reset` (ARD `src/externLib/esp_lcd_sh8601.c`, and the registry's `espressif/esp_lcd_sh8601` 2.0.1 that 0.0.4 builds with) |
 | TE pin | `LCD_TE` (J4 pin 3) goes **only to test pad TP20**, not to a GPIO. Software TE sync is not possible without a bodge wire. | [C] SCH p1 LCD block |
 | DSI_PWR_EN (J4 pin 24) | Pulled up to VCC3V3 through R13 10 kΩ. Not controlled by firmware. | [C] SCH p1 |
 | Display supplies | J4 power pins tie to **VCC3V3 (DCDC1)**. No separate VCI/VDDIO switch was found. The panel's own boost converters are on the FPC/COG. | [U] SCH p1 (FPC pins 11/12/15/16 = VCC3V3; the module's internal VCI/VDDIO split is not shown) |
@@ -136,7 +157,7 @@ Caveat [U]: the meaning of page-0x20 registers 0x19 and 0x1C is not documented i
 | **BOOT** (Key1) | **GPIO9** | 10 kΩ pull-up (R8) to 3V3 + 100 nF, **active low**. Strapping pin: held low at reset = download mode. | [C] SCH p1 KEYS; XZ `config.h:22`; DOC |
 | **KEY** (Key3, silkscreen "IO10") | **GPIO10** | 10 kΩ pull-up (R18), cap C22 not fitted, **active low**. The SCH p1 GPIO table lists GPIO10 as "LCD_RESET", but the drawn nets put LCD_RESET on ALDO3 and GPIO10 on Key3. The silkscreen says IO10. | [C] SCH p1 KEYS + p2 silkscreen; table conflict noted |
 | **PWR** (Key2) | **AXP2101 PWRON** directly, and inverted onto **GPIO18** | Key2 pulls PWRON low. PWRON also drives the gate of BSS138 Q T1 (via R28 1 kΩ). The drain is GPIO18 with a 10 kΩ pull-up (R11). So **GPIO18 reads LOW when idle and HIGH while PWR is pressed** (FET turns off). | [U] SCH p1 KEYS (net trace read off the schematic; the PWRON idle-high level is assumed from the AXP2101's internal pull-up). Vendor code never reads GPIO18 as a key. |
-| PWR via PMIC | The AXP2101 also latches PEK short/long-press IRQ flags (IRQ regs 0x48-0x4A). They are readable over I2C, but IRQ_N is not wired to a GPIO, so you would have to poll. | [U] AXP2101 datasheet knowledge + SCH (AXP_IRQ unrouted) |
+| PWR via PMIC | The AXP2101 also latches the power key's events in IRQ status 2 (**0x49**): bit 0 positive edge (release), bit 1 negative edge (press), bit 2 long press, bit 3 short press, enabled by the same bits of 0x41 and cleared by writing 1s back. IRQ_N is not wired to a GPIO, so they are polled; 0.0.4 does, every 50 ms, and reports `pwr=`. | Bit layout [C] XPowersLib `XPowersParams.hpp:342-345` (IRQ2 = reg 41H/49H), `clearIrqStatus`; whether they fire on this board [U] until 0.0.4's telemetry |
 | BSP conflict | BSP header defines `BSP_RTC_INT = GPIO18`. SCH shows RTC_INT going only to a test pad and GPIO18 = PWR-key sense. **Treat BSP's RTC_INT=18 as an error.** | [U] BSP header `:79` vs SCH p1 |
 | Physical position | Top-silkscreen (SCH p2) top edge, left→right: **Key3 "IO10", Key2 "PWR", Key1 "BOOT"**. DOC says all three are side-mounted. Page 2 is the component-side view. If the AMOLED faces the user from the other side, the order seen from the front is mirrored: **BOOT, PWR, KEY**. Check on the device. | [U] SCH p2; DOC |
 

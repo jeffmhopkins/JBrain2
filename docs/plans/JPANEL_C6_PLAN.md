@@ -4,9 +4,10 @@
 > — C0 and C1 are proven on the board (2026-10-11): USB-flashed 0.0.1 from the PWA's board
 > picker, it joined Wi-Fi 6, reached the box over TLS, and took 0.0.2 over the air and kept it
 > across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
-> half has landed beside it, not in the image: `components/` (the contract, `ui_kit`, the
-> shell, fake services, every app as descriptor + model + view, `svc_debug`), `host/` and
-> `sim/` — see "What the framework lays down" under §1.
+> half landed first (`components/`, `host/`, `sim/` — "What the framework lays down" under §1);
+> **0.0.4 switches it into the image** with the first real drivers — the AXP2101, the buttons and
+> the CO5300 under LVGL, the shell over fake services — built and in `dist/`, not yet seen on the
+> glass (firmware README "What 0.0.4 adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -124,8 +125,7 @@ The structure above exists and runs, with no chip driver behind it:
   screenshot path, and an open/close check that every app — closed mid-hold included — leaves
   the widget and timer count it found), **`tools/check_app_deps.py`**. All three run in CI.
 
-It is excluded from the device build so `dist/` stays byte-identical; C2 switches it on
-(firmware README "Layout"). Built against the S3's lessons and the twins' messaging review
+It was excluded from the device build until 0.0.4 switched it on (firmware README "Layout"). Built against the S3's lessons and the twins' messaging review
 (`JPANEL_MESSAGING_FIXES_PLAN.md`): one decision drives both the drawn overlay and its hit area
 (B0, B3); a hold's release follows its press and a notice arriving mid-hold waits rather than
 burying the talk ring (B1, E2.9); the event queue counts what it drops (§7.3); cross-task events
@@ -203,7 +203,7 @@ answering. An alarm outranks it; it outranks every app.
 |---|---|---|
 | **C0** ✅ | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Proven on the board 2026-10-11. |
 | **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
-| **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check), outside the image. **Left:** the drivers behind the services, and switching the framework into the image. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
+| **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **Left:** confirming 0.0.4 on the glass and that 0.0.5 installs over it, touch (CST9220), the RTC, then swipe and tile taps. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
 | **C2d** | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. |
 | **C3** | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C3b** | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tools, `svc_notice` and the overlay. | Jerv asks a yes/no on the panel and acts on the tap. |

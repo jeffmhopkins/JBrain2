@@ -29,14 +29,15 @@ The 303a:1001 identity is the same one the S3 panels enumerate with, so nothing 
 the two boards apart; the box's flasher is told which chip it is writing (`--chip esp32c6`) and
 keeps the flash size, mode and frequency this build put in the bootloader header.
 
-## What this first image is for
+## What the first images were for
 
-**Making every firmware after it arrive over Wi-Fi.** The discipline is the one
+**Making every firmware after them arrive over Wi-Fi.** The discipline is the one
 `../firmware/README.md` ("What this first image is for") set for the twins' panels, and it held:
 display, touch, audio and PSRAM all arrived there by OTA onto a unit that had already proved it
 could take one.
 
-This image does exactly six things:
+The bring-up image (0.0.1-0.0.3) did exactly six things, and every image since still does them
+first:
 
 1. reads its provisioning from NVS;
 2. joins Wi-Fi;
@@ -47,9 +48,9 @@ This image does exactly six things:
 5. asks for a newer image every minute and installs it;
 6. reports the version it is running — from `version.txt`, compiled into the app descriptor.
 
-Deliberately absent: **display, touch, audio, IMU, RTC, SD card, buttons and the PMIC.** Each is
-the class of fault that ends in a boot loop. They arrive over the air, one at a time, onto a
-panel that has already taken an update. **Check `bootloader.bin` is byte-identical before
+Deliberately absent from it: **display, touch, audio, IMU, RTC, SD card, buttons and the PMIC.**
+Each is the class of fault that ends in a boot loop. They arrive over the air, one at a time,
+onto a panel that has already taken an update (0.0.4 brings the first three of them). **Check `bootloader.bin` is byte-identical before
 shipping each one** — that is what makes it a pure app OTA whose rollback lands on the same
 bootloader.
 
@@ -68,17 +69,72 @@ button change wakes the loop so the box hears a press within seconds — which i
 left/middle/right order and GPIO18's polarity get settled with nothing but a finger on the
 panel. It writes no register and drives no pin, so it cannot leave the panel dark; it
 releases the bus afterwards because the C2 power service must be that bus's only owner.
-`HARDWARE.md` holds the researched facts these readings confirm or correct.
+`HARDWARE.md` holds the researched facts these readings confirm or correct. 0.0.4 replaces it
+with the real services; its answers are in `HARDWARE.md` "Measured on the board".
 
-### Why the PMIC is left alone
+## What 0.0.4 adds: the screen
 
-The AXP2101's power-on defaults are what power the ESP32-C6 in the first place — the chip is
-running this code because of them. A wrong register write is the one bring-up mistake that can
-cut the chip's own rail or the battery path, and it would survive an OTA rollback (the PMIC
-keeps its registers across an ESP reset). Nothing this image does needs a rail the defaults do
-not already provide, so it does not open the I2C bus at all. The PMIC arrives in the image that
-needs the display's and the amplifier's rails, which is also the first image that can show what
-it did.
+The first image that drives the glass: the AXP2101, the buttons, the CO5300 under LVGL 9.2.2,
+and the framework's shell with every app over the **fake** services (no touch, audio or box data
+yet — the home grid, BOOT, KEY and PWR are what can be exercised).
+
+| Piece | What it is |
+| --- | --- |
+| `svc_power` (`esp/svc_power_axp2101.c`) | The I2C bus's ONE owner. Checks chip id 0x4A; enables the battery/VBUS/VSYS ADC and battery detection; sets pre-charge 50 mA, termination 50 mA and constant current **300 mA** (the BSP's 500, lowered until the cell is chosen); latches the PWR key's edges in IRQ register 0x49 and polls them every 50 ms. Every write is read back. |
+| `svc_buttons` (`esp/svc_buttons.c`) | GPIO9 (BOOT, left) and GPIO10 (KEY, right), sampled every 10 ms and debounced over three samples; GPIO18 with its **internal pull-up**, pressed meaning "not the level it idled at", since its polarity is still being measured. |
+| `svc_display` (`esp/svc_display_co5300.c`) | ALDO3 off/on as the panel reset, SPI2 in quad mode at 40 MHz (CS15, SCLK0, D0-D3 GPIO1-4), `espressif/esp_lcd_sh8601` 2.0.1 with the vendor's 480×480 init table, RGB565 byte-swapped, one 480×40 internal DMA strip (38.4 KB), every window rounded to even. |
+| `main/ui_task.c` | The UI task: the one task that touches LVGL, the shell, an app or the panel io handle. |
+
+**PWR** (middle) is screen dark/wake, **BOOT** home/back, **KEY** hold-to-talk to the open app,
+as the shell defines them. A PWR press reaches the shell from whichever route fires first —
+GPIO18 or the PMIC's latched press — and the second report of the same press inside 400 ms is
+dropped; telemetry names every route that has ever fired (`pwr=`).
+
+### The safety rules, and how each is held
+
+- **Nothing new runs before the rollback gate.** `start_panel()` is called after
+  `ota_confirm_health`, exactly where the 0.0.3 probe started: whatever the display does, this
+  image has already proved it can reach the box and take the next one.
+- **The boot after a fault runs headless.** `disp_guard.c` (host-tested) refuses the display
+  when the last reset was a panic, an interrupt/task/RTC watchdog, a CPU lockup, a brownout or a
+  power glitch. That boot reports `display=skipped-after-panic` with the stage the last one died
+  in (`crumb=`), does not write the PMIC at all, and keeps polling for updates — so a display
+  driver that faults every boot alternates with a boot that can take the image that fixes it.
+  The next clean boot (an OTA's reset included) tries the display again.
+- **An LVGL assert is a panic, not a spin.** LVGL's default handler is `while(1);`;
+  `lv_port/lv_assert_trap.h` makes it a trap, which the rule above then catches.
+- **Nothing new can starve the update loop.** The UI, power and button tasks all run at the main
+  task's priority 1, so FreeRTOS round-robins them: even a UI task stuck in a loop would leave the
+  update loop its share. The UI loop always sleeps at least a tick.
+- **One task owns the panel, and brightness waits for the frame.** Flushes are synchronous —
+  with one buffer LVGL could not draw ahead anyway — so no pixel transfer is in flight when the UI
+  task returns from `lv_timer_handler`, and that is the only moment it writes `0x51`. On the S3
+  the same correctly framed write sent mid-frame hung the renderer. A flush that does not complete
+  in 1 s stops the UI (`display=failed:flush`) rather than queue onto a stuck bus.
+- **Dark is brightness 0, never display-off** (svc_display.h), and the PMIC switches no rail but
+  ALDO3, and that one only as the reset pulse, back on before anything else runs.
+
+### Reading 0.0.4 from the box
+
+The first report goes out while the panel is still starting; the UI asks for a second once it
+has run for ~5 s (and a PWR press asks for one too). Everything is in the telemetry `note`:
+
+| Token | Good | Bad, and what it means |
+| --- | --- | --- |
+| `display=` | `ok` | `failed:<step>` (`sem`, `spi`, `io`, `panel`, `reset`, `init`, `on`, `buf`, `lvgl`, `flush`): the step that failed, panel left alone. `skipped-after-panic`: the last boot faulted — read `crumb=` and `reset_reason`. |
+| `lcdrst=` | `aldo3` | `sw-only`: the PMIC refused the reset pulse; the controller got a software reset only. |
+| `frames=` / `flush_ms=` | climbing / ~20-30 | stuck at 0 with `display=ok`: LVGL never flushed. `flush_err` > 0: a strip never completed. |
+| `bri=req/sent/state`, `bri_n=` | `50/128/sent` ~2 s after boot | `…/err`: the bus refused the write. `sent` while the glass did not step down from full brightness: the write is discarded — the S3's failure. **Only the eye can tell**; PWR must black the screen and bring it back. |
+| `ui=`, `stage=`, `ui_age=` | `up`, 10-13, 0 | `ui_age` growing: the UI task is stuck at `stage` (1 LVGL, 2 shell, 10 events, 11 render, 12 brightness, 13 idle, 101-109 the display's init steps, 14 stopped). |
+| `ui_heap=free/min` | free ≥ 100000 | under ~100 KB: the next TLS handshake or OTA is at risk. Compare `int_min` after an OTA. |
+| `ui_stack=` / `main_stack=` | > 1500 / > 1500 bytes | small: a stack near overflow. |
+| `pmu=` | `ok` | `failed:<reg>`: that register did not read back; `absent`: no AXP2101 on the bus; `readonly`: a fault boot. |
+| `bat=` `vbus=` `vsys=` `chg=` | 0, ~5000, ~5000, 0 on USB with no cell | `vbus=0` on USB: the ADC is not enabled. `axp=16:…,30:…,62:…,64:…` are the VBUS limit, ADC enable, charge current and charge voltage as read. |
+| `pwr=` | `pek`, `gpio18` or both after a PWR press | `none` after pressing PWR: neither route works yet. `g18idle=` is GPIO18's level with the pull-up. |
+| `edges=` | `boot=dn@…`, `key=dn@…`, `g18=dn@…`, `pek@…` (deciseconds) | missing presses: debounce or wiring. |
+
+The critical test is the **next** update: 0.0.5 must arrive and install with the display running
+(`ota_err` empty, version moving on).
 
 ### Why the console is USB-only
 
@@ -108,8 +164,10 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
   `version`, `uptime_ms`, `reset_reason`, the internal-heap readings (`free_heap`, `int_free`,
   `int_min`, `int_big`, `int_largest`), `wifi_reason` / `wifi_drops`, `ota_err` / `ota_tries`,
-  `relinks`, `box_quiet_s`, and `note` — `board=jpanel-c6 image=bring-up chip=esp32c6 rev=… dump=…`,
-  because nothing else in the body says which board sent it.
+  `relinks`, `box_quiet_s`, and `note` — `board=jpanel-c6 image=display chip=esp32c6 rev=… dump=…`,
+  because nothing else in the body says which board sent it, then each service's own tokens
+  ("Reading 0.0.4 from the box" above). The note is bounded on its own, so a long one is cut
+  rather than costing the whole report.
 
 Each request is its own HTTPS session, closed before the next. The S3 panels moved to one shared
 WebSocket (`../firmware/main/link.c`) because talk turns and polls overlapped; this image makes
@@ -132,8 +190,8 @@ The S3 panels lean on 8 MB of PSRAM and on ESP-SR. This board has neither, and t
 the shape of every later wave:
 
 - **The screen is drawn in strips.** A full RGB565 frame at this panel's resolution does not fit
-  next to Wi-Fi and TLS in ~300 KB of free internal RAM. LVGL renders into partial buffers (a
-  band of the screen, double-buffered for DMA) and the CO5300 receives a window at a time.
+  next to Wi-Fi and TLS in ~300 KB of free internal RAM. LVGL renders into one 480×40 partial
+  buffer in internal DMA memory and the CO5300 receives a window at a time.
 - **Audio is streamed, both ways.** At 16 kHz, 16-bit mono a second is 32 KB, so ten seconds of
   speech is 320 KB — more than the chip has free. A recording goes to the box while it is being
   made; a reply plays through a small ring as it arrives. Nothing holds a whole clip.
@@ -145,7 +203,8 @@ the shape of every later wave:
 
 ## Pin map
 
-From the vendor's listing. Recorded for later waves — **this image drives none of them.**
+From the vendor's listing, corrected by `HARDWARE.md`. 0.0.4 drives the buttons, the I2C bus (the
+AXP2101 only) and the display; the rest are for later waves.
 
 | Function | Pins |
 | --- | --- |
@@ -155,7 +214,7 @@ From the vendor's listing. Recorded for later waves — **this image drives none
 | I2C (shared) | SDA GPIO8, SCL GPIO7 — AXP2101, PCF85063, QMI8658, CST9220, ES8311, ES7210 |
 | IMU interrupts | INT1 GPIO16, INT2 GPIO17 |
 | Touch | TP_RST GPIO11, TP_INT GPIO5 |
-| Display (CO5300, QSPI) | CS GPIO15, SCL GPIO0, D0 GPIO1, D1 GPIO2, D2 GPIO3, D3 GPIO4; LCD_RST appears to be an AXP2101 ALDO rail (**unverified**) |
+| Display (CO5300, QSPI) | CS GPIO15, SCL GPIO0, D0 GPIO1, D1 GPIO2, D2 GPIO3, D3 GPIO4; LCD reset is the AXP2101's ALDO3 |
 | I2S | MCLK GPIO19, SCLK GPIO20, LRCK GPIO22, ASDOUT GPIO21, DSDIN GPIO23; PA_CTRL appears to be an AXP2101 ALDO rail (**unverified**) |
 | TF card (SPI) | SCK GPIO0, MOSI GPIO1, MISO GPIO2, CS GPIO6 |
 
@@ -191,16 +250,19 @@ while it is free; this image already writes panics into it and reports `dump=1`.
 
 ## Layout: the app framework
 
-The plan's §1 architecture is laid down beside the bring-up image but **not yet in it**:
+The plan's §1 architecture, in the image since 0.0.4:
 
 ```
-main/               the bring-up image (Wi-Fi, OTA, rollback, telemetry) — what dist/ is built from
+main/               Wi-Fi, OTA, rollback, telemetry; the UI task (ui_task.c); the app set (apps.c)
+lv_port/            LVGL's assert handler: a trap, not a spin
 components/
   app_api/          app_t, app_event_t, the svc_*.h interfaces, the redacting debug writer
   ui_kit/           theme tokens from the mock, the shared widgets, the talk ring, toasts
   shell/            home pages, the one open app, button routing, overlays
                     (shell_core.c: every decision, no LVGL, host-tested; shell.c: carries it out)
-  svc_*/            one per chip or box route; in-memory implementations until each driver lands
+  svc_*/            one per chip or box route; in-memory implementations until each driver lands.
+                    svc_power, svc_display and svc_buttons are real: the device builds their
+                    esp/ driver and pure *_logic.c, the sim and host the top-level files
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
   app_jerv/ app_thread/ app_clock/ app_settings/ app_minecraft/
                     each a descriptor + a pure *_model.c + a view; app_thread is one component
@@ -210,14 +272,14 @@ sim/                every component against LVGL on the host, headless to PNG
 tools/check_app_deps.py   an app may require app_api, ui_kit and LVGL and nothing else
 ```
 
-**Why it is out of the image.** ESP-IDF builds every directory under `components/`, and these
-need LVGL and drivers the bring-up image does not carry; `CMakeLists.txt` excludes them, so
-`dist/` stays byte-identical to what `main/` alone builds. **C2 switches it on**: delete the
-exclude, add `lvgl/lvgl: "==9.2.2"` (the sim's pin) to a `main/idf_component.yml`, move
-`sim/apps.c` into `main/`, have `main` require the shell, the apps and the services, and put
-`dbg_log_chain(esp_log_set_vprintf(dbg_log_vprintf))` first in `app_main`. The whole framework
-has been compiled and linked for the esp32c6 that way (LVGL as a managed component, Kconfig
-fonts 14-30 and 48): a 691 KB image, 136 KB of static DIRAM before Wi-Fi.
+**How it is in the image.** LVGL `==9.2.2` (the sim's pin) is a managed component declared in
+`main/idf_component.yml`, the sh8601 driver `==2.0.1` in `components/svc_display/`, and
+`dependencies.lock` pins both by content hash so `dist/` stays reproducible. `main/apps.c` is the
+one app set, compiled by the sim too. LVGL is configured in `sdkconfig.defaults` to match
+`sim/lv_conf.h` (RGB565, Montserrat 14-30 and 48, no theme, a static 64 KB heap). The services
+the drivers have not reached yet are still the fakes, on the device as in the sim. **Not yet
+wired:** the debug ring's `esp_log` hook and the debug commands — they have no transport until
+C2d, and a hook in every task's log path is risk with no reader.
 
 **The rules the code holds itself to**, from the S3 panels and their review:
 
@@ -232,8 +294,9 @@ fonts 14-30 and 48): a 691 KB image, 136 KB of static DIRAM before Wi-Fi.
   `sim --lifecycle` proves every app — closed mid-hold included — leaves exactly the widget and
   timer count it found.
 - **Nothing assumes the glass obeyed.** `svc_display` records a brightness and reports
-  `applied` only once the display task confirmed it: the S3's CO5300 discarded runtime
-  brightness writes. Dark is brightness 0, never display-off.
+  `applied` only once the UI task sent it between frames and the bus took it: the S3's CO5300
+  discarded runtime brightness writes, and the glass cannot be read back over this bus at
+  40 MHz, so the owner's eye is the last check. Dark is brightness 0, never display-off.
 
 ### Running it
 
@@ -273,7 +336,7 @@ check a snapshot for the fake provisioning's password, device key and CA.
 
 ```sh
 IDF_TARGETS=esp32c6 scripts/firmware-setup.sh     # once — ESP-IDF v5.5.5 + the RISC-V toolchain
-echo 0.0.2 > firmware-c6/version.txt               # bump FIRST: the version is compiled in
+echo 0.0.5 > firmware-c6/version.txt               # bump FIRST: the version is compiled in
 . ~/esp-idf/export.sh && (cd firmware-c6 && idf.py fullclean && idf.py build)
 scripts/firmware-dist.sh firmware-c6               # copies the built set into dist/ — it ships
 ```
@@ -286,7 +349,9 @@ same source build the same bytes on any machine, and the `firmware-c6` job in
 ELF's hash and the ELF carries line numbers.
 
 Bring-up image 0.0.1: app 1.08 MB in a 4 MB slot (73% free); 149 KB of the 442 KB of DIRAM used
-statically, before Wi-Fi and TLS allocate at runtime.
+statically, before Wi-Fi and TLS allocate at runtime. 0.0.4, with LVGL and the framework: app
+1.74 MB (58% of the slot free); 239 KB of DIRAM static, 64 KB of it LVGL's heap. At runtime the
+UI adds a 38.4 KB strip buffer and a 12 KB task stack.
 
 ## Recovery
 

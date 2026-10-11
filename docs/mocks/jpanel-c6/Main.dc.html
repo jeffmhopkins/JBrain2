@@ -16,7 +16,7 @@ body{margin:0}
 </helmet>
 <div style="width: 720px; height: 720px; position: relative; overflow: hidden; background: #E4E4E0; font-family: 'Montserrat', sans-serif; color: #1A1B1E;">
 
-  <div style="position: absolute; left: 177px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
+  <div style="position: absolute; left: 423px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
     <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">KEY</span>
     <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">hold to talk</span>
   </div>
@@ -24,14 +24,14 @@ body{margin:0}
     <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">PWR</span>
     <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">screen on / off</span>
   </div>
-  <div style="position: absolute; left: 423px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
+  <div style="position: absolute; left: 177px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
     <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">BOOT</span>
     <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">home</span>
   </div>
 
-  <button aria-label="KEY — hold to talk" onPointerDown="{{keyDown}}" onPointerUp="{{keyUp}}" onPointerCancel="{{keyUp}}" style="position: absolute; left: 201px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: {{keyBg}}; cursor: pointer; touch-action: none; padding: 0;"></button>
+  <button aria-label="KEY — hold to talk" onPointerDown="{{keyDown}}" onPointerUp="{{keyUp}}" onPointerCancel="{{keyUp}}" style="position: absolute; left: 447px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: {{keyBg}}; cursor: pointer; touch-action: none; padding: 0;"></button>
   <button aria-label="PWR — screen on or off" onClick="{{pwr}}" style="position: absolute; left: 324px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: #F4F4F2; cursor: pointer; padding: 0;"></button>
-  <button aria-label="BOOT — home" onClick="{{boot}}" style="position: absolute; left: 447px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: #F4F4F2; cursor: pointer; padding: 0;"></button>
+  <button aria-label="BOOT — home" onClick="{{boot}}" style="position: absolute; left: 201px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: #F4F4F2; cursor: pointer; padding: 0;"></button>
 
   <div style="position: absolute; left: 77px; top: 112px; width: 566px; height: 566px; border-radius: 72px; background: #F4F4F2; box-shadow: 0 1px 0 #FFFFFF inset, 0 18px 40px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.12);">
     <div style="position: absolute; left: 17px; top: 17px; width: 532px; height: 532px; border-radius: 60px; background: #050505;">

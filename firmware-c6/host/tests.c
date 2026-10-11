@@ -6,9 +6,13 @@
 #include <string.h>
 
 #include "app_event.h"
+#include "axp_logic.h"
+#include "btn_logic.h"
 #include "clock_model.h"
 #include "dbg_core.h"
 #include "dbg_json.h"
+#include "disp_guard.h"
+#include "disp_logic.h"
 #include "jerv_model.h"
 #include "minutes.h"
 #include "notice_policy.h"
@@ -654,6 +658,96 @@ static void test_a_screenshot_streams_in_stripes_and_round_trips(void)
     CHECK(!dbg_shot_decode(out, 6, back, W, H), "a truncated stream does not decode");
 }
 
+
+/* ---- drivers: the pure halves of svc_display, svc_power and svc_buttons ---- */
+
+static void test_every_flush_window_is_even_aligned_and_covers_the_dirty_area(void)
+{
+    for (int32_t x1 = 0; x1 < 480; x1 += 7)
+        for (int32_t w = 1; x1 + w <= 480; w += 13) {
+            int32_t a = x1, b = 5, c = x1 + w - 1, d = 5 + (w % 9);
+            disp_area_even(&a, &b, &c, &d, 480, 480);
+            if (a % 2 || b % 2 || (c - a + 1) % 2 || (d - b + 1) % 2) {
+                CHECK(false, "start and size are even in both axes");
+                return;
+            }
+            if (a > x1 || c < x1 + w - 1 || b > 5 || d < 5 + (w % 9)) {
+                CHECK(false, "the rounded window still covers what was dirty");
+                return;
+            }
+        }
+    int32_t a = 479, b = 479, c = 479, d = 479;
+    disp_area_even(&a, &b, &c, &d, 480, 480);
+    CHECK(a == 478 && c == 479 && b == 478 && d == 479, "the last pixel rounds inward, never off the glass");
+    a = -3, b = -1, c = 600, d = 900;
+    disp_area_even(&a, &b, &c, &d, 480, 480);
+    CHECK(a == 0 && b == 0 && c == 479 && d == 479, "an area past the edges is clipped to the screen");
+    a = 0, b = 0, c = 479, d = 39;
+    disp_area_even(&a, &b, &c, &d, 480, 480);
+    CHECK(a == 0 && c == 479 && b == 0 && d == 39, "an aligned strip is left exactly as it was");
+}
+
+static void test_brightness_maps_percent_to_the_0x51_byte_and_dark_is_zero(void)
+{
+    CHECK(disp_level(100, false) == 255 && disp_level(0, false) == 0, "0-100 spans 0x00-0xFF");
+    CHECK(disp_level(50, false) == 128, "half is 0x80");
+    CHECK(disp_level(200, false) == 255, "out of range is clamped, not wrapped");
+    CHECK(disp_level(80, true) == 0, "dark is level 0 whatever the setting");
+}
+
+static void test_the_display_is_skipped_only_on_the_boot_after_a_fault(void)
+{
+    const int faults[] = {DG_RST_PANIC, DG_RST_INT_WDT, DG_RST_TASK_WDT, DG_RST_WDT,
+                          DG_RST_BROWNOUT, DG_RST_PWR_GLITCH, DG_RST_CPU_LOCKUP};
+    for (size_t i = 0; i < sizeof faults / sizeof *faults; i++)
+        CHECK(!dg_may_start(faults[i]), "a panic, a watchdog or a brownout leaves the display off");
+    CHECK(dg_may_start(DG_RST_POWERON), "a power-on starts it");
+    CHECK(dg_may_start(DG_RST_SW), "the reset after an OTA starts it, so a fixed image is tried");
+    CHECK(dg_may_start(DG_RST_EXT) && dg_may_start(DG_RST_UNKNOWN), "anything else starts it");
+}
+
+static void test_a_button_needs_three_steady_samples(void)
+{
+    btn_db_t b = {0};
+    CHECK(btn_db_step(&b, true) == 0 && btn_db_step(&b, true) == 0, "two samples are not a press");
+    CHECK(btn_db_step(&b, true) == 1, "the third is");
+    CHECK(btn_db_step(&b, true) == 0, "holding is not another press");
+    CHECK(btn_db_step(&b, false) == 0 && btn_db_step(&b, true) == 0, "a one-sample bounce is ignored");
+    CHECK(btn_db_step(&b, false) == 0 && btn_db_step(&b, false) == 0, "release needs three too");
+    CHECK(btn_db_step(&b, false) == -1, "and is reported once");
+}
+
+static void test_one_pwr_press_seen_two_ways_toggles_once(void)
+{
+    pwr_merge_t m = {0};
+    CHECK(!strcmp(pwr_seen_name(m.seen), "none"), "nothing seen yet");
+    CHECK(pwr_merge_accept(&m, PWR_SRC_GPIO18, 1000), "the first report is a press");
+    CHECK(!pwr_merge_accept(&m, PWR_SRC_PEK, 1050), "the PMIC's report of the same press is not");
+    CHECK(!strcmp(pwr_seen_name(m.seen), "pek+gpio18"), "but both routes are recorded as working");
+    CHECK(pwr_merge_accept(&m, PWR_SRC_PEK, 1000 + PWR_MERGE_MS), "a press after the window counts");
+    pwr_merge_t z = {0};
+    CHECK(pwr_merge_accept(&z, PWR_SRC_PEK, 0), "a press at uptime zero counts");
+    CHECK(!strcmp(pwr_seen_name(z.seen), "pek"), "and names its route");
+    pwr_merge_t w = {.last_ms = 0xFFFFFF00u, .any = true};
+    CHECK(!pwr_merge_accept(&w, PWR_SRC_GPIO18, 0x10), "the window holds across the 49-day wrap");
+}
+
+static void test_the_pmic_registers_decode_as_the_probe_read_them(void)
+{
+    /* 0.0.3 on the board: 0x00=0x20, 0x01=0x15 — on USB, no battery, not charging. */
+    axp_status_t st = axp_status_decode(0x20, 0x15);
+    CHECK(st.vbus_good && !st.battery && !st.charging, "on USB, no cell, not charging");
+    st = axp_status_decode(0x28, 0x20 | 0x05);
+    CHECK(st.battery && st.charging, "a cell on charge reads as one");
+    CHECK(axp_adc14(0xD3, 0x88) == 0x1388, "VBUS keeps 14 bits: 5000 mV");
+    CHECK(axp_adc13(0xF0, 0x68) == 0x1068, "the battery keeps 13 bits: 4200 mV");
+    CHECK(axp_pek_pressed(AXP_PEK_DOWN), "the falling edge is a press");
+    CHECK(!axp_pek_pressed(AXP_PEK_SHORT | AXP_PEK_UP), "a release latched later is not a second one");
+    CHECK(!axp_pek_pressed(0xF0), "battery and VBUS events are not the key");
+    CHECK(axp_field(0xFF, 0x04, 0x00) == 0xFB, "clearing ALDO3 leaves every other rail on");
+    CHECK(axp_field(0x15, 0x1F, 9) == 0x09 && axp_field(0xE5, 0x1F, 9) == 0xE9, "a field write keeps the bits outside its mask");
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -687,6 +781,12 @@ int main(void)
     test_the_log_ring_keeps_whole_lines_newest_last();
     test_the_esp_log_hook_keeps_the_line_and_still_prints_it();
     test_a_screenshot_streams_in_stripes_and_round_trips();
+    test_every_flush_window_is_even_aligned_and_covers_the_dirty_area();
+    test_brightness_maps_percent_to_the_0x51_byte_and_dark_is_zero();
+    test_the_display_is_skipped_only_on_the_boot_after_a_fault();
+    test_a_button_needs_three_steady_samples();
+    test_one_pwr_press_seen_two_ways_toggles_once();
+    test_the_pmic_registers_decode_as_the_probe_read_them();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }
