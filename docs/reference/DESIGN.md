@@ -3436,6 +3436,44 @@ Sheet → Dialog.
   restart; the allowlist's on/off applies at the next restart (turning it off confirms), names
   are live while it runs. Their *pending* tags come from `pending_restart`.
 
+### Crash site at spawn (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-wreck/a-switch-in-sheet.html`)
+
+A world the box makes can start at a crash site: an escape pod at spawn, with the damaged
+mothership overhead (plan §"SW1–SW4 — Spawn wreck"). The owner chose **A, a switch in the
+sheet**, over B (a two-picture **Start** choice) and C (the server default only). A reuses the
+Cheats pattern the sheet already has. It gives a choice per world and a default in the PWA, and
+its row line answers "will this one have it?" from the list. The rivals are kept in
+`docs/mocks/minecraft-wreck/README.md`.
+
+- **New world** has a **Crash site at spawn** switch row under Cheats, built the same way. It
+  starts at the server default. Its line is *on — an escape pod crashed at spawn, its mothership
+  overhead* or *off — the world's own spawn, nothing built*. It adds *· not the server default*
+  when the two differ.
+- **Reset** shows the same row under *Same seed* and *New seed*, never under *Empty*. While it's
+  on, the row adds *Built on its first start after the reset.* The choice rides the confirm
+  dialog into the request.
+- **Import** says *No crash site is added.* Imported and restored worlds are never touched.
+- **A test world** (made over the debug API to prove the crash site, plan §SW4) reads
+  *test world, {date} — made over the debug API* as its origin, so the owner can tell it from
+  their own. Renaming it, changing its settings, or resetting, importing or restoring over it
+  makes it theirs.
+- **Each world row** has one more line, *Crash site:* followed by its state:
+  - *on its way*;
+  - *building — the pod*, with its phase, only while that world is loaded and the server is up;
+  - *didn't finish — trying again*;
+  - *built*;
+  - *not built* (passed over);
+  - *off*.
+- **The world's page** has a **Crash site** line in its facts, in the same states at full
+  length. For *off*, it says why: imported, restored, made before crash sites, or started plain.
+  A generated world without one also gets a note: *A crash site can't be added to a world that's
+  been played — it would land on what's built there. Reset it with a seed to start one fresh.*
+  There is no "add it now".
+- **Server settings** has **Crash site by default** in its own block under **Save settings**.
+  That Save applies at the next restart, while this switch saves at once. It is optimistic, as
+  the auto-update switch is, and flips back if it's refused. Turning it off while a world is
+  armed says so in the toast: *Skyblock run still gets its crash site — set when made.*
+
 ### The Minecraft map (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-map/a-full-bleed.html`)
 
 Plan §M8 (the viewer), §M8a (its timeline) and P3 (the chat card) share one map component. The

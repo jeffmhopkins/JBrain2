@@ -150,8 +150,10 @@ class Rig:
         self._track_id = 0
         self._last_pos: dict[str, dict[str, Any]] = {}
         self._track_lock = threading.Lock()
-        # The last event note_wreck() has read.
+        # The last event note_wreck() has read, and each world's latest build phase (for
+        # the PWA's "building — the pod" while it's armed).
         self._wreck_seen = 0
+        self._wreck_phase: dict[str, tuple[str, float]] = {}
         # Map tiles (§M8): one chunk index per world folder, and the PNGs it rendered,
         # both dropped when that world's database files change.
         self._map_lock = threading.Lock()
@@ -367,6 +369,7 @@ class Rig:
             "boot_id": bds.BOOT_ID,
             "lan_ip": lan_ip(),
             "auto_update": self.settings()["auto_update"],
+            "spawn_wreck": self.settings()["spawn_wreck"],
             "run": self.settings()["run"],
             "update": dict(self.update_state),
             "started_at": started,
@@ -718,6 +721,8 @@ class Rig:
                     "backups": len(backups),
                     "last_backup": backups[0]["created"] if backups else None,
                     "last_download": self.index.last_download(folder),
+                    # Where an armed world's build has got to: loaded, pod, ship, failed.
+                    "wreck_phase": self._phase_of(rec),
                 }
             )
         return {"slots": out, "active": active, "keep_per_slot": worlds.KEEP_PER_SLOT}
@@ -760,7 +765,11 @@ class Rig:
                 self._stop(f"Switching to the world {rec['name']}")
             if not rec["exists"] and not rec["seed"]:
                 rec = self.slots.update(
-                    slot_id, seed=worlds.new_seed(), origin="new", wreck=self._arm()
+                    slot_id,
+                    seed=worlds.new_seed(),
+                    origin="new",
+                    created_at=time.time(),
+                    wreck=self._arm(),
                 )
             self._step("writing")
             self._apply_slot(rec)
@@ -773,6 +782,10 @@ class Rig:
         rec = self.slots.get(slot_id)
         if rec["exists"]:
             raise ValueError("that slot already holds a world — reset it first")
+        if body.get("test") and (rec["name"] or rec["seed"]):
+            # The debug API's guard, kept here too: a test world only goes in an empty
+            # slot, never over a world the owner made and hasn't generated yet.
+            raise ValueError("a test world only goes in an empty slot")
         seed = worlds.check_seed(str(body.get("seed") or "")) or worlds.new_seed()
         rules = worlds.check_rules(dict(body.get("rules") or {}), worlds.DEFAULT_RULES)
         return self.slots.update(
@@ -786,6 +799,7 @@ class Rig:
             origin="new",
             created_at=time.time(),
             wreck=self._arm(body.get("wreck")),
+            test=bool(body.get("test")),
         )
 
     def update_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -796,7 +810,8 @@ class Rig:
         fields = {k: body[k] for k in ("name", "gamemode", "difficulty") if k in body}
         if "cheats" in body:
             fields["cheats"] = bool(body["cheats"])
-        rec = self.slots.update(slot_id, **fields)
+        # The owner changing a test world makes it theirs, out of the debug API's reach.
+        rec = self.slots.update(slot_id, **fields, test=False)
         active = rec["folder"] == self.active_folder()
         if active and "difficulty" in fields and self.bds.running:
             with contextlib.suppress(bds.ConsoleError):
@@ -849,17 +864,28 @@ class Rig:
                     created_at=time.time(),
                     rules={},
                     wreck=None,  # the owner's own world: never touched
+                    test=False,
                 )
 
             self._restart_around(folder, work, "A world is being imported here")
         return self.slots.get(slot_id)
 
-    def reset_slot(self, slot_id: str, mode: str, seed: str = "") -> dict[str, Any]:
+    def reset_slot(
+        self,
+        slot_id: str,
+        mode: str,
+        seed: str = "",
+        wreck: Any = None,
+        test: bool = False,
+    ) -> dict[str, Any]:
         rec = self.slots.get(slot_id)
         folder = rec["folder"]
         active = folder == self.active_folder()
         if mode not in ("same_seed", "new_seed", "empty"):
             raise ValueError("reset mode must be same_seed, new_seed or empty")
+        if test and not rec["test"]:
+            # A test reset keeps a mark, never makes one: the owner's world stays theirs.
+            raise ValueError("only a test world can be reset as one")
         if mode == "empty" and active:
             raise ValueError("the loaded world can't be emptied — load another first")
         seed = worlds.check_seed(seed)
@@ -886,7 +912,8 @@ class Rig:
                     seed=new,
                     origin="reset",
                     created_at=time.time(),
-                    wreck=self._arm(),
+                    wreck=self._arm(wreck),
+                    test=test,
                 )
                 if active:
                     self._apply_slot(fresh)
@@ -901,7 +928,7 @@ class Rig:
         source = self.index.entry(name)["folder"]
         src = self.slots.by_folder(source) or {}
         # A restored world is the one in the backup, built or not; it is never re-armed.
-        fields: dict[str, Any] = {"origin": "restored", "wreck": None}
+        fields: dict[str, Any] = {"origin": "restored", "wreck": None, "test": False}
         if source != folder:
             # Another world's backup: the slot becomes that world, so its old seed and
             # settings no longer describe it. Rules come with the source's choices.
@@ -1073,6 +1100,13 @@ class Rig:
         listing.write_text(json.dumps(packs, indent=2))
         return pack_id
 
+    def _phase_of(self, rec: dict[str, Any]) -> str | None:
+        # A phase from before the slot's world was (re)made is the old world's build.
+        phase, at = self._wreck_phase.get(rec["folder"], ("", 0.0))
+        if rec.get("wreck") != "armed" or at < float(rec.get("created_at") or 0):
+            return None
+        return phase or None
+
     def _arm(self, want: Any = None) -> str | None:
         """The wreck state a world the box is about to generate starts in: armed unless
         the owner turned the crash site off (for this world, or by default)."""
@@ -1135,16 +1169,21 @@ class Rig:
             return
         self._wreck_seen = events[-1]["id"]
         for e in events:
-            if e["kind"] != "wreck" or e.get("phase") != "done":
+            if e["kind"] != "wreck":
                 continue
-            rec = self.slots.by_folder(str(e.get("world") or ""))
+            folder = str(e.get("world") or "")
+            self._wreck_phase[folder] = (str(e.get("phase") or ""), float(e["at"]))
+            if e.get("phase") != "done":
+                continue
+            rec = self.slots.by_folder(folder)
             # A "done" from before the slot's world was (re)generated is the old
             # world's, not this armed one's.
             if not rec or rec.get("wreck") != "armed":
                 continue
             if e["at"] < float(rec.get("created_at") or 0):
                 continue
-            self.slots.update(rec["id"], wreck="done")
+            # A done with a cause is the pack passing the world over, not building it.
+            self.slots.update(rec["id"], wreck="skipped" if e.get("cause") else "done")
 
     def sample_positions(self) -> int:
         """One travel-log pass: ask the console where each online player is. A player
@@ -1852,7 +1891,11 @@ class Handler(BaseHTTPRequestHandler):
             return rig.update_slot(slot, body)
         if action == "reset":
             return rig.reset_slot(
-                slot, str(body.get("mode", "")), str(body.get("seed") or "")
+                slot,
+                str(body.get("mode", "")),
+                str(body.get("seed") or ""),
+                body.get("wreck"),
+                bool(body.get("test")),
             )
         raise ValueError(f"unknown world action: {action}")
 

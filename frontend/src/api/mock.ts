@@ -3885,7 +3885,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
       const s = slotOf(world[1]);
       const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
       if (world[2] === "load") return json({ slot: world[1], loaded: true });
-      return json({ ...s, ...body, applies: s?.active ? "next restart" : "next load" });
+      // A create or reset's `wreck` is the owner's choice; the slot answers with its state.
+      const wreck = "wreck" in body ? { wreck: body.wreck ? "armed" : null } : {};
+      return json({ ...s, ...body, ...wreck, applies: s?.active ? "next restart" : "next load" });
     }
     if (path === "/api/minecraft/backups" && method === "GET") {
       const folder = slotOf(url.searchParams.get("slot") ?? undefined)?.folder;

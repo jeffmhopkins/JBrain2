@@ -77,7 +77,8 @@ DEFAULT_RULES: dict[str, bool | int | str] = {
 _RULE_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _SEED_MAX = 64
 DIFFICULTIES = ("peaceful", "easy", "normal", "hard")
-WRECK_STATES = (None, "armed", "done")
+# "skipped": the build passed the world over (made before it shipped, or already played).
+WRECK_STATES = (None, "armed", "done", "skipped")
 
 
 def slot_ids(count: int) -> list[str]:
@@ -126,8 +127,13 @@ class SlotStore:
                 "cheats": False,
                 "origin": None,
                 # The spawn wreck (§SW1): "armed" until the pack reports it built, then
-                # "done"; None for a world the box didn't generate, which never gets one.
+                # "done" ("skipped" when it passed the world over); None for a world the
+                # box didn't generate, which never gets one.
                 "wreck": None,
+                # Made over the debug API for testing (§SW4): only such a world can be
+                # reset or emptied there. The owner resetting, importing or restoring
+                # over it clears it.
+                "test": False,
                 **raw.get(sid, {}),
             }
             rec["exists"] = self.exists(rec["folder"])

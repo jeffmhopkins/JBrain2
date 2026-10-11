@@ -58,6 +58,7 @@ export function mcServer(overrides: Partial<MinecraftServer> = {}): MinecraftSer
     ],
     update: mcUpdate(),
     auto_update: false,
+    spawn_wreck: true,
     ...overrides,
   };
 }
@@ -265,6 +266,8 @@ export function mcSlot(overrides: Partial<MinecraftSlot> = {}): MinecraftSlot {
     backups: 1,
     last_backup: daysAgo(6),
     last_download: null,
+    wreck: null,
+    wreck_phase: null,
     ...overrides,
   };
 }
@@ -302,6 +305,7 @@ export function mcSlots(): MinecraftSlot[] {
       last_played: daysAgo(3),
       backups: 1,
       last_backup: daysAgo(3),
+      wreck: "done",
     }),
     mcSlot({
       id: "slot4",
@@ -312,6 +316,7 @@ export function mcSlots(): MinecraftSlot[] {
       difficulty: "hard",
       origin: "new",
       created_at: daysAgo(1),
+      wreck: "armed",
       bytes: 0,
       last_played: null,
       backups: 0,

@@ -13,13 +13,15 @@ token — snapshots are listed, not downloaded, the same rule as `/debug/backup`
 
 from __future__ import annotations
 
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api.deps import DebugDep, SettingsDep
+from jbrain.api.minecraft import WORLD_JOB_TIMEOUT_S
+from jbrain.config import Settings
 from jbrain.minecraft import client as mc
 from jbrain.minecraft import timeline, travel
 
@@ -207,7 +209,8 @@ async def minecraft_probe_pack(
 
 
 # Read-only views of the world slots and the travel log (§3a, M2/M3, T1), so setting up
-# and debugging them doesn't need the owner's phone. Changing worlds stays owner-only.
+# and debugging them doesn't need the owner's phone. Changing the owner's worlds stays
+# owner-only; the token can only make, reset and empty its own test worlds (§SW4).
 _SLOT = r"^slot\d+$"
 
 
@@ -226,6 +229,107 @@ async def minecraft_world_rules(
 ) -> dict[str, Any]:
     request.state.debug_detail = f"minecraft rules {slot}"
     return await _sidecar(settings, "GET", f"/worlds/{slot}/rules")
+
+
+class TestWorldIn(BaseModel):
+    seed: str = Field(min_length=1, max_length=64)
+    name: str | None = Field(default=None, max_length=40)
+    wreck: bool = True
+
+
+class TestResetIn(BaseModel):
+    mode: Literal["same_seed", "new_seed", "empty"]
+    seed: str | None = Field(default=None, max_length=64)
+    wreck: bool = True
+
+
+async def _slot(settings: Settings, slot: str) -> dict[str, Any]:
+    worlds = await _sidecar(settings, "GET", "/worlds")
+    rec = next((s for s in worlds.get("slots", []) if s.get("id") == slot), None)
+    if rec is None:
+        raise HTTPException(404, f"no such slot: {slot}")
+    return rec
+
+
+async def _nobody_on(settings: Settings, what: str) -> None:
+    # A load or a reset of the loaded world restarts the server, which would put the
+    # owner's family out of the game for a test.
+    status = await _sidecar(settings, "GET", "/status")
+    names = [str(p.get("name", "")) for p in status.get("players") or []]
+    if names:
+        raise HTTPException(409, f"{', '.join(names)} on the server — not {what} now")
+
+
+@router.post("/test-worlds/{slot}")
+async def minecraft_make_test_world(
+    slot: Annotated[str, Path(pattern=_SLOT)],
+    body: TestWorldIn,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+) -> dict[str, Any]:
+    """Make a test world from `seed` in an empty slot, marked `test`. It's generated
+    (and its crash site built, while `wreck`) the first time it loads."""
+    request.state.debug_detail = f"minecraft test world {slot} seed {body.seed}"
+    rec = await _slot(settings, slot)
+    if rec.get("exists") or rec.get("name") or rec.get("seed"):
+        raise HTTPException(409, f"{slot} holds {rec.get('name') or 'a world'} — not a free slot")
+    return await _sidecar(
+        settings,
+        "POST",
+        f"/worlds/{slot}/create",
+        json={
+            "name": body.name or f"Test {body.seed}"[:40],
+            "seed": body.seed,
+            "wreck": body.wreck,
+            "test": True,
+        },
+    )
+
+
+@router.post("/test-worlds/{slot}/reset")
+async def minecraft_reset_test_world(
+    slot: Annotated[str, Path(pattern=_SLOT)],
+    body: TestResetIn,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+) -> dict[str, Any]:
+    """Regenerate a test world (same or new seed) or empty its slot. Only a world this
+    API made, and the owner hasn't since taken over, can be reset here."""
+    request.state.debug_detail = f"minecraft reset test world {slot} {body.mode}"
+    rec = await _slot(settings, slot)
+    if not rec.get("test"):
+        raise HTTPException(409, f"{rec.get('name') or slot} isn't a test world — owner-only")
+    if rec.get("active"):
+        await _nobody_on(settings, "resetting the loaded world")
+    return await _sidecar(
+        settings,
+        "POST",
+        f"/worlds/{slot}/reset",
+        json={"mode": body.mode, "seed": body.seed, "wreck": body.wreck, "test": True},
+        timeout_s=WORLD_JOB_TIMEOUT_S,
+    )
+
+
+@router.post("/worlds/{slot}/load")
+async def minecraft_load_world(
+    slot: Annotated[str, Path(pattern=_SLOT)],
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+) -> dict[str, Any]:
+    """Load a slot's world (the loaded one is backed up first): a test world to check
+    it, then the owner's own back. Refused while anyone is playing, and for an empty
+    slot. Each load backs up the world it leaves, and automatic backups push out the
+    oldest, so a sweep loads its test worlds back to back and the owner's once, at the
+    end."""
+    request.state.debug_detail = f"minecraft load {slot}"
+    rec = await _slot(settings, slot)
+    if not rec.get("name"):
+        raise HTTPException(409, f"{slot} is empty — make a test world there first")
+    await _nobody_on(settings, "switching worlds")
+    return await _sidecar(settings, "POST", f"/worlds/{slot}/load", timeout_s=WORLD_JOB_TIMEOUT_S)
 
 
 @router.get("/travel")

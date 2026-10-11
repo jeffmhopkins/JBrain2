@@ -221,11 +221,16 @@ async def test_worlds_and_rules_are_read_only_views_of_the_sidecar(sidecar) -> N
         ("GET", "/worlds"),
         ("GET", "/worlds/slot2/rules"),
     ]
-    # Read-only by construction: the debug router has no world-changing routes.
+    # The owner's worlds are read-only here: the only world-changing routes are a load
+    # and the test worlds' own make and reset, each guarded below (§SW4).
     paths = {
         (m, getattr(r, "path", "")) for r in mc.router.routes for m in getattr(r, "methods", ())
     }
-    assert not any("/worlds" in p and m != "GET" for m, p in paths)
+    assert {(m, p) for m, p in paths if "worlds" in p and m != "GET"} == {
+        ("POST", "/debug/minecraft/worlds/{slot}/load"),
+        ("POST", "/debug/minecraft/test-worlds/{slot}"),
+        ("POST", "/debug/minecraft/test-worlds/{slot}/reset"),
+    }
 
 
 async def test_travel_reports_the_log_summary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -324,3 +329,128 @@ async def test_the_debug_timeline_is_counts_for_the_slots_world(
     with pytest.raises(HTTPException) as empty:
         await mc.minecraft_timeline(req, SETTINGS, PRINCIPAL, 10.0, 20.0, slot="slot4")
     assert empty.value.status_code == 404
+
+
+# ---- test worlds (§SW4): the token makes, resets and empties only its own
+
+
+def _worlds(*slots: dict[str, Any]) -> httpx.Response:
+    base = {"name": None, "exists": False, "active": False, "test": False}
+    return httpx.Response(200, json={"slots": [{**base, **s} for s in slots]})
+
+
+def _writes(seen: list[httpx.Request]) -> list[tuple[str, Any]]:
+    return [
+        (r.url.path, json.loads(r.content) if r.content else None)
+        for r in seen
+        if r.method == "POST"
+    ]
+
+
+async def test_a_test_world_is_made_only_in_an_empty_slot_and_marked(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot4"}, {"id": "slot2", "name": "Castle Hill"})
+    req = _request(FakeSupervisor(RUNNING))
+    await mc.minecraft_make_test_world("slot4", mc.TestWorldIn(seed="42"), req, SETTINGS, PRINCIPAL)
+    assert _writes(seen) == [
+        ("/worlds/slot4/create", {"name": "Test 42", "seed": "42", "wreck": True, "test": True})
+    ]
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_make_test_world(
+            "slot2", mc.TestWorldIn(seed="42"), req, SETTINGS, PRINCIPAL
+        )
+    assert exc.value.status_code == 409 and "Castle Hill" in str(exc.value.detail)
+    assert len(_writes(seen)) == 1  # the owner's world is never written
+
+
+async def test_only_a_test_world_can_be_reset_over_the_token(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds(
+        {"id": "slot2", "name": "Castle Hill", "exists": True},
+        {"id": "slot4", "name": "Test 42", "exists": True, "test": True},
+    )
+    req = _request(FakeSupervisor(RUNNING))
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_reset_test_world(
+            "slot2", mc.TestResetIn(mode="empty"), req, SETTINGS, PRINCIPAL
+        )
+    assert exc.value.status_code == 409
+    assert _writes(seen) == []
+    await mc.minecraft_reset_test_world(
+        "slot4", mc.TestResetIn(mode="new_seed", seed="7"), req, SETTINGS, PRINCIPAL
+    )
+    assert _writes(seen) == [
+        ("/worlds/slot4/reset", {"mode": "new_seed", "seed": "7", "wreck": True, "test": True})
+    ]
+
+
+async def test_the_loaded_test_world_waits_for_nobody_to_be_on(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot4", "name": "T", "test": True, "active": True})
+    replies["/status"] = httpx.Response(200, json={"players": [{"name": "Mira_P"}]})
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_reset_test_world(
+            "slot4",
+            mc.TestResetIn(mode="same_seed"),
+            _request(FakeSupervisor(RUNNING)),
+            SETTINGS,
+            PRINCIPAL,
+        )
+    assert exc.value.status_code == 409 and "Mira_P" in str(exc.value.detail)
+    assert _writes(seen) == []
+
+
+async def test_a_load_needs_a_world_and_nobody_playing(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot1", "name": "World"}, {"id": "slot5"})
+    replies["/status"] = httpx.Response(200, json={"players": []})
+    req = _request(FakeSupervisor(RUNNING))
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_load_world("slot5", req, SETTINGS, PRINCIPAL)
+    assert exc.value.status_code == 409  # a load would generate a world there
+    await mc.minecraft_load_world("slot1", req, SETTINGS, PRINCIPAL)
+    assert _writes(seen) == [("/worlds/slot1/load", None)]
+    replies["/status"] = httpx.Response(200, json={"players": [{"name": "BlockyFox"}]})
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_load_world("slot1", req, SETTINGS, PRINCIPAL)
+    assert exc.value.status_code == 409 and "BlockyFox" in str(exc.value.detail)
+
+
+async def test_an_idle_test_worlds_reset_doesnt_wait_on_players(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot4", "name": "T", "exists": True, "test": True})
+    replies["/status"] = httpx.Response(200, json={"players": [{"name": "Mira_P"}]})
+    await mc.minecraft_reset_test_world(
+        "slot4",
+        mc.TestResetIn(mode="empty"),
+        _request(FakeSupervisor(RUNNING)),
+        SETTINGS,
+        PRINCIPAL,
+    )
+    # Not loaded, so nobody is put out of the game: the reset goes ahead.
+    assert [r.url.path for r in seen] == ["/worlds", "/worlds/slot4/reset"]
+
+
+async def test_a_slot_the_box_doesnt_have_is_a_404(sidecar) -> None:
+    _, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot1", "name": "World"})
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_load_world(
+            "slot9", _request(FakeSupervisor(RUNNING)), SETTINGS, PRINCIPAL
+        )
+    assert exc.value.status_code == 404
+
+
+async def test_a_made_but_ungenerated_owner_world_is_not_a_free_slot(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds"] = _worlds({"id": "slot4", "seed": "5127"})  # name blanked
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_make_test_world(
+            "slot4",
+            mc.TestWorldIn(seed="9"),
+            _request(FakeSupervisor(RUNNING)),
+            SETTINGS,
+            PRINCIPAL,
+        )
+    assert exc.value.status_code == 409
+    assert _writes(seen) == []
