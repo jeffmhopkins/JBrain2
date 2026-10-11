@@ -1540,3 +1540,26 @@ def test_find_brings_an_ores_deepslate_twin_and_suggests_names() -> None:
     assert none["searched"] == [] and "minecraft:diamond_block" in none["suggestions"]
     with pytest.raises(ValueError):
         rig.map_find("slot1", "overworld", 0, 0, ["stone; op @a"], 3, 500)
+
+
+def test_an_installed_test_kit_is_refreshed_on_every_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+    world = tmp_path / "server" / "worlds" / "world"
+    world.mkdir(parents=True)
+    rig._start()
+    assert not (
+        world / "behavior_packs" / "jbrain_probe"
+    ).exists()  # never added unasked
+
+    rig.probe_pack(True)
+    stale = world / "behavior_packs" / "jbrain_probe" / "scripts" / "main.js"
+    stale.write_text("// an older image's kit")
+    rig._start()
+    assert stale.read_text() != "// an older image's kit"  # the image's copy again
+    rp = json.loads((world / "world_resource_packs.json").read_text())
+    assert [p["pack_id"] for p in rp] == [PROBE_RP_ID]  # listed once, not appended

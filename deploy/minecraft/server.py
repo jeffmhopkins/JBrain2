@@ -281,6 +281,15 @@ class Rig:
         except OSError as exc:
             # The travel log loses deaths, but the server itself must still start.
             print(f"[minecraft] jbrain pack not installed: {exc}", flush=True)
+        # The home-test kit, where a world has it, is refreshed the same way: a copy left
+        # from an older image kept registering `/jb:dave` after the command moved to the
+        # jbrain pack, so the new one failed to register and the kit ran stale code.
+        if (self.world_dir() / "behavior_packs" / PROBE_PACK_DIR).is_dir():
+            try:
+                self.install_pack(PROBE_PACK_SRC, PROBE_PACK_DIR, True)
+                self.install_pack(PROBE_RP_SRC, PROBE_PACK_DIR, True, kind="resource")
+            except OSError as exc:
+                print(f"[minecraft] test kit not refreshed: {exc}", flush=True)
         self.bds.start()
         self._apply_rules_when_up(self.active_folder())
 
