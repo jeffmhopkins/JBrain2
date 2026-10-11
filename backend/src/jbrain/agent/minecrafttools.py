@@ -24,7 +24,7 @@ import math
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from fastapi import HTTPException
@@ -69,6 +69,36 @@ _DIMENSION_NAMES = {"overworld": "Overworld", "nether": "Nether", "the_end": "En
 # `locate`'s answer when it found one ("The nearest mansion is at block 2312, ~, -1544");
 # anything else (an unknown id, a down generator) searched nothing and costs no scan.
 _LOCATED = re.compile(r"\bis at block\b")
+
+
+class Found(ToolOutput):
+    """A tool's answer plus the facts behind its text, for the in-game door's fast path
+    (§M18), which fills Dave's fixed lines from these rather than reading prose meant for
+    the model. The model sees only the text; `found` never reaches it."""
+
+    found: dict[str, Any]
+
+    def __new__(cls, content: str, brief: str, **found: Any) -> Found:
+        out = cast("Found", ToolOutput.__new__(cls, content, result_brief=brief))
+        out.found = found
+        return out
+
+
+# A search's first hit as the tool texts print it: `locate`'s console line (its y is
+# "~" or "(y?)" when the generator doesn't say) and mc_find_block's nearest-first list.
+# Read off the text, not `Found`, because a free repeat (§M17) answers from the stored text.
+_LOCATE_HIT = re.compile(r"\bis at block (-?\d+), (?:~|\(y\?\)|(-?\d+)), (-?\d+)")
+_BLOCK_HIT = re.compile(r"\bat x=(-?\d+) y=(-?\d+) z=(-?\d+), ")
+
+
+def first_hit(result: str, dim: str) -> Spot | None:
+    """Where the first thing a deep scan found is, or None when it found nothing."""
+    if m := _BLOCK_HIT.search(result):
+        return Spot(int(m.group(1)), int(m.group(2)), int(m.group(3)), dim)
+    if m := _LOCATE_HIT.search(result):
+        y = None if m.group(2) is None else int(m.group(2))
+        return Spot(int(m.group(1)), y, int(m.group(3)), dim)
+    return None
 
 
 def fence(body: str) -> str:
@@ -481,6 +511,8 @@ def build_minecraft_handlers(
         return ToolOutput("\n".join(lines), result_brief=f"{status.get('state')}, {len(online)} on")
 
     async def mc_players(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        if str(arguments.get("gamertag") or "").strip():
+            return await where_is(str(arguments["gamertag"]).strip(), ctx)
         status = await sidecar("GET", "/status")
         online = (
             {
@@ -502,6 +534,74 @@ def build_minecraft_handlers(
             for r in rows
         )
         return ToolOutput(fence(body), result_brief=f"{len(rows)} player(s)")
+
+    async def where_is(raw: str, ctx: ToolContext) -> str | ToolOutput:
+        """One player's whereabouts: live while they're online, else their last sample in
+        the loaded world. The owner decided Dave may say where other players are (§4), so
+        this answers in game for anyone, unlike the tools that write."""
+        tag = check_gamertag(raw)
+        if tag is None:
+            return "That isn't a gamertag (letters, digits and spaces, up to 16)."
+        world = await loaded_world(ctx)
+        status = await sidecar("GET", "/status")
+        async with scoped_session(maker, ctx.session) as s:
+            seen = (
+                await s.execute(
+                    text(
+                        "SELECT xuid, gamertag FROM app.mc_player_sessions"
+                        " WHERE lower(gamertag) = lower(:g) ORDER BY started_at DESC LIMIT 1"
+                    ),
+                    {"g": tag},
+                )
+            ).first()
+            last = (
+                (
+                    await s.execute(
+                        text(
+                            "SELECT x, y, z, dim, at FROM app.mc_player_track"
+                            " WHERE xuid = :k AND world = :w ORDER BY at DESC LIMIT 1"
+                        ),
+                        {"k": seen.xuid, "w": world},
+                    )
+                ).first()
+                if seen is not None and world
+                else None
+            )
+        if seen is None:
+            return ToolOutput(
+                f"Nobody called {fence(tag)} has played on this server.", result_brief="unknown"
+            )
+        name = str(seen.gamertag)
+        online = isinstance(status, dict) and any(
+            str(p.get("name", "")).casefold() == name.casefold()
+            or (p.get("xuid") and str(p.get("xuid")) == seen.xuid)
+            for p in status.get("players", [])
+        )
+        if last is None:
+            state = "online now" if online else "not online"
+            return Found(
+                f"{fence(name)} is {state}, and has no position recorded in this world yet.",
+                "no position",
+                gamertag=name,
+                online=online,
+                spot=None,
+            )
+        spot = Spot(math.floor(last.x), math.floor(last.y), math.floor(last.z), str(last.dim))
+        asker = asker_for(ctx.agent_session_id)
+        if online:
+            body = f"{fence(name)} is online now, at {spot_text(spot)}." + from_asker(asker, spot)
+        else:
+            body = (
+                f"{fence(name)} isn't online. Last seen at {spot_text(spot)},"
+                f" {_when(last.at)}." + from_asker(asker, spot)
+            )
+        return Found(
+            body,
+            "online" if online else "last seen",
+            gamertag=name,
+            online=online,
+            spot=spot,
+        )
 
     async def mc_play_history(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         days = _int(arguments.get("days"), 14, 1, 90)
@@ -560,8 +660,12 @@ def build_minecraft_handlers(
         asker = asker_for(ctx.agent_session_id)
         if asker is not None and day is not None:
             used, _ = await book_for(ctx).today(asker.world, asker.key, day)
-            left = scans.scans_left(max(scans.SCANS_PER_DAY - used, 0))
-            body += f"\nDeep scans for the player asking: {left} (of {scans.SCANS_PER_DAY})."
+            n = max(scans.SCANS_PER_DAY - used, 0)
+            body += (
+                f"\nDeep scans for the player asking: {scans.scans_left(n)}"
+                f" (of {scans.SCANS_PER_DAY})."
+            )
+            return Found(body, "time + weather", scans_left=n)
         return ToolOutput(body, result_brief="time + weather")
 
     async def scanned(
@@ -691,9 +795,10 @@ def build_minecraft_handlers(
             else "the satellite's survey (predicted from the seed; the height is within a"
             " few blocks)"
         )
-        return ToolOutput(
+        return Found(
             f"{where_}: {got['biome']} ({got['biome_id']}), surface at y={got['y']} — {how}.",
-            result_brief=str(got["biome"]),
+            str(got["biome"]),
+            biome=str(got["biome"]),
         )
 
     async def mc_find_block(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
@@ -896,11 +1001,12 @@ def build_minecraft_handlers(
                 f"Cleared {fence(gamertag)}'s tricorder waypoint; it points at spawn again.",
                 result_brief="cleared",
             )
-        return ToolOutput(
+        return Found(
             f"{fence(gamertag)}'s tricorder now points to {fence(event['label'])} at"
             f" {spot_text(target)}. They see it when they hold the Tricorder."
             + from_asker(asker_for(ctx.agent_session_id), target),
-            result_brief=str(event["label"]),
+            str(event["label"]),
+            target=target,
         )
 
     # --- saved places ------------------------------------------------------------------
@@ -1009,9 +1115,10 @@ def build_minecraft_handlers(
         body = "\n".join(
             f"- {r.name}: {spot_text(_spot(r))}.{from_asker(asker, _spot(r))}" for r in rows
         )
-        return ToolOutput(
+        return Found(
             f"{fence(player.gamertag)}'s saved places in this world:\n{fence(body)}",
-            result_brief=f"{len(rows)} place(s)",
+            f"{len(rows)} place(s)",
+            places=[(str(r.name), _spot(r)) for r in rows],
         )
 
     async def mc_place_remove(arguments: dict, ctx: ToolContext) -> str | ToolOutput:

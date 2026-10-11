@@ -16,6 +16,11 @@ The door's rules, each enforced here rather than asked of the prompt:
   reply text can end the command.
 - **One turn at a time per player**; a question asked mid-turn waits its turn.
 - **Fail-closed**: a turn that errors answers a short apology and is logged.
+- **The fast path first** (§M18, `minecraft/fastpath.py`): a question that clearly is one
+  of a few fixed requests is carried out through the same tool handlers and answered with
+  Dave's signed-off lines, with no model turn; it lands in the session like any exchange.
+- **Only the asker's unlocked items** (§M19, `minecraft/guide.py`): the turn's prompt
+  carries the item-guide entries the pack says this player has unlocked, and no others.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import math
 import re
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -39,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import MINECRAFT_DAVE_AGENT, agent_for, narrow_for_ingame
 from jbrain.agent.clock import now_block
+from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.agent.minecrafttools import chat_intro, fence, name_key, resolve_player, spot_text
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -47,6 +53,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
 from jbrain.llm.types import AssistantMessage
 from jbrain.minecraft import client as mc
+from jbrain.minecraft import fastpath, guide
 from jbrain.minecraft.asker import DIMENSIONS, Asker, Spot, asking
 from jbrain.minecraft.sessions import check_gamertag
 from jbrain.tasks.runner import TurnExecutor
@@ -120,6 +127,7 @@ def parse_question(e: dict[str, Any]) -> Question | None:
         world=str(e.get("world") or "world"),
         at=at,
         spawn=_spot(e.get("spawn")),
+        known=guide.parse_known(e.get("known")),
     )
     return Question(int(e["id"]), float(e.get("at") or 0), asker, question[:256])
 
@@ -181,6 +189,7 @@ class DaveDoor:
         transcript: AgentTranscript,
         executor: TurnExecutor,
         owner_principal_id: Callable[[], Awaitable[str | None]],
+        tools: Mapping[str, ToolHandler] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._maker = maker
@@ -190,6 +199,9 @@ class DaveDoor:
         self._transcript = transcript
         self._executor = executor
         self._owner_principal_id = owner_principal_id
+        # The in-game tool handlers, for the fast path; without them every question is a
+        # model turn.
+        self._fast = fastpath.FastPath(tools) if tools is not None else None
         self._clock = clock
         self.boot_id: str | None = None
         self.cursor = 0
@@ -260,10 +272,13 @@ class DaveDoor:
     # --- one question ------------------------------------------------------------------
 
     async def answer(self, q: Question) -> None:
-        """Run the turn and send its reply; any failure is an apology, never silence."""
+        """Answer on the fast path when it can, else run the turn; send the reply. Any
+        failure is an apology, never silence."""
         try:
-            async with self._turns:
-                reply = await self.run_turn(q)
+            reply = await self.fast_answer(q)
+            if reply is None:
+                async with self._turns:
+                    reply = await self.run_turn(q)
         except Exception as exc:  # noqa: BLE001 — a failed turn is an apology, not a crash
             log.warning("minecraft.door_turn_failed", player=q.asker.key, error=repr(exc))
             reply = APOLOGY
@@ -279,6 +294,59 @@ class DaveDoor:
                 log.warning("minecraft.door_reply_failed", error=str(exc.detail))
                 return
 
+    async def fast_answer(self, q: Question) -> str | None:
+        """The fast path's reply, recorded in the asker's session as an ordinary
+        exchange; None hands the question to the model (no match, or no signed-off line
+        for how it came out)."""
+        ask = fastpath.match(q.text) if self._fast is not None else None
+        if ask is None or self._fast is None:
+            return None
+        pid = await self._owner_principal_id()
+        if pid is None:
+            return None
+        owner = SessionContext(principal_id=pid, principal_kind="owner")
+        session_id = await self.session_for(owner, q.asker)
+        ctx = ToolContext(session=read_context(pid, ()), scopes=(), agent_session_id=session_id)
+        try:
+            with asking(session_id, q.asker):
+                answered = await self._fast.answer(ask, q.asker, ctx)
+        except Exception as exc:  # noqa: BLE001 — the model can still answer it
+            log.warning("minecraft.door_fastpath_failed", player=q.asker.key, error=repr(exc))
+            return None
+        if answered is None:
+            return None
+        log.info("minecraft.door_fastpath", player=q.asker.key, action=ask.action)
+        # No run row: no model ran. The exchange is what makes it part of the session, so
+        # a later turn's history and the PWA both see it.
+        with contextlib.suppress(Exception):
+            await self._transcript.record_exchange(
+                owner,
+                session_id=session_id,
+                run_id=None,
+                user_text=q.text,
+                assistant_text=answered.reply,
+                tools=answered.steps,
+            )
+        with contextlib.suppress(Exception):
+            await self._sessions.touch(owner, session_id)
+        return answered.reply
+
+    async def keep_switch(self, world: str) -> bool:
+        """Whether this world's "Power Pack keeps inventory" switch is on. Unreadable is
+        off, so the guide never describes a use the world might not have."""
+        try:
+            got = await mc.call(self._settings, "GET", "/worlds")
+        except HTTPException:
+            return False
+        return any(
+            s.get("folder") == world and s.get("power_pack_keep") is True
+            for s in got.get("slots", [])
+        )
+
+    async def item_guide(self, asker: Asker) -> str:
+        keep = "power_pack_uses" in asker.known and await self.keep_switch(asker.world)
+        return guide.for_player(asker.known, keep_switch=keep)
+
     async def run_turn(self, q: Question) -> str:
         pid = await self._owner_principal_id()
         if pid is None:
@@ -287,7 +355,8 @@ class DaveDoor:
         session_id = await self.session_for(owner, q.asker)
         intro = await chat_intro(self._maker, None, owner, session_id)
         profile = narrow_for_ingame(agent_for(MINECRAFT_DAVE_AGENT))
-        profile = replace(profile, prompt=f"{profile.prompt}\n\n{intro}")
+        items = await self.item_guide(q.asker)
+        profile = replace(profile, prompt=f"{profile.prompt}\n\n{items}\n\n{intro}")
         conversation = [
             UserMessage(text=now_block(None)),
             *await self.history(owner, session_id),

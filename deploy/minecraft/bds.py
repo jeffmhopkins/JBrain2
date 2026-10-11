@@ -39,6 +39,10 @@ _PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
 PACK_EVENTS = ("death", "respawn", "dave", "wreck")
 # A `/jb:dave` question as the pack cuts it (§M5); anything longer was not the pack's.
 QUESTION_MAX = 256
+# The asker's Old Maker unlocks (§M19), as the pack names them; the backend keeps only
+# the ones it knows, so this just bounds what a line can carry.
+_KNOWN = re.compile(r"[a-z_]{1,32}")
+KNOWN_MAX = 16
 _VERSION = re.compile(r"Version:? ([0-9][0-9.]*[0-9])")
 _STARTED = "Server started."
 # `save query` prints this line, then the file list on the next line.
@@ -227,6 +231,12 @@ class Bds:
             extra["spawn"] = _place(spawn) if isinstance(spawn, dict) else None
             if extra["spawn"] is not None and len(extra["spawn"]) < 4:
                 extra["spawn"] = None  # a spawn point is only useful whole
+            unlocks = data.get("known")
+            extra["known"] = sorted(
+                {k for k in unlocks if isinstance(k, str) and _KNOWN.fullmatch(k)}
+                if isinstance(unlocks, list)
+                else set()
+            )[:KNOWN_MAX]
         self._event(str(data["ev"]), name, known["xuid"] if known else "", **extra)
 
     def note_world_replaced(self, folder: str) -> None:

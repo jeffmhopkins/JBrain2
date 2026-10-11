@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain import box_events
+from jbrain.agent.agents import MINECRAFT_DAVE_INGAME_TOOLS
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import (
     build_event_emitter,
@@ -1550,6 +1551,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         slot_role=SlotRole.WORKSHOP,
                     ),
                     owner_principal_id=lambda: _owner_principal_id(maker),
+                    # The fast path (§M18) runs the same handlers a player's turn holds.
+                    tools={
+                        name: app.state.agent_registry.get(name).handler
+                        for name in MINECRAFT_DAVE_INGAME_TOOLS
+                        if name in app.state.agent_registry
+                    },
                 )
             )
         )

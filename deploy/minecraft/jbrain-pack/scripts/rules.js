@@ -128,3 +128,32 @@ export const dropSpot = (at, minY, lastSafe) => {
   if (at.y >= minY || !lastSafe || lastSafe.dim !== at.dim) return at;
   return lastSafe;
 };
+
+// Dave's item guide, unlocked as each item becomes craftable (§M19; canon: "Dave explains
+// each item only once you can make it"). Like the game's recipe book, an unlock comes the
+// first time the player holds the key ingredient. Only built items are here: the Tricorder
+// from the start, the Power Pack on a first Ender Pearl, its uses on a first Power Pack.
+export const UNLOCKED_BY = {
+  "minecraft:ender_pearl": "power_pack",
+  [POWER_PACK]: "power_pack_uses",
+};
+
+// A player's recorded unlocks, from the world property; anything unreadable is a fresh start.
+export const parseKnown = (raw) => {
+  if (typeof raw !== "string") return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter((k) => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+};
+
+// The unlocks after a look at what the player carries: never fewer than before, sorted
+// so an unchanged set is recognisably the same.
+export const unlocksFrom = (known, typeIds) => {
+  const out = new Set(known);
+  out.add("tricorder");
+  for (const t of typeIds) if (UNLOCKED_BY[t]) out.add(UNLOCKED_BY[t]);
+  return [...out].sort();
+};

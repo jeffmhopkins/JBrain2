@@ -1904,10 +1904,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "83ce7efb2dcfdf47bf70c5fffd2d9ef0321eead76995fd5f3ce0a35ac67bf678",
         ),
+        # v2: a `gamertag` for where one player is (§M18's "where is <player>").
         "mc_players.tool": (
             "mc_players",
-            1,
-            "d489a66f8ba6fd3acee764982d0aff716989bce0962b7ee566f38a90d34d4a65",
+            2,
+            "3aea96cc7384be24ef144fed5bd5177f2910324e67e7f62dd8de13017e3600fc",
         ),
         "mc_server_status.tool": (
             "mc_server_status",

@@ -1387,6 +1387,32 @@ def test_a_dave_question_is_an_event_filed_under_the_connected_xuid(
     assert first["spawn"] == {"x": 1.0, "y": 70.0, "z": 2.0, "dim": "overworld"}
     assert len(second["text"]) == bds.QUESTION_MAX
     assert second["spawn"] is None  # a partial spawn point is no spawn point
+    assert first["known"] == []  # an older pack sends no unlocks
+
+
+def test_a_dave_question_carries_the_askers_unlocks_bounded(tmp_path: Path) -> None:
+    """§M19: the pack's `known` list rides the event as plain short names only."""
+    b = bds.Bds(tmp_path)
+    b._record("[x INFO] Player connected: Steve 42, xuid: 111")
+    junk = ["power_pack", "tricorder", "power_pack", 7, "Not Allowed", "x" * 40]
+    b._record(
+        '[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","text":"hi","x":1,"y":2,'
+        '"z":3,"dim":"overworld","known":' + json.dumps(junk) + "}"
+    )
+    b._record(
+        '[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","text":"hi","x":1,"y":2,'
+        '"z":3,"dim":"overworld","known":"tricorder"}'
+    )
+    b._record(
+        '[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","text":"hi","x":1,"y":2,'
+        '"z":3,"dim":"overworld","known":'
+        + json.dumps([f"k{c}" for c in "abcdefghijklmnopqrst"])
+        + "}"
+    )
+    first, second, third = (e for e in b.events_after(0) if e["kind"] == "dave")
+    assert first["known"] == ["power_pack", "tricorder"]
+    assert second["known"] == []
+    assert len(third["known"]) == bds.KNOWN_MAX
 
 
 def test_only_the_jbrain_pack_registers_the_dave_command() -> None:

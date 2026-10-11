@@ -217,6 +217,16 @@ async def test_a_failed_intro_degrades_to_a_pointer_not_a_failed_turn(
     assert got == api_agent.MINECRAFT_INTRO_FALLBACK
 
 
+def test_the_owners_chats_carry_the_whole_item_guide() -> None:
+    """§M19: the PWA sees every built item; only the game gates them per player."""
+    from jbrain.api import agent as api_agent
+
+    prompt = api_agent.minecraft_prompt("PERSONA", "## This chat\nabout Steve42")
+    assert prompt.startswith("PERSONA\n\n## The Old Makers' items\n")
+    assert "### The Power Pack" in prompt and "keeping your things" in prompt
+    assert prompt.endswith("## This chat\nabout Steve42")
+
+
 # --- in game: the asker is the player (MINECRAFT_BEDROCK_PLAN.md §P2) ------------------
 
 ASKER = Asker(

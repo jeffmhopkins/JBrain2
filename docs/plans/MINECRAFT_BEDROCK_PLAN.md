@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17✅ M18◻️ M19◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17✅ M18✅ M19✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1813,7 +1813,7 @@ Only checkable on the box: the console's real reply to `time query day` (parsed 
 "Day is N"; unit tests pin that shape from the existing `mc_world_info` test), and that
 sleeping through the night advances it in the family's world.
 
-### M18 — Dave's fast path: simple asks answered without the model (owner, 2026-10-11; not built)
+### M18 — Dave's fast path: simple asks answered without the model (owner, 2026-10-11; shipped 2026-10-11)
 
 **Why.** Most of what players say to Dave in game is a handful of fixed requests. Answering
 those directly is instant, costs no model time, and gives the same answer every time. The
@@ -1853,7 +1853,54 @@ model stays for real questions.
 
 **Order:** after the Tricorder and Power Pack wave and M17, since all three touch the door.
 
-### M19 — Dave's item guide, unlocked as each item becomes craftable (owner, 2026-10-11; not built)
+**Shipped 2026-10-11 (wave mc-fastpath).** `jbrain/minecraft/fastpath.py` holds the
+patterns and Dave's quick-answer lines (copied from the lore page, gaps filled), with
+tests for each match and for the near-misses that must reach the model. The door tries it
+before the model (`DaveDoor.fast_answer`); `main.py` hands it the same handlers the
+in-game turn holds, and it refuses any tool outside `MINECRAFT_DAVE_INGAME_TOOLS`. What
+was decided while building it:
+- **Whole-question matches only**, after dropping a leading "Dave," and a trailing "?",
+  "!" or "please". A place name is a few plain words: anything with an instruction or a
+  reference in it ("but", "my", "nearest", "it", coordinates) goes to the model, so
+  "navigate to tree farm but avoid the river" and "navigate to the nearest village"
+  both do. **"take me to …" is never matched**: in the canon it is transport, which isn't
+  built.
+- **No signed-off line for how it came out → the model.** A place in another dimension, a
+  player in another dimension or standing beside the asker, a write the tool refused, a
+  search that found nothing or couldn't run, no saved places: the question goes to the
+  model as if the fast path weren't there. Doing it again is safe (pointing the Tricorder
+  and saving where you stand are idempotent, a refused write wrote nothing, and a scan
+  already paid for today is a free repeat).
+- **"Where is *player*"** needed a tool, so `mc_players` (v2) takes an optional
+  `gamertag`: online, the newest position sample in the loaded world, with the way and
+  distance from the asker; offline, where they were last seen. It's held in game too,
+  as the owner decided (§4, "Dave may say where other players are"). Asking where you
+  yourself are is "where am I".
+- **"Where am I"** is the asker's position from the event plus `mc_what_is_at`'s biome;
+  with the map unreadable it still answers, without the biome.
+- **"Nearest *structure* / *block*"** knows a fixed list of words (Overworld structures
+  `locate` finds, as `deploy/minecraft/mapping.py` names them, and the ores and spawners
+  `mc_find_block` reads). It is a deep scan through the same handler (out of scans, it
+  answers the recharge line word for word), then points the Tricorder at the first hit.
+  The reply is the lore's signed-off everyday answer ("From up here I see one … Hold your
+  Tricorder and follow the arrow, crew.") plus the scans left; the quick answers have no
+  line of their own for it. `locate` is Overworld-only, so from elsewhere a structure
+  goes to the model.
+- **`/jb:dave hello` is left to the model.** It replays DW1's welcome, which isn't built
+  (DW1 "Not built"); the fast path takes it when DW1 ships.
+- **Recorded like any exchange:** the question and Dave's line go into the player's "In
+  game: <gamertag>" session as a user turn and an assistant turn carrying the tool steps
+  it ran (`AgentTranscript.record_exchange`, no run row since no model ran), so the next
+  model turn's history and the PWA both see it.
+- The handlers return their facts beside the text (`minecrafttools.Found`) so the lines
+  are filled from data, not by reading prose meant for the model; a search's first hit
+  is read off its text (`first_hit`), because a free repeat answers from the stored text.
+- Prompt `agent-minecraft-dave-v11`; `mc_players` v2. No new tool.
+
+Only checkable on the box, by a player: the lines in a real game chat, and that a
+question typed with the Xbox keyboard (capitals, a trailing "?") still matches.
+
+### M19 — Dave's item guide, unlocked as each item becomes craftable (owner, 2026-10-11; shipped 2026-10-11)
 
 **Why.** Players will ask Dave how the Old Maker items work. He should explain each one
 well, but not before the player can make it: the items are found in play, not read off a
@@ -1892,6 +1939,36 @@ moments):
 - **The owner's PWA chats** see the whole guide.
 
 **Order:** with M18 (both reshape the in-game turn), after the Tricorder and Power Pack wave.
+
+**Shipped 2026-10-11 (wave mc-fastpath).** The entries are prompt material,
+`agent/prompts/minecraft_dave_guide.prompt` (`agent-minecraft-dave-guide-v1`, pinned by
+hash), read by `jbrain/minecraft/guide.py`. What was decided while building it:
+- **Built entries only:** the Tricorder, the Power Pack (what it is and its recipe), and
+  keeping your things on death (its one built use). Transport, the No-Spawn Beacon,
+  Wormhole Seeds and the Replicator have no entry until their waves ship.
+- **Keeping your things is per world:** the entry is in a player's guide only when that
+  world's "Power Pack keeps inventory" switch is on (the door reads the slot record from
+  `/worlds`; unreadable is off). A player who has made a pack in a world with the switch
+  off gets a one-line entry instead: a pack does nothing there yet, and Dave promises
+  nothing.
+- **The unlocks** are a world dynamic property per player id, `jb:known:<id>` (a JSON
+  list), beside the Tricorder's serial: DW1's first-time beats aren't built, so there
+  was no beat record to share. The pack looks at what the player carries once a second
+  on the Tricorder loop and again at every `/jb:dave`; the Tricorder is always unlocked,
+  an Ender Pearl unlocks `power_pack`, a Power Pack unlocks `power_pack_uses`, and an
+  unlock is never taken back. The `dave` event carries them as `known`; the sidecar
+  passes through only short lowercase names (at most 16), and the door keeps only those
+  it knows. An older pack sends none, which is the Tricorder alone.
+- **The in-game prompt** is the persona, then the asker's entries, then the chat intro;
+  the owner's PWA chats get every built entry in the same place.
+- The fast path's lines name no item but the Tricorder, which every player has; no tool's
+  reply names an Old Maker item.
+- Prompt `agent-minecraft-dave-v11`: the guide is the only source on the items, and in
+  game an item that isn't in it isn't mentioned.
+
+Only checkable on the box, by a player: that picking up an Ender Pearl, then crafting a
+Power Pack, is noticed within a second (`jb:known:<id>` grows), and the answers to "what's
+a power pack?" before and after.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
@@ -2220,7 +2297,10 @@ first-ever waking in a world gets theirs quietly: `firstWaking()` in the pack's
 `main.js` is the hook the welcome sequence replaces. Dave's lines are one constants
 block, `LINES` in `jbrain-pack/scripts/rules.js`, copied verbatim from the lore page.
 Not built: the welcome and the first-time beats, `/jb:dave hello`, and the prompt's
-story section.
+story section. Until it is, the model answers `hello`; once the welcome's lines exist,
+M18's fast path (`minecraft/fastpath.py`) is where `hello` belongs. The first-time beats'
+record can sit beside M19's unlocks (`jb:known:<id>`), which are recorded at the same
+moments.
 
 Every line the pack uses is signed off on the lore page (owner, 2026-10-11), including
 "This tricorder is retired" (§M9) and "Your Power Pack burnt out…" (§M10).
@@ -2570,7 +2650,7 @@ never in the prompt:
 | `find_villager(profession, trade?)` | "nearest librarian selling Mending" (villager trades are in the saved actor data) | index | Player |
 | `find_block(block, area)` | "nearest diamonds", "any spawners near here" | index | **Fair play** |
 | ★ `find_container(item)` | "which chest has my diamonds?" | index | Player |
-| ★ `where_is(player)` | another player's position (sharing is on, owner decision) | live → index | Player |
+| ★ `where_is(player)` — **shipped as `mc_players` with a `gamertag`** (2026-10-11, §M18) | another player's position (sharing is on, owner decision) | live → index | Player |
 | `guide_me(target)` / `stop_guiding` | a live **actionbar compass** ("→ pig, 42 m NE") refreshed every second until arrival. Display only: `titleraw … actionbar`, with no world change | live | Player |
 | `portal_math(x,z)` | Overworld↔Nether coordinates; "where do I build the portal so it links to my base?" | computed | Player |
 | `route(from, to)` | straight-line distance and bearing, plus a map with both points marked | computed + M8 | Player |
