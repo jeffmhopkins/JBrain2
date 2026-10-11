@@ -1210,11 +1210,11 @@ also keep it from pointing at them.
 
 #### The Power Pack (the currency)
 
-A **Power Pack** is crafted from **a full crafting table of Ender Pearls**: nine pearls in a
-3×3 grid make one pack (owner, 2026-10-11; it was nine Eyes of Ender until then). Pearls
-come from endermen, so a pack is earned by hunting them, with no Nether trip for blaze
-powder first. Plain Ender Pearls still throw and teleport as usual; Eyes of Ender stay the
-End-portal key and nothing else.
+A **Power Pack** is crafted from **8 Ender Pearls in a ring around 1 Blaze Powder** on a
+crafting table (owner, 2026-10-11; it was nine Eyes of Ender until then). The pearls come
+from hunting endermen and the powder from a Nether fortress's blazes, so packs arrive once a
+player has reached the Nether. Plain Ender Pearls still throw and teleport as usual; Eyes of
+Ender stay the End-portal key and nothing else.
 
 **How it's made:**
 - A **custom item `jbrain:power_pack`**:
@@ -1224,14 +1224,15 @@ End-portal key and nothing else.
     with a glint), from the server-pushed `jbrain` resource pack (§3c rule 2).
   - It isn't a pearl or an eye to the game, so it can't be thrown or used to fill an
     End-portal frame by accident.
-- A **shaped recipe** (`recipes/power_pack.json`, crafting table, nine
-  `minecraft:ender_pearl` → one `jbrain:power_pack`) in the behavior pack. Recipes are
+- A **shaped recipe** (`recipes/power_pack.json`, crafting table, pattern
+  `PPP / PBP / PPP`, P = `minecraft:ender_pearl`, B = `minecraft:blaze_powder`, unlocked in
+  the recipe book by an Ender Pearl → one `jbrain:power_pack`) in the behavior pack. Recipes are
   stable data and need no experiment, and it shows in the recipe book like any vanilla
   recipe.
 - **Checked in M0b:** the item shows with its icon and name, and the recipe works, on the
   Xbox and on Windows, after the automatic download on join.
 - **Fallback, only if that download fails on a client:** Dave "forges" a pack instead of
-  the crafting table. "Dave, make me a Power Pack" takes nine pearls and gives an Ender
+  the crafting table. "Dave, make me a Power Pack" takes 8 pearls and a Blaze Powder and gives an Ender
   Pearl named "Power Pack" with lore. The script recognises it by its lore (an anvil can
   rename an item but can't add lore, so it can't be faked).
 
@@ -1271,7 +1272,7 @@ inventory"**.
   rather than a free switch, so the two can't contradict each other.
 - With the switch off, the world behaves exactly like vanilla.
 
-**Why it's costly:** one death saved costs nine Ender Pearls, so it's a real decision, not a free
+**Why it's costly:** one death saved costs 8 Ender Pearls and a Blaze Powder, so it's a real decision, not a free
 safety net (owner, 2026-10-10).
 
 **Checks first (M0b, needs a player):**
@@ -1337,7 +1338,7 @@ superseded.
 **Per world, owner-only switch:** "Power Pack teleport" (on by default, alongside the
 keep-inventory charm). With it off, Dave says teleporting isn't allowed in this world.
 
-**Why it stays fair:** each trip costs a Power Pack (nine Ender Pearls). The same packs are the
+**Why it stays fair:** each trip costs a Power Pack (8 Ender Pearls and a Blaze Powder). The same packs are the
 keep-inventory charm, so players choose how to spend them.
 
 **Tests:**
@@ -1439,7 +1440,7 @@ The private chest is the design below. The cargo chest follows it.
    feeds Josh's receiver), or is it only ever the placer's? Routing is decided: one
    receiver, the first one placed.
 2. **Cost.** For example, crafting one chest needs an ender chest plus a Power Pack
-   (nine pearls), and the dye is free. Or the chest is cheap but each **new colour channel**
+   (8 pearls and a Blaze Powder), and the dye is free. Or the chest is cheap but each **new colour channel**
    costs a Power Pack the first time it's used.
 3. **How many colours:** the 16 dye colours.
 4. **What happens to a vault if its owner is removed from the allowlist:** it's kept, and
@@ -1551,7 +1552,7 @@ piece: powered helmet, chestplate, leggings and boots.
   to netherite, and it **keeps the piece's enchantments and damage**. A crafting-table
   recipe would wipe a player's enchantments.
 - **The slots:** template = netherite upgrade smithing template, base = the netherite
-  piece, addition = a Power Pack. A full set costs 4 Power Packs (36 Ender Pearls) plus 4
+  piece, addition = a Power Pack. A full set costs 4 Power Packs (32 Ender Pearls, 4 Blaze Powder) plus 4
   templates on top of netherite. That's end-game.
   - **Option:** make the Power Pack itself the template (tagged
     `minecraft:transform_templates`), so no netherite template is needed. It's cheaper,
@@ -2610,7 +2611,7 @@ Any ❌ moves that feature to a vanilla fallback before M5 is scheduled.
    record. The owner has already accepted the add-on.
 2. **Per-player keep inventory: DECIDED → the Power Pack charm (M10, owner,
    2026-10-10).** A player keeps their inventory on death if they carry a Power Pack
-   (crafted from nine Ender Pearls), and one pack is used up. The tricorder is always kept. The approach below is the one
+   (crafted from 8 Ender Pearls around a Blaze Powder), and one pack is used up. The tricorder is always kept. The approach below is the one
    M10 uses. Bedrock's `keepInventory`
    is a world-wide game rule, so a per-player version needs the M5 add-on. The approach
    worked out, recorded for if it's chosen:
