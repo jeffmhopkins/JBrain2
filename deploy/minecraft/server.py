@@ -15,6 +15,7 @@ import collections
 import contextlib
 import hmac
 import io
+import ipaddress
 import json
 import math
 import os
@@ -26,6 +27,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -112,6 +114,10 @@ WRECK_WAIT_S = 90.0
 # Travel log (§T1): each online player's position, this often, kept only once they have
 # moved this far — standing still costs nothing.
 TRACK_S = 10.0
+# The box's public address, for "how to join" from outside. Asked of Cloudflare's trace
+# page by IP, so no DNS is involved, every PUBLIC_IP_S; a lookup that fails keeps the last.
+PUBLIC_IP_URL = "https://1.1.1.1/cdn-cgi/trace"
+PUBLIC_IP_S = 600.0
 TRACK_MIN_MOVE = 4.0
 TRACK_KEPT = 20000
 _DIMENSIONS = {0: "overworld", 1: "nether", 2: "the_end"}
@@ -126,6 +132,7 @@ class Rig:
         # True while the wrapper itself stops and restarts BDS (an update, a pack
         # install), so the watchdog in main() does not read it as a crash.
         self.maintenance = False
+        self.public_ip: str | None = None
         self.latest: dict[str, Any] = {}
         self.update_state: dict[str, Any] = {"state": "idle"}
         # One lifecycle at a time: first-boot install, Start/Stop/Restart, an update,
@@ -368,6 +375,7 @@ class Rig:
             ],
             "boot_id": bds.BOOT_ID,
             "lan_ip": lan_ip(),
+            "public_ip": self.public_ip,
             "auto_update": self.settings()["auto_update"],
             "spawn_wreck": self.settings()["spawn_wreck"],
             "run": self.settings()["run"],
@@ -1643,6 +1651,35 @@ def lan_ip() -> str | None:
         return None
 
 
+def public_ip(fetch: Callable[[], bytes] | None = None) -> str | None:
+    """The address the internet sees this box at, or None when it can't be told. Only a
+    public IPv4 counts: a private one would mean the answer came from inside the home."""
+
+    def ask() -> bytes:
+        req = urllib.request.Request(PUBLIC_IP_URL, headers={"User-Agent": "jbrain-minecraft"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.read(4096)
+
+    try:
+        body = (fetch or ask)().decode("ascii", "replace")
+    except OSError:
+        return None
+    for line in body.splitlines():
+        if line.startswith("ip="):
+            try:
+                ip = ipaddress.ip_address(line[3:].strip())
+            except ValueError:
+                return None
+            return str(ip) if ip.version == 4 and ip.is_global else None
+    return None
+
+
+def watch_public_ip(rig: Rig, lookup: Callable[[], str | None] = public_ip) -> None:
+    while not rig.stopping:
+        rig.public_ip = lookup() or rig.public_ip
+        time.sleep(PUBLIC_IP_S)
+
+
 def version_key(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split(".") if p.isdigit())
 
@@ -2074,6 +2111,7 @@ def main() -> None:
             time.sleep(TRACK_S)
 
     threading.Thread(target=_tracker, daemon=True).start()
+    threading.Thread(target=watch_public_ip, args=(rig,), daemon=True).start()
     # BDS exiting on its own (a crash, a console `stop` that slipped through) ends the
     # container, so `restart: unless-stopped` brings it back rather than leaving a
     # healthy-looking wrapper around a dead game server.

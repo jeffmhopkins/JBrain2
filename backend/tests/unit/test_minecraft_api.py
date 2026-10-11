@@ -9,7 +9,7 @@ stop-then-start, and "who's online" comes from the live server.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -98,6 +98,26 @@ async def test_the_server_view_matches_the_contract(fake) -> None:
     assert s["lan_ip"] == "192.168.1.20" and s["players"][0]["joined_at"] == 100.0
     assert s["job"] is None and s["pending_restart"] == []
     assert s["spawn_wreck"] is True  # a box that doesn't say is on, the default
+    # An older box, or one not set up for internet play: no address to show.
+    assert s["public_ip"] is None and s["announced_ip"] is None
+
+
+async def test_the_public_and_announced_addresses_are_passed_through(fake) -> None:
+    fake["replies"]["/status"] = {
+        **STATUS,
+        "public_ip": "50.88.136.173",
+        "properties": {
+            **cast(dict[str, Any], STATUS["properties"]),
+            "server-udp-ports": "50.88.130.9:19140-19144:19140-19144",
+        },
+    }
+    s = (await api.minecraft(_request(), SETTINGS))["server"]
+    assert (s["public_ip"], s["announced_ip"]) == ("50.88.136.173", "50.88.130.9")
+
+
+@pytest.mark.parametrize("ports", ["19140-19144", "19140-19144:19140-19144", "", None])
+def test_ports_with_no_address_announce_none(ports) -> None:
+    assert api._announced_ip(ports) is None
 
 
 async def test_a_running_world_job_is_passed_through(fake) -> None:

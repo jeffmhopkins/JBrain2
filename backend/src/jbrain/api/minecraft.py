@@ -14,6 +14,7 @@ only the screen knows what the owner has already been told.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -37,6 +38,16 @@ def _maker(request: Request) -> async_sessionmaker[AsyncSession]:
     return cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
 
 
+# `server-udp-ports` is `[public-ip:]external:internal`; the address, when there is one,
+# is what joining players are told to send their game traffic to.
+_ANNOUNCED = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}):")
+
+
+def _announced_ip(udp_ports: object) -> str | None:
+    m = _ANNOUNCED.match(str(udp_ports or ""))
+    return m.group(1) if m else None
+
+
 def _server_view(raw: dict[str, Any]) -> dict[str, Any]:
     props = raw.get("properties") or {}
     return {
@@ -49,6 +60,10 @@ def _server_view(raw: dict[str, Any]) -> dict[str, Any]:
         "difficulty": props.get("difficulty"),
         "allow_list": str(props.get("allow-list", "false")).lower() == "true",
         "lan_ip": raw.get("lan_ip"),
+        # What the internet sees the box at, and what the server tells players it is: the
+        # PWA flags them differing, since internet play breaks until they match again.
+        "public_ip": raw.get("public_ip"),
+        "announced_ip": _announced_ip(props.get("server-udp-ports")),
         "port": int(props.get("server-port", 19132)),
         "uptime_s": raw.get("uptime_s"),
         "players": raw.get("players") or [],

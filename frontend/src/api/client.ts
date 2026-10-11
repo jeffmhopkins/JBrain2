@@ -447,6 +447,11 @@ export interface MinecraftServer {
   difficulty: string;
   allow_list: boolean;
   lan_ip: string | null;
+  /** What the internet sees the box at, looked up every 10 minutes. Older boxes omit it. */
+  public_ip?: string | null;
+  /** The address the server tells joining players to use for game traffic
+   *  (`server-udp-ports`); internet play breaks when it isn't `public_ip`. */
+  announced_ip?: string | null;
   port: number;
   uptime_s: number | null;
   players: MinecraftOnlinePlayer[];
