@@ -638,7 +638,8 @@ def test_the_planning_rules_hold(tmp_path: Path) -> None:
 SIM_SCENARIOS = [
     "plains", "forest", "jungle", "desert", "snowy", "mountainside", "badlands",
     "swamp", "mangrove", "island", "ocean", "high_plateau", "place_fails_once",
-    "peaks_under_ship", "reloaded", "slow_and_stuck", "already_played",
+    "peaks_under_ship", "reloaded", "short_ship_area", "slow_and_stuck",
+    "already_played",
     "resume_after_1pct",
     "resume_after_30pct",
     "resume_after_60pct", "resume_after_90pct",

@@ -2015,6 +2015,18 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   waiting costs the world nothing. In the simulator, every job step now costs wall time
   and `runTimeout` passes real ticks, so a spinning wait runs out its 90 s before its
   chunks load: the old pack fails there, as on the box.
+- With the spin gone the world ran a full 20 ticks a second during waits, and the pod
+  built in 4 s after load. Forest came down whole in 31 s. But in jungle and plains the
+  mothership still had chunks that never loaded: 19 and 6 of its 84, and 25 of 90 in
+  desert. Mapped from the console in plains, they were the area's whole far column. A console area over just
+  those chunks loaded them at once, and so did removing and re-adding the same ship area
+  from the console a few ticks apart; plains then finished whole. The pack had added the
+  ship's area in the same tick it removed the pod's, and an area added then can come up
+  short. Now an add waits out the tick of any removal, and the pod's area stays up until
+  the build is done, so the world is never without one. A load that gains no chunk for
+  15 s gets a patch area over the chunks still missing. In the simulator, an area added
+  in a removal's tick never loads its last column and row, and a `short_ship_area`
+  scenario, whose ship area always comes up short, must be patched and finish whole.
 
 ### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; not built)
 

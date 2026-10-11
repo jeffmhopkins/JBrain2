@@ -33,6 +33,8 @@ const LOAD_WAIT_MS = 90_000;
 const STEADY_TICKS = 3;
 const STEADY_MS = 1_000;
 const PROGRESS_MS = 15_000;
+// A load that hasn't gained a chunk in this long gets a patch area over what's missing.
+const STALL_MS = 15_000;
 const MAX_FAILURES = 3;
 const RETRY_TICKS = 20 * 30;
 const POD_STEPS = ["terrain", "place", "crater", "canopy", "details", "kit", "spawn"];
@@ -121,26 +123,37 @@ function set(dim, x, y, z, id, states) {
 // The ticking areas this run has up, by name, with their boxes. On the box a removed
 // area's chunks unload a moment later, so re-adding one it already had let the load
 // check pass on chunks about to go, and every block edit after it fell on nothing. An
-// area already up for the same box is kept. A replaced one is removed and re-added in
-// the same tick, never waited out, so the box being loaded is never without one.
-// loadBox's steady reads are what catch the late unload (SW4).
+// area already up for the same box is kept. And an area added in the same tick as a
+// removal can come up short, never loading chunks along its far edges (19 of the
+// mothership's 84, on the box), so an add waits out the tick of any removal. loadBox's
+// steady reads are what catch the late unload, and its patch what heals a short load
+// (SW4).
 const live = new Map();
+let removedAt = -1;
 
-function area(dim, name, x0, z0, x1, z1) {
+function remove(dim, name) {
+  command(dim, `tickingarea remove ${name}`, true);
+  live.delete(name);
+  removedAt = system.currentTick;
+}
+
+function* area(dim, name, x0, z0, x1, z1) {
   const box = `${x0} ${z0} ${x1} ${z1}`;
   if (live.get(name) === box) return;
-  command(dim, `tickingarea remove ${name}`, true);
+  // One this run never added can only be a crash's leftover, or nothing: cleared without
+  // the wait, so a build's first area doesn't cost it a tick with none up.
+  if (live.has(name)) remove(dim, name);
+  else command(dim, `tickingarea remove ${name}`, true);
+  while (system.currentTick === removedAt) yield NEXT_TICK;
   command(dim, `tickingarea add ${x0} 0 ${z0} ${x1} 0 ${z1} ${name} true`);
   live.set(name, box);
 }
 
-function drop(dim, name, quiet = false) {
-  command(dim, `tickingarea remove ${name}`, quiet);
-  live.delete(name);
-}
-
 function dropAreas(dim) {
-  for (const name of [POD_AREA, SHIP_AREA]) drop(dim, name, true);
+  for (const name of [POD_AREA, SHIP_AREA]) {
+    remove(dim, name);
+    remove(dim, `${name}_patch`);
+  }
 }
 
 /**
@@ -149,9 +162,11 @@ function dropAreas(dim) {
  * nothing about the middle: one column per chunk is read. A chunk read once can still be
  * about to unload (a just-removed area's), so every chunk is read again each tick until
  * the box has held for STEADY_TICKS ticks over STEADY_MS. A slow load logs how many
- * chunks it's still missing.
+ * chunks it's still missing, and one that stops gaining chunks gets a second area over
+ * them: on the box a fresh area always loaded what a short one never did.
  */
-function* loadBox(dim, x0, z0, x1, z1) {
+function* loadBox(dim, name, x0, z0, x1, z1) {
+  yield* area(dim, name, x0, z0, x1, z1);
   const columns = [];
   for (let cx = Math.floor(x0 / 16); cx <= Math.floor(x1 / 16); cx += 1) {
     for (let cz = Math.floor(z0 / 16); cz <= Math.floor(z1 / 16); cz += 1) {
@@ -164,11 +179,21 @@ function* loadBox(dim, x0, z0, x1, z1) {
   let heldSince = 0;
   let last = -1;
   let missing = columns.length;
+  let gained = start;
   while (Date.now() - start < LOAD_WAIT_MS) {
     const tick = system.currentTick;
     if (tick !== last) {
       last = tick;
-      missing = columns.filter(([x, z]) => !blockAt(dim, x, 0, z)).length;
+      const lost = columns.filter(([x, z]) => !blockAt(dim, x, 0, z));
+      if (lost.length < missing) gained = Date.now();
+      missing = lost.length;
+      if (missing && Date.now() - gained >= STALL_MS) {
+        const xs = lost.map(([x]) => x);
+        const zs = lost.map(([, z]) => z);
+        warn(`${name}: ${missing} chunks stuck, patching`);
+        yield* area(dim, `${name}_patch`, Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs));
+        gained = Date.now();
+      }
       if (missing) {
         held = 0;
       } else {
@@ -216,8 +241,7 @@ function* plan_(dim, state) {
   const spawn = world.getDefaultSpawnLocation();
   const cx = Math.floor(spawn.x);
   const cz = Math.floor(spawn.z);
-  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
-  yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* loadBox(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = yield* survey(dim, cx, cz, SURVEY);
   const site = plan.chooseSite(ground, { x: cx, z: cz }, WRECK.pod);
   const frame = plan.podFrame(site, WRECK.pod);
@@ -357,8 +381,7 @@ function* podStep(dim, state, step, ground) {
 
 function* buildPod(dim, state) {
   const { x: cx, z: cz } = state.spawn;
-  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
-  yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* loadBox(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = plan.decodeGround(state.ground);
   for (const step of POD_STEPS) {
     if (state.steps.includes(step)) continue;
@@ -372,7 +395,8 @@ function* buildPod(dim, state) {
     save(state);
     yield;
   }
-  drop(dim, POD_AREA);
+  // The pod's area stays up until the build is done, so the ship's is never added in the
+  // tick it goes, and the world is never left with none.
 }
 
 function* peakUnder(dim, x0, z0, lx, lz) {
@@ -405,8 +429,7 @@ function* buildShip(dim, state) {
     const base = plan.shipBase(state.frame, pod, ship);
     for (const shift of plan.SHIP_SHIFTS) {
       const [x0, z0] = [base.x, base.z + shift];
-      area(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
-      yield* loadBox(dim, x0, z0, x0 + lx - 1, z0 + lz - 1);
+      yield* loadBox(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
       const y = plan.shipHeight(base.y, yield* peakUnder(dim, x0, z0, lx, lz), ly, top);
       if (y !== null) {
         state.ship = { x: x0, y, z: z0 };
@@ -419,8 +442,7 @@ function* buildShip(dim, state) {
     save(state);
   }
   const { x, y, z } = state.ship;
-  area(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
-  yield* loadBox(dim, x, z, x + lx - 1, z + lz - 1);
+  yield* loadBox(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
   for (let i = state.tiles ?? 0; i < ship.tiles.length; i += 1) {
     const t = ship.tiles[i];
     world.structureManager.place(t.id, dim, { x: x + t.x, y, z: z + t.z });
@@ -428,7 +450,6 @@ function* buildShip(dim, state) {
     save(state);
     yield;
   }
-  drop(dim, SHIP_AREA);
 }
 
 function* build(state) {
