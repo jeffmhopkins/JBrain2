@@ -221,7 +221,14 @@ async def test_a_question_is_one_player_tier_turn_answered_privately(world) -> N
     assert await door.tick() == 1
     await door.drain()
     (call,) = executor.calls
-    assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS
+    # Less transport, a Power Pack use, until the asker has made a pack (§M19), and the
+    # Replicator's tool until they hold 8 packs (§M15), and the wormhole tool until they
+    # have unlocked the Wormhole Seed (§M12).
+    assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS - {
+        "mc_transport",
+        "mc_replicator_program",
+        "mc_wormhole_aim",
+    }
     assert "intro for session-of-111" in call["profile"].prompt
     assert call["agent_session_id"] == "session-of-111"
     assert call["read_scopes"] == ()
@@ -420,3 +427,25 @@ async def test_the_turn_gets_only_the_askers_unlocked_items(world) -> None:
     # The guide sits before the chat intro, so the prompt's head stays the same.
     prompt = call["profile"].prompt
     assert prompt.index("### The Tricorder") < prompt.index("intro for session-of-111")
+    assert "mc_replicator_program" not in call["profile"].tools
+
+    # 8 Power Packs held: the Replicator's entry and its tool arrive together (§M15).
+    world["events"].append(
+        _event(5, "program this replicator for iron", known=["power_pack_uses", "replicator"])
+    )
+    await door.tick()
+    await door.drain()
+    call = executor.calls[-1]
+    assert "### The Replicator" in call["profile"].prompt
+    assert "mc_replicator_program" in call["profile"].tools
+    assert "mc_wormhole_aim" not in call["profile"].tools
+
+    # Popped chorus fruit after a pack: the Wormhole Seed's entry and its tool (§M12).
+    world["events"].append(
+        _event(6, "open the wormhole to tree farm", known=["power_pack_uses", "wormhole_seed"])
+    )
+    await door.tick()
+    await door.drain()
+    call = executor.calls[-1]
+    assert "### The Wormhole Seed" in call["profile"].prompt
+    assert "mc_wormhole_aim" in call["profile"].tools

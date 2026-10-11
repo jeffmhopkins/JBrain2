@@ -53,9 +53,10 @@ JBRAIN_PACK_ID = json.loads(
 )["header"]["uuid"]
 
 
-JBRAIN_RP_ID = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())[
-    "header"
-]["uuid"]
+_JBRAIN_RP = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())
+JBRAIN_RP_ID = _JBRAIN_RP["header"]["uuid"]
+# Bumped whenever its textures change, so clients re-download it.
+JBRAIN_RP_VERSION = _JBRAIN_RP["header"]["version"]
 # The home-test kit's resource pack, retired when its icons moved to the jbrain one.
 OLD_PROBE_RP_ID = "26d6c250-8ead-4bb8-9dd0-d3805e61d61e"
 
@@ -971,7 +972,8 @@ def test_a_loaded_world_gets_its_saved_rules_once_it_is_up(
         "gamerule doFireTick false",
         "gamerule keepInventory true",
         # The jbrain pack's copy of the switch, last.
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
 
 
@@ -1141,7 +1143,8 @@ def test_saved_rules_come_back_on_a_plain_start_too(
         _t.sleep(0.02)
     assert sent == [
         "gamerule doFireTick false",
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
 
 
@@ -1631,11 +1634,13 @@ def test_every_world_gets_the_jbrain_resource_pack_and_clients_must_take_it(
     monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
     rig._start()
     rp = json.loads((world / "world_resource_packs.json").read_text())
-    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": [1, 1, 0]}]
+    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": JBRAIN_RP_VERSION}]
     assert not old.exists()
     icons = world / "resource_packs" / "jbrain" / "textures" / "items"
     assert sorted(p.name for p in icons.iterdir()) == [
         "power_pack.png",
+        "replicator.png",
+        "replicator_programmed.png",
         "tricorder.png",
         "wormhole_seed.png",
     ]
@@ -1670,14 +1675,15 @@ def test_the_power_pack_switch_is_off_by_default_and_applies_live(
     assert out["power_pack_keep"] is True and out["applies"] == "now"
     assert sent == [
         "gamerule keepInventory true",
-        'scriptevent jb:config {"power_pack_keep": true}',
+        'scriptevent jb:config {"power_pack_keep": true, "power_pack_transport": true}',
     ]
     sent.clear()
     out = rig.set_power_pack("slot1", False)
     # Off hands the rule back (the owner's choice, or vanilla's off), saved for later.
     assert sent == [
         "gamerule keepInventory false",
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
     assert rig.slots.get("slot1")["rules"] == {"keepInventory": False}
     with pytest.raises(ValueError):
@@ -1761,7 +1767,8 @@ def test_every_start_tells_the_pack_the_switch_after_the_rules(
     started[-1].join(5)
     assert sent == [
         "gamerule pvp false",
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
     sent.clear()
     rig.slots.update("slot1", power_pack_keep=True)
@@ -1770,7 +1777,7 @@ def test_every_start_tells_the_pack_the_switch_after_the_rules(
     assert sent == [
         "gamerule pvp false",
         "gamerule keepInventory true",
-        'scriptevent jb:config {"power_pack_keep": true}',
+        'scriptevent jb:config {"power_pack_keep": true, "power_pack_transport": true}',
     ]
 
 

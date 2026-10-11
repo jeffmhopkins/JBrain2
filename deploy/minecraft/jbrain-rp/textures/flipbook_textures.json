@@ -3,5 +3,17 @@
     "flipbook_texture": "textures/blocks/wormhole",
     "atlas_tile": "jbrain_wormhole",
     "ticks_per_frame": 2
+  },
+  {
+    "flipbook_texture": "textures/blocks/replicator_front_working",
+    "atlas_tile": "jbrain_replicator_front_working",
+    "ticks_per_frame": 5,
+    "blend_frames": true
+  },
+  {
+    "flipbook_texture": "textures/blocks/replicator_top_working",
+    "atlas_tile": "jbrain_replicator_top_working",
+    "ticks_per_frame": 5,
+    "blend_frames": true
   }
 ]

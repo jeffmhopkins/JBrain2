@@ -138,6 +138,9 @@ class SlotStore:
                 # keepInventory is held on and the jbrain pack drops for a player who
                 # died without both a Power Pack and their own Tricorder.
                 "power_pack_keep": False,
+                # Transport on request (§M10): on by default; off, the jbrain pack
+                # refuses every Power Pack teleport in this world.
+                "power_pack_transport": True,
                 **raw.get(sid, {}),
             }
             rec["exists"] = self.exists(rec["folder"])
@@ -166,8 +169,10 @@ class SlotStore:
                     raise ValueError(
                         f"game mode must be one of {', '.join(GAMEMODES)}"
                     )
-                if key == "power_pack_keep" and not isinstance(value, bool):
-                    raise ValueError("power_pack_keep is true or false")
+                if key in ("power_pack_keep", "power_pack_transport") and not isinstance(
+                    value, bool
+                ):
+                    raise ValueError(f"{key} is true or false")
                 if key == "wreck" and value not in WRECK_STATES:
                     raise ValueError(f"wreck must be one of {WRECK_STATES}")
                 if key == "difficulty" and value not in DIFFICULTIES:

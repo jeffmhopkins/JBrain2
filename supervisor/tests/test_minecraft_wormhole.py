@@ -72,8 +72,8 @@ def test_the_art_ships_as_drawn_and_the_surface_is_a_flipbook() -> None:
     strip = RP / f"{path}.png"
     assert strip.read_bytes() == (ART / "wormhole.png").read_bytes()
     flip = _json(RP / "textures" / "flipbook_textures.json")
-    assert [f["atlas_tile"] for f in flip] == ["jbrain_wormhole"]
-    assert flip[0]["flipbook_texture"] == path
+    (mine,) = [f for f in flip if f["atlas_tile"] == "jbrain_wormhole"]
+    assert mine["flipbook_texture"] == path
     width, height, colour = _png(strip)
     assert (width, colour) == (16, 6) and height % 16 == 0 and height > 16
     assert _png(seed) == (16, 16, 6)
@@ -92,14 +92,23 @@ def _node(tmp_path: Path, *tests: str) -> Path:
         pytest.fail("node is needed to run the jbrain pack's script (dev-setup has it)")
     root = tmp_path / "run"
     shutil.copytree(PACK, root / "pack")
-    fake = root / "node_modules" / "@minecraft" / "server"
-    fake.mkdir(parents=True)
-    shutil.copy(SIM / "fake_server.mjs", fake / "index.mjs")
-    (fake / "package.json").write_text(
-        json.dumps(
-            {"name": "@minecraft/server", "type": "module", "exports": "./index.mjs"}
+    # main.js loads every module, so server-ui's stand-in too (transport's form).
+    for module, source in (
+        ("server", "fake_server.mjs"),
+        ("server-ui", "fake_server_ui.mjs"),
+    ):
+        fake = root / "node_modules" / "@minecraft" / module
+        fake.mkdir(parents=True)
+        shutil.copy(SIM / source, fake / "index.mjs")
+        (fake / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": f"@minecraft/{module}",
+                    "type": "module",
+                    "exports": "./index.mjs",
+                }
+            )
         )
-    )
     for name in tests:
         shutil.copy(SIM / name, root / name)
     return root

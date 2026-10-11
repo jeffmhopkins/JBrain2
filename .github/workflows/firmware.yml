@@ -139,8 +139,7 @@ jobs:
 
   # JEFF'S C6 JPANEL — a separate project with its own committed images, held to the same
   # rule: `firmware-c6/dist/` is what the box flashes, so it must be what this source builds.
-  # No host tests (the bring-up image has no pure-C modules yet) and no srmodels.bin (ESP-SR
-  # does not support the C6, so there is no model partition).
+  # No srmodels.bin (ESP-SR does not support the C6, so there is no model partition).
   firmware-c6:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -148,6 +147,32 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+
+      # The app framework's pure half — shell arbitration, the app models, the notice policy,
+      # the debug surface's redaction — in seconds, before the toolchain pull.
+      - name: Host tests for the app framework
+        run: make -C firmware-c6/host test
+
+      # Every app depends only on app_api, ui_kit and LVGL (JPANEL_C6_PLAN.md §1). The
+      # self-test first, so a checker that has stopped catching anything fails too.
+      - name: Apps never depend on each other
+        run: |
+          python3 firmware-c6/tools/check_app_deps.py --self-test
+          python3 firmware-c6/tools/check_app_deps.py
+
+      # The framework against real LVGL, headless: every mock board's state rendered through
+      # the debug screenshot path, every app opened and closed back to the same widget and
+      # timer count, and a debug snapshot checked for provisioning secrets. The PNGs are
+      # uploaded so a drift from docs/mocks/jpanel-c6/ is visible in review.
+      - name: Simulator renders the mock states
+        run: firmware-c6/sim/render.sh "$RUNNER_TEMP/jpanel-c6-sim" "$RUNNER_TEMP/sim-build"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jpanel-c6-sim
+          path: ${{ runner.temp }}/jpanel-c6-sim/
+          if-no-files-found: ignore
 
       # The same IDF pin as the S3 job, so the two projects never disagree about a header.
       - uses: espressif/esp-idf-ci-action@v1

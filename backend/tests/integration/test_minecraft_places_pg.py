@@ -347,7 +347,12 @@ async def test_a_question_runs_in_the_askers_own_continuing_session(maker, sidec
     (call,) = executor.calls
     sid = call["agent_session_id"]
     assert sid != pwa.agent_session_id
-    assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS
+    # Transport stays out until the asker has made a Power Pack (M10), and this one hasn't.
+    assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS - {
+        "mc_transport",
+        "mc_replicator_program",
+        "mc_wormhole_aim",
+    }
     assert "Steve 42" in call["profile"].prompt  # the chat intro: whose session it is
     async with scoped_session(maker, owner) as s:
         place = (await s.execute(text("SELECT xuid, x, z FROM app.mc_places"))).one()

@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15◻️ M16◻️ M17✅ M18✅ M19✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1350,7 +1350,8 @@ it's on, the rule is excluded from every changed count and reset. The New world 
 Off · On only. DESIGN.md "Worlds and backups" has the rest.
 
 Not built: the Power Pack's lore (a crafted item gets none from a
-script without a hook; left out rather than faked), and transport. **Box checks:** home
+script without a hook; left out rather than faked). Transport shipped later, below.
+**Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
 `entityDie`, `spawnItem` keeping enchantments, names and durability, and what one
 summoned `xp_orb` is worth, so the orb count can be tuned).
@@ -1431,6 +1432,64 @@ keep-inventory charm, so players choose how to spend them.
 - An unconfirmed `locate` result is refused as unknown.
 - A cross-dimension trip to a dimension never visited is refused.
 - Choosing No on the form costs nothing.
+
+**Shipped (wave mc-transport, 2026-10-11): transport on request, without its PWA toggle.**
+- **The tool.** `mc_transport {place}` (`agent/minecrafttransport.py`), Minecraft_Dave's
+  one acting tool. It works only on an in-game turn, only for the asker, and only to a
+  place in their own `app.mc_places` for the loaded world, never a bed, a structure,
+  coordinates or someone else's place. It's offered only once the asker has unlocked
+  `power_pack_uses`: before that the door leaves it out of the turn, so its description
+  can't name the pack (§M19).
+- **The pack decides.** The tool sends `scriptevent jb:transport {id, player, label, x, y,
+  z, dim, visited}`, where `visited` is the dimensions the travel log has seen the player
+  in, in this world. The pack's own `transport.js` (pure rules in `transport_rules.js`)
+  also keeps `jb:visited:<id>` once a second. It refuses, spending nothing, when:
+  - the switch is off;
+  - the player has no own Tricorder, or no Power Pack (inventory, armor or off-hand);
+  - the place has no y;
+  - the place is in a dimension they've never been in;
+  - they're offline, or a form is already open for them.
+- **The form.** Otherwise a `@minecraft/server-ui` `MessageFormData` asks Yes or No.
+  - That's server-ui **2.0.0**, stable beside `@minecraft/server` 2.0.0. The manifest
+    declares it, so no experiment is needed.
+  - The text is the plan's own: `Market — 1,239 blocks, Overworld. Use 1 Power Pack? (you
+    have 3)`, with no distance for another dimension.
+  - A busy player (chat still open) is asked again each second.
+  - The offer lapses after 45 s.
+- **On Yes.** The pack loads the landing with a temporary `tickingarea` (up to about 5 s),
+  then refuses ground that never loads and lava at the feet or head. It checks the switch,
+  the Tricorder and the pack again, calls `tryTeleport` with `checkForBlocks`, and only if
+  that lands burns one pack, smallest stack first. The enderman-teleport sound and portal
+  particles play at both ends.
+- **Every step is one console line,** `transport <id> <outcome> {json}`. The tool reads the
+  offer back at once, then reads `/logs` for up to 50 s for how it ended: moved, declined,
+  expired, blocked, unloaded or refused.
+- **The trip log.** A trip, or a landing that stopped one, goes in the player's progress
+  log (`app.mc_goal_log`, source `auto`): from, to, and the pack spent or kept.
+- **The switch.** "Power Pack teleport" is the slot's `power_pack_transport`, on by
+  default. It travels in the same `jb:config` line as `power_pack_keep`, and an older
+  record reads as on. It's set by `PUT /api/minecraft/worlds/{slot}/power-pack-transport`
+  (owner) or `PUT /api/debug/minecraft/worlds/{slot}/power-pack-transport`. **Next: the
+  PWA toggle, through its own GUI gate.**
+- **Dave's words.** The guide has a `power_pack_transport` entry (guide v3), shown only
+  where the switch is on. It reveals that saved places are transport beacons, the
+  first-Power-Pack beat's canon. The persona (`agent-minecraft-dave-v12`) says "transport
+  beacon" only once that entry is there. M18's fast path still leaves "take me to …" to
+  the model.
+
+Not built:
+- The form's line and the tool's replies aren't on the lore page's signed-off list yet.
+- The Power Pack's item lore ("Keeps your things, or takes you somewhere") is still
+  missing, so M10 isn't complete.
+
+**Box checks:**
+- The form shows over the game on the Xbox and Windows, and Yes is `selection` 0.
+- `tryTeleport` with `checkForBlocks` refuses a built-over spot.
+- The `tickingarea` preload reaches a far place, and leaves no ticking area behind.
+- The portal particle id draws.
+- One pack is gone after a trip and none after No.
+- A Nether place before and after the player's first Nether visit.
+- The trip line in their progress log.
 
 ### M11 — Trans-dimensional chests (owner idea, 2026-10-10; details open)
 
@@ -1562,8 +1621,10 @@ What the build settled:
   into the surface; a blocked landing (`tryTeleport` with `checkForBlocks`) is refused once,
   with a message, and tried again only after stepping out and back in.
 - **The item guide** gains the seed (`wormhole_seed`): the pack unlocks it on a first popped
-  chorus fruit once the player has made a Power Pack, and in a world without the keep switch
-  the Power Pack's "nothing yet" entry gives way to it.
+  chorus fruit once the player has made a Power Pack, and in a world with neither the keep
+  nor the transport switch the Power Pack's "nothing yet" entry gives way to it. In game the
+  door offers `mc_wormhole_aim` only with that unlock, as it does transport and the
+  Replicator's tool, so nothing in an earlier turn names the gates.
 - **Messages are plain status**, not Dave's lines, until the lore page has his words for
   planting and opening (below).
 - **Still to check on the box:** that using the seed on a diamond block fires
@@ -1711,7 +1772,7 @@ piece is worn.
 damage on Bedrock; a custom wearable with an attachable shows on the Xbox; and the
 effect refresh doesn't flicker.
 
-### M15 — The Replicator: a furnace Dave programs to make one thing (owner, 2026-10-11; not built)
+### M15 — The Replicator: a furnace Dave programs to make one thing (owner, 2026-10-11; shipped 2026-10-11)
 
 **What and why.** The story and rules are canon in Bleepbloop_City's
 [`notes/lore.md`](https://github.com/jeffmhopkins/Bleepbloop_City/blob/main/notes/lore.md#the-replicator).
@@ -1760,7 +1821,78 @@ interval.
 (fuel burn time, a full output, an unloaded chunk) and breaking (the item returns with its
 target). The Dave tool gets the usual tool tests.
 
-### M16 — The No-Spawn Beacon: a mob-free 3×3 of chunks (owner, 2026-10-11; not built)
+**Shipped 2026-10-11 (wave mc-replicator).** Built mostly as above; where it differs, the
+build wins and the reasons are here.
+- **A custom block, not a vanilla furnace.** The item design
+  (`docs/mocks/minecraft-items/README.md`, set A, binding) makes the Replicator a placer
+  item for its own block, `jbrain:replicator`, with the set's faces, a `programmed` state
+  that lights the front and top, and `minecraft:placement_direction` facing. Putting a
+  vanilla furnace down instead would show a plain furnace and drop a plain furnace.
+  - **What stable `@minecraft/server` 2.x can't do:** a custom block can't have a
+    container or a furnace screen, and a script can't open one on it. Hoppers can't push
+    into it or pull from it.
+  - **So the "furnace" is the containers round it:** a chest, barrel or hopper **on top**
+    holds the blocks it burns (any item that is also a block), one on **any side** holds
+    the fuel, and one **below** takes what it makes. Those are the faces a furnace's
+    hoppers use, so a hopper on top feeding down, one beside it, and one below carrying
+    the output away all work. Canon's "fuel in the bottom" is the furnace screen's bottom
+    slot; here the bottom is the output.
+  - **Decided (owner, 2026-10-11): furnace layout — top input, side fuel, bottom
+    output, hoppers on each face like a vanilla furnace.** Chests and barrels work too. A
+    hopper on top pointing down, or beside it pointing in, can't push into the block, so
+    its items wait in it and the script pulls them; a hopper below gets the output and
+    passes it on.
+  - Using the block (right-click) opens a small `@minecraft/server-ui` panel (owner
+    request, 2026-10-11): titled "Iron Replicator" or "Replicator — not programmed", with
+    what it makes, what it's waiting for right now, and how to connect each face. It
+    opens no panel while the player sneaks (that's placing a hopper or chest on it, as on
+    a furnace), never stacks a second one, and falls back to chat when a form can't open.
+    Its wording is a draft until signed off on the lore page.
+- **Working look (owner request, 2026-10-11).** A `jbrain:working` state beside
+  `jbrain:programmed` gives three looks: blank, programmed-idle and programmed-working.
+  Working swaps the front window and top centre for 8-frame flipbooks (an amethyst pulse
+  and an ember glow, `make_replicator_working.py`) and gives light 10. It turns on on a
+  tick that makes something and off on the first that doesn't; unloaded, it keeps its
+  last look. Each item made puts a flame and an amethyst sparkle at the front and plays a
+  furnace crackle; a particle or sound the game refuses never stops the making. No idle
+  crackle between items: the block only ticks every 10 s. The item sprite stays the flat
+  programmed one.
+- **The run is a block tick, not an interval over a list.** The block's
+  `minecraft:tick` fires every 200 game ticks (10 s), and the game only ticks loaded
+  land, so canon's "only while its land is awake" is the engine's own rule, and nothing
+  catches up afterwards. Each tick: room below, a block on top, and fuel (a new fuel item
+  is lit only when under 200 ticks remain, using vanilla burn times: coal 8, a coal block
+  80, lava 100 and its bucket left behind) make one target. Wanting any of them, it waits
+  and takes nothing.
+- **Programming** is `mc_replicator_program(target)` (`agent/minecraftreplicator.py`, in
+  game only, in both of Dave's tool sets): one `scriptevent jb:replicator` with the
+  asker's gamertag and a checked `minecraft:` id; "iron", "gold", "copper" and
+  "netherite" mean their ingots. The pack refuses (not holding a Replicator, no such
+  item, a stack size other than 64, the same target again, fewer than 512) or takes
+  exactly 512 from the inventory and swaps the held item for
+  `jbrain:replicator_programmed` named "<Target> Replicator", lore *Burns any block into
+  <target>*, target in the item property `jb:target`. That second item exists only so the
+  slot draws the programmed sprite (an item's icon can't change per stack); both place
+  the same block. Prompt `agent-minecraft-dave-v13`.
+- **Placing and breaking.** On placement the held item's target goes into a world
+  property per block (`jb:replicator:<dim>:<x>,<y>,<z>`, with fuel left and its state);
+  the block's loot table is empty and breaking spawns the same item back, programmed as
+  it was (also in creative). Fuel burning inside is lost, as a furnace's is. It is
+  immune to explosions and immovable by pistons, so neither can lose its programming.
+- **The guide (§M19):** a player with 8 Power Packs on them unlocks `replicator` (the
+  pack checks once a second); its entry is in `agent-minecraft-dave-guide-v4`.
+- **Packs:** behavior pack 1.3.0 and resource pack 1.2.0, so clients fetch the new
+  icons and faces.
+
+Only checkable on the box: that the block loads (custom components on format 1.21.90+,
+`minecraft:movable`, `replace_block_item`), that its front faces the player in all four
+directions and the GUI shows the flat sprite, that it keeps ticking after a restart,
+that a hopper below takes the output on, that breaking it gives the named item back, and
+that "Dave, program this replicator for iron" works with 512 ingots, that the working faces animate and
+light the room only while it makes things, that the flame, sparkle and crackle play at the
+front in every facing, and that the panel opens on a phone and an Xbox.
+
+### M16 — The No-Spawn Beacon: a mob-free 3×3 of chunks (owner, 2026-10-11; shipped 2026-10-11)
 
 **Why.** The owner's endgame is a base out "in space": high in the sky or out over the
 End. Endermen would still come, because they teleport in. A beacon keeps a whole area
@@ -1816,8 +1948,56 @@ endermen, piglins, wild cows and sheep, and the rest.
 mob farm needs to be outside the 3×3.
 
 **Open (owner):**
-- **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
-  lore page; its icon joins the item set (`docs/mocks/minecraft-items/`).
+- **Lore:** Dave's first-time line for the beacon belongs on the Bleepbloop_City lore page
+  (its story is there now, "The No-Spawn Beacon"); none is built.
+
+**Shipped 2026-10-11 (wave mc-beacon).** The block `jbrain:no_spawn_beacon`
+(`jbrain-pack/blocks/`), its shaped recipe (`recipes/no_spawn_beacon.json`, unlocked in the
+recipe book by an echo shard), and its logic in its own module, `scripts/beacon.js`
+(rules in `beacon_rules.js`); `main.js` only calls `initBeacon(world, system)`. What was
+decided while building it:
+- **Kept is a list, removed is a list.** The beacon removes only the vanilla hostile,
+  neutral and passive mob types it names (`REMOVABLE`); any other entity (items, XP,
+  arrows, boats, armor stands, another pack's entities, a mob the game adds later) is
+  never touched. Always kept: players, villagers (both ids) and the wandering trader,
+  iron, snow and copper golems, the Ender Dragon and the Wither. Any removable mob stays
+  when tamed (`minecraft:is_tamed`), name-tagged, on a lead, or marked `jb:kept`.
+- **`jb:kept`** is set on a removable mob by any `playerInteractWithEntity` (feeding,
+  trading, a name tag being put on), and on every removable mob born (`entitySpawn` cause
+  `Born`), wherever it is: a bred animal carried or led into the area later stays.
+- **Records:** one world property per beacon, `jb:beacon:<dimension>@x,y,z`, so any
+  number fit. Read lazily on first use (a script can't read world properties while it
+  first loads) and rebuilt into a per-dimension set of covered chunk keys.
+- **The sweep** runs every 20 ticks over each beacon whose block reads back: an unloaded
+  beacon chunk is skipped, and a beacon block that's gone without a player breaking it
+  (an explosion) drops its record. It queries the 48×48 full-height volume, excluding
+  players. Each removal is `entity.remove()` (no death, so no drops) after an end-rod
+  sparkle and a smoke puff.
+- **Not done:** pistons can move the block (its record then drops on the next sweep and
+  the moved block does nothing until it's broken and placed again); the M8 map and Dave
+  don't know about beacons yet.
+- **The guide** (§M19): an echo shard unlocks `no_spawn_beacon` only for a player who has
+  already unlocked `power_pack_uses` (`UNLOCK_NEEDS` in `rules.js`; both in one look
+  counts). The entry is in `minecraft_dave_guide.prompt`, `agent-minecraft-dave-guide-v2`
+  (re-pinned; v3 adds transport, §M10), and in the owner's chats.
+- **Icon:** set A, drawn by `docs/mocks/minecraft-items/make_beacon.py`: a tuff block in
+  a copper frame; the top is the recipe from above (eight echo shards round a lit
+  amethyst lens), the side an amethyst column with echo-teal lights. The faces ship in
+  `jbrain-rp/textures/blocks/` through a new `terrain_texture.json`; the resource pack's
+  version went to 1.1.0 so clients fetch the new textures.
+
+Only checkable on the box, by a player:
+- the recipe crafts (a Power Pack ringed by 8 echo shards) and shows in the recipe book
+  after an echo shard; the block places, shows its faces, glows faintly, and drops itself
+  when broken by hand;
+- placed at night, hostile mobs stop appearing in the 48×48 square round its chunk, top to bottom, and a
+  wild cow walked in vanishes in a puff with no drops, while a named, leashed, fed or bred
+  animal, a tamed wolf, a villager and an iron golem stay; an enderman lured into a sky
+  base vanishes within a second;
+- broken, mobs spawn there again; the console shows `no-spawn beacon on at …` and
+  `… off at …`;
+- the particle ids (`minecraft:endrod`, `minecraft:basic_smoke_particle`) render, and
+  "what's a no-spawn beacon?" is answered only after a made Power Pack and an echo shard.
 
 ### M17 — Deep-scan limit: two locates per player per Minecraft day (owner, 2026-10-11; shipped 2026-10-11)
 
@@ -2048,6 +2228,48 @@ hash), read by `jbrain/minecraft/guide.py`. What was decided while building it:
 Only checkable on the box, by a player: that picking up an Ender Pearl, then crafting a
 Power Pack, is noticed within a second (`jb:known:<id>` grows), and the answers to "what's
 a power pack?" before and after.
+
+### M20 — Map share links: a view-only map for someone without a login (owner, 2026-10-11; shipped 2026-10-11)
+
+**Why.** The owner wants to send the map to a player (their brother) who has no JBrain
+login: open a link, see the world with their gamertag on it, and touch nothing else on the
+box.
+
+**What the owner does.** On the map, **Share this map** (a fab beside the dimension
+switch) opens the Share sheet for the world being viewed: pick the gamertag the map opens
+on (everyone ever seen in that world, online first), **Create link**, then **Copy link**
+(or **Send…** where the phone has a share sheet). The sheet lists the live links with how
+often each was opened and a **Revoke** per link. A link has no expiry; it works until
+revoked. Owner decisions: the link shows **every player's** live position, travel history
+and timeline in that world, not only the chosen player's; it lasts until revoked.
+
+**What the visitor gets.** `/mc/s/{token}` mounts `McShareApp` instead of the owner app: the
+same map page (`MapPage`) over the public routes, opened on the shared player (selected,
+in their dimension), with Layers, Timeline, Follow and the session list. It has no back
+button, no world picker, no Share, and no structure re-scan; a **View only** chip sits where
+the back button is. A revoked link, or a slot that now holds another world, shows *This
+map link was turned off*.
+
+**Contract.**
+- Owner (`api/minecraft.py`, owner-only like the rest): `POST /api/minecraft/shares`
+  `{slot, xuid}` → the link plus its token, shown once (404 when the slot holds no world or
+  the player has never been seen in it); `GET /api/minecraft/shares`; `DELETE
+  /api/minecraft/shares/{id}`.
+- Public (`api/minecraft_share.py`, no owner dependency): `GET /api/mc-share/{token}` (the
+  world and the player it opens on; the only read that counts as a view), then
+  `/map/info`, `/map/tile/{dim}/{zoom}/{tx}/{tz}.png`, `/map/point`, `/map/players`,
+  `/map/structures` and `/timeline` under it. The token picks the slot; the visitor never
+  names one. Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`,
+  `noindex`.
+- Storage and RLS (migration `0230_mc_share_links`): `app.mc_share_links` keeps only the
+  token's SHA-256, the slot, its world folder at mint, and the player. A visitor reads under
+  `mc_share_context(link_id)`; the `*_share` policies on `mc_player_track`,
+  `mc_player_explored`, `mc_player_events` and `mc_player_sessions` admit only rows of the
+  pinned, unrevoked link's world (a session by the world of its join event). Tested in
+  `tests/integration/test_mc_share_pg.py`.
+
+Only checkable on the box: that the link opens from outside the house (it needs the
+public hostname — Cloudflare Tunnel or direct mode, not LAN-only).
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 

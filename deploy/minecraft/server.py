@@ -875,6 +875,7 @@ class Rig:
                     wreck=None,  # the owner's own world: never touched
                     test=False,
                     power_pack_keep=False,
+                    power_pack_transport=True,
                 )
 
             self._restart_around(folder, work, "A world is being imported here")
@@ -944,6 +945,7 @@ class Rig:
             # settings no longer describe it. Rules come with the source's choices.
             fields["rules"] = dict(src.get("rules") or {})
             fields["power_pack_keep"] = bool(src.get("power_pack_keep"))
+            fields["power_pack_transport"] = src.get("power_pack_transport") is not False
             if not rec["exists"]:
                 when = time.strftime("%b %-d", time.localtime(path.stat().st_mtime))
                 fields["name"] = f"{src.get('name') or source} ({when})"
@@ -1109,6 +1111,19 @@ class Rig:
             if live:
                 keep = effective_rules(rec)["keepInventory"]
                 self.bds.command(worlds.rule_command("keepInventory", keep))
+                self.bds.command(pack_config(rec))
+        return {**rec, "applies": "now" if live else "next load"}
+
+    def set_power_pack_transport(self, slot_id: str, on: Any) -> dict[str, Any]:
+        """The world's "Power Pack teleport" switch (§M10), on by default. Saved on the
+        slot and sent to the pack at every start; on the loaded, running world also at
+        once. No game rule rides on it: off, the pack refuses every trip."""
+        if not isinstance(on, bool):
+            raise ValueError("`on` is true or false")
+        with self._locked():
+            rec = self.slots.update(slot_id, power_pack_transport=on)
+            live = rec["folder"] == self.active_folder() and self.bds.state == "running"
+            if live:
                 self.bds.command(pack_config(rec))
         return {**rec, "applies": "now" if live else "next load"}
 
@@ -1658,7 +1673,10 @@ def managed_rules(rec: dict[str, Any] | None) -> dict[str, bool | int | str]:
 def pack_config(rec: dict[str, Any] | None) -> str:
     """The console line that tells the jbrain pack the world's settings. JSON-escaped
     by json.dumps, one line, as every scriptevent the wrapper sends."""
-    cfg = {"power_pack_keep": bool((rec or {}).get("power_pack_keep"))}
+    cfg = {
+        "power_pack_keep": bool((rec or {}).get("power_pack_keep")),
+        "power_pack_transport": (rec or {}).get("power_pack_transport") is not False,
+    }
     return f"scriptevent jb:config {json.dumps(cfg)}"
 
 
@@ -1989,6 +2007,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(202, rig.sweep_structures(str(body.get("slot") or "")))
             elif m := _WORLD_POWER_PACK.match(self.path):
                 self._send(200, rig.set_power_pack(m.group(1), body.get("on")))
+            elif m := _WORLD_TRANSPORT.match(self.path):
+                self._send(
+                    200, rig.set_power_pack_transport(m.group(1), body.get("on"))
+                )
             elif self.path == "/probe-pack":
                 self._send(200, rig.probe_pack(bool(body.get("install", True))))
             else:
@@ -2067,6 +2089,7 @@ _SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
 _WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
 _WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
 _WORLD_POWER_PACK = re.compile(r"^/worlds/(slot\d+)/power-pack$")
+_WORLD_TRANSPORT = re.compile(r"^/worlds/(slot\d+)/power-pack-transport$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 _BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
 _MAP_TILE = re.compile(r"^/map/tile/(overworld|nether|the_end)/(\d)/(-?\d+)/(-?\d+)\.png$")

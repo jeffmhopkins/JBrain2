@@ -89,6 +89,13 @@ def test_the_tricorder_is_locked_and_kept_by_the_script() -> None:
         if d.get("module_name") == "@minecraft/server"
     )
     assert not re.search(r"beta|alpha", server["version"])
+    # The transport form (§M10) is server-ui's MessageFormData, stable since 2.0.0.
+    ui = next(
+        d
+        for d in manifest["dependencies"]
+        if d.get("module_name") == "@minecraft/server-ui"
+    )
+    assert ui["version"] == "2.0.0"
 
 
 def test_daves_lines_live_in_one_block_marked_with_their_sign_off() -> None:
@@ -104,15 +111,24 @@ def _node_root(tmp_path: Path) -> Path:
         pytest.fail("node is needed to run the jbrain pack's script (dev-setup has it)")
     root = tmp_path / "run"
     shutil.copytree(PACK, root / "pack")
-    fake = root / "node_modules" / "@minecraft" / "server"
-    fake.mkdir(parents=True)
-    shutil.copy(MC / "jbrain-sim" / "fake_server.mjs", fake / "index.mjs")
-    (fake / "package.json").write_text(
-        json.dumps(
-            {"name": "@minecraft/server", "type": "module", "exports": "./index.mjs"}
+    for module, source in (
+        ("server", "fake_server.mjs"),
+        ("server-ui", "fake_server_ui.mjs"),
+    ):
+        fake = root / "node_modules" / "@minecraft" / module
+        fake.mkdir(parents=True)
+        shutil.copy(MC / "jbrain-sim" / source, fake / "index.mjs")
+        (fake / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": f"@minecraft/{module}",
+                    "type": "module",
+                    "exports": "./index.mjs",
+                }
+            )
         )
-    )
-    shutil.copy(MC / "jbrain-sim" / "pack.test.mjs", root / "pack.test.mjs")
+    for test in ("pack.test.mjs", "transport.test.mjs"):
+        shutil.copy(MC / "jbrain-sim" / test, root / test)
     return root
 
 
@@ -136,3 +152,12 @@ def test_the_pack_script_enforces_the_rules(tmp_path: Path) -> None:
     deaths."""
     root = _node_root(tmp_path)
     _node_test(root / "pack.test.mjs", cwd=root)
+
+
+def test_transport_on_request_follows_the_rules(tmp_path: Path) -> None:
+    """transport.js against the fakes (§M10): own Tricorder and a pack, a Yes on the
+    form, then one pack burnt only if the teleport lands; No, a blocked or unloaded
+    landing, an unvisited dimension or the switch off cost nothing; every outcome is
+    one console line the tool reads."""
+    root = _node_root(tmp_path)
+    _node_test(root / "transport.test.mjs", cwd=root)

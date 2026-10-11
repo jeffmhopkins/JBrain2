@@ -9,6 +9,11 @@ import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, pa
   parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
   xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
+import { initTransport } from "./transport.js";
+import { initReplicator } from "./replicator.js";
+import { initBeacon } from "./beacon.js";
+
+initBeacon(world, system);
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",
@@ -321,6 +326,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   }
 });
 
+initTransport({ carried, tricorderOn, say });
 initWormholes();
 
 // --- the Tricorder's arrow, about four times a second -----------------------------------
@@ -449,3 +455,5 @@ system.beforeEvents.startup.subscribe((ev) => {
     },
   );
 });
+
+initReplicator();

@@ -1796,6 +1796,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "24962528ead4bd2793c17ef132fe5559b2e02c870de178464068e2448cba5e1d",
         ),
+        # Transport on request (§M10): the one acting tool, in game only, the asker only.
+        "mc_transport.tool": (
+            "mc_transport",
+            1,
+            "7081110983693064ea6333a44beafa55126753965e4b496fdf7bee79a06871d3",
+        ),
         "mc_places.tool": (
             "mc_places",
             1,
@@ -1811,6 +1817,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "mc_wormhole_aim",
             1,
             "eda4dbb595d6db1ee749991fef5cb2f3a72accbe51b4180912e778a78487bde5",
+        ),
+        # In game only: the asker's held Replicator, from 8 stacks they carry (§M15).
+        "mc_replicator_program.tool": (
+            "mc_replicator_program",
+            1,
+            "6406cfd569f7751ba799020b9a934833ed5808eca95d3c5b48cfc28150a68685",
         ),
         "mc_goals.tool": (
             "mc_goals",
