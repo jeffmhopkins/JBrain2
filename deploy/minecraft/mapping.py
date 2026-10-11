@@ -27,6 +27,12 @@ from pathlib import Path
 import leveldb
 
 DATA3D = 43
+# Worlds last saved before 1.18 keep each chunk's surface in Data2D: 256 heights then 256
+# one-byte biomes, both indexed z * 16 + x, heights measured from y=0 rather than the
+# 1.18 floor of y=-64. A chunk nobody has loaded since an upgrade keeps it, so an
+# imported old world would otherwise be explored ground drawn as never generated.
+DATA2D = 45
+_LEGACY_FLOOR = 64
 TILE = 256  # blocks per tile side at zoom 0
 # Zoom k covers 2^k × 256 blocks per side, one pixel per 2^k blocks. The furthest zoom out
 # is one pixel per chunk (owner, 2026-10-10). Zoomed-out tiles sample only the columns
@@ -144,6 +150,17 @@ class Column:
         self.height, self.biome = height, biome  # both indexed z * 16 + x
 
 
+def decode_data2d(value: bytes) -> Column:
+    heights = [h + _LEGACY_FLOOR for h in struct.unpack_from("<256h", value, 0)]
+    return Column(heights, list(value[512:768]))
+
+
+def sample_data2d(value: bytes, x: int, z: int) -> tuple[int, int]:
+    i = z * 16 + x
+    (height,) = struct.unpack_from("<h", value, i * 2)
+    return height + _LEGACY_FLOOR, value[512 + i]
+
+
 def decode_data3d(value: bytes) -> Column:
     """A chunk's surface: the height and the biome AT that height, per column."""
     heights = list(struct.unpack_from("<256h", value, 0))
@@ -180,6 +197,7 @@ class WorldIndex:
         self._signature: tuple = ()
         self._read_at: float | None = None
         self._raw: dict[tuple[int, int, int], bytes] = {}
+        self._legacy: set[tuple[int, int, int]] = set()  # chunks whose record is Data2D
 
     def _current(self) -> tuple:
         try:
@@ -197,10 +215,13 @@ class WorldIndex:
         if signature == self._signature:
             return
         raw: dict[tuple[int, int, int], bytes] = {}
-        for key, value in leveldb.read_db(self.db, wanted=_is_any_data3d).items():
+        legacy: dict[tuple[int, int, int], bytes] = {}
+        for key, value in leveldb.read_db(self.db, wanted=_is_surface).items():
             cx, cz = struct.unpack_from("<ii", key)
             dim = struct.unpack_from("<i", key, 8)[0] if len(key) == 13 else 0
-            raw[(dim, cx, cz)] = value
+            (raw if key[-1] == DATA3D else legacy)[(dim, cx, cz)] = value
+        self._legacy = legacy.keys() - raw.keys()  # a re-saved chunk's Data3D is current
+        raw.update((cell, legacy[cell]) for cell in self._legacy)
         self._raw, self._signature, self._read_at = raw, signature, now
 
     def columns(self, dim: int, cx0: int, cz0: int, n: int) -> dict[tuple[int, int], Column]:
@@ -211,7 +232,8 @@ class WorldIndex:
                 if value is None:
                     continue
                 try:
-                    out[(cx, cz)] = decode_data3d(value)
+                    legacy = (dim, cx, cz) in self._legacy
+                    out[(cx, cz)] = decode_data2d(value) if legacy else decode_data3d(value)
                 except (struct.error, IndexError):
                     continue  # one corrupt chunk is a hole in the map, not a failed tile
         return out
@@ -228,10 +250,11 @@ class WorldIndex:
                 value = self._raw.get((dim, cx, cz))
                 if value is None:
                     continue
+                sample = sample_data2d if (dim, cx, cz) in self._legacy else surface_sample
                 try:
                     for lx in offsets:
                         for lz in offsets:
-                            out[(cx * 16 + lx, cz * 16 + lz)] = surface_sample(value, lx, lz)
+                            out[(cx * 16 + lx, cz * 16 + lz)] = sample(value, lx, lz)
                 except (struct.error, IndexError):
                     continue  # one corrupt chunk is a hole in the map
         return out
@@ -251,8 +274,8 @@ class WorldIndex:
         }
 
 
-def _is_any_data3d(key: bytes) -> bool:
-    return (len(key) == 9 and key[8] == DATA3D) or (len(key) == 13 and key[12] == DATA3D)
+def _is_surface(key: bytes) -> bool:
+    return len(key) in (9, 13) and key[-1] in (DATA3D, DATA2D)
 
 
 def render_biome(columns: dict[tuple[int, int], Column], cx0: int, cz0: int, n: int) -> list[bytearray]:

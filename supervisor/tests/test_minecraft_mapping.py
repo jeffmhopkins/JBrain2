@@ -181,6 +181,42 @@ def test_zoomed_out_tiles_sample_the_columns_they_show(tmp_path: Path) -> None:
     assert len(index.samples(0, 0, 0, 1, 2)) == 64  # zoom 1: every other column
 
 
+def test_a_chunk_last_saved_before_1_18_is_drawn_not_left_as_a_hole(
+    tmp_path: Path,
+) -> None:
+    def data2d(height: int, biome: int) -> bytes:
+        return struct.pack("<256h", *([height] * 256)) + bytes([biome] * 256)
+
+    write_table(
+        tmp_path / "000005.ldb",
+        [
+            (
+                mapping.chunk_key(0, 0, 0, mapping.DATA3D),
+                1,
+                data3d(lambda x, z: 144, 1),
+            ),
+            (mapping.chunk_key(1, 0, 0, mapping.DATA2D), 2, data2d(80, 4)),
+            # Re-saved since the upgrade: both records exist, and Data3D is current.
+            (mapping.chunk_key(2, 0, 0, mapping.DATA2D), 3, data2d(10, 0)),
+            (
+                mapping.chunk_key(2, 0, 0, mapping.DATA3D),
+                4,
+                data3d(lambda x, z: 144, 1),
+            ),
+        ],
+    )
+    index = mapping.WorldIndex(tmp_path)
+    index.refresh()
+    assert index.extent(0)["chunks"] == 3
+    cols = index.columns(0, 0, 0, 3)
+    # y=80 before 1.18 is y=80 after it: 144 above the new floor, like its neighbour.
+    assert cols[(1, 0)].height[0] == 144 and cols[(1, 0)].biome[0] == 4
+    assert cols[(2, 0)].biome[0] == 1
+    assert index.samples(0, 0, 0, 3, 16)[(24, 8)] == (144, 4)
+    rows = mapping.render_biome(cols, 0, 0, 16)
+    assert tuple(rows[8][24 * 4 : 24 * 4 + 4]) == (*mapping.BIOME_COLORS[4], 255)
+
+
 def test_the_index_rereads_on_change_but_not_more_often_than_a_minute(
     tmp_path: Path,
 ) -> None:
