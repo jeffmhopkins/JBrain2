@@ -140,6 +140,8 @@ class Rig:
         # both dropped when that world's database files change.
         self._map_lock = threading.Lock()
         self._map_index: dict[str, mapping.WorldIndex] = {}
+        self._map_seed: dict[str, str | None] = {}
+        self._predictor = mapping.Predictor()
         self._tiles: dict[tuple, bytes] = {}
         self.slots = worlds.SlotStore(
             SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
@@ -1072,6 +1074,10 @@ class Rig:
         index.refresh()
         if index._signature != before:
             self._tiles = {k: v for k, v in self._tiles.items() if k[0] != folder}
+        if index._signature != before or folder not in self._map_seed:
+            # Re-read with the index: a restore or reset can change the world under a folder.
+            seed = worlds.read_level_dat(self.world_dir(folder)).get("RandomSeed")
+            self._map_seed[folder] = str(seed) if isinstance(seed, int) else None
         return folder, index
 
     def map_info(self, slot_id: str, dim: str) -> dict[str, Any]:
@@ -1080,8 +1086,11 @@ class Rig:
         if dim not in mapping.DIMENSIONS:
             raise ValueError("dimension must be overworld, nether or the_end")
         with self._map_lock:
-            _, index = self._map_for(slot_id)
+            folder, index = self._map_for(slot_id)
             area = index.extent(mapping.DIMENSIONS[dim])
+            predicted = self._map_seed.get(folder) is not None and self._predictor.available(
+                mapping.DIMENSIONS[dim]
+            )
         return {
             "slot": slot_id,
             "dimension": dim,
@@ -1089,6 +1098,9 @@ class Rig:
             "tile_blocks": mapping.TILE,
             "max_zoom": mapping.MAX_ZOOM,
             "layers": ["biome"],
+            # Ground nobody has been to is drawn from the seed; without it, transparent
+            # is ungenerated ground.
+            "predicted": predicted,
         }
 
     def map_tile(self, slot_id: str, dim: str, zoom: int, tx: int, tz: int) -> bytes:
@@ -1103,7 +1115,15 @@ class Rig:
             key = (folder, dim, zoom, tx, tz)
             cached = self._tiles.get(key)
             if cached is None:
-                cached = mapping.tile(index, mapping.DIMENSIONS[dim], zoom, tx, tz)
+                cached = mapping.tile(
+                    index,
+                    mapping.DIMENSIONS[dim],
+                    zoom,
+                    tx,
+                    tz,
+                    self._predictor,
+                    self._map_seed.get(folder),
+                )
                 if len(self._tiles) > 512:  # a few MB of PNGs at most
                     self._tiles.clear()
                 self._tiles[key] = cached

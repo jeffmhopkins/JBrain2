@@ -1392,6 +1392,7 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
         rig.map_tile("slot1", "overworld", mapping.MAX_ZOOM + 1, 0, 0)
     info = rig.map_info("slot1", "overworld")
     assert info["extent"] is None and info["tile_blocks"] == 256  # empty db: all fog
+    assert info["predicted"] is False  # no level.dat seed and no binary in the test rig
     png = rig.map_tile("slot1", "overworld", 0, 0, 0)
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     assert (

@@ -3,7 +3,12 @@
 The first layer is the **biome atlas**. It needs no block parsing at all: every generated
 chunk stores a `Data3D` record holding its height map and its biome per 4×4×4 cell, which
 is everything a hillshaded biome map needs, and is read straight off the world's LevelDB
-(`leveldb.py`). Ungenerated ground is left transparent, which is the fog the viewer draws.
+(`leveldb.py`).
+
+Ground nobody has been to is **predicted from the seed** (`Predictor`, the owner's
+"satellite from orbit"), then the real chunks are drawn over it wherever they exist.
+Only the Overworld is predicted: Bedrock's Nether did not match the prediction when
+checked, so ungenerated Nether and End ground stays transparent.
 
 A tile is 256×256 pixels. At zoom 0 it is 256×256 blocks, one pixel per block; each zoom
 out doubles the blocks per pixel, down to one pixel per chunk. Zoomed-out pixels each
@@ -19,9 +24,12 @@ What the record looks like on 1.26 (checked against a real world, plan §M8 note
 from __future__ import annotations
 
 import math
+import os
 import struct
+import subprocess
 import time
 import zlib
+from collections import OrderedDict
 from pathlib import Path
 
 import leveldb
@@ -343,16 +351,102 @@ def render_sampled(
     return rows
 
 
-def tile(index: WorldIndex, dim: int, zoom: int, tx: int, tz: int) -> bytes:
+# cubiomes speaks Java's biome ids. They are Bedrock's for every biome older than 1.13,
+# but the oceans of 1.13 and everything from 1.16 on were numbered differently. Checked
+# against a real 1.26 world generated from the same seed (plan §M8, "satellite").
+JAVA_TO_BEDROCK = {
+    10: 46, 44: 40, 45: 42, 46: 44, 47: 41, 48: 43, 49: 45, 50: 47, 168: 48, 169: 49,
+    174: 188, 175: 187, 177: 186, 178: 185, 179: 184, 180: 182, 181: 183, 182: 189,
+    183: 190, 184: 191, 185: 192, 186: 193,
+}
+PREDICT_BIN = Path(os.environ.get("MC_PREDICT_BIN", "/app/jbrain-predict"))
+_PREDICT_TIMEOUT_S = 30
+
+
+class Predictor:
+    """The Overworld's surface from its seed alone, by the `jbrain-predict` binary
+    (deploy/minecraft/predict/). A seed always predicts the same ground, so a tile's
+    prediction is kept (compressed) across the re-reads that drop the rendered tiles."""
+
+    def __init__(self, binary: Path = PREDICT_BIN, keep: int = 256) -> None:
+        self.binary, self.keep = binary, keep
+        self._cache: OrderedDict[tuple, bytes] = OrderedDict()
+
+    def available(self, dim: int) -> bool:
+        return dim == 0 and self.binary.is_file()
+
+    def grid(
+        self, seed: str, dim: int, x0: int, z0: int, n: int, step: int
+    ) -> dict[tuple[int, int], tuple[int, int]]:
+        """(height, Bedrock biome) every `step` blocks over an n×n grid from (x0, z0),
+        keyed by block position; {} when nothing can be predicted there."""
+        if not self.available(dim):
+            return {}
+        key = (seed, dim, x0, z0, n, step)
+        packed = self._cache.get(key)
+        if packed is None:
+            try:
+                out = subprocess.run(
+                    [str(self.binary), seed, str(dim), str(x0), str(z0), str(n), str(step)],
+                    capture_output=True,
+                    timeout=_PREDICT_TIMEOUT_S,
+                    check=True,
+                ).stdout
+            except (OSError, subprocess.SubprocessError):
+                return {}  # the real chunks still draw; only the prediction is missing
+            if len(out) != n * n * 4:
+                return {}
+            packed = zlib.compress(out, 1)
+            self._cache[key] = packed
+            if len(self._cache) > self.keep:
+                self._cache.popitem(last=False)
+        else:
+            self._cache.move_to_end(key)
+        values: tuple[int, ...] = struct.unpack(f"<{n * n * 2}h", zlib.decompress(packed))
+        grid: dict[tuple[int, int], tuple[int, int]] = {}
+        for k in range(n * n):
+            biome = values[2 * k + 1]
+            grid[(x0 + (k % n) * step, z0 + (k // n) * step)] = (
+                values[2 * k],
+                JAVA_TO_BEDROCK.get(biome, biome),
+            )
+        return grid
+
+
+def _over(base: list[bytearray], top: list[bytearray]) -> list[bytearray]:
+    """`top`'s drawn pixels over `base`: the real world wins wherever it exists."""
+    for brow, trow in zip(base, top):
+        for o in range(3, len(trow), 4):
+            if trow[o]:
+                brow[o - 3 : o + 1] = trow[o - 3 : o + 1]
+    return base
+
+
+def tile(
+    index: WorldIndex,
+    dim: int,
+    zoom: int,
+    tx: int,
+    tz: int,
+    predictor: Predictor | None = None,
+    seed: str | None = None,
+) -> bytes:
     """One 256×256 PNG tile. Zoom 0 is one pixel per block; zoom k is one pixel per 2^k
-    blocks, down to one pixel per chunk. Tile (0, 0) at any zoom starts at block (0, 0)."""
+    blocks, down to one pixel per chunk. Tile (0, 0) at any zoom starts at block (0, 0).
+    With a predictor and the world's seed, ground nobody has been to is drawn too."""
     span = CHUNKS_PER_TILE << zoom
     cx0, cz0 = tx * span, tz * span
+    step = 1 << zoom
     if zoom:
-        step = 1 << zoom
-        samples = index.samples(dim, cx0, cz0, span, step)
-        return png(render_sampled(samples, cx0 * 16, cz0 * 16, TILE, step))
-    return png(render_biome(index.columns(dim, cx0, cz0, span), cx0, cz0, span))
+        real = render_sampled(index.samples(dim, cx0, cz0, span, step), cx0 * 16, cz0 * 16, TILE, step)
+    else:
+        real = render_biome(index.columns(dim, cx0, cz0, span), cx0, cz0, span)
+    if predictor is None or seed is None:
+        return png(real)
+    predicted = predictor.grid(seed, dim, cx0 * 16, cz0 * 16, TILE, step)
+    if not predicted:
+        return png(real)
+    return png(_over(render_sampled(predicted, cx0 * 16, cz0 * 16, TILE, step), real))
 
 
 def floor_of(dim: int) -> int:
