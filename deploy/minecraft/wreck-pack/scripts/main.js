@@ -25,6 +25,7 @@ const SHIP_AREA = "jbrain_wreck_ship";
 // crater, skid mark and canopy reach about 40 further.
 const SURVEY = 64;
 const LOAD_WAIT_TICKS = 20 * 90;
+const STEADY_TICKS = 5;
 const MAX_FAILURES = 3;
 const RETRY_TICKS = 20 * 30;
 const POD_STEPS = ["terrain", "place", "crater", "canopy", "details", "kit", "spawn"];
@@ -91,20 +92,18 @@ function set(dim, x, y, z, id, states) {
 }
 
 // The ticking areas this run has up, by name, with their boxes. On the box a removed
-// area's chunks unload a moment later, so re-adding an area it already had let the load
-// check pass on chunks about to go, and every block edit after it fell on nothing (SW4).
+// area's chunks unload a moment later, so re-adding one it already had let the load
+// check pass on chunks about to go, and every block edit after it fell on nothing. An
+// area already up for the same box is kept. A replaced one is removed and re-added in
+// the same tick, never waited out: with no player on and no area up the world barely
+// ticks (13 ticks in its first 2.5 minutes, on the box), so any wait there takes ages.
+// loadBox's steady reads are what catch the late unload (SW4).
 const live = new Map();
-// How long a removed area's chunks are given to unload before the load check reads.
-const UNLOAD_TICKS = 40;
 
-function* area(dim, name, x0, z0, x1, z1) {
+function area(dim, name, x0, z0, x1, z1) {
   const box = `${x0} ${z0} ${x1} ${z1}`;
   if (live.get(name) === box) return;
-  // One left from a crash, or this run's for another box: gone first, then waited out.
-  if (command(dim, `tickingarea remove ${name}`, true)) {
-    const start = system.currentTick;
-    while (system.currentTick - start < UNLOAD_TICKS) yield;
-  }
+  command(dim, `tickingarea remove ${name}`, true);
   command(dim, `tickingarea add ${x0} 0 ${z0} ${x1} 0 ${z1} ${name} true`);
   live.set(name, box);
 }
@@ -119,29 +118,36 @@ function dropAreas(dim) {
 }
 
 /**
- * Wait (as a job: yielding) until every chunk of the box can be read. A ticking area
- * loads its chunks over several ticks, so the corners being ready says nothing about
- * the middle: one column per chunk is checked, and a chunk once seen stays counted.
- * The wait is in game ticks, not yields: the game runs many job steps a tick, so a
- * yield count gave a new world's chunks under a second to generate (SW4, on the box).
+ * Wait (as a job: yielding) until every chunk of the box can be read, and stays so for
+ * STEADY_TICKS ticks in a row. A ticking area loads its chunks over several ticks, so
+ * the corners being ready says nothing about the middle: one column per chunk is read.
+ * And a chunk read once can still be about to unload (a just-removed area's), so every
+ * chunk is read again each tick until the box has held. The wait is in game ticks, not
+ * yields: the game runs many job steps a tick, so a yield count gave a new world's
+ * chunks under a second to generate (SW4, on the box).
  */
 function* loadBox(dim, x0, z0, x1, z1) {
-  const waiting = new Set();
+  const columns = [];
   for (let cx = Math.floor(x0 / 16); cx <= Math.floor(x1 / 16); cx += 1) {
-    for (let cz = Math.floor(z0 / 16); cz <= Math.floor(z1 / 16); cz += 1) waiting.add(`${cx},${cz}`);
+    for (let cz = Math.floor(z0 / 16); cz <= Math.floor(z1 / 16); cz += 1) {
+      columns.push([Math.min(Math.max(cx * 16, x0), x1), Math.min(Math.max(cz * 16, z0), z1)]);
+    }
   }
   const start = system.currentTick;
+  let held = 0;
+  let last = -1;
+  let missing = columns.length;
   while (system.currentTick - start < LOAD_WAIT_TICKS) {
-    for (const k of [...waiting]) {
-      const [cx, cz] = k.split(",").map(Number);
-      const x = Math.min(Math.max(cx * 16, x0), x1);
-      const z = Math.min(Math.max(cz * 16, z0), z1);
-      if (blockAt(dim, x, 0, z)) waiting.delete(k);
+    const now = system.currentTick;
+    if (now !== last) {
+      last = now;
+      missing = columns.filter(([x, z]) => !blockAt(dim, x, 0, z)).length;
+      held = missing ? 0 : held + 1;
+      if (held >= STEADY_TICKS) return;
     }
-    if (waiting.size === 0) return;
     yield;
   }
-  throw new Unloaded(`${waiting.size} chunks of ${x0},${z0}..${x1},${z1} never loaded`);
+  throw new Unloaded(`${missing} chunks of ${x0},${z0}..${x1},${z1} never loaded`);
 }
 
 /** The ground of one column: the topmost block that isn't a plant, tree or snow cover. */
@@ -174,7 +180,7 @@ function* plan_(dim, state) {
   const spawn = world.getDefaultSpawnLocation();
   const cx = Math.floor(spawn.x);
   const cz = Math.floor(spawn.z);
-  yield* area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = yield* survey(dim, cx, cz, SURVEY);
   const site = plan.chooseSite(ground, { x: cx, z: cz }, WRECK.pod);
@@ -315,7 +321,7 @@ function* podStep(dim, state, step, ground) {
 
 function* buildPod(dim, state) {
   const { x: cx, z: cz } = state.spawn;
-  yield* area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = plan.decodeGround(state.ground);
   for (const step of POD_STEPS) {
@@ -363,7 +369,7 @@ function* buildShip(dim, state) {
     const base = plan.shipBase(state.frame, pod, ship);
     for (const shift of plan.SHIP_SHIFTS) {
       const [x0, z0] = [base.x, base.z + shift];
-      yield* area(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
+      area(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
       yield* loadBox(dim, x0, z0, x0 + lx - 1, z0 + lz - 1);
       const y = plan.shipHeight(base.y, yield* peakUnder(dim, x0, z0, lx, lz), ly, top);
       if (y !== null) {
@@ -377,7 +383,7 @@ function* buildShip(dim, state) {
     save(state);
   }
   const { x, y, z } = state.ship;
-  yield* area(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
+  area(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
   yield* loadBox(dim, x, z, x + lx - 1, z + lz - 1);
   for (let i = state.tiles ?? 0; i < ship.tiles.length; i += 1) {
     const t = ship.tiles[i];
@@ -424,7 +430,9 @@ function* build(state) {
       system.runTimeout(() => system.runJob(build(load())), RETRY_TICKS);
     }
   } finally {
-    dropAreas(dim);
+    // A build that will be retried keeps its areas up: with them gone and nobody on, the
+    // world barely ticks, and the 30 s retry would take hours.
+    if (state.stage === "done") dropAreas(dim);
   }
 }
 

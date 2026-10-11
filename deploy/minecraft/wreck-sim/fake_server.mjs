@@ -130,7 +130,8 @@ export class Dimension {
     const words = text.split(/\s+/);
     if (words[0] === "tickingarea" && words[1] === "remove") {
       const gone = this.areas.get(words[2]);
-      if (!gone) throw new Error(`no ticking area ${words[2]}`);
+      // The box answers a remove of no such area without throwing.
+      if (!gone) return { successCount: 0 };
       this.areas.delete(words[2]);
       this.dying.push({ box: gone.box, until: tick() + UNLOAD_DELAY_TICKS });
     } else if (words[0] === "tickingarea" && words[1] === "add" && words[2] !== "circle") {
@@ -156,6 +157,7 @@ export class Dimension {
 let stopAfterSteps = Infinity;
 let clock = 0; // job steps run so far
 let stopped = 0;
+let idle = 0;
 // The game runs many job steps a tick, so a wait counted in yields is far shorter than
 // it looks; the fake does the same, and loads chunks by the tick, as the game does.
 const STEPS_PER_TICK = 50;
@@ -197,7 +199,11 @@ export const system = {
     // test stops the "server" mid-job, is dropped there with no cleanup at all.
     let steps = 0;
     while (!gen.next().done) {
+      const was = tick();
       clock += 1;
+      // A tick a build spends with no ticking area up: on the box, with nobody on, the
+      // world barely ticks then, so a wait through one takes minutes.
+      if (tick() !== was && dim && dim.areas.size === 0) idle += 1;
       if (++steps >= stopAfterSteps) {
         stopped += 1;
         timeouts.length = 0; // the "server" is gone: nothing it scheduled runs either
@@ -225,6 +231,7 @@ export const sim = {
     ticks = 0;
     stopAfterSteps = Infinity;
     stopped = 0;
+    idle = 0;
     clock = 0;
     timeouts.length = 0;
     return dim;
@@ -234,6 +241,7 @@ export const sim = {
     for (let i = 0; timeouts.length && i < 20; i += 1) timeouts.shift()();
   },
   stopped: () => stopped,
+  idleTicks: () => idle,
   clock: () => clock,
   /** Stop the "server" dead after this many job steps (Infinity: never). */
   stopAfter(n) {

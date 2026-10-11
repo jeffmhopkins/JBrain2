@@ -1736,6 +1736,14 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   chunks are waited out (2 s) before the load check. In the simulator, a removed area's
   chunks now last one tick, and a new area has none ready on the tick it's added, so
   the old code fails there exactly as it did on the box.
+- That fix made each build take about 10 minutes before the pod was placed. Its 2-second
+  unload wait ran while no ticking area was up, and with nobody on the world all but
+  stops ticking then: 13 ticks in its first 2.5 minutes. Now nothing waits without an
+  area up. A replaced area is removed and re-added in the same tick. `loadBox` catches
+  the late unload by reading every chunk again each tick, until the box has held for 5
+  ticks. A build that will be retried keeps its areas, so its 30-second retry doesn't
+  take hours either. In the simulator, removing a missing area no longer throws, which
+  matches the box, and a build fails if it spends a tick with no area up.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 

@@ -126,6 +126,8 @@ async function run(name, spec, n, stopAt = Infinity) {
   const done = events.filter((e) => e.phase === "done");
   // Every block edit a build tries must land; the box once lost them all silently.
   checks.writes_landed = !logs.some((l) => l.includes("not written"));
+  // A build never waits with no ticking area up (the box's world all but stops then).
+  checks.never_idle = sim.idleTicks() === 0;
   const wrote = (step) => {
     const line = logs.find((l) => l.includes(`[jbrain-wreck] step ${step}: `));
     return line ? Number(line.split(": ")[1].split(" ")[0]) : 0;
