@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1691,6 +1691,41 @@ mob farm needs to be outside the 3×3.
 - **The Warden:** removed, or left alone like the bosses.
 - **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
   lore page; its icon joins the item set (`docs/mocks/minecraft-items/`).
+
+### M17 — Deep-scan limit: two locates per player per Minecraft day (owner, 2026-10-11; not built)
+
+**Why.** Dave's searches stay useful without making the world trivial: "where's the
+nearest diamond" or "the nearest ancient city" is a treat, not a reflex. In the story, the
+satellite's deep scan needs time to recharge.
+
+**Decided (owner, 2026-10-11):**
+- **Two deep scans per player per Minecraft day**, in game. Each player has their own two;
+  the limit is not shared.
+- **The PWA is unlimited:** the owner's own chats with Minecraft_Dave and the map's
+  Structures overlay never count.
+- **Sleeping resets it:** the day is the world's own day counter (`time query day`), so a
+  night slept through starts a new day and two new scans.
+- **A repeat is free:** asking again for something Dave already found for that player today
+  (the same structure kind or block, from about the same place) answers from the first scan
+  and costs nothing.
+
+**What counts as a deep scan:** the searches that reveal something nobody has pointed out:
+`mc_nearby` (the server's own `locate`) and `mc_find_block`. Free: `mc_what_is_at`, saved
+places and waypoints, where other players are, a player's own trail and deaths.
+
+**How it's built:**
+- **Enforced in the tool handlers**, on in-game turns only (the door's player tier), so no
+  prompt can talk past it. Out of scans, the tool answers in character without running the
+  search ("…the deep scan needs to recharge, crew. Ask me again tomorrow.") and the answer
+  says how many remain otherwise ("1 scan left today").
+- **The count** lives in a small owner-only table (world folder, xuid, Minecraft day, scans
+  used, and today's answers for the free repeat), with an RLS isolation test. It survives
+  restarts.
+- **The day** comes from the console (`time query day`), read when a scan is asked for.
+- Dave's prompt learns the rule, so he can say how many scans a player has left.
+
+**Lore:** the recharge story and Dave's out-of-scans line go on the Bleepbloop_City lore
+page.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
