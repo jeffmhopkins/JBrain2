@@ -254,7 +254,8 @@ async def reset_world(
         settings,
         "POST",
         f"/worlds/{slot}/reset",
-        json=body.model_dump(),
+        # An unset crash site is left out, so the box applies its own default.
+        json=body.model_dump(exclude={"wreck"} if body.wreck is None else None),
         timeout_s=WORLD_JOB_TIMEOUT_S,
     )
 

@@ -181,7 +181,7 @@ async def test_a_worlds_crash_site_choice_reaches_the_box(fake) -> None:
     await api.reset_world("slot2", api.ResetIn(mode="same_seed", wreck=True), SETTINGS)
     assert fake["calls"][-1][2]["json"]["wreck"] is True
     await api.reset_world("slot2", api.ResetIn(mode="empty"), SETTINGS)
-    assert fake["calls"][-1][2]["json"]["wreck"] is None  # the box's default
+    assert "wreck" not in fake["calls"][-1][2]["json"]  # the box's default
 
 
 async def test_players_take_who_is_online_from_the_live_server(
