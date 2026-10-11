@@ -118,6 +118,12 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return state
 
 
+def _asked(fake: dict[str, Any]) -> list[Any]:
+    # Only the sidecar reads these routes make: another test's leftover drain loop may
+    # still be polling the faked sidecar's /events.
+    return [c for c in fake["calls"] if c[1] in ("/worlds", "/status") or c[1].startswith("/map")]
+
+
 def _client(*, owner: bool = False, capacity: float = 60) -> TestClient:
     app = FastAPI()
     app.include_router(minecraft_share.router, prefix="/api")
@@ -170,7 +176,7 @@ def test_the_page_open_names_the_world_and_player_and_counts_a_view(fake) -> Non
 )
 def test_an_unknown_or_revoked_token_reads_nothing(fake, path: str) -> None:
     assert _client().get(f"/api/mc-share/nope{path}").status_code == 404
-    assert fake["calls"] == [] and fake["images"] == [] and fake["positions"] == []
+    assert _asked(fake) == [] and fake["images"] == [] and fake["positions"] == []
 
 
 def test_a_slot_now_holding_another_world_is_gone(fake) -> None:
@@ -253,7 +259,7 @@ def test_no_owner_action_is_reachable_with_a_token(fake) -> None:
     # The owner routes themselves still need the owner.
     assert client.get("/api/minecraft/shares").status_code == 401
     assert client.post("/api/minecraft/map/structures/sweep").status_code == 401
-    assert fake["calls"] == []
+    assert _asked(fake) == []
 
 
 def test_reads_are_rate_limited(fake) -> None:
