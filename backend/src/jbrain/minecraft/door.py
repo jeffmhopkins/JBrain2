@@ -359,6 +359,11 @@ class DaveDoor:
             # Transport is a Power Pack use: until the asker has made one, the tool and its
             # description aren't offered, so nothing in the turn names the pack (§M19).
             profile = replace(profile, tools=(profile.tools or frozenset()) - {"mc_transport"})
+        if "replicator" not in q.asker.known:
+            # Likewise the Replicator's tool, until they could have made one (§M15).
+            profile = replace(
+                profile, tools=(profile.tools or frozenset()) - {"mc_replicator_program"}
+            )
         items = await self.item_guide(q.asker)
         profile = replace(profile, prompt=f"{profile.prompt}\n\n{items}\n\n{intro}")
         conversation = [

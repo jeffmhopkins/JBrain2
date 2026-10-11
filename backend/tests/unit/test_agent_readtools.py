@@ -1812,6 +1812,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "9c9c361ada06950f833ffd1248dfc2da387830bd96796118d8aab1848c1a0b9c",
         ),
+        # In game only: the asker's held Replicator, from 8 stacks they carry (§M15).
+        "mc_replicator_program.tool": (
+            "mc_replicator_program",
+            1,
+            "6406cfd569f7751ba799020b9a934833ed5808eca95d3c5b48cfc28150a68685",
+        ),
         "mc_goals.tool": (
             "mc_goals",
             1,

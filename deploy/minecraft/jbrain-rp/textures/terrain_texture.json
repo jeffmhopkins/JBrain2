@@ -6,6 +6,27 @@
   "texture_data": {
     "jbrain_no_spawn_beacon_bottom": { "textures": "textures/blocks/no_spawn_beacon_bottom" },
     "jbrain_no_spawn_beacon_side": { "textures": "textures/blocks/no_spawn_beacon_side" },
-    "jbrain_no_spawn_beacon_top": { "textures": "textures/blocks/no_spawn_beacon_top" }
+    "jbrain_no_spawn_beacon_top": { "textures": "textures/blocks/no_spawn_beacon_top" },
+    "jbrain_replicator_front": {
+      "textures": "textures/blocks/replicator_front"
+    },
+    "jbrain_replicator_front_programmed": {
+      "textures": "textures/blocks/replicator_front_programmed"
+    },
+    "jbrain_replicator_top": {
+      "textures": "textures/blocks/replicator_top"
+    },
+    "jbrain_replicator_top_programmed": {
+      "textures": "textures/blocks/replicator_top_programmed"
+    },
+    "jbrain_replicator_side": {
+      "textures": "textures/blocks/replicator_side"
+    },
+    "jbrain_replicator_front_working": {
+      "textures": "textures/blocks/replicator_front_working"
+    },
+    "jbrain_replicator_top_working": {
+      "textures": "textures/blocks/replicator_top_working"
+    }
   }
 }

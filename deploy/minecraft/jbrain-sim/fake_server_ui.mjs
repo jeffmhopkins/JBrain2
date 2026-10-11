@@ -41,3 +41,27 @@ export class MessageFormData {
     return Promise.resolve().then(() => forms.answer(player, shown));
   }
 }
+
+// The Replicator's panel (§M15): a title, a body and buttons, answered like the others.
+export class ActionFormData {
+  constructor() {
+    this.form = { title: "", body: "", buttons: [] };
+  }
+  title(t) {
+    this.form.title = t;
+    return this;
+  }
+  body(b) {
+    this.form.body = b;
+    return this;
+  }
+  button(t) {
+    this.form.buttons.push(t);
+    return this;
+  }
+  show(player) {
+    const shown = { player, ...this.form };
+    forms.shown.push(shown);
+    return Promise.resolve().then(() => forms.answer(player, shown));
+  }
+}

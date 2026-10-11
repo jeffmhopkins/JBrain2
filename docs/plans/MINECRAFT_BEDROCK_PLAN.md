@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16✅ M17✅ M18✅ M19✅ M20✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1730,7 +1730,7 @@ piece is worn.
 damage on Bedrock; a custom wearable with an attachable shows on the Xbox; and the
 effect refresh doesn't flicker.
 
-### M15 — The Replicator: a furnace Dave programs to make one thing (owner, 2026-10-11; not built)
+### M15 — The Replicator: a furnace Dave programs to make one thing (owner, 2026-10-11; shipped 2026-10-11)
 
 **What and why.** The story and rules are canon in Bleepbloop_City's
 [`notes/lore.md`](https://github.com/jeffmhopkins/Bleepbloop_City/blob/main/notes/lore.md#the-replicator).
@@ -1778,6 +1778,77 @@ interval.
 (enough, too few, a 16-stack target, an unstackable target, reprogramming), the run loop
 (fuel burn time, a full output, an unloaded chunk) and breaking (the item returns with its
 target). The Dave tool gets the usual tool tests.
+
+**Shipped 2026-10-11 (wave mc-replicator).** Built mostly as above; where it differs, the
+build wins and the reasons are here.
+- **A custom block, not a vanilla furnace.** The item design
+  (`docs/mocks/minecraft-items/README.md`, set A, binding) makes the Replicator a placer
+  item for its own block, `jbrain:replicator`, with the set's faces, a `programmed` state
+  that lights the front and top, and `minecraft:placement_direction` facing. Putting a
+  vanilla furnace down instead would show a plain furnace and drop a plain furnace.
+  - **What stable `@minecraft/server` 2.x can't do:** a custom block can't have a
+    container or a furnace screen, and a script can't open one on it. Hoppers can't push
+    into it or pull from it.
+  - **So the "furnace" is the containers round it:** a chest, barrel or hopper **on top**
+    holds the blocks it burns (any item that is also a block), one on **any side** holds
+    the fuel, and one **below** takes what it makes. Those are the faces a furnace's
+    hoppers use, so a hopper on top feeding down, one beside it, and one below carrying
+    the output away all work. Canon's "fuel in the bottom" is the furnace screen's bottom
+    slot; here the bottom is the output.
+  - **Decided (owner, 2026-10-11): furnace layout — top input, side fuel, bottom
+    output, hoppers on each face like a vanilla furnace.** Chests and barrels work too. A
+    hopper on top pointing down, or beside it pointing in, can't push into the block, so
+    its items wait in it and the script pulls them; a hopper below gets the output and
+    passes it on.
+  - Using the block (right-click) opens a small `@minecraft/server-ui` panel (owner
+    request, 2026-10-11): titled "Iron Replicator" or "Replicator — not programmed", with
+    what it makes, what it's waiting for right now, and how to connect each face. It
+    opens no panel while the player sneaks (that's placing a hopper or chest on it, as on
+    a furnace), never stacks a second one, and falls back to chat when a form can't open.
+    Its wording is a draft until signed off on the lore page.
+- **Working look (owner request, 2026-10-11).** A `jbrain:working` state beside
+  `jbrain:programmed` gives three looks: blank, programmed-idle and programmed-working.
+  Working swaps the front window and top centre for 8-frame flipbooks (an amethyst pulse
+  and an ember glow, `make_replicator_working.py`) and gives light 10. It turns on on a
+  tick that makes something and off on the first that doesn't; unloaded, it keeps its
+  last look. Each item made puts a flame and an amethyst sparkle at the front and plays a
+  furnace crackle; a particle or sound the game refuses never stops the making. No idle
+  crackle between items: the block only ticks every 10 s. The item sprite stays the flat
+  programmed one.
+- **The run is a block tick, not an interval over a list.** The block's
+  `minecraft:tick` fires every 200 game ticks (10 s), and the game only ticks loaded
+  land, so canon's "only while its land is awake" is the engine's own rule, and nothing
+  catches up afterwards. Each tick: room below, a block on top, and fuel (a new fuel item
+  is lit only when under 200 ticks remain, using vanilla burn times: coal 8, a coal block
+  80, lava 100 and its bucket left behind) make one target. Wanting any of them, it waits
+  and takes nothing.
+- **Programming** is `mc_replicator_program(target)` (`agent/minecraftreplicator.py`, in
+  game only, in both of Dave's tool sets): one `scriptevent jb:replicator` with the
+  asker's gamertag and a checked `minecraft:` id; "iron", "gold", "copper" and
+  "netherite" mean their ingots. The pack refuses (not holding a Replicator, no such
+  item, a stack size other than 64, the same target again, fewer than 512) or takes
+  exactly 512 from the inventory and swaps the held item for
+  `jbrain:replicator_programmed` named "<Target> Replicator", lore *Burns any block into
+  <target>*, target in the item property `jb:target`. That second item exists only so the
+  slot draws the programmed sprite (an item's icon can't change per stack); both place
+  the same block. Prompt `agent-minecraft-dave-v13`.
+- **Placing and breaking.** On placement the held item's target goes into a world
+  property per block (`jb:replicator:<dim>:<x>,<y>,<z>`, with fuel left and its state);
+  the block's loot table is empty and breaking spawns the same item back, programmed as
+  it was (also in creative). Fuel burning inside is lost, as a furnace's is. It is
+  immune to explosions and immovable by pistons, so neither can lose its programming.
+- **The guide (§M19):** a player with 8 Power Packs on them unlocks `replicator` (the
+  pack checks once a second); its entry is in `agent-minecraft-dave-guide-v4`.
+- **Packs:** behavior pack 1.3.0 and resource pack 1.2.0, so clients fetch the new
+  icons and faces.
+
+Only checkable on the box: that the block loads (custom components on format 1.21.90+,
+`minecraft:movable`, `replace_block_item`), that its front faces the player in all four
+directions and the GUI shows the flat sprite, that it keeps ticking after a restart,
+that a hopper below takes the output on, that breaking it gives the named item back, and
+that "Dave, program this replicator for iron" works with 512 ingots, that the working faces animate and
+light the room only while it makes things, that the flame, sparkle and crackle play at the
+front in every facing, and that the panel opens on a phone and an Xbox.
 
 ### M16 — The No-Spawn Beacon: a mob-free 3×3 of chunks (owner, 2026-10-11; shipped 2026-10-11)
 

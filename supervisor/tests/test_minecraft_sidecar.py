@@ -1639,6 +1639,8 @@ def test_every_world_gets_the_jbrain_resource_pack_and_clients_must_take_it(
     icons = world / "resource_packs" / "jbrain" / "textures" / "items"
     assert sorted(p.name for p in icons.iterdir()) == [
         "power_pack.png",
+        "replicator.png",
+        "replicator_programmed.png",
         "tricorder.png",
     ]
     assert rig.properties()["texturepacks-required"] == "true"
