@@ -94,11 +94,7 @@ def test_the_tricorder_is_locked_and_kept_by_the_script() -> None:
 def test_daves_lines_live_in_one_block_marked_with_their_sign_off() -> None:
     rules = (PACK / "scripts" / "rules.js").read_text()
     block = rules.split("export const LINES = {", 1)[0]
-    signed = (
-        "Signed off by the owner (2026-10-11): `noSignal`, `notTuned` and `rebeamed`"
-    )
-    assert signed in block
-    assert "DRAFTS" in block
+    assert "Signed off by the owner (2026-10-11): every line here." in block
     main = (PACK / "scripts" / "main.js").read_text()
     assert "kssht" not in main and "nearly lost you" not in main  # only via LINES
 

@@ -2184,9 +2184,8 @@ block, `LINES` in `jbrain-pack/scripts/rules.js`, copied verbatim from the lore 
 Not built: the welcome and the first-time beats, `/jb:dave hello`, and the prompt's
 story section.
 
-The re-beam line and the two static lines are signed off with the rest of Dave's lines
-(owner, 2026-10-11). Two lines from the plan aren't on the lore page yet, so they wait for
-sign-off there: "This tricorder is retired" (§M9) and "Your Power Pack burnt out…" (§M10).
+Every line the pack uses is signed off on the lore page (owner, 2026-10-11), including
+"This tricorder is retired" (§M9) and "Your Power Pack burnt out…" (§M10).
 
 **Tests.** The pack's beat bookkeeping and the Tricorder checks get node tests against
 the fake server, as the wreck pack's do. The prompt change gets a prompt test.
