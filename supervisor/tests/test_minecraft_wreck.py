@@ -638,7 +638,8 @@ def test_the_planning_rules_hold(tmp_path: Path) -> None:
 SIM_SCENARIOS = [
     "plains", "forest", "jungle", "desert", "snowy", "mountainside", "badlands",
     "swamp", "mangrove", "island", "ocean", "high_plateau", "place_fails_once",
-    "peaks_under_ship", "reloaded", "already_played", "resume_after_1pct",
+    "peaks_under_ship", "reloaded", "slow_and_stuck", "already_played",
+    "resume_after_1pct",
     "resume_after_30pct",
     "resume_after_60pct", "resume_after_90pct",
 ]  # fmt: skip
@@ -672,9 +673,10 @@ def test_the_crash_site_comes_down_right_in_every_kind_of_world(tmp_path: Path) 
     assert not any(
         r["site"]["splash"]
         for n, r in results.items()
-        if n not in ("ocean", "already_played")
+        if n not in ("ocean", "already_played", "slow_and_stuck")
     )
     assert "site" not in results["already_played"]  # passed over: nothing built
+    assert "site" not in results["slow_and_stuck"]  # gave up in time, built nothing
     # A spawn too high for the ship's usual height: capped under the build limit.
     assert results["high_plateau"]["ship"]["y"] + 64 <= 319
     # Stopped dead mid-build and resumed: the same world as an uninterrupted build.

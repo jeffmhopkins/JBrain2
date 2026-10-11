@@ -1767,6 +1767,15 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   ticks. A build that will be retried keeps its areas, so its 30-second retry doesn't
   take hours either. In the simulator, removing a missing area no longer throws, which
   matches the box, and a build fails if it spends a tick with no area up.
+- With that, the pod builds in about 49 s after load, every block written. The mothership
+  then stalled for over 14 minutes. **With nobody on, the box's world ticks about 0.3
+  times a second even with a ticking area up** (337 ticks in 15 minutes), so the
+  steady-load check and its 90-second give-up, both counted in ticks, could take hours.
+  The waits are now on the clock: `loadBox` gives up after 90 s, and "held" means every
+  chunk read fine on 3 ticks at least 1 s apart. A slow load logs how many chunks it's
+  still missing every 15 s, so the next run says what's stuck. The simulator's clock
+  runs with its ticks, and a new `slow_and_stuck` scenario, a tick every 3 s and a spawn
+  chunk that never loads, must give up within its waits.
 
 ### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; not built)
 
