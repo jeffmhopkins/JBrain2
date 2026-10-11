@@ -30,7 +30,8 @@ panel, the others import it at a fixed `start` state).
 - **Settings:** Wi-Fi (state, network, signal, Connect/Disconnect — no SSID or password
   entry; the network is the one the box wrote at flash time), Battery (AXP2101 fuel gauge
   percent, voltage, charging/USB, or "No battery fitted"), Firmware (version, **Update
-  now** forces a manifest check and OTA; disabled while Wi-Fi is off), Touch screen
+  now** forces a manifest check and OTA; disabled while Wi-Fi is off), Jerv (**Read replies
+  aloud** switch — off means text only, with a Listen button on each reply), Touch screen
   (**Calibrate**: the twins' 16-target, taps-until-they-agree routine; BOOT cancels and
   keeps the old map).
 - **Ground is pure black** (an unlit AMOLED pixel is off); colours are `DESIGN.md`'s accents:
