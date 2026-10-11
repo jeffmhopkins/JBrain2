@@ -23,8 +23,8 @@
 > The Replicator's plan is §M15 (added after revision 1); the wave that builds it takes this
 > page's facts in — its placer item and one generic programmed look are recorded here.
 
-The items get final icons in place of the probe kit's placeholders
-(`deploy/minecraft/probe-rp/textures/items/{tricorder,power_pack}.png`). The placeholder
+The items got final icons in place of the probe kit's placeholders (the retired
+`deploy/minecraft/probe-rp/`; set A now ships in `deploy/minecraft/jbrain-rp/`). The placeholder
 Tricorder is a grey slab with green bars, and the placeholder Power Pack is close to an Eye of
 Ender. Each variant gives all three items one look, so the Old Makers' tech reads as made by one
 people:
@@ -210,8 +210,7 @@ Eye of Ender and Ender Pearl. The owner picks.
 - **Items, in the `jbrain` resource pack:**
   - The icons go in `textures/items/tricorder.png` and `textures/items/power_pack.png`.
     `textures/item_texture.json` maps them under the keys `jbrain_tricorder` and
-    `jbrain_power_pack`, as the probe kit's `deploy/minecraft/probe-rp/textures/item_texture.json`
-    already does.
+    `jbrain_power_pack`, as `deploy/minecraft/jbrain-rp/textures/item_texture.json` does.
   - The behavior pack's item JSON points `minecraft:icon` at those keys.
   - The Power Pack's glint is the item's `minecraft:glint`, not part of the texture.
   - **§M10** names set A's icon (a copper-capped glass cell, with a glint), and the recipe of

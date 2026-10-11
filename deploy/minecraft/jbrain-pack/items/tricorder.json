@@ -3,7 +3,7 @@
   "minecraft:item": {
     "description": {
       "identifier": "jbrain:tricorder",
-      "menu_category": { "category": "equipment" }
+      "menu_category": { "category": "none" }
     },
     "components": {
       "minecraft:icon": "jbrain_tricorder",

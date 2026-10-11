@@ -1,6 +1,6 @@
 ---
 name: mc_set_waypoint
-version: 2
+version: 3
 permission: web
 params:
   type: object
@@ -36,4 +36,4 @@ Point a player's Tricorder at a destination: coordinates, or one of their saved 
 While they hold it, its screen line shows an arrow toward the place, its label and how far
 it is (and the y, if given), or which dimension it's in when they're elsewhere. Each
 player has their own waypoint, kept with the world, and it can be set while they're
-offline. Needs the Tricorder add-on (the home-test kit) in the loaded world.
+offline. The Tricorder comes with the box's own jbrain pack, in every world it loads.

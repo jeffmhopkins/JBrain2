@@ -1783,10 +1783,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "739ba8520c3a7507d632d8c5254e6d083b55a770b59d090a58fa9b2af2737bb3",
         ),
         # v2: `place`, a saved place's name, as an alternative to coordinates.
+        # v3: the Tricorder is in every world (the jbrain pack), not the home-test kit.
         "mc_set_waypoint.tool": (
             "mc_set_waypoint",
-            2,
-            "27daf01130fe6331a72fb228bdd55008cfb1320480410f0b724fc47f3a48a865",
+            3,
+            "6ddd9af8cf28f6316f9c669ac7104fc8944cd4d2d18c62ba4c59e90446200e5d",
         ),
         # v2: no coordinates; a place is only ever where the player is right now.
         "mc_place_save.tool": (

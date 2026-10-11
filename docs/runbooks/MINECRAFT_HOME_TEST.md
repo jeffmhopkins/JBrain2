@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-11
+> **Status:** Living · **Last verified:** 2026-10-11 (the crew's items moved into every world)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -10,23 +10,30 @@ armor (M14).
 Row 6 onward is **Dave in game** (M5's door, P2): the owner's three phrases, "point me home",
 "mark this location as tree farm" and "navigate to tree farm", typed as `/jb:dave …`.
 
+Rows 10–16 are **the Tricorder and the Power Pack** (M9, M10, DW1's rules), which are no
+longer part of the kit: the always-installed `jbrain` packs carry them, with their icons,
+into every world the box loads.
+
 **The owner just plays, and the assistant reads the answers.** The test kit logs each
-finding as a `[jbrain-probe]` line on the server, and the assistant watches over the debug
-console (`GET /api/debug/minecraft/logs`). There is nothing to write down. It runs on the
-**test world** in slot 1, never on an imported real world.
+finding as a `[jbrain-probe]` line on the server, the `jbrain` pack logs its own as
+`[jbrain] …`, and the assistant watches over the debug console
+(`GET /api/debug/minecraft/logs`). There is nothing to write down. It runs on the **test
+world** in slot 1, never on an imported real world.
 
 ## Before (assistant, over the debug console)
 
 1. **Install the kit:** `POST /api/debug/minecraft/probe-pack {"install": true}`. The
-   server restarts with:
-   - the probe behavior pack: the custom items `jbrain:power_pack` and
-     `jbrain:tricorder`, and the nine-Eye-of-Ender recipe;
-   - the probe resource pack (their icons), which the server now pushes to every joining
-     client;
-   - `texturepacks-required=true` and `content-log-console-output-enabled=true`.
+   server restarts with the probe behavior pack, which only logs what it sees. Every world
+   already has the rest, with no route: the `jbrain` behavior pack (the custom items
+   `jbrain:power_pack` and `jbrain:tricorder`, the Power Pack recipe, the arrow)
+   and the `jbrain` resource pack (their icons, pushed to every joining client), with
+   `texturepacks-required=true` and `content-log-console-output-enabled=true` pinned.
 2. **Check the server log for content errors** (a bad item or recipe file is logged as it
    loads). If an item failed, fix it before the owner sits down.
-3. **Make sure joining is open:** the allowlist is off, and the owner knows the LAN
+3. **For rows 13–16, turn the Power Pack switch on** for the test world:
+   `PUT /api/debug/minecraft/worlds/slot1/power-pack {"on": true}` (log
+   `[jbrain] config power_pack_keep=true`). Turn it off again afterwards.
+4. **Make sure joining is open:** the allowlist is off, and the owner knows the LAN
    address (Minecraft screen → Join).
 
 ## The checks (owner, at the console or controller)
@@ -35,25 +42,34 @@ console (`GET /api/debug/minecraft/logs`). There is nothing to write down. It ru
 |---|---|---|---|
 | 1 | **Join from Windows** (Friends → LAN Games, or Servers → add the LAN address, port 19132) | Windows reaches the server over NetherNet; the **resource pack downloads by itself** on join, with no install step and no third-party site | Minecraft screen's Players; log `Player connected` + resource pack download |
 | 2 | **Join from the Xbox** (Friends → Joinable LAN Games) | Whether the Xbox sees the server in LAN Games at all (else: add it by address), and the same automatic pack download | Same |
-| 3 | Open the inventory and the creative or recipe search; type `Power` | **The custom items show their own icons and names** (not a purple-black square) | Your eyes |
-| 4 | In survival with cheats on: `/give @s ender_eye 9`, then put all nine in a crafting table | **The nine-eye recipe works** and makes one Power Pack | log `power_pack in inventory` |
-| 5 | `/give @s jbrain:tricorder`, then hold it and turn around | The tricorder's **actionbar arrow** follows your facing smoothly ("↗ World spawn · 120 blocks") — the M9 mechanic | log `tricorder held`; your eyes on how smooth it is |
+| 3 | Open the inventory and the recipe book; search `Power` | **The items show their set-A icons and names** (not a purple-black square), and the Power Pack's recipe is in the recipe book | Your eyes |
+| 4 | In survival with cheats on: `/give @s ender_pearl 8` and `/give @s blaze_powder 1`, then put the pearls in a ring round the powder in a crafting table | **The Power Pack recipe works** (eight pearls round one blaze powder) and makes one Power Pack | log `power_pack in inventory` |
+| 5 | Hold **your Tricorder** (beamed into your inventory the first time you joined, named "<you>'s Tricorder") and turn around | The **actionbar arrow** follows your facing smoothly ("↗ World spawn · 120 blocks") — the M9 mechanic | log `tricorder in inventory: … lock inventory; keepOnDeath true`; your eyes on how smooth it is |
 | 5b | Ask Minecraft_Dave "point my tricorder at the nearest diamonds" (it finds them, then sets the waypoint), then hold the tricorder | The arrow now leads to **Dave's waypoint** with its label, distance and depth ("↗ Diamonds · 40 blocks · y -58"), and says "You're here" on arrival | log `waypoint set for …`; your eyes |
 | 6 | Type `/jb:dave hello` | The custom command (from the always-installed jbrain pack) appears in autocomplete and runs on a vanilla client; you see "Dave is thinking…" and then a private `<Dave> …` reply nobody else sees | log `[jbrain] {"ev":"dave",…}`; a Minecraft_Dave chat titled "In game: <your gamertag>" in the PWA |
 | 6a | Stand somewhere, then `/jb:dave mark this location as tree farm` | **Saving a place** where you stand: Dave says it's saved with its coordinates | the PWA chat's `mc_place_save` step; `GET /api/debug/minecraft/logs` |
 | 6b | Walk away, then `/jb:dave navigate to tree farm`, and hold the tricorder | **Navigating to it:** Dave says which way and how far; the arrow leads back to "tree farm" | log `waypoint set for …`; your eyes |
 | 6c | `/jb:dave point me home` — first with no bed set, then after sleeping in a bed (or saying `/jb:dave mark this location as home`) | **Home:** with nothing to go on Dave says so and offers to mark it; with a bed the arrow points at the bed ("Home (your bed)"); a saved home wins over the bed | the reply; the PWA chat |
 | 6d | `/jb:dave "Dave, mark this location as tree farm"` (with quotes), and the same without them | A **comma or a number needs quotes** (checked on a server console; the unquoted one should show a syntax error), and a leading "Dave," is ignored | your eyes |
-| 7 | Die once (fall, or `/kill @s`) | **Deaths reach the travel log with their cause**, and whether a dead player's inventory is still readable (the keep-inventory work) | `GET /api/debug/minecraft/travel` deaths +1; log `player died` |
+| 7 | Die once (fall, or `/kill @s`) | **Deaths reach the travel log with their cause**, and whether a dead player's inventory is still readable (the keep-inventory work); **the Tricorder stays with you** | `GET /api/debug/minecraft/travel` deaths +1; log `player died` |
 | 8 | Walk somewhere for a minute | Travel-log trail samples are recorded | `GET /api/debug/minecraft/travel` samples grow |
 | 9 | *(optional)* Everyone at once, both devices | Memory and CPU with real players (the 2 GB cap) | debug status |
+| 10 | Try to get rid of your Tricorder: the drop key (Q / the controller's drop), dragging it out of the inventory, putting it in a chest | **It's locked to your inventory** on Windows and on the Xbox: none of them work | Your eyes |
+| 11 | `/clear @s jbrain:tricorder`, then `/kill @s` and respawn (or leave and rejoin) | **Re-beamed on waking:** a new one arrives with Dave's "…there you are. Without your Tricorder I nearly lost you…" line | log; your eyes |
+| 12 | `/clear @s jbrain:tricorder`, then `/give @s jbrain:tricorder` (an unowned copy, which reads as retired), hold it and type `/jb:dave hello`; then `/clear` it and ask again with none at all; rejoin to get yours back | **Owner only:** no arrow (the actionbar says "This tricorder is retired"), and Dave answers "…static… that one isn't tuned to you." in chat; with none, "…kssht… no signal…". No question reaches Dave either way | your eyes; no `"ev":"dave"` line in the log |
+| 13 | Switch on (Before, step 3). With a Power Pack and your Tricorder, die with a full inventory, some XP and armor | **Kept:** everything stays, one pack burns (the smallest stack), and on respawn a private "Your Power Pack burnt out…" line with a fizz | log `power pack: … kept their things` |
+| 14 | Switch on. Die again with no pack (and once with a pack but someone else's Tricorder) | **Dropped like a normal death** at the spot: items, armor and off-hand fall, Curse of Vanishing items vanish, XP drops as orbs and resets, the Tricorder stays | log `power pack: … dropped their things`; check enchantments, names and durability on the dropped items |
+| 15 | Switch on. Fall into the void (the End, or below bedrock in creative→survival) | The drops land **at the last place you stood**, not in the void | log; your eyes |
+| 16 | Switch off. Die with a Power Pack | **Vanilla:** everything drops, the pack included; the Tricorder stays (keep on death) | your eyes |
 
 ## After (assistant)
 
 1. **Record every answer** in the plan's M0b section and §3c's compatibility table, and
    unblock or re-plan the waves they gate.
 2. **Remove the kit:** `POST /api/debug/minecraft/probe-pack {"install": false}`. The
-   server restarts without the probe packs, and the two test properties are cleared.
+   server restarts without the probe pack; the `jbrain` packs stay, as in every world.
+3. **Turn the Power Pack switch back off** unless the owner wants it:
+   `PUT /api/debug/minecraft/worlds/slot1/power-pack {"on": false}`.
 
 ## If something fails
 

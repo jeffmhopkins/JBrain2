@@ -2,64 +2,19 @@
 // with "[jbrain-probe]" so the wrapper's console can be grepped for the answers:
 // does a stable-API pack load with no experiments, does console output reach the
 // server console, does `scriptevent` arrive, is there a stable chat event, and is a
-// dead player's inventory still readable. The `/jb:dave` command it once probed is now
-// the jbrain pack's (the in-game door, §M5): two packs registering one name would
-// collide.
+// dead player's inventory still readable. What it once carried has moved to the
+// always-installed jbrain pack, because two packs defining one name collide: `/jb:dave`
+// (the in-game door, §M5), and the Tricorder, the Power Pack, its recipe and the
+// waypoint arrow (§M9, §M10). The kit now only watches, so the owner just plays and the
+// assistant reads the answers off the server log (docs/runbooks/MINECRAFT_HOME_TEST.md).
 import { system, world } from "@minecraft/server";
-
-// Home-test kit (docs/runbooks/MINECRAFT_HOME_TEST.md): the custom items and recipe from
-// this pack, with icons from the server-pushed probe resource pack. Each finding is a
-// `[jbrain-probe]` line, logged once per player, so the owner just plays and the
-// assistant reads the answers off the server log.
 
 const say = (msg) => console.log(`[jbrain-probe] ${msg}`);
 
 say("loaded");
 say(`chatSend after-event available: ${Boolean(world.afterEvents.chatSend)}`);
 
-// Each player's tricorder destination, set by Minecraft_Dave through the console
-// (`scriptevent jb:waypoint {json}`). Kept as a world property keyed by gamertag, so it is
-// saved with the world and can be set while the player is offline.
-const DIMS = { overworld: "minecraft:overworld", nether: "minecraft:nether", the_end: "minecraft:the_end" };
-const waypointKey = (name) => `jb:waypoint:${name.toLowerCase()}`;
-const waypointOf = (name) => {
-  const raw = world.getDynamicProperty(waypointKey(name));
-  if (typeof raw !== "string") return undefined;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-};
-
-const setWaypoint = (message) => {
-  const wp = JSON.parse(message);
-  if (typeof wp.player !== "string" || !wp.player) throw new Error("no player");
-  if (wp.clear) {
-    world.setDynamicProperty(waypointKey(wp.player), undefined);
-    say(`waypoint cleared for ${wp.player}`);
-    return;
-  }
-  if (!Number.isFinite(wp.x) || !Number.isFinite(wp.z) || !(wp.dim in DIMS)) {
-    throw new Error("x, z and dim are required");
-  }
-  const label = String(wp.label ?? "Waypoint").slice(0, 40);
-  world.setDynamicProperty(
-    waypointKey(wp.player),
-    JSON.stringify({ x: wp.x, y: Number.isFinite(wp.y) ? wp.y : null, z: wp.z, dim: wp.dim, label }),
-  );
-  say(`waypoint set for ${wp.player}: ${label} at ${wp.x} ${wp.z} (${wp.dim})`);
-};
-
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
-  if (ev.id === "jb:waypoint") {
-    try {
-      setWaypoint(ev.message);
-    } catch (e) {
-      say(`waypoint refused: ${e}`);
-    }
-    return;
-  }
   if (ev.id.startsWith("jb:")) say(`scriptevent ${ev.id} ${ev.message}`);
 });
 
@@ -81,24 +36,13 @@ world.afterEvents.entityDie.subscribe((ev) => {
   }
 });
 
-// Who has had each test item, so each finding is logged once rather than every tick.
+// Who has had each of the crew's items, so each finding is logged once rather than
+// every tick: the item reached the player, with its lock and keep-on-death flags.
 const seen = new Set();
 const once = (key, msg) => {
   if (seen.has(key)) return;
   seen.add(key);
   say(msg);
-};
-
-// The tricorder's arrow: the bearing to the player's waypoint (world spawn when Dave hasn't
-// set one) minus where the player faces, in eight steps.
-const ARROWS = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"];
-const arrowTo = (player, tx, tz) => {
-  const { x, z } = player.location;
-  const view = player.getViewDirection();
-  const target = Math.atan2(tx - x, -(tz - z));
-  const facing = Math.atan2(view.x, -view.z);
-  const turn = (((target - facing) * 180) / Math.PI + 720) % 360;
-  return { arrow: ARROWS[Math.round(turn / 45) % 8], blocks: Math.round(Math.hypot(tx - x, tz - z)) };
 };
 
 system.runInterval(() => {
@@ -110,25 +54,11 @@ system.runInterval(() => {
       if (item?.typeId === "jbrain:power_pack") {
         once(`pp:${player.name}`, `power_pack in inventory: ${player.name} (x${item.amount})`);
       } else if (item?.typeId === "jbrain:tricorder") {
-        once(`tc:${player.name}`, `tricorder in inventory: ${player.name}`);
-      }
-    }
-    const held = inv.getItem(player.selectedSlotIndex);
-    if (held?.typeId === "jbrain:tricorder") {
-      once(`hold:${player.name}`, `tricorder held: ${player.name} (actionbar arrow on)`);
-      const wp = waypointOf(player.name);
-      if (!wp) {
-        const { arrow, blocks } = arrowTo(player, 0, 0);
-        player.onScreenDisplay.setActionBar(`${arrow} World spawn · ${blocks} blocks`);
-      } else if (player.dimension.id !== DIMS[wp.dim]) {
-        const where = { overworld: "the Overworld", nether: "the Nether", the_end: "the End" }[wp.dim];
-        player.onScreenDisplay.setActionBar(`${wp.label} is in ${where}`);
-      } else {
-        const { arrow, blocks } = arrowTo(player, wp.x, wp.z);
-        const depth = wp.y === null ? "" : ` · y ${wp.y}`;
-        const here = blocks < 3 ? "You're here" : `${blocks} blocks`;
-        player.onScreenDisplay.setActionBar(`${arrow} ${wp.label} · ${here}${depth}`);
+        once(
+          `tc:${player.name}`,
+          `tricorder in inventory: ${player.name} (${item.nameTag}; lock ${item.lockMode}; keepOnDeath ${item.keepOnDeath})`,
+        );
       }
     }
   }
-}, 5);
+}, 20);

@@ -221,8 +221,9 @@ async def test_worlds_and_rules_are_read_only_views_of_the_sidecar(sidecar) -> N
         ("GET", "/worlds"),
         ("GET", "/worlds/slot2/rules"),
     ]
-    # The owner's worlds are read-only here: the only world-changing routes are a load
-    # and the test worlds' own make and reset, each guarded below (§SW4).
+    # The owner's worlds are read-only here: the only world-changing routes are a load,
+    # the test worlds' own make and reset, each guarded below (§SW4), and the Power Pack
+    # switch, a game rule the owner has no other no-terminal way to flip yet (§M10).
     paths = {
         (m, getattr(r, "path", "")) for r in mc.router.routes for m in getattr(r, "methods", ())
     }
@@ -230,7 +231,24 @@ async def test_worlds_and_rules_are_read_only_views_of_the_sidecar(sidecar) -> N
         ("POST", "/debug/minecraft/worlds/{slot}/load"),
         ("POST", "/debug/minecraft/test-worlds/{slot}"),
         ("POST", "/debug/minecraft/test-worlds/{slot}/reset"),
+        ("PUT", "/debug/minecraft/worlds/{slot}/power-pack"),
     }
+
+
+async def test_the_power_pack_switch_passes_through_and_is_recorded(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds/slot2/power-pack"] = httpx.Response(
+        200, json={"id": "slot2", "power_pack_keep": True, "applies": "now"}
+    )
+    req = _request(FakeSupervisor([]))
+    out = await mc.minecraft_power_pack("slot2", mc.PowerPackIn(on=True), req, SETTINGS, PRINCIPAL)
+    assert out["power_pack_keep"] is True
+    assert seen[-1].method == "POST" and json.loads(seen[-1].content) == {"on": True}
+    assert req.state.debug_detail == "minecraft power pack slot2 on=True"
+    replies["/worlds/slot2/power-pack"] = httpx.Response(400, json={"detail": "bad"})
+    with pytest.raises(HTTPException) as exc:
+        await mc.minecraft_power_pack("slot2", mc.PowerPackIn(on=False), req, SETTINGS, PRINCIPAL)
+    assert exc.value.status_code == 400
 
 
 async def test_travel_reports_the_log_summary(monkeypatch: pytest.MonkeyPatch) -> None:
