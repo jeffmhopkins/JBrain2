@@ -134,6 +134,10 @@ class SlotStore:
                 # reset or emptied there. The owner resetting, importing or restoring
                 # over it clears it.
                 "test": False,
+                # The Power Pack charm (§M10): off is a vanilla world; on, the world's
+                # keepInventory is held on and the jbrain pack drops for a player who
+                # died without both a Power Pack and their own Tricorder.
+                "power_pack_keep": False,
                 **raw.get(sid, {}),
             }
             rec["exists"] = self.exists(rec["folder"])
@@ -162,6 +166,8 @@ class SlotStore:
                     raise ValueError(
                         f"game mode must be one of {', '.join(GAMEMODES)}"
                     )
+                if key == "power_pack_keep" and not isinstance(value, bool):
+                    raise ValueError("power_pack_keep is true or false")
                 if key == "wreck" and value not in WRECK_STATES:
                     raise ValueError(f"wreck must be one of {WRECK_STATES}")
                 if key == "difficulty" and value not in DIFFICULTIES:

@@ -220,6 +220,9 @@ change.
 - **Still to run**: Windows and Xbox joining (including whether the Xbox sees the server in
   LAN Games), `/jb:dave` from a client, the inventory-at-death read, memory under play, the
   parser, map and biome inputs, and the vanilla-client checks.
+  - **The items have left the kit (2026-10-11):** the Tricorder, the Power Pack, the recipe,
+    the icons and the arrow are in the always-installed `jbrain` packs now (M9/M10/DW1,
+    below), and the kit only logs. The runbook's rows 10–16 check them.
   - **The home-test kit is ready** (`../runbooks/MINECRAFT_HOME_TEST.md`): the probe
     packs now carry the custom items, the recipe and a server-pushed resource pack, and
     the runbook lists the eight checks in one sitting.
@@ -1128,13 +1131,14 @@ compass that Dave sets.
 **Waypoints, first cut (shipped 2026-10-11, owner: "a tool to set the tricorder waypoint
 destination per user").** Dave's `mc_set_waypoint(x, z, y?, dimension?, label?,
 gamertag?, clear?)` sends `scriptevent jb:waypoint {json}` over the console (the JSON is
-`json.dumps`-escaped, so a label can't end the command). The home-test kit's script
-stores it as a **world** dynamic property keyed by gamertag — saved with the world and
+`json.dumps`-escaped, so a label can't end the command). The `jbrain` pack's script (the
+home-test kit's until 2026-10-11) stores it as a **world** dynamic property keyed by gamertag — saved with the world and
 settable while the player is offline — and the held tricorder shows
 `↗ <label> · 412 blocks · y -58` (the y when given), `You're here` within 3 blocks,
 `<label> is in the Nether` from another dimension, and world spawn when none is set.
-The script answers with a `[jbrain-probe] waypoint set/cleared/refused` line, which the
-tool reads back: no answer means the kit isn't in the loaded world, and the tool says so
+The script answers with a `[jbrain] waypoint set/cleared/refused` line (`[jbrain-probe]`
+while it was the kit's), which the tool reads back: no answer means the pack didn't load
+in that world, and the tool says so
 rather than claiming it worked. Checked on a local 1.26 server: set (a gamertag with a
 space), a refused bad dimension, cleared. **Saved places (2026-10-11):** `mc_set_waypoint`
 also takes `place`, a name the player saved with `mc_place_save` (`app.mc_places`,
@@ -1145,9 +1149,27 @@ typed coordinates (owner, 2026-10-11): where the in-game asker stands, or from t
 their position while they're online (a sample under a minute old). Otherwise nothing is
 saved. **"home"** is their saved home,
 else the bed the in-game event reported, else Dave says neither exists and offers to mark
-it. In game the answer also says which way and how far the target is. Still to come from the design below: the
-per-xuid player property, the named and retired "<Player>'s Tricorder", keepOnDeath, and
-Dave handing one over.
+it. In game the answer also says which way and how far the target is.
+
+**Shipped (wave mc-items, 2026-10-11): the Tricorder in every world.** `jbrain:tricorder`
+and its set-A icon (`../mocks/minecraft-items/`) moved from the home-test kit into the
+always-installed `jbrain` behavior pack and a new `jbrain` resource pack, which the
+wrapper installs into every world it loads and BDS pushes on join
+(`texturepacks-required=true` is pinned). Each copy is named "<Player>'s Tricorder" with
+the lore "Points where Dave says", created with `lockMode = inventory` and
+`keepOnDeath = true`, and carries its owner's `player.id` and a serial as item dynamic
+properties: the world keeps each owner's current serial, so a new copy retires every
+older one wherever it is (it reads "This tricorder is retired", and is unlocked so it
+can be thrown away). Only the owner sees the arrow; with no waypoint it points at world
+spawn (the pod's hatch in a crash-site world). The stable script API has no xuid, so the
+owner key is the player's entity id, which BDS keeps per player per world. Waypoints
+still go by gamertag, as Dave's tool sends them, and its replies are now `[jbrain]
+waypoint …` lines. The rules are pure functions in `jbrain-pack/scripts/rules.js`, tested
+under node (`deploy/minecraft/jbrain-sim/`, run by the supervisor's pytest). Still to
+come: Dave handing one over in the welcome (DW1), the arrival chime, and a target set
+by `guide_me`. **Box checks:** the lock in Bedrock's own UI on Windows and Xbox (the
+drop key, dragging it out, a chest, a death); that `player.id` is stable across
+sessions; the icon download on join; home test rows 5, 10–12.
 
 **How it's built** (on M5's bridge, using M6's `guide_me` tool):
 - Dave's `guide_me(player, target)` sends `scriptevent jb:target <xuid> <json>` with
@@ -1272,6 +1294,28 @@ inventory"**.
   rather than a free switch, so the two can't contradict each other.
 - With the switch off, the world behaves exactly like vanilla.
 
+**Shipped (wave mc-items, 2026-10-11): the keep-inventory charm.** `jbrain:power_pack`
+and its recipe are in the `jbrain` pack (out of the kit), and the switch is
+built: the slot's `power_pack_keep`, **off by default**, set by
+`PUT /api/minecraft/worlds/{slot}/power-pack` (owner) or
+`PUT /api/debug/minecraft/worlds/{slot}/power-pack` (until the PWA has the toggle). The
+sidecar holds `keepInventory` on while it's on (the rules view reports it under
+`managed` and refuses a change to it; off hands it back to the owner's saved choice, or
+off), and tells the pack with `scriptevent jb:config {"power_pack_keep": …}` after the
+rules at every start and at once on the loaded world; the pack keeps it as a world
+dynamic property. On a player's death with the switch on and the rule on: a Power Pack
+(inventory, armor or off-hand) and their own Tricorder burn one pack, smallest stack
+first, keep everything, and tell them on respawn with a fizz; anything less drops the
+inventory, armor and off-hand at the spot (the last place they stood for a void
+death), skipping keepOnDeath items, destroying Curse of Vanishing, and resetting XP with
+7 orbs a level up to 100. A fault in the charm leaves everyone keeping (logged). Not
+built: the PWA toggle on the world's page and its "managed by the Power Pack charm" row
+(next, through the mock gate), the Power Pack's lore (a crafted item gets none from a
+script without a hook; left out rather than faked), and transport. **Box checks:** home
+test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
+`entityDie`, `spawnItem` keeping enchantments, names and durability, and what one
+summoned `xp_orb` is worth, so the orb count can be tuned).
+
 **Why it's costly:** one death saved costs 8 Ender Pearls and a Blaze Powder, so it's a real decision, not a free
 safety net (owner, 2026-10-10).
 
@@ -1287,7 +1331,7 @@ safety net (owner, 2026-10-10).
 - A pack in the off-hand or a shulker box: the off-hand counts; inside a shulker box it
   does not (the rule is "in your inventory").
 - Pack disabled: everyone keeps (fail-safe).
-- Nine eyes in the crafting table make one Power Pack; eight make nothing.
+- 8 Ender Pearls around a Blaze Powder make one Power Pack; 7 pearls, or no powder, make nothing.
 
 #### Teleport to a known place, one Power Pack per trip (owner, 2026-10-10)
 
@@ -2120,7 +2164,22 @@ canon: who Dave is, the crew, the Tricorder, the transporter.
 - When the canon changes, the prompt is updated to match, in the same PR as any code it
   affects.
 
-**Open (owner):** sign-off on Dave's draft lines (on the lore page).
+**Shipped (wave mc-items, 2026-10-11): the rules, not the welcome.** The Tricorder is in
+the `jbrain` packs in every world (M9's note), and the pack enforces: owner only (static
+for anyone else), no Tricorder no Dave (`/jb:dave` answers the static lines and sends
+nothing to the backend), bound to the player (`lockMode`, `keepOnDeath`), and re-beamed
+on every waking with the "nearly lost you" line, retiring older copies. A player's
+first-ever waking in a world gets theirs quietly: `firstWaking()` in the pack's
+`main.js` is the hook the welcome sequence replaces. Dave's lines are one constants
+block, `LINES` in `jbrain-pack/scripts/rules.js`, copied verbatim from the lore page.
+Not built: the welcome and the first-time beats, `/jb:dave hello`, and the prompt's
+story section.
+
+**Open (owner):** sign-off on Dave's draft lines (on the lore page). Signed off
+(2026-10-11): the two static lines, "…kssht… no signal…" and "…static… that one isn't
+tuned to you." The rest are still drafts, including the re-beam line the pack already
+uses, and the plan's "This tricorder is retired" and "Your Power Pack burnt out…",
+which aren't on the lore page yet.
 
 **Tests.** The pack's beat bookkeeping and the Tricorder checks get node tests against
 the fake server, as the wreck pack's do. The prompt change gets a prompt test.

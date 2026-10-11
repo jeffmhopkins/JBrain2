@@ -51,7 +51,7 @@ EVERY_SCOPE = SessionContext(
     domain_scopes=("general", "health", "finance", "location"),
 )
 TABLES = ("mc_places", "mc_chat_player", "mc_player_track", "mc_player_sessions")
-WAYPOINT_SET = ["[x] [Scripting] [jbrain-probe] waypoint set"]
+WAYPOINT_SET = ["[x] [Scripting] [jbrain] waypoint set"]
 
 
 class FakeSettings:

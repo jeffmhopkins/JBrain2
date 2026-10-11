@@ -426,6 +426,21 @@ async def set_world_rules(
     return await mc.call(settings, "POST", f"/worlds/{slot}/rules", json=body.model_dump())
 
 
+class PowerPackIn(BaseModel):
+    on: bool
+
+
+@router.put("/worlds/{slot}/power-pack")
+async def set_power_pack(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: PowerPackIn, settings: SettingsDep
+) -> dict[str, Any]:
+    """The world's "Power Pack keeps inventory" switch (plan §M10), off by default. On,
+    the world's keepInventory is held on (the rules view marks it managed and refuses a
+    change to it) and the jbrain pack drops for anyone who dies without both a Power Pack
+    and their own Tricorder. Applies at once to the loaded world, else on its next load."""
+    return await mc.call(settings, "POST", f"/worlds/{slot}/power-pack", json=body.model_dump())
+
+
 # --- the map (MINECRAFT_BEDROCK_PLAN.md §M8) ----------------------------------------
 _DIM = r"^(overworld|nether|the_end)$"
 # A block coordinate inside the world border.

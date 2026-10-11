@@ -1,5 +1,5 @@
 {
-  "resource_pack_name": "jbrain_probe",
+  "resource_pack_name": "jbrain",
   "texture_name": "atlas.items",
   "texture_data": {
     "jbrain_power_pack": { "textures": "textures/items/power_pack" },

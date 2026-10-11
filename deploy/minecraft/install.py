@@ -157,7 +157,11 @@ def env_overrides(env: Mapping[str, str]) -> dict[str, str]:
     `server-port` and negotiates gameplay UDP ports per client, which is why the
     container runs on the host network.
     `content-log-console-output-enabled` puts script `console.log` on stdout, which is
-    the companion bridge's return channel (M5)."""
+    the companion bridge's return channel (M5), and BDS's content errors (a bad item or
+    recipe file) with it, so a broken item shows in the log rather than going missing.
+    `texturepacks-required` makes every client take the world's resource packs — the
+    always-installed `jbrain` pack's item icons (§3c rule 2) — so nobody joins with the
+    Tricorder drawn as a missing-texture square."""
     out = {
         "server-name": env.get("MC_SERVER_NAME", "JBrain"),
         "level-name": env.get("MC_LEVEL_NAME", "world"),
@@ -169,6 +173,7 @@ def env_overrides(env: Mapping[str, str]) -> dict[str, str]:
         "enable-lan-visibility": "true",
         "server-port": "19132",
         "content-log-console-output-enabled": "true",
+        "texturepacks-required": "true",
     }
     seed = env.get("MC_LEVEL_SEED", "")
     if seed:
