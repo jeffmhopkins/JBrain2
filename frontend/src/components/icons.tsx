@@ -765,3 +765,27 @@ export const ArrowDownIcon = (p: IconProps) => (
     <path d="M12 5v14M19 12l-7 7-7-7" />
   </Icon>
 );
+
+export const LogInIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" />
+  </Icon>
+);
+
+export const LogOutIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+  </Icon>
+);
+
+export const RewindIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M11 19 2 12l9-7zM22 19l-9-7 9-7z" />
+  </Icon>
+);
+
+export const FlagIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 22V4M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1" />
+  </Icon>
+);

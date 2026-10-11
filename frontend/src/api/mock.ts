@@ -25,6 +25,7 @@ import type {
   LlmSettings,
   LlmUsage,
   MinecraftDim,
+  MinecraftTimelinePart,
   NoteAnalysis,
   NoteOut,
   PetCommand,
@@ -3827,6 +3828,18 @@ export const mockFetch: typeof fetch = async (input, init) => {
       });
     }
     if (path === "/api/minecraft/worlds") return json(w.worlds);
+    if (path === "/api/minecraft/timeline") {
+      const m = await import("../minecraftMapFixtures");
+      const q = url.searchParams;
+      const parts = (q.get("include") ?? "trails,events,sessions").split(",");
+      return json(
+        m.mcTimeline(q.get("slot") ?? "slot1", Number(q.get("from")), Number(q.get("to")), {
+          include: parts as MinecraftTimelinePart[],
+          players: (q.get("players") ?? "").split(",").filter(Boolean),
+          dim: (q.get("dim") ?? "overworld") as MinecraftDim,
+        }),
+      );
+    }
     if (path.startsWith("/api/minecraft/map/")) {
       const m = await import("../minecraftMapFixtures");
       const slot = url.searchParams.get("slot") ?? "slot1";

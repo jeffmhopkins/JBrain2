@@ -1444,6 +1444,14 @@ def test_every_dimension_is_predicted_once_the_seed_is_known(tmp_path: Path) -> 
         assert rig.map_info("slot1", dim)["predicted"] is True
 
 
+def test_map_info_gives_the_overworld_its_world_spawn() -> None:
+    _make_world("world", _level_dat(RandomSeed=7, SpawnX=32, SpawnY=32767, SpawnZ=-8))
+    rig = _world_rig()
+    assert rig.map_info("slot1", "overworld")["spawn"] == {"x": 32, "z": -8}
+    # The spawn is an Overworld place.
+    assert rig.map_info("slot1", "nether")["spawn"] is None
+
+
 def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     mapping = sys.modules.get("mapping") or __import__("mapping")
     _make_world("world")
@@ -1457,6 +1465,7 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     info = rig.map_info("slot1", "overworld")
     assert info["extent"] is None and info["tile_blocks"] == 256  # empty db: all fog
     assert info["predicted"] is False  # no level.dat seed and no binary in the test rig
+    assert info["spawn"] is None  # and no spawn either
     png = rig.map_tile("slot1", "overworld", 0, 0, 0)
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     assert (

@@ -9,7 +9,11 @@ import type {
   MinecraftDim,
   MinecraftMapPlayer,
   MinecraftMapPoint,
+  MinecraftSession,
   MinecraftSlot,
+  MinecraftTimelineEvent,
+  MinecraftTrail,
+  MinecraftTrailSegment,
 } from "./api/client";
 
 /** Tile side in px, and in blocks at zoom 0. */
@@ -252,6 +256,8 @@ export const GLYPHS = {
   gem: "M6 3h12l4 6-10 13L2 9ZM11 3 8 9l4 13 4-13-3-6M2 9h20",
   portal:
     "M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM10 7c2 1 2 3 0 5s-2 4 0 5M14 7c-2 1-2 3 0 5s2 4 0 5",
+  login: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3",
+  logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   pick: "M14.531 12.469 6.619 20.38a1 1 0 1 1-3-3l7.912-7.912M15.686 4.314A12.5 12.5 0 0 0 5.461 2.958 1 1 0 0 0 5.58 4.71a22 22 0 0 1 6.318 3.393M17.7 3.7a1 1 0 0 0-1.4 0l-4.6 4.6a1 1 0 0 0 0 1.4l2.6 2.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4zM19.686 8.314a12.501 12.501 0 0 1 1.356 10.225 1 1 0 0 1-1.751-.119 22 22 0 0 0-3.393-6.319",
 } as const;
 
@@ -325,7 +331,7 @@ export const overworldSide = (x: number, z: number) => [x * 8, z * 8] as const;
 
 // ---- the honest status line ----
 
-export type StatusTone = "ok" | "off" | "bad" | "spin";
+export type StatusTone = "ok" | "off" | "bad" | "spin" | "warn";
 
 export interface StatusInput {
   /** The map's world is the loaded one and the server is running. */
@@ -426,3 +432,462 @@ export function playersIn(players: MinecraftMapPlayer[], dim: MinecraftDim): Min
 
 /** The disc's letter. */
 export const initialOf = (tag: string) => (tag[0] ?? "?").toUpperCase();
+
+// ---- players' colours ----
+
+/** Player colours: the four accents the mock gives its players, in roster order. */
+export const PLAYER_TOKENS = ["--steel", "--green", "--amber", "--violet"];
+
+export interface RosterEntry {
+  xuid: string;
+  gamertag: string;
+  token: string;
+}
+
+/** Everyone the map knows of, by gamertag, each with a stable colour: the same player is
+ *  the same colour on the map, the scrubber, the day strip and the session list. */
+export function rosterOf(players: { xuid: string; gamertag: string }[]): RosterEntry[] {
+  const seen = new Map<string, string>();
+  for (const p of players) if (!seen.has(p.xuid)) seen.set(p.xuid, p.gamertag);
+  return [...seen]
+    .map(([xuid, gamertag]) => ({ xuid, gamertag }))
+    .sort((a, b) => a.gamertag.localeCompare(b.gamertag) || a.xuid.localeCompare(b.xuid))
+    .map((p, i) => ({ ...p, token: PLAYER_TOKENS[i % PLAYER_TOKENS.length] ?? "--steel" }));
+}
+
+// ---- the timeline (M8a): time in epoch seconds, days in the phone's own time zone ----
+
+export type Preset = "session" | "today" | "week" | "all";
+
+export const PRESETS: { id: Preset; label: string; name: string }[] = [
+  { id: "session", label: "Session", name: "This session" },
+  { id: "today", label: "Today", name: "Today" },
+  { id: "week", label: "Week", name: "This week" },
+  { id: "all", label: "All", name: "Everything" },
+];
+
+export const SPEEDS = [1, 10, 60, 600] as const;
+
+/** One tap moves to the next speed, round to 1× again. */
+export function nextSpeed(s: number): number {
+  const i = SPEEDS.indexOf(s as (typeof SPEEDS)[number]);
+  return SPEEDS[(i + 1) % SPEEDS.length] ?? 1;
+}
+
+const MIN = 60;
+const HOUR = 3600;
+const DAY = 86_400;
+/** A loaded session's range runs this far past each end. */
+export const SESSION_PAD = 2 * MIN;
+/** A tapped day's range runs this far past its first start and last end. */
+export const DAY_PAD = 10 * MIN;
+/** How much of each player's recent path the fading tail shows. */
+export const TAIL_S = 5 * MIN;
+/** The server's longest range. */
+export const MAX_SPAN = 92 * DAY;
+/** The day strip covers the last week; the session list reaches further back. */
+export const STRIP_DAYS = 7;
+/** The travel log samples every 10 s, keeping a sample only after some movement. */
+const SAMPLE_S = 10;
+
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function fmtClock(sec: number): string {
+  const d = new Date(sec * 1000);
+  const h = d.getHours();
+  return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}${NB}${h >= 12 ? "pm" : "am"}`;
+}
+
+/** Local midnight at the start of `sec`'s day, `shift` days on. */
+export function dayStart(sec: number, shift = 0): number {
+  const d = new Date(sec * 1000);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + shift).getTime() / 1000;
+}
+
+/** Whole calendar days from `sec` to `now`: 0 today, 1 yesterday. */
+export function dayDiff(sec: number, now: number): number {
+  return Math.round((dayStart(now) - dayStart(sec)) / DAY);
+}
+
+export function fmtShortDay(sec: number): string {
+  const d = new Date(sec * 1000);
+  return `${DOW[d.getDay()]}${NB}${MON[d.getMonth()]}${NB}${d.getDate()}`;
+}
+
+export function fmtDay(sec: number, now: number): string {
+  const dd = dayDiff(sec, now);
+  return dd === 0 ? "Today" : dd === 1 ? "Yesterday" : fmtShortDay(sec);
+}
+
+export function fmtDur(secs: number): string {
+  const m = Math.round(secs / MIN);
+  if (m < 60) return `${m}${NB}min`;
+  return `${Math.floor(m / 60)}h${NB}${String(m % 60).padStart(2, "0")}m`;
+}
+
+/** "4:10–7:52 pm", "11:40 am–12:15 pm", or "1:58 pm–now" for a session still on. */
+export function fmtSpan(start: number, end: number | null): string {
+  const a = fmtClock(start);
+  if (end === null) return `${a}–now`;
+  const b = fmtClock(end);
+  return a.slice(-2) === b.slice(-2) ? `${a.slice(0, -3)}–${b}` : `${a}–${b}`;
+}
+
+export function fmtKm(blocks: number): string {
+  return `${(blocks / 1000).toFixed(1)}${NB}km`;
+}
+
+export const sessionEnd = (s: MinecraftSession, now: number) => s.end ?? now;
+
+export const sessionDistance = (s: MinecraftSession) =>
+  Object.values(s.distance).reduce((a, b) => a + (b ?? 0), 0);
+
+/** Loading a session: its own span and two minutes either side, never past now. */
+export function sessionRange(s: MinecraftSession, now: number): [number, number] {
+  return [s.start - SESSION_PAD, Math.min(now, sessionEnd(s, now) + SESSION_PAD)];
+}
+
+/** A tapped day: its activity, from the first start to the last end. */
+export function dayRange(list: MinecraftSession[], now: number): [number, number] | null {
+  if (!list.length) return null;
+  const a = Math.min(...list.map((s) => s.start));
+  const b = Math.max(...list.map((s) => sessionEnd(s, now)));
+  return [a - DAY_PAD, Math.min(now, b + DAY_PAD)];
+}
+
+export function presetRange(
+  p: Preset,
+  sessions: MinecraftSession[],
+  now: number,
+): [number, number] {
+  if (p === "today") return [dayStart(now), now];
+  if (p === "week") return [now - 7 * DAY, now];
+  if (p === "all") {
+    const first = sessions.length ? Math.min(...sessions.map((s) => s.start)) : now - 7 * DAY;
+    return [Math.max(first - SESSION_PAD, now - MAX_SPAN + MIN), now];
+  }
+  // This session: whoever is on now, from the earliest of them; or the newest session.
+  const open = sessions.filter((s) => s.end === null);
+  if (open.length) return [Math.min(...open.map((s) => s.start)) - SESSION_PAD, now];
+  const newest = [...sessions].sort((a, b) => b.start - a.start)[0];
+  return newest ? sessionRange(newest, now) : [now - HOUR, now];
+}
+
+export interface StripDay {
+  start: number;
+  /** Today, or the weekday. */
+  label: string;
+  date: number;
+  today: boolean;
+  /** Who played that day, in roster order. */
+  who: string[];
+  /** That day's sessions, by start. */
+  sessions: MinecraftSession[];
+}
+
+/** The days since the first session, at most the last `days`, oldest first. */
+export function dayStrip(
+  sessions: MinecraftSession[],
+  now: number,
+  roster: string[],
+  days = STRIP_DAYS,
+): StripDay[] {
+  if (!sessions.length) return [];
+  const first = dayStart(Math.min(...sessions.map((s) => s.start)));
+  const out: StripDay[] = [];
+  for (let k = days - 1; k >= 0; k--) {
+    const start = dayStart(now, -k);
+    if (start < first) continue;
+    const next = dayStart(now, -k + 1);
+    const list = sessions
+      .filter((s) => s.start >= start && s.start < next)
+      .sort((a, b) => a.start - b.start);
+    const d = new Date(start * 1000);
+    out.push({
+      start,
+      label: k === 0 ? "Today" : (DOW[d.getDay()] ?? ""),
+      date: d.getDate(),
+      today: k === 0,
+      who: roster.filter((x) => list.some((s) => s.xuid === x)),
+      sessions: list,
+    });
+  }
+  return out;
+}
+
+export interface SessionGroup {
+  start: number;
+  label: string;
+  list: MinecraftSession[];
+}
+
+/** The Sessions sheet: newest first, grouped by day, optionally one player's. */
+export function sessionGroups(
+  sessions: MinecraftSession[],
+  who: string | null,
+  now: number,
+): SessionGroup[] {
+  const out: SessionGroup[] = [];
+  const list = sessions
+    .filter((s) => who === null || s.xuid === who)
+    .sort((a, b) => b.start - a.start);
+  for (const s of list) {
+    const start = dayStart(s.start);
+    const g = out[out.length - 1];
+    if (g && g.start === start) g.list.push(s);
+    else {
+      const dd = dayDiff(s.start, now);
+      const label = `${fmtDay(s.start, now)}${dd < 2 ? ` · ${fmtShortDay(s.start)}` : ""}`;
+      out.push({ start, label, list: [s] });
+    }
+  }
+  return out;
+}
+
+/** Time mode is anywhere but now. */
+export const isTimeTravel = (on: boolean, t: number, now: number) => on && t < now - 1;
+
+/** The status line while replaying or scrubbed: it never says Live. */
+export function timeStatus(
+  t: number,
+  now: number,
+  playing: boolean,
+  speed: number,
+): { tone: StatusTone; head: string; sub: string } {
+  const day = dayDiff(t, now) < 2 ? fmtDay(t, now).toLowerCase() : fmtDay(t, now);
+  return {
+    tone: "warn",
+    head: `Not live · ${day} ${fmtClock(t)}`,
+    sub: `${playing ? `Replaying at ${speed}×` : "Paused"} · positions from the travel log · terrain as of now`,
+  };
+}
+
+// ---- where everyone was at a moment ----
+
+export interface TrailPos {
+  x: number;
+  y: number;
+  z: number;
+  dim: MinecraftDim;
+  session: string | null;
+}
+
+const lerp = (a: number, b: number, f: number) => a + (b - a) * f;
+
+function within(seg: MinecraftTrailSegment, t: number, downsampled: boolean): TrailPos {
+  const pts = seg.points;
+  let lo = 0;
+  let hi = pts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((pts[mid]?.[0] ?? 0) < t) lo = mid + 1;
+    else hi = mid;
+  }
+  const q = pts[lo] ?? pts[pts.length - 1];
+  const p = pts[Math.max(0, lo - 1)] ?? q;
+  if (!p || !q) return { x: 0, y: 0, z: 0, dim: seg.dim, session: seg.session };
+  const gap = q[0] - p[0];
+  let f = gap > 0 ? (t - p[0]) / gap : 1;
+  // A full-rate trail keeps a sample only after movement, so a long gap is standing still
+  // followed by one sample's worth of walking — not a slow glide across the whole gap.
+  if (!downsampled && gap > 3 * SAMPLE_S) f = Math.max(0, (t - (q[0] - SAMPLE_S)) / SAMPLE_S);
+  f = clamp(f, 0, 1);
+  return {
+    x: lerp(p[1], q[1], f),
+    y: lerp(p[2], q[2], f),
+    z: lerp(p[3], q[3], f),
+    dim: seg.dim,
+    session: seg.session,
+  };
+}
+
+const held = (seg: MinecraftTrailSegment): TrailPos | null => {
+  const p = seg.points[seg.points.length - 1];
+  return p ? { x: p[1], y: p[2], z: p[3], dim: seg.dim, session: seg.session } : null;
+};
+
+/** Where a player was at `t`: interpolated inside a segment, held at a segment's end until
+ *  the same session goes on (through a portal, after a respawn) or while that session is
+ *  still open; nowhere between sessions. */
+export function posAt(
+  trail: MinecraftTrail,
+  t: number,
+  isOpen: (session: string) => boolean = () => false,
+): TrailPos | null {
+  const segs = trail.segments;
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    const first = seg?.points[0];
+    const last = seg?.points[seg.points.length - 1];
+    if (!seg || !first || !last) continue;
+    if (t < first[0]) {
+      const prev = segs[i - 1];
+      return prev && prev.session !== null && prev.session === seg.session ? held(prev) : null;
+    }
+    if (t <= last[0]) return within(seg, t, trail.downsampled);
+  }
+  const end = segs[segs.length - 1];
+  return end?.session && isOpen(end.session) ? held(end) : null;
+}
+
+/** A segment's path up to `t` (and from `since`), ending at `t`'s own position when `t` is
+ *  inside it: what the trail and the fading tail draw. */
+export function pathUpTo(
+  seg: MinecraftTrailSegment,
+  t: number,
+  since = Number.NEGATIVE_INFINITY,
+  downsampled = false,
+): [number, number][] {
+  const out: [number, number][] = [];
+  for (const p of seg.points) {
+    if (p[0] > t) break;
+    if (p[0] >= since) out.push([p[1], p[3]]);
+  }
+  const first = seg.points[0];
+  const last = seg.points[seg.points.length - 1];
+  if (first && last && t >= first[0] && t < last[0]) {
+    const at = within(seg, t, downsampled);
+    out.push([at.x, at.z]);
+  }
+  return out;
+}
+
+/** The session a player was in at `t`, if any. */
+export function sessionAt(
+  sessions: MinecraftSession[],
+  xuid: string,
+  t: number,
+  now: number,
+): MinecraftSession | null {
+  return sessions.find((s) => s.xuid === xuid && s.start <= t && t <= sessionEnd(s, now)) ?? null;
+}
+
+// ---- events: the scrubber's glyphs and what they say ----
+
+const SCRUB_KINDS = new Set(["join", "leave", "death", "dimension"]);
+
+export interface ScrubMark {
+  /** px from the track's left edge. */
+  left: number;
+  lead: MinecraftTimelineEvent;
+  events: MinecraftTimelineEvent[];
+}
+
+/** The scrubber's event glyphs, merged when closer than the 44 px tap floor; a merged mark
+ *  shows a death first, then a portal trip. */
+export function scrubMarks(
+  events: MinecraftTimelineEvent[],
+  from: number,
+  to: number,
+  width: number,
+  gap = 44,
+): ScrubMark[] {
+  const span = Math.max(1, to - from);
+  const out: ScrubMark[] = [];
+  for (const e of [...events].sort((a, b) => a.at - b.at)) {
+    if (!SCRUB_KINDS.has(e.kind) || e.at < from || e.at > to) continue;
+    const left = ((e.at - from) / span) * width;
+    const c = out[out.length - 1];
+    if (c && left - c.left < gap) c.events.push(e);
+    else out.push({ left, lead: e, events: [e] });
+  }
+  for (const c of out) {
+    c.lead =
+      c.events.find((e) => e.kind === "death") ??
+      c.events.find((e) => e.kind === "dimension") ??
+      c.lead;
+  }
+  return out;
+}
+
+/** "minecraft:zombie_villager" → "Zombie Villager". */
+export function entityName(typeId: string): string {
+  return (typeId.split(":").pop() ?? typeId)
+    .split("_")
+    .filter(Boolean)
+    .map((w) => (w[0] ?? "").toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+const withArticle = (n: string) => `${/^[AEIOU]/.test(n) ? "an" : "a"} ${n}`;
+
+/** A death in the game's own terms, from the damage cause the behavior pack logged and the
+ *  killer's type: "burned in lava", "killed by a Zombie". */
+export function deathCause(cause: string | null | undefined, killer?: string | null): string {
+  const k = killer ? withArticle(entityName(killer)) : null;
+  switch (cause) {
+    case "lava":
+      return "burned in lava";
+    case "fire":
+    case "fireTick":
+    case "campfire":
+    case "soulCampfire":
+      return "burned to death";
+    case "fall":
+      return "fell from a high place";
+    case "drowning":
+      return "drowned";
+    case "void":
+      return "fell out of the world";
+    case "suffocation":
+      return "suffocated in a wall";
+    case "starve":
+      return "starved to death";
+    case "freezing":
+      return "froze to death";
+    case "lightning":
+      return "struck by lightning";
+    case "magma":
+      return "discovered the floor was lava";
+    case "contact":
+      return "pricked to death";
+    case "flyIntoWall":
+      return "flew into a wall";
+    case "anvil":
+    case "fallingBlock":
+      return "squashed by a falling block";
+    case "stalactite":
+      return "skewered by a falling stalactite";
+    case "stalagmite":
+      return "impaled on a stalagmite";
+    case "wither":
+      return "withered away";
+    case "sonicBoom":
+      return "obliterated by a sonic boom";
+    case "fireworks":
+      return "went off with a bang";
+    case "magic":
+      return k ? `killed by ${k} using magic` : "killed by magic";
+    case "projectile":
+      return k ? `shot by ${k}` : "shot";
+    case "entityExplosion":
+    case "blockExplosion":
+      return k ? `blown up by ${k}` : "blew up";
+    default:
+      return k ? `killed by ${k}` : "died";
+  }
+}
+
+const DIM_SHORT: Record<MinecraftDim, string> = {
+  overworld: "Overworld",
+  nether: "Nether",
+  the_end: "End",
+};
+
+/** What one event says, for the scrubber's labels and the tapped-item panel. */
+export function eventWords(e: MinecraftTimelineEvent): string {
+  const who = e.gamertag;
+  if (e.kind === "death") return `${who} ${deathCause(e.cause, e.killer)}`;
+  if (e.kind === "join") return `${who} logged in`;
+  if (e.kind === "leave") return `${who} logged off`;
+  if (e.kind === "respawn") return `${who} respawned`;
+  return `${who} went to the ${DIM_SHORT[e.dim ?? "overworld"]}`;
+}
+
+/** The toast when a replay follows someone into another dimension. */
+export function dimNote(gamertag: string, to: MinecraftDim, respawned: boolean): string {
+  return respawned
+    ? `${gamertag} died and respawned in the ${DIM_SHORT[to]}`
+    : `${gamertag} went to the ${DIM_SHORT[to]}`;
+}

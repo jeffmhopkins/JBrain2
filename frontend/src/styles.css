@@ -32961,6 +32961,652 @@ button.wf-sigpill {
   z-index: 20;
 }
 
+/* ---- the map's timeline (M8a): status, tapped row, Explored by ---- */
+.mc-map-status.time b {
+  color: var(--warn-text);
+}
+
+.mc-map-live {
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: var(--fs-micro);
+}
+
+@media (max-width: 360px) {
+  .mc-map-status.time .mc-map-status-sub {
+    display: none;
+  }
+}
+
+.mc-map-det-ic.death {
+  background: var(--rose-tint);
+  border-color: transparent;
+  color: var(--danger-text);
+}
+
+.mc-map-det-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mc-map-det-row .mc-map-det-ic {
+  width: 32px;
+  height: 32px;
+}
+
+.mc-map-det-row .mc-map-det-t {
+  font-size: var(--fs-secondary);
+  line-height: 1.3;
+}
+
+.mc-map-det-row .mc-map-det-s {
+  margin-top: 0;
+  font-family: var(--font-mono);
+}
+
+.mc-map-copy1 {
+  flex: none;
+  width: 44px;
+  padding: 0;
+}
+
+.mc-map-det-acts {
+  margin-top: 0;
+}
+
+.mc-map-det-acts .mc-btn {
+  flex: 1;
+  min-width: 0;
+}
+
+.mc-map-who {
+  margin: 2px 0 10px 46px;
+}
+
+.mc-map-lg-i i.mc-map-lg-fog {
+  background: var(--map-fog);
+  opacity: 0.75;
+}
+
+/* Read aloud, never seen: in the glyph's colour it would still count as text. */
+.mc-sr {
+  color: var(--text);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* chips: players shown, whose sessions, explored by */
+.mc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mc-chip {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 36 px to the eye, 44 px to the finger: the inset counts from inside the 1 px border. */
+.mc-chip::after {
+  content: "";
+  position: absolute;
+  inset: -5px -2px;
+}
+
+.mc-chip[aria-pressed="true"],
+.mc-chip[aria-checked="true"] {
+  background: var(--steel-tint);
+  border-color: var(--steel);
+  color: var(--text);
+}
+
+.mc-chip .pd {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: var(--r-pill);
+}
+
+.mc-chip[aria-pressed="false"] .pd {
+  opacity: 0.45;
+}
+
+.mc-chip .ct {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-pdisc {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  color: var(--map-ink-on);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+}
+
+/* ---- the Timeline tab: the day strip, that day's sessions, transport, scrubber ---- */
+.mc-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.mc-dy {
+  display: flex;
+  margin: 0 -12px;
+}
+
+.mc-dy-d {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 52px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+}
+
+.mc-dy-d:disabled .mc-dy-n {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.mc-dy-w {
+  font-size: var(--fs-micro);
+  line-height: 1.2;
+  color: var(--text-2);
+}
+
+.mc-dy-n {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-dy-dots {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+}
+
+.mc-dy-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+}
+
+.mc-dy-d[aria-checked="true"] {
+  background: var(--steel-tint);
+  box-shadow: inset 0 0 0 1px var(--steel);
+}
+
+.mc-dy-d[aria-checked="true"] .mc-dy-w {
+  color: var(--text);
+}
+
+.mc-dc {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 -16px;
+  padding: 2px 16px;
+  border: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mc-dc-c {
+  appearance: none;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px 0 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+}
+
+.mc-dc-c[aria-pressed="true"] {
+  background: var(--steel-tint);
+  border-color: var(--steel);
+}
+
+.mc-dc-tx {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.mc-dc-tx b {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-dc-tx span {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-dc-tx .on {
+  color: var(--ok-text);
+}
+
+.mc-dc-none {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.mc-tl-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.mc-tl-play {
+  appearance: none;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+
+.mc-tl-speed {
+  appearance: none;
+  min-width: 52px;
+  height: 44px;
+  flex: none;
+  padding: 0 8px;
+  border-radius: var(--r-input);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-tl-when {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.mc-tl-when b {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mc-tl-when span {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mc-tl-follow,
+.mc-tl-now {
+  appearance: none;
+  min-height: 44px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: var(--r-input);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+
+.mc-tl-now {
+  min-width: 44px;
+  justify-content: center;
+}
+
+.mc-tl-follow:disabled {
+  color: var(--text-3);
+}
+
+.mc-tl-follow[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+
+.mc-tl-now[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--green-tint);
+  color: var(--ok-text);
+}
+
+.mc-tl-now .mc-dot {
+  width: 8px;
+  height: 8px;
+}
+
+@media (max-width: 360px) {
+  .mc-tl-top {
+    gap: 6px;
+  }
+
+  .mc-tl-speed {
+    min-width: 46px;
+    padding: 0 6px;
+  }
+
+  .mc-tl-follow {
+    width: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .mc-tl-follow .fl {
+    display: none;
+  }
+}
+
+.mc-tl-scrub {
+  position: relative;
+  height: 88px;
+  margin: 0 2px;
+  touch-action: none;
+}
+
+.mc-tl-marks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 44px;
+}
+
+.mc-tl-mk {
+  appearance: none;
+  position: absolute;
+  top: 0;
+  width: 44px;
+  height: 44px;
+  margin-left: -22px;
+  padding: 0 0 4px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+}
+
+.mc-tl-mk.death {
+  color: var(--danger-text);
+}
+
+.mc-tl-mk.dimension {
+  color: var(--violet);
+}
+
+.mc-tl-mk .n {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+.mc-tl-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 44px;
+  height: 44px;
+  cursor: pointer;
+}
+
+.mc-tl-rail,
+.mc-tl-band,
+.mc-tl-fill {
+  position: absolute;
+  top: 19px;
+  height: 6px;
+  border-radius: var(--r-pill);
+}
+
+.mc-tl-rail {
+  left: 0;
+  right: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.mc-tl-band {
+  opacity: 0.55;
+}
+
+.mc-tl-fill {
+  left: 0;
+  background: var(--steel);
+}
+
+.mc-tl-thumb {
+  position: absolute;
+  top: 8px;
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 2px solid var(--steel);
+  box-shadow: 0 0 0 4px var(--steel-tint);
+  pointer-events: none;
+}
+
+.mc-tl-track:focus-visible .mc-tl-thumb {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.mc-tl-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mc-tl-more .mc-sect {
+  margin: 0;
+}
+
+.mc-tl-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mc-tl-range {
+  margin-bottom: 8px;
+}
+
+/* ---- the Sessions sheet (alternative 1's list) ---- */
+.mc-sl-note {
+  margin-bottom: 8px;
+}
+
+.mc-sl-who {
+  margin-bottom: 6px;
+}
+
+.mc-sl-day {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin: 14px 2px 6px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mc-sl-day span {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.mc-sl-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.mc-sl-row {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 12px 8px 10px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+}
+
+.mc-sl-row + .mc-sl-row {
+  border-top: 1px solid var(--border);
+}
+
+.mc-sl-row[aria-current="true"] {
+  background: var(--steel-tint);
+  border-left-color: var(--steel);
+}
+
+.mc-sl-row .mc-pdisc {
+  width: 28px;
+  height: 28px;
+  font-size: var(--fs-secondary);
+}
+
+.mc-sl-tx {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.mc-sl-t {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-sl-m {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-sl-t .badge {
+  color: var(--ok-text);
+}
+
+.mc-sl-ic {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+.mc-sl-ic .nth {
+  display: inline-flex;
+  color: var(--violet);
+}
+
+.mc-sl-ic .dth {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--danger-text);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mc-map-panel {
     transition: none;

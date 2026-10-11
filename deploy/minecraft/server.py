@@ -160,6 +160,7 @@ class Rig:
         self._map_index: dict[str, mapping.WorldIndex] = {}
         self._block_index: dict[str, blocks.BlockIndex] = {}
         self._map_seed: dict[str, str | None] = {}
+        self._map_spawn: dict[str, dict[str, int] | None] = {}
         self._predictor = mapping.Predictor()
         self._tiles: dict[tuple, bytes] = {}
         # One structure sweep at a time (it is console time), and how it is going.
@@ -1247,8 +1248,13 @@ class Rig:
             self._tiles = {k: v for k, v in self._tiles.items() if k[0] != folder}
         if index._signature != before or folder not in self._map_seed:
             # Re-read with the index: a restore or reset can change the world under a folder.
-            seed = worlds.read_level_dat(self.world_dir(folder)).get("RandomSeed")
+            top = worlds.read_level_dat(self.world_dir(folder))
+            seed = top.get("RandomSeed")
             self._map_seed[folder] = str(seed) if isinstance(seed, int) else None
+            sx, sz = top.get("SpawnX"), top.get("SpawnZ")
+            self._map_spawn[folder] = (
+                {"x": sx, "z": sz} if isinstance(sx, int) and isinstance(sz, int) else None
+            )
         return folder, index
 
     def map_info(self, slot_id: str, dim: str) -> dict[str, Any]:
@@ -1262,6 +1268,7 @@ class Rig:
             predicted = self._map_seed.get(folder) is not None and self._predictor.available(
                 mapping.DIMENSIONS[dim]
             )
+            spawn = self._map_spawn.get(folder) if dim == "overworld" else None
         return {
             "slot": slot_id,
             "dimension": dim,
@@ -1272,6 +1279,9 @@ class Rig:
             # Ground nobody has been to is drawn from the seed; without it, transparent
             # is ungenerated ground.
             "predicted": predicted,
+            # The world spawn from level.dat, for the map's Beds & spawn overlay. No y:
+            # Bedrock often stores a placeholder there and settles on the surface itself.
+            "spawn": spawn,
         }
 
     def map_point(self, slot_id: str, dim: str, x: int, z: int) -> dict[str, Any]:

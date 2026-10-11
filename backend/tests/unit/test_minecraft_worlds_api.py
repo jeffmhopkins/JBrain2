@@ -299,3 +299,45 @@ def test_map_players_are_the_travel_logs_latest_with_who_is_on(
     other = client.get("/api/minecraft/map/players?slot=slot2").json()
     assert other["live"] is False and not any(p["online"] for p in other["players"])
     assert client.get("/api/minecraft/map/players?slot=slot5").status_code == 404
+
+
+def test_the_timeline_reads_the_slots_world_with_its_range_and_filters(
+    client, sidecar, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[dict[str, Any]] = []
+
+    async def timeline(_maker: Any, world: str, start: float, end: float, **kw: Any):
+        asked.append({"world": world, "start": start, "end": end, **kw})
+        if end - start > 1_000:
+            raise ValueError("a range covers at most 92 days")
+        return {"world": world, "trails": [], "events": [], "sessions": []}
+
+    monkeypatch.setattr(api.timeline, "timeline", timeline)
+    client.app.state.session_maker = object()
+    _players_world(sidecar, active=False)
+    got = client.get(
+        "/api/minecraft/timeline?slot=slot2&from=100&to=700&players=2535,name:Mira P"
+        "&include=sessions,explored&dim=nether"
+    )
+    assert got.status_code == 200 and got.json()["slot"] == "slot2"
+    assert asked[-1] == {
+        "world": "castle",
+        "start": 100.0,
+        "end": 700.0,
+        "players": ["2535", "name:Mira P"],
+        "include": frozenset({"sessions", "explored"}),
+        "dim": "nether",
+    }
+    plain = client.get("/api/minecraft/timeline?slot=slot2&from=0&to=10")
+    assert plain.status_code == 200
+    assert asked[-1]["players"] == []
+    assert asked[-1]["include"] == frozenset({"trails", "events", "sessions"})
+    too_long = client.get("/api/minecraft/timeline?slot=slot2&from=0&to=5000")
+    assert too_long.status_code == 422 and "92 days" in too_long.json()["detail"]
+    assert client.get("/api/minecraft/timeline?slot=slot5&from=0&to=1").status_code == 404
+    many = ",".join(["a"] * 17)
+    for bad in ("include=positions", "dim=moon", f"players={many}"):
+        query = f"slot=slot2&from=0&to=1&{bad}"
+        assert client.get(f"/api/minecraft/timeline?{query}").status_code == 422, bad
+    assert client.get("/api/minecraft/timeline?slot=slot2&from=x&to=1").status_code == 422
+    assert client.get("/api/minecraft/timeline?slot=slot2&to=1").status_code == 422

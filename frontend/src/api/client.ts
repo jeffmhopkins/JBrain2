@@ -552,6 +552,8 @@ export interface MinecraftMapInfo {
   max_zoom: number;
   layers: string[];
   predicted: boolean;
+  /** The world spawn from level.dat, Overworld only (no y). Absent from older sidecars. */
+  spawn?: { x: number; z: number } | null;
 }
 
 /** GET /map/point: one column. `survey` is the seed's prediction, its y an estimate. */
@@ -609,6 +611,83 @@ export interface MinecraftMapStructures {
   stale: string | null;
   sweep: MinecraftSweep;
 }
+
+// ---- the timeline (§M8a): one world's travel log over a range, epoch seconds ----
+
+/** A run of one player's trail inside one session, one dimension and one life: the client
+ *  interpolates inside a segment and never draws a line between two. Points are
+ *  [t, x, y, z]. */
+export interface MinecraftTrailSegment {
+  session: string | null;
+  dim: MinecraftDim;
+  points: [number, number, number, number][];
+}
+
+export interface MinecraftTrail {
+  xuid: string;
+  gamertag: string;
+  samples: number;
+  /** Fewer points than samples were sent, so a gap no longer means "standing still". */
+  downsampled: boolean;
+  segments: MinecraftTrailSegment[];
+}
+
+export type MinecraftEventKind = "join" | "leave" | "death" | "respawn" | "dimension";
+
+export interface MinecraftTimelineEvent {
+  kind: MinecraftEventKind;
+  xuid: string;
+  gamertag: string;
+  at: number;
+  dim: MinecraftDim | null;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+  /** A death's damage cause as the game names it (`lava`, `entityAttack`, …). */
+  cause?: string | null;
+  /** A death's killer entity type (`minecraft:zombie`), when there was one. */
+  killer?: string | null;
+  /** A dimension change's origin. */
+  from_dim?: MinecraftDim;
+}
+
+export interface MinecraftSession {
+  id: string;
+  xuid: string;
+  gamertag: string;
+  start: number;
+  /** Null while the player is on now. */
+  end: number | null;
+  last_seen: number;
+  /** Blocks walked per dimension, never counting a respawn's jump. */
+  distance: Partial<Record<MinecraftDim, number>>;
+  dims: MinecraftDim[];
+  deaths: number;
+  /** Where the session's first sample was, to centre the map on loading it. */
+  first: { dim: MinecraftDim; x: number; z: number } | null;
+}
+
+export interface MinecraftExplored {
+  dim: MinecraftDim;
+  /** [chunk x, chunk z, first seen]. */
+  chunks: [number, number, number][];
+  truncated: boolean;
+}
+
+export interface MinecraftTimeline {
+  slot: string;
+  world: string;
+  from: number;
+  to: number;
+  now: number;
+  trails?: MinecraftTrail[];
+  truncated?: boolean;
+  events?: MinecraftTimelineEvent[];
+  sessions?: MinecraftSession[];
+  explored?: MinecraftExplored;
+}
+
+export type MinecraftTimelinePart = "trails" | "events" | "sessions" | "explored";
 
 /** A biome-map tile: built by the client, never authored by a model (DESIGN "minecraft_map"). */
 export function minecraftTileUrl(
@@ -4884,6 +4963,32 @@ export const api = {
       { method: "POST" },
     );
     return (await response.json()) as MinecraftSweep;
+  },
+
+  async minecraftTimeline(
+    slot: string,
+    from: number,
+    to: number,
+    opts: {
+      include?: MinecraftTimelinePart[];
+      players?: string[];
+      dim?: MinecraftDim;
+    } = {},
+  ): Promise<MinecraftTimeline> {
+    const q = new URLSearchParams({
+      slot,
+      from: String(Math.floor(from)),
+      to: String(Math.ceil(to)),
+    });
+    if (opts.include) q.set("include", opts.include.join(","));
+    if (opts.players?.length) q.set("players", opts.players.join(","));
+    if (opts.dim) q.set("dim", opts.dim);
+    const response = await request(`/api/minecraft/timeline?${q}`);
+    const body = (await response.json()) as MinecraftTimeline;
+    if (!body || typeof body.from !== "number") {
+      throw new ApiError(502, "Unexpected response from the Minecraft timeline.");
+    }
+    return body;
   },
 
   async minecraftNewSeed(): Promise<string> {

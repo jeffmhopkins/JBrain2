@@ -214,7 +214,11 @@ describe("the Minecraft map", () => {
     expect(screen.getByText("Explored")).toBeInTheDocument();
     expect(screen.getByText("Satellite survey")).toBeInTheDocument();
     expect(screen.getByText("Wormhole gates")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Timeline" })).toBeDisabled();
+    for (const name of ["Trails", "Deaths", "Beds & spawn", "Explored by…"]) {
+      expect(screen.getByRole("switch", { name })).toBeInTheDocument();
+    }
+    expect(screen.getByText("Saved places")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Timeline" })).toBeEnabled();
   });
 
   it("back returns to the Minecraft screen", async () => {

@@ -23,7 +23,7 @@ from jbrain.api.deps import DebugDep, SettingsDep
 from jbrain.api.minecraft import WORLD_JOB_TIMEOUT_S
 from jbrain.config import Settings
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import travel
+from jbrain.minecraft import timeline, travel
 
 router = APIRouter(prefix="/debug/minecraft")
 
@@ -339,6 +339,27 @@ async def minecraft_travel(request: Request, _p: DebugDep) -> dict[str, Any]:
     request.state.debug_detail = "minecraft travel summary"
     maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
     return {"players": await travel.summary(maker)}
+
+
+@router.get("/timeline")
+async def minecraft_timeline(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    start: Annotated[float, Query(alias="from")],
+    end: Annotated[float, Query(alias="to")],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+) -> dict[str, Any]:
+    """What the map's timeline would send for a range — per player the samples read, the
+    points kept and the segments, the events by kind, the session count — as counts, the
+    same rule as `/travel`: no trail leaves over a token."""
+    request.state.debug_detail = f"minecraft timeline counts {slot}"
+    rec = await mc.slot_record(settings, slot)
+    maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
+    try:
+        return await timeline.counts(maker, str(rec["folder"]), start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/map/info")
