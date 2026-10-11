@@ -149,7 +149,9 @@ jobs:
       - uses: actions/checkout@v5
 
       # The app framework's pure half — shell arbitration, the app models, the notice policy,
-      # the debug surface's redaction — in seconds, before the toolchain pull.
+      # the debug surface's redaction, the drivers' decisions (flush alignment, the PMIC's
+      # registers, button debounce, the boot-after-a-fault guard) — in seconds, before the
+      # toolchain pull.
       - name: Host tests for the app framework
         run: make -C firmware-c6/host test
 
@@ -175,6 +177,9 @@ jobs:
           if-no-files-found: ignore
 
       # The same IDF pin as the S3 job, so the two projects never disagree about a header.
+      # Since 0.0.4 the image carries LVGL and the CO5300's sh8601 driver as managed
+      # components: the build fetches them itself, at the versions and content hashes
+      # `firmware-c6/dependencies.lock` pins, so the byte comparison below still holds.
       - uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.5

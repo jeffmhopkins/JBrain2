@@ -16,7 +16,9 @@ SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/svc_notice/notice_policy.c $(C)/svc_notice/svc_notice_fake.c \
       $(C)/svc_audio/talk_policy.c $(C)/svc_settings/svc_settings_fake.c \
       $(C)/svc_rtc/svc_rtc_fake.c $(C)/svc_net/svc_net_fake.c $(C)/svc_box/svc_box_fake.c \
-      $(wildcard $(C)/svc_debug/*.c)
+      $(wildcard $(C)/svc_debug/*.c) \
+      $(C)/svc_display/disp_logic.c $(C)/svc_display/disp_guard.c \
+      $(C)/svc_power/axp_logic.c $(C)/svc_buttons/btn_logic.c
 # Headers are prerequisites: a suite that reports OK against a stale binary is worse than none.
 HDR = $(wildcard $(C)/*/include/*.h $(C)/*/*.h)
 

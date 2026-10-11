@@ -26,6 +26,9 @@ void dbg_sys_init(void);
 void dbg_sys_watch_task(void *handle);
 /* The UI task's stage, kept across a panic's reset and reported by the next boot. */
 void dbg_sys_crumb(uint32_t stage);
+/* The stage the last boot died in (0: none recorded), and the one this boot is in now. */
+uint32_t dbg_sys_crumb_at_boot(void);
+uint32_t dbg_sys_crumb_now(void);
 
 /* ---- log ring ---- */
 #define DBG_LOG_BYTES 3072

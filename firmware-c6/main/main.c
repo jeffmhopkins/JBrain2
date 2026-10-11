@@ -1,12 +1,11 @@
-/* Jeff's jpanel, bring-up image. Its entire job is to make every firmware after it arrive over
- * Wi-Fi: join, reach the box, mark itself good, report, and install what the box offers.
+/* Jeff's jpanel. Its first job is still to make every firmware after it arrive over Wi-Fi:
+ * join, reach the box, mark itself good, report, and install what the box offers.
  *
- * 0.0.3 adds a read-only probe (probe.c) that reports the bus, the PMIC's rails and the
- * buttons, run only after the rollback gate.
- *
- * No display, touch, audio or PMIC driver on purpose (README "What this first image is for"):
- * each is the class of fault that ends in a boot loop, and they arrive over the air onto a
- * unit that has already proved it can take an update.
+ * 0.0.4 is the first image that drives the screen: the AXP2101 (svc_power), the buttons
+ * (svc_buttons), the CO5300 under LVGL (svc_display) and the shell with every app over fake
+ * services (ui_task.c). ALL OF IT STARTS AFTER THE ROLLBACK GATE, and the boot after a panic or a
+ * watchdog leaves the display off (disp_guard.c), so no fault in the new code can stop this
+ * loop reaching the box and taking the image that fixes it (README "What 0.0.4 adds").
  */
 
 #include <inttypes.h>
@@ -15,6 +14,8 @@
 #include <string.h>
 
 #include "cfg.h"
+#include "dbg_core.h"
+#include "disp_guard.h"
 #include "esp_chip_info.h"
 #include "esp_core_dump.h"
 #include "esp_heap_caps.h"
@@ -26,7 +27,10 @@
 #include "net.h"
 #include "nvs_flash.h"
 #include "ota.h"
-#include "probe.h"
+#include "svc_buttons.h"
+#include "svc_display_drv.h"
+#include "svc_power_drv.h"
+#include "ui_task.h"
 
 static const char *TAG = "jpanel-c6";
 
@@ -105,17 +109,29 @@ static bool report(const cfg_t *cfg)
     ota_apply_faults(&ota_err, &ota_tries);
     const long quiet_s = s_box_ever ? (long)((now_ms() - s_box_ms) / 1000) : -1;
 
-    char probe[440];
-    probe_note(probe, sizeof(probe));
+    /* Bounded on its own, so however long a service's tokens grow the body still fits and the
+       report still goes: a truncated note is a smaller loss than no heartbeat. Static, as is
+       the body, because this task then runs a TLS handshake on the same 8 KB stack. */
+    static char note[720], part[200];
+    size_t used = 0;
+    void (*const parts[])(char *, size_t) = {svc_display_note, ui_task_note, svc_power_note,
+                                             svc_buttons_note};
+    note[0] = '\0';
+    for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
+        parts[i](part, sizeof part);
+        const int k = snprintf(note + used, sizeof note - used, " %s", part);
+        if (k > 0) used += (size_t)k < sizeof note - used ? (size_t)k : sizeof note - used - 1;
+    }
 
-    char body[1280];
+    static char body[1280];
     const int n = snprintf(
         body, sizeof(body),
         "{\"version\":\"%s\",\"uptime_ms\":%" PRIu32 ",\"reset_reason\":\"%s\","
         "\"free_heap\":%u,\"int_free\":%u,\"int_min\":%u,\"int_big\":%u,\"int_largest\":%u,"
         "\"wifi_reason\":%d,\"wifi_drops\":%d,\"ota_err\":\"%s\",\"ota_tries\":%d,"
         "\"relinks\":%u,\"box_quiet_s\":%ld,"
-        "\"note\":\"board=jpanel-c6 image=probe chip=esp32c6 rev=%u.%u dump=%d %s\"}",
+        "\"note\":\"board=jpanel-c6 image=display chip=esp32c6 rev=%u.%u dump=%d "
+        "main_stack=%u%s\"}",
         ota_running_version(), now_ms(), reason,
         (unsigned)esp_get_free_heap_size(),
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -123,7 +139,8 @@ static bool report(const cfg_t *cfg)
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
         wifi_reason, wifi_drops, ota_err, ota_tries, s_relinks, quiet_s,
-        (unsigned)(chip.revision / 100), (unsigned)(chip.revision % 100), dump ? 1 : 0, probe);
+        (unsigned)(chip.revision / 100), (unsigned)(chip.revision % 100), dump ? 1 : 0,
+        (unsigned)uxTaskGetStackHighWaterMark(NULL), note);
     if (n < 0 || n >= (int)sizeof(body)) {
         ESP_LOGE(TAG, "telemetry body overflowed — not sent");
         return false;
@@ -148,9 +165,40 @@ static bool maybe_install(const cfg_t *cfg, const ota_manifest_t *m, uint32_t *l
     return true;
 }
 
+/* disp_guard.c is pure and host-tested with its own copy of these numbers. */
+_Static_assert((int)DG_RST_PANIC == (int)ESP_RST_PANIC &&
+                   (int)DG_RST_INT_WDT == (int)ESP_RST_INT_WDT &&
+                   (int)DG_RST_TASK_WDT == (int)ESP_RST_TASK_WDT &&
+                   (int)DG_RST_WDT == (int)ESP_RST_WDT &&
+                   (int)DG_RST_BROWNOUT == (int)ESP_RST_BROWNOUT &&
+                   (int)DG_RST_PWR_GLITCH == (int)ESP_RST_PWR_GLITCH &&
+                   (int)DG_RST_CPU_LOCKUP == (int)ESP_RST_CPU_LOCKUP &&
+                   (int)DG_RST_SW == (int)ESP_RST_SW && (int)DG_RST_POWERON == (int)ESP_RST_POWERON,
+               "disp_guard.h's reset numbers have drifted from esp_reset_reason_t");
+
+/* After the rollback gate, never before it: this image has already proved it can reach the box
+   and take the next one, whatever the new code below does. */
+static void start_panel(void)
+{
+    dbg_sys_init();
+    const int reset = (int)esp_reset_reason();
+    const bool may_start = dg_may_start(reset);
+    if (!may_start) {
+        ESP_LOGW(TAG, "last boot ended in a fault (reset %d, stage %lu) — no display this boot",
+                 reset, (unsigned long)dbg_sys_crumb_at_boot());
+        svc_display_mark_skipped();
+    }
+    /* Read-only on a fault boot: the PMIC keeps its registers across an ESP reset, so a bad
+       write is the one fault a rollback would not undo. */
+    const esp_err_t pmu = svc_power_start(may_start, svc_buttons_pek);
+    if (pmu != ESP_OK) ESP_LOGE(TAG, "PMIC: %s", esp_err_to_name(pmu));
+    svc_buttons_start(ui_task_button, xTaskGetCurrentTaskHandle());
+    if (may_start) ui_task_start(xTaskGetCurrentTaskHandle());
+}
+
 void app_main(void)
 {
-    ESP_LOGI(TAG, "jbrain jpanel (ESP32-C6), version %s — bring-up image", ota_running_version());
+    ESP_LOGI(TAG, "jbrain jpanel (ESP32-C6), version %s", ota_running_version());
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -186,9 +234,7 @@ void app_main(void)
         ota_confirm_health(reachable);
         if (!reachable) ESP_LOGE(TAG, "on Wi-Fi but the box did not answer");
     }
-    /* After the rollback gate, never before it: whatever the probe finds, this image has
-       already proved it can reach the box and take the next one. */
-    probe_start(xTaskGetCurrentTaskHandle());
+    start_panel();
 
     uint32_t last_report_ms = 0;
     bool reported = false;
@@ -206,9 +252,10 @@ void app_main(void)
             if (maybe_install(&cfg, &manifest, &ota_last_try_ms)) reported = false;
         }
 
-        /* A button press wakes the loop early, so the box hears it within seconds. */
+        /* A PWR press, or the UI settling, wakes the loop early so the box hears it in seconds. */
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CHECK_PERIOD_MS));
-        if (probe_take_dirty()) reported = false;
+        /* Both asked, both cleared: `|`, not `||`. */
+        if (svc_buttons_take_dirty() | ui_task_take_dirty()) reported = false;
 
         if (joined && s_box_ever && (uint32_t)(now_ms() - s_box_ms) > LINK_SUSPECT_MS) {
             /* Never-reached is excluded: a wrong key or URL is not fixed by a re-join, and

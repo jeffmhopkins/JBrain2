@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.5,<6.1"
+  # The release the host sim renders with (sim/CMakeLists.txt), so the glass and the PNGs CI
+  # uploads are drawn by the same LVGL. Exact, so `idf.py update-dependencies` cannot move it.
+  lvgl/lvgl: "==9.2.2"
