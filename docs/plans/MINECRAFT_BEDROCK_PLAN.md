@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1631,6 +1631,70 @@ interval.
 (enough, too few, a 16-stack target, an unstackable target, reprogramming), the run loop
 (fuel burn time, a full output, an unloaded chunk) and breaking (the item returns with its
 target). The Dave tool gets the usual tool tests.
+
+### M16 — The No-Spawn Beacon: a mob-free 3×3 of chunks (owner, 2026-10-11; not built)
+
+**Why.** The owner's endgame is a base out "in space": high in the sky or out over the
+End. Endermen would still come, because they teleport in. A beacon keeps a whole area
+clear without a global rule change (Bedrock's only switch, `doMobSpawning`, is
+world-wide).
+
+**Decided (owner, 2026-10-11):**
+- **Reach:** the **3×3 block of chunks** centred on the beacon's own chunk, the full
+  column from the world's floor to its ceiling. That is 48×48 blocks, so a base across a
+  chunk border is covered. Overlapping beacons are fine.
+- **No Dave to switch it on:** crafted and placed, it works at once. Breaking it switches it
+  off.
+- **What it removes:** hostile and neutral mobs, and wild passive mobs nobody has
+  interacted with (below).
+- **How:** the mob **vanishes**, with a puff of particles and no drops. In the story Dave
+  beams it away.
+
+**What is kept** (proposed from the owner's "or maybe just non-interacted also"):
+- players;
+- anything **tamed** (a wolf, cat or parrot), **name-tagged** or **on a lead**;
+- anything a player has **interacted with**: `playerInteractWithEntity` (stable) sets an
+  entity dynamic property `jb:kept`, so a villager traded with or a cow that was fed stays;
+- animals **bred** by players (`entitySpawn` with cause `Born`);
+- villagers and golems (iron, snow and copper golems, which canon calls Old Maker helpers);
+- bosses: the Ender Dragon and the Wither are never removed, so a beacon can't skip a
+  fight. Open (owner): whether the Warden counts.
+
+Everything else in range goes: zombies, skeletons, creepers, spiders, phantoms, slimes,
+endermen, piglins, wild cows and sheep, and the rest.
+
+**How it's built** (stable `@minecraft/server`):
+- **A custom block** `jbrain:no_spawn_beacon`, with its own texture from the `jbrain`
+  resource pack, and a crafting recipe (open, below).
+- **Placing** it (`playerPlaceBlock`) records it in a world dynamic property: dimension,
+  position, and the 9 chunk keys it covers. **Breaking** it (`playerBreakBlock`, or the
+  block missing on a sweep) removes the record.
+- **Spawns:** on `entitySpawn`, a mob whose chunk is in the protected set and that isn't
+  kept is removed at once (`entity.remove()`), with particles. A set lookup, so it costs
+  almost nothing.
+- **Arrivals:** once a second, a sweep reads the mobs in each protected area
+  (`dimension.getEntities` with a volume) and removes any that aren't kept. This catches
+  endermen that teleport in, and anything that walks, falls or comes through a portal.
+- **Only where it matters:** mobs exist only in loaded chunks, so the sweep skips areas no
+  player is near.
+- **Map and Dave:** protected areas show on the M8 map, and Dave can say which of a
+  player's places are covered. Neither is needed for the beacon to work.
+
+**Side effects to know:** inside the area, raids, phantoms and mob farms stop working. A
+mob farm needs to be outside the 3×3.
+
+**Open (owner):**
+- **The recipe** (options in the conversation of 2026-10-11):
+  1. Endgame: a vanilla beacon (a Nether Star) surrounded by 4 Power Packs and 4 echo
+     shards.
+  2. Late game: a lodestone (a netherite ingot) surrounded by 4 Power Packs and 4 crying
+     obsidian.
+  3. Mid game: a Power Pack surrounded by 8 echo shards (an ancient city).
+  4. Early: a Power Pack surrounded by 8 amethyst shards.
+- **Who may break it:** anyone, or only whoever placed it.
+- **The Warden:** removed, or left alone like the bosses.
+- **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
+  lore page; its icon joins the item set (`docs/mocks/minecraft-items/`).
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
