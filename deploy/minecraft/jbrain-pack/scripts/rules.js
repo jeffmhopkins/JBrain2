@@ -4,10 +4,9 @@
 
 // Dave's words, copied verbatim from the canon: Bleepbloop_City `notes/lore.md`, "Dave's
 // lines". The lore page is the source: a line changes there first, then here.
-// - Signed off by the owner (2026-10-11): `noSignal` and `notTuned`.
-// - Still DRAFTS awaiting the owner's sign-off on the lore page: `rebeamed`.
-// - Not on the lore page yet, from the plan (§M9 `retired`, §M10 `burnt`), so drafts too:
-//   they go to the lore page for sign-off with the rest.
+// - Signed off by the owner (2026-10-11): `noSignal`, `notTuned` and `rebeamed`.
+// - Not on the lore page yet, from the plan (§M9 `retired`, §M10 `burnt`), so DRAFTS:
+//   they go to the lore page for sign-off.
 export const LINES = {
   noSignal: "…kssht… no signal…",
   notTuned: "…static… that one isn't tuned to you.",

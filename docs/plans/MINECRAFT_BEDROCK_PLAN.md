@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ M18◻️ M19◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ M18◻️ M19◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1810,8 +1810,8 @@ model stays for real questions.
   for near-misses that must fall through to the model.
 - A fast-path action goes through the same tool handlers, with the same checks (the asker's
   own places, the scan limit, fair play), as a model turn would.
-- The reply lines are drafts on the Bleepbloop_City lore page until the owner signs them off,
-  like Dave's other lines.
+- The reply lines are on the Bleepbloop_City lore page, signed off by the owner
+  (2026-10-11) with Dave's other lines.
 
 **Order:** after the Tricorder and Power Pack wave and M17, since all three touch the door.
 
@@ -1993,7 +1993,7 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   world clears its mark, so the token can't touch it again; the sidecar refuses to make
   or reset an owner world as a test one, behind the API's checks. The PWA shows a test world as *test world —
   made over the debug API*. `DEBUG_ACCESS.md` has the routes.
-- **The sweep ◻️**, once the image carrying the route is on the box. Worlds are made from
+- **The sweep ✅** (2026-10-11; results below). Worlds are made from
   seeds whose spawn `mapping.Predictor` puts in each biome, loaded back to back (each load
   backs up the world it leaves), and the owner's world is loaded back once, at the end. Each one is checked from the world index:
 - the pod is present;
@@ -2004,8 +2004,11 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
 **Box-only checks** (can't be proven off the box):
 - BDS honours a pack pre-written into an ungenerated world's folder. **Confirmed
   2026-10-11:** the first test world loaded both packs and the build reported in.
-- Every palette entry places as intended on the running version.
-- Placing a whole build in one go stays inside the script watchdog.
+- Every palette entry places as intended on the running version. **Confirmed
+  2026-10-11:** every pod step's writes read back as written in all 15 biomes, and the
+  hull and mothership samples matched.
+- Placing a whole build in one go stays inside the script watchdog. **Confirmed
+  2026-10-11:** each world built in about 16 s with no watchdog warning.
 
 **What the box taught (SW4 sweep, 2026-10-11).**
 - The first test world gave up in about a minute: *N chunks … never loaded*, three
@@ -2095,6 +2098,12 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
     cave pocket under the pod's edge (air from 65 to 68 under a dirt crust). The
     terrain step fills up from the ground it read, so a hollow below that stays. One
     column, in a pod otherwise whole and walkable, is left as it is for now.
+- **Swamp and mangrove swamp, again,** after the water fixes, with plains and jungle as
+  controls: all four came down whole in 16 s, with the hatch dry, open and walkable, the
+  interior air, the supports 12/12, the mothership 8/8, and every write landed. Swamp's
+  terrain step now writes 735 blocks to build the site up above its pools. Every biome
+  in the sweep has now passed. The owner's world was loaded back, and the test slot was
+  emptied.
 
 ### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; not built)
 
@@ -2103,8 +2112,8 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
 That page is the source of truth for the story and for Dave's exact words; this section
 is only how jbrain2 builds it. In short: Dave is the Old Makers' satellite AI in orbit, and
 every player is crew who woke beside their crashed pod. Dave reaches them only through
-their Tricorder, and death is his transporter. Dave's lines are still a draft, waiting
-for the owner's sign-off on the lore page, and DW1 isn't built until they're signed off.
+their Tricorder, and death is his transporter. The owner signed off Dave's lines on the
+lore page (2026-10-11), so DW1 can be built from them.
 
 **Where it lives.**
 - **The Tricorder** moves from the home-test kit into the always-installed `jbrain`
@@ -2175,11 +2184,9 @@ block, `LINES` in `jbrain-pack/scripts/rules.js`, copied verbatim from the lore 
 Not built: the welcome and the first-time beats, `/jb:dave hello`, and the prompt's
 story section.
 
-**Open (owner):** sign-off on Dave's draft lines (on the lore page). Signed off
-(2026-10-11): the two static lines, "…kssht… no signal…" and "…static… that one isn't
-tuned to you." The rest are still drafts, including the re-beam line the pack already
-uses, and the plan's "This tricorder is retired" and "Your Power Pack burnt out…",
-which aren't on the lore page yet.
+The re-beam line and the two static lines are signed off with the rest of Dave's lines
+(owner, 2026-10-11). Two lines from the plan aren't on the lore page yet, so they wait for
+sign-off there: "This tricorder is retired" (§M9) and "Your Power Pack burnt out…" (§M10).
 
 **Tests.** The pack's beat bookkeeping and the Tricorder checks get node tests against
 the fake server, as the wreck pack's do. The prompt change gets a prompt test.
