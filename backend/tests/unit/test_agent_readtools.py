@@ -1788,10 +1788,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "27daf01130fe6331a72fb228bdd55008cfb1320480410f0b724fc47f3a48a865",
         ),
+        # v2: no coordinates; a place is only ever where the player is right now.
         "mc_place_save.tool": (
             "mc_place_save",
-            1,
-            "3915b06c70f876a77ae2a2c47236802f97188f157c32976d3ff61b5862ae8df9",
+            2,
+            "24962528ead4bd2793c17ef132fe5559b2e02c870de178464068e2448cba5e1d",
         ),
         "mc_places.tool": (
             "mc_places",

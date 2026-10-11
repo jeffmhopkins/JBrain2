@@ -55,6 +55,9 @@ GOAL_TITLE_MAX = 120
 PLACE_NAME_MAX = 40
 # Per player and world: a handful of bases, farms and portals, not a survey.
 PLACES_MAX = 100
+# From the PWA a place is saved at the player's position only while it's this fresh:
+# the sidecar samples every 10 s and the drain lands them within another 10.
+PLACE_FRESH_S = 60
 
 # Bedrock structure and biome ids: lowercase words, optionally namespaced.
 _GAME_ID = re.compile(r"^(minecraft:)?[a-z_]{2,40}$")
@@ -764,9 +767,8 @@ def build_minecraft_handlers(
         why = " and no bed or respawn anchor set" if home and asker is not None else ""
         return (
             f"There's no saved place called {fence(name)}{why}, so the tricorder wasn't"
-            " changed. Offer to mark it: the player stands there and asks you to, or gives"
-            " coordinates (mc_place_save)."
-            + (f" Their saved places: {fence(known)}." if known else "")
+            " changed. Offer to mark it: the player stands there and asks you to"
+            " (mc_place_save)." + (f" Their saved places: {fence(known)}." if known else "")
         )
 
     async def mc_set_waypoint(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
@@ -846,9 +848,6 @@ def build_minecraft_handlers(
         name = place_name(arguments.get("name"))
         if not name:
             return f"A place needs a name of 1–{PLACE_NAME_MAX} characters, like tree farm."
-        x, z = arguments.get("x"), arguments.get("z")
-        if (x is None) != (z is None):
-            return "Give both x and z, or neither (to save where the player is)."
         asker = asker_for(ctx.agent_session_id)
         world = await loaded_world(ctx)
         if not world:
@@ -857,22 +856,10 @@ def build_minecraft_handlers(
             player = await chat_player(s, ctx)
             if player is None:
                 return no_player
-            origin = "the coordinates given"
-            if x is not None and z is not None:
-                dim = dimension_of(arguments, ctx)
-                if dim not in _DIMENSIONS:
-                    return "dimension must be overworld, nether or the_end."
-                try:
-                    raw_y = arguments.get("y")
-                    spot = Spot(
-                        int(float(x)),
-                        None if raw_y in (None, "") else int(float(raw_y)),
-                        int(float(z)),
-                        dim,
-                    )
-                except (TypeError, ValueError):
-                    return "x, y and z must be numbers."
-            elif asker is not None:
+            # A place is only ever where the player is right now, never typed
+            # coordinates: a saved place is what a transport may go to, and that must be
+            # somewhere they've stood (owner, 2026-10-11).
+            if asker is not None:
                 spot = asker.at
                 origin = "where the player is standing"
             else:
@@ -880,20 +867,22 @@ def build_minecraft_handlers(
                     await s.execute(
                         text(
                             "SELECT x, y, z, dim FROM app.mc_player_track WHERE xuid = :k"
-                            " AND world = :w ORDER BY at DESC LIMIT 1"
+                            " AND world = :w AND at > now() - make_interval(secs => :fresh)"
+                            " ORDER BY at DESC LIMIT 1"
                         ),
-                        {"k": player.key, "w": world},
+                        {"k": player.key, "w": world, "fresh": PLACE_FRESH_S},
                     )
                 ).first()
                 if last is None:
                     return (
-                        f"{fence(player.gamertag)} has no known position in this world, so"
-                        " nothing was saved. Give the place's x and z (and y)."
+                        f"{fence(player.gamertag)} isn't in this world right now, so nothing"
+                        " was saved. A place is saved where they're standing: they can ask in"
+                        " game, or ask again here while they're there."
                     )
                 spot = Spot(
                     math.floor(last.x), math.floor(last.y), math.floor(last.z), str(last.dim)
                 )
-                origin = "the player's last known position"
+                origin = "where the player is right now"
             if (
                 max(abs(spot.x), abs(spot.z)) > _COORD_MAX
                 or (spot.y is not None and not -64 <= spot.y <= 320)
