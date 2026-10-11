@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2✅ SW3◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2✅ SW3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -782,6 +782,10 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 
 ### M8a — Timeline: scrub through time on the map (owner, 2026-10-10)
 
+**Shipped 2026-10-11** as the map viewer's wave 2 — what was built, and the gaps it left, are
+under §M8, *Viewer, wave 2*. The session stepper below was replaced at the GUI gate by the
+Days navigation (`docs/mocks/minecraft-map/README.md`, *Session navigation*).
+
 **What the owner sees.** The PWA map gets a **time scrubber** along its bottom edge:
 - **Scrub or play** at 1×, 10×, 60× or 600×. Each player is a coloured dot that moves
   along their trail, with a fading tail of the last few minutes behind it.
@@ -825,7 +829,8 @@ survey, Copy X Z), a long-press pin, and the same component as the inline card i
 Minecraft_Dave's chat. **Session navigation is 3 · Days**: a day strip with a dot per
 player who played, that day's sessions as chips, and each player's full session list
 behind **Sessions**. The mock README lists the four DESIGN exceptions approved with the
-pick and the remaining build gaps (a saved structure sweep; the travel-log session API).
+pick and the build gaps it named (a saved structure sweep; the travel-log session API),
+both since built: waves 1 and 2 below.
 
 **Viewer, wave 1 — the live map (shipped 2026-10-11).** A's live view, without the
 timeline (DESIGN.md "The Minecraft map"):
@@ -858,8 +863,52 @@ timeline (DESIGN.md "The Minecraft map"):
   `POST /api/minecraft/map/structures/sweep?slot` starts one on demand. Read:
   `GET /api/minecraft/map/structures?slot&dim` (structures, `swept_at`, `stale`, `sweep`
   progress); debug twins of both.
-- **Next (M8a, P3):** the timeline with Days navigation, replay, trails, deaths, beds and
-  spawn, *Explored by*, and the chat card.
+
+**Viewer, wave 2 — the timeline, M8a (shipped 2026-10-11).** The Timeline tab of variant A with
+session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
+- **API:** `GET /api/minecraft/timeline?slot&from&to&players&include&dim` (owner-only, the
+  slot's world folder resolved like `/map/players`; query logic in
+  `backend/src/jbrain/minecraft/timeline.py`). Over one range of at most 92 days it returns:
+  - **trails**: each player's samples cut into *segments* at every session, dimension and
+    respawn, then down to at most 2,000 points a player, keeping each segment's first and
+    last point so nothing is ever drawn or interpolated across a portal, a log-off or a
+    respawn (`downsampled` says when gaps no longer mean "standing still");
+  - **events**: joins and leaves (placed at the player's first and last sample, since the
+    console gives them no position), deaths with the behavior pack's `cause` and `killer`,
+    respawns, and dimension changes derived from the trail (a respawn's jump is not one);
+  - **sessions**: every session of the world, newest first (at most 500), each with its
+    start, its end or null while on, deaths, blocks walked per dimension (never the
+    respawn's jump), the dimensions it visited and where it began. A session belongs to the
+    world its join event was recorded in, so sessions from before the travel log (T1) aren't
+    listed;
+  - **explored** (asked for with `include=explored`): the fog of war in one dimension, each
+    chunk's first-seen time up to the range's end, for everyone or the `players` given, at
+    most 60,000 chunks.
+
+  Raw reads are bounded too (300,000 samples, 5,000 events a range). The debug twin
+  `GET /api/debug/minecraft/timeline?slot&from&to` gives the same range as counts only —
+  samples read, points sent, segments, events by kind, sessions — the `/travel` rule: no
+  trail leaves over a token.
+- **The screen:** the Timeline tab opens pinned to now (still the live view); the day strip
+  (the last week since the first session, a dot per player who played), that day's sessions
+  as chips, the transport (play/pause, 1× / 10× / 60× / 600×, the clock, Follow, Now/Live),
+  the scrubber with session bands and merged event glyphs, and the presets *Session · Today ·
+  Week · All* and *Who's shown* one drag further. A day sets the range to its activity, a
+  chip loads its session with 2 minutes either side and centres the map on its start, and
+  the shared Sheet *Sessions* lists every session (a player's **Sessions** opens it filtered).
+  Playback is a local redraw: dots interpolated between samples with a 5-minute tail, Follow
+  switches dimension with a toast, deaths pinned with their cause and **Replay the minutes
+  before**, and the status line reads *Not live · yesterday 4:48 pm — replaying at 600× ·
+  positions from the travel log · terrain as of now*, with **Back to live**.
+- **Overlays made real:** Trails, Deaths, Beds & spawn (the **world spawn**, which the
+  sidecar's `/map/info` now reads from `level.dat`) and *Explored by* (Anyone or one player,
+  lifting by first-seen time as the timeline plays).
+- **Not yet (the box doesn't record it):** **beds**. The behavior pack reads a player's spawn
+  point only when they ask Dave something (`/jb:dave`), and nothing keeps it, so the overlay
+  draws the world spawn and says beds aren't recorded. A pack event on a bed or respawn
+  anchor being set, kept per player, would close it. **Saved places** (`mc_places`) are kept
+  but not drawn yet; the overlay stays *later*.
+- **Next (P3):** the chat card.
 
 **Renderer, first layer (shipped 2026-10-10).**
 - **Reader:** `deploy/minecraft/leveldb.py` is a stdlib reader for Mojang's LevelDB

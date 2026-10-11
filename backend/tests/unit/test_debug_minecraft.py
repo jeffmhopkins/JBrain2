@@ -293,3 +293,34 @@ async def test_the_debug_structure_index_and_sweep_pass_through(sidecar) -> None
     started = await mc.minecraft_map_sweep(req, SETTINGS, PRINCIPAL, slot="slot2")
     assert started == {"state": "running"}
     assert seen[1].method == "POST" and json.loads(seen[1].content) == {"slot": "slot2"}
+
+
+async def test_the_debug_timeline_is_counts_for_the_slots_world(
+    sidecar, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seen, replies = sidecar
+    replies["/worlds"] = httpx.Response(
+        200, json={"slots": [{"id": "slot2", "folder": "castle", "exists": True}]}
+    )
+    asked: list[tuple[str, float, float]] = []
+
+    async def counts(_maker: Any, world: str, start: float, end: float) -> dict[str, Any]:
+        asked.append((world, start, end))
+        if end <= start:
+            raise ValueError("the range must end after it starts")
+        return {"world": world, "players": []}
+
+    monkeypatch.setattr(mc.timeline, "counts", counts)
+    req: Any = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=object())),
+        state=SimpleNamespace(),
+    )
+    out = await mc.minecraft_timeline(req, SETTINGS, PRINCIPAL, 10.0, 20.0, slot="slot2")
+    assert out == {"world": "castle", "players": []} and asked == [("castle", 10.0, 20.0)]
+    assert req.state.debug_detail == "minecraft timeline counts slot2"
+    with pytest.raises(HTTPException) as bad:
+        await mc.minecraft_timeline(req, SETTINGS, PRINCIPAL, 20.0, 10.0, slot="slot2")
+    assert bad.value.status_code == 422
+    with pytest.raises(HTTPException) as empty:
+        await mc.minecraft_timeline(req, SETTINGS, PRINCIPAL, 10.0, 20.0, slot="slot4")
+    assert empty.value.status_code == 404

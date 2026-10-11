@@ -3443,8 +3443,9 @@ owner chose **A — the map full-bleed under one persistent bottom panel**, with
 navigation **3 · Days** for the timeline; B (docked bars) and C (a card with a crosshair) are the
 round's record in `docs/mocks/minecraft-map/README.md`. A won because it is the only layout
 whose worst case (a 320 × 568 phone with the timeline open) still leaves a usable map, and it
-keeps every modal on the shared shells. **Wave 1 (shipped) is the live view**; the timeline,
-replay, *Explored by* and the chat card come with M8a and P3.
+keeps every modal on the shared shells. **Wave 1 (shipped) is the live view; wave 2 (shipped)
+is the timeline** — Days navigation, replay, trails, deaths, the world spawn and *Explored by*.
+The chat card comes with P3.
 
 - **Two ways in.** A **Map** row on the Minecraft screen under Worlds & backups (*{world} ·
   BlockyFox and Mira_P on the map*, or *nobody on right now*), and a **Map** row on each world's
@@ -3468,39 +3469,99 @@ replay, *Explored by* and the chat card come with M8a and P3.
   pick — has three heights (peek; the layer grid; 80 %), set by dragging its top edge or with
   its chevron, and the map always centres in the part it leaves. Peek is the world picker
   (*Castle Hill ▾*, opening the shared Sheet *Map of…* over all five slots, the empty ones
-  disabled), the **Layers / Timeline** tabs (Timeline disabled until M8a) and the **status
-  line**. What you tapped sits above the body.
+  disabled), the **Layers / Timeline** tabs and the **status line**. What you tapped sits above
+  the body; on the timeline it is one row (icon, title, *X · Z*, Copy, close) so the strip,
+  transport and scrubber keep their room.
 - **Honest status, always visible:** *Live · N on* / *Up to a minute behind the world ·
   positions live*; *Loading map tiles · X of Y* while tiles arrive; *Server stopped* / *Map as
   of then · players where they logged off*; *{world} isn't loaded* / *Map as of {date}, when it
   was last played*; *Box unreachable — retrying…* (pan and zoom still work over the tiles the
   phone has). In the End with nobody there: *Nobody has been to the End — all of it is the
-  survey*. It never says Live for a world that isn't loaded and running.
+  survey*. It never says Live for a world that isn't loaded and running. **In time mode** —
+  anywhere on the timeline but pinned to now — the line leads *Not live · yesterday 4:48 pm*
+  in `--warn-text` with *Replaying at 600×* (or *Paused*) *· positions from the travel log ·
+  terrain as of now*; under 360 px the second line goes. It never says Live there, and on the
+  Layers tab it carries **Back to live**.
 - **Tap anything for its coordinates**, each with **Copy X Z** (two numbers):
   - a **spot** asks `/map/point`: biome, *Explored · ground at Y 70* or *Satellite survey
     (predicted) · ground at Y ~129* (the survey's y is an estimate, so it stays out of the
     coordinates);
-  - a **player** gives *online · here now* or *offline · logged off here {ago}*;
+  - a **player** gives *online · here now*, *offline · logged off here {ago}* or, on the
+    timeline, *here at 4:48 pm, yesterday*, with **Follow** and **Sessions**;
+  - a **skull** gives the death in the game's own words (*BlockyFox burned in lava*, *killed
+    by a Zombie*, *blown up by a Creeper* — the behavior pack's damage cause and killer) and
+    when, with **Replay the minutes before** (its session from 3 minutes earlier, 10×, Follow
+    on);
+  - the **world spawn** (a star) gives *World spawn · where new players start*;
   - a **structure** gives *Located by the server* and whether its ground is explored or
     survey (no Y: `locate` gives none);
   - the **Nether** adds *Overworld side: X ×8 · Z ×8*.
 - **Long-press** drops a pin, glides in to at least 4 px per block, toasts *Pin dropped — nudge
   it block by block*, and offers **Nudge one block** (W / N / S / E).
-- **Markers:** players are discs in the four accents by roster order (filled and pulsing while
-  online, hollow where they logged off) and never cluster. **Structures** (the server's own
+- **Markers:** players are discs in the four accents (`--steel`, `--green`, `--amber`,
+  `--violet`, by gamertag, the same colour on the map, the day strip, the chips, the scrubber's
+  bands and the session list; filled and pulsing while online, hollow where they logged off)
+  and never cluster. Deaths are a rose disc with skull eyes and teeth; a count badge of deaths
+  only is rose-ringed. On the replay, where each shown player logged in, logged off and went
+  through a portal (up to the moment) are the scrubber's glyphs on the dark halo; each taps to
+  *BlockyFox logged in* / *went to the Nether* and when. **Structures** (the server's own
   `locate`, from the sidecar's saved sweep, so they draw with the server stopped) are Lucide
   outlines on an amber-ringed halo tile; markers within **40 px** merge into a count badge
   that zooms in on tap until they separate (markers on one block open the first). Every
-  marker has a 46-px hit circle. Labels go tapped thing, players, structures; a label that
+  marker has a 46-px hit circle. Labels go tapped thing, players, spawn, structures; a label that
   would collide with another, a floating control, the panel or the scale bar moves below its
   marker or is dropped — never drawn under it.
 - **Layers:** **Biomes** (explored + satellite survey) is the only base layer; Surface and Height
-  are listed, disabled, *later*. Overlays: **Players**, **Structures** (its line says *from the
-  server's locate · exact*, or *searching the world · N%* while the box sweeps, with **Search
-  again** when the world is live) and **Grid & coordinates**; Trails, Deaths, Beds & spawn,
-  Saved places, *Explored by…* and Wormhole gates are listed with a *later* badge. The legend
-  pairs *Explored · Satellite survey*, the dimension's biome swatches, and the glyphs with the
-  count badge.
+  are listed, disabled, *later*. Overlays: **Players**; **Trails** (live, each player's latest
+  session; on the timeline, everyone's path up to the moment, faint, with a bold fading tail of
+  the last 5 minutes); **Deaths** (the last week's live, the range's up to the moment on the
+  timeline); **Beds & spawn** (the world spawn from `level.dat` — beds aren't recorded, so its
+  line says so); **Structures** (its line says *from the server's locate · exact*, or
+  *searching the world · N%* while the box sweeps, with **Search again** when the world is
+  live); **Explored by…** (off by default; chips *Anyone* or one player; a `--map-fog` veil at
+  62 % over every chunk they hadn't come near, lifted by each chunk's first-seen time as the
+  timeline plays); **Grid & coordinates**. Saved places and Wormhole gates are listed with a
+  *later* badge. The legend pairs *Explored · Satellite survey*, the dimension's biome
+  swatches, the glyphs (player, structure, death, spawn) with the count badge, and the veil
+  while *Explored by* is on.
+- **The Timeline tab** (session navigation *3 · Days*). Opening it pins the timeline to now —
+  still the live view, the transport's **Live** pressed — and the panel goes to its middle
+  height, which ends at the scrubber (the map keeps at least 190 px). Top to bottom:
+  - the **day strip**: the last week, edge to edge, from the first day anyone played (*Sun 4 …
+    Today 10*), a dot per player who played that day, days nobody played disabled; the
+    selected day follows the scrubber, so a week's replay walks across it. Tapping a day sets
+    the range to its activity (first start to last end, 10 minutes either side), puts the
+    scrubber at its first start and centres the map there;
+  - **that day's sessions as chips** (player disc, start time, duration or *on now* in
+    `--ok-text`), scrolling sideways when they don't fit. A chip loads its session: the range
+    becomes the session with 2 minutes either side, the scrubber its start, the map that
+    start (switching dimension if need be), and the chip stays pressed;
+  - the **transport**: play/pause (44 px, steel tint), the speed (*1× / 10× / 60× / 600×*, one
+    tap cycles), the clock and day, **Follow** (the loaded session's player; icon-only under
+    360 px) and **Now** (pressed and reading **Live** while pinned to now);
+  - the **scrubber**: a 28-px thumb on a 44-px track over the range, each shown player's
+    sessions as bands in their colour at 55 %, and above it a row of 44-px event glyphs —
+    skull (deaths, `--danger-text`), portal (dimension changes, `--violet`), log-in and
+    log-out — merged with a count when closer than 44 px, a death leading. A glyph jumps the
+    scrubber there and the map to the spot; a death also selects itself. Arrow keys step a
+    fiftieth, Page Up / Down a tenth, Home / End the ends;
+  - one drag further, **Range and who's shown**: **All sessions**, the presets **Session ·
+    Today · Week · All** (*Session* is whoever is on now, else the newest session) and a chip
+    per player that hides or shows them.
+
+  Playing moves each shown player's dot along their trail, interpolated between samples
+  (a full-rate trail's long gap reads as standing still, then one sample's walk) and never
+  across a session, portal or respawn; a player is nowhere between their sessions. **Follow**
+  keeps the map on the player and, when they change dimension, switches the map with a toast
+  (*BlockyFox went to the Nether*, *…died and respawned in the Overworld*); dragging the map
+  turns Follow off. Playback is a local redraw — one request per range, none per frame.
+- **The session list** (alternative 1's, the shared Sheet *Sessions*): *{world} · newest first*,
+  radio chips **All players** and one per player with counts, then the sessions grouped by
+  day (*Today · Sat Oct 10 — 3 sessions*) in micro-row cards: start–end or *–now* with an *on
+  now* badge, the player under *All players*, the duration and distance, a portal glyph for a
+  Nether trip and a skull count. The loaded session is highlighted; a tap loads it and closes
+  the sheet. It opens from **All sessions** and from a player's **Sessions** (filtered to
+  them) — the way to anything older than the strip's week.
 - **Absolute sizes:** the canvas and its floating chrome (`.mc-map*` over the picture) don't
   scale with the text-size setting (see "Theming"); the panel, the Sheet and their words use
   the type tokens. The pulse stops under `prefers-reduced-motion` and while the tab is hidden.

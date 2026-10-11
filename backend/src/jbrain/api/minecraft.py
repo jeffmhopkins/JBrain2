@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
 from jbrain.api.deps import SettingsDep, owner_only
-from jbrain.minecraft import changelog, sessions, travel
+from jbrain.minecraft import changelog, sessions, timeline, travel
 from jbrain.minecraft import client as mc
 
 router = APIRouter(prefix="/minecraft", dependencies=[Depends(owner_only)])
@@ -473,10 +473,7 @@ async def map_players(
     """Each player's latest position in one world, from the travel log, and whether they
     are on it right now. Only the loaded, running world has anyone on; any other world
     shows where each player last was."""
-    view = await mc.call(settings, "GET", "/worlds")
-    rec = next((s for s in view.get("slots") or [] if s.get("id") == slot), None)
-    if rec is None or not rec.get("exists"):
-        raise HTTPException(status_code=404, detail=f"{slot} has no world yet")
+    rec = await mc.slot_record(settings, slot)
     online: set[str] = set()
     running = False
     if rec.get("active"):
@@ -517,3 +514,40 @@ async def sweep_structures(
     """Search the loaded world for structures again, now. A 409 when it isn't the loaded,
     running world: `locate` asks the server, so only that world can answer."""
     return await mc.call(settings, "POST", "/map/structures/sweep", json={"slot": slot})
+
+
+_PLAYERS = r"^[^,]{1,64}(,[^,]{1,64}){0,15}$"
+_PARTS = r"^(trails|events|sessions|explored)(,(trails|events|sessions|explored)){0,3}$"
+
+
+@router.get("/timeline")
+async def map_timeline(
+    request: Request,
+    settings: SettingsDep,
+    start: Annotated[float, Query(alias="from")],
+    end: Annotated[float, Query(alias="to")],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    players: Annotated[str | None, Query(pattern=_PLAYERS)] = None,
+    include: Annotated[str, Query(pattern=_PARTS)] = "trails,events,sessions",
+    dim: Annotated[str, Query(pattern=_DIM)] = "overworld",
+) -> dict[str, Any]:
+    """One world's travel log over [from, to] (epoch seconds) for the map's timeline (plan
+    §M8a): each player's trail cut to at most 2,000 points, never across a session, a
+    dimension or a respawn; the joins, leaves, deaths (with cause and killer), respawns and
+    dimension changes in range; every session of the world, newest first; and, asked for
+    with `include=explored`, the fog of war in `dim` with each chunk's first-seen time.
+    `players` (comma-separated keys) narrows trails, events and fog to those players."""
+    rec = await mc.slot_record(settings, slot)
+    try:
+        got = await timeline.timeline(
+            _maker(request),
+            str(rec["folder"]),
+            start,
+            end,
+            players=[p for p in (players or "").split(",") if p],
+            include=frozenset(include.split(",")),
+            dim=dim,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"slot": slot, **got}

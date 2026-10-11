@@ -10,6 +10,11 @@ import type {
   MinecraftMapPlayers,
   MinecraftMapPoint,
   MinecraftMapStructures,
+  MinecraftSession,
+  MinecraftTimeline,
+  MinecraftTimelineEvent,
+  MinecraftTimelinePart,
+  MinecraftTrailSegment,
 } from "./api/client";
 
 const nowS = () => Date.now() / 1000;
@@ -200,6 +205,7 @@ export function mcMapInfo(slot: string, dim: MinecraftDim): MinecraftMapInfo {
     max_zoom: 4,
     layers: ["biome"],
     predicted: true,
+    spawn: dim === "overworld" ? (castle ? { x: 32, z: -8 } : { x: 0, z: 0 }) : null,
   };
 }
 
@@ -227,54 +233,33 @@ export function mcMapPoint(
 export function mcMapPlayers(slot: string, live: boolean): MinecraftMapPlayers {
   const t = nowS();
   const castle = slot === "slot2";
+  const log = fixtureLog();
+  // Castle Hill's players are where the travel log last saw them, as on the box.
   const players = castle
-    ? [
-        {
-          xuid: "2535411",
-          gamertag: "BlockyFox",
-          dim: "overworld",
-          x: 118,
-          y: 71,
-          z: -212,
-          at: t - 8,
-          online: live,
-        },
-        {
-          xuid: "2535412",
-          gamertag: "Mira_P",
-          dim: "overworld",
-          x: 286,
-          y: 68,
-          z: -352,
-          at: t - 3,
-          online: live,
-        },
-        {
-          xuid: "2535413",
-          gamertag: "Steve42",
-          dim: "overworld",
-          x: 410,
-          y: 63,
-          z: 132,
-          at: t - 66_000,
-          online: false,
-        },
-        {
-          xuid: "2535414",
-          gamertag: "Pebble_J",
-          dim: "nether",
-          x: 60,
-          y: 70,
-          z: -40,
-          at: t - 170_000,
-          online: false,
-        },
-      ]
+    ? FX_PLAYERS.flatMap((p) => {
+        const segs = log.trails.get(p.xuid) ?? [];
+        const seg = segs[segs.length - 1];
+        const last = seg?.points[seg.points.length - 1];
+        if (!seg || !last) return [];
+        const on = log.sessions.some((s) => s.xuid === p.xuid && s.end === null);
+        return [
+          {
+            xuid: p.xuid,
+            gamertag: p.gamertag,
+            dim: seg.dim,
+            x: last[1],
+            y: last[2],
+            z: last[3],
+            at: on ? t - 8 : last[0],
+            online: live && on,
+          },
+        ];
+      })
     : [
         {
           xuid: "2535411",
           gamertag: "BlockyFox",
-          dim: "overworld",
+          dim: "overworld" as MinecraftDim,
           x: 12,
           y: 70,
           z: -6,
@@ -282,12 +267,7 @@ export function mcMapPlayers(slot: string, live: boolean): MinecraftMapPlayers {
           online: false,
         },
       ];
-  return {
-    slot,
-    world: slot,
-    live: live && castle,
-    players: players as MinecraftMapPlayers["players"],
-  };
+  return { slot, world: slot, live: live && castle, players };
 }
 
 const STRUCTS: Record<MinecraftDim, [string, number, number][]> = {
@@ -334,4 +314,392 @@ export function mcMapStructures(slot: string, dim: MinecraftDim): MinecraftMapSt
     stale: swept ? null : "never searched",
     sweep: { state: "idle" },
   };
+}
+
+// ---- the travel log behind the timeline (M8a): the reviewed fixture's week ----
+//
+// README "Shared fixture": 17 sessions from six days ago to now (Oct 4–10 in the mock,
+// whose "now" is Sat Oct 10, 2:40 pm — pin the clock there and the days and times match),
+// the four players, their deaths, and BlockyFox's 3h 42m session the day before yesterday's
+// evening: castle → portal → Nether fortress, dies in lava, respawns at his bed, then the
+// shipwreck, the village and home. Today's sessions are placed back from the real now, so
+// "on now" is true whatever the time.
+
+interface FxPlayer {
+  xuid: string;
+  gamertag: string;
+  bed: [number, number] | null;
+}
+
+const FX_PLAYERS: FxPlayer[] = [
+  { xuid: "2535411", gamertag: "BlockyFox", bed: [-136, 94] },
+  { xuid: "2535412", gamertag: "Mira_P", bed: [226, -296] },
+  { xuid: "2535413", gamertag: "Steve42", bed: null },
+  { xuid: "2535414", gamertag: "Pebble_J", bed: null },
+];
+const SPAWN: [number, number] = [32, -8];
+const PORTAL_O: [number, number] = [-40, 40];
+const PORTAL_N: [number, number] = [-5, 5];
+const VILLAGE: [number, number] = [232, -304];
+const CASTLE: [number, number] = [-140, 90];
+
+interface Way {
+  p?: [number, number];
+  dwell?: number;
+  speed?: number;
+  portal?: MinecraftDim;
+  respawn?: boolean;
+  died?: [string, string | null, number];
+}
+
+interface FxLog {
+  key: number;
+  now: number;
+  sessions: MinecraftSession[];
+  trails: Map<string, MinecraftTrailSegment[]>;
+  events: MinecraftTimelineEvent[];
+}
+
+function rng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+const groundY = (dim: MinecraftDim) => (dim === "nether" ? 64 : 70);
+
+function buildLog(): FxLog {
+  const now = Math.floor(nowS());
+  // Day `d` of the mock's Oct 4–10 week, as a day this many days before today.
+  const at = (d: number, h: number, m: number) => {
+    const t = new Date();
+    return new Date(t.getFullYear(), t.getMonth(), t.getDate() - (10 - d), h, m).getTime() / 1000;
+  };
+  const r = rng(4242);
+  const wob = noise(31);
+  const sessions: MinecraftSession[] = [];
+  const trails = new Map<string, MinecraftTrailSegment[]>();
+  const events: MinecraftTimelineEvent[] = [];
+
+  function session(who: FxPlayer, start: number, end: number | null, plan: Way[]) {
+    const id = `fx-${sessions.length + 1}`;
+    const stop = end ?? now;
+    const segs: MinecraftTrailSegment[] = [];
+    const distance: Partial<Record<MinecraftDim, number>> = {};
+    let t = start;
+    let d: MinecraftDim = "overworld";
+    let [x, z] = plan[0]?.p ?? SPAWN;
+    const ev = (kind: MinecraftTimelineEvent["kind"], extra: Partial<MinecraftTimelineEvent>) =>
+      events.push({
+        kind,
+        xuid: who.xuid,
+        gamertag: who.gamertag,
+        at: t,
+        dim: d,
+        x: Math.round(x),
+        y: groundY(d),
+        z: Math.round(z),
+        ...extra,
+      });
+    const push = (nx: number, nz: number, fresh = false) => {
+      let seg = segs[segs.length - 1];
+      const last = seg?.points[seg.points.length - 1];
+      if (!seg || fresh || seg.dim !== d) {
+        seg = { session: id, dim: d, points: [] };
+        segs.push(seg);
+      } else if (last) {
+        const step = Math.hypot(nx - last[1], nz - last[3]);
+        if (step < 4) return; // the sidecar keeps a sample only after movement
+        distance[d] = (distance[d] ?? 0) + step;
+      }
+      seg.points.push([t, Math.round(nx), groundY(d), Math.round(nz)]);
+    };
+    push(x, z);
+    ev("join", {});
+    for (const w of plan.slice(1)) {
+      if (t >= stop) break;
+      if (w.portal) {
+        t += 6;
+        const from = d;
+        d = w.portal;
+        [x, z] = d === "nether" ? PORTAL_N : PORTAL_O;
+        push(x, z, true);
+        ev("dimension", { from_dim: from });
+        continue;
+      }
+      if (w.respawn) {
+        t += 9;
+        d = "overworld";
+        [x, z] = who.bed ?? SPAWN;
+        push(x, z, true);
+        ev("respawn", {});
+        continue;
+      }
+      const [tx, tz] = w.p ?? [x, z];
+      const dist = Math.hypot(tx - x, tz - z);
+      const steps = Math.max(1, Math.round(dist / ((w.speed ?? 4.2) * 10)));
+      const [sx, sz] = [x, z];
+      const ph = r() * 100;
+      for (let q = 1; q <= steps && t < stop; q++) {
+        t += 10;
+        const f = q / steps;
+        const off = Math.sin(f * Math.PI) * 26 * (wob(ph + f * 3, 1, 2) - 0.5) * 2;
+        x = sx + (tx - sx) * f - ((tz - sz) / (dist || 1)) * off;
+        z = sz + (tz - sz) * f + ((tx - sx) / (dist || 1)) * off;
+        push(x, z);
+      }
+      if (w.died) {
+        t += 4;
+        const [cause, killer, y] = w.died;
+        ev("death", { cause, killer, y });
+      }
+      if (w.dwell) {
+        const until = Math.min(stop, t + w.dwell * 60);
+        while (t + 60 < until) {
+          t += 60;
+          push(tx + (r() - 0.5) * 18, tz + (r() - 0.5) * 18);
+        }
+        t = until;
+      }
+    }
+    t = stop;
+    if (end !== null) ev("leave", {});
+    const first = segs[0]?.points[0];
+    sessions.push({
+      id,
+      xuid: who.xuid,
+      gamertag: who.gamertag,
+      start,
+      end,
+      last_seen: Math.min(now, stop),
+      distance: Object.fromEntries(Object.entries(distance).map(([k, v]) => [k, Math.round(v)])),
+      dims: DIM_ORDER.filter((k) => segs.some((g) => g.dim === k)),
+      deaths: 0,
+      first: first && segs[0] ? { dim: segs[0].dim, x: first[1], z: first[3] } : null,
+    });
+    trails.set(who.xuid, [...(trails.get(who.xuid) ?? []), ...segs]);
+  }
+
+  const [B, M, S, P] = FX_PLAYERS as [FxPlayer, FxPlayer, FxPlayer, FxPlayer];
+  const zombie = "minecraft:zombie";
+  session(B, at(4, 16, 2), at(4, 17, 31), [
+    { p: SPAWN },
+    { p: [-20, 40] },
+    { p: CASTLE, dwell: 34 },
+    { p: [40, 130] },
+    { p: [10, 20], dwell: 6 },
+  ]);
+  session(M, at(4, 16, 10), at(4, 17, 20), [
+    { p: SPAWN },
+    { p: [120, -140] },
+    { p: VILLAGE, dwell: 40 },
+  ]);
+  session(M, at(5, 17, 0), at(5, 18, 10), [{ p: VILLAGE }, { p: [196, -262], dwell: 52 }]);
+  session(P, at(5, 19, 10), at(5, 19, 48), [{ p: SPAWN }, { p: [60, 40], dwell: 22 }]);
+  session(B, at(6, 15, 31), at(6, 16, 48), [
+    { p: CASTLE },
+    { p: [-250, -90] },
+    { p: [-330, -230], dwell: 8 },
+    { p: [-372, -262], died: ["fall", null, 131] },
+    { respawn: true },
+    { p: [-100, 150], dwell: 22 },
+  ]);
+  session(S, at(6, 18, 0), at(6, 18, 40), [
+    { p: SPAWN },
+    { p: [-120, -60] },
+    { p: [-40, -150] },
+    { p: SPAWN, dwell: 4 },
+  ]);
+  session(B, at(7, 10, 20), at(7, 11, 5), [
+    { p: CASTLE },
+    { p: [-200, 40] },
+    { p: CASTLE, dwell: 22 },
+  ]);
+  session(B, at(7, 16, 5), at(7, 17, 12), [
+    { p: CASTLE },
+    { p: [60, 200] },
+    { p: [-60, 300], died: ["entityAttack", zombie, 66] },
+    { respawn: true },
+    { p: [-150, 120], dwell: 20 },
+  ]);
+  session(S, at(7, 19, 30), at(7, 20, 5), [
+    { p: SPAWN },
+    { p: [-40, -150], dwell: 12 },
+    { p: SPAWN },
+  ]);
+  session(M, at(8, 17, 0), at(8, 18, 30), [
+    { p: VILLAGE },
+    { p: [196, -262], dwell: 34 },
+    { p: [150, -200], died: ["entityExplosion", "minecraft:creeper", 69] },
+    { respawn: true },
+    { p: [196, -262], dwell: 40 },
+  ]);
+  session(P, at(8, 18, 0), at(8, 18, 40), [
+    { p: SPAWN },
+    { p: [60, 40] },
+    { p: [90, 60], died: ["entityAttack", zombie, 70] },
+    { respawn: true },
+    { p: [10, 10], dwell: 10 },
+  ]);
+  session(B, at(9, 16, 10), at(9, 19, 52), [
+    { p: CASTLE, dwell: 12 },
+    { p: PORTAL_O },
+    { portal: "nether" },
+    { p: [30, -20] },
+    { p: [60, -40], dwell: 24 },
+    { p: [86, -30] },
+    { p: [41, -58], died: ["lava", null, 33] },
+    { respawn: true },
+    { p: [100, 60] },
+    { p: [300, 100] },
+    { p: [430, 150], dwell: 16, speed: 3 },
+    { p: [380, 40] },
+    { p: [250, -150] },
+    { p: VILLAGE, dwell: 25 },
+    { p: [120, -40] },
+    { p: CASTLE, dwell: 20 },
+  ]);
+  session(M, at(9, 17, 0), at(9, 18, 15), [
+    { p: VILLAGE },
+    { p: [300, -420] },
+    { p: [120, -470] },
+    { p: VILLAGE, dwell: 6 },
+  ]);
+  session(S, at(9, 19, 20), at(9, 20, 14), [
+    { p: SPAWN },
+    { p: [200, 40] },
+    { p: [380, 120] },
+    { p: [434, 146], died: ["drowning", null, 48], speed: 2.5 },
+    { respawn: true },
+    { p: [60, -30], dwell: 30 },
+  ]);
+  // Today: placed back from now, so the two still on are on whatever the time.
+  session(M, now - 5 * 3600, now - 5 * 3600 + 45 * 60, [
+    { p: VILLAGE },
+    { p: [196, -262], dwell: 30 },
+  ]);
+  session(B, now - 42 * 60, null, [
+    { p: CASTLE },
+    { p: [-20, -60] },
+    { p: [130, -180] },
+    { p: [196, -262], dwell: 8 },
+    { p: [118, -212], dwell: 60 },
+  ]);
+  session(M, now - 7 * 60, null, [
+    { p: VILLAGE },
+    { p: [330, -400] },
+    { p: [286, -352], dwell: 60 },
+  ]);
+
+  events.sort((a, b) => a.at - b.at);
+  for (const s of sessions) {
+    s.deaths = events.filter(
+      (e) => e.kind === "death" && e.xuid === s.xuid && e.at >= s.start && e.at <= (s.end ?? now),
+    ).length;
+  }
+  for (const [k, segs] of trails) {
+    trails.set(
+      k,
+      segs.sort((a, b) => (a.points[0]?.[0] ?? 0) - (b.points[0]?.[0] ?? 0)),
+    );
+  }
+  return { key: Math.floor(now / 60), now, sessions, trails, events };
+}
+
+const DIM_ORDER: MinecraftDim[] = ["overworld", "nether", "the_end"];
+let LOG: FxLog | null = null;
+let FOG: { key: number; by: Map<string, Map<string, number>> } | null = null;
+
+/** The fixture's week, rebuilt once a minute so "now" and "on now" stay true. */
+export function fixtureLog(): FxLog {
+  if (!LOG || LOG.key !== Math.floor(nowS() / 60)) LOG = buildLog();
+  return LOG;
+}
+
+/** Each player's fog of war per dimension: chunk → first seen, the travel log's 4-chunk
+ *  reveal. */
+function fog(log: FxLog) {
+  if (FOG?.key === log.key) return FOG.by;
+  const by = new Map<string, Map<string, number>>();
+  for (const [xuid, segs] of log.trails) {
+    for (const seg of segs) {
+      const key = `${xuid}|${seg.dim}`;
+      const m = by.get(key) ?? new Map<string, number>();
+      by.set(key, m);
+      let lx = Number.NaN;
+      let lz = Number.NaN;
+      for (const [t, x, , z] of seg.points) {
+        const cx = Math.floor(x / 16);
+        const cz = Math.floor(z / 16);
+        if (cx === lx && cz === lz) continue;
+        lx = cx;
+        lz = cz;
+        for (let dz = -4; dz <= 4; dz++) {
+          for (let dx = -4; dx <= 4; dx++) {
+            const k = `${cx + dx},${cz + dz}`;
+            if (t < (m.get(k) ?? Number.POSITIVE_INFINITY)) m.set(k, t);
+          }
+        }
+      }
+    }
+  }
+  FOG = { key: log.key, by };
+  return by;
+}
+
+export function mcTimeline(
+  slot: string,
+  from: number,
+  to: number,
+  opts: { include: MinecraftTimelinePart[]; players: string[]; dim: MinecraftDim },
+): MinecraftTimeline {
+  const log = fixtureLog();
+  const castle = slot === "slot2";
+  const wanted = (x: string) => !opts.players.length || opts.players.includes(x);
+  const out: MinecraftTimeline = { slot, world: slot, from, to, now: nowS() };
+  if (opts.include.includes("trails")) {
+    out.truncated = false;
+    out.trails = castle
+      ? FX_PLAYERS.filter((p) => wanted(p.xuid)).flatMap((p) => {
+          const segments = (log.trails.get(p.xuid) ?? [])
+            .map((g) => ({ ...g, points: g.points.filter(([t]) => t >= from && t <= to) }))
+            .filter((g) => g.points.length);
+          const samples = segments.reduce((a, g) => a + g.points.length, 0);
+          return samples
+            ? [{ xuid: p.xuid, gamertag: p.gamertag, samples, downsampled: false, segments }]
+            : [];
+        })
+      : [];
+  }
+  if (opts.include.includes("events")) {
+    out.events = castle
+      ? log.events.filter((e) => e.at >= from && e.at <= to && wanted(e.xuid))
+      : [];
+  }
+  if (opts.include.includes("sessions")) {
+    out.sessions = castle ? [...log.sessions].sort((a, b) => b.start - a.start) : [];
+  }
+  if (opts.include.includes("explored")) {
+    const best = new Map<string, number>();
+    if (castle) {
+      for (const [key, chunks] of fog(log)) {
+        const [xuid, dim] = key.split("|");
+        if (dim !== opts.dim || !wanted(xuid ?? "")) continue;
+        for (const [k, t] of chunks) {
+          if (t <= to && t < (best.get(k) ?? Number.POSITIVE_INFINITY)) best.set(k, t);
+        }
+      }
+    }
+    out.explored = {
+      dim: opts.dim,
+      chunks: [...best].map(([k, t]) => {
+        const [cx, cz] = k.split(",").map(Number);
+        return [cx ?? 0, cz ?? 0, t] as [number, number, number];
+      }),
+      truncated: false,
+    };
+  }
+  return out;
 }

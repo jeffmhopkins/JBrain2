@@ -199,3 +199,13 @@ async def download(settings: Any, path: str) -> tuple[httpx.AsyncClient, httpx.R
         await client.aclose()
         raise HTTPException(status_code=404 if resp.status_code == 404 else 502, detail=msg)
     return client, resp
+
+
+async def slot_record(settings: Any, slot: str) -> dict[str, Any]:
+    """The sidecar's record of a slot that holds a world. Its folder is what the travel
+    log is keyed by, so a slot's history follows whichever world is in it."""
+    view = await call(settings, "GET", "/worlds")
+    rec = next((s for s in view.get("slots") or [] if s.get("id") == slot), None)
+    if rec is None or not rec.get("exists"):
+        raise HTTPException(status_code=404, detail=f"{slot} has no world yet")
+    return rec
