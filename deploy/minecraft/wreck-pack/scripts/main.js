@@ -30,6 +30,11 @@ const RETRY_TICKS = 20 * 30;
 const POD_STEPS = ["terrain", "place", "crater", "canopy", "details", "kit", "spawn"];
 
 const emit = (ev) => console.log(`[jbrain] ${JSON.stringify(ev)}`);
+// A warning goes out as a plain log line: on the box a build whose block edits didn't
+// land showed no warnings at all, and log lines are what the console reliably shows.
+const warn = (text) => console.log(`[jbrain-wreck] ${text}`);
+// Each pod step's block writes, and the first reason one didn't land, for its summary.
+const writes = { tried: 0, failed: 0, first: "" };
 
 class Unloaded extends Error {}
 
@@ -52,7 +57,7 @@ function command(dim, text, quiet = false) {
   } catch (err) {
     // `tickingarea add` for an area that survived a crash, `remove` for one already
     // gone: both mean the world is already as wanted.
-    if (!quiet) console.warn(`[jbrain-wreck] ${text}: ${err}`);
+    if (!quiet) warn(`${text}: ${err}`);
     return false;
   }
 }
@@ -66,23 +71,51 @@ function blockAt(dim, x, y, z) {
 }
 
 function set(dim, x, y, z, id, states) {
+  writes.tried += 1;
+  const fail = (why) => {
+    writes.failed += 1;
+    if (!writes.first) writes.first = `${id} at ${x} ${y} ${z}: ${why}`;
+  };
   const b = blockAt(dim, x, y, z);
-  if (!b) return;
+  if (!b) return fail("no block there (chunk not loaded?)");
   try {
     if (states) b.setPermutation(BlockPermutation.resolve(`minecraft:${id}`, states));
     else b.setType(`minecraft:${id}`);
   } catch (err) {
-    console.warn(`[jbrain-wreck] ${id} at ${x} ${y} ${z}: ${err}`);
+    return fail(String(err));
   }
+  // Read back, so a write the game took without throwing but didn't keep is told apart
+  // from one lost later (the box's first sweep lost every one, with no error).
+  const now = blockAt(dim, x, y, z)?.typeId;
+  if (now !== `minecraft:${id}`) fail(`read back as ${now}`);
 }
 
-function area(dim, name, x0, z0, x1, z1) {
-  command(dim, `tickingarea remove ${name}`, true);
+// The ticking areas this run has up, by name, with their boxes. On the box a removed
+// area's chunks unload a moment later, so re-adding an area it already had let the load
+// check pass on chunks about to go, and every block edit after it fell on nothing (SW4).
+const live = new Map();
+// How long a removed area's chunks are given to unload before the load check reads.
+const UNLOAD_TICKS = 40;
+
+function* area(dim, name, x0, z0, x1, z1) {
+  const box = `${x0} ${z0} ${x1} ${z1}`;
+  if (live.get(name) === box) return;
+  // One left from a crash, or this run's for another box: gone first, then waited out.
+  if (command(dim, `tickingarea remove ${name}`, true)) {
+    const start = system.currentTick;
+    while (system.currentTick - start < UNLOAD_TICKS) yield;
+  }
   command(dim, `tickingarea add ${x0} 0 ${z0} ${x1} 0 ${z1} ${name} true`);
+  live.set(name, box);
+}
+
+function drop(dim, name, quiet = false) {
+  command(dim, `tickingarea remove ${name}`, quiet);
+  live.delete(name);
 }
 
 function dropAreas(dim) {
-  for (const name of [POD_AREA, SHIP_AREA]) command(dim, `tickingarea remove ${name}`, true);
+  for (const name of [POD_AREA, SHIP_AREA]) drop(dim, name, true);
 }
 
 /**
@@ -141,7 +174,7 @@ function* plan_(dim, state) {
   const spawn = world.getDefaultSpawnLocation();
   const cx = Math.floor(spawn.x);
   const cz = Math.floor(spawn.z);
-  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = yield* survey(dim, cx, cz, SURVEY);
   const site = plan.chooseSite(ground, { x: cx, z: cz }, WRECK.pod);
@@ -270,7 +303,7 @@ function* podStep(dim, state, step, ground) {
         try {
           container.addItem(new ItemStack(`minecraft:${id}`, count));
         } catch (err) {
-          console.warn(`[jbrain-wreck] kit ${id}: ${err}`);
+          warn(`kit ${id}: ${err}`);
         }
       }
     });
@@ -282,17 +315,22 @@ function* podStep(dim, state, step, ground) {
 
 function* buildPod(dim, state) {
   const { x: cx, z: cz } = state.spawn;
-  area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
+  yield* area(dim, POD_AREA, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   yield* loadBox(dim, cx - SURVEY, cz - SURVEY, cx + SURVEY - 1, cz + SURVEY - 1);
   const ground = plan.decodeGround(state.ground);
   for (const step of POD_STEPS) {
     if (state.steps.includes(step)) continue;
+    Object.assign(writes, { tried: 0, failed: 0, first: "" });
     yield* podStep(dim, state, step, ground);
+    // Every step says what it wrote, so one that quietly did nothing (no ground read
+    // for its columns, say) shows up on the box, not only one that failed.
+    const lost = writes.failed ? `; ${writes.failed} not written, first: ${writes.first}` : "";
+    warn(`step ${step}: ${writes.tried - writes.failed} of ${writes.tried} blocks written${lost}`);
     state.steps.push(step);
     save(state);
     yield;
   }
-  command(dim, `tickingarea remove ${POD_AREA}`);
+  drop(dim, POD_AREA);
 }
 
 function* peakUnder(dim, x0, z0, lx, lz) {
@@ -325,7 +363,7 @@ function* buildShip(dim, state) {
     const base = plan.shipBase(state.frame, pod, ship);
     for (const shift of plan.SHIP_SHIFTS) {
       const [x0, z0] = [base.x, base.z + shift];
-      area(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
+      yield* area(dim, SHIP_AREA, x0, z0, x0 + lx - 1, z0 + lz - 1);
       yield* loadBox(dim, x0, z0, x0 + lx - 1, z0 + lz - 1);
       const y = plan.shipHeight(base.y, yield* peakUnder(dim, x0, z0, lx, lz), ly, top);
       if (y !== null) {
@@ -339,7 +377,7 @@ function* buildShip(dim, state) {
     save(state);
   }
   const { x, y, z } = state.ship;
-  area(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
+  yield* area(dim, SHIP_AREA, x, z, x + lx - 1, z + lz - 1);
   yield* loadBox(dim, x, z, x + lx - 1, z + lz - 1);
   for (let i = state.tiles ?? 0; i < ship.tiles.length; i += 1) {
     const t = ship.tiles[i];
@@ -348,7 +386,7 @@ function* buildShip(dim, state) {
     save(state);
     yield;
   }
-  command(dim, `tickingarea remove ${SHIP_AREA}`);
+  drop(dim, SHIP_AREA);
 }
 
 function* build(state) {

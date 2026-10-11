@@ -69,11 +69,19 @@ export class Dimension {
     this.items = new Map();
     this.commands = [];
     this.heightRange = { min: -64, max: 320 };
-    this.areas = new Map(); // name -> {box: [cx0, cz0, cx1, cz1] in chunks, at: clock}
+    this.areas = new Map(); // name -> {box: [cx0, cz0, cx1, cz1] in chunks, at: tick}
+    // Removed areas whose chunks haven't unloaded yet: on the box they go a moment
+    // after the remove, so a load check right after one can be fooled.
+    this.dying = []; // {box, until: tick}
   }
   loaded(x, z) {
     const cx = Math.floor(x / 16);
     const cz = Math.floor(z / 16);
+    this.dying = this.dying.filter((d) => tick() < d.until);
+    for (const { box } of this.dying) {
+      const [x0, z0, x1, z1] = box;
+      if (cx >= x0 && cx <= x1 && cz >= z0 && cz <= z1) return true;
+    }
     // Like the game, an area's chunks come in over several ticks: here a few chunks a
     // tick, in rows, so a chunk in the middle loads after the corners have.
     for (const { box, at } of this.areas.values()) {
@@ -82,7 +90,7 @@ export class Dimension {
       const order = (cx - x0) * (z1 - z0 + 1) + (cz - z0);
       const row = Math.floor((z1 - z0 + 1) / 2);
       const ready = order === 0 || cx === x1 || ((cz === z0 || cz === z1) && order < row) ? 0 : order;
-      if (tick() - at >= ready / CHUNKS_PER_TICK) return true;
+      if (tick() - at >= Math.max(1, ready / CHUNKS_PER_TICK)) return true;
     }
     return false;
   }
@@ -121,7 +129,10 @@ export class Dimension {
     this.commands.push(text);
     const words = text.split(/\s+/);
     if (words[0] === "tickingarea" && words[1] === "remove") {
-      if (!this.areas.delete(words[2])) throw new Error(`no ticking area ${words[2]}`);
+      const gone = this.areas.get(words[2]);
+      if (!gone) throw new Error(`no ticking area ${words[2]}`);
+      this.areas.delete(words[2]);
+      this.dying.push({ box: gone.box, until: tick() + UNLOAD_DELAY_TICKS });
     } else if (words[0] === "tickingarea" && words[1] === "add" && words[2] !== "circle") {
       const [x0, , z0, x1, , z1] = words.slice(2, 8).map(Number);
       const box = [Math.floor(Math.min(x0, x1) / 16), Math.floor(Math.min(z0, z1) / 16),
@@ -150,6 +161,9 @@ let stopped = 0;
 const STEPS_PER_TICK = 50;
 const CHUNKS_PER_TICK = 1;
 const tick = () => Math.floor(clock / STEPS_PER_TICK);
+// The box's own timing: a removed area's chunks are gone by the next tick, and a new
+// area has none ready on the tick it was added, the corners included.
+const UNLOAD_DELAY_TICKS = 1;
 const timeouts = [];
 
 const listeners = [];
