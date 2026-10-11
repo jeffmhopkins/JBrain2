@@ -74,6 +74,8 @@ export class Dimension {
     // after the remove, so a load check right after one can be fooled.
     this.dying = []; // {box, until: tick}
     this.dead = new Set(); // "cx,cz" chunks a scenario never lets load
+    this.removedAt = -1; // the tick an area was last removed
+    this.alwaysShort = ""; // an area name a scenario always loads short
   }
   loaded(x, z) {
     const cx = Math.floor(x / 16);
@@ -86,9 +88,12 @@ export class Dimension {
     }
     // Like the game, an area's chunks come in over several ticks: here a few chunks a
     // tick, in rows, so a chunk in the middle loads after the corners have.
-    for (const { box, at } of this.areas.values()) {
+    for (const { box, at, short } of this.areas.values()) {
       const [x0, z0, x1, z1] = box;
       if (cx < x0 || cx > x1 || cz < z0 || cz > z1) continue;
+      // The box's quirk: an area added in the tick another was removed never loads its
+      // last column and row of chunks.
+      if (short && (cx === x1 || cz === z1)) continue;
       const order = (cx - x0) * (z1 - z0 + 1) + (cz - z0);
       const row = Math.floor((z1 - z0 + 1) / 2);
       const ready = order === 0 || cx === x1 || ((cz === z0 || cz === z1) && order < row) ? 0 : order;
@@ -135,6 +140,7 @@ export class Dimension {
       // The box answers a remove of no such area without throwing.
       if (!gone) return { successCount: 0 };
       this.areas.delete(words[2]);
+      this.removedAt = tick();
       this.dying.push({ box: gone.box, until: tick() + UNLOAD_DELAY_TICKS });
     } else if (words[0] === "tickingarea" && words[1] === "add" && words[2] !== "circle") {
       const [x0, , z0, x1, , z1] = words.slice(2, 8).map(Number);
@@ -142,7 +148,7 @@ export class Dimension {
         Math.floor(Math.max(x0, x1) / 16), Math.floor(Math.max(z0, z1) / 16)];
       if ((box[2] - box[0] + 1) * (box[3] - box[1] + 1) > 100) throw new Error("ticking area over 100 chunks");
       if (this.areas.size >= 10) throw new Error("too many ticking areas");
-      this.areas.set(words[8], { box, at: tick() });
+      this.areas.set(words[8], { box, at: tick(), short: this.removedAt === tick() || words[8] === this.alwaysShort });
     } else if (words[0] === "tickingarea" && words[2] === "circle") {
       const [x, , z, r] = words.slice(3, 7).map(Number);
       const cx = Math.floor(x / 16);
