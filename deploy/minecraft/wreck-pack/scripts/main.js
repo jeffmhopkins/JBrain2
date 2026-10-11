@@ -24,9 +24,10 @@ const SHIP_AREA = "jbrain_wreck_ship";
 // chunks, inside a ticking area's 100. The site is chosen within 24 of spawn, and its
 // crater, skid mark and canopy reach about 40 further.
 const SURVEY = 64;
-// Waits are measured on the clock, not in ticks. With nobody on, the box's world ticks
-// about 0.3 times a second even with a ticking area up (337 ticks in 15 minutes), so a
-// wait in ticks can run for hours.
+// Waits are measured on the clock, not in ticks, and never spin: a job that yields in a
+// loop is handed the rest of every tick, and on the box that starved the world to a tick
+// every few seconds (337 in 15 minutes), too slow for its chunks ever to load. Left
+// alone it ran 10 ticks a second.
 const LOAD_WAIT_MS = 90_000;
 // A box has "held" once every chunk read fine on this many ticks, at least this far apart.
 const STEADY_TICKS = 3;
@@ -44,6 +45,26 @@ const warn = (text) => console.log(`[jbrain-wreck] ${text}`);
 const writes = { tried: 0, failed: 0, first: "" };
 
 class Unloaded extends Error {}
+
+// Yielded by a build that has nothing to do until the next tick: run() stops the job and
+// picks it up then, so the wait costs the world nothing.
+const NEXT_TICK = Symbol("next tick");
+
+function run(gen) {
+  system.runJob(
+    (function* () {
+      for (;;) {
+        const { done, value } = gen.next();
+        if (done) return;
+        if (value === NEXT_TICK) {
+          system.runTimeout(() => run(gen), 1);
+          return;
+        }
+        yield;
+      }
+    })(),
+  );
+}
 
 function load() {
   try {
@@ -101,8 +122,7 @@ function set(dim, x, y, z, id, states) {
 // area's chunks unload a moment later, so re-adding one it already had let the load
 // check pass on chunks about to go, and every block edit after it fell on nothing. An
 // area already up for the same box is kept. A replaced one is removed and re-added in
-// the same tick, never waited out: with no player on and no area up the world barely
-// ticks (13 ticks in its first 2.5 minutes, on the box), so any wait there takes ages.
+// the same tick, never waited out, so the box being loaded is never without one.
 // loadBox's steady reads are what catch the late unload (SW4).
 const live = new Map();
 
@@ -124,13 +144,12 @@ function dropAreas(dim) {
 }
 
 /**
- * Wait (as a job: yielding) until every chunk of the box can be read, and stays so. A
+ * Wait, a tick at a time, until every chunk of the box can be read, and stays so. A
  * ticking area loads its chunks over several ticks, so the corners being ready says
  * nothing about the middle: one column per chunk is read. A chunk read once can still be
  * about to unload (a just-removed area's), so every chunk is read again each tick until
- * the box has held for STEADY_TICKS ticks over STEADY_MS. The waits are on the clock,
- * since an empty server's ticks are seconds apart (SW4, on the box), and a slow load
- * logs how many chunks it's still missing.
+ * the box has held for STEADY_TICKS ticks over STEADY_MS. A slow load logs how many
+ * chunks it's still missing.
  */
 function* loadBox(dim, x0, z0, x1, z1) {
   const columns = [];
@@ -162,7 +181,7 @@ function* loadBox(dim, x0, z0, x1, z1) {
       told = Date.now();
       warn(`loading ${x0},${z0}..${x1},${z1}: ${missing} of ${columns.length} chunks missing, tick ${tick}`);
     }
-    yield;
+    yield NEXT_TICK;
   }
   throw new Unloaded(`${missing} chunks of ${x0},${z0}..${x1},${z1} never loaded`);
 }
@@ -444,11 +463,11 @@ function* build(state) {
     } else {
       save(state);
       emit({ ev: "wreck", phase: "failed", cause });
-      system.runTimeout(() => system.runJob(build(load())), RETRY_TICKS);
+      system.runTimeout(() => run(build(load())), RETRY_TICKS);
     }
   } finally {
-    // A build that will be retried keeps its areas up: with them gone and nobody on, the
-    // world barely ticks, and the 30 s retry would take hours.
+    // A build that will be retried keeps its areas up, so its chunks are still there when
+    // it picks up again.
     if (state.stage === "done") dropAreas(dim);
   }
 }
@@ -470,5 +489,5 @@ world.afterEvents.worldLoad.subscribe(() => {
     emit({ ev: "wreck", phase: "done", cause: "not a new world" });
     return;
   }
-  system.runJob(build(state));
+  run(build(state));
 });

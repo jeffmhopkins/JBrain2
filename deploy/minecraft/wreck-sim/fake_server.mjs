@@ -156,7 +156,7 @@ export class Dimension {
   }
 }
 
-let stopAfterSteps = Infinity;
+let stepsLeft = Infinity; // job steps until the "server" stops dead
 let clock = 0; // job steps run so far
 let stopped = 0;
 let idle = 0;
@@ -164,17 +164,34 @@ let idle = 0;
 // it looks; the fake does the same, and loads chunks by the tick, as the game does.
 const STEPS_PER_TICK = 50;
 const CHUNKS_PER_TICK = 1;
-const tick = () => Math.floor(clock / STEPS_PER_TICK);
+let ticksRun = 0;
+let inTick = 0; // job steps run in the current tick
+const tick = () => ticksRun;
 // The pack times its waits on the clock; here the clock runs with the ticks, at a
-// healthy server's 50 ms a tick, so a run is the same however fast the machine is.
-// A scenario can slow it to the box's empty-server pace (seconds a tick).
+// healthy server's 50 ms a tick, so a run is the same however fast the machine is. A
+// scenario can slow the ticks themselves. Every job step costs wall time too: a job that
+// spins through a wait is handed the rest of each tick, and on the box that slowed the
+// world to a tick every few seconds, too slow for a box of chunks ever to load.
 const EPOCH = 1_790_000_000_000;
+const STEP_MS = 60;
 let msPerTick = 50;
-Date.now = () => EPOCH + tick() * msPerTick;
+let ms = 0;
+Date.now = () => EPOCH + ms;
 // The box's own timing: a removed area's chunks are gone by the next tick, and a new
 // area has none ready on the tick it was added, the corners included.
 const UNLOAD_DELAY_TICKS = 1;
 const timeouts = [];
+
+// Whether the world's wreck is finished, by the pack's own record.
+const done = () => JSON.parse(props.get("jbrain:wreck") ?? "{}").stage === "done";
+
+function passTick() {
+  ticksRun += 1;
+  inTick = 0;
+  ms += msPerTick;
+  // A tick a build spends with no ticking area up: an empty server unloads its chunks.
+  if (dim && dim.areas.size === 0 && !done()) idle += 1;
+}
 
 const listeners = [];
 const props = new Map();
@@ -203,27 +220,25 @@ export const system = {
     return tick();
   },
   runJob(gen) {
-    // The game spreads a job over ticks; here it simply runs to the end — or, when the
-    // test stops the "server" mid-job, is dropped there with no cleanup at all.
-    let steps = 0;
+    // The game spreads a job over ticks; here it runs on, a tick every STEPS_PER_TICK
+    // steps — or, when the test stops the "server" mid-job, is dropped there with no
+    // cleanup at all.
     while (!gen.next().done) {
-      const was = tick();
       clock += 1;
-      // A tick a build spends with no ticking area up: on the box, with nobody on, the
-      // world barely ticks then, so a wait through one takes minutes.
-      if (tick() !== was && dim && dim.areas.size === 0) idle += 1;
-      if (++steps >= stopAfterSteps) {
+      ms += STEP_MS;
+      if (++inTick >= STEPS_PER_TICK) passTick();
+      if (--stepsLeft <= 0) {
         stopped += 1;
         timeouts.length = 0; // the "server" is gone: nothing it scheduled runs either
         return 1; // abandoned: no finally, no catch
       }
-      if (steps > 5e6) throw new Error("job never finished");
+      if (clock > 5e6) throw new Error("job never finished");
     }
     return 1;
   },
-  runTimeout(fn, _ticks) {
-    // Run once the current load's work has: sim.load() drains these.
-    timeouts.push(fn);
+  runTimeout(fn, ticks) {
+    // Run once that many ticks have passed: sim.load() drains these, in order.
+    timeouts.push({ fn, due: ticksRun + Math.max(1, ticks) });
     return timeouts.length;
   },
 };
@@ -238,16 +253,25 @@ export const sim = {
     dim = new Dimension(terrain);
     placeHook = onPlace;
     ticks = 0;
-    stopAfterSteps = Infinity;
     stopped = 0;
     idle = 0;
     clock = 0;
+    ticksRun = 0;
+    inTick = 0;
+    ms = 0;
+    stepsLeft = Infinity;
     timeouts.length = 0;
     return dim;
   },
   load() {
     for (const fn of listeners) fn({});
-    for (let i = 0; timeouts.length && i < 20; i += 1) timeouts.shift()();
+    for (let i = 0; timeouts.length; i += 1) {
+      if (i > 1e6) throw new Error("timeouts never stopped");
+      timeouts.sort((a, b) => a.due - b.due);
+      const { fn, due } = timeouts.shift();
+      while (ticksRun < due) passTick();
+      fn();
+    }
   },
   stopped: () => stopped,
   now: () => Date.now(),
@@ -255,7 +279,7 @@ export const sim = {
   clock: () => clock,
   /** Stop the "server" dead after this many job steps (Infinity: never). */
   stopAfter(n) {
-    stopAfterSteps = n;
+    stepsLeft = n;
   },
   props,
   spawn: () => spawn,
