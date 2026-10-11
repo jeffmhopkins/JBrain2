@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ M18◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ M18◻️ M19◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1766,6 +1766,46 @@ model stays for real questions.
   like Dave's other lines.
 
 **Order:** after the Tricorder and Power Pack wave and M17, since all three touch the door.
+
+### M19 — Dave's item guide, unlocked as each item becomes craftable (owner, 2026-10-11; not built)
+
+**Why.** Players will ask Dave how the Old Maker items work. He should explain each one
+well, but not before the player can make it: the items are found in play, not read off a
+list.
+
+**Decided (owner, 2026-10-11):** Dave knows how to use every special item, and explains an
+item only once the asker **can craft it**. Until then he doesn't mention it, even if asked
+directly; he can say there are things he'll tell them about when they're ready.
+
+**When an item unlocks for a player** (like the game's own recipe book, which unlocks a
+recipe when you first hold an ingredient; the first-time beats of §DW1 fire at the same
+moments):
+
+| Item | Unlocks when the player first holds | Built in |
+|---|---|---|
+| Tricorder | from the start (Dave beams it down) | M9 / DW1 |
+| Power Pack | an Eye of Ender | M10 |
+| Keep-inventory and transport (the Power Pack's uses) | a Power Pack | M10 |
+| No-Spawn Beacon | an echo shard, once they have made a Power Pack | M16 |
+| Wormhole Seed | its key ingredient, once its recipe is decided | M12 |
+| Replicator | 8 Power Packs (canon) | M15 |
+
+- **Built only.** An item is in the guide only once its wave has shipped in that world; a
+  beat never describes what isn't built (canon).
+- **Per player, per world.** The pack records each unlock in the same world dynamic property
+  that records the first-time beats, so it needs no backend.
+
+**How Dave knows:**
+- **The guide.** One entry per item in the prompt material: what it is (from the canon), how
+  to craft it, how to use it, and its limits. The text follows the lore page and the plan,
+  and is updated in the same PR as the item's wave.
+- **The asker's unlocks** ride on the `/jb:dave` event from the pack (`"known": [...]`).
+  The in-game turn gets only those entries; the others are not in the model's context at
+  all, so it can't leak them.
+- **The fast path (M18)** and tool replies follow the same rule: no locked item is named.
+- **The owner's PWA chats** see the whole guide.
+
+**Order:** with M18 (both reshape the in-game turn), after the Tricorder and Power Pack wave.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
