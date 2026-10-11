@@ -1,6 +1,6 @@
 ---
 name: mc_locate
-version: 2
+version: 3
 permission: web
 params:
   type: object
@@ -24,3 +24,6 @@ Find the nearest structure or biome of a kind in the Overworld, using the server
 world generator — it answers even for places nobody has explored. Gives the coordinates
 and the distance from where it searched. Nether and End structures can't be searched
 this way yet.
+In game this is one of the asking player's deep scans (two per Minecraft day); the
+same search again from about the same place is free, and the answer says how many
+are left.

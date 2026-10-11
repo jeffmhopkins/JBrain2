@@ -265,6 +265,23 @@ async def test_travel_reports_the_log_summary(monkeypatch: pytest.MonkeyPatch) -
     assert req.state.debug_detail == "minecraft travel summary"
 
 
+async def test_scans_reports_counts_per_world_and_player(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def summary(_maker: Any) -> list[dict[str, Any]]:
+        return [{"world": "slot2", "xuid": "111", "day": 7, "used": 1, "left": 1}]
+
+    monkeypatch.setattr(mc.scans, "summary", summary)
+    req: Any = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=object())),
+        state=SimpleNamespace(),
+    )
+    out = await mc.minecraft_scans(req, PRINCIPAL)
+    assert out == {
+        "per_day": 2,
+        "players": [{"world": "slot2", "xuid": "111", "day": 7, "used": 1, "left": 1}],
+    }
+    assert req.state.debug_detail == "minecraft scan counts"
+
+
 async def test_the_debug_map_serves_a_picture_not_the_world(sidecar) -> None:
     seen, replies = sidecar
     replies["/map/tile/the_end/0/1/1.png"] = httpx.Response(200, content=b"\x89PNG")

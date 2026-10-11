@@ -17,6 +17,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.db.session import SessionContext
 from jbrain.minecraft import client as mc
 from jbrain.minecraft.asker import Asker, Spot, asking
+from tests.unit.test_minecraft_scans import MemoryBook
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
 
@@ -38,7 +39,13 @@ def sidecar(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def _tools() -> dict[str, Any]:
-    return mt.build_minecraft_handlers(object(), object(), None)  # type: ignore[arg-type]
+    book = MemoryBook()
+    return mt.build_minecraft_handlers(
+        object(),  # type: ignore[arg-type]
+        object(),
+        None,
+        scan_book=lambda _ctx: book,
+    )
 
 
 async def test_locate_builds_one_fixed_command_from_checked_input(sidecar) -> None:

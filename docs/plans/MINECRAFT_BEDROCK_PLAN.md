@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ M18◻️ M19◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17✅ M18◻️ M19◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1740,7 +1740,7 @@ mob farm needs to be outside the 3×3.
 - **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
   lore page; its icon joins the item set (`docs/mocks/minecraft-items/`).
 
-### M17 — Deep-scan limit: two locates per player per Minecraft day (owner, 2026-10-11; not built)
+### M17 — Deep-scan limit: two locates per player per Minecraft day (owner, 2026-10-11; shipped 2026-10-11)
 
 **Why.** Dave's searches stay useful without making the world trivial: "where's the
 nearest diamond" or "the nearest ancient city" is a treat, not a reflex. In the story, the
@@ -1774,6 +1774,44 @@ places and waypoints, where other players are, a player's own trail and deaths.
 
 **Lore:** the recharge story and Dave's out-of-scans line go on the Bleepbloop_City lore
 page.
+
+**Shipped 2026-10-11 (wave mc-scan-limit).** `jbrain/minecraft/scans.py` and the
+owner-only table `app.mc_scans` (one row per world folder, player key and Minecraft day:
+scans used, and today's results as `{tool, what, dim, x, z, text}` for the free repeat;
+with an RLS isolation test). What was decided while building it:
+- **`mc_locate` counts too.** The list above names `mc_nearby` and `mc_find_block`, but
+  `mc_locate` is the server's own `locate` for one structure or biome, the tool Dave uses
+  for "where's the nearest village?". Leaving it free would have left the limit with
+  nothing to hold, and the lore counts "finding the nearest structure". So all three
+  are deep scans; everything else stays free.
+- **Charged only for a search that ran.** A scan is reserved before the search (one SQL
+  upsert that refuses past two, so two calls in one turn can't both spend the last) and
+  refunded when nothing was searched: a down server, a `locate` that found nothing to
+  report ("is at block" missing from its reply), or `mc_find_block` with none of the
+  names in explored ground. A search that ran and found nothing in range still counts.
+- **A repeat** is the same tool with the same settings (the structure kind or block set
+  in any order, and the radius and limit), in the same dimension, from within
+  **256 blocks** of where it was first asked. It answers from the stored text, says it
+  cost nothing and how many are left, and works even when the player is out of scans.
+- **The day** is read with `time query day` at each in-game scan. When it can't be read,
+  `mc_nearby` and `mc_locate` (which need the running server anyway) refuse cleanly
+  without searching or charging; `mc_find_block` (which reads the world's files and works
+  with the server stopped) counts against the last day recorded for that world, or a
+  bucket of its own (day −1) if none ever was.
+- **Old days are pruned on write:** reserving a scan deletes the world's rows for every
+  other day, so a world whose clock is set back starts clean.
+- **Saying how many are left:** each in-game scan answer ends "1 scan left today", and
+  `mc_world_info` in game adds the asker's count, so Dave can answer "how many scans do I
+  have left?" (M18's fast path takes over that reply). The out-of-scans answer carries
+  the lore's signed-off line word for word.
+- The owner sees the counts without a terminal at `GET /api/debug/minecraft/scans`
+  (per world, player and day: used, left, results kept; never the results).
+- Prompt `agent-minecraft-dave-v10`; `mc_locate` v3, `mc_nearby` v2, `mc_find_block` v2,
+  `mc_world_info` v2. No new tool.
+
+Only checkable on the box: the console's real reply to `time query day` (parsed as
+"Day is N"; unit tests pin that shape from the existing `mc_world_info` test), and that
+sleeping through the night advances it in the family's world.
 
 ### M18 — Dave's fast path: simple asks answered without the model (owner, 2026-10-11; not built)
 

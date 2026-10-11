@@ -1,6 +1,6 @@
 ---
 name: mc_find_block
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -32,3 +32,6 @@ The nearest blocks of the given kinds, with their exact x, y and z, read from th
 saved chunks — "point me to the nearest diamond". Only explored ground can be searched:
 ores and other blocks don't exist until the game generates a chunk. If none of the names is
 in explored ground, it answers with block ids that are, so you can try again.
+In game this is one of the asking player's deep scans (two per Minecraft day); the
+same search again from about the same place is free, and the answer says how many
+are left.
