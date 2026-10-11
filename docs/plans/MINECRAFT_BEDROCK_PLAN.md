@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17✅ M18✅ M19✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16✅ M17✅ M18✅ M19✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1720,7 +1720,7 @@ interval.
 (fuel burn time, a full output, an unloaded chunk) and breaking (the item returns with its
 target). The Dave tool gets the usual tool tests.
 
-### M16 — The No-Spawn Beacon: a mob-free 3×3 of chunks (owner, 2026-10-11; not built)
+### M16 — The No-Spawn Beacon: a mob-free 3×3 of chunks (owner, 2026-10-11; shipped 2026-10-11)
 
 **Why.** The owner's endgame is a base out "in space": high in the sky or out over the
 End. Endermen would still come, because they teleport in. A beacon keeps a whole area
@@ -1776,8 +1776,56 @@ endermen, piglins, wild cows and sheep, and the rest.
 mob farm needs to be outside the 3×3.
 
 **Open (owner):**
-- **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
-  lore page; its icon joins the item set (`docs/mocks/minecraft-items/`).
+- **Lore:** Dave's first-time line for the beacon belongs on the Bleepbloop_City lore page
+  (its story is there now, "The No-Spawn Beacon"); none is built.
+
+**Shipped 2026-10-11 (wave mc-beacon).** The block `jbrain:no_spawn_beacon`
+(`jbrain-pack/blocks/`), its shaped recipe (`recipes/no_spawn_beacon.json`, unlocked in the
+recipe book by an echo shard), and its logic in its own module, `scripts/beacon.js`
+(rules in `beacon_rules.js`); `main.js` only calls `initBeacon(world, system)`. What was
+decided while building it:
+- **Kept is a list, removed is a list.** The beacon removes only the vanilla hostile,
+  neutral and passive mob types it names (`REMOVABLE`); any other entity (items, XP,
+  arrows, boats, armor stands, another pack's entities, a mob the game adds later) is
+  never touched. Always kept: players, villagers (both ids) and the wandering trader,
+  iron, snow and copper golems, the Ender Dragon and the Wither. Any removable mob stays
+  when tamed (`minecraft:is_tamed`), name-tagged, on a lead, or marked `jb:kept`.
+- **`jb:kept`** is set on a removable mob by any `playerInteractWithEntity` (feeding,
+  trading, a name tag being put on), and on every removable mob born (`entitySpawn` cause
+  `Born`), wherever it is: a bred animal carried or led into the area later stays.
+- **Records:** one world property per beacon, `jb:beacon:<dimension>@x,y,z`, so any
+  number fit. Read lazily on first use (a script can't read world properties while it
+  first loads) and rebuilt into a per-dimension set of covered chunk keys.
+- **The sweep** runs every 20 ticks over each beacon whose block reads back: an unloaded
+  beacon chunk is skipped, and a beacon block that's gone without a player breaking it
+  (an explosion) drops its record. It queries the 48×48 full-height volume, excluding
+  players. Each removal is `entity.remove()` (no death, so no drops) after an end-rod
+  sparkle and a smoke puff.
+- **Not done:** pistons can move the block (its record then drops on the next sweep and
+  the moved block does nothing until it's broken and placed again); the M8 map and Dave
+  don't know about beacons yet.
+- **The guide** (§M19): an echo shard unlocks `no_spawn_beacon` only for a player who has
+  already unlocked `power_pack_uses` (`UNLOCK_NEEDS` in `rules.js`; both in one look
+  counts). The entry is in `minecraft_dave_guide.prompt`, now `agent-minecraft-dave-guide-v2`
+  (re-pinned), and in the owner's chats.
+- **Icon:** set A, drawn by `docs/mocks/minecraft-items/make_beacon.py`: a tuff block in
+  a copper frame; the top is the recipe from above (eight echo shards round a lit
+  amethyst lens), the side an amethyst column with echo-teal lights. The faces ship in
+  `jbrain-rp/textures/blocks/` through a new `terrain_texture.json`; the resource pack's
+  version went to 1.1.0 so clients fetch the new textures.
+
+Only checkable on the box, by a player:
+- the recipe crafts (a Power Pack ringed by 8 echo shards) and shows in the recipe book
+  after an echo shard; the block places, shows its faces, glows faintly, and drops itself
+  when broken by hand;
+- placed at night, hostile mobs stop appearing in the 48×48 square round its chunk, top to bottom, and a
+  wild cow walked in vanishes in a puff with no drops, while a named, leashed, fed or bred
+  animal, a tamed wolf, a villager and an iron golem stay; an enderman lured into a sky
+  base vanishes within a second;
+- broken, mobs spawn there again; the console shows `no-spawn beacon on at …` and
+  `… off at …`;
+- the particle ids (`minecraft:endrod`, `minecraft:basic_smoke_particle`) render, and
+  "what's a no-spawn beacon?" is answered only after a made Power Pack and an echo shard.
 
 ### M17 — Deep-scan limit: two locates per player per Minecraft day (owner, 2026-10-11; shipped 2026-10-11)
 

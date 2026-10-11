@@ -8,6 +8,9 @@ import { system, world, CommandPermissionLevel, CustomCommandParamType,
 import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, parseConfig,
   parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
   xpToDrop } from "./rules.js";
+import { initBeacon } from "./beacon.js";
+
+initBeacon(world, system);
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",
