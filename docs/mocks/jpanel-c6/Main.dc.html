@@ -188,6 +188,9 @@ body{margin:0}
           <button onClick="{{openAlarms}}" aria-label="{{clock.aria}}" style="position: absolute; inset: 0; border: none; background: #000000; color: #E6E7E9; font-family: inherit; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;">
             <span style="font-size: 124px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: {{face.color}}; opacity: {{face.opacity}};">{{clock.hm}}</span>
           </button>
+          <sc-if value="{{showDate}}" hint-placeholder-val="{{true}}">
+            <span style="position: absolute; left: 0; right: 0; bottom: 40px; text-align: center; font-size: 24px; font-weight: 600; letter-spacing: 0.02em; color: {{face.color}}; opacity: {{face.dateOpacity}}; pointer-events: none;">{{clock.dayDate}}</span>
+          </sc-if>
           <sc-if value="{{faceBadge.show}}" hint-placeholder-val="{{false}}">
             <button onClick="{{faceBadge.open}}" aria-label="{{faceBadge.aria}}" style="position: absolute; top: 26px; right: 30px; height: 44px; min-width: 44px; padding: 0 12px; box-sizing: border-box; border-radius: 22px; border: 1px solid #26282C; background: #0A0A0A; color: {{face.color}}; opacity: {{faceBadge.opacity}}; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; font-size: 18px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{faceBadge.count}}</span></button>
           </sc-if>
@@ -215,6 +218,12 @@ body{margin:0}
               </sc-for>
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #26282C;">
+                <span style="font-size: 20px; font-weight: 500;">Day and date under the time</span>
+                <button role="switch" aria-checked="{{dateSw.checked}}" aria-label="Show day and date under the time" onClick="{{toggleDate}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{dateSw.border}}; background: {{dateSw.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{dateSw.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{dateSw.knob}};"></span>
+                </button>
+              </div>
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
                 <div style="display: flex; flex-direction: column; gap: 2px;">
                   <span style="font-size: 22px; font-weight: 600;">Night clock</span>
@@ -452,7 +461,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
       alarms: [
         { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
@@ -865,13 +874,23 @@ class Component extends DCLogic {
       isClock: isPage && s.screen === 'clock' && s.clockView === 'alarms' && !s.ring,
       isClockFace: on && s.screen === 'clock' && s.clockView === 'face' && !s.ring && !s.rec,
       openAlarms: () => this.put({ clockView: 'alarms' }),
+      showDate: !!s.showDate,
+      dateSw: {
+        checked: s.showDate ? 'true' : 'false',
+        track: s.showDate ? 'rgba(143,188,154,0.22)' : '#1E2024',
+        border: s.showDate ? 'transparent' : '#3A3D42',
+        knob: s.showDate ? '#8FBC9A' : '#9A9DA3',
+        knobX: s.showDate ? 34 : 5
+      },
+      toggleDate: () => { if (!this.swiped) this.put((b) => ({ showDate: !b.showDate })); },
       face: (() => {
         const d = new Date();
         const nowM = d.getHours() * 60 + d.getMinutes();
         const n = s.night;
         const inWindow = n.from > n.to ? (nowM >= n.from || nowM < n.to) : (nowM >= n.from && nowM < n.to);
-        if (!(s.forceNight || (n.on && inWindow))) return { color: '#E6E7E9', opacity: 1 };
-        return Object.assign({}, this.nightPalette()[n.color]);
+        if (!(s.forceNight || (n.on && inWindow))) return { color: '#E6E7E9', opacity: 1, dateOpacity: 0.55 };
+        const p = this.nightPalette()[n.color];
+        return { color: p.color, opacity: p.opacity, dateOpacity: Math.round(p.opacity * 0.7 * 100) / 100 };
       })(),
       night: (() => {
         const n = s.night;
@@ -964,7 +983,8 @@ class Component extends DCLogic {
       clock: (() => {
         const d = new Date();
         const t = this.hm(d.getHours(), d.getMinutes());
-        return { hm: t.hm, ampm: t.ampm, short: t.hm, aria: 'The time is ' + t.hm + '. Tap for alarms.', date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
+        const dayDate = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        return { hm: t.hm, ampm: t.ampm, short: t.hm, dayDate: dayDate, aria: 'The time is ' + t.hm + '. Tap for alarms.', date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
       })(),
       alarms: s.alarms.slice().sort((x, y) => x.h * 60 + x.m - (y.h * 60 + y.m)).map((al, k, arr) => {
         const t = this.hm(al.h, al.m);

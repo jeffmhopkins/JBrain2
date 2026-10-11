@@ -62,3 +62,6 @@ panel, the others import it at a fixed `start` state).
   message or a girl's message does not pop up — it waits as a small badge (bell + count) in
   the top-right corner, drawn in the night-clock colour at night, and opens only when tapped.
   An alarm ringing still takes the whole screen (that is the clock doing its job). Board 17.
+- **Day and date under the clock** (owner, 2026-10-11): a small "Sun 11 Oct" near the bottom of
+  the face, in the face's colour at lower opacity (so it dims with the night clock). On by
+  default; a switch on the Clock → alarms page turns it off.
