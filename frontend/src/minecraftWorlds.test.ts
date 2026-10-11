@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { MinecraftSlot } from "./api/client";
 import {
   mcBackup,
   mcBackups,
@@ -28,6 +29,7 @@ import {
   jobLine,
   loadConfirm,
   nextToGo,
+  originText,
   resetConfirm,
   resetOptions,
   restoreConfirm,
@@ -295,5 +297,13 @@ describe("jobs", () => {
     expect(worldBlocked(null, true, "running")).toMatch(/^Busy updating Minecraft/);
     expect(worldBlocked(null, false, "stopping")).toBe("Wait for the server to finish stopping.");
     expect(worldBlocked(null, false, "running")).toBe("");
+  });
+
+  it("a world the debug API made says so, so the owner can tell it from theirs", () => {
+    const creative = mcSlots()[2] as MinecraftSlot;
+    expect(originText({ ...creative, test: true })).toMatch(
+      /^test world, \w+ \d+ — made over the debug API$/,
+    );
+    expect(originText(creative)).toMatch(/^new world, /);
   });
 });

@@ -1613,11 +1613,20 @@ lands on a world that was played before it shipped.
 - **No new debug route.** The debug API's `GET /minecraft/worlds` and `GET /minecraft`
   already return the new fields.
 
-**SW4 — prove it in every biome, on the box.** This needs the owner's debug token, and a
-debug-API way to make test worlds. Today, changing worlds is owner-only in the PWA, so
-either that boundary moves or the owner makes the worlds. It is a biome sweep: worlds made
-from seeds whose spawn `mapping.Predictor` puts in each biome. Each one is checked from the
-world index:
+**SW4 — prove it in every biome, on the box.** It needs the owner's debug token, and a
+debug-API way to make test worlds. The owner chose to move the boundary (2026-10-11): the
+token can make **test worlds**, and the owner's worlds stay read-only to it.
+- **The route ✅.** `POST /debug/minecraft/test-worlds/{slot}` makes a world from a seed,
+  only in an empty slot, and marks it `test`. `…/test-worlds/{slot}/reset` regenerates or
+  empties only a `test` world. `POST /debug/minecraft/worlds/{slot}/load` loads any slot
+  holding a world, and is refused while anyone is on, so a test never puts the family out
+  of the game. The owner renaming, changing, resetting, importing or restoring over a test
+  world clears its mark, so the token can't touch it again; the sidecar refuses to make
+  or reset an owner world as a test one, behind the API's checks. The PWA shows a test world as *test world —
+  made over the debug API*. `DEBUG_ACCESS.md` has the routes.
+- **The sweep ◻️**, once the image carrying the route is on the box. Worlds are made from
+  seeds whose spawn `mapping.Predictor` puts in each biome, loaded back to back (each load
+  backs up the world it leaves), and the owner's world is loaded back once, at the end. Each one is checked from the world index:
 - the pod is present;
 - it is neither floating nor buried;
 - its hatch is reachable;

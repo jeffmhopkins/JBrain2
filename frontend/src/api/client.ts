@@ -517,6 +517,9 @@ export interface MinecraftSlot {
   wreck?: MinecraftWreck;
   /** While armed, how far the build has got: "loaded", "pod", "ship" or "failed". */
   wreck_phase?: string | null;
+  /** Made over the debug API to test the crash site; cleared once the owner resets,
+   *  imports or restores over it. */
+  test?: boolean;
 }
 
 export type MinecraftWreck = "armed" | "done" | "skipped" | null;

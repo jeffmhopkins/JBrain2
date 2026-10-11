@@ -130,6 +130,10 @@ class SlotStore:
                 # "done" ("skipped" when it passed the world over); None for a world the
                 # box didn't generate, which never gets one.
                 "wreck": None,
+                # Made over the debug API for testing (§SW4): only such a world can be
+                # reset or emptied there. The owner resetting, importing or restoring
+                # over it clears it.
+                "test": False,
                 **raw.get(sid, {}),
             }
             rec["exists"] = self.exists(rec["folder"])

@@ -56,6 +56,8 @@ export function settingsLine(s: MinecraftSlot, running: boolean): string {
 
 export function originText(s: MinecraftSlot): string {
   const made = s.created_at ? ` ${shortDate(s.created_at)}` : "";
+  // A world the debug API made says so, so the owner can tell it from their own.
+  if (s.test) return `test world${made ? `,${made}` : ""} — made over the debug API`;
   switch (s.origin) {
     case "imported":
       return `imported${made} from a .mcworld — settings came from the file`;
