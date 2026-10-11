@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16✅ M17✅ M18✅ M19✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16✅ M17✅ M18✅ M19✅ M20✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -2056,6 +2056,48 @@ hash), read by `jbrain/minecraft/guide.py`. What was decided while building it:
 Only checkable on the box, by a player: that picking up an Ender Pearl, then crafting a
 Power Pack, is noticed within a second (`jb:known:<id>` grows), and the answers to "what's
 a power pack?" before and after.
+
+### M20 — Map share links: a view-only map for someone without a login (owner, 2026-10-11; shipped 2026-10-11)
+
+**Why.** The owner wants to send the map to a player (their brother) who has no JBrain
+login: open a link, see the world with their gamertag on it, and touch nothing else on the
+box.
+
+**What the owner does.** On the map, **Share this map** (a fab beside the dimension
+switch) opens the Share sheet for the world being viewed: pick the gamertag the map opens
+on (everyone ever seen in that world, online first), **Create link**, then **Copy link**
+(or **Send…** where the phone has a share sheet). The sheet lists the live links with how
+often each was opened and a **Revoke** per link. A link has no expiry; it works until
+revoked. Owner decisions: the link shows **every player's** live position, travel history
+and timeline in that world, not only the chosen player's; it lasts until revoked.
+
+**What the visitor gets.** `/mc/s/{token}` mounts `McShareApp` instead of the owner app: the
+same map page (`MapPage`) over the public routes, opened on the shared player (selected,
+in their dimension), with Layers, Timeline, Follow and the session list. It has no back
+button, no world picker, no Share, and no structure re-scan; a **View only** chip sits where
+the back button is. A revoked link, or a slot that now holds another world, shows *This
+map link was turned off*.
+
+**Contract.**
+- Owner (`api/minecraft.py`, owner-only like the rest): `POST /api/minecraft/shares`
+  `{slot, xuid}` → the link plus its token, shown once (404 when the slot holds no world or
+  the player has never been seen in it); `GET /api/minecraft/shares`; `DELETE
+  /api/minecraft/shares/{id}`.
+- Public (`api/minecraft_share.py`, no owner dependency): `GET /api/mc-share/{token}` (the
+  world and the player it opens on; the only read that counts as a view), then
+  `/map/info`, `/map/tile/{dim}/{zoom}/{tx}/{tz}.png`, `/map/point`, `/map/players`,
+  `/map/structures` and `/timeline` under it. The token picks the slot; the visitor never
+  names one. Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`,
+  `noindex`.
+- Storage and RLS (migration `0230_mc_share_links`): `app.mc_share_links` keeps only the
+  token's SHA-256, the slot, its world folder at mint, and the player. A visitor reads under
+  `mc_share_context(link_id)`; the `*_share` policies on `mc_player_track`,
+  `mc_player_explored`, `mc_player_events` and `mc_player_sessions` admit only rows of the
+  pinned, unrevoked link's world (a session by the world of its join event). Tested in
+  `tests/integration/test_mc_share_pg.py`.
+
+Only checkable on the box: that the link opens from outside the house (it needs the
+public hostname — Cloudflare Tunnel or direct mode, not LAN-only).
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
