@@ -122,6 +122,16 @@ Object.defineProperty(Dimension.prototype, "cells", {
 Dimension.prototype.getBlock = function getBlock(location) {
   return new Block(this, location);
 };
+// Particles and sounds, recorded; `blocks.effectsFail` makes each one throw, as an id the
+// game doesn't know does.
+Dimension.prototype.spawnParticle = function spawnParticle(id, at) {
+  if (blocks.effectsFail) throw new Error(`unknown particle ${id}`);
+  blocks.effects.push({ kind: "particle", id, at: { ...at } });
+};
+Dimension.prototype.playSound = function playSound(id, at) {
+  if (blocks.effectsFail) throw new Error(`unknown sound ${id}`);
+  blocks.effects.push({ kind: "sound", id, at: { ...at } });
+};
 
 const chunkOf = ({ x, z }) => `${Math.floor(x / 16)},${Math.floor(z / 16)}`;
 const unloaded = new Set();
@@ -130,8 +140,12 @@ const component = () => sim.blockComponent(REP);
 
 /** Test-side controls for blocks, not part of the game API. */
 export const blocks = {
+  effects: [],
+  effectsFail: false,
   reset() {
     unloaded.clear();
+    blocks.effects.length = 0;
+    blocks.effectsFail = false;
   },
   // A container block (a chest, a hopper) at `loc`; returns its container.
   container(loc, typeId = "minecraft:chest", size = 27) {
@@ -155,7 +169,9 @@ export const blocks = {
     const block = sim.overworld.getBlock(loc);
     const ev = {
       block, dimension: sim.overworld, player,
-      permutationToPlace: perm(REP, { "jbrain:programmed": false, "minecraft:cardinal_direction": "south" }),
+      permutationToPlace: perm(REP, {
+        "jbrain:programmed": false, "jbrain:working": false, "minecraft:cardinal_direction": "south",
+      }),
     };
     component().beforeOnPlayerPlace(ev);
     block.setPermutation(ev.permutationToPlace);

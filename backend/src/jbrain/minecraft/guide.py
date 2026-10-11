@@ -51,16 +51,27 @@ def parse_known(raw: Any) -> frozenset[str]:
     return ALWAYS | {n for n in names if isinstance(n, str) and n in UNLOCKS}
 
 
-def entries_for(known: Iterable[str], *, keep_switch: bool) -> list[str]:
+def entries_for(
+    known: Iterable[str], *, keep_switch: bool, transport_switch: bool = False
+) -> list[str]:
     """The entry names a player with these unlocks may see, in reading order. Keeping your
-    things is a use only a world with its switch on has; elsewhere a made pack does
-    nothing, and the guide says so rather than describing a use the world lacks."""
+    things and transport are each a use only a world with its switch on has; where
+    neither is, a made pack does nothing, and the guide says so rather than describing a
+    use the world lacks."""
     have = set(known) | ALWAYS
     out = ["tricorder"]
     if have & {"power_pack", "power_pack_uses"}:
         out.append("power_pack")
     if "power_pack_uses" in have:
-        out.append("power_pack_keep" if keep_switch else "power_pack_unused")
+        uses = [
+            name
+            for name, on in (
+                ("power_pack_keep", keep_switch),
+                ("power_pack_transport", transport_switch),
+            )
+            if on
+        ]
+        out.extend(uses or ["power_pack_unused"])
     if "no_spawn_beacon" in have:
         out.append("no_spawn_beacon")
     if "replicator" in have:
@@ -68,8 +79,11 @@ def entries_for(known: Iterable[str], *, keep_switch: bool) -> list[str]:
     return out
 
 
-def for_player(known: Iterable[str], *, keep_switch: bool) -> str:
-    names = ["intro_game", *entries_for(known, keep_switch=keep_switch)]
+def for_player(known: Iterable[str], *, keep_switch: bool, transport_switch: bool = False) -> str:
+    names = [
+        "intro_game",
+        *entries_for(known, keep_switch=keep_switch, transport_switch=transport_switch),
+    ]
     return "\n\n".join(ENTRIES[n] for n in names)
 
 
@@ -79,6 +93,7 @@ def for_owner() -> str:
         "tricorder",
         "power_pack",
         "power_pack_keep",
+        "power_pack_transport",
         "no_spawn_beacon",
         "replicator",
     ]

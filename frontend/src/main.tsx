@@ -8,9 +8,11 @@ import { parseIntakePath } from "./intake/share";
 import { parseSharePath } from "./jcode/share";
 import { parseJlaunchSharePath } from "./jlaunch/share";
 import { initLocationCapture } from "./location";
+import { parseMcSharePath } from "./minecraftMapSource";
 import { parseResearchSharePath } from "./research/share";
 import { JcodeShareApp } from "./screens/JcodeShareApp";
 import { JlaunchShareApp } from "./screens/JlaunchShareApp";
+import { McShareApp } from "./screens/McShareApp";
 import { ResearchShareApp } from "./screens/ResearchShareApp";
 import { armUpdateChecks } from "./swUpdate";
 import { initTheme } from "./theme";
@@ -46,6 +48,8 @@ function pickRoot(): JSX.Element {
   if (parseSharePath()) return <JcodeShareApp />;
   if (parseResearchSharePath()) return <ResearchShareApp />;
   if (parseJlaunchSharePath()) return <JlaunchShareApp />;
+  // A /mc/s/{token} path is a shared Minecraft map: view-only, nothing else on the box.
+  if (parseMcSharePath()) return <McShareApp />;
   if (parseIntakePath()) return <GuidedIntakeApp />;
   // Owner app only. Warm the geolocation fix here — NOT at module load — so a public
   // share/intake recipient (a scoped surface above) is never prompted for location; only the

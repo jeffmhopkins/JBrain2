@@ -10,6 +10,10 @@
         "jbrain:programmed": [
           false,
           true
+        ],
+        "jbrain:working": [
+          false,
+          true
         ]
       },
       "traits": {
@@ -121,6 +125,26 @@
               "render_method": "opaque"
             }
           }
+        }
+      },
+      {
+        "condition": "q.block_state('jbrain:programmed') && q.block_state('jbrain:working')",
+        "components": {
+          "minecraft:material_instances": {
+            "*": {
+              "texture": "jbrain_replicator_side",
+              "render_method": "opaque"
+            },
+            "north": {
+              "texture": "jbrain_replicator_front_working",
+              "render_method": "opaque"
+            },
+            "up": {
+              "texture": "jbrain_replicator_top_working",
+              "render_method": "opaque"
+            }
+          },
+          "minecraft:light_emission": 10
         }
       }
     ]

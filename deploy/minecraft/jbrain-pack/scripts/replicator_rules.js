@@ -8,6 +8,14 @@ export const REPLICATOR = "jbrain:replicator";
 export const PROGRAMMED = "jbrain:replicator_programmed";
 export const POWER_PACK = "jbrain:power_pack";
 export const STATE = "jbrain:programmed";
+export const WORKING = "jbrain:working";
+// What each item made looks and sounds like: a flame and an amethyst-purple sparkle at the
+// front, and a furnace's crackle.
+export const EFFECTS = {
+  flame: "minecraft:basic_flame_particle",
+  sparkle: "minecraft:portal_reverse_particle",
+  sound: "block.furnace.lit",
+};
 export const TARGET = "jb:target";
 
 // Canon: 8 full stacks of the target is the pattern, so only a 64-stacker can be one.
@@ -146,21 +154,39 @@ export const parseRecord = (raw) => {
   }
 };
 
-// What a player is shown when they use a placed replicator: what it makes, why it's
-// waiting if it is, and where everything goes.
-const WAITING = {
-  running: "running",
-  no_input: "waiting for a block on top",
-  no_fuel: "waiting for fuel beside it",
-  no_output: "waiting for room below",
+// The panel a player sees when they use a placed replicator: what it makes, what it's
+// waiting for right now, and how to connect it — the owner's furnace layout (2026-10-11),
+// hoppers on each face as on a vanilla furnace.
+// - DRAFT wording (owner request, 2026-10-11), awaiting sign-off on the lore page.
+export const PANEL = {
+  blankTitle: "Replicator — not programmed",
+  blank: "Not programmed — hold it and ask Dave to program it.",
+  makes: (target) => `Makes: ${targetLabel(target).toLowerCase()}`,
+  waiting: {
+    running: "Working",
+    no_input: "Waiting: no blocks on top",
+    no_fuel: "Waiting: no fuel",
+    no_output: "Waiting: output full (or nothing below)",
+  },
+  fuelLeft: (n) => `Fuel for ${n} more`,
+  how: [
+    "How to connect:",
+    "Top — a hopper (or chest) pointing down into it: blocks to burn.",
+    "Side — a hopper (or chest) pointing into it: fuel (coal, charcoal, coal blocks, lava buckets…).",
+    "Below — a hopper (or chest): finished items come out here.",
+    "Tip: put a chest above the top hopper and one under the bottom hopper.",
+  ].join("\n"),
+  ok: "OK",
 };
-export const HOW = "Blocks in a chest or hopper on top · fuel beside it · out into one below";
 
-export const statusLine = (rec) => {
-  if (!rec) return `§7Blank Replicator§r · ask Dave to program it`;
+export const panelTitle = (rec) => (rec ? programmedName(rec.target) : PANEL.blankTitle);
+
+export const panelBody = (rec) => {
+  if (!rec) return `${PANEL.blank}\n\n${PANEL.how}`;
   const left = Math.floor(rec.fuel / COOK_TICKS);
-  const fuel = left > 0 ? ` · fuel for ${left} more` : "";
-  return `§6${programmedName(rec.target)}§r · ${WAITING[rec.state] ?? WAITING.no_input}${fuel}`;
+  const status = [PANEL.makes(rec.target), PANEL.waiting[rec.state] ?? PANEL.waiting.no_input];
+  if (left > 0) status.push(PANEL.fuelLeft(left));
+  return `${status.join(" · ")}\n\n${PANEL.how}`;
 };
 
 // Whether a player carrying these stacks ({typeId, amount}) has unlocked the Replicator's

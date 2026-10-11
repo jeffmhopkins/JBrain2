@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { ItemStack, blocks, sim } from "@minecraft/server";
+import { FormCancelationReason, forms } from "@minecraft/server-ui";
 import * as r from "./pack/scripts/replicator_rules.js";
 import { initReplicator } from "./pack/scripts/replicator.js";
 
@@ -47,6 +48,7 @@ const rig = (target = IRON) => {
 beforeEach(() => {
   sim.reset();
   blocks.reset();
+  forms.reset();
 });
 
 // --- the pure rules ------------------------------------------------------------------------
@@ -199,11 +201,65 @@ test("a blank one places blank, makes nothing, and breaks back to a blank", () =
   assert.equal(item.nameTag, undefined);
 });
 
-test("using a placed one tells the player what it makes and why it waits", () => {
-  const { p } = rig();
-  blocks.interact(p, AT);
-  assert.match(p.messages.at(-1), /Iron Replicator§r · waiting for a block on top/);
-  assert.match(p.messages.at(-1), /fuel beside it/);
+// The panel: open it, let its promise settle, and return what was shown.
+const use = async (p, loc = AT) => {
+  const before = forms.shown.length;
+  blocks.interact(p, loc);
+  sim.flush();
+  await new Promise((done) => setImmediate(done));
+  return forms.shown.slice(before);
+};
+
+test("using a placed one opens a panel: what it makes, what it waits for, how to connect", async () => {
+  const { p, input, fuel, output } = rig();
+  let [panel] = await use(p);
+  assert.equal(panel.title, "Iron Replicator");
+  assert.deepEqual(panel.buttons, ["OK"]);
+  assert.match(panel.body, /^Makes: iron · Waiting: no blocks on top\n/);
+  assert.match(panel.body, /Top — a hopper \(or chest\) pointing down into it: blocks to burn\./);
+  assert.match(panel.body, /Below — a hopper \(or chest\): finished items come out here\./);
+  input.setItem(0, new ItemStack("minecraft:cobblestone", 9));
+  blocks.ticks(1);
+  [panel] = await use(p);
+  assert.match(panel.body, /^Makes: iron · Waiting: no fuel\n/);
+  fuel.setItem(0, new ItemStack("minecraft:coal", 1));
+  blocks.ticks(1);
+  [panel] = await use(p);
+  assert.match(panel.body, /^Makes: iron · Working · Fuel for 7 more\n/);
+  for (let i = 0; i < 5; i++) output.setItem(i, new ItemStack("minecraft:dirt", 64));
+  blocks.ticks(1);
+  [panel] = await use(p);
+  assert.match(panel.body, /^Makes: iron · Waiting: output full \(or nothing below\) · Fuel for 7 more\n/);
+});
+
+test("a blank one's panel says to ask Dave; sneaking opens none; one at a time", async () => {
+  const p = crafter();
+  blocks.place(p, AT);
+  const [panel] = await use(p);
+  assert.equal(panel.title, "Replicator — not programmed");
+  assert.match(panel.body, /^Not programmed — hold it and ask Dave to program it\./);
+  p.isSneaking = true;
+  assert.deepEqual(await use(p), []);
+  p.isSneaking = false;
+  let close;
+  forms.answer = () => new Promise((done) => { close = done; });
+  assert.equal((await use(p)).length, 1);
+  assert.deepEqual(await use(p), []); // still open: no second panel on top
+  close({ canceled: false, selection: 0 });
+  await new Promise((done) => setImmediate(done));
+  assert.equal((await use(p)).length, 1);
+});
+
+test("a panel that can't open falls back to chat", async () => {
+  const p = crafter("Busy", "-8"); // not the last test's player, whose panel stays open
+  blocks.place(p, AT);
+  forms.answer = () => ({ canceled: true, cancelationReason: FormCancelationReason.UserBusy });
+  await use(p);
+  assert.match(p.messages.at(-1), /Replicator — not programmed§r\nNot programmed/);
+  forms.answer = () => { throw new Error("no ui"); };
+  p.messages.length = 0;
+  await use(p);
+  assert.match(p.messages.at(-1), /How to connect:/);
 });
 
 // --- running -------------------------------------------------------------------------------
@@ -219,6 +275,71 @@ test("one of the target per turn from any block, fuel beside, out below", () => 
   assert.equal(input.getItem(5).amount, 7);
   assert.equal(input.getItem(4).amount, 3);
   assert.equal(fuel.getItem(0), undefined); // the coal is lit once
+});
+
+test("all hoppers, as on a furnace: pulled from on top and beside, pushed into one below", () => {
+  const p = crafter();
+  give(p, IRON, 512);
+  program(p.name, IRON);
+  blocks.place(p, AT);
+  // A hopper can't push into the Replicator, so its items wait in it to be pulled.
+  const top = blocks.container({ x: 0, y: 65, z: 0 }, "minecraft:hopper", 5);
+  const side = blocks.container({ x: -1, y: 64, z: 0 }, "minecraft:hopper", 5);
+  const below = blocks.container({ x: 0, y: 63, z: 0 }, "minecraft:hopper", 5);
+  top.setItem(2, new ItemStack("minecraft:cobblestone", 3));
+  side.setItem(4, new ItemStack("minecraft:charcoal", 1));
+  blocks.ticks(4);
+  assert.equal(below.getItem(0).typeId, IRON);
+  assert.equal(below.getItem(0).amount, 3);
+  assert.equal(top.getItem(2), undefined);
+  assert.equal(side.getItem(4), undefined);
+  assert.match(sim.props.get(r.recordKey("minecraft:overworld", AT)), /no_input/);
+});
+
+test("it shows working while it makes things, and idle the tick it stops", () => {
+  const { input, fuel, output } = rig();
+  const working = () => blocks.block(AT).permutation.getState(r.WORKING);
+  assert.equal(working(), false);
+  input.setItem(0, new ItemStack("minecraft:cobblestone", 2));
+  fuel.setItem(0, new ItemStack("minecraft:coal", 1));
+  blocks.ticks(1);
+  assert.equal(working(), true);
+  assert.equal(blocks.block(AT).permutation.getState(r.STATE), true);
+  blocks.ticks(2); // the second block made, then none left
+  assert.equal(working(), false);
+  input.setItem(0, new ItemStack("minecraft:cobblestone", 64));
+  blocks.ticks(1);
+  assert.equal(working(), true);
+  for (let i = 0; i < 5; i++) if (!output.getItem(i)) output.setItem(i, new ItemStack("minecraft:dirt", 64));
+  output.setItem(0, new ItemStack(IRON, 64));
+  blocks.ticks(1);
+  assert.equal(working(), false); // output full
+  output.setItem(0, undefined);
+  blocks.ticks(6); // coal's 8th item, then out of fuel
+  assert.equal(working(), false);
+  assert.match(sim.props.get(r.recordKey("minecraft:overworld", AT)), /no_fuel/);
+});
+
+test("each item made gets one flame, one sparkle and one crackle at the front", () => {
+  const { input, fuel } = rig();
+  input.setItem(0, new ItemStack("minecraft:cobblestone", 2));
+  fuel.setItem(0, new ItemStack("minecraft:coal", 1));
+  blocks.ticks(4);
+  const ids = blocks.effects.map((e) => e.id);
+  assert.deepEqual(ids, [r.EFFECTS.flame, r.EFFECTS.sparkle, r.EFFECTS.sound,
+    r.EFFECTS.flame, r.EFFECTS.sparkle, r.EFFECTS.sound]);
+  // Placed facing south, the burst is on the south face.
+  assert.deepEqual(blocks.effects[0].at, { x: 0.5, y: 64.5, z: 1.1 });
+});
+
+test("a particle or sound the game refuses doesn't stop the making", () => {
+  const { input, fuel, output } = rig();
+  blocks.effectsFail = true;
+  input.setItem(0, new ItemStack("minecraft:cobblestone", 3));
+  fuel.setItem(0, new ItemStack("minecraft:coal", 1));
+  blocks.ticks(3);
+  assert.equal(output.getItem(0).amount, 3);
+  assert.equal(blocks.block(AT).permutation.getState(r.WORKING), true);
 });
 
 test("coal lasts 8; lava leaves its bucket; no fuel is idle", () => {

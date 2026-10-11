@@ -23,8 +23,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
-from jbrain.api.deps import SettingsDep, owner_only
-from jbrain.minecraft import changelog, sessions, timeline, travel
+from jbrain.api.deps import OwnerDep, SettingsDep, owner_only
+from jbrain.db.session import SessionContext
+from jbrain.minecraft import changelog, sessions, shares, timeline, travel
 from jbrain.minecraft import client as mc
 
 router = APIRouter(prefix="/minecraft", dependencies=[Depends(owner_only)])
@@ -456,6 +457,18 @@ async def set_power_pack(
     return await mc.call(settings, "POST", f"/worlds/{slot}/power-pack", json=body.model_dump())
 
 
+@router.put("/worlds/{slot}/power-pack-transport")
+async def set_power_pack_transport(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: PowerPackIn, settings: SettingsDep
+) -> dict[str, Any]:
+    """The world's "Power Pack teleport" switch (plan §M10, transport on request), on by
+    default. Off, the jbrain pack refuses every trip Dave offers in that world. Applies at
+    once to the loaded world, else on its next load."""
+    return await mc.call(
+        settings, "POST", f"/worlds/{slot}/power-pack-transport", json=body.model_dump()
+    )
+
+
 # --- the map (MINECRAFT_BEDROCK_PLAN.md §M8) ----------------------------------------
 _DIM = r"^(overworld|nether|the_end)$"
 # The map's base layers: explored ground in its real block colours, or the biome atlas.
@@ -517,6 +530,18 @@ async def map_players(
     are on it right now. Only the loaded, running world has anyone on; any other world
     shows where each player last was."""
     rec = await mc.slot_record(settings, slot)
+    return await players_view(request, settings, slot, rec)
+
+
+async def players_view(
+    request: Request,
+    settings: Any,
+    slot: str,
+    rec: dict[str, Any],
+    ctx: SessionContext | None = None,
+) -> dict[str, Any]:
+    """`/map/players` for a slot record already in hand; a map share passes its own
+    pinned `ctx` so the travel log is read under the share's RLS, not the owner's."""
     online: set[str] = set()
     running = False
     if rec.get("active"):
@@ -530,7 +555,11 @@ async def map_players(
                 sessions.player_key(str(p.get("xuid", "")), str(p.get("name", "")))
                 for p in status.get("players") or []
             }
-    players = await travel.latest_positions(_maker(request), str(rec["folder"]))
+    folder = str(rec["folder"])
+    if ctx is None:
+        players = await travel.latest_positions(_maker(request), folder)
+    else:
+        players = await travel.latest_positions(_maker(request), folder, ctx)
     for p in players:
         p["online"] = p["xuid"] in online
     return {"slot": slot, "world": rec["folder"], "live": running, "players": players}
@@ -594,3 +623,79 @@ async def map_timeline(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"slot": slot, **got}
+
+
+# --- share links (a no-login view of one world's map) --------------------------------
+# The public read side is `api/minecraft_share.py`; these are the owner's mint, list and
+# revoke. A link opens on one player but shows every player's position and history in
+# its world, until revoked.
+
+
+class MintMapShareIn(BaseModel):
+    slot: str = Field(pattern=_SLOT)
+    xuid: str = Field(min_length=1, max_length=64)
+
+
+class MapShareOut(BaseModel):
+    id: str
+    slot: str
+    xuid: str
+    gamertag: str
+    created_at: float
+    last_viewed_at: float | None
+    view_count: int
+
+
+class MintMapShareOut(MapShareOut):
+    # The bearer secret, shown exactly once; only its hash is kept.
+    token: str
+
+
+def _share_out(link: shares.ShareLink) -> MapShareOut:
+    return MapShareOut(
+        id=link.id,
+        slot=link.slot,
+        xuid=link.xuid,
+        gamertag=link.gamertag,
+        created_at=link.created_at.timestamp(),
+        last_viewed_at=link.last_viewed_at.timestamp() if link.last_viewed_at else None,
+        view_count=link.view_count,
+    )
+
+
+def _owner(owner: Any) -> SessionContext:
+    return SessionContext(principal_id=owner.id, principal_kind="owner")
+
+
+@router.post("/shares", status_code=201)
+async def mint_map_share(
+    body: MintMapShareIn, owner: OwnerDep, request: Request, settings: SettingsDep
+) -> MintMapShareOut:
+    """A share link for one world, opened on one of its players. 404 when the slot holds
+    no world or the player has never been seen in it."""
+    rec = await mc.slot_record(settings, body.slot)
+    folder = str(rec["folder"])
+    seen = await travel.latest_positions(_maker(request), folder)
+    player = next((p for p in seen if p["xuid"] == body.xuid), None)
+    if player is None:
+        raise HTTPException(status_code=404, detail="that player has never been in this world")
+    secret, link = await shares.mint_share(
+        _maker(request),
+        _owner(owner),
+        slot=body.slot,
+        world=folder,
+        xuid=body.xuid,
+        gamertag=str(player["gamertag"]),
+    )
+    return MintMapShareOut(**_share_out(link).model_dump(), token=secret)
+
+
+@router.get("/shares")
+async def list_map_shares(owner: OwnerDep, request: Request) -> list[MapShareOut]:
+    return [_share_out(s) for s in await shares.list_shares(_maker(request), _owner(owner))]
+
+
+@router.delete("/shares/{share_id}", status_code=204)
+async def revoke_map_share(share_id: str, owner: OwnerDep, request: Request) -> None:
+    if not await shares.revoke_share(_maker(request), _owner(owner), share_id):
+        raise HTTPException(status_code=404, detail="unknown share link")

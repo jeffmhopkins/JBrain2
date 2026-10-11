@@ -952,10 +952,11 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v10: in game, the deep scan's daily limit (§M17) and saying how many are left.
         # v11: `mc_players` finds one player (§M18), and the item guide is the only source
         # on the Old Makers' items, in game only what the asker has unlocked (§M19).
-        # v12: `mc_replicator_program`, in game only, for the asker's held Replicator (§M15).
+        # v12: `mc_transport` (§M10), and "transport beacon" once the guide describes it.
+        # v13: `mc_replicator_program`, in game only, for the asker's held Replicator (§M15).
         "minecraft_dave": (
-            "agent-minecraft-dave-v12",
-            "d24cd7d40ee785d9f47879c1dad2ae0cf55c79108c3b220f02c2f8bc73cfc72b",
+            "agent-minecraft-dave-v13",
+            "4c098fe42af6fdd1e72fc9c35afc7b0faee9aadeaa1ab0d2e9516542794e9d05",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

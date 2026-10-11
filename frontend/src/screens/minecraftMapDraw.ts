@@ -59,13 +59,21 @@ export async function fetchTile(
   tx: number,
   tz: number,
   layer: BaseLayer = "surface",
+  url: (
+    slot: string,
+    dim: MinecraftDim,
+    zoom: number,
+    tx: number,
+    tz: number,
+    layer: BaseLayer,
+  ) => string = minecraftTileUrl,
 ): Promise<CanvasImageSource> {
   if (MOCK_MODE) {
     // The mock world has biomes, not blocks: both layers draw it the same.
     const m = await import("../minecraftMapFixtures");
     return m.mockTile(slot, dim, zoom, tx, tz);
   }
-  return loadImage(minecraftTileUrl(slot, dim, zoom, tx, tz, layer));
+  return loadImage(url(slot, dim, zoom, tx, tz, layer));
 }
 
 export interface Tokens {

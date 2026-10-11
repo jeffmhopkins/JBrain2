@@ -15,6 +15,7 @@
 import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
   type TouchEvent,
   useCallback,
   useEffect,
@@ -36,7 +37,6 @@ import {
   type MinecraftStructure,
   type MinecraftTimeline,
   type MinecraftTimelineEvent,
-  api,
 } from "../api/client";
 import { useBackLayer } from "../backLayers";
 import { Sheet } from "../components/Sheet";
@@ -57,6 +57,7 @@ import {
   GridIcon,
   InfoIcon,
   LayersIcon,
+  LinkIcon,
   LocateIcon,
   LogInIcon,
   LogOutIcon,
@@ -122,7 +123,9 @@ import {
   zoomAt,
 } from "../minecraftMap";
 import type { MapIntent } from "../minecraftMapNav";
+import { type MapSource, OWNER_MAP } from "../minecraftMapSource";
 import { useForeground } from "../visibility";
+import { ShareSheet } from "./MinecraftMapShare";
 import { SessionsSheet, TimelinePanel, type TimelineState } from "./MinecraftMapTimeline";
 import { useCovered, useW } from "./MinecraftWorlds";
 import {
@@ -152,6 +155,8 @@ import {
   veil,
 } from "./minecraftMapDraw";
 
+/** How close a shared map opens on its player. */
+const FOCUS_SCALE = 1.4;
 /** Online players' positions arrive through the travel log every ~10 s. */
 const PLAYERS_POLL_MS = 10_000;
 /** The live view's trails and deaths: the last week, refreshed this often. */
@@ -255,7 +260,25 @@ function errText(err: unknown): string {
 const isUnreachable = (err: unknown) =>
   !(err instanceof ApiError) || err.status >= 502 || err.status === 0;
 
-/** The map page. `at` opens it on one spot (a chat card's view) instead of fitting everyone. */
+/** What the map page needs from around it: the owner's worlds, or one shared world. */
+export interface MapHost {
+  source: MapSource;
+  slots: MinecraftSlot[];
+  slotOf: (id: string) => MinecraftSlot | null;
+  startSlot: string;
+  running: boolean;
+  onlineCount: number;
+  nowMs: number;
+  covered: boolean;
+  root: RefObject<HTMLDivElement>;
+  /** The owner's way back and way to share; a shared view has neither, nor a world picker. */
+  owner: { pop: () => void } | null;
+  /** A shared view opens on this player (an xuid key) instead of fitting everyone. */
+  focus?: string | undefined;
+}
+
+/** The owner's map page. `at` opens it on one spot (a chat card's view) instead of fitting
+ *  everyone. */
 export function MapLayer({
   slot: startSlot,
   at,
@@ -264,10 +287,32 @@ export function MapLayer({
   at?: MapIntent | undefined;
 }) {
   const w = useW();
-  const pop = w.pop;
-  useBackLayer(pop);
+  useBackLayer(w.pop);
   const root = useRef<HTMLDivElement>(null);
   const covered = useCovered(w, root);
+  return (
+    <MapPage
+      at={at}
+      host={{
+        source: OWNER_MAP,
+        slots: w.slots,
+        slotOf: w.slotOf,
+        startSlot: startSlot ?? w.active?.id ?? "slot1",
+        running: w.running,
+        onlineCount: w.online.length,
+        nowMs: w.nowMs,
+        covered,
+        root,
+        owner: { pop: w.pop },
+      }}
+    />
+  );
+}
+
+/** The map itself, for whichever host it sits in. */
+export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefined }) {
+  const { source, owner, covered, root } = host;
+  const pop = owner?.pop;
   const back = useRef<HTMLButtonElement>(null);
   const mapEl = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -276,7 +321,7 @@ export function MapLayer({
   const gridEl = useRef<HTMLDivElement>(null);
   const foreground = useForeground();
 
-  const [slot, setSlot] = useState(startSlot ?? w.active?.id ?? "slot1");
+  const [slot, setSlot] = useState(host.startSlot);
   const [dim, setDim] = useState<MinecraftDim>(at?.dim ?? "overworld");
   const [snap, setSnap] = useState<Snap>("min");
   const [sel, setSel] = useState<Sel | null>(() =>
@@ -317,11 +362,12 @@ export function MapLayer({
   const [panelH, setPanelH] = useState(160);
   const [vis, setVis] = useState(600);
   const [toast, setToast] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
 
-  const slotRec: MinecraftSlot | null = w.slotOf(slot);
+  const slotRec: MinecraftSlot | null = host.slotOf(slot);
   const loaded = !!slotRec?.active;
-  const live = loaded && (players?.live ?? w.running);
-  const onlineCount = players ? players.players.filter((p) => p.online).length : w.online.length;
+  const live = loaded && (players?.live ?? host.running);
+  const onlineCount = players ? players.players.filter((p) => p.online).length : host.onlineCount;
   // The time-mode data is the range's; the live view's overlays are the last week's.
   const log = tl.on ? rangeLog : liveLog;
   const sessions = rangeLog?.sessions ?? liveLog?.sessions ?? [];
@@ -409,8 +455,8 @@ export function MapLayer({
   useEffect(() => {
     let gone = false;
     setInfo(null);
-    api
-      .minecraftMapInfo(slot, dim)
+    source
+      .info(slot, dim)
       .then((i) => {
         if (gone) return;
         setInfo(i);
@@ -425,14 +471,14 @@ export function MapLayer({
     return () => {
       gone = true;
     };
-  }, [slot, dim]);
+  }, [source, slot, dim]);
 
   useEffect(() => {
     if (!foreground) return;
     let gone = false;
     const read = () =>
-      api
-        .minecraftMapPlayers(slot)
+      source
+        .players(slot)
         .then((p) => {
           if (gone) return;
           setPlayers(p);
@@ -450,14 +496,14 @@ export function MapLayer({
       gone = true;
       clearInterval(t);
     };
-  }, [slot, foreground]);
+  }, [source, slot, foreground]);
 
   const sweeping = structs?.sweep.state === "running";
   useEffect(() => {
     let gone = false;
     const read = () =>
-      api
-        .minecraftMapStructures(slot, dim)
+      source
+        .structures(slot, dim)
         .then((s) => {
           if (!gone) setStructs(s);
         })
@@ -475,7 +521,7 @@ export function MapLayer({
       gone = true;
       clearInterval(t);
     };
-  }, [slot, dim, sweeping, foreground]);
+  }, [source, slot, dim, sweeping, foreground]);
 
   // What a tapped spot or structure stands on.
   useEffect(() => {
@@ -486,8 +532,8 @@ export function MapLayer({
     const [x, z] = sel.kind === "spot" ? [sel.x, sel.z] : [sel.s.x, sel.s.z];
     let gone = false;
     setPoint(null);
-    api
-      .minecraftMapPoint(slot, sel.dim, x, z)
+    source
+      .point(slot, sel.dim, x, z)
       .then((p) => {
         if (!gone) setPoint(p);
       })
@@ -497,7 +543,7 @@ export function MapLayer({
     return () => {
       gone = true;
     };
-  }, [sel, slot]);
+  }, [source, sel, slot]);
 
   // The live view's trails and deaths: the last week of the travel log.
   useEffect(() => {
@@ -505,8 +551,8 @@ export function MapLayer({
     let gone = false;
     const read = () => {
       const now = nowS();
-      api
-        .minecraftTimeline(slot, now - LIVE_LOG_S, now)
+      source
+        .timeline(slot, now - LIVE_LOG_S, now)
         .then((got) => {
           if (!gone) setLiveLog(got);
         })
@@ -525,7 +571,7 @@ export function MapLayer({
       gone = true;
       clearInterval(t);
     };
-  }, [slot, live, foreground]);
+  }, [source, slot, live, foreground]);
 
   // The timeline's range: one request, then everything inside it is a local redraw. A
   // range pinned to now grows with the clock without asking again.
@@ -535,8 +581,8 @@ export function MapLayer({
       return;
     }
     let gone = false;
-    api
-      .minecraftTimeline(slot, tl.from, tl.to)
+    source
+      .timeline(slot, tl.from, tl.to)
       .then((got) => {
         if (!gone) setRangeLog(got);
       })
@@ -548,7 +594,7 @@ export function MapLayer({
     return () => {
       gone = true;
     };
-  }, [slot, tl.on, tl.from, tl.to, say]);
+  }, [source, slot, tl.on, tl.from, tl.to, say]);
 
   // Explored by: the fog for this dimension, lifted by first-seen time on the timeline.
   useEffect(() => {
@@ -558,8 +604,8 @@ export function MapLayer({
     }
     let gone = false;
     const now = nowS();
-    api
-      .minecraftTimeline(slot, now - 86_400, now, {
+    source
+      .timeline(slot, now - 86_400, now, {
         include: ["explored"],
         dim,
         players: exBy ? [exBy] : [],
@@ -573,7 +619,7 @@ export function MapLayer({
     return () => {
       gone = true;
     };
-  }, [slot, dim, ov.explored, exBy]);
+  }, [source, slot, dim, ov.explored, exBy]);
 
   // ---- view ----
 
@@ -639,12 +685,27 @@ export function MapLayer({
     [glide, redraw],
   );
 
-  // Fit once per world and dimension, when what to fit has arrived.
+  // Fit once per world and dimension, when what to fit has arrived. A shared map opens on
+  // its player instead, in whichever dimension they're in, the first time it can.
+  const focusOn = useRef(host.focus ?? null);
   useEffect(() => {
     if (!needsFit.current || !info || (!players && !playersFailed)) return;
+    const p = players?.players.find((q) => q.xuid === focusOn.current);
+    focusOn.current = null;
+    if (p && p.dim !== state.current.dim) {
+      setDim(p.dim);
+      focusOn.current = p.xuid;
+      return;
+    }
     needsFit.current = false;
-    fitEveryone(false);
-  }, [info, players, playersFailed, fitEveryone]);
+    if (!p) {
+      fitEveryone(false);
+      return;
+    }
+    view.current = { x: p.x + 0.5, z: p.z + 0.5, s: FOCUS_SCALE };
+    redraw();
+    setSel({ kind: "player", p });
+  }, [info, players, playersFailed, fitEveryone, redraw]);
 
   const select = useCallback((next: Sel | null) => {
     setSel(next);
@@ -1000,7 +1061,7 @@ export function MapLayer({
       const entry: TileEntry = { img: have?.img ?? null, at: now, state: "loading" };
       cache.current.set(key, entry);
       inFlight.current++;
-      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer)
+      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer, source.tileUrl)
         .then((img) => {
           cache.current.set(key, { img, at: Date.now(), state: "ok" });
         })
@@ -1017,7 +1078,7 @@ export function MapLayer({
         });
       return entry;
     },
-    [redraw],
+    [source.tileUrl, redraw],
   );
 
   const draw = useCallback(() => {
@@ -1420,7 +1481,8 @@ export function MapLayer({
 
   async function searchAgain() {
     try {
-      const sweep = await api.minecraftMapSweep(slot);
+      if (!source.sweep) return;
+      const sweep = await source.sweep(slot);
       setStructs((s) => (s ? { ...s, sweep } : s));
     } catch (err) {
       say(errText(err));
@@ -1497,9 +1559,16 @@ export function MapLayer({
       </div>
 
       <div className="mc-map-top">
-        <button type="button" className="mc-map-fab" onClick={pop} aria-label="Back" ref={back}>
-          <ChevronLeftIcon size={20} />
-        </button>
+        {pop ? (
+          <button type="button" className="mc-map-fab" onClick={pop} aria-label="Back" ref={back}>
+            <ChevronLeftIcon size={20} />
+          </button>
+        ) : (
+          <span className="mc-map-viewonly">
+            <EyeIcon size={16} />
+            View only
+          </span>
+        )}
         <div className="mc-seg mc-map-dims" role="radiogroup" aria-label="Dimension">
           {DIMS.map((d) => (
             <button
@@ -1514,6 +1583,16 @@ export function MapLayer({
             </button>
           ))}
         </div>
+        {owner && (
+          <button
+            type="button"
+            className="mc-map-fab"
+            aria-label="Share this map"
+            onClick={() => setSharing(true)}
+          >
+            <LinkIcon size={20} />
+          </button>
+        )}
       </div>
       <div className="mc-map-fabs">
         <button
@@ -1552,15 +1631,19 @@ export function MapLayer({
         >
           <div className="mc-map-grip" aria-hidden="true" />
           <div className="mc-map-head">
-            <button
-              type="button"
-              className="mc-map-world"
-              aria-label={`World: ${title} — change`}
-              onClick={() => setPicker(true)}
-            >
-              {title}
-              <ChevronDownIcon size={16} />
-            </button>
+            {owner ? (
+              <button
+                type="button"
+                className="mc-map-world"
+                aria-label={`World: ${title} — change`}
+                onClick={() => setPicker(true)}
+              >
+                {title}
+                <ChevronDownIcon size={16} />
+              </button>
+            ) : (
+              <span className="mc-map-world">{title}</span>
+            )}
             <div className="mc-seg mc-map-tabs" role="tablist" aria-label="Panel">
               <button
                 type="button"
@@ -1617,7 +1700,7 @@ export function MapLayer({
               <Detail
                 sel={sel}
                 point={point}
-                nowMs={w.nowMs}
+                nowMs={host.nowMs}
                 compact={tl.on}
                 onClose={() => select(null)}
                 onCopy={(x, z) => void copy(x, z)}
@@ -1708,7 +1791,7 @@ export function MapLayer({
                 layer={layer}
                 setLayer={setLayer}
                 structs={structs}
-                canSearch={live && !sweeping}
+                canSearch={live && !sweeping && !!source.sweep}
                 onSearch={() => void searchAgain()}
                 dim={dim}
                 spawn={dim === "overworld" ? !!info?.spawn : null}
@@ -1728,7 +1811,7 @@ export function MapLayer({
             Any world slot. Only the loaded one shows live positions.
           </p>
           <div className="mc-map-worlds">
-            {w.slots.map((s) => (
+            {host.slots.map((s) => (
               <button
                 key={s.id}
                 type="button"
@@ -1743,7 +1826,7 @@ export function MapLayer({
                 <span className="mc-navtx">
                   <span className="ops-card-title">{slotLabel(s)}</span>
                   <span className="mc-navmeta">
-                    Slot {s.id.replace(/\D/g, "")} · {slotLine(s, w.running)}
+                    Slot {s.id.replace(/\D/g, "")} · {slotLine(s, host.running)}
                   </span>
                 </span>
                 {s.active && <span className="badge ok mc-loaded">loaded</span>}
@@ -1751,6 +1834,15 @@ export function MapLayer({
             ))}
           </div>
         </Sheet>
+      )}
+      {sharing && owner && (
+        <ShareSheet
+          slot={slot}
+          world={title}
+          players={players?.players ?? []}
+          nowMs={host.nowMs}
+          onClose={() => setSharing(false)}
+        />
       )}
       {list && (
         <SessionsSheet

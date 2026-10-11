@@ -223,7 +223,7 @@ async def test_worlds_and_rules_are_read_only_views_of_the_sidecar(sidecar) -> N
     ]
     # The owner's worlds are read-only here: the only world-changing routes are a load,
     # the test worlds' own make and reset, each guarded below (§SW4), and the Power Pack
-    # switch, a game rule the owner has no other no-terminal way to flip yet (§M10).
+    # switches, which the owner has no other no-terminal way to flip yet (§M10).
     paths = {
         (m, getattr(r, "path", "")) for r in mc.router.routes for m in getattr(r, "methods", ())
     }
@@ -232,6 +232,7 @@ async def test_worlds_and_rules_are_read_only_views_of_the_sidecar(sidecar) -> N
         ("POST", "/debug/minecraft/test-worlds/{slot}"),
         ("POST", "/debug/minecraft/test-worlds/{slot}/reset"),
         ("PUT", "/debug/minecraft/worlds/{slot}/power-pack"),
+        ("PUT", "/debug/minecraft/worlds/{slot}/power-pack-transport"),
     }
 
 

@@ -21,6 +21,12 @@
     },
     "jbrain_replicator_side": {
       "textures": "textures/blocks/replicator_side"
+    },
+    "jbrain_replicator_front_working": {
+      "textures": "textures/blocks/replicator_front_working"
+    },
+    "jbrain_replicator_top_working": {
+      "textures": "textures/blocks/replicator_top_working"
     }
   }
 }

@@ -1,14 +1,15 @@
 // The Replicator (docs/plans/MINECRAFT_BEDROCK_PLAN.md §M15): a block Dave programs to
 // make one thing, which burns any block into it like a furnace. Stable @minecraft/server
-// only, so it is a custom block with script-run "furnace" behaviour: a custom block can't
+// and @minecraft/server-ui only, so it is a custom block with script-run "furnace" behaviour: a custom block can't
 // hold a container, and scripts can't open a furnace's UI on one. It reads blocks from a
 // container on top, fuel from one beside it and puts what it makes into one below — the
 // sides a furnace's hoppers use — once per block tick, which the game only runs where the
 // land is loaded. The rules are in replicator_rules.js.
 import { system, world, BlockTypes, ItemStack } from "@minecraft/server";
-import { FUEL_LEFTOVER, HOW, PATTERN, PROGRAMMED, REPLICATOR, STATE, TARGET,
+import { ActionFormData, FormCancelationReason } from "@minecraft/server-ui";
+import { EFFECTS, FUEL_LEFTOVER, PATTERN, PROGRAMMED, REPLICATOR, STATE, TARGET, WORKING,
   fuelTicks, parseProgram, parseRecord, programCheck, programmedLore, programmedName,
-  recordKey, roomFor, statusLine, takePlan, turn, unlocksReplicator } from "./replicator_rules.js";
+  panelBody, panelTitle, PANEL, recordKey, roomFor, takePlan, turn, unlocksReplicator } from "./replicator_rules.js";
 
 const say = (msg) => console.log(`[jbrain] ${msg}`);
 
@@ -121,6 +122,37 @@ const slotsOf = (container) => {
   return out;
 };
 
+// Its working look (owner, 2026-10-11): lit and pulsing while it makes things, idle the
+// tick it stops. Unloaded, it keeps whichever look it last had.
+const setWorking = (block, on) => {
+  const perm = block.permutation;
+  if (perm.getState(WORKING) === on) return;
+  block.setPermutation(perm.withState(WORKING, on));
+};
+
+// Which way the front faces: the placement state names it (the trait's 180° offset turns
+// the front toward the player who placed it).
+const FACING = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
+
+// A burst at the front and a soft crackle for each item made. Cosmetic: a particle or
+// sound the game doesn't know never stops the making.
+const effects = (block) => {
+  const [dx, dz] = FACING[block.permutation.getState("minecraft:cardinal_direction")] ?? [0, 0];
+  const c = block.center();
+  const at = { x: c.x + dx * 0.6, y: c.y, z: c.z + dz * 0.6 };
+  for (const fx of [
+    () => block.dimension.spawnParticle(EFFECTS.flame, at),
+    () => block.dimension.spawnParticle(EFFECTS.sparkle, at),
+    () => block.dimension.playSound(EFFECTS.sound, c, { volume: 0.6 }),
+  ]) {
+    try {
+      fx();
+    } catch {
+      // A bad id costs only that effect.
+    }
+  }
+};
+
 // One block tick: every COOK_TICKS (the block's `minecraft:tick`), so only while its
 // chunk ticks, and with no catching up after.
 const onTick = ({ block }) => {
@@ -152,7 +184,9 @@ const onTick = ({ block }) => {
   if (plan.make) {
     const spill = output.addItem(new ItemStack(rec.target, 1));
     if (spill) block.dimension.spawnItem(spill, block.below().center());
+    effects(block);
   }
+  setWorking(block, plan.make);
   if (plan.fuel !== rec.fuel || plan.state !== rec.state) {
     writeRecord(block, { target: rec.target, fuel: plan.fuel, state: plan.state });
   }
@@ -192,9 +226,35 @@ const onPlayerBreak = ({ block, dimension }) => {
   dimension.spawnItem(makeReplicator(rec?.target), block.center());
 };
 
+// Players whose panel is open, so a second use doesn't stack another on top.
+const panelOpen = new Set();
+
 const onPlayerInteract = ({ block, player }) => {
-  if (!player) return;
-  player.sendMessage(`${statusLine(readRecord(block))}\n§7${HOW}`);
+  // Sneaking is placing a hopper or chest against it, as on a furnace: no panel.
+  if (!player || player.isSneaking || panelOpen.has(player.id)) return;
+  const rec = readRecord(block);
+  const title = panelTitle(rec);
+  const body = panelBody(rec);
+  const inChat = () => player.sendMessage(`§6${title}§r\n${body}`);
+  panelOpen.add(player.id);
+  // A form can't open from inside a block event's tick; the next one is soon enough.
+  system.run(() => {
+    try {
+      new ActionFormData().title(title).body(body).button(PANEL.ok)
+        .show(player)
+        .then((resp) => {
+          panelOpen.delete(player.id);
+          if (resp.canceled && resp.cancelationReason === FormCancelationReason.UserBusy) inChat();
+        })
+        .catch(() => {
+          panelOpen.delete(player.id);
+          inChat();
+        });
+    } catch {
+      panelOpen.delete(player.id);
+      inChat();
+    }
+  });
 };
 
 // --- §M19: Dave explains it once a player has 8 Power Packs on them ----------------------

@@ -62,7 +62,10 @@ def test_the_block_faces_the_placer_and_lights_up_when_programmed() -> None:
     block = _json(PACK / "blocks" / "replicator.json")["minecraft:block"]
     desc = block["description"]
     assert desc["identifier"] == "jbrain:replicator"
-    assert desc["states"] == {"jbrain:programmed": [False, True]}
+    assert desc["states"] == {
+        "jbrain:programmed": [False, True],
+        "jbrain:working": [False, True],
+    }
     trait = desc["traits"]["minecraft:placement_direction"]
     assert trait["enabled_states"] == ["minecraft:cardinal_direction"]
     comps = block["components"]
@@ -75,12 +78,16 @@ def test_the_block_faces_the_placer_and_lights_up_when_programmed() -> None:
     assert comps["minecraft:movable"] == {"movement_type": "immovable"}
     rotations = {}
     programmed = None
+    working: dict = {}
     for perm in block["permutations"]:
         if "cardinal_direction" in perm["condition"]:
             way = perm["condition"].split("== '")[1].rstrip("'")
             rotations[way] = perm["components"]["minecraft:transformation"]["rotation"]
         else:
-            programmed = perm["components"]["minecraft:material_instances"]
+            if "working" in perm["condition"]:
+                working = perm["components"]
+            else:
+                programmed = perm["components"]["minecraft:material_instances"]
     assert rotations == {
         "north": [0, 0, 0],
         "west": [0, 90, 0],
@@ -94,14 +101,30 @@ def test_the_block_faces_the_placer_and_lights_up_when_programmed() -> None:
     assert blank["up"]["texture"] == "jbrain_replicator_top"
     assert programmed["up"]["texture"] == "jbrain_replicator_top_programmed"
     assert blank["*"] == programmed["*"]
+    # Working (owner, 2026-10-11): the pulsing front and top, and it gives off light.
+    lit = working["minecraft:material_instances"]
+    assert lit["north"]["texture"] == "jbrain_replicator_front_working"
+    assert lit["up"]["texture"] == "jbrain_replicator_top_working"
+    assert working["minecraft:light_emission"] == 10
+    assert "minecraft:light_emission" not in comps
+    flipbooks = json.loads((RP / "textures" / "flipbook_textures.json").read_text())
+    ours_fb = {f["atlas_tile"]: f for f in flipbooks if "replicator" in f["atlas_tile"]}
+    assert set(ours_fb) == {
+        "jbrain_replicator_front_working",
+        "jbrain_replicator_top_working",
+    }
     terrain = _json(RP / "textures" / "terrain_texture.json")
     assert terrain["texture_name"] == "atlas.terrain"
     ours = {k: v for k, v in terrain["texture_data"].items() if "replicator" in k}
     for key, entry in ours.items():
         face = key.removeprefix("jbrain_")
         png = RP / f"{entry['textures']}.png"
+        if key in ours_fb:  # 8 frames stacked: 16 x 128
+            assert ours_fb[key]["flipbook_texture"] == entry["textures"]
         assert png.read_bytes() == (DOCS_ICONS / f"{face}.png").read_bytes()
-    used = {m["texture"] for m in [*blank.values(), *programmed.values()]}
+    used = {
+        m["texture"] for m in [*blank.values(), *programmed.values(), *lit.values()]
+    }
     assert used == set(ours)
 
 
@@ -121,15 +144,23 @@ def test_the_replicator_script(tmp_path: Path) -> None:
         pytest.fail("node is needed to run the jbrain pack's script (dev-setup has it)")
     root = tmp_path / "run"
     shutil.copytree(PACK, root / "pack")
-    fake = root / "node_modules" / "@minecraft" / "server"
-    fake.mkdir(parents=True)
-    shutil.copy(SIM / "fake_server.mjs", fake / "base.mjs")
-    shutil.copy(SIM / "replicator_fake.mjs", fake / "index.mjs")
-    (fake / "package.json").write_text(
-        json.dumps(
-            {"name": "@minecraft/server", "type": "module", "exports": "./index.mjs"}
+    for module, sources in (
+        ("server", {"base.mjs": "fake_server.mjs", "index.mjs": "replicator_fake.mjs"}),
+        ("server-ui", {"index.mjs": "fake_server_ui.mjs"}),
+    ):
+        fake = root / "node_modules" / "@minecraft" / module
+        fake.mkdir(parents=True)
+        for name, source in sources.items():
+            shutil.copy(SIM / source, fake / name)
+        (fake / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": f"@minecraft/{module}",
+                    "type": "module",
+                    "exports": "./index.mjs",
+                }
+            )
         )
-    )
     shutil.copy(SIM / "replicator.test.mjs", root / "replicator.test.mjs")
     result = subprocess.run(
         ["node", "--test", str(root / "replicator.test.mjs")],

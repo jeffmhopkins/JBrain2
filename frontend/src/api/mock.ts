@@ -25,6 +25,7 @@ import type {
   LlmSettings,
   LlmUsage,
   MinecraftDim,
+  MinecraftMapShare,
   MinecraftTimelinePart,
   NoteAnalysis,
   NoteOut,
@@ -63,6 +64,9 @@ const mockExport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockImport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockReset = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 /** Each Minecraft world's Power Pack switch and saved keepInventory, per page load. */
+// Map share links the mock has minted this visit; the token "demo" always opens Castle Hill.
+const mcShares: (MinecraftMapShare & { token: string })[] = [];
+
 const mcKeep: Record<string, { pack: boolean; keep: boolean }> = {};
 
 const CONTAINERS: ContainerStatus[] = [
@@ -3884,6 +3888,51 @@ export const mockFetch: typeof fetch = async (input, init) => {
   const path = url.pathname;
   const method = (init?.method ?? "GET").toUpperCase();
 
+  // --- A shared Minecraft map (/mc/s/{token}): Castle Hill, opened on its first player.
+  const shared = path.match(/^\/api\/mc-share\/([^/]+)(\/.*)?$/);
+  if (shared) {
+    const token = decodeURIComponent(shared[1] ?? "");
+    const rest = shared[2] ?? "";
+    if (token !== "demo" && !mcShares.some((x) => x.token === token)) {
+      return json({ detail: "unknown or revoked share link" }, 404);
+    }
+    const m = await import("../minecraftMapFixtures");
+    const slot = "slot2";
+    const dim = (url.searchParams.get("dim") ?? "overworld") as MinecraftDim;
+    const players = m.mcMapPlayers(slot, true);
+    if (rest === "") {
+      const first = players.players[0];
+      return json({
+        slot,
+        name: "Castle Hill",
+        active: true,
+        last_played: null,
+        focus: { xuid: first?.xuid ?? "", gamertag: first?.gamertag ?? "" },
+      });
+    }
+    if (rest === "/map/info") return json(m.mcMapInfo(slot, dim));
+    if (rest === "/map/players") return json(players);
+    if (rest === "/map/structures") return json(m.mcMapStructures(slot, dim));
+    if (rest === "/map/point") {
+      const x = Number(url.searchParams.get("x"));
+      const z = Number(url.searchParams.get("z"));
+      return json(m.mcMapPoint(slot, dim, x, z));
+    }
+    if (rest === "/timeline") {
+      const q = url.searchParams;
+      return json(
+        m.mcTimeline(slot, Number(q.get("from")), Number(q.get("to")), {
+          include: (q.get("include") ?? "trails,events,sessions").split(
+            ",",
+          ) as MinecraftTimelinePart[],
+          players: (q.get("players") ?? "").split(",").filter(Boolean),
+          dim,
+        }),
+      );
+    }
+    return json({ detail: "Not Found" }, 404);
+  }
+
   // --- Minecraft: the reviewed fixture. Default is running, two on, an update waiting;
   // `?mc=<scenario>` on the page URL picks another (see minecraftScenario).
   if (path.startsWith("/api/minecraft")) {
@@ -3945,6 +3994,34 @@ export const mockFetch: typeof fetch = async (input, init) => {
             : s,
         ),
       });
+    }
+    if (path === "/api/minecraft/shares" && method === "GET") {
+      return json(mcShares.map(({ token: _t, ...rest }) => rest));
+    }
+    if (path === "/api/minecraft/shares" && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { slot: string; xuid: string };
+      const m = await import("../minecraftMapFixtures");
+      const who = m.mcMapPlayers(body.slot, true).players.find((p) => p.xuid === body.xuid);
+      if (!who) return json({ detail: "that player has never been in this world" }, 404);
+      const made = {
+        id: `share-${mcShares.length + 1}`,
+        slot: body.slot,
+        xuid: who.xuid,
+        gamertag: who.gamertag,
+        created_at: Date.now() / 1000,
+        last_viewed_at: null,
+        view_count: 0,
+        token: `mock${Math.random().toString(36).slice(2, 12)}`,
+      };
+      mcShares.unshift(made);
+      return json(made, 201);
+    }
+    const revoke = path.match(/^\/api\/minecraft\/shares\/([^/]+)$/);
+    if (revoke && method === "DELETE") {
+      const at = mcShares.findIndex((x) => x.id === revoke[1]);
+      if (at < 0) return json({ detail: "unknown share link" }, 404);
+      mcShares.splice(at, 1);
+      return new Response(null, { status: 204 });
     }
     if (path === "/api/minecraft/timeline") {
       const m = await import("../minecraftMapFixtures");
