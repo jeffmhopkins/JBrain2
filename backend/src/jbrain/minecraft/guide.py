@@ -29,8 +29,9 @@ VERSION = _PROMPT.version
 _ENTRY = re.compile(r"^\[entry: (\w+)\]\n", re.MULTILINE)
 
 # What the pack can report a player has unlocked: the Tricorder from the start, the Power
-# Pack on their first Ender Pearl, its uses on their first Power Pack.
-UNLOCKS = ("tricorder", "power_pack", "power_pack_uses")
+# Pack on their first Ender Pearl, its uses on their first Power Pack, the Wormhole Seed on
+# their first popped chorus fruit after that (§M12).
+UNLOCKS = ("tricorder", "power_pack", "power_pack_uses", "wormhole_seed")
 ALWAYS = frozenset({"tricorder"})
 
 
@@ -52,13 +53,20 @@ def parse_known(raw: Any) -> frozenset[str]:
 def entries_for(known: Iterable[str], *, keep_switch: bool) -> list[str]:
     """The entry names a player with these unlocks may see, in reading order. Keeping your
     things is a use only a world with its switch on has; elsewhere a made pack does
-    nothing, and the guide says so rather than describing a use the world lacks."""
+    nothing until gates are known (a re-aim burns one), and the guide says so rather than
+    describing a use the world lacks."""
     have = set(known) | ALWAYS
     out = ["tricorder"]
     if have & {"power_pack", "power_pack_uses"}:
         out.append("power_pack")
     if "power_pack_uses" in have:
-        out.append("power_pack_keep" if keep_switch else "power_pack_unused")
+        if keep_switch:
+            out.append("power_pack_keep")
+        elif "wormhole_seed" not in have:
+            out.append("power_pack_unused")
+    # A re-aim burns a pack, so with gates known a pack is never "nothing in this world".
+    if "wormhole_seed" in have:
+        out.append("wormhole_seed")
     return out
 
 
@@ -68,5 +76,5 @@ def for_player(known: Iterable[str], *, keep_switch: bool) -> str:
 
 
 def for_owner() -> str:
-    names = ["intro_owner", "tricorder", "power_pack", "power_pack_keep"]
+    names = ["intro_owner", "tricorder", "power_pack", "power_pack_keep", "wormhole_seed"]
     return "\n\n".join(ENTRIES[n] for n in names)

@@ -140,7 +140,7 @@ export class Player {
   }
 }
 
-const subs = { die: [], spawn: [], script: [], startup: [] };
+const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [] };
 const intervals = [];
 let queued = [];
 const props = new Map();
@@ -152,6 +152,8 @@ export const world = {
   afterEvents: {
     entityDie: { subscribe: (fn) => subs.die.push(fn) },
     playerSpawn: { subscribe: (fn) => subs.spawn.push(fn) },
+    playerInteractWithBlock: { subscribe: (fn) => subs.interact.push(fn) },
+    playerBreakBlock: { subscribe: (fn) => subs.break.push(fn) },
   },
   getDynamicProperty: (k) => props.get(k),
   setDynamicProperty: (k, v) => (v === undefined ? props.delete(k) : props.set(k, v)),
@@ -201,6 +203,12 @@ export const sim = {
   die(player) {
     for (const fn of subs.die) fn({ deadEntity: player, damageSource: { cause: "fall" } });
     sim.flush();
+  },
+  interact(ev) {
+    for (const fn of subs.interact) fn(ev);
+  },
+  breakBlock(ev) {
+    for (const fn of subs.break) fn(ev);
   },
   scriptevent(id, message) {
     for (const fn of subs.script) fn({ id, message });

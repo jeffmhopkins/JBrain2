@@ -49,6 +49,7 @@ people:
 | `a/power_pack.png` (= `a/power_pack_ember.png`), `a/power_pack_pearl.png` | A's Power Pack, **the owner's pick: the pearl core with an ember at its heart**; and the plain pearl, kept as the record |
 | `a/replicator.png`, `a/replicator_programmed.png` | The Replicator **item**'s flat sprite, blank and programmed |
 | `a/replicator_front.png`, `a/replicator_front_programmed.png`, `a/replicator_top.png`, `a/replicator_top_programmed.png`, `a/replicator_side.png` | The placed block's faces. The side also serves as the bottom. |
+| `a/wormhole_seed.png`, `a/wormhole.png` | The Wormhole Seed's icon (a lilac chorus pod under a copper collar, a window onto the fold) and the wormhole gate's surface, a 16-frame flipbook strip (16×256) that tiles without seams (§M12). Drawn by `make_wormhole.py` from A's palette. |
 | `{b,c}/*.png` | Revision 1's B and C sets, unchanged. Their `replicator.png` and `replicator_iron.png` are flat previews of the block cube. |
 | `vanilla/*.png` | Our own rough stand-ins for an Eye of Ender, Ender Pearl, compass, spyglass and furnace, there for contrast only. They are not Mojang textures. |
 | `make_icons.py`, `make_pages.py` | Draw every PNG from pixel grids, and build A's page from them. To revise, edit a grid and run both. B and C still draw byte-identical; their pages aren't rebuilt. |

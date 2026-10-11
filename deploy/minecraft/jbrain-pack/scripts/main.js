@@ -8,6 +8,7 @@ import { system, world, CommandPermissionLevel, CustomCommandParamType,
 import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, parseConfig,
   parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
   xpToDrop } from "./rules.js";
+import { initWormholes } from "./wormhole.js";
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",
@@ -319,6 +320,8 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     }
   }
 });
+
+initWormholes();
 
 // --- the Tricorder's arrow, about four times a second -----------------------------------
 

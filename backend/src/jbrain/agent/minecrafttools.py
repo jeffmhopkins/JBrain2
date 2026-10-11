@@ -1147,6 +1147,10 @@ def build_minecraft_handlers(
                 " changed.",
                 result_brief="not found",
             )
+        # Their wormhole gates that led there go dormant (§M12). The removal stands
+        # whatever the pack answers, so its answer isn't waited on for anything.
+        forget = {"op": "forget", "player": player.gamertag, "place": gone.name}
+        await console(f"scriptevent jb:wormhole {json.dumps(forget)}")
         return ToolOutput(
             f"Removed {fence(gone.name)} ({spot_text(_spot(gone))}) from"
             f" {fence(player.gamertag)}'s places.",

@@ -1806,6 +1806,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "9c9c361ada06950f833ffd1248dfc2da387830bd96796118d8aab1848c1a0b9c",
         ),
+        # Wormhole gates (§M12): opens or re-aims the player's own gate at a saved place.
+        "mc_wormhole_aim.tool": (
+            "mc_wormhole_aim",
+            1,
+            "eda4dbb595d6db1ee749991fef5cb2f3a72accbe51b4180912e778a78487bde5",
+        ),
         "mc_goals.tool": (
             "mc_goals",
             1,

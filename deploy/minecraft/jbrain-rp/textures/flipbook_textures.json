@@ -1,0 +1,7 @@
+[
+  {
+    "flipbook_texture": "textures/blocks/wormhole",
+    "atlas_tile": "jbrain_wormhole",
+    "ticks_per_frame": 2
+  }
+]

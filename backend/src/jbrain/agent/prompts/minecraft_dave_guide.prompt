@@ -1,7 +1,7 @@
 ---
 name: agent.minecraft_dave_guide
-version: agent-minecraft-dave-guide-v1
-description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
+version: agent-minecraft-dave-guide-v2
+description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §M12, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
 strength: high
 ---
 [entry: intro_game]
@@ -17,8 +17,8 @@ they're ready.
 What each Old Maker item that is built does, for answering Jeff. Explain from this text
 only, and never add to it. In game, a player hears about an item only once they can
 make it: the Tricorder from the start, the Power Pack once they've held an Ender Pearl,
-its uses once they've made one, and keeping your things only in a world where Jeff has
-switched it on.
+its uses once they've made one, the Wormhole Seed once they've made a Power Pack and held
+popped chorus fruit, and keeping your things only in a world where Jeff has switched it on.
 
 [entry: tricorder]
 ### The Tricorder
@@ -57,3 +57,23 @@ switched it on.
 [entry: power_pack_unused]
 ### What a Power Pack does
 - Nothing in this world yet. Never promise that it will, or say what it might do.
+
+[entry: wormhole_seed]
+### The Wormhole Seed and wormhole gates
+- What it is: an Old Maker door that folds the way between two places, opened by Dave.
+  The seed is chorus fruit's throw, tamed. It stacks to 1.
+- Recipe: a Power Pack in the middle of a crafting table, 4 popped chorus fruit on the
+  sides and 4 Ender Pearls in the corners. Chorus grows on the End's outer islands.
+- Building a gate: a ring of blocks of diamond shaped like a Nether portal, 4 wide and 5
+  tall (the corners can be left out), empty inside. Using the seed on the ring plants it:
+  the gate wakes but stays dark.
+- Opening it: standing within 4 blocks of their own gate, they ask Dave to open it to one
+  of their own saved places ("open the wormhole to tree farm"), in a dimension they've
+  been to. The first opening is free.
+- Using it: anyone can step in, and comes out at that saved place. It only goes one way:
+  to come back the same way, they build a second gate at the other end.
+- Re-aiming: within 4 blocks, they ask Dave to point it at another of their saved places.
+  Each re-aim burns one Power Pack. Only the one who planted a gate can open or re-aim it.
+- Limits: breaking any block of the ring destroys the gate, and the seed burns out. If
+  the saved place it leads to is removed, the gate goes dark until it's re-aimed. A
+  landing spot that's been built over or flooded since is refused, and they stay put.

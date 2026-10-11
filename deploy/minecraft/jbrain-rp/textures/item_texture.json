@@ -3,6 +3,7 @@
   "texture_name": "atlas.items",
   "texture_data": {
     "jbrain_power_pack": { "textures": "textures/items/power_pack" },
-    "jbrain_tricorder": { "textures": "textures/items/tricorder" }
+    "jbrain_tricorder": { "textures": "textures/items/tricorder" },
+    "jbrain_wormhole_seed": { "textures": "textures/items/wormhole_seed" }
   }
 }

@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17✅ M18✅ M19✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15◻️ M16◻️ M17✅ M18✅ M19✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1529,7 +1529,47 @@ The private chest is the design below. The cargo chest follows it.
 4. **What happens to a vault if its owner is removed from the allowlist:** it's kept, and
    the owner can see its contents from the PWA.
 
-### M12 — Wormhole gates: a seed, a diamond gate, and Dave (owner, 2026-10-11; not built)
+### M12 — Wormhole gates: a seed, a diamond gate, and Dave (owner, 2026-10-11; shipped 2026-10-11)
+
+**Shipped (2026-10-11).** Built as decided below, in the jbrain pack's own module
+(`jbrain-pack/scripts/wormhole.js`, rules in `wormhole_rules.js`; tests
+`jbrain-sim/wormhole*.test.mjs`, run by `supervisor/tests/test_minecraft_wormhole.py`), the
+seed's item, recipe and icon, the `jbrain:wormhole` surface block (a 16-frame flipbook,
+art in `docs/mocks/minecraft-items/make_wormhole.py`), and one Dave tool,
+`mc_wormhole_aim` (`backend/src/jbrain/agent/minecraftwormhole.py`), in game and in the app.
+What the build settled:
+- **One tool opens and re-aims.** The first opening of a gate is free; every aim after it
+  costs a Power Pack, including re-opening a gate that went dormant. Aiming at the place it
+  already leads to changes and costs nothing. The backend checks the place is the player's
+  own (`app.mc_places`, loaded world) and its dimension visited (the Overworld always, the
+  dimension they stand in, or any in their travel log); the pack checks the rest live
+  (online, within 4 blocks of a gate they planted, the ring clear, the pack in hand or
+  inventory or off-hand, the smallest stack burnt) and answers on the console, read back
+  as `mc_set_waypoint` does.
+- **The frame is the ten ring blocks.** Corners are optional, so a seed can't be planted
+  from one and breaking one leaves the gate standing; breaking any of the ten collapses it
+  (the record and the surface go, nothing drops). A player's break collapses it at once;
+  pistons, blasts and commands are caught by a once-a-second look at gates in loaded ground.
+- **Records** are world dynamic properties (`jb:gates`, `jb:gate:<id>`), keyed to the
+  planter's gamertag (the pack has no xuid, as with waypoints). A gate keeps the place's
+  coordinates from when it was aimed: saving the place again elsewhere doesn't move it until
+  it is re-aimed; removing the place (`mc_place_remove`) takes the planter's gates that led
+  there dormant.
+- **Trips are logged** as `[jbrain] wormhole trip: …` lines in the server log (plantings,
+  collapses and refused landings too). Mirroring gates and trips to the sidecar for the PWA
+  and the M8 map waits for M8.
+- **Players only** travel (mobs and items stay an open option). A trip happens on stepping
+  into the surface; a blocked landing (`tryTeleport` with `checkForBlocks`) is refused once,
+  with a message, and tried again only after stepping out and back in.
+- **The item guide** gains the seed (`wormhole_seed`): the pack unlocks it on a first popped
+  chorus fruit once the player has made a Power Pack, and in a world without the keep switch
+  the Power Pack's "nothing yet" entry gives way to it.
+- **Messages are plain status**, not Dave's lines, until the lore page has his words for
+  planting and opening (below).
+- **Still to check on the box:** that using the seed on a diamond block fires
+  `playerInteractWithBlock` on Bedrock (a custom item with no use behaviour), the flipbook
+  and blend render of the surface, the particle and sound ids, and `tryTeleport` into an
+  unloaded chunk or another dimension.
 
 **Decided (owner, 2026-10-11).** This replaces the 2026-10-10 proposal of paired seeds
 and twin gates. A wormhole works like transport on request (M10): a crafted **Wormhole
