@@ -12,8 +12,9 @@
 >   as a soul lantern, C's as a first-aid kit, and C's Power Pack as an eyeball.
 > - Still to check on a device: the set beside a real Eye of Ender and Ender Pearl at GUI
 >   scale 2 and 3, in the build that installs it.
-> - **Revision 3 is open for one pick:** the Power Pack's core, **pearl** (the main version)
->   or **ember** (the alternate). See "Revision 3" below.
+> - **Revision 3 decided (owner, 2026-10-11): the ember.** The Power Pack's pearl core has a
+>   blaze ember at its heart; `a/power_pack.png` is now that version, and the plain pearl is
+>   kept as `a/power_pack_pearl.png`. See "Revision 3" below.
 > - The Replicator's placer-item design (below) is the coordinator's decision, and the owner can
 >   overrule it.
 >
@@ -45,7 +46,7 @@ people:
 | `a-copper-amethyst.html` | **A, revision 2**: the current page |
 | `b-deep-dark.html`, `c-ship-quartz.html` | B and C, revision 1, kept as the record. Only their links to A were updated. |
 | `a/tricorder.png`, `a/tricorder_lens.png` | A's Tricorder (ping) and A2's (lens), 16×16 RGBA |
-| `a/power_pack.png`, `a/power_pack_ember.png` | A's Power Pack: the pearl core (main), and the alternate with an ember at the pearl's heart |
+| `a/power_pack.png` (= `a/power_pack_ember.png`), `a/power_pack_pearl.png` | A's Power Pack, **the owner's pick: the pearl core with an ember at its heart**; and the plain pearl, kept as the record |
 | `a/replicator.png`, `a/replicator_programmed.png` | The Replicator **item**'s flat sprite, blank and programmed |
 | `a/replicator_front.png`, `a/replicator_front_programmed.png`, `a/replicator_top.png`, `a/replicator_top_programmed.png`, `a/replicator_side.png` | The placed block's faces. The side also serves as the bottom. |
 | `{b,c}/*.png` | Revision 1's B and C sets, unchanged. Their `replicator.png` and `replicator_iron.png` are flat previews of the block cube. |
@@ -161,10 +162,10 @@ Powder**, not nine Eyes of Ender. So A's Power Pack keeps its copper-capped glas
 core sealed inside is now an **Ender Pearl**: a teal sphere with a light highlight and a dark
 lower edge, and no pupil or slit.
 
-There are two versions, for the owner to pick between:
+There were two versions; **the owner picked the ember** (2026-10-11):
 
-- **Pearl** (`a/power_pack.png`), the main version, as the owner asked for.
-- **Ember** (`a/power_pack_ember.png`), the alternate. It's the same pearl with a 4-px
+- **Pearl** (now `a/power_pack_pearl.png`), the plain pearl core.
+- **Ember** (`a/power_pack_ember.png`, and now also `a/power_pack.png`), the pick. It's the same pearl with a 4-px
   blaze-orange and yellow ember glowing at its heart, a hint at the Blaze Powder.
 
 The page's **Pack** switch swaps them everywhere. With the glint held still (reduced motion,
