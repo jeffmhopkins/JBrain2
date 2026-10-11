@@ -30,9 +30,17 @@ _ENTRY = re.compile(r"^\[entry: (\w+)\]\n", re.MULTILINE)
 
 # What the pack can report a player has unlocked: the Tricorder from the start, the Power
 # Pack on their first Ender Pearl, its uses on their first Power Pack, the No-Spawn Beacon
-# on their first echo shard once they have made a pack, the Replicator once they hold 8
+# on their first echo shard once they have made a pack, the Wormhole Seed on their first
+# popped chorus fruit once they have made a pack (§M12), the Replicator once they hold 8
 # Power Packs (§M15).
-UNLOCKS = ("tricorder", "power_pack", "power_pack_uses", "no_spawn_beacon", "replicator")
+UNLOCKS = (
+    "tricorder",
+    "power_pack",
+    "power_pack_uses",
+    "no_spawn_beacon",
+    "wormhole_seed",
+    "replicator",
+)
 ALWAYS = frozenset({"tricorder"})
 
 
@@ -56,8 +64,8 @@ def entries_for(
 ) -> list[str]:
     """The entry names a player with these unlocks may see, in reading order. Keeping your
     things and transport are each a use only a world with its switch on has; where
-    neither is, a made pack does nothing, and the guide says so rather than describing a
-    use the world lacks."""
+    neither is, a made pack does nothing until wormholes are known (a re-aim burns one),
+    and the guide says so rather than describing a use the world lacks."""
     have = set(known) | ALWAYS
     out = ["tricorder"]
     if have & {"power_pack", "power_pack_uses"}:
@@ -71,9 +79,14 @@ def entries_for(
             )
             if on
         ]
-        out.extend(uses or ["power_pack_unused"])
+        # A re-aim burns a pack, so with gates known a pack is never "nothing in this world".
+        if not uses and "wormhole_seed" not in have:
+            uses = ["power_pack_unused"]
+        out.extend(uses)
     if "no_spawn_beacon" in have:
         out.append("no_spawn_beacon")
+    if "wormhole_seed" in have:
+        out.append("wormhole_seed")
     if "replicator" in have:
         out.append("replicator")
     return out
@@ -95,6 +108,7 @@ def for_owner() -> str:
         "power_pack_keep",
         "power_pack_transport",
         "no_spawn_beacon",
+        "wormhole_seed",
         "replicator",
     ]
     return "\n\n".join(ENTRIES[n] for n in names)

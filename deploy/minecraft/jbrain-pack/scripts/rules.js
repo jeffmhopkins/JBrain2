@@ -133,16 +133,18 @@ export const dropSpot = (at, minY, lastSafe) => {
 // each item only once you can make it"). Like the game's recipe book, an unlock comes the
 // first time the player holds the key ingredient. Only built items are here: the Tricorder
 // from the start, the Power Pack on a first Ender Pearl, its uses on a first Power Pack,
-// the No-Spawn Beacon on a first echo shard once they have made a Power Pack.
+// the No-Spawn Beacon on a first echo shard once they have made a Power Pack, and the
+// Wormhole Seed on a first popped chorus fruit once they have made a Power Pack (§M12).
 export const UNLOCKED_BY = {
   "minecraft:ender_pearl": "power_pack",
   [POWER_PACK]: "power_pack_uses",
   "minecraft:echo_shard": "no_spawn_beacon",
+  "minecraft:popped_chorus_fruit": "wormhole_seed",
 };
-
 // An unlock that also needs an earlier one: an echo shard before any Power Pack teaches
-// nothing, and the same shard held later (or with a pack in the same look) does.
-export const UNLOCK_NEEDS = { no_spawn_beacon: "power_pack_uses" };
+// nothing, and the same shard held later (or with a pack in the same look) does. Popped
+// chorus fruit and the Wormhole Seed likewise.
+export const UNLOCK_NEEDS = { no_spawn_beacon: "power_pack_uses", wormhole_seed: "power_pack_uses" };
 
 // A player's recorded unlocks, from the world property; anything unreadable is a fresh start.
 export const parseKnown = (raw) => {

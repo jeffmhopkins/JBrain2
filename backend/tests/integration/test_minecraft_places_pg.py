@@ -351,6 +351,7 @@ async def test_a_question_runs_in_the_askers_own_continuing_session(maker, sidec
     assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS - {
         "mc_transport",
         "mc_replicator_program",
+        "mc_wormhole_aim",
     }
     assert "Steve 42" in call["profile"].prompt  # the chat intro: whose session it is
     async with scoped_session(maker, owner) as s:

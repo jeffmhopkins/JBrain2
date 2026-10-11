@@ -142,7 +142,7 @@ export class Player {
   }
 }
 
-const subs = { die: [], spawn: [], script: [], startup: [] };
+const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [] };
 const intervals = [];
 let queued = [];
 const props = new Map();
@@ -155,11 +155,13 @@ export const world = {
   afterEvents: {
     entityDie: { subscribe: (fn) => subs.die.push(fn) },
     playerSpawn: { subscribe: (fn) => subs.spawn.push(fn) },
-    // The No-Spawn Beacon's (beacon.test.mjs drives it with its own stand-in).
+    playerInteractWithBlock: { subscribe: (fn) => subs.interact.push(fn) },
+    playerBreakBlock: { subscribe: (fn) => subs.break.push(fn) },
+    // The No-Spawn Beacon's (beacon.test.mjs drives it with its own stand-in); its
+    // playerBreakBlock is the wormhole gates' one above.
     entitySpawn: { subscribe: () => {} },
     playerInteractWithEntity: { subscribe: () => {} },
     playerPlaceBlock: { subscribe: () => {} },
-    playerBreakBlock: { subscribe: () => {} },
   },
   getDynamicProperty: (k) => props.get(k),
   getDynamicPropertyIds: () => [...props.keys()],
@@ -214,6 +216,12 @@ export const sim = {
   die(player) {
     for (const fn of subs.die) fn({ deadEntity: player, damageSource: { cause: "fall" } });
     sim.flush();
+  },
+  interact(ev) {
+    for (const fn of subs.interact) fn(ev);
+  },
+  breakBlock(ev) {
+    for (const fn of subs.break) fn(ev);
   },
   scriptevent(id, message) {
     for (const fn of subs.script) fn({ id, message });

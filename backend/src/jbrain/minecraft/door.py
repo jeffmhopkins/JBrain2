@@ -364,6 +364,9 @@ class DaveDoor:
             profile = replace(
                 profile, tools=(profile.tools or frozenset()) - {"mc_replicator_program"}
             )
+        if "wormhole_seed" not in q.asker.known:
+            # And the wormhole gates' tool, until the guide describes them (§M12).
+            profile = replace(profile, tools=(profile.tools or frozenset()) - {"mc_wormhole_aim"})
         items = await self.item_guide(q.asker)
         profile = replace(profile, prompt=f"{profile.prompt}\n\n{items}\n\n{intro}")
         conversation = [

@@ -4,6 +4,7 @@
   "padding": 8,
   "num_mip_levels": 4,
   "texture_data": {
+    "jbrain_wormhole": { "textures": "textures/blocks/wormhole" },
     "jbrain_no_spawn_beacon_bottom": { "textures": "textures/blocks/no_spawn_beacon_bottom" },
     "jbrain_no_spawn_beacon_side": { "textures": "textures/blocks/no_spawn_beacon_side" },
     "jbrain_no_spawn_beacon_top": { "textures": "textures/blocks/no_spawn_beacon_top" },

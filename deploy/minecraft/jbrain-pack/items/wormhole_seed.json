@@ -1,0 +1,14 @@
+{
+  "format_version": "1.21.40",
+  "minecraft:item": {
+    "description": {
+      "identifier": "jbrain:wormhole_seed",
+      "menu_category": { "category": "items" }
+    },
+    "components": {
+      "minecraft:icon": "jbrain_wormhole_seed",
+      "minecraft:display_name": { "value": "Wormhole Seed" },
+      "minecraft:max_stack_size": 1
+    }
+  }
+}
