@@ -1444,63 +1444,63 @@ The private chest is the design below. The cargo chest follows it.
 4. **What happens to a vault if its owner is removed from the allowlist:** it's kept, and
    the owner can see its contents from the PWA.
 
-### M12 — Wormhole gates: two linked portals (owner idea, 2026-10-10; details open)
+### M12 — Wormhole gates: a seed, a diamond gate, and Dave (owner, 2026-10-11; not built)
 
-**The idea.** Like a Nether portal, but between **two places the players choose**, in any
-dimensions. Gates are **very expensive** to make.
+**Decided (owner, 2026-10-11).** This replaces the 2026-10-10 proposal of paired seeds
+and twin gates. A wormhole works like transport on request (M10): a crafted **Wormhole
+Seed** is planted in a **diamond gate**, and **Dave opens it** to one of the planter's own
+saved places.
+- **One-way.** A gate leads to its saved place and nothing comes back through it. A return
+  trip needs a second gate (a second seed and frame) at the other end, which is the point:
+  it doubles the cost.
+- **Re-aimable.** Standing **within 4 blocks of the gate**, the player asks Dave to point
+  it at another of their saved places. Each re-aim costs **one Power Pack**.
+- **The cost** is the seed's craft, plus the frame's diamonds, plus a Power Pack per
+  re-aim. Opening a gate the first time costs nothing beyond the seed.
 
-**How a gate comes to be (proposed):**
-1. **Craft a pair of Wormhole Seeds.** One craft makes **two** linked seeds
-   (`jbrain:wormhole_seed`, stack size 1). They share a pair id stored on each seed as an
-   item dynamic property. The tooltip says "Wormhole Seed — pair 7, side A/B".
-2. **Build a frame and plant seed A**, as with a Nether portal.
-   - The player builds the frame first: e.g. a 4×5 ring of **crying obsidian**, which is
-     itself costly.
-   - Using the seed on the frame's base plants it, and the script checks the frame's
-     shape.
-   - The gate **forms but stays dormant**: a dim, still surface with a faint particle
-     shimmer, and a chat line "Waiting for its twin".
-3. **Plant seed B anywhere else**, in any dimension. **Both gates come alive** at the same
-   moment, with an animated wormhole surface and a vanilla sound at both ends. The link
-   is **bi-directional**.
-4. **Stepping in:** the script sees a player inside the gate surface and
-   `tryTeleport`s them to the other gate's exit spot, facing out. A short cooldown stops
-   the player bouncing straight back. Mobs and items don't travel; that's a later option.
+**How a gate comes to be:**
+1. **Craft a Wormhole Seed** (`jbrain:wormhole_seed`, stack 1). Recipe: open (below).
+2. **Build the frame:** a Nether-portal-shaped ring of **blocks of diamond**, 4 wide by 5
+   tall, with or without corners (10 blocks, 90 diamonds, at the least). The frame is
+   checked by the script, so a bigger frame is a later option, not a guess.
+3. **Plant the seed:** use it on the frame. The script checks the shape, takes the seed and
+   records the gate as **dormant**, with a faint shimmer and Dave's line.
+4. **Ask Dave** within 4 blocks of the gate: "Dave, open the wormhole to *tree farm*". He
+   checks:
+   - the asker is within 4 blocks of a gate **they** planted;
+   - the place is **one of their own saved places** (`app.mc_places`), the same rule as
+     transport;
+   - the place's dimension is one they have already visited.
+   Then the gate fills with the wormhole surface, a custom block from the `jbrain`
+   resource pack.
+5. **Step in:** the 5-tick loop sees a player inside the surface and `tryTeleport`s them to
+   the saved place, with `checkForBlocks`. A spot built over or flooded since is refused,
+   and the player stays put.
 
-**Rules (proposed):**
-- **Breaking any frame block** takes that gate down, and the twin goes dormant again.
-  Rebuilding the frame and re-using the seed restores it. Mining the gate's core returns
-  the seed, so a gate can be moved.
-- **A blocked exit** (built over, or filled with water or lava) refuses the trip rather
-  than putting the player inside blocks.
-- **Logging:** every trip is recorded (who, from, to), and gates show on the M8 map.
-- **A cross-dimension gate** to a dimension a player has never visited is refused, so
-  nobody reaches the End early. This is the same rule as the M10 teleport.
-- **Gates are shared infrastructure.** Anyone can step through, unless the owner makes a
-  gate private to its builder (owner option).
+**Re-aiming** follows the same checks as opening, and the pack removes one Power Pack only
+once the gate has really changed. With none, Dave says so and the gate keeps its target.
 
-**Built on:**
-- custom items and a custom block for the gate surface (its texture and animation come in
-  the join download);
-- frame detection by block checks;
-- `tryTeleport`;
-- gate records kept by the pack: world dynamic properties for pair id, both ends, state
-  and builder, mirrored to the sidecar for the PWA.
+**Rules:**
+- **Breaking a frame block** closes the gate (it goes dormant, keeping its seed and target).
+  Rebuilding the frame reopens it to the same place for free.
+- **Every trip is logged** (who, gate, place) and gates show on the M8 map.
+- **Saved places stay the planter's.** If the target place is removed (`mc_place_remove`),
+  the gate goes dormant until it is re-aimed.
 
-It needs M5's pack install, not Dave, though Dave can answer "where does the blue gate go?"
+**Built on:** the custom seed item, the frame check by block reads, a custom surface block,
+`tryTeleport`, and gate records in world dynamic properties (gate id, frame position and
+axis, planter xuid, target place, state), mirrored to the sidecar for the PWA and the map.
+Opening and re-aiming are Dave tools on the M10 path: a `scriptevent` the pack carries out,
+and the pack's answer read back, as `mc_set_waypoint` does.
 
-**Open (owner): how expensive?** Some options:
-1. **A Nether Star at the core:** a seed pair needs a Nether Star (killing a Wither) plus 4
-   Power Packs (36 eyes). This is the true end-game, and only a few gates ever exist.
-2. **Power Packs only:** 8 Power Packs (72 eyes) for a pair. That's heavy grinding, but
-   no boss fight.
-3. **A cheaper seed with an expensive frame:** the frame needs crying obsidian plus a
-   ring of blocks of diamond or netherite. A gate is a visible monument of what it cost.
-
-Also open:
-- whether a gate can be re-linked;
-- whether more than two gates can share a network (a hub);
-- whether mobs and items travel.
+**Open (owner):**
+- **The seed recipe.** Options: 4 Power Packs and an Ender Pearl; a Power Pack and an echo
+  shard; a Nether Star at the core (true endgame).
+- **Who may step through:** anyone (shared infrastructure) or only the planter.
+- **Mining the core** to get the seed back, so a gate can be moved.
+- **Whether mobs and items travel** (later option).
+- **Lore:** the story and Dave's lines for planting, opening and re-aiming belong on the
+  Bleepbloop_City lore page, as a later-tech beat shown once gates are built.
 
 ### M13 — The laser cannon: a beam weapon (owner idea, 2026-10-10; details open)
 

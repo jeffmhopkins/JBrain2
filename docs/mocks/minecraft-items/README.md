@@ -15,8 +15,8 @@
 >
 > Story source: Bleepbloop_City `notes/lore.md` ("Dave, the crew and the Tricorder" and "The
 > Replicator"). Behaviour source: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M9, §M10 and §DW1.
-> **The Replicator has no plan section yet**, so its icon is ahead of its spec. The wave that
-> builds it should take this page's facts in.
+> The Replicator's plan is §M15 (added after revision 1); the wave that builds it takes this
+> page's facts in — its placer item and one generic programmed look are recorded here.
 
 The items get final icons in place of the probe kit's placeholders
 (`deploy/minecraft/probe-rp/textures/items/{tricorder,power_pack}.png`). The placeholder
@@ -130,7 +130,7 @@ the most strongly canon materials of the three.
 |---|---|
 | **F1** A block's item draws from its default permutation, and breaking it drops the plain block, so a permutation can't show a programmed Replicator in a slot. | Decided (coordinator; the owner can overrule): a **custom placer item**, using `minecraft:block_placer` with `replace_block_item`. The item's name and lore carry the target, and a script sets the block's state when it's placed. The item has its own **flat 16×16 sprite**, blank and programmed, and the page's slots show exactly that. |
 | **F2** Canon allows hundreds of targets, so per-target fronts don't scale. | **One generic programmed look** on the item, the front and the top. The target appears only in the name and tooltip ("Iron Replicator"). The iron swatch is gone. |
-| **F3** There's no Replicator plan section. | Said in the header: the icon is ahead of its spec. |
+| **F3** There's no Replicator plan section. | Said in the header; the plan has since gained §M15, the Replicator. |
 | **F4** Facing, the GUI cube, and the bottom face. | In "Facts": `minecraft:placement_direction` with transformation permutations, a box check of which face the cube shows, and the bottom face. |
 | **F5** §M10 says "an Eye of Ender look with a glow". | Noted in "Facts", to reconcile in the build PR. |
 | Cross 2: the top drew eight eyes, a checkerboard at 1×. | A's top now has eight of A's own capped cells, with no outlines between them, on one tuff panel. |
