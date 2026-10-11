@@ -249,23 +249,6 @@ body{margin:0}
           <div ref="{{settingsRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 16px 20px 28px; box-sizing: border-box;">
           <div style="display: flex; flex-direction: column; gap: 14px;">
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                <span style="font-size: 22px; font-weight: 600;">Wi-Fi</span>
-                <span style="font-size: 16px; font-weight: 600; padding: 4px 12px; border-radius: 14px; background: {{wifi.chipBg}}; color: {{wifi.chipColor}};">{{wifi.state}}</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 12px;">
-                <span style="display: flex; align-items: flex-end; gap: 3px; height: 20px;" aria-label="{{wifi.barsLabel}}">
-                  <sc-for list="{{wifi.bars}}" as="bar" hint-placeholder-count="4">
-                    <span style="width: 5px; height: {{bar.h}}px; border-radius: 1.5px; background: {{bar.bg}};"></span>
-                  </sc-for>
-                </span>
-                <span style="font-size: 20px; font-weight: 600; flex-grow: 1;">{{wifi.ssid}}</span>
-                <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{wifi.detail}}</span>
-              </div>
-              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{wifi.note}}</span>
-              <button onClick="{{toggleWifi}}" aria-label="{{wifi.btn}}" style="height: 56px; border-radius: 18px; border: 1px solid {{wifi.btnBorder}}; background: {{wifi.btnBg}}; color: {{wifi.btnColor}}; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">{{wifi.btn}}</button>
-            </div>
-            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
                 <span style="font-size: 22px; font-weight: 600;">{{power.title}}</span>
                 <span style="font-size: 22px; font-weight: 700; color: {{power.color}}; font-variant-numeric: tabular-nums;">{{power.big}}</span>
@@ -331,6 +314,23 @@ body{margin:0}
               </div>
               <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; line-height: 1.3;">Taps landing off-target? Tap each cross until it turns green.</span>
               <button onClick="{{startCalib}}" aria-label="Calibrate the touch screen" style="height: 56px; border-radius: 18px; border: none; background: rgba(127,167,201,0.16); color: #7FA7C9; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">Calibrate</button>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <span style="font-size: 22px; font-weight: 600;">Wi-Fi</span>
+                <span style="font-size: 16px; font-weight: 600; padding: 4px 12px; border-radius: 14px; background: {{wifi.chipBg}}; color: {{wifi.chipColor}};">{{wifi.state}}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="display: flex; align-items: flex-end; gap: 3px; height: 20px;" aria-label="{{wifi.barsLabel}}">
+                  <sc-for list="{{wifi.bars}}" as="bar" hint-placeholder-count="4">
+                    <span style="width: 5px; height: {{bar.h}}px; border-radius: 1.5px; background: {{bar.bg}};"></span>
+                  </sc-for>
+                </span>
+                <span style="font-size: 20px; font-weight: 600; flex-grow: 1;">{{wifi.ssid}}</span>
+                <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{wifi.detail}}</span>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{wifi.note}}</span>
+              <button onClick="{{toggleWifi}}" aria-label="{{wifi.btn}}" style="height: 56px; border-radius: 18px; border: 1px solid {{wifi.btnBorder}}; background: {{wifi.btnBg}}; color: {{wifi.btnColor}}; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">{{wifi.btn}}</button>
             </div>
           </div>
           </div>
@@ -540,7 +540,19 @@ class Component extends DCLogic {
   toggleWifi() {
     const s = this.base(this.state);
     if (s.wifi === 'connecting') return;
-    if (s.wifi === 'connected') { this.put({ wifi: 'off' }); return; }
+    if (s.wifi === 'connected') {
+      // Two taps, three seconds apart at most: going offline stops messages, Jerv and updates,
+      // so one brush of a finger must not do it.
+      if (!s.wifiArm) {
+        clearTimeout(this.wifiArmTimer);
+        this.put({ wifiArm: true });
+        this.wifiArmTimer = setTimeout(() => this.put({ wifiArm: false }), 3000);
+        return;
+      }
+      clearTimeout(this.wifiArmTimer);
+      this.put({ wifi: 'off', wifiArm: false });
+      return;
+    }
     this.put({ wifi: 'connecting' });
     setTimeout(() => this.put((b) => (b.wifi === 'connecting' ? { wifi: 'connected' } : {})), 1800);
   }
@@ -865,7 +877,7 @@ class Component extends DCLogic {
       isCalib: on && !!s.calib,
       isRestart: on && s.fw.phase === 'restarting',
       fw: this.fwView(s.fw, s.wifi === 'connected'),
-      wifi: this.wifiView(s.wifi),
+      wifi: Object.assign(this.wifiView(s.wifi), s.wifiArm && s.wifi === 'connected' ? { btn: 'Tap again to disconnect', btnColor: '#CF8A8F', btnBg: 'rgba(207,138,143,0.13)', btnBorder: 'transparent' } : {}),
       power: this.powerView(this.props.power || 'charging'),
       toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
       ttsOn: s.tts ? 'true' : 'false',

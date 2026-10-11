@@ -65,3 +65,7 @@ panel, the others import it at a fixed `start` state).
 - **Day and date under the clock** (owner, 2026-10-11): a small "Sun 11 Oct" near the bottom of
   the face, in the face's colour at lower opacity (so it dims with the night clock). On by
   default; a switch on the Clock → alarms page turns it off.
+- **Wi-Fi is the last card in Settings** (owner, 2026-10-11), below everything else, so a scroll
+  or a stray tap near the top cannot reach it; and **Disconnect takes two taps** within three
+  seconds (the first turns the button rose: "Tap again to disconnect"). Order is now Battery,
+  Notifications, Jerv, Firmware, Brightness, Touch screen, Wi-Fi.
