@@ -1,6 +1,9 @@
 /* Jeff's jpanel, bring-up image. Its entire job is to make every firmware after it arrive over
  * Wi-Fi: join, reach the box, mark itself good, report, and install what the box offers.
  *
+ * 0.0.3 adds a read-only probe (probe.c) that reports the bus, the PMIC's rails and the
+ * buttons, run only after the rollback gate.
+ *
  * No display, touch, audio or PMIC driver on purpose (README "What this first image is for"):
  * each is the class of fault that ends in a boot loop, and they arrive over the air onto a
  * unit that has already proved it can take an update.
@@ -23,6 +26,7 @@
 #include "net.h"
 #include "nvs_flash.h"
 #include "ota.h"
+#include "probe.h"
 
 static const char *TAG = "jpanel-c6";
 
@@ -101,14 +105,17 @@ static bool report(const cfg_t *cfg)
     ota_apply_faults(&ota_err, &ota_tries);
     const long quiet_s = s_box_ever ? (long)((now_ms() - s_box_ms) / 1000) : -1;
 
-    char body[768];
+    char probe[440];
+    probe_note(probe, sizeof(probe));
+
+    char body[1280];
     const int n = snprintf(
         body, sizeof(body),
         "{\"version\":\"%s\",\"uptime_ms\":%" PRIu32 ",\"reset_reason\":\"%s\","
         "\"free_heap\":%u,\"int_free\":%u,\"int_min\":%u,\"int_big\":%u,\"int_largest\":%u,"
         "\"wifi_reason\":%d,\"wifi_drops\":%d,\"ota_err\":\"%s\",\"ota_tries\":%d,"
         "\"relinks\":%u,\"box_quiet_s\":%ld,"
-        "\"note\":\"board=jpanel-c6 image=bring-up chip=esp32c6 rev=%u.%u dump=%d\"}",
+        "\"note\":\"board=jpanel-c6 image=probe chip=esp32c6 rev=%u.%u dump=%d %s\"}",
         ota_running_version(), now_ms(), reason,
         (unsigned)esp_get_free_heap_size(),
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -116,7 +123,7 @@ static bool report(const cfg_t *cfg)
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
         wifi_reason, wifi_drops, ota_err, ota_tries, s_relinks, quiet_s,
-        (unsigned)(chip.revision / 100), (unsigned)(chip.revision % 100), dump ? 1 : 0);
+        (unsigned)(chip.revision / 100), (unsigned)(chip.revision % 100), dump ? 1 : 0, probe);
     if (n < 0 || n >= (int)sizeof(body)) {
         ESP_LOGE(TAG, "telemetry body overflowed — not sent");
         return false;
@@ -179,6 +186,9 @@ void app_main(void)
         ota_confirm_health(reachable);
         if (!reachable) ESP_LOGE(TAG, "on Wi-Fi but the box did not answer");
     }
+    /* After the rollback gate, never before it: whatever the probe finds, this image has
+       already proved it can reach the box and take the next one. */
+    probe_start(xTaskGetCurrentTaskHandle());
 
     uint32_t last_report_ms = 0;
     bool reported = false;
@@ -196,7 +206,9 @@ void app_main(void)
             if (maybe_install(&cfg, &manifest, &ota_last_try_ms)) reported = false;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(CHECK_PERIOD_MS));
+        /* A button press wakes the loop early, so the box hears it within seconds. */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CHECK_PERIOD_MS));
+        if (probe_take_dirty()) reported = false;
 
         if (joined && s_box_ever && (uint32_t)(now_ms() - s_box_ms) > LINK_SUSPECT_MS) {
             /* Never-reached is excluded: a wrong key or URL is not fixed by a re-join, and

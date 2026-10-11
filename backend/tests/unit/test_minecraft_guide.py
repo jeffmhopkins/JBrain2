@@ -12,17 +12,17 @@ from jbrain.minecraft import guide
 
 def test_the_guide_is_pinned_to_its_version() -> None:
     """The entries are prompt material: a wording change bumps the version with it."""
-    assert guide.VERSION == "agent-minecraft-dave-guide-v2"
+    assert guide.VERSION == "agent-minecraft-dave-guide-v3"
     body = guide._PROMPT.body  # noqa: SLF001 — the pin is on the file's exact text
     assert hashlib.sha256(body.encode()).hexdigest() == (
-        "57e3a815efb31126254a78e432f0dad7e7dc2f6990460c2c035d346cbc64fb5a"
+        "5fa71c23a1e117a03c89fec16c9c15e3e09a5462aaafba5469e26a8d6f8d76c6"
     )
 
 
 def test_only_built_items_have_entries() -> None:
-    """The Tricorder, the Power Pack and the Replicator are built; the pack's
-    keep-your-things use is built (a per-world switch); transport, the No-Spawn Beacon and
-    wormholes are not, so the guide never describes them."""
+    """The Tricorder, the Power Pack, the No-Spawn Beacon and the Replicator are built;
+    the pack's keep-your-things use is built (a per-world switch); transport and wormholes
+    are not, so the guide never describes them."""
     assert set(guide.ENTRIES) == {
         "intro_game",
         "intro_owner",
@@ -30,15 +30,19 @@ def test_only_built_items_have_entries() -> None:
         "power_pack",
         "power_pack_keep",
         "power_pack_unused",
+        "no_spawn_beacon",
         "replicator",
     }
     whole = "\n".join(guide.ENTRIES.values()).lower()
-    for unbuilt in ("wormhole", "no-spawn", "echo shard", "chorus", "transport"):
+    for unbuilt in ("wormhole", "chorus", "transport"):
         assert unbuilt not in whole, unbuilt
     # The canon's recipe and rules, as the lore page says them.
     assert "eight Ender Pearls in a ring around one Blaze Powder" in guide.ENTRIES["power_pack"]
     assert "only works for its owner" in guide.ENTRIES["tricorder"]
     assert "their own Tricorder" in guide.ENTRIES["power_pack_keep"]
+    beacon = guide.ENTRIES["no_spawn_beacon"]
+    assert "a Power Pack in the middle of a crafting table, surrounded by eight echo" in beacon
+    assert "so does the Warden" in beacon and "the Ender Dragon and the Wither" in beacon
 
 
 def test_known_is_read_strictly_and_always_has_the_tricorder() -> None:
@@ -97,3 +101,16 @@ def test_the_replicator_entry_opens_with_8_power_packs_and_says_the_canon() -> N
     for canon in ("eight Power Packs", "8 full stacks (512)", "stack to 64", "about every 10"):
         assert canon in entry, canon
     assert "Replicator" not in guide.for_player({"power_pack_uses"}, keep_switch=True)
+
+
+def test_the_beacon_opens_only_on_its_own_unlock() -> None:
+    """The pack sends `no_spawn_beacon` once a player who has made a Power Pack holds an
+    echo shard (rules.js `UNLOCK_NEEDS`); until then the beacon isn't in the turn."""
+    assert "no_spawn_beacon" in guide.parse_known(["no_spawn_beacon"])
+    made_a_pack = {"power_pack", "power_pack_uses"}
+    assert "no_spawn_beacon" not in guide.entries_for(made_a_pack, keep_switch=True)
+    assert "No-Spawn" not in guide.for_player(made_a_pack, keep_switch=True)
+    assert guide.entries_for({*made_a_pack, "no_spawn_beacon"}, keep_switch=False)[-1] == (
+        "no_spawn_beacon"
+    )
+    assert "### The No-Spawn Beacon" in guide.for_owner()

@@ -96,12 +96,13 @@ def test_the_block_faces_the_placer_and_lights_up_when_programmed() -> None:
     assert blank["*"] == programmed["*"]
     terrain = _json(RP / "textures" / "terrain_texture.json")
     assert terrain["texture_name"] == "atlas.terrain"
-    for key, entry in terrain["texture_data"].items():
+    ours = {k: v for k, v in terrain["texture_data"].items() if "replicator" in k}
+    for key, entry in ours.items():
         face = key.removeprefix("jbrain_")
         png = RP / f"{entry['textures']}.png"
         assert png.read_bytes() == (DOCS_ICONS / f"{face}.png").read_bytes()
     used = {m["texture"] for m in [*blank.values(), *programmed.values()]}
-    assert used == set(terrain["texture_data"])
+    assert used == set(ours)
 
 
 def test_main_only_starts_the_replicator() -> None:

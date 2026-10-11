@@ -29,9 +29,10 @@ VERSION = _PROMPT.version
 _ENTRY = re.compile(r"^\[entry: (\w+)\]\n", re.MULTILINE)
 
 # What the pack can report a player has unlocked: the Tricorder from the start, the Power
-# Pack on their first Ender Pearl, its uses on their first Power Pack, the Replicator once
-# they hold 8 Power Packs (§M15).
-UNLOCKS = ("tricorder", "power_pack", "power_pack_uses", "replicator")
+# Pack on their first Ender Pearl, its uses on their first Power Pack, the No-Spawn Beacon
+# on their first echo shard once they have made a pack, the Replicator once they hold 8
+# Power Packs (§M15).
+UNLOCKS = ("tricorder", "power_pack", "power_pack_uses", "no_spawn_beacon", "replicator")
 ALWAYS = frozenset({"tricorder"})
 
 
@@ -60,6 +61,8 @@ def entries_for(known: Iterable[str], *, keep_switch: bool) -> list[str]:
         out.append("power_pack")
     if "power_pack_uses" in have:
         out.append("power_pack_keep" if keep_switch else "power_pack_unused")
+    if "no_spawn_beacon" in have:
+        out.append("no_spawn_beacon")
     if "replicator" in have:
         out.append("replicator")
     return out
@@ -71,5 +74,12 @@ def for_player(known: Iterable[str], *, keep_switch: bool) -> str:
 
 
 def for_owner() -> str:
-    names = ["intro_owner", "tricorder", "power_pack", "power_pack_keep", "replicator"]
+    names = [
+        "intro_owner",
+        "tricorder",
+        "power_pack",
+        "power_pack_keep",
+        "no_spawn_beacon",
+        "replicator",
+    ]
     return "\n\n".join(ENTRIES[n] for n in names)

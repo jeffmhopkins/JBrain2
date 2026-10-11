@@ -9,6 +9,9 @@ import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, pa
   parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
   xpToDrop } from "./rules.js";
 import { initReplicator } from "./replicator.js";
+import { initBeacon } from "./beacon.js";
+
+initBeacon(world, system);
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",
