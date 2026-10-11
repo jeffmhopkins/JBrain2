@@ -250,6 +250,18 @@ body{margin:0}
           <div style="display: flex; flex-direction: column; gap: 14px;">
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <label for="jp-bright" style="font-size: 22px; font-weight: 600;">Brightness</label>
+                <span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;">{{brightLabel}}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; color: #9A9DA3;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle></svg>
+                <input id="jp-bright" type="range" min="10" max="100" step="5" value="{{bright}}" onInput="{{setBright}}" onChange="{{setBright}}" style="flex-grow: 1; height: 44px; margin: 0; accent-color: #7FA7C9; cursor: pointer;">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9"></path></svg>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">10% is the floor, so the screen can never be set to look switched off.</span>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
                 <span style="font-size: 22px; font-weight: 600;">{{power.title}}</span>
                 <span style="font-size: 22px; font-weight: 700; color: {{power.color}}; font-variant-numeric: tabular-nums;">{{power.big}}</span>
               </div>
@@ -294,18 +306,6 @@ body{margin:0}
                 </div>
               </sc-if>
               <button onClick="{{updateNow}}" aria-label="Update now" style="height: 56px; border-radius: 18px; border: none; background: {{fw.btnBg}}; color: {{fw.btnColor}}; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">{{fw.btn}}</button>
-            </div>
-            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
-              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
-                <label for="jp-bright" style="font-size: 22px; font-weight: 600;">Brightness</label>
-                <span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;">{{brightLabel}}</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 12px; color: #9A9DA3;">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle></svg>
-                <input id="jp-bright" type="range" min="10" max="100" step="5" value="{{bright}}" onInput="{{setBright}}" onChange="{{setBright}}" style="flex-grow: 1; height: 44px; margin: 0; accent-color: #7FA7C9; cursor: pointer;">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9"></path></svg>
-              </div>
-              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">10% is the floor, so the screen can never be set to look switched off.</span>
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
