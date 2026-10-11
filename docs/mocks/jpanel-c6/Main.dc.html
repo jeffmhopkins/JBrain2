@@ -134,7 +134,13 @@ body{margin:0}
                       </div>
                     </sc-if>
                     <span style="font-size: 22px; font-weight: 500; line-height: 1.3; color: {{m.textColor}};">{{m.text}}</span>
+                    <sc-if value="{{m.canSpeak}}" hint-placeholder-val="{{false}}">
+                      <button onClick="{{m.speak}}" aria-label="Read this reply aloud" style="align-self: flex-start; height: 44px; padding: 0 14px; border-radius: 22px; border: none; background: rgba(164,147,201,0.16); color: #A493C9; display: flex; align-items: center; gap: 8px; font-family: inherit; font-size: 17px; font-weight: 600; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Listen</span></button>
+                    </sc-if>
                   </div>
+                  <sc-if value="{{m.speakingNow}}" hint-placeholder-val="{{false}}">
+                    <span style="display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 500; color: #A493C9; padding-left: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Speaking…</span></span>
+                  </sc-if>
                 </div>
               </sc-if>
               <sc-if value="{{m.me}}" hint-placeholder-val="{{false}}">
@@ -202,6 +208,16 @@ body{margin:0}
                 </div>
               </sc-if>
               <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{power.line}}</span>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <span style="font-size: 22px; font-weight: 600;">Jerv</span>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                <span style="font-size: 20px; font-weight: 500;">Read replies aloud</span>
+                <button role="switch" aria-checked="{{ttsOn}}" aria-label="Read Jerv's replies aloud" onClick="{{toggleTts}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{tts.border}}; background: {{tts.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{tts.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{tts.knob}};"></span>
+                </button>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{tts.note}}</span>
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
@@ -316,7 +332,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', wifi: 'connected' };
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', wifi: 'connected', tts: true, speaking: null };
     if (start === 'home-p2') s.page = 1;
     if (start === 'jerv' || start === 'elora' || start === 'lydian' || start === 'minecraft') s.screen = start;
     if (start === 'settings') s.screen = 'settings';
@@ -343,6 +359,12 @@ class Component extends DCLogic {
     clearInterval(this.playTimer);
     clearTimeout(this.toastTimer);
     clearInterval(this.fwTimer);
+    clearTimeout(this.speakTimer);
+  }
+
+  speakDone(id) {
+    clearTimeout(this.speakTimer);
+    this.speakTimer = setTimeout(() => this.put((b) => (b.speaking === id ? { speaking: null } : {})), 2600);
   }
 
   toggleWifi() {
@@ -542,7 +564,8 @@ class Component extends DCLogic {
     if (to === 'jerv') {
       const reply = s.said % 2 === 0 ? "Done — I'll remind you at 9:00 tomorrow." : "Done — the porch light goes off at 11:00 tonight.";
       setTimeout(() => {
-        this.put((b) => ({ threads: Object.assign({}, b.threads, { jerv: b.threads.jerv.map((m) => (m.id === id + 1 ? Object.assign({}, m, { text: reply, pending: false }) : m)) }) }));
+        this.put((b) => ({ speaking: b.tts ? id + 1 : b.speaking, threads: Object.assign({}, b.threads, { jerv: b.threads.jerv.map((m) => (m.id === id + 1 ? Object.assign({}, m, { text: reply, pending: false }) : m)) }) }));
+        this.speakDone(id + 1);
       }, 2400);
     }
   }
@@ -604,7 +627,10 @@ class Component extends DCLogic {
         playing: playing, paused: !playing,
         playLabel: playing ? 'Pause' : 'Play message',
         prog: playing ? Math.min(100, Math.round((s.progress / (m.durS || 1)) * 100)) : (m.played === false ? 0 : 100),
-        play: () => { if (!this.swiped) this.togglePlay(s.screen, m); }
+        play: () => { if (!this.swiped) this.togglePlay(s.screen, m); },
+        canSpeak: s.screen === 'jerv' && m.from !== 'me' && m.kind !== 'voice' && !m.pending && !s.tts && s.speaking !== m.id,
+        speakingNow: s.speaking === m.id,
+        speak: () => { if (this.swiped) return; this.put({ speaking: m.id }); this.speakDone(m.id); }
       };
     });
     let rec = null;
@@ -636,6 +662,15 @@ class Component extends DCLogic {
       wifi: this.wifiView(s.wifi),
       power: this.powerView(this.props.power || 'charging'),
       toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
+      ttsOn: s.tts ? 'true' : 'false',
+      tts: {
+        track: s.tts ? 'rgba(143,188,154,0.22)' : '#1E2024',
+        border: s.tts ? 'transparent' : '#3A3D42',
+        knob: s.tts ? '#8FBC9A' : '#9A9DA3',
+        knobX: s.tts ? 34 : 5,
+        note: s.tts ? 'Replies are spoken and shown as text.' : 'Replies are text only. Tap Listen on a reply to hear it.'
+      },
+      toggleTts: () => { if (!this.swiped) this.put((b) => ({ tts: !b.tts, speaking: null })); },
       cal: this.calView(s.calib || { i: 0, taps: 0 }),
       calibWhen: s.calibWhen,
       openSettings: () => { if (!this.swiped) this.put({ screen: 'settings', playing: null }); },
