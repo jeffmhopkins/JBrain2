@@ -3370,6 +3370,16 @@ export interface EndpointFirmware {
   url: string;
 }
 
+/** A kind of panel the box can flash. The twins' panels are `s3-amoled-18`; the owner's own
+ *  is `c6-amoled-216`. `ready` is "every image is on the box", not a checksum. */
+export interface EndpointBoard {
+  id: string;
+  label: string;
+  chip: string;
+  version: string | null;
+  ready: boolean;
+}
+
 /** What a unit IS, chosen at flash time. A `jpet` is one of the twins' panels: it joins the
  *  roster and can exchange voice messages with its sibling. A `display` is an endpoint the
  *  owner operates — same OTA, settings and telemetry — that no pet can reach. */
@@ -3385,6 +3395,9 @@ export interface FlashRequest {
   erase?: boolean;
   /** Keep this network on the box so a panel can be re-flashed without a phone. */
   remember?: boolean;
+  /** Which kind of panel is on the cable. Absent = the twins' S3, which is what a box that
+   *  predates the second board flashes. */
+  board?: string;
 }
 
 /** One jpanel message, owner-facing (docs/plans/JPANEL_PLAN.md §3b).
@@ -6452,6 +6465,18 @@ export const api = {
   // Which firmware this box would flash. There is only ever one — the images committed in
   // `firmware/dist/`, which arrive with every Ops -> Update like the rest of the box — so
   // there is no "installed vs available" to reconcile and nothing to sync.
+  // Empty on a box that predates the board list (404), so the Flash tab falls back to the
+  // one board it always flashed rather than refusing to flash at all.
+  async getEndpointBoards(): Promise<EndpointBoard[]> {
+    try {
+      const response = await request("/api/endpoint/boards");
+      return (await response.json()) as EndpointBoard[];
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return [];
+      throw e;
+    }
+  },
+
   async getEndpointFirmware(): Promise<EndpointFirmware | null> {
     // `request` throws on any non-2xx, so an absent firmware has to be caught rather than
     // read off the response. It is a real state rather than a failure (a checkout with no

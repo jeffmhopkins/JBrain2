@@ -180,6 +180,40 @@ async def test_the_settings_poll_also_says_what_firmware_is_served(
         assert 0 <= got["dim_percent"] <= 100
 
 
+PANEL_KEY_C6 = "n" * 43
+
+
+async def test_the_settings_poll_serves_the_asking_board_s_version(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker,
+    tmp_path: Path,
+) -> None:
+    """A C6 panel told the S3's version would see "update available" on every three-second
+    poll and then fetch a manifest that never offers one. It asks with the same `?board=` its
+    manifest poll carries; an S3 panel, asking with nothing, keeps getting the S3's."""
+    await SqlAuthRepo(maker).create_principal(
+        "device_key", keys.hash_key(PANEL_KEY_C6), "panel Jeff"
+    )
+    c6 = tmp_path / "firmware-c6"
+    c6.mkdir()
+    (c6 / "version.txt").write_text("0.1.0\n", encoding="utf-8")
+    app = create_app(
+        Settings(
+            secure_cookies=False,
+            database_url=database_url,
+            firmware_dir=str(_firmware_tree(tmp_path / "firmware")),
+            firmware_c6_dir=str(c6),
+        )
+    )
+    auth = {"Authorization": f"Bearer {PANEL_KEY_C6}"}
+    with TestClient(app) as client:
+        c6_body = client.get("/api/endpoint/settings?board=c6-amoled-216", headers=auth)
+        assert c6_body.status_code == 200, c6_body.text
+        assert c6_body.json()["fw_version"] == "0.1.0"
+        s3_body = client.get("/api/endpoint/settings", headers=auth)
+        assert s3_body.json()["fw_version"] == FW_VERSION
+
+
 async def test_a_box_with_no_firmware_still_serves_the_knobs(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker,

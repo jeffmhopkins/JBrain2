@@ -1,0 +1,1079 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jeff's jpanel</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 720px; height: 720px; position: relative; overflow: hidden; background: #E4E4E0; font-family: 'Montserrat', sans-serif; color: #1A1B1E;">
+
+  <div style="position: absolute; left: 177px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
+    <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">KEY</span>
+    <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">hold to talk</span>
+  </div>
+  <div style="position: absolute; left: 300px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
+    <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">PWR</span>
+    <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">screen on / off</span>
+  </div>
+  <div style="position: absolute; left: 423px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
+    <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">BOOT</span>
+    <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">home</span>
+  </div>
+
+  <button aria-label="KEY — hold to talk" onPointerDown="{{keyDown}}" onPointerUp="{{keyUp}}" onPointerCancel="{{keyUp}}" style="position: absolute; left: 201px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: {{keyBg}}; cursor: pointer; touch-action: none; padding: 0;"></button>
+  <button aria-label="PWR — screen on or off" onClick="{{pwr}}" style="position: absolute; left: 324px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: #F4F4F2; cursor: pointer; padding: 0;"></button>
+  <button aria-label="BOOT — home" onClick="{{boot}}" style="position: absolute; left: 447px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: #F4F4F2; cursor: pointer; padding: 0;"></button>
+
+  <div style="position: absolute; left: 77px; top: 112px; width: 566px; height: 566px; border-radius: 72px; background: #F4F4F2; box-shadow: 0 1px 0 #FFFFFF inset, 0 18px 40px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.12);">
+    <div style="position: absolute; left: 17px; top: 17px; width: 532px; height: 532px; border-radius: 60px; background: #050505;">
+      <div onPointerDown="{{screenDown}}" onPointerMove="{{screenMove}}" onPointerUp="{{screenUp}}" style="position: absolute; left: 26px; top: 26px; width: 480px; height: 480px; border-radius: 44px; overflow: hidden; background: #000000; color: #E6E7E9; user-select: none; touch-action: pan-y;">
+
+        <sc-if value="{{isHome0}}" hint-placeholder-val="{{true}}">
+          <div style="position: absolute; left: 36px; top: 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; width: 408px;">
+            <sc-for list="{{tiles}}" as="t" hint-placeholder-count="4">
+              <button onClick="{{t.open}}" aria-label="{{t.aria}}" style="position: relative; height: 196px; border-radius: 28px; background: #17181B; border: 1px solid #26282C; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; cursor: pointer; font-family: inherit; padding: 0;">
+                <span style="width: 96px; height: 96px; border-radius: 48px; background: {{t.tint}}; color: {{t.color}}; opacity: {{t.iconOpacity}}; display: flex; align-items: center; justify-content: center;">
+                  <sc-if value="{{t.isJerv}}" hint-placeholder-val="{{false}}">
+                    <svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L28.5 19.5 L43 24 L28.5 28.5 L24 43 L19.5 28.5 L5 24 L19.5 19.5 Z"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{t.isCube}}" hint-placeholder-val="{{false}}">
+                    <svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L41 14.5 L41 33.5 L24 43 L7 33.5 L7 14.5 Z"></path><path d="M7 14.5 L24 24 L41 14.5"></path><path d="M24 24 L24 43"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{t.isPerson}}" hint-placeholder-val="{{true}}">
+                    <span style="font-size: 46px; font-weight: 700; line-height: 1;">{{t.initial}}</span>
+                  </sc-if>
+                </span>
+                <span style="font-size: 24px; font-weight: 600; color: {{t.labelColor}};">{{t.label}}</span>
+                <sc-if value="{{t.soon}}" hint-placeholder-val="{{false}}">
+                  <span style="position: absolute; top: 14px; right: 14px; font-size: 15px; font-weight: 600; color: #9A9DA3; padding: 4px 10px; border-radius: 12px; background: #1E2024;">Soon</span>
+                </sc-if>
+                <sc-if value="{{t.hasBadge}}" hint-placeholder-val="{{false}}">
+                  <span style="position: absolute; top: 12px; right: 12px; min-width: 36px; height: 36px; padding: 0 8px; box-sizing: border-box; border-radius: 18px; background: #C9A36A; color: #000000; font-size: 20px; font-weight: 700; display: flex; align-items: center; justify-content: center;">{{t.badge}}</span>
+                </sc-if>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isHome1}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; left: 36px; top: 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; width: 408px;">
+            <button onClick="{{openClock}}" aria-label="Clock" style="height: 196px; border-radius: 28px; background: #17181B; border: 1px solid #26282C; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; cursor: pointer; font-family: inherit; padding: 0;">
+              <span style="width: 96px; height: 96px; border-radius: 48px; background: #1E2024; color: #E6E7E9; display: flex; align-items: center; justify-content: center;"><svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="18"></circle><path d="M24 13 L24 24 L31 28"></path></svg></span>
+              <span style="font-size: 24px; font-weight: 600; color: #E6E7E9; font-variant-numeric: tabular-nums;">{{clock.short}}</span>
+            </button>
+            <button onClick="{{openSettings}}" aria-label="Settings" style="height: 196px; border-radius: 28px; background: #17181B; border: 1px solid #26282C; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; cursor: pointer; font-family: inherit; padding: 0;">
+              <span style="width: 96px; height: 96px; border-radius: 48px; background: #1E2024; color: #C4C7CC; display: flex; align-items: center; justify-content: center;">
+                <svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="6"></circle><circle cx="24" cy="24" r="13"></circle><path d="M24 5 L24 11 M24 37 L24 43 M5 24 L11 24 M37 24 L43 24 M10.6 10.6 L14.8 14.8 M33.2 33.2 L37.4 37.4 M10.6 37.4 L14.8 33.2 M33.2 14.8 L37.4 10.6"></path></svg>
+              </span>
+              <span style="font-size: 24px; font-weight: 600; color: #E6E7E9;">Settings</span>
+            </button>
+            <sc-for list="{{emptySlots}}" as="e" hint-placeholder-count="2">
+              <div style="height: 196px; border-radius: 28px; border: 2px dashed #26282C; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: #5C5F66; font-size: 20px; font-weight: 600;">{{e.label}}</div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isHome}}" hint-placeholder-val="{{true}}">
+          <div style="position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; gap: 12px;">
+            <span style="width: 10px; height: 10px; border-radius: 5px; background: {{dot0}};"></span>
+            <span style="width: 10px; height: 10px; border-radius: 5px; background: {{dot1}};"></span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isPage}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; left: 0; top: 0; right: 0; height: 76px; display: flex; align-items: center; gap: 12px; padding: 0 20px; box-sizing: border-box; border-bottom: 1px solid #17181B;">
+            <button onClick="{{goHome}}" aria-label="Back to home" style="width: 44px; height: 44px; border-radius: 22px; border: none; background: #17181B; color: #E6E7E9; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5 L8 12 L15 19"></path></svg>
+            </button>
+            <span style="width: 44px; height: 44px; border-radius: 22px; background: {{cur.tint}}; color: {{cur.color}}; display: flex; align-items: center; justify-content: center;">
+              <sc-if value="{{cur.isJerv}}" hint-placeholder-val="{{true}}">
+                <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L28.5 19.5 L43 24 L28.5 28.5 L24 43 L19.5 28.5 L5 24 L19.5 19.5 Z"></path></svg>
+              </sc-if>
+              <sc-if value="{{cur.isCube}}" hint-placeholder-val="{{false}}">
+                <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L41 14.5 L41 33.5 L24 43 L7 33.5 L7 14.5 Z"></path><path d="M7 14.5 L24 24 L41 14.5"></path><path d="M24 24 L24 43"></path></svg>
+              </sc-if>
+              <sc-if value="{{cur.isPerson}}" hint-placeholder-val="{{false}}">
+                <span style="font-size: 22px; font-weight: 700;">{{cur.initial}}</span>
+              </sc-if>
+              <sc-if value="{{cur.isClock}}" hint-placeholder-val="{{false}}">
+                <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="18"></circle><path d="M24 13 L24 24 L31 28"></path></svg>
+              </sc-if>
+              <sc-if value="{{cur.isGear}}" hint-placeholder-val="{{false}}">
+                <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="6"></circle><circle cx="24" cy="24" r="13"></circle><path d="M24 5 L24 11 M24 37 L24 43 M5 24 L11 24 M37 24 L43 24 M10.6 10.6 L14.8 14.8 M33.2 33.2 L37.4 37.4 M10.6 37.4 L14.8 33.2 M33.2 14.8 L37.4 10.6"></path></svg>
+              </sc-if>
+            </span>
+            <span style="font-size: 26px; font-weight: 600; flex-grow: 1;">{{cur.name}}</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isThread}}" hint-placeholder-val="{{false}}">
+          <div ref="{{listRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 60px; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 16px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;">
+            <sc-for list="{{msgs}}" as="m" hint-placeholder-count="2">
+              <sc-if value="{{m.them}}" hint-placeholder-val="{{true}}">
+                <div style="align-self: flex-start; max-width: 360px; display: flex; flex-direction: column; gap: 4px;">
+                  <div style="background: #1E2024; border-radius: 22px 22px 22px 6px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
+                    <sc-if value="{{m.voice}}" hint-placeholder-val="{{false}}">
+                      <div style="display: flex; align-items: center; gap: 10px;">
+                        <button onClick="{{m.play}}" aria-label="{{m.playLabel}}" style="width: 44px; height: 44px; border-radius: 22px; border: none; background: {{cur.tint}}; color: {{cur.color}}; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex-shrink: 0;">
+                          <sc-if value="{{m.playing}}" hint-placeholder-val="{{false}}">
+                            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><rect x="3" y="2" width="4" height="14" rx="1"></rect><rect x="11" y="2" width="4" height="14" rx="1"></rect></svg>
+                          </sc-if>
+                          <sc-if value="{{m.paused}}" hint-placeholder-val="{{true}}">
+                            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><path d="M4 2 L16 9 L4 16 Z"></path></svg>
+                          </sc-if>
+                        </button>
+                        <div style="flex-grow: 1; width: 150px; height: 6px; border-radius: 3px; background: #2C2F34; overflow: hidden;">
+                          <div style="height: 6px; width: {{m.prog}}%; background: {{cur.color}};"></div>
+                        </div>
+                        <span style="font-size: 18px; font-weight: 600; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{m.dur}}</span>
+                        <sc-if value="{{m.unplayed}}" hint-placeholder-val="{{false}}">
+                          <span style="width: 10px; height: 10px; border-radius: 5px; background: #C9A36A;" aria-label="Not played yet"></span>
+                        </sc-if>
+                      </div>
+                    </sc-if>
+                    <span style="font-size: 22px; font-weight: 500; line-height: 1.3; color: {{m.textColor}};">{{m.text}}</span>
+                    <sc-if value="{{m.canSpeak}}" hint-placeholder-val="{{false}}">
+                      <button onClick="{{m.speak}}" aria-label="Read this reply aloud" style="align-self: flex-start; height: 44px; padding: 0 14px; border-radius: 22px; border: none; background: rgba(164,147,201,0.16); color: #A493C9; display: flex; align-items: center; gap: 8px; font-family: inherit; font-size: 17px; font-weight: 600; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Listen</span></button>
+                    </sc-if>
+                  </div>
+                  <sc-if value="{{m.speakingNow}}" hint-placeholder-val="{{false}}">
+                    <span style="display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 500; color: #A493C9; padding-left: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Speaking…</span></span>
+                  </sc-if>
+                </div>
+              </sc-if>
+              <sc-if value="{{m.me}}" hint-placeholder-val="{{false}}">
+                <div style="align-self: flex-end; max-width: 360px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                  <div style="background: #1D2733; border-radius: 22px 22px 6px 22px; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px;">
+                    <sc-if value="{{m.voice}}" hint-placeholder-val="{{true}}">
+                      <div style="display: flex; align-items: center; gap: 8px; color: #7FA7C9;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11 a7 7 0 0 0 14 0"></path><path d="M12 18 L12 21"></path></svg>
+                        <span style="font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums;">{{m.dur}}</span>
+                      </div>
+                    </sc-if>
+                    <span style="font-size: 22px; font-weight: 500; line-height: 1.3; color: {{m.textColor}};">{{m.text}}</span>
+                  </div>
+                  <sc-if value="{{m.hasStatus}}" hint-placeholder-val="{{false}}">
+                    <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; padding-right: 6px;">{{m.status}}</span>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+          <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 60px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #9A9DA3; font-size: 18px; font-weight: 600;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11 a7 7 0 0 0 14 0"></path><path d="M12 18 L12 21"></path></svg>
+            <span>Hold KEY to talk</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isMinecraft}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 0 48px; text-align: center;">
+            <span style="width: 120px; height: 120px; border-radius: 60px; background: rgba(143, 188, 154, 0.16); color: #8FBC9A; display: flex; align-items: center; justify-content: center; opacity: 0.6;">
+              <svg width="64" height="64" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L41 14.5 L41 33.5 L24 43 L7 33.5 L7 14.5 Z"></path><path d="M7 14.5 L24 24 L41 14.5"></path><path d="M24 24 L24 43"></path></svg>
+            </span>
+            <span style="font-size: 26px; font-weight: 600;">Not built yet</span>
+            <span style="font-size: 20px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">This page is reserved. Press BOOT to go home.</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isClockFace}}" hint-placeholder-val="{{false}}">
+          <button onClick="{{openAlarms}}" aria-label="{{clock.aria}}" style="position: absolute; inset: 0; border: none; background: #000000; color: #E6E7E9; font-family: inherit; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;">
+            <span style="font-size: 124px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: {{face.color}}; opacity: {{face.opacity}};">{{clock.hm}}</span>
+          </button>
+        </sc-if>
+
+        <sc-if value="{{isClock}}" hint-placeholder-val="{{false}}">
+          <div ref="{{clockRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 18px 20px 28px; box-sizing: border-box;">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+              <sc-if value="{{hasNext}}" hint-placeholder-val="{{true}}">
+                <span style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; background: rgba(201,163,106,0.14); color: #C9A36A; font-size: 18px; font-weight: 600;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{nextAlarm}}</span></span>
+              </sc-if>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 6px 18px; display: flex; flex-direction: column;">
+              <sc-for list="{{alarms}}" as="al" hint-placeholder-count="2">
+                <div style="display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid {{al.rule}};">
+                  <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px; opacity: {{al.dim}};">
+                    <span style="font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums;">{{al.hm}} <span style="font-size: 18px; font-weight: 600; color: #9A9DA3;">{{al.ampm}}</span></span>
+                    <span style="font-size: 16px; font-weight: 500; color: #9A9DA3;">{{al.sub}}</span>
+                  </div>
+                  <button role="switch" aria-checked="{{al.checked}}" aria-label="{{al.aria}}" onClick="{{al.toggle}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{al.border}}; background: {{al.track}}; cursor: pointer; padding: 0;">
+                    <span style="position: absolute; top: 5px; left: {{al.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{al.knob}};"></span>
+                  </button>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: 22px; font-weight: 600;">Night clock</span>
+                  <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{night.window}}</span>
+                </div>
+                <button role="switch" aria-checked="{{night.checked}}" aria-label="Night clock" onClick="{{toggleNight}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{night.border}}; background: {{night.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{night.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{night.knob}};"></span>
+                </button>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+                <sc-for list="{{nightColors}}" as="nc" hint-placeholder-count="3">
+                  <button aria-pressed="{{nc.pressed}}" onClick="{{nc.pick}}" style="height: 56px; border-radius: 16px; border: 2px solid {{nc.ring}}; background: #0A0A0A; color: {{nc.color}}; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums; opacity: {{nc.dim}};">{{nc.label}}</button>
+                </sc-for>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">Dim digits on black from bedtime to morning. Hours are set in the PWA.</span>
+            </div>
+            <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35; text-align: center; padding: 0 10px;">Add or change alarms in the PWA: jpanel → Panels → Jeff's. Alarms ring from the panel's own clock, even with Wi-Fi off.</span>
+          </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isSettings}}" hint-placeholder-val="{{false}}">
+          <div ref="{{settingsRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 16px 20px 28px; box-sizing: border-box;">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <span style="font-size: 22px; font-weight: 600;">Wi-Fi</span>
+                <span style="font-size: 16px; font-weight: 600; padding: 4px 12px; border-radius: 14px; background: {{wifi.chipBg}}; color: {{wifi.chipColor}};">{{wifi.state}}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="display: flex; align-items: flex-end; gap: 3px; height: 20px;" aria-label="{{wifi.barsLabel}}">
+                  <sc-for list="{{wifi.bars}}" as="bar" hint-placeholder-count="4">
+                    <span style="width: 5px; height: {{bar.h}}px; border-radius: 1.5px; background: {{bar.bg}};"></span>
+                  </sc-for>
+                </span>
+                <span style="font-size: 20px; font-weight: 600; flex-grow: 1;">{{wifi.ssid}}</span>
+                <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{wifi.detail}}</span>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{wifi.note}}</span>
+              <button onClick="{{toggleWifi}}" aria-label="{{wifi.btn}}" style="height: 56px; border-radius: 18px; border: 1px solid {{wifi.btnBorder}}; background: {{wifi.btnBg}}; color: {{wifi.btnColor}}; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">{{wifi.btn}}</button>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <span style="font-size: 22px; font-weight: 600;">{{power.title}}</span>
+                <span style="font-size: 22px; font-weight: 700; color: {{power.color}}; font-variant-numeric: tabular-nums;">{{power.big}}</span>
+              </div>
+              <sc-if value="{{power.hasBattery}}" hint-placeholder-val="{{true}}">
+                <div style="height: 10px; border-radius: 5px; background: #2C2F34; overflow: hidden;">
+                  <div style="height: 10px; width: {{power.pct}}%; background: {{power.color}};"></div>
+                </div>
+              </sc-if>
+              <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{power.line}}</span>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <span style="font-size: 22px; font-weight: 600;">Notifications</span>
+              <sc-for list="{{notifRows}}" as="nr" hint-placeholder-count="3">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                  <span style="font-size: 20px; font-weight: 500; opacity: {{nr.dim}};">{{nr.label}}</span>
+                  <button role="switch" aria-checked="{{nr.checked}}" aria-label="{{nr.label}}" onClick="{{nr.toggle}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{nr.border}}; background: {{nr.track}}; cursor: pointer; padding: 0; opacity: {{nr.dim}};">
+                    <span style="position: absolute; top: 5px; left: {{nr.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{nr.knob}};"></span>
+                  </button>
+                </div>
+              </sc-for>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{notifNote}}</span>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <span style="font-size: 22px; font-weight: 600;">Jerv</span>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                <span style="font-size: 20px; font-weight: 500;">Read replies aloud</span>
+                <button role="switch" aria-checked="{{ttsOn}}" aria-label="Read Jerv's replies aloud" onClick="{{toggleTts}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{tts.border}}; background: {{tts.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{tts.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{tts.knob}};"></span>
+                </button>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{tts.note}}</span>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <span style="font-size: 22px; font-weight: 600;">Firmware</span>
+                <span style="font-size: 18px; font-weight: 600; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{fw.version}}</span>
+              </div>
+              <span style="font-size: 18px; font-weight: 500; color: {{fw.noteColor}}; line-height: 1.3;">{{fw.note}}</span>
+              <sc-if value="{{fw.showBar}}" hint-placeholder-val="{{false}}">
+                <div style="height: 8px; border-radius: 4px; background: #2C2F34; overflow: hidden;">
+                  <div style="height: 8px; width: {{fw.pct}}%; background: #7FA7C9;"></div>
+                </div>
+              </sc-if>
+              <button onClick="{{updateNow}}" aria-label="Update now" style="height: 56px; border-radius: 18px; border: none; background: {{fw.btnBg}}; color: {{fw.btnColor}}; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">{{fw.btn}}</button>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <label for="jp-bright" style="font-size: 22px; font-weight: 600;">Brightness</label>
+                <span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;">{{brightLabel}}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; color: #9A9DA3;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle></svg>
+                <input id="jp-bright" type="range" min="10" max="100" step="5" value="{{bright}}" onInput="{{setBright}}" onChange="{{setBright}}" style="flex-grow: 1; height: 44px; margin: 0; accent-color: #7FA7C9; cursor: pointer;">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9"></path></svg>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">10% is the floor, so the screen can never be set to look switched off.</span>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <span style="font-size: 22px; font-weight: 600;">Touch screen</span>
+                <span style="font-size: 18px; font-weight: 600; color: #9A9DA3;">{{calibWhen}}</span>
+              </div>
+              <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; line-height: 1.3;">Taps landing off-target? Tap each cross until it turns green.</span>
+              <button onClick="{{startCalib}}" aria-label="Calibrate the touch screen" style="height: 56px; border-radius: 18px; border: none; background: rgba(127,167,201,0.16); color: #7FA7C9; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">Calibrate</button>
+            </div>
+          </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{showThumb}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; right: 5px; top: {{thumb.top}}px; width: 4px; height: {{thumb.h}}px; border-radius: 2px; background: #4A4D53; pointer-events: none;"></div>
+        </sc-if>
+
+        <sc-if value="{{isCalib}}" hint-placeholder-val="{{false}}">
+          <div onClick="{{calibTap}}" style="position: absolute; inset: 0; background: #000000; cursor: crosshair;">
+            <div style="position: absolute; left: 0; right: 0; top: 214px; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none;">
+              <span style="font-size: 22px; font-weight: 600;">Tap the cross</span>
+              <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{cal.step}} of 16 · BOOT cancels</span>
+            </div>
+            <div style="position: absolute; left: {{cal.x}}px; top: {{cal.y}}px; width: 0; height: 0; pointer-events: none;">
+              <div style="position: absolute; left: -24px; top: -1.5px; width: 48px; height: 3px; background: {{cal.color}};"></div>
+              <div style="position: absolute; left: -1.5px; top: -24px; width: 3px; height: 48px; background: {{cal.color}};"></div>
+              <div style="position: absolute; left: -14px; top: -14px; width: 28px; height: 28px; border-radius: 14px; border: 3px solid {{cal.color}}; box-sizing: border-box;"></div>
+              <div style="position: absolute; left: -24px; top: {{cal.dotsTop}}px; width: 48px; display: flex; justify-content: center; gap: 6px;">
+                <sc-for list="{{cal.dots}}" as="d" hint-placeholder-count="3">
+                  <span style="width: 8px; height: 8px; border-radius: 4px; background: {{d.bg}};"></span>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isRestart}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; inset: 0; background: #000000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;">
+            <span style="font-size: 26px; font-weight: 600;">Restarting…</span>
+            <span style="font-size: 18px; font-weight: 500; color: #9A9DA3;">Installing {{fw.next}}</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isRec}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; inset: 0; background: #000000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;">
+            <div style="display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: 600;">
+              <span style="width: 14px; height: 14px; border-radius: 7px; background: {{rec.color}};"></span>
+              <span>{{rec.title}}</span>
+            </div>
+            <div style="width: 220px; height: 220px; display: flex; align-items: center; justify-content: center;">
+              <div style="width: {{rec.ring}}px; height: {{rec.ring}}px; border-radius: 50%; border: 6px solid {{rec.color}}; box-sizing: border-box; background: {{rec.tint}}; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums;">{{rec.time}}</span>
+              </div>
+            </div>
+            <span style="font-size: 22px; font-weight: 600;">Let go of KEY to send</span>
+            <span style="font-size: 18px; font-weight: 500; color: #9A9DA3;">Tap the screen to cancel · 1:00 max</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{hasNote}}" hint-placeholder-val="{{false}}">
+          <div role="alertdialog" aria-label="{{note.aria}}" style="position: absolute; inset: 0; background: #000000; display: flex; flex-direction: column; padding: 40px 32px 30px; box-sizing: border-box; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 10px; color: {{note.accent}};">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
+              <span style="font-size: 18px; font-weight: 700; letter-spacing: 0.02em; flex-grow: 1;">{{note.from}}</span>
+              <span style="font-size: 16px; font-weight: 600; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{note.count}}</span>
+            </div>
+            <span style="font-size: 30px; font-weight: 700; line-height: 1.2;">{{note.title}}</span>
+            <span style="font-size: 21px; font-weight: 500; line-height: 1.35; color: #C4C7CC; flex-grow: 1;">{{note.body}}</span>
+            <div style="display: grid; grid-template-columns: repeat({{note.cols}}, minmax(0, 1fr)); gap: 10px;">
+              <sc-for list="{{note.choices}}" as="ch" hint-placeholder-count="2">
+                <button onClick="{{ch.pick}}" style="height: 64px; border-radius: 20px; border: 1px solid {{ch.border}}; background: {{ch.bg}}; color: {{ch.color}}; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer; padding: 0 8px;">{{ch.label}}</button>
+              </sc-for>
+            </div>
+            <span style="font-size: 15px; font-weight: 500; color: #9A9DA3; text-align: center;">{{note.hint}}</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isRinging}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; inset: 0; background: #000000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;">
+            <span style="color: #C9A36A;"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg></span>
+            <div style="display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums;">
+              <span style="font-size: 92px; font-weight: 700; line-height: 1;">{{ring.hm}}</span>
+              <span style="font-size: 28px; font-weight: 600; color: #9A9DA3;">{{ring.ampm}}</span>
+            </div>
+            <span style="font-size: 24px; font-weight: 600; color: #C9A36A;">{{ring.label}}</span>
+            <div style="display: flex; gap: 14px; margin-top: 22px;">
+              <button onClick="{{snooze}}" style="width: 196px; height: 72px; border-radius: 24px; border: none; background: rgba(127,167,201,0.18); color: #7FA7C9; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer;">Snooze 9 min</button>
+              <button onClick="{{stopAlarm}}" style="width: 150px; height: 72px; border-radius: 24px; border: 1px solid #3A3D42; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer;">Stop</button>
+            </div>
+            <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; margin-top: 6px;">KEY snoozes · BOOT stops</span>
+          </div>
+        </sc-if>
+
+        <div style="position: absolute; inset: 0; background: #000000; opacity: {{veil}}; pointer-events: none;"></div>
+
+        <sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; left: 40px; right: 40px; bottom: 78px; display: flex; justify-content: center;">
+            <span style="background: #1E2024; border: 1px solid #26282C; border-radius: 22px; padding: 12px 20px; font-size: 20px; font-weight: 600; text-align: center;">{{toast}}</span>
+          </div>
+        </sc-if>
+
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+class Component extends DCLogic {
+  accents() {
+    return {
+      jerv: { color: '#A493C9', tint: 'rgba(164,147,201,0.16)', name: 'Jerv', initial: '' },
+      quorra: { color: '#C9A36A', tint: 'rgba(201,163,106,0.16)', name: 'Quorra', initial: 'Q' },
+      tamsin: { color: '#6FB6B1', tint: 'rgba(111,182,177,0.16)', name: 'Tamsin', initial: 'T' },
+      minecraft: { color: '#8FBC9A', tint: 'rgba(143,188,154,0.16)', name: 'Minecraft', initial: '' },
+      settings: { color: '#C4C7CC', tint: '#1E2024', name: 'Settings', initial: '' },
+      clock: { color: '#E6E7E9', tint: '#1E2024', name: 'Alarms', initial: '' }
+    };
+  }
+
+  seed() {
+    return {
+      jerv: [
+        { id: 1, from: 'me', kind: 'voice', durS: 3, text: 'Add milk to the shopping list.' },
+        { id: 2, from: 'them', kind: 'text', text: 'Added milk to your shopping list.' }
+      ],
+      quorra: [
+        { id: 3, from: 'me', kind: 'voice', durS: 4, text: 'Have a good day at school!', status: 'Played' },
+        { id: 4, from: 'them', kind: 'voice', durS: 5, text: 'Daddy, when are you coming home?', played: false }
+      ],
+      tamsin: [
+        { id: 5, from: 'them', kind: 'voice', durS: 3, text: 'I made you a drawing.', played: true },
+        { id: 6, from: 'me', kind: 'voice', durS: 2, text: "I can't wait to see it!", status: 'Played' }
+      ]
+    };
+  }
+
+  initial() {
+    const start = this.props.start || 'home';
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
+      alarms: [
+        { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
+        { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
+        { id: 3, h: 21, m: 0, days: 'Every day', label: 'Girls to bed', on: true }
+      ] };
+    if (start === 'home-p2') s.page = 1;
+    if (start === 'jerv' || start === 'quorra' || start === 'tamsin' || start === 'minecraft') s.screen = start;
+    if (start === 'settings') s.screen = 'settings';
+    if (start === 'updating') { s.screen = 'settings'; s.fw = { version: '0.0.1', phase: 'downloading', pct: 64 }; }
+    if (start === 'calib') { s.screen = 'settings'; s.calib = { i: 5, taps: 1 }; }
+    if (start === 'clock') { s.screen = 'clock'; s.page = 1; }
+    if (start === 'notify-info') s.notes = [this.sample('info')];
+    if (start === 'notify-question') s.notes = [this.sample('yes/no question'), this.sample('info')];
+    if (start === 'clock-night') { s.screen = 'clock'; s.page = 1; s.forceNight = true; }
+    if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
+    if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
+    if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
+    if (start === 'rec-quorra') { s.screen = 'quorra'; s.rec = { to: 'quorra', secs: 4.1, frozen: true }; }
+    return s;
+  }
+
+  base(prev) {
+    return prev && prev.ready && prev.start === (this.props.start || 'home') ? prev : this.initial();
+  }
+
+  put(fn) {
+    this.setState((prev) => {
+      const b = this.base(prev);
+      return Object.assign({}, b, typeof fn === 'function' ? fn(b) : fn);
+    });
+  }
+
+  componentWillUnmount() {
+    clearInterval(this.recTimer);
+    clearInterval(this.playTimer);
+    clearTimeout(this.toastTimer);
+    clearInterval(this.fwTimer);
+    clearTimeout(this.speakTimer);
+    clearInterval(this.tick);
+  }
+
+  componentDidMount() {
+    this.measure();
+    this.tick = setInterval(() => this.forceUpdate(), 15000);
+  }
+
+  hm(h, m) {
+    return { hm: String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'), ampm: '' };
+  }
+
+  speakDone(id) {
+    clearTimeout(this.speakTimer);
+    this.speakTimer = setTimeout(() => this.put((b) => (b.speaking === id ? { speaking: null } : {})), 2600);
+  }
+
+  // Deep red first: it is the colour least disruptive to dark-adapted eyes, and on an AMOLED
+  // dim digits on black light almost nothing else in the room.
+  nightPalette() {
+    return {
+      red: { color: '#B23A3A', opacity: 0.55 },
+      amber: { color: '#A47A3E', opacity: 0.5 },
+      grey: { color: '#6E7178', opacity: 0.55 }
+    };
+  }
+
+  snooze() {
+    const s = this.base(this.state);
+    if (!s.ring) return;
+    const t = s.ring.h * 60 + s.ring.m + 9;
+    const when = this.hm(Math.floor(t / 60) % 24, t % 60);
+    this.put({ ring: null });
+    this.say('Snoozed until ' + when.hm);
+  }
+
+  toggleWifi() {
+    const s = this.base(this.state);
+    if (s.wifi === 'connecting') return;
+    if (s.wifi === 'connected') { this.put({ wifi: 'off' }); return; }
+    this.put({ wifi: 'connecting' });
+    setTimeout(() => this.put((b) => (b.wifi === 'connecting' ? { wifi: 'connected' } : {})), 1800);
+  }
+
+  wifiView(w) {
+    const on = w === 'connected';
+    const strength = on ? 3 : 0;
+    return {
+      state: on ? 'Connected' : (w === 'connecting' ? 'Connecting…' : 'Off'),
+      chipBg: on ? 'rgba(143,188,154,0.16)' : (w === 'connecting' ? 'rgba(201,163,106,0.16)' : '#1E2024'),
+      chipColor: on ? '#8FBC9A' : (w === 'connecting' ? '#C9A36A' : '#9A9DA3'),
+      ssid: '[Your network]',
+      detail: on ? '−58 dBm' : '',
+      bars: [6, 10, 14, 18].map((h, k) => ({ h: h, bg: k < strength ? '#E6E7E9' : '#3A3D42' })),
+      barsLabel: on ? 'Signal 3 of 4' : 'Not connected',
+      note: on
+        ? 'Saved when the panel was flashed from the box. Change the network there.'
+        : 'Off until you connect or restart. No messages, Jerv or updates while off.',
+      btn: on ? 'Disconnect' : (w === 'connecting' ? 'Connecting…' : 'Connect'),
+      btnBg: on ? '#1E2024' : (w === 'connecting' ? '#1E2024' : 'rgba(127,167,201,0.16)'),
+      btnColor: on ? '#E6E7E9' : (w === 'connecting' ? '#5C5F66' : '#7FA7C9'),
+      btnBorder: on ? '#26282C' : 'transparent'
+    };
+  }
+
+  powerView(mode) {
+    const m = {
+      charging: { pct: 87, v: '4.11 V', how: 'Charging from USB' },
+      'on battery': { pct: 62, v: '3.86 V', how: 'On battery' },
+      'low battery': { pct: 12, v: '3.52 V', how: 'On battery — plug in soon' }
+    }[mode];
+    if (!m) return { title: 'Power', big: 'USB', hasBattery: false, pct: 0, color: '#E6E7E9', line: 'No battery fitted · USB 5.02 V' };
+    return {
+      title: 'Battery', big: m.pct + '%', hasBattery: true, pct: m.pct,
+      color: m.pct <= 15 ? '#C9A36A' : '#8FBC9A',
+      line: m.v + ' · ' + m.how
+    };
+  }
+
+  updateNow() {
+    const s = this.base(this.state);
+    if (s.wifi !== 'connected') { this.say('Connect Wi-Fi first'); return; }
+    if (s.fw.phase === 'checking' || s.fw.phase === 'downloading' || s.fw.phase === 'restarting') return;
+    const current = s.fw.version;
+    this.put((b) => ({ fw: Object.assign({}, b.fw, { phase: 'checking', pct: 0 }) }));
+    setTimeout(() => {
+      if (current !== '0.0.1') { this.put((b) => ({ fw: Object.assign({}, b.fw, { phase: 'uptodate' }) })); return; }
+      clearInterval(this.fwTimer);
+      this.fwTimer = setInterval(() => {
+        this.put((b) => {
+          const pct = Math.min(100, b.fw.pct + 4);
+          if (pct >= 100) {
+            clearInterval(this.fwTimer);
+            setTimeout(() => this.put((c) => ({ fw: { version: '0.0.2', phase: 'done', pct: 0 } })), 1600);
+            return { fw: Object.assign({}, b.fw, { phase: 'restarting', pct: 100 }) };
+          }
+          return { fw: Object.assign({}, b.fw, { phase: 'downloading', pct: pct }) };
+        });
+      }, 120);
+    }, 1000);
+  }
+
+  fwView(fw, online) {
+    const busy = !online || fw.phase === 'checking' || fw.phase === 'downloading' || fw.phase === 'restarting';
+    const notes = {
+      idle: 'Asks the box for newer firmware now, instead of waiting for the next check.',
+      checking: 'Asking the box…',
+      downloading: 'Downloading 0.0.2 · ' + fw.pct + '%',
+      restarting: 'Restarting into 0.0.2…',
+      done: 'Updated. A version that fails to start rolls back by itself.',
+      uptodate: 'Already on the newest version.'
+    };
+    return {
+      version: fw.version, next: '0.0.2', pct: fw.pct,
+      note: online ? (notes[fw.phase] || notes.idle) : 'Connect Wi-Fi to check for updates.',
+      noteColor: fw.phase === 'done' ? '#8FBC9A' : '#9A9DA3',
+      showBar: fw.phase === 'downloading',
+      btn: fw.phase === 'checking' ? 'Checking…' : (fw.phase === 'downloading' ? 'Downloading…' : 'Update now'),
+      btnBg: busy ? '#1E2024' : 'rgba(127,167,201,0.16)',
+      btnColor: busy ? '#5C5F66' : '#7FA7C9'
+    };
+  }
+
+  calView(c) {
+    const knots = [44, 172, 308, 436];
+    const x = knots[c.i % 4];
+    const y = knots[Math.floor(c.i / 4)];
+    return {
+      x: x, y: y, step: c.i + 1,
+      dotsTop: y > 400 ? -48 : 32,
+      color: c.taps >= 3 ? '#8FBC9A' : '#C9A36A',
+      dots: [0, 1, 2].map((k) => ({ bg: k < c.taps ? '#C9A36A' : '#3A3D42' }))
+    };
+  }
+
+  // Jump to the newest message only when one arrives or the thread changes: re-pinning on every
+  // render would yank the view back down while someone is reading up the history.
+  sample(kind) {
+    const k = {
+      info: { from: 'Ops', title: 'Disk 91% full', body: 'The box is running low on space. Ops → Disk shows what is using it.', choices: [] },
+      'yes/no question': { from: 'Jerv', title: 'Run the cleanup now?', body: 'Frees about 38 GB of build cache. Nothing you keep is touched.', choices: ['Yes', 'No'] },
+      'three choices': { from: 'Minecraft', title: 'Restart the server?', body: 'An update is ready. Two players are on.', choices: ['Now', 'In 10 min', 'Skip'] },
+      urgent: { from: 'Ops', title: 'Backup failed', body: 'Last night\'s backup did not finish. Check Ops → Backups.', choices: [], urgent: true }
+    }[kind];
+    this.noteSeq = (this.noteSeq || 0) + 1;
+    return Object.assign({ id: this.noteSeq, urgent: false }, k);
+  }
+
+  nightWindow(s) {
+    const f = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+    return f(s.night.from) + '–' + f(s.night.to);
+  }
+
+  inNight(s) {
+    const d = new Date();
+    const nowM = d.getHours() * 60 + d.getMinutes();
+    const n = s.night;
+    return n.from > n.to ? (nowM >= n.from || nowM < n.to) : (nowM >= n.from && nowM < n.to);
+  }
+
+  // The tweak stands in for the box: picking a kind "sends" one, as POST /panel/notify would.
+  // A refusal never reaches the glass — the box answers the sender — so the mock shows the
+  // sender's answer as a toast rather than anything the panel itself would draw.
+  maybeIncoming(prevProps) {
+    const kind = this.props.incoming;
+    if (!kind || kind === 'none' || (prevProps && prevProps.incoming === kind)) return;
+    const b = this.base(this.state);
+    if (!b.notif.allow) { this.say('Sender got 409 not_accepting'); return; }
+    if (b.notif.quiet && this.inNight(b)) { this.say('Sender got 409 quiet_hours, until ' + this.nightWindow(b).split('–')[1]); return; }
+    const n = this.sample(kind);
+    this.put((c) => ({ notes: c.notes.concat([n]), off: false }));
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps && prevProps.incoming !== this.props.incoming) this.maybeIncoming(prevProps);
+    const s = this.base(this.state);
+    const t = s.threads[s.screen];
+    const key = s.screen + ':' + (t ? t.length : 0) + ':' + (t && t.length ? t[t.length - 1].text : '');
+    if (this.listEl && key !== this.pinKey) this.listEl.scrollTop = this.listEl.scrollHeight;
+    this.pinKey = key;
+    this.measure();
+  }
+
+  scroller() {
+    const s = this.base(this.state);
+    if (s.off || s.rec || s.calib) return null;
+    if (s.ring) return null;
+    if (s.screen === 'settings') return this.settingsEl || null;
+    if (s.screen === 'clock') return s.clockView === 'alarms' ? this.clockEl || null : null;
+    if (s.threads[s.screen]) return this.listEl || null;
+    return null;
+  }
+
+  measure() {
+    const el = this.scroller();
+    const s = this.base(this.state);
+    const next = el ? { top: Math.round(el.scrollTop), h: el.clientHeight, ch: el.scrollHeight, bottomGap: s.threads[s.screen] ? 60 : 0 } : null;
+    const prev = s.scroll || null;
+    const same = (!next && !prev) || (next && prev && next.top === prev.top && next.h === prev.h && next.ch === prev.ch && next.bottomGap === prev.bottomGap);
+    if (!same) this.put({ scroll: next });
+  }
+
+  thumbView(sc) {
+    if (!sc || sc.ch <= sc.h + 2) return null;
+    const trackTop = 77 + 8;
+    const trackH = sc.h - 16;
+    const h = Math.max(32, Math.round(trackH * sc.h / sc.ch));
+    const top = trackTop + Math.round((trackH - h) * Math.min(1, sc.top / (sc.ch - sc.h)));
+    return { top: top, h: h };
+  }
+
+  fmt(secs) {
+    const t = Math.max(0, Math.floor(secs));
+    return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+  }
+
+  say(text) {
+    clearTimeout(this.toastTimer);
+    this.put({ toast: text });
+    this.toastTimer = setTimeout(() => this.put({ toast: '' }), 2200);
+  }
+
+  startRec() {
+    const s = this.base(this.state);
+    if (s.ring) { this.snooze(); return; }
+    if (s.off) return;
+    if (s.screen === 'home' || s.screen === 'minecraft' || s.screen === 'settings') {
+      this.say('Open a conversation, then hold KEY');
+      return;
+    }
+    clearInterval(this.recTimer);
+    this.put({ rec: { to: s.screen, secs: 0 }, toast: '' });
+    this.recTimer = setInterval(() => {
+      this.put((b) => {
+        if (!b.rec || b.rec.frozen) return {};
+        const secs = b.rec.secs + 0.1;
+        if (secs >= 60) { setTimeout(() => this.stopRec(true), 0); }
+        return { rec: Object.assign({}, b.rec, { secs: secs }) };
+      });
+    }, 100);
+  }
+
+  stopRec(send) {
+    clearInterval(this.recTimer);
+    const s = this.base(this.state);
+    if (!s.rec || s.rec.frozen) return;
+    const to = s.rec.to;
+    const secs = s.rec.secs;
+    if (!send) { this.put({ rec: null }); this.say('Cancelled — nothing sent'); return; }
+    if (secs < 0.6) { this.put({ rec: null }); this.say('Hold KEY the whole time you talk'); return; }
+    const said = {
+      jerv: ['Remind me to call the vet tomorrow at nine.', 'Turn the porch light off at eleven.'],
+      quorra: ['Goodnight sweetheart, sleep well.', "I'll be home in twenty minutes."],
+      tamsin: ['Goodnight, sleep tight.', "I'll be home in twenty minutes."]
+    }[to];
+    const id = s.nextId;
+    const text = said[s.said % said.length];
+    const mine = { id: id, from: 'me', kind: 'voice', durS: Math.round(secs), text: 'Transcribing…', pending: true, status: to === 'jerv' ? '' : 'Sending…' };
+    this.put((b) => ({ rec: null, nextId: b.nextId + 2, said: b.said + 1, threads: Object.assign({}, b.threads, { [to]: b.threads[to].concat([mine]) }) }));
+    setTimeout(() => {
+      this.put((b) => {
+        const list = b.threads[to].map((m) => (m.id === id ? Object.assign({}, m, { text: text, pending: false, status: to === 'jerv' ? '' : 'Delivered' }) : m));
+        if (to === 'jerv') list.push({ id: id + 1, from: 'them', kind: 'text', text: '…', pending: true });
+        return { threads: Object.assign({}, b.threads, { [to]: list }) };
+      });
+    }, 900);
+    if (to === 'jerv') {
+      const reply = s.said % 2 === 0 ? "Done — I'll remind you at 9:00 tomorrow." : "Done — the porch light goes off at 11:00 tonight.";
+      setTimeout(() => {
+        this.put((b) => ({ speaking: b.tts ? id + 1 : b.speaking, threads: Object.assign({}, b.threads, { jerv: b.threads.jerv.map((m) => (m.id === id + 1 ? Object.assign({}, m, { text: reply, pending: false }) : m)) }) }));
+        this.speakDone(id + 1);
+      }, 2400);
+    }
+  }
+
+  togglePlay(thread, m) {
+    const s = this.base(this.state);
+    clearInterval(this.playTimer);
+    if (s.playing === m.id) { this.put({ playing: null }); return; }
+    this.put({ playing: m.id, progress: 0 });
+    this.playTimer = setInterval(() => {
+      this.put((b) => {
+        if (b.playing !== m.id) return {};
+        const p = b.progress + 0.2;
+        if (p >= m.durS) {
+          clearInterval(this.playTimer);
+          return { playing: null, progress: 0, threads: Object.assign({}, b.threads, { [thread]: b.threads[thread].map((x) => (x.id === m.id ? Object.assign({}, x, { played: true }) : x)) }) };
+        }
+        return { progress: p };
+      });
+    }, 200);
+  }
+
+  unplayed(list) {
+    return list.filter((m) => m.from === 'them' && m.kind === 'voice' && m.played === false).length;
+  }
+
+  renderVals() {
+    const s = this.base(this.state);
+    const A = this.accents();
+    const on = !s.off;
+    const open = (key) => () => {
+      if (this.swiped) return;
+      this.put({ screen: key, playing: null });
+    };
+    const tile = (key) => {
+      const a = A[key];
+      const badge = key === 'quorra' || key === 'tamsin' ? this.unplayed(s.threads[key]) : 0;
+      return {
+        key: key, label: a.name, initial: a.initial, color: a.color, tint: a.tint,
+        isJerv: key === 'jerv', isCube: key === 'minecraft', isPerson: key === 'quorra' || key === 'tamsin',
+        soon: key === 'minecraft', hasBadge: badge > 0, badge: badge,
+        iconOpacity: key === 'minecraft' ? 0.45 : 1,
+        labelColor: key === 'minecraft' ? '#9A9DA3' : '#E6E7E9',
+        aria: a.name + (badge ? ', ' + badge + ' new' : '') + (key === 'minecraft' ? ', not built yet' : ''),
+        open: open(key)
+      };
+    };
+    const isPage = on && s.screen !== 'home';
+    const thread = s.threads[s.screen];
+    const a = A[s.screen] || A.jerv;
+    const msgs = (thread || []).map((m) => {
+      const playing = s.playing === m.id;
+      return {
+        id: m.id, me: m.from === 'me', them: m.from !== 'me', voice: m.kind === 'voice',
+        text: m.text, dur: this.fmt(m.durS || 0),
+        textColor: m.pending ? '#9A9DA3' : '#E6E7E9',
+        status: m.status || '', hasStatus: !!m.status,
+        unplayed: m.from === 'them' && m.played === false && !playing,
+        playing: playing, paused: !playing,
+        playLabel: playing ? 'Pause' : 'Play message',
+        prog: playing ? Math.min(100, Math.round((s.progress / (m.durS || 1)) * 100)) : (m.played === false ? 0 : 100),
+        play: () => { if (!this.swiped) this.togglePlay(s.screen, m); },
+        canSpeak: s.screen === 'jerv' && m.from !== 'me' && m.kind !== 'voice' && !m.pending && !s.tts && s.speaking !== m.id,
+        speakingNow: s.speaking === m.id,
+        speak: () => { if (this.swiped) return; this.put({ speaking: m.id }); this.speakDone(m.id); }
+      };
+    });
+    let rec = null;
+    if (s.rec) {
+      const r = A[s.rec.to];
+      const t = s.rec.secs;
+      const level = 0.6 * Math.abs(Math.sin(t * 5.3)) + 0.4 * Math.abs(Math.sin(t * 2.1));
+      rec = {
+        color: s.rec.to === 'jerv' ? '#CF8A8F' : '#7FA7C9',
+        tint: s.rec.to === 'jerv' ? 'rgba(207,138,143,0.10)' : 'rgba(127,167,201,0.10)',
+        title: s.rec.to === 'jerv' ? 'Jerv is listening' : 'Message to ' + r.name,
+        time: this.fmt(t),
+        ring: Math.round(170 + 50 * level)
+      };
+    }
+    return {
+      isHome: on && s.screen === 'home' && !s.rec && !s.ring,
+      isHome0: on && s.screen === 'home' && s.page === 0 && !s.rec && !s.ring,
+      isHome1: on && s.screen === 'home' && s.page === 1 && !s.rec && !s.ring,
+      dot0: s.page === 0 ? '#E6E7E9' : '#3A3D42',
+      dot1: s.page === 1 ? '#E6E7E9' : '#3A3D42',
+      tiles: [tile('jerv'), tile('minecraft'), tile('quorra'), tile('tamsin')],
+      emptySlots: [{ label: 'Empty' }, { label: 'Empty' }],
+      isPage: isPage && !s.rec && !s.calib && !s.ring && !s.notes.length && s.fw.phase !== 'restarting' && !(s.screen === 'clock' && s.clockView === 'face'),
+      isSettings: isPage && s.screen === 'settings' && !s.calib && s.fw.phase !== 'restarting',
+      isCalib: on && !!s.calib,
+      isRestart: on && s.fw.phase === 'restarting',
+      fw: this.fwView(s.fw, s.wifi === 'connected'),
+      wifi: this.wifiView(s.wifi),
+      power: this.powerView(this.props.power || 'charging'),
+      toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
+      ttsOn: s.tts ? 'true' : 'false',
+      clockRef: (el) => { this.clockEl = el; },
+      openClock: () => { if (!this.swiped) this.put({ screen: 'clock', clockView: 'face', playing: null }); },
+      isClock: isPage && s.screen === 'clock' && s.clockView === 'alarms' && !s.ring,
+      isClockFace: on && s.screen === 'clock' && s.clockView === 'face' && !s.ring && !s.rec,
+      openAlarms: () => this.put({ clockView: 'alarms' }),
+      face: (() => {
+        const d = new Date();
+        const nowM = d.getHours() * 60 + d.getMinutes();
+        const n = s.night;
+        const inWindow = n.from > n.to ? (nowM >= n.from || nowM < n.to) : (nowM >= n.from && nowM < n.to);
+        if (!(s.forceNight || (n.on && inWindow))) return { color: '#E6E7E9', opacity: 1 };
+        return Object.assign({}, this.nightPalette()[n.color]);
+      })(),
+      night: (() => {
+        const n = s.night;
+        const f = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+        return {
+          window: f(n.from) + ' – ' + f(n.to),
+          checked: n.on ? 'true' : 'false',
+          track: n.on ? 'rgba(143,188,154,0.22)' : '#1E2024',
+          border: n.on ? 'transparent' : '#3A3D42',
+          knob: n.on ? '#8FBC9A' : '#9A9DA3',
+          knobX: n.on ? 34 : 5
+        };
+      })(),
+      toggleNight: () => { if (!this.swiped) this.put((b) => ({ night: Object.assign({}, b.night, { on: !b.night.on }) })); },
+      nightColors: ['red', 'amber', 'grey'].map((key) => {
+        const pal = this.nightPalette()[key];
+        const picked = s.night.color === key;
+        return {
+          label: { red: 'Red', amber: 'Amber', grey: 'Grey' }[key],
+          color: pal.color, dim: s.night.on ? 1 : 0.5,
+          pressed: picked ? 'true' : 'false',
+          ring: picked ? '#7FA7C9' : '#26282C',
+          pick: () => { if (!this.swiped) this.put((b) => ({ night: Object.assign({}, b.night, { color: key }) })); }
+        };
+      }),
+      isRinging: !!s.ring,
+      hasNote: on && !s.ring && !s.rec && s.notes.length > 0,
+      note: (() => {
+        const n = s.notes[0];
+        if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', accent: '#7FA7C9', aria: '' };
+        const answer = (label) => () => {
+          this.put((b) => ({ notes: b.notes.slice(1) }));
+          this.say(n.choices.length ? 'Sent to ' + n.from + ': ' + label : 'Dismissed');
+        };
+        const labels = n.choices.length ? n.choices : ['OK'];
+        return {
+          from: n.from + (n.urgent ? ' · urgent' : ''),
+          title: n.title, body: n.body,
+          accent: n.urgent ? '#C9A36A' : '#7FA7C9',
+          count: s.notes.length > 1 ? '1 of ' + s.notes.length : '',
+          cols: labels.length === 3 ? 3 : labels.length,
+          hint: n.choices.length ? 'Your answer goes back to ' + n.from + ' · BOOT answers nothing' : 'BOOT dismisses',
+          aria: n.from + ': ' + n.title,
+          choices: labels.map((label, k) => ({
+            label: label,
+            bg: k === 0 ? 'rgba(127,167,201,0.18)' : '#1E2024',
+            color: k === 0 ? '#7FA7C9' : '#E6E7E9',
+            border: k === 0 ? 'transparent' : '#3A3D42',
+            pick: answer(label)
+          }))
+        };
+      })(),
+      notifRows: [['allow', 'Accept messages from the box'], ['quiet', 'Refuse during night hours'], ['sound', 'Chime when one arrives']].map(([key, label]) => {
+        const v = s.notif[key];
+        const live = key === 'allow' || s.notif.allow;
+        return {
+          label: label, checked: v ? 'true' : 'false', dim: live ? 1 : 0.45,
+          track: v ? 'rgba(143,188,154,0.22)' : '#1E2024',
+          border: v ? 'transparent' : '#3A3D42',
+          knob: v ? '#8FBC9A' : '#9A9DA3',
+          knobX: v ? 34 : 5,
+          toggle: () => { if (!this.swiped && live) this.put((b) => ({ notif: Object.assign({}, b.notif, { [key]: !b.notif[key] }) })); }
+        };
+      }),
+      notifNote: !s.notif.allow
+        ? 'Off: every message is refused at the box. The sender is told this panel is not accepting messages.'
+        : s.notif.quiet
+          ? 'Refused ' + this.nightWindow(s) + ' — the sender is told quiet hours, and until when. Same hours as the night clock.'
+          : 'Jerv, Ops and workflows can pop up a message here and ask a question you answer with a tap.',
+      ring: s.ring ? Object.assign(this.hm(s.ring.h, s.ring.m), { label: s.ring.label || 'Alarm' }) : { hm: '', ampm: '', label: '' },
+      snooze: () => this.snooze(),
+      stopAlarm: () => { this.put({ ring: null }); this.say('Alarm stopped'); },
+      clock: (() => {
+        const d = new Date();
+        const t = this.hm(d.getHours(), d.getMinutes());
+        return { hm: t.hm, ampm: t.ampm, short: t.hm, aria: 'The time is ' + t.hm + '. Tap for alarms.', date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
+      })(),
+      alarms: s.alarms.slice().sort((x, y) => x.h * 60 + x.m - (y.h * 60 + y.m)).map((al, k, arr) => {
+        const t = this.hm(al.h, al.m);
+        return {
+          hm: t.hm, ampm: t.ampm,
+          sub: al.days + (al.label ? ' · ' + al.label : ''),
+          dim: al.on ? 1 : 0.5,
+          rule: k === arr.length - 1 ? 'transparent' : '#26282C',
+          checked: al.on ? 'true' : 'false',
+          aria: 'Alarm ' + t.hm + ' ' + t.ampm + (al.on ? ', on' : ', off'),
+          track: al.on ? 'rgba(143,188,154,0.22)' : '#1E2024',
+          border: al.on ? 'transparent' : '#3A3D42',
+          knob: al.on ? '#8FBC9A' : '#9A9DA3',
+          knobX: al.on ? 34 : 5,
+          toggle: () => { if (!this.swiped) this.put((b) => ({ alarms: b.alarms.map((x) => (x.id === al.id ? Object.assign({}, x, { on: !x.on }) : x)) })); }
+        };
+      }),
+      hasNext: s.alarms.some((al) => al.on),
+      nextAlarm: (() => {
+        const d = new Date();
+        const nowM = d.getHours() * 60 + d.getMinutes();
+        const on = s.alarms.filter((al) => al.on).map((al) => ({ al: al, wait: ((al.h * 60 + al.m - nowM) + 1440) % 1440 })).sort((x, y) => x.wait - y.wait);
+        if (!on.length) return '';
+        const t = this.hm(on[0].al.h, on[0].al.m);
+        const hrs = Math.floor(on[0].wait / 60);
+        const mins = on[0].wait % 60;
+        return 'Next ' + t.hm + ' · in ' + (hrs ? hrs + ' h ' : '') + mins + ' min';
+      })(),
+      bright: s.bright,
+      brightLabel: s.bright + '%',
+      veil: Math.round((1 - s.bright / 100) * 0.8 * 100) / 100,
+      setBright: (e) => { const v = Number(e.target.value); if (v >= 10 && v <= 100) this.put({ bright: v }); },
+      tts: {
+        track: s.tts ? 'rgba(143,188,154,0.22)' : '#1E2024',
+        border: s.tts ? 'transparent' : '#3A3D42',
+        knob: s.tts ? '#8FBC9A' : '#9A9DA3',
+        knobX: s.tts ? 34 : 5,
+        note: s.tts ? 'Replies are spoken and shown as text.' : 'Replies are text only. Tap Listen on a reply to hear it.'
+      },
+      toggleTts: () => { if (!this.swiped) this.put((b) => ({ tts: !b.tts, speaking: null })); },
+      cal: this.calView(s.calib || { i: 0, taps: 0 }),
+      calibWhen: s.calibWhen,
+      openSettings: () => { if (!this.swiped) this.put({ screen: 'settings', playing: null }); },
+      updateNow: () => { if (!this.swiped) this.updateNow(); },
+      startCalib: () => { if (!this.swiped) this.put({ calib: { i: 0, taps: 0 } }); },
+      calibTap: () => {
+        this.put((b) => {
+          if (!b.calib || b.calib.taps >= 3) return {};
+          const taps = b.calib.taps + 1;
+          if (taps >= 3) {
+            setTimeout(() => this.put((c) => {
+              if (!c.calib) return {};
+              if (c.calib.i >= 15) { setTimeout(() => this.say('Calibration saved'), 0); return { calib: null, calibWhen: 'Today' }; }
+              return { calib: { i: c.calib.i + 1, taps: 0 } };
+            }), 350);
+          }
+          return { calib: { i: b.calib.i, taps: taps } };
+        });
+      },
+      isThread: isPage && !!thread && !s.rec && !s.ring,
+      isMinecraft: isPage && s.screen === 'minecraft' && !s.rec,
+      cur: { name: a.name, color: a.color, tint: a.tint, initial: a.initial, isJerv: s.screen === 'jerv', isCube: s.screen === 'minecraft', isPerson: s.screen === 'quorra' || s.screen === 'tamsin', isGear: s.screen === 'settings', isClock: s.screen === 'clock' },
+      msgs: msgs,
+      isRec: on && !!s.rec,
+      rec: rec || { color: '#7FA7C9', tint: 'transparent', title: '', time: '0:00', ring: 170 },
+      hasToast: on && !!s.toast,
+      toast: s.toast,
+      keyBg: s.rec ? '#D9D9D4' : '#F4F4F2',
+      listRef: (el) => { this.listEl = el; },
+      settingsRef: (el) => { this.settingsEl = el; },
+      onScroll: () => this.measure(),
+      showThumb: !!this.thumbView(s.scroll),
+      thumb: this.thumbView(s.scroll) || { top: 0, h: 0 },
+      keyDown: (e) => {
+        if (e && e.currentTarget && e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+        this.startRec();
+      },
+      keyUp: () => this.stopRec(true),
+      pwr: () => { clearInterval(this.recTimer); this.put((b) => ({ off: !b.off, rec: null, playing: null })); },
+      boot: () => {
+        clearInterval(this.recTimer);
+        const b = this.base(this.state);
+        if (b.ring) { this.put({ ring: null, off: false }); this.say('Alarm stopped'); return; }
+        if (b.notes.length) { this.put({ notes: b.notes.slice(1) }); this.say('Dismissed — no answer sent'); return; }
+        if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
+        this.put({ screen: 'home', page: 0, rec: null, playing: null, off: false });
+      },
+      goHome: () => {
+        if (s.screen === 'clock' && s.clockView === 'alarms') { this.put({ clockView: 'face' }); return; }
+        this.put({ screen: 'home', playing: null, page: s.screen === 'settings' || s.screen === 'clock' ? 1 : 0 });
+      },
+      screenDown: (e) => {
+        this.sx = e.clientX;
+        this.drag = null;
+        const el = this.scroller();
+        const onControl = e.target && e.target.tagName === 'INPUT';
+        if (el && e.pointerType === 'mouse' && !onControl) this.drag = { el: el, y: e.clientY, top: el.scrollTop, moved: false };
+        this.swiped = false;
+        const b = this.base(this.state);
+        if (b.off) { this.put({ off: false }); return; }
+        if (b.rec && !b.rec.frozen) this.stopRec(false);
+      },
+      // Touch scrolls natively (touch-action: pan-y); a mouse has no swipe, so dragging is
+      // emulated here to make the mock behave like the glass.
+      screenMove: (e) => {
+        const d = this.drag;
+        if (!d) return;
+        const dy = e.clientY - d.y;
+        if (Math.abs(dy) > 6) d.moved = true;
+        if (d.moved) d.el.scrollTop = d.top - dy;
+      },
+      screenUp: (e) => {
+        if (this.drag && this.drag.moved) {
+          this.swiped = true;
+          setTimeout(() => { this.swiped = false; }, 50);
+        }
+        this.drag = null;
+        const b = this.base(this.state);
+        if (b.screen !== 'home' || this.sx == null) return;
+        const dx = e.clientX - this.sx;
+        this.sx = null;
+        if (Math.abs(dx) > 60) {
+          this.swiped = true;
+          this.put({ page: dx < 0 ? 1 : 0 });
+          setTimeout(() => { this.swiped = false; }, 50);
+        }
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

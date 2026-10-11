@@ -1,0 +1,164 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-11T16:30:00Z"
+  },
+  "title": "Jeff's jpanel UI",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 720,
+      "h": 720,
+      "title": "Live panel \u2014 press and hold KEY to talk",
+      "is_interactive": true
+    },
+    "Home.dc.html": {
+      "x": 0,
+      "y": 1063,
+      "w": 720,
+      "h": 720,
+      "title": "1 \u00b7 Home"
+    },
+    "Jerv.dc.html": {
+      "x": 800,
+      "y": 1063,
+      "w": 720,
+      "h": 720,
+      "title": "2 \u00b7 Jerv conversation"
+    },
+    "RecJerv.dc.html": {
+      "x": 1600,
+      "y": 1063,
+      "w": 720,
+      "h": 720,
+      "title": "3 \u00b7 Holding KEY \u2014 talking to Jerv"
+    },
+    "Quorra.dc.html": {
+      "x": 0,
+      "y": 1903,
+      "w": 720,
+      "h": 720,
+      "title": "4 \u00b7 Quorra thread (unplayed message)"
+    },
+    "RecQuorra.dc.html": {
+      "x": 800,
+      "y": 1903,
+      "w": 720,
+      "h": 720,
+      "title": "5 \u00b7 Holding KEY \u2014 message to Quorra"
+    },
+    "Minecraft.dc.html": {
+      "x": 1600,
+      "y": 1903,
+      "w": 720,
+      "h": 720,
+      "title": "6 \u00b7 Minecraft (not built yet)"
+    },
+    "Settings.dc.html": {
+      "x": 0,
+      "y": 2743,
+      "w": 720,
+      "h": 720,
+      "title": "7 \u00b7 Settings (page 2)"
+    },
+    "Updating.dc.html": {
+      "x": 800,
+      "y": 2743,
+      "w": 720,
+      "h": 720,
+      "title": "8 \u00b7 Update now \u2014 downloading"
+    },
+    "Calib.dc.html": {
+      "x": 1600,
+      "y": 2743,
+      "w": 720,
+      "h": 720,
+      "title": "9 \u00b7 Calibrating the touch screen"
+    },
+    "Clock.dc.html": {
+      "x": 0,
+      "y": 3583,
+      "w": 720,
+      "h": 720,
+      "title": "10 \u00b7 Clock \u2014 giant 24-hour face (tap for alarms)"
+    },
+    "Ringing.dc.html": {
+      "x": 1600,
+      "y": 3583,
+      "w": 720,
+      "h": 720,
+      "title": "12 \u00b7 Alarm ringing"
+    },
+    "PwaAlarms.dc.html": {
+      "x": 2400,
+      "y": 3583,
+      "w": 390,
+      "h": 844,
+      "title": "13 \u00b7 PWA \u2014 set alarms (jpanel \u2192 Panels)",
+      "is_interactive": true
+    },
+    "ClockAlarms.dc.html": {
+      "x": 800,
+      "y": 3583,
+      "w": 720,
+      "h": 720,
+      "title": "11 \u00b7 Clock \u2192 alarms (on/off)"
+    },
+    "ClockNight.dc.html": {
+      "x": 0,
+      "y": 4423,
+      "w": 720,
+      "h": 720,
+      "title": "14 \u00b7 Night clock (dim red, bedtime hours)"
+    },
+    "NotifyInfo.dc.html": {
+      "x": 800,
+      "y": 4423,
+      "w": 720,
+      "h": 720,
+      "title": "15 \u00b7 Push message from the box"
+    },
+    "NotifyQuestion.dc.html": {
+      "x": 1600,
+      "y": 4423,
+      "w": 720,
+      "h": 720,
+      "title": "16 \u00b7 Push question \u2014 answer goes back (1 of 2)"
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Home.dc.html",
+    "Jerv.dc.html",
+    "RecJerv.dc.html",
+    "Quorra.dc.html",
+    "RecQuorra.dc.html",
+    "Minecraft.dc.html",
+    "Settings.dc.html",
+    "Updating.dc.html",
+    "Calib.dc.html",
+    "Clock.dc.html",
+    "ClockAlarms.dc.html",
+    "Ringing.dc.html",
+    "PwaAlarms.dc.html",
+    "ClockNight.dc.html",
+    "NotifyInfo.dc.html",
+    "NotifyQuestion.dc.html"
+  ],
+  "notes": {
+    "states": {
+      "x": 0,
+      "y": 800,
+      "text": "Screens to lock down",
+      "kind": "title1",
+      "maxW": 2790
+    }
+  },
+  "designSystems": []
+}

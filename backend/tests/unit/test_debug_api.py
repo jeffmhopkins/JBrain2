@@ -2426,6 +2426,42 @@ class TestPanelFlashOverDebug:
         scopes = client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
         assert "endpoint.flash" in scopes
 
+    def test_the_board_reaches_the_shared_flash_builder(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The debug console is the fallback when the PWA is broken, so it must be able to
+        re-flash the C6 too — and say nothing about a board to mean the S3, like the PWA."""
+        client, key = debug_client
+        boards: list[str] = []
+
+        async def stored(_r: Any, _c: Any) -> tuple[str, str]:
+            return "net", "pw"
+
+        async def fake_build(*_a: Any, **k: Any) -> dict[str, Any]:
+            boards.append(k["board"])
+            return {"port": "/dev/ttyACM0", "images": [], "nvs": {}}
+
+        class Streamed:
+            async def __aenter__(self) -> "Streamed":
+                return self
+
+            async def __aexit__(self, *_: Any) -> None:
+                return None
+
+            async def aiter_bytes(self) -> Any:
+                yield b"OK\n"
+
+        monkeypatch.setattr(endpoint_api, "remembered_wifi", stored)
+        monkeypatch.setattr(endpoint_api, "build_flash", fake_build)
+        monkeypatch.setattr(httpx.AsyncClient, "stream", lambda *_a, **_k: Streamed())
+        for extra in ({}, {"board": "c6-amoled-216"}):
+            client.post(
+                "/api/debug/endpoint/flash",
+                json={"port": "/dev/ttyACM0", **extra},
+                headers=_auth(key),
+            )
+        assert boards == ["s3-amoled-18", "c6-amoled-216"]
+
 
 def test_the_panel_ring_routes_require_the_debug_token(
     debug_client: tuple[TestClient, str],

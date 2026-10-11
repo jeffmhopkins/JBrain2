@@ -1,0 +1,49 @@
+# Partition table for Jeff's jpanel (Waveshare ESP32-C6-Touch-AMOLED-2.16, 16 MB flash).
+#
+# THIS TABLE IS EFFECTIVELY PERMANENT. OTA rewrites an app slot and nothing else, so changing
+# the layout costs a USB reflash. It is laid out for what this panel will eventually run, not
+# for the bring-up image, which is ~1 MB.
+#
+# Comments only ever get their own line here: anything after the size column is parsed as the
+# Flags field, which is how the first S3 table failed to build.
+#
+# THE FIRST FOUR ROWS ARE THE S3 PANELS' EXACTLY (firmware/partitions.csv), on purpose: the
+# box's flasher hardcodes NVS at 0x9000/0x6000, otadata at 0xF000 and the app at 0x20000, and
+# matching them means the C6 needs a different image set, not a different flasher.
+#
+#   nvs        24K    wifi creds, api url, device token, box CA root (the box writes it)
+#   otadata     8K    which slot boots, and whether it is trusted yet
+#   factory     4M    the recovery app a USB flash writes. Never OTA'd.
+#   ota_0/1     4M    each
+#   coredump  128K    a panic's stack dump, kept across the reset it causes
+#   storage   3.75M   app-written cache (assets fetched from the box). Ends exactly at 16M.
+#
+# NO `model` PARTITION. ESP-SR does not support the C6, so there are no speech models to
+# reserve room for; the S3's 3.5M went to the app slots and to storage instead.
+#
+# APP SLOTS ARE THE ONLY THING OTA CAN GROW, so they get the space. Everything that must
+# change after this flash has to ride the app image: a font or an image put in a data
+# partition is frozen until the next cable. The eventual app is LVGL, Wi-Fi + TLS, an audio
+# stream client and its fonts/images, with no 3 MB speech library: 4M is roughly double a
+# generous estimate of that. Three EQUAL slots, because a slot smaller than its siblings is
+# one that cannot take an update they can.
+#
+# COREDUMP IS THE S3'S STANDING REGRET (firmware/README.md: "there is no coredump partition to
+# add without a USB reflash"). Reserving it costs 128K; capturing into it is app config, so a
+# later OTA can change how it is used. 128K holds every task stack this chip can have with
+# room left, since there is no PSRAM to dump.
+#
+# STORAGE IS NOT FOR SHIPPED ASSETS (see above): it is a cache the app itself fills and can
+# rewrite over Wi-Fi, which is what makes a data partition useful on a cable-once device.
+# `littlefs` because it survives power loss mid-write; the subtype is only a label the
+# filesystem component looks up.
+#
+# Name,     Type, SubType,  Offset,    Size
+nvs,        data, nvs,      0x9000,    0x6000
+otadata,    data, ota,      0xF000,    0x2000
+phy_init,   data, phy,      0x11000,   0x1000
+factory,    app,  factory,  0x20000,   0x400000
+ota_0,      app,  ota_0,    0x420000,  0x400000
+ota_1,      app,  ota_1,    0x820000,  0x400000
+coredump,   data, coredump, 0xC20000,  0x20000
+storage,    data, littlefs, 0xC40000,  0x3C0000

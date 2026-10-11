@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -6860,3 +6860,32 @@ window never exceeding its buffer, fallback and its clock rollover, the URI and 
 and the image builds and fits (10% of the app slot free). **Not verified until it runs on a panel:**
 the live heap with a held session, reconnect behaviour across a box restart, the HTTPS fallback
 against an old box, and the OTA suspend/resume path.
+
+## Two kinds of panel (2026-10-11)
+
+The owner's own panel is a different board — a Waveshare ESP32-C6-Touch-AMOLED-2.16 — with its
+own firmware project, `firmware-c6/`, beside `firmware/`. The box path stopped assuming one
+board:
+
+- **A board registry** (`jbrain.api.endpoint.BOARDS`): `s3-amoled-18` (chip `esp32s3`,
+  `firmware/`, app `jbrain-endpoint.bin`, plus `srmodels.bin` at `0xaa0000`) and
+  `c6-amoled-216` (chip `esp32c6`, `firmware-c6/`, app `jbrain-jpanel-c6.bin`, no model
+  partition). The other offsets are shared. Each board's checkout is its own read-only mount
+  (`./src/firmware-c6:/firmware-c6:ro`, setting `firmware_c6_dir`), which ships with
+  **Ops → Update** like the first one — no host step.
+- **Flash** takes `board` (default the S3, so a PWA or debug call that predates this is
+  unchanged), sends that board's whole image set or refuses, and passes the chip to the sidecar,
+  whose `esptool_argv` takes it from an allowlist. The S3 keeps its 16 MB / dio / 80m geometry;
+  the C6 is written with `keep`, leaving the header its own build produced.
+- **OTA is chosen by the panel asking, not by a record of what was flashed.** The C6 firmware
+  sends `?board=c6-amoled-216` on `GET /api/endpoint/firmware` and on the settings poll
+  (`GET /api/endpoint/settings`, whose `fw_version` is the update signal), and follows the
+  manifest's `url` as given — it carries the board. Absent means the S3, so every panel on a
+  wall today is served exactly what it was. A recorded board column would have been a
+  migration and a second fact able to disagree with the firmware, which is the one party that
+  knows its chip; and a wrong answer is still not a brick, because `esp_https_ota` refuses an
+  image built for another chip.
+- `GET /api/endpoint/boards` (owner) lists each board with its available version and whether
+  its set is complete — the shape the PWA's board picker will read.
+- The port label no longer claims a chip: 303a:1001 is "Espressif USB-Serial/JTAG (ESP32-S3 or
+  ESP32-C6)".

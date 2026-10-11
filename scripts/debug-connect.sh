@@ -688,7 +688,7 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
-  panel-flash) # [--port /dev/ttyACM0] [--name Elora] [--role jpet|display] [--erase] — flash a panel
+  panel-flash) # [--port /dev/ttyACM0] [--name Quorra] [--role jpet|display] [--board ID] [--erase] — flash a panel
     # Uses the network the owner asked this box to REMEMBER; a Wi-Fi password is never
     # taken from here, because it would then live in a debug transcript. Mints a fresh
     # device key and retires the ones it replaced — which the flash only started actually
@@ -698,12 +698,16 @@ PY
     # --role decides whether this unit joins the twins' addressing. Defaults to `jpet`,
     # which is what every panel in the house is; `display` is an endpoint the owner
     # operates that no pet can reach.
-    fport=""; fname=""; frole="jpet"; ferase="false"
+    #
+    # --board picks the image set and esptool's chip: `s3-amoled-18` (the default, every
+    # jpet) or `c6-amoled-216` (the owner's C6 panel). The api refuses an unknown one.
+    fport=""; fname=""; frole="jpet"; fboard="s3-amoled-18"; ferase="false"
     while [ $# -gt 0 ]; do
       case "$1" in
         --port) fport="$2"; shift 2 ;;
         --name) fname="$2"; shift 2 ;;
         --role) frole="$2"; shift 2 ;;
+        --board) fboard="$2"; shift 2 ;;
         --erase) ferase="true"; shift ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
       esac
@@ -712,7 +716,7 @@ PY
       jpet|display) ;;
       *) echo "--role must be jpet or display" >&2; exit 2 ;;
     esac
-    body="$(P="$fport" N="$fname" R="$frole" E="$ferase" python3 -c 'import json,os; print(json.dumps({"port": os.environ["P"], "name": os.environ["N"], "role": os.environ["R"], "erase": os.environ["E"] == "true"}))')"
+    body="$(P="$fport" N="$fname" R="$frole" B="$fboard" E="$ferase" python3 -c 'import json,os; print(json.dumps({"port": os.environ["P"], "name": os.environ["N"], "role": os.environ["R"], "board": os.environ["B"], "erase": os.environ["E"] == "true"}))')"
     _call POST /api/debug/endpoint/flash "$body" | _pp ;;
 
   panel-address) # why a panel is, or is not, reaching this box over the LAN

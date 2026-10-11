@@ -326,6 +326,11 @@ fi
 #   . ~/esp-idf/export.sh && (cd firmware && idf.py build)
 #   scripts/firmware-dist.sh           # REQUIRED after any firmware change
 #
+# firmware-c6/ (Jeff's ESP32-C6 jpanel) is the same shape on a RISC-V toolchain, also opt-in:
+#   IDF_TARGETS=esp32c6 scripts/firmware-setup.sh
+#   . ~/esp-idf/export.sh && (cd firmware-c6 && idf.py build)
+#   scripts/firmware-dist.sh firmware-c6
+#
 # That third step is not optional bookkeeping: the built images in firmware/dist/ ARE the
 # distribution — the box flashes them off its own checkout instead of downloading a release
 # — so a firmware change that skips it ships the old image under a new version number.

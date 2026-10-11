@@ -12,6 +12,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  type EndpointBoard,
   type EndpointFirmware,
   type EndpointPort,
   type FlashRequest,
@@ -45,6 +46,11 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
   const [ports, setPorts] = useState<EndpointPort[] | null>(null);
   const [firmware, setFirmware] = useState<EndpointFirmware | null>(null);
+  const [boards, setBoards] = useState<EndpointBoard[]>([]);
+  // Nothing chosen until the owner chooses. Both boards enumerate as the same Espressif
+  // USB device, so the port cannot say which is on the cable, and a guessed board is the
+  // wrong chip handed to esptool.
+  const [board, setBoard] = useState("");
   const [absent, setAbsent] = useState(false);
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -96,6 +102,12 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
       // Best-effort: not knowing the version must never cost the owner the port list.
       setFirmware(null);
     }
+
+    try {
+      setBoards(await api.getEndpointBoards());
+    } catch {
+      setBoards([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -109,6 +121,7 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
     try {
       const body: FlashRequest = { port, ssid, password, erase, remember, role };
       if (name) body.name = name;
+      if (board) body.board = board;
       for await (const line of api.flashEndpoint(body)) {
         setLog((prev) => [...prev, line]);
       }
@@ -151,7 +164,10 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
   useEffect(() => () => watchAbort.current?.abort(), []);
 
   const panels = (ports ?? []).filter((p) => p.is_espressif);
-  const ready = Boolean(port && ssid) && !flashing;
+  // A box with no board list is one that can only flash the twins' S3: no choice to make.
+  const choosing = boards.length > 0;
+  const chosen = boards.find((b) => b.id === board);
+  const ready = Boolean(port && ssid && (!choosing || chosen?.ready)) && !flashing;
   const done = log.length > 0 && log[log.length - 1] === "OK";
   const failed = log.some((l) => l.startsWith("FAILED"));
 
@@ -216,6 +232,36 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
             )}
             {panels.length > 1 && (
               <p className="ep-hint">Two panels are connected — pick the one to flash.</p>
+            )}
+
+            {choosing && (
+              <fieldset className="ep-field ep-role">
+                <legend>Which board is it</legend>
+                {boards.map((b) => (
+                  <label key={b.id} className="ep-radio">
+                    <input
+                      type="radio"
+                      name="panel-board"
+                      checked={board === b.id}
+                      onChange={() => setBoard(b.id)}
+                      disabled={!b.ready}
+                    />
+                    <span>
+                      {b.label}
+                      <em>
+                        {b.ready
+                          ? `Firmware ${b.version ?? "?"} on the box.`
+                          : "No firmware for this board on the box yet — run Ops → Update."}
+                      </em>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            {chosen?.chip === "esp32c6" && role === "jpet" && (
+              <p className="ep-hint">
+                This is your own panel — it should be <strong>A display</strong> below, not a pet.
+              </p>
             )}
           </Step>
 
@@ -299,9 +345,13 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
 
           <Step n={3} title="Flash">
             <p className="ep-hint">
-              {firmware
-                ? `Firmware ${firmware.version}, already on the box — nothing to fetch or download.`
-                : "This box has no firmware built into its checkout. Run Ops → Update, then rescan."}
+              {choosing
+                ? chosen
+                  ? `${chosen.label}: firmware ${chosen.version ?? "?"}, already on the box — nothing to fetch or download.`
+                  : "Pick which board it is in step 1."
+                : firmware
+                  ? `Firmware ${firmware.version}, already on the box — nothing to fetch or download.`
+                  : "This box has no firmware built into its checkout. Run Ops → Update, then rescan."}
             </p>
 
             <label className="ep-check">

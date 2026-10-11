@@ -241,6 +241,11 @@ services:
       # in the source this stack was built from — no GitHub release, no CDN host, no
       # credential, and nothing for the owner to press before the Flash button works.
       - ./src/firmware:/firmware:ro
+      # The second board's firmware (the owner's ESP32-C6 panel), a sibling project in
+      # the same checkout and mounted the same way. A sibling mount rather than mounting
+      # `./src` whole: the api has no business reading the rest of the source tree. This
+      # file is copied in by `update-inner.sh`, so the mount arrives with Ops -> Update.
+      - ./src/firmware-c6:/firmware-c6:ro
     # `jcode`: the api proxies the owner's code-mode control surface to the jcode
     # control server (http://jcode:9100), which lives ONLY on the jcode network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy

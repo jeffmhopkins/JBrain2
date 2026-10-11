@@ -2192,6 +2192,8 @@ class PanelFlashIn(BaseModel):
     # (CLAUDE.md #10), so a unit kind it cannot choose is a unit kind the owner cannot fix from
     # here when the PWA is the thing that is broken.
     role: endpoint_api.PanelRole = "jpet"
+    # Same picker as the PWA's, same S3 default, for the same reason as `role` above.
+    board: endpoint_api.BoardId = endpoint_api.DEFAULT_BOARD
     erase: bool = False
 
 
@@ -2257,6 +2259,7 @@ async def panel_flash(
                 password=password,
                 name=body.name,
                 role=body.role,
+                board=body.board,
                 erase=body.erase,
             )
             async with client.stream("POST", f"{base}/flash", json=payload) as stream:
