@@ -340,6 +340,32 @@ def test_a_reset_takes_the_owners_choice_over_the_default() -> None:
     assert server.Handler._world_action(rig, "slot2", "reset", body)["wreck"] is None
 
 
+def test_a_test_world_keeps_its_mark_only_until_the_owner_takes_it_over(
+    tmp_path: Path,
+) -> None:
+    rig = _rig()
+    assert rig.create_slot("slot2", {"name": "T", "test": True})["test"] is True
+    assert rig.create_slot("slot3", {"name": "Mine"})["test"] is False
+    _make_world("slot2")
+    rig.slots.update("slot2", seed="7")
+    body = {"mode": "same_seed", "test": True}
+    assert server.Handler._world_action(rig, "slot2", "reset", body)["test"] is True
+    assert rig.reset_slot("slot2", "same_seed")["test"] is False  # the owner's now
+
+    rig.slots.update("slot2", test=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("level.dat", b"x")
+        zf.writestr("db/1.ldb", b"y")
+    upload = tmp_path / "w.mcworld"
+    upload.write_bytes(buf.getvalue())
+    assert rig.import_slot("slot2", upload)["test"] is False
+
+    rig.slots.update("slot2", test=True)
+    snap = rig.snapshot("manual", folder="slot2")
+    assert rig.restore_snapshot(snap["name"], "slot2")["test"] is False
+
+
 def test_the_default_is_saved_at_once_and_reported_in_status(tmp_path: Path) -> None:
     rig = _rig()
     rig.bds = bds.Bds(tmp_path)

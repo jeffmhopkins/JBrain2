@@ -794,6 +794,7 @@ class Rig:
             origin="new",
             created_at=time.time(),
             wreck=self._arm(body.get("wreck")),
+            test=bool(body.get("test")),
         )
 
     def update_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -857,13 +858,19 @@ class Rig:
                     created_at=time.time(),
                     rules={},
                     wreck=None,  # the owner's own world: never touched
+                    test=False,
                 )
 
             self._restart_around(folder, work, "A world is being imported here")
         return self.slots.get(slot_id)
 
     def reset_slot(
-        self, slot_id: str, mode: str, seed: str = "", wreck: Any = None
+        self,
+        slot_id: str,
+        mode: str,
+        seed: str = "",
+        wreck: Any = None,
+        test: bool = False,
     ) -> dict[str, Any]:
         rec = self.slots.get(slot_id)
         folder = rec["folder"]
@@ -897,6 +904,7 @@ class Rig:
                     origin="reset",
                     created_at=time.time(),
                     wreck=self._arm(wreck),
+                    test=test,
                 )
                 if active:
                     self._apply_slot(fresh)
@@ -911,7 +919,7 @@ class Rig:
         source = self.index.entry(name)["folder"]
         src = self.slots.by_folder(source) or {}
         # A restored world is the one in the backup, built or not; it is never re-armed.
-        fields: dict[str, Any] = {"origin": "restored", "wreck": None}
+        fields: dict[str, Any] = {"origin": "restored", "wreck": None, "test": False}
         if source != folder:
             # Another world's backup: the slot becomes that world, so its old seed and
             # settings no longer describe it. Rules come with the source's choices.
@@ -1869,6 +1877,7 @@ class Handler(BaseHTTPRequestHandler):
                 str(body.get("mode", "")),
                 str(body.get("seed") or ""),
                 body.get("wreck"),
+                bool(body.get("test")),
             )
         raise ValueError(f"unknown world action: {action}")
 
