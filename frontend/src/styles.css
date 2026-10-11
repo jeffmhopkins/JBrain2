@@ -31700,6 +31700,22 @@ button.wf-sigpill {
   color: var(--text);
 }
 
+.mc-seg button[aria-busy="true"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.mc-seg button[aria-busy="true"] .mc-spin {
+  color: var(--warn-text);
+}
+
+.mc-seg button[aria-disabled="true"] {
+  cursor: default;
+}
+
 @media (max-width: 360px) {
   .mc-seg.four {
     display: grid;
@@ -31994,6 +32010,41 @@ button.wf-sigpill {
 .mc-rule.choice .mc-sel,
 .mc-rule.choice .mc-rstatic {
   flex: 1;
+}
+
+/* Keep inventory: the segments take the row's full width, the meaning and help under them. */
+.mc-rule.mc-keep {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.mc-keep-now {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.mc-keep-now .mc-spin {
+  color: var(--warn-text);
+}
+
+.mc-keep-err {
+  margin-bottom: 0;
+}
+
+.mc-keep-help {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-2);
 }
 
 .mc-rl {

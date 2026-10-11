@@ -690,14 +690,132 @@ export function rulesNote(view: MinecraftRules, s: MinecraftSlot): RulesNote {
   };
 }
 
-/** The ids whose value differs from the default. */
-export function changedRules(view: Pick<MinecraftRules, "rules" | "defaults">): string[] {
+/** The ids whose value differs from the default. A rule a box feature holds (the Power Pack's
+ *  keepInventory) isn't the owner's change: it isn't counted, and no reset may send it, since
+ *  the sidecar refuses the whole batch over it. */
+export function changedRules(
+  view: Pick<MinecraftRules, "rules" | "defaults" | "managed">,
+): string[] {
   return Object.keys(view.rules).filter(
-    (id) => id in view.defaults && view.rules[id] !== view.defaults[id],
+    (id) =>
+      id in view.defaults && !(id in (view.managed ?? {})) && view.rules[id] !== view.defaults[id],
   );
 }
 
 export function ruleSavedToast(r: RuleDef, v: MinecraftRuleValue, live: boolean, when: string) {
   const what = r.label.toLowerCase();
   return live ? `Applied live — ${what}: ${ruleWord(r, v)}` : `Saved — ${what} changes ${when}`;
+}
+
+// ---- keep inventory: Off · On · Power Pack (plan §M10; binding mock
+// docs/mocks/minecraft-keep-inventory/a-segmented-row.html) ----
+
+export type KeepMode = "off" | "on" | "pack";
+
+/** A saved world's choice. Off and On are the plain rule; Power Pack is the slot's switch. */
+export const KEEP_MODES = ["off", "on", "pack"] as const;
+/** The New world form's: the switch lives on a saved slot, which a world being created doesn't
+ *  have yet, and create takes no switch — so the draft offers the plain rule only. */
+export const DRAFT_KEEP_MODES = ["off", "on"] as const;
+
+export const KEEP_WORD: Record<KeepMode, string> = { off: "Off", on: "On", pack: "Power Pack" };
+
+/** Fixed under the row, so the mode is explained before anyone picks it (a pick can be live). */
+export const KEEP_HELP =
+  "Power Pack: players keep their things only while carrying a Power Pack and their own Tricorder; one pack burns each time. Without both, they drop everything.";
+
+export function keepMode(view: Pick<MinecraftRules, "rules" | "managed">): KeepMode {
+  if (view.managed?.keepInventory) return "pack";
+  return view.rules.keepInventory === true ? "on" : "off";
+}
+
+/** The plain choice the switch hands back when it turns off: the slot's saved rule (the sidecar
+ *  pins the value it was turned on over), else Off, as the sidecar falls back. */
+export const keepSaved = (s: MinecraftSlot) => s.rules?.keepInventory === true;
+
+export function keepMeaning(mode: KeepMode, saved: boolean): string {
+  if (mode === "off") return "Everyone drops their things where they die.";
+  if (mode === "on") return "Everyone keeps everything when they die.";
+  return `Underneath it's ${saved ? "On" : "Off"} — that comes back if Power Pack is turned off.`;
+}
+
+export interface KeepStep {
+  kind: "pack" | "rule";
+  on: boolean;
+  msg: string;
+}
+
+/** The writes a pick takes. With the switch on the sidecar refuses a keepInventory write, so
+ *  leaving Power Pack is the switch off first (back to the saved choice), then the rule only
+ *  when the pick differs from that choice. */
+export function keepSteps(from: KeepMode, to: KeepMode, saved: boolean): KeepStep[] {
+  if (from === to) return [];
+  if (to === "pack") return [{ kind: "pack", on: true, msg: "Turning Power Pack on…" }];
+  const want = to === "on";
+  const steps: KeepStep[] = [];
+  if (from === "pack") {
+    steps.push({
+      kind: "pack",
+      on: false,
+      msg: `Turning Power Pack off — keep inventory goes back to your saved ${saved ? "On" : "Off"}…`,
+    });
+    if (saved === want) return steps;
+  }
+  steps.push({ kind: "rule", on: want, msg: `Setting keep inventory ${KEEP_WORD[to]}…` });
+  return steps;
+}
+
+const BUSY_WORD: Record<string, string> = {
+  start: "starting",
+  stop: "stopping",
+  restart: "restarting",
+  "another action": "busy with another action",
+};
+
+/** A 400/409's detail as a clause: the sidecar's `busy: restoring a backup` reads *the server
+ *  is restoring a backup*; a console that stopped mid-write, and the managed-rule refusal a
+ *  stale device gets, read plainly. Anything else is quoted. */
+export function refusalReason(detail: string): string {
+  const d = detail.trim().replace(/[.\s]+$/, "");
+  const busy = d.match(/^busy: (.+)$/);
+  if (busy?.[1]) return `the server is ${BUSY_WORD[busy[1]] ?? busy[1]}`;
+  if (/not running/.test(d)) return "the server isn't running";
+  if (/managed by the Power Pack/.test(d)) return "Power Pack is holding it on";
+  return d;
+}
+
+/** The rose line after a failed pick, worded from the re-read rather than the attempt: a
+ *  Power Pack write saves the slot before it reaches the console, so a failure can leave it
+ *  changed. *Nothing changed* only when the server refused and the re-read agrees; a 503 or a
+ *  dropped connection never says it. */
+export function keepFailText(o: {
+  to: KeepMode;
+  from: KeepMode;
+  now: KeepMode | null;
+  refused: boolean;
+  reason: string;
+}): string {
+  const head = `Couldn't set keep inventory to ${KEEP_WORD[o.to]} — ${o.reason}.`;
+  const maybe = "The server may still be working on it.";
+  if (o.now === null) return `${head} Couldn't read it back. ${maybe}`;
+  const now = KEEP_WORD[o.now];
+  if (o.now === o.to)
+    return `Keep inventory reads ${now} now, but the server reported a problem — ${o.reason}.`;
+  if (o.now === o.from)
+    return o.refused ? `${head} Nothing changed.` : `${head} It still reads ${now}. ${maybe}`;
+  const off = o.from === "pack" ? "Power Pack is off and it" : "It";
+  return `${head} ${off} reads ${now} for now.${o.refused ? "" : ` ${maybe}`}`;
+}
+
+/** After a pick lands. `live` is the write's own answer (the switch's `applies`, the rules'
+ *  `live`); where else it applies is worded from the slot, as rulesNote() does. */
+export function keepSavedToast(to: KeepMode, from: KeepMode, s: MinecraftSlot, live: boolean) {
+  const what =
+    from === "pack"
+      ? `Power Pack off, keep inventory ${KEEP_WORD[to]}`
+      : `keep inventory ${KEEP_WORD[to]}`;
+  if (live) return `Applied live — ${what}`;
+  return s.active
+    ? `Saved — ${what} when the server starts`
+    : `Saved — ${what} from ${slotName(s)}'s next load`;
 }
