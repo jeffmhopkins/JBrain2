@@ -104,7 +104,7 @@ def test_what_clearly_is_a_fixed_request_matches(said: str, want: fp.Ask | None)
         "how many scans does Mira have left",
         "list Mira's places",
         "clear my waypoint and point me home",
-        # "take me to" is transport in the canon, which isn't built: always the model's.
+        # "take me to" is transport (§M10): the model's mc_transport and its Yes / No form.
         "take me home",
         "take me to tree farm",
         # DW1's welcome replay isn't built; the model answers hello (§M18 note).

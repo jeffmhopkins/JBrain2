@@ -183,6 +183,7 @@ _AUTHORS_BRIEF = {
     "mc_place_save",
     "mc_places",
     "mc_place_remove",
+    "mc_transport",
     "mc_command",
     "mc_server_action",
     "mc_server_log",

@@ -221,7 +221,8 @@ async def test_a_question_is_one_player_tier_turn_answered_privately(world) -> N
     assert await door.tick() == 1
     await door.drain()
     (call,) = executor.calls
-    assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS
+    # Less transport, a Power Pack use, until the asker has made a pack (§M19).
+    assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS - {"mc_transport"}
     assert "intro for session-of-111" in call["profile"].prompt
     assert call["agent_session_id"] == "session-of-111"
     assert call["read_scopes"] == ()

@@ -8,6 +8,7 @@ import { system, world, CommandPermissionLevel, CustomCommandParamType,
 import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, parseConfig,
   parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
   xpToDrop } from "./rules.js";
+import { initTransport } from "./transport.js";
 import { initBeacon } from "./beacon.js";
 
 initBeacon(world, system);
@@ -322,6 +323,8 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     }
   }
 });
+
+initTransport({ carried, tricorderOn, say });
 
 // --- the Tricorder's arrow, about four times a second -----------------------------------
 
