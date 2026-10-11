@@ -180,6 +180,9 @@ def test_map_tiles_pass_through_as_png_and_bad_input_never_reaches_the_box(clien
     assert resp.status_code == 200 and resp.content == png
     assert resp.headers["content-type"] == "image/png"
     assert seen[-1].url.params["slot"] == "slot2"
+    assert seen[-1].url.params["layer"] == "surface"  # true colour unless asked otherwise
+    client.get("/api/minecraft/map/tile/overworld/1/-2/3.png?layer=biomes")
+    assert seen[-1].url.params["layer"] == "biomes"
     info = client.get("/api/minecraft/map/info?dim=nether").json()
     assert info["tile_blocks"] == 256 and seen[-1].url.params["dim"] == "nether"
     count = len(seen)
@@ -187,6 +190,7 @@ def test_map_tiles_pass_through_as_png_and_bad_input_never_reaches_the_box(clien
         "/api/minecraft/map/tile/aether/0/0/0.png",
         "/api/minecraft/map/tile/overworld/5/0/0.png",
         "/api/minecraft/map/tile/overworld/0/0/0.png?slot=../etc",
+        "/api/minecraft/map/tile/overworld/0/0/0.png?layer=../etc",
         "/api/minecraft/map/info?dim=moon",
     ):
         assert client.get(bad).status_code == 422, bad

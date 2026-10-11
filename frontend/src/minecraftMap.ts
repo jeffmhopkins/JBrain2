@@ -133,11 +133,16 @@ export function visibleTiles(v: MapView, f: Frame): TileSpot[] {
   return out.map(({ d: _d, ...t }) => t);
 }
 
+/** The map's base layers the box renders: explored ground in its real block colours, or
+ *  the biome atlas. Unexplored ground is the biome survey under either. */
+export type BaseLayer = "surface" | "biomes";
+
 export const tileKey = (
   slot: string,
   dim: MinecraftDim,
   t: { zoom: number; tx: number; tz: number },
-) => `${slot}|${dim}|${t.zoom}|${t.tx}|${t.tz}`;
+  layer: BaseLayer = "surface",
+) => `${slot}|${dim}|${layer}|${t.zoom}|${t.tx}|${t.tz}`;
 
 /** The view that frames these world points in the visible map, or null for none. */
 export function fitView(pts: [number, number][], f: Frame, pad = 56, maxS = 1.2): MapView | null {

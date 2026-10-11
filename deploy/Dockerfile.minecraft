@@ -53,6 +53,7 @@ COPY deploy/minecraft/worlds.py ./worlds.py
 COPY deploy/minecraft/leveldb.py ./leveldb.py
 COPY deploy/minecraft/mapping.py ./mapping.py
 COPY deploy/minecraft/blocks.py ./blocks.py
+COPY deploy/minecraft/blockcolors.py ./blockcolors.py
 COPY deploy/minecraft/structures.py ./structures.py
 COPY deploy/minecraft/structure_sweep.py ./structure_sweep.py
 COPY deploy/minecraft/probe-pack ./probe-pack

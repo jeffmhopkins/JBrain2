@@ -694,15 +694,17 @@ export interface MinecraftTimeline {
 
 export type MinecraftTimelinePart = "trails" | "events" | "sessions" | "explored";
 
-/** A biome-map tile: built by the client, never authored by a model (DESIGN "minecraft_map"). */
+/** A map tile of one base layer: built by the client, never authored by a model (DESIGN
+ *  "minecraft_map"). */
 export function minecraftTileUrl(
   slot: string,
   dim: MinecraftDim,
   zoom: number,
   tx: number,
   tz: number,
+  layer: "surface" | "biomes" = "surface",
 ): string {
-  return `/api/minecraft/map/tile/${dim}/${zoom}/${tx}/${tz}.png?slot=${encodeURIComponent(slot)}`;
+  return `/api/minecraft/map/tile/${dim}/${zoom}/${tx}/${tz}.png?slot=${encodeURIComponent(slot)}&layer=${layer}`;
 }
 
 /** PATCH /worlds/{slot}: the slot, plus when a change takes effect. */

@@ -74,6 +74,7 @@ import {
 } from "../components/icons";
 import { agoOf } from "../minecraft";
 import {
+  type BaseLayer,
   DIMS,
   type Frame,
   GLYPHS,
@@ -135,9 +136,9 @@ import {
   clusterBadge,
   colorOf,
   drawScale,
+  drawTiles,
   fetchTile,
   grid,
-  hole,
   line,
   markerGlyph,
   markerLabel,
@@ -229,6 +230,23 @@ const OVERLAYS: Overlays = {
   grid: false,
 };
 
+// The base layers the box renders, each with its swatch: a built-on plank floor for
+// true colour, a forest for the biome atlas. Height is listed, not built yet.
+const BASE_LAYERS: [BaseLayer, string, string, [number, number, number]][] = [
+  ["surface", "Surface", "true colour where explored", [162, 130, 78]],
+  ["biomes", "Biomes", "explored + satellite survey", [5, 102, 33]],
+];
+const LAYER_KEY = "jbrain.minecraftMap.layer";
+
+/** The base layer this viewer last picked: a per-device convenience, Surface by default. */
+function storedLayer(): BaseLayer {
+  try {
+    return localStorage.getItem(LAYER_KEY) === "biomes" ? "biomes" : "surface";
+  } catch {
+    return "surface";
+  }
+}
+
 function errText(err: unknown): string {
   return err instanceof ApiError ? err.message : "Can't reach the box.";
 }
@@ -268,6 +286,15 @@ export function MapLayer({
   );
   const [point, setPoint] = useState<MinecraftMapPoint | null>(null);
   const [ov, setOv] = useState<Overlays>(OVERLAYS);
+  const [layer, setLayerState] = useState<BaseLayer>(storedLayer);
+  const setLayer = useCallback((l: BaseLayer) => {
+    setLayerState(l);
+    try {
+      localStorage.setItem(LAYER_KEY, l);
+    } catch {
+      // A private window keeps the choice for this visit only.
+    }
+  }, []);
   /** Explored by: null is anyone, else one player's key. */
   const [exBy, setExBy] = useState<string | null>(null);
   const [tab, setTab] = useState<"layers" | "time">("layers");
@@ -328,14 +355,42 @@ export function MapLayer({
   const dayEl = useRef<HTMLSpanElement>(null);
   const trackEl = useRef<HTMLDivElement>(null);
   const scrubEl = useRef<HTMLDivElement>(null);
-  const state = useRef({ slot, dim, sel, ov, players, structs, info, tl, log, roster, fog, exBy });
-  state.current = { slot, dim, sel, ov, players, structs, info, tl, log, roster, fog, exBy };
+  const state = useRef({
+    slot,
+    dim,
+    layer,
+    sel,
+    ov,
+    players,
+    structs,
+    info,
+    tl,
+    log,
+    roster,
+    fog,
+    exBy,
+  });
+  state.current = {
+    slot,
+    dim,
+    layer,
+    sel,
+    ov,
+    players,
+    structs,
+    info,
+    tl,
+    log,
+    roster,
+    fog,
+    exBy,
+  };
 
   const redraw = useCallback(() => {
     dirty.current = true;
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: any change to what's drawn redraws.
-  useEffect(redraw, [slot, dim, sel, ov, players, structs, info, panelH, tl, log, fog]);
+  useEffect(redraw, [slot, dim, layer, sel, ov, players, structs, info, panelH, tl, log, fog]);
 
   // A pushed page takes focus at its back button.
   useEffect(() => {
@@ -928,7 +983,11 @@ export function MapLayer({
   }, [redraw]);
 
   const want = useCallback(
-    (key: string, t: { zoom: number; tx: number; tz: number }): TileEntry | null => {
+    (
+      key: string,
+      t: { zoom: number; tx: number; tz: number },
+      layer: BaseLayer,
+    ): TileEntry | null => {
       const st = state.current;
       const now = Date.now();
       const have = cache.current.get(key);
@@ -941,7 +1000,7 @@ export function MapLayer({
       const entry: TileEntry = { img: have?.img ?? null, at: now, state: "loading" };
       cache.current.set(key, entry);
       inFlight.current++;
-      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz)
+      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer)
         .then((img) => {
           cache.current.set(key, { img, at: Date.now(), state: "ok" });
         })
@@ -980,16 +1039,14 @@ export function MapLayer({
     // tiles
     ctx.imageSmoothingEnabled = false;
     const spots = visibleTiles(v, f);
-    let pending = 0;
-    for (const s of spots) {
-      const entry = want(tileKey(st.slot, st.dim, s), s);
-      if (entry?.img)
-        ctx.drawImage(entry.img, 0, 0, 256, 256, s.sx, s.sy, s.size + 0.5, s.size + 0.5);
-      else {
-        if (entry?.state !== "failed") pending++;
-        hole(ctx, s.sx, s.sy, s.size, entry?.state === "failed" ? "failed" : "loading", t);
-      }
-    }
+    const pending = drawTiles(
+      ctx,
+      spots,
+      st.layer,
+      (s, layer) => cache.current.get(tileKey(st.slot, st.dim, s, layer)),
+      (s, layer) => want(tileKey(st.slot, st.dim, s, layer), s, layer),
+      t,
+    );
     setTiles((p) =>
       p.visible === spots.length && p.pending === pending ? p : { visible: spots.length, pending },
     );
@@ -1648,6 +1705,8 @@ export function MapLayer({
                 gridRef={gridEl}
                 ov={ov}
                 setOv={setOv}
+                layer={layer}
+                setLayer={setLayer}
                 structs={structs}
                 canSearch={live && !sweeping}
                 onSearch={() => void searchAgain()}
@@ -1993,6 +2052,8 @@ function Layers({
   gridRef,
   ov,
   setOv,
+  layer,
+  setLayer,
   structs,
   canSearch,
   onSearch,
@@ -2006,6 +2067,8 @@ function Layers({
   gridRef: React.RefObject<HTMLDivElement>;
   ov: Overlays;
   setOv: (f: (o: Overlays) => Overlays) => void;
+  layer: BaseLayer;
+  setLayer: (l: BaseLayer) => void;
   structs: MinecraftMapStructures | null;
   canSearch: boolean;
   onSearch: () => void;
@@ -2032,24 +2095,30 @@ function Layers({
     <>
       <h3 className="mc-sect mc-map-sect">Map</h3>
       <div className="mc-map-ly-grid" role="radiogroup" aria-label="Base layer" ref={gridRef}>
-        {/* biome-ignore lint/a11y/useSemanticElements: a styled option card; a native radio can't carry this layout. */}
-        <button type="button" className="mc-map-ly" role="radio" aria-checked="true">
-          <span
-            className="mc-map-sw"
-            style={{
-              background: `linear-gradient(135deg,rgb(${forest.join(",")}) 0 50%,rgb(${asSurvey(plains)}) 50%)`,
-            }}
-            aria-hidden="true"
-          />
-          <span className="mc-map-ly-tx">
-            <span className="mc-map-ly-t">Biomes</span>
-            <span className="mc-map-ly-s">explored + satellite survey</span>
-          </span>
-        </button>
-        {[
-          ["Surface", "true colour"],
-          ["Height", "contours"],
-        ].map(([t, s]) => (
+        {BASE_LAYERS.map(([id, t, s, sw]) => (
+          <button
+            key={id}
+            type="button"
+            className="mc-map-ly"
+            // biome-ignore lint/a11y/useSemanticElements: a styled option card; a native radio can't carry this layout.
+            role="radio"
+            aria-checked={layer === id}
+            onClick={() => setLayer(id)}
+          >
+            <span
+              className="mc-map-sw"
+              style={{
+                background: `linear-gradient(135deg,rgb(${sw.join(",")}) 0 50%,rgb(${asSurvey(plains)}) 50%)`,
+              }}
+              aria-hidden="true"
+            />
+            <span className="mc-map-ly-tx">
+              <span className="mc-map-ly-t">{t}</span>
+              <span className="mc-map-ly-s">{s}</span>
+            </span>
+          </button>
+        ))}
+        {[["Height", "contours"]].map(([t, s]) => (
           <button
             key={t}
             type="button"
@@ -2207,7 +2276,12 @@ function Layers({
           ))}
         </div>
         <p className="mc-note">
-          Biome colours, hillshaded from the north-west. Water darkens with depth.
+          {layer === "surface" && dim !== "nether"
+            ? "Explored ground in the colour of its top block, seen from above, hillshaded from the north-west. Water darkens with depth; the survey is biome colours."
+            : "Biome colours, hillshaded from the north-west. Water darkens with depth."}
+          {layer === "surface" && dim === "nether"
+            ? " The Nether is shown by biome: from above, its top block is the bedrock roof."
+            : ""}
         </p>
         <div className="mc-map-lg-row">
           <span className="mc-map-lg-i">

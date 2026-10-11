@@ -286,8 +286,9 @@ async def test_the_debug_map_serves_a_picture_not_the_world(sidecar) -> None:
     seen, replies = sidecar
     replies["/map/tile/the_end/0/1/1.png"] = httpx.Response(200, content=b"\x89PNG")
     req = _request(FakeSupervisor([]))
-    resp = await mc.minecraft_map_tile("the_end", 0, 1, 1, req, SETTINGS, PRINCIPAL)
+    resp = await mc.minecraft_map_tile("the_end", 0, 1, 1, req, SETTINGS, PRINCIPAL, layer="biomes")
     assert resp.body == b"\x89PNG" and resp.media_type == "image/png"
+    assert seen[-1].url.params["layer"] == "biomes"
     await mc.minecraft_map_info(req, SETTINGS, PRINCIPAL, slot="slot1", dim="overworld")
     assert [r.url.path for r in seen] == ["/map/tile/the_end/0/1/1.png", "/map/info"]
 

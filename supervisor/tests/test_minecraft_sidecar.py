@@ -1473,6 +1473,8 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
         rig.map_info("slot1", "aether")
     with pytest.raises(ValueError):
         rig.map_tile("slot1", "overworld", mapping.MAX_ZOOM + 1, 0, 0)
+    with pytest.raises(ValueError):
+        rig.map_tile("slot1", "overworld", 0, 0, 0, layer="height")
     info = rig.map_info("slot1", "overworld")
     assert info["extent"] is None and info["tile_blocks"] == 256  # empty db: all fog
     assert info["predicted"] is False  # no level.dat seed and no binary in the test rig
@@ -1482,6 +1484,28 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     assert (
         rig.map_tile("slot1", "overworld", 0, 0, 0) is png
     )  # cached until files change
+    # Each layer is its own tile: switching layers never serves the other's picture.
+    assert rig.map_tile("slot1", "overworld", 0, 0, 0, layer="biomes") is not png
+    # A true-colour draw in progress never holds up the Biomes tile shown under it.
+    with rig._surface_lock:
+        under = rig.map_tile("slot1", "overworld", 0, 1, 0, layer="biomes")
+    assert under[:8] == png[:8]
+    # A true-colour tile drawn from a world re-read meanwhile is served, not kept.
+    index = rig._map_index["world"]
+    # The module the sidecar loaded, whichever test file ran first.
+    real_tile = server.mapping.tile
+
+    def reread_meanwhile(*args: object) -> bytes:
+        index._signature = ("moved",)
+        return real_tile(*args)
+
+    server.mapping.tile = reread_meanwhile
+    try:
+        drawn = rig.map_tile("slot1", "overworld", 0, 2, 0)
+    finally:
+        server.mapping.tile = real_tile
+    assert drawn[:8] == png[:8]
+    assert not any(k[3] == 2 for k in rig._tiles)
 
 
 def test_a_point_is_explored_ground_the_survey_or_unknown() -> None:

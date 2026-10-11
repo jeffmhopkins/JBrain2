@@ -33,6 +33,7 @@ import {
   UserIcon,
 } from "../../components/icons";
 import {
+  type BaseLayer,
   type Frame,
   GLYPHS,
   type MapView,
@@ -67,8 +68,8 @@ import {
   clusterBadge,
   colorOf,
   drawScale,
+  drawTiles,
   fetchTile,
-  hole,
   line,
   markerGlyph,
   markerLabel,
@@ -435,7 +436,11 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
   }, [redraw]);
 
   const want = useCallback(
-    (key: string, t: { zoom: number; tx: number; tz: number }): TileEntry | null => {
+    (
+      key: string,
+      t: { zoom: number; tx: number; tz: number },
+      layer: BaseLayer,
+    ): TileEntry | null => {
       const have = cache.current.get(key);
       const retry = have?.state === "failed" && Date.now() - have.at > 15_000;
       if (have && !retry) return have;
@@ -443,7 +448,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
       const entry: TileEntry = { img: null, at: Date.now(), state: "loading" };
       cache.current.set(key, entry);
       inFlight.current++;
-      fetchTile(slot, dim, t.zoom, t.tx, t.tz)
+      fetchTile(slot, dim, t.zoom, t.tx, t.tz, layer)
         .then((img) => cache.current.set(key, { img, at: Date.now(), state: "ok" }))
         .catch(() => cache.current.set(key, { img: null, at: Date.now(), state: "failed" }))
         .finally(() => {
@@ -473,16 +478,14 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
 
     ctx.imageSmoothingEnabled = false;
     const spots = visibleTiles(v, f);
-    let pending = 0;
-    for (const s of spots) {
-      const entry = want(tileKey(slot, dim, s), s);
-      if (entry?.img)
-        ctx.drawImage(entry.img, 0, 0, 256, 256, s.sx, s.sy, s.size + 0.5, s.size + 0.5);
-      else {
-        if (entry?.state !== "failed") pending++;
-        hole(ctx, s.sx, s.sy, s.size, entry?.state === "failed" ? "failed" : "loading", t);
-      }
-    }
+    const pending = drawTiles(
+      ctx,
+      spots,
+      "surface",
+      (s, layer) => cache.current.get(tileKey(slot, dim, s, layer)),
+      (s, layer) => want(tileKey(slot, dim, s, layer), s, layer),
+      t,
+    );
     setTiles((p) =>
       p.visible === spots.length && p.pending === pending ? p : { visible: spots.length, pending },
     );
@@ -752,7 +755,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
       <div className="tv-mc-head">
         <MapIcon size={16} />
         <span className="tv-mc-title">
-          <b>{title}</b> · Biomes
+          <b>{title}</b> · {dim === "nether" ? "Biomes" : "Surface"}
         </span>
         <button
           type="button"
