@@ -10,6 +10,8 @@ export const EquipmentSlot = {
 export const CommandPermissionLevel = { Any: 0 };
 export const CustomCommandParamType = { String: "String" };
 export const CustomCommandStatus = { Success: 0, Failure: 1 };
+// No block types here; replicator_fake.mjs has the blocks the Replicator's tests need.
+export const BlockTypes = { get: () => undefined };
 
 export class ItemStack {
   constructor(typeId, amount = 1) {
@@ -146,6 +148,7 @@ let queued = [];
 const props = new Map();
 let players = [];
 let commands = new Map();
+const blockComponents = new Map();
 const rules = { keepInventory: false };
 
 export const world = {
@@ -182,10 +185,14 @@ export const sim = {
   startup() {
     commands = new Map();
     for (const fn of subs.startup) {
-      fn({ customCommandRegistry: { registerCommand: (def, cb) => commands.set(def.name, { def, cb }) } });
+      fn({
+        customCommandRegistry: { registerCommand: (def, cb) => commands.set(def.name, { def, cb }) },
+        blockComponentRegistry: { registerCustomComponent: (name, c) => blockComponents.set(name, c) },
+      });
     }
   },
   command: (name) => commands.get(name),
+  blockComponent: (name) => blockComponents.get(name),
   player(name, id) {
     const p = new Player(name, id, sim.overworld);
     players.push(p);

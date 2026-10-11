@@ -3,6 +3,8 @@
   "texture_name": "atlas.items",
   "texture_data": {
     "jbrain_power_pack": { "textures": "textures/items/power_pack" },
-    "jbrain_tricorder": { "textures": "textures/items/tricorder" }
+    "jbrain_tricorder": { "textures": "textures/items/tricorder" },
+    "jbrain_replicator": { "textures": "textures/items/replicator" },
+    "jbrain_replicator_programmed": { "textures": "textures/items/replicator_programmed" }
   }
 }

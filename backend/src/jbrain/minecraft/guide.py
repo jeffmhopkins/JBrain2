@@ -29,8 +29,9 @@ VERSION = _PROMPT.version
 _ENTRY = re.compile(r"^\[entry: (\w+)\]\n", re.MULTILINE)
 
 # What the pack can report a player has unlocked: the Tricorder from the start, the Power
-# Pack on their first Ender Pearl, its uses on their first Power Pack.
-UNLOCKS = ("tricorder", "power_pack", "power_pack_uses")
+# Pack on their first Ender Pearl, its uses on their first Power Pack, the Replicator once
+# they hold 8 Power Packs (§M15).
+UNLOCKS = ("tricorder", "power_pack", "power_pack_uses", "replicator")
 ALWAYS = frozenset({"tricorder"})
 
 
@@ -59,6 +60,8 @@ def entries_for(known: Iterable[str], *, keep_switch: bool) -> list[str]:
         out.append("power_pack")
     if "power_pack_uses" in have:
         out.append("power_pack_keep" if keep_switch else "power_pack_unused")
+    if "replicator" in have:
+        out.append("replicator")
     return out
 
 
@@ -68,5 +71,5 @@ def for_player(known: Iterable[str], *, keep_switch: bool) -> str:
 
 
 def for_owner() -> str:
-    names = ["intro_owner", "tricorder", "power_pack", "power_pack_keep"]
+    names = ["intro_owner", "tricorder", "power_pack", "power_pack_keep", "replicator"]
     return "\n\n".join(ENTRIES[n] for n in names)

@@ -1,0 +1,244 @@
+// The Replicator (docs/plans/MINECRAFT_BEDROCK_PLAN.md §M15): a block Dave programs to
+// make one thing, which burns any block into it like a furnace. Stable @minecraft/server
+// only, so it is a custom block with script-run "furnace" behaviour: a custom block can't
+// hold a container, and scripts can't open a furnace's UI on one. It reads blocks from a
+// container on top, fuel from one beside it and puts what it makes into one below — the
+// sides a furnace's hoppers use — once per block tick, which the game only runs where the
+// land is loaded. The rules are in replicator_rules.js.
+import { system, world, BlockTypes, ItemStack } from "@minecraft/server";
+import { FUEL_LEFTOVER, HOW, PATTERN, PROGRAMMED, REPLICATOR, STATE, TARGET,
+  fuelTicks, parseProgram, parseRecord, programCheck, programmedLore, programmedName,
+  recordKey, roomFor, statusLine, takePlan, turn, unlocksReplicator } from "./replicator_rules.js";
+
+const say = (msg) => console.log(`[jbrain] ${msg}`);
+
+const keyOf = (block) => recordKey(block.dimension.id, block.location);
+const readRecord = (block) => parseRecord(world.getDynamicProperty(keyOf(block)));
+const writeRecord = (block, rec) =>
+  world.setDynamicProperty(keyOf(block), rec ? JSON.stringify(rec) : undefined);
+
+const targetOf = (item) => {
+  if (item?.typeId !== PROGRAMMED) return undefined;
+  const t = item.getDynamicProperty(TARGET);
+  return typeof t === "string" ? t : undefined;
+};
+
+export const makeReplicator = (target) => {
+  if (!target) return new ItemStack(REPLICATOR, 1);
+  const item = new ItemStack(PROGRAMMED, 1);
+  item.nameTag = programmedName(target);
+  item.setLore([programmedLore(target)]);
+  item.setDynamicProperty(TARGET, target);
+  return item;
+};
+
+const maxAmountOf = (typeId) => {
+  try {
+    return new ItemStack(typeId, 1).maxAmount;
+  } catch {
+    return undefined; // no such item
+  }
+};
+
+// --- programming, at Dave's request (mc_replicator_program) -----------------------------
+
+const program = (message) => {
+  const { player: name, target } = parseProgram(message);
+  const player = world.getAllPlayers().find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (!player) return `replicator refused: offline ${name}`;
+  const inv = player.getComponent("minecraft:inventory")?.container;
+  if (!inv) return `replicator refused: offline ${name}`;
+  const slot = player.selectedSlotIndex;
+  const held = inv.getItem(slot);
+  const slots = [];
+  for (let i = 0; i < inv.size; i++) {
+    const it = inv.getItem(i);
+    if (it) slots.push({ i, typeId: it.typeId, amount: it.amount });
+  }
+  const have = slots.reduce((n, s) => n + (s.typeId === target ? s.amount : 0), 0);
+  const refused = programCheck({
+    held: held && { typeId: held.typeId, target: targetOf(held) },
+    target,
+    maxAmount: maxAmountOf(target),
+    have,
+  });
+  if (refused) {
+    return `replicator refused: ${refused.code}${refused.detail === undefined ? "" : ` ${refused.detail}`}`;
+  }
+  for (const { i, left } of takePlan(slots, target, PATTERN)) {
+    if (left > 0) {
+      const it = inv.getItem(i);
+      it.amount = left;
+      inv.setItem(i, it);
+    } else {
+      inv.setItem(i, undefined);
+    }
+  }
+  inv.setItem(slot, makeReplicator(target));
+  player.playSound("random.anvil_use");
+  return `replicator programmed: ${player.name} ${target} as ${programmedName(target)}`;
+};
+
+// --- the placed block ---------------------------------------------------------------------
+
+const containerAt = (block) => {
+  try {
+    return block?.getComponent("minecraft:inventory")?.container;
+  } catch {
+    return undefined;
+  }
+};
+
+const isBlock = (typeId) => typeId !== REPLICATOR && typeId !== PROGRAMMED
+  && BlockTypes.get(typeId) !== undefined;
+
+const firstSlot = (container, ok) => {
+  if (!container) return -1;
+  for (let i = 0; i < container.size; i++) {
+    const it = container.getItem(i);
+    if (it && ok(it)) return i;
+  }
+  return -1;
+};
+
+const takeOne = (container, i) => {
+  const it = container.getItem(i);
+  const leftover = FUEL_LEFTOVER[it.typeId];
+  if (it.amount > 1) {
+    it.amount -= 1;
+    container.setItem(i, it);
+  } else {
+    container.setItem(i, leftover ? new ItemStack(leftover, 1) : undefined);
+  }
+};
+
+const slotsOf = (container) => {
+  const out = [];
+  for (let i = 0; i < container.size; i++) {
+    const it = container.getItem(i);
+    out.push(it && { typeId: it.typeId, amount: it.amount, named: Boolean(it.nameTag) });
+  }
+  return out;
+};
+
+// One block tick: every COOK_TICKS (the block's `minecraft:tick`), so only while its
+// chunk ticks, and with no catching up after.
+const onTick = ({ block }) => {
+  const rec = readRecord(block);
+  if (!rec) return;
+  const input = containerAt(block.above());
+  const output = containerAt(block.below());
+  const fuelBoxes = [block.north(), block.south(), block.east(), block.west()]
+    .map(containerAt)
+    .filter(Boolean);
+  const inSlot = firstSlot(input, (it) => isBlock(it.typeId));
+  let fuelBox;
+  let fuelSlot = -1;
+  for (const c of fuelBoxes) {
+    fuelSlot = firstSlot(c, (it) => fuelTicks(it.typeId) > 0);
+    if (fuelSlot >= 0) {
+      fuelBox = c;
+      break;
+    }
+  }
+  const room = Boolean(output) && roomFor(slotsOf(output), rec.target, maxAmountOf(rec.target) ?? 64);
+  const plan = turn(rec, {
+    input: inSlot >= 0,
+    burn: fuelBox ? fuelTicks(fuelBox.getItem(fuelSlot).typeId) : 0,
+    room,
+  });
+  if (plan.takeFuel) takeOne(fuelBox, fuelSlot);
+  if (plan.takeInput) takeOne(input, inSlot);
+  if (plan.make) {
+    const spill = output.addItem(new ItemStack(rec.target, 1));
+    if (spill) block.dimension.spawnItem(spill, block.below().center());
+  }
+  if (plan.fuel !== rec.fuel || plan.state !== rec.state) {
+    writeRecord(block, { target: rec.target, fuel: plan.fuel, state: plan.state });
+  }
+};
+
+// Placed by a player: the held item says what it makes. The before-event is read-only,
+// so the target waits here for onPlace, which runs for this placement next.
+const pending = new Map();
+
+const beforeOnPlayerPlace = (ev) => {
+  let held;
+  try {
+    const inv = ev.player?.getComponent("minecraft:inventory")?.container;
+    held = inv?.getItem(ev.player.selectedSlotIndex);
+  } catch {
+    return; // unreadable: it goes down blank
+  }
+  const target = targetOf(held);
+  if (!target) return;
+  ev.permutationToPlace = ev.permutationToPlace.withState(STATE, true);
+  pending.set(keyOf(ev.block), target);
+};
+
+const onPlace = ({ block }) => {
+  const key = keyOf(block);
+  const target = pending.get(key);
+  pending.delete(key);
+  // A stale record (the block went some way that never told us) is overwritten either way.
+  writeRecord(block, target ? { target, fuel: 0, state: "no_input" } : undefined);
+};
+
+// Its loot table is empty: the script gives back the item, programmed as it was. Fuel
+// already burning in it is lost, as a furnace's is.
+const onPlayerBreak = ({ block, dimension }) => {
+  const rec = readRecord(block);
+  writeRecord(block, undefined);
+  dimension.spawnItem(makeReplicator(rec?.target), block.center());
+};
+
+const onPlayerInteract = ({ block, player }) => {
+  if (!player) return;
+  player.sendMessage(`${statusLine(readRecord(block))}\n§7${HOW}`);
+};
+
+// --- §M19: Dave explains it once a player has 8 Power Packs on them ----------------------
+
+const knownKey = (id) => `jb:known:${id}`;
+
+const learnReplicator = () => {
+  for (const player of world.getAllPlayers()) {
+    try {
+      const raw = world.getDynamicProperty(knownKey(player.id));
+      const known = typeof raw === "string" ? JSON.parse(raw) : [];
+      if (!Array.isArray(known) || known.includes("replicator")) continue;
+      const inv = player.getComponent("minecraft:inventory")?.container;
+      const stacks = [];
+      for (let i = 0; i < (inv?.size ?? 0); i++) {
+        const it = inv.getItem(i);
+        if (it) stacks.push({ typeId: it.typeId, amount: it.amount });
+      }
+      if (!unlocksReplicator(stacks)) continue;
+      // main.js keeps every name it finds here and adds the Tricorder if it's missing.
+      world.setDynamicProperty(knownKey(player.id), JSON.stringify([...known, "replicator"].sort()));
+    } catch {
+      // A player mid-join is looked at again next second.
+    }
+  }
+};
+
+export const initReplicator = () => {
+  system.beforeEvents.startup.subscribe((ev) => {
+    ev.blockComponentRegistry.registerCustomComponent(REPLICATOR, {
+      beforeOnPlayerPlace,
+      onPlace,
+      onPlayerBreak,
+      onPlayerInteract,
+      onTick,
+    });
+  });
+  system.afterEvents.scriptEventReceive.subscribe((ev) => {
+    if (ev.id !== "jb:replicator") return;
+    try {
+      say(program(ev.message));
+    } catch (e) {
+      say(`replicator refused: bad_request ${e}`);
+    }
+  });
+  system.runInterval(learnReplicator, 20);
+};

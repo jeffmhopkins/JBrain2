@@ -1631,11 +1631,16 @@ def test_every_world_gets_the_jbrain_resource_pack_and_clients_must_take_it(
     monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
     rig._start()
     rp = json.loads((world / "world_resource_packs.json").read_text())
-    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": [1, 0, 0]}]
+    rp_version = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())[
+        "header"
+    ]["version"]
+    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": rp_version}]
     assert not old.exists()
     icons = world / "resource_packs" / "jbrain" / "textures" / "items"
     assert sorted(p.name for p in icons.iterdir()) == [
         "power_pack.png",
+        "replicator.png",
+        "replicator_programmed.png",
         "tricorder.png",
     ]
     assert rig.properties()["texturepacks-required"] == "true"

@@ -344,6 +344,7 @@ OPTIONAL_MINECRAFT_TOOLS = frozenset(
         "mc_place_save",
         "mc_places",
         "mc_place_remove",
+        "mc_replicator_program",
         "mc_command",
         "mc_server_action",
         "mc_server_log",
