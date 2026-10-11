@@ -469,3 +469,14 @@ def test_read_keys_takes_the_newest_write_and_only_the_blocks_it_needs(
     )
     assert got == {bytes([3]) * 4: b"new", bytes([8]) * 4: b"old"}  # 5 was deleted
     assert leveldb.read_db(tmp_path)[bytes([1]) * 4] == b"old"
+
+
+def test_a_version_8_section_takes_its_y_from_the_key(tmp_path: Path) -> None:
+    # Version 8 is version 9 without the y byte: an old world's records until re-saved.
+    v9 = subchunk(-4, {(3, 2, 5): "minecraft:diamond_ore"})
+    v8 = bytes([8, v9[1]]) + v9[3:]
+    write_table(tmp_path / "000005.ldb", [(_sub_key(0, 0, -4), 1, v8)])
+    index = blocks.BlockIndex(tmp_path)
+    index.refresh()
+    hits, _ = index.find(0, 0, 0, {"minecraft:diamond_ore"})
+    assert (hits[0]["x"], hits[0]["y"], hits[0]["z"]) == (3, -62, 5)
