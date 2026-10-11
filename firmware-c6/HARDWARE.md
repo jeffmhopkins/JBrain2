@@ -24,10 +24,17 @@ These override anything below that disagrees.
 - **Buttons, seen from the front, left → right: BOOT (GPIO9), PWR, KEY (GPIO10)** — the
   silkscreen order mirrored, as §4 suspected. BOOT and KEY idle high and read low while
   pressed (~0.4-0.5 s taps seen). Confirmed.
-- **PWR on GPIO18 did not move**: idle 0, and a tap left it at 0 with no internal pull set.
-  §4's 10 kΩ pull-up (R11) is either not fitted or the inverter is wired otherwise; the next
-  image enables GPIO18's internal pull-up and also polls the AXP2101's PEK press flags
-  (`0x48`-`0x4A`) so the reliable source is chosen by measurement. Unconfirmed until then.
+- **PWR works both ways (0.0.4, measured):** with GPIO18's *internal* pull-up on, it idles
+  low and reads **high while PWR is pressed**, and the AXP2101's PEK flags latch the same
+  press — every tap seen by both (`pwr=pek+gpio18`). With no pull (0.0.3) GPIO18 never moved,
+  so §4's R11 pull-up is evidently not fitted: **the internal pull-up is required.** GPIO18 is
+  the immediate source; PEK is the one that also sees presses while the CPU is busy.
+- **Runtime brightness works (0.0.4, seen by the owner):** `0x51` sent framed as
+  `(0x02<<24)|(0x51<<8)`, between frames, from the one task that owns the panel io, dims the
+  glass. This is the write the twins' S3 panels silently discard; on this board it takes.
+- **Display timings (0.0.4):** first full 480×480 frame 71 ms over QSPI at 40 MHz through one
+  480×40 strip; later partial frames ~32 ms. Free internal heap with the UI up: ~156 KB,
+  minimum ~120 KB.
 
 ## Sources and short names
 
