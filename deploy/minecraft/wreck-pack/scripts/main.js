@@ -82,8 +82,12 @@ function set(dim, x, y, z, id, states) {
     if (states) b.setPermutation(BlockPermutation.resolve(`minecraft:${id}`, states));
     else b.setType(`minecraft:${id}`);
   } catch (err) {
-    fail(String(err));
+    return fail(String(err));
   }
+  // Read back, so a write the game took without throwing but didn't keep is told apart
+  // from one lost later (the box's first sweep lost every one, with no error).
+  const now = blockAt(dim, x, y, z)?.typeId;
+  if (now !== `minecraft:${id}`) fail(`read back as ${now}`);
 }
 
 function area(dim, name, x0, z0, x1, z1) {
