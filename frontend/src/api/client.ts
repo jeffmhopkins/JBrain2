@@ -452,6 +452,9 @@ export interface MinecraftServer {
   players: MinecraftOnlinePlayer[];
   update: MinecraftUpdate;
   auto_update: boolean;
+  /** Whether a world the box makes starts at the crash site; a world's sheet can override
+   *  it. Saved at once, no restart. Older boxes omit it (treated as on). */
+  spawn_wreck?: boolean;
   /** A world operation in flight. Every device sees it, and a second one is refused (409). */
   job?: MinecraftJob | null;
   /** server.properties keys saved since the last start ("gamemode", "allow-cheats",
@@ -509,7 +512,14 @@ export interface MinecraftSlot {
   backups: number;
   last_backup: number | null;
   last_download: number | null;
+  /** The crash site at spawn: "armed" builds on the world's first start, "done" is built,
+   *  "skipped" is passed over (made before crash sites, or the build gave up), null none. */
+  wreck?: MinecraftWreck;
+  /** While armed, how far the build has got: "loaded", "pod", "ship" or "failed". */
+  wreck_phase?: string | null;
 }
+
+export type MinecraftWreck = "armed" | "done" | "skipped" | null;
 
 export interface MinecraftWorlds {
   active: string;
@@ -630,6 +640,14 @@ export interface MinecraftNewWorld {
   difficulty: string;
   cheats: boolean;
   rules?: Record<string, MinecraftRuleValue>;
+  /** The crash site at spawn; omitted follows the server's `spawn_wreck`. */
+  wreck?: boolean;
+}
+
+/** PUT /settings: the box's own settings, which apply at once. */
+export interface MinecraftSettings {
+  auto_update: boolean;
+  spawn_wreck: boolean;
 }
 
 export type MinecraftResetMode = "same_seed" | "new_seed" | "empty";
@@ -4797,9 +4815,9 @@ export const api = {
     return (await response.json()) as MinecraftUpdateStarted;
   },
 
-  async minecraftSettings(body: { auto_update: boolean }): Promise<{ auto_update: boolean }> {
+  async minecraftSettings(body: Partial<MinecraftSettings>): Promise<MinecraftSettings> {
     const response = await request("/api/minecraft/settings", jsonInit("PUT", body));
-    return (await response.json()) as { auto_update: boolean };
+    return (await response.json()) as MinecraftSettings;
   },
 
   async minecraftPlayers(): Promise<MinecraftPlayers> {
@@ -4894,10 +4912,11 @@ export const api = {
     slot: string,
     mode: MinecraftResetMode,
     seed?: string,
+    wreck?: boolean,
   ): Promise<MinecraftSlot | MinecraftAccepted> {
     const response = await request(
       `/api/minecraft/worlds/${slot}/reset`,
-      jsonInit("POST", { mode, seed: seed ?? null }),
+      jsonInit("POST", { mode, seed: seed ?? null, ...(wreck === undefined ? {} : { wreck }) }),
     );
     return (await response.json()) as MinecraftSlot | MinecraftAccepted;
   },

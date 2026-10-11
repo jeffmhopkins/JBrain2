@@ -70,6 +70,84 @@ export function originText(s: MinecraftSlot): string {
   }
 }
 
+// ---- the crash site at spawn (plan §SW3) ----
+
+/** Where a world's crash site stands. "building" and "failed" are an armed world's build in
+ *  progress, which only runs while it's loaded and the server is up; otherwise its last phase
+ *  is just where a stopped build will carry on from. */
+export type WreckState = "armed" | "building" | "failed" | "done" | "skipped" | "off";
+
+const WRECK_PHASE: Record<string, [string, string]> = {
+  loaded: ["reading the ground", "reading the ground at spawn"],
+  pod: ["the pod", "building the pod"],
+  ship: ["the ship", "placing the mothership overhead"],
+};
+
+export function wreckState(s: MinecraftSlot, running: boolean): WreckState {
+  if (s.wreck === "done" || s.wreck === "skipped") return s.wreck;
+  if (s.wreck !== "armed") return "off";
+  if (!(s.active && running) || !s.wreck_phase) return "armed";
+  if (s.wreck_phase === "failed") return "failed";
+  return s.wreck_phase in WRECK_PHASE ? "building" : "armed";
+}
+
+/** The state's colour class: amber while building, rose when a try failed. */
+export function wreckTone(s: MinecraftSlot, running: boolean): string | undefined {
+  const k = wreckState(s, running);
+  return k === "building" ? "mc-pend-t" : k === "failed" ? "mc-danger-t" : undefined;
+}
+
+/** The world row's line: "Crash site: on its way". */
+export function wreckRowText(s: MinecraftSlot, running: boolean): string {
+  switch (wreckState(s, running)) {
+    case "armed":
+      return "on its way";
+    case "building":
+      return `building — ${WRECK_PHASE[s.wreck_phase ?? ""]?.[0]}`;
+    case "failed":
+      return "didn't finish — trying again";
+    case "done":
+      return "built";
+    case "skipped":
+      return "not built";
+    default:
+      return "off";
+  }
+}
+
+/** The world page's Crash site fact. */
+export function wreckFactText(s: MinecraftSlot, running: boolean): string {
+  switch (wreckState(s, running)) {
+    case "armed":
+      return "on its way — built the first time it starts";
+    case "building":
+      return `building — ${WRECK_PHASE[s.wreck_phase ?? ""]?.[1]}`;
+    case "failed":
+      return "didn't finish — trying again shortly";
+    case "done":
+      return "built — the pod at spawn, the mothership overhead";
+    case "skipped":
+      return "none — it was passed over, as it was already played or the build gave up";
+    default:
+      if (s.origin === "imported") return "none — imported worlds are never touched";
+      if (s.origin === "restored") return "none — restored worlds are never touched";
+      if (!s.origin) return "none — made before crash sites";
+      return "none — it started at a plain spawn";
+  }
+}
+
+/** A played world without one can't get one: say why, and the way back. */
+export function wreckLaterText(s: MinecraftSlot, running: boolean): string | null {
+  const k = wreckState(s, running);
+  if ((k !== "off" && k !== "skipped") || notGenerated(s)) return null;
+  return "A crash site can't be added to a world that's been played — it would land on what's built there. Reset it with a seed to start one fresh.";
+}
+
+/** The sheets' switch line. */
+export function wreckSwitchText(on: boolean, serverDefault: boolean): string {
+  return `${on ? "on — an escape pod crashed at spawn, its mothership overhead" : "off — the world's own spawn, nothing built"}${on !== serverDefault ? " · not the server default" : ""}`;
+}
+
 export function playedText(s: MinecraftSlot, running: boolean, online: number, nowMs: number) {
   if (notGenerated(s)) return "not generated yet — made the first time it loads";
   if (s.active && running) return online ? "playing now" : "loaded · nobody on";

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   MinecraftBackup,
@@ -370,7 +370,7 @@ describe("Minecraft worlds and backups", () => {
     fireEvent.click(create);
     await waitFor(() =>
       expect(writes()).toContain(
-        'POST /api/minecraft/worlds/slot5/create {"name":"Skyblock 2","seed":"424242","gamemode":"survival","difficulty":"normal","cheats":false}',
+        'POST /api/minecraft/worlds/slot5/create {"name":"Skyblock 2","seed":"424242","gamemode":"survival","difficulty":"normal","cheats":false,"wreck":true}',
       ),
     );
   });
@@ -450,9 +450,139 @@ describe("Minecraft worlds and backups", () => {
     fireEvent.click(go);
     await waitFor(() =>
       expect(writes()).toContain(
-        'POST /api/minecraft/worlds/slot3/reset {"mode":"new_seed","seed":"424242"}',
+        'POST /api/minecraft/worlds/slot3/reset {"mode":"new_seed","seed":"424242","wreck":true}',
       ),
     );
+  });
+
+  it("each world says where its crash site stands, on its row and its page", async () => {
+    await openWorlds();
+    expect(await screen.findByRole("button", { name: /^Creative test/ })).toHaveTextContent(
+      "Crash site: built",
+    );
+    expect(screen.getByRole("button", { name: /^Skyblock run/ })).toHaveTextContent(
+      "Crash site: on its way",
+    );
+    expect(screen.getByRole("button", { name: /^Castle Hill/ })).toHaveTextContent(
+      "Crash site: off",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Castle Hill/ }));
+    expect(await screen.findByText("none — imported worlds are never touched")).toBeVisible();
+    // A played world can't get one now: the page says why and how to start one fresh.
+    expect(screen.getByText(/can't be added to a world that's been played/)).toBeVisible();
+  });
+
+  it("an armed world's build shows its phase while it runs, and a failed try", async () => {
+    const armed = (phase: string) =>
+      mcWorlds(
+        mcSlots().map((s) =>
+          s.id === "slot4"
+            ? { ...s, active: true, exists: true, wreck_phase: phase }
+            : { ...s, active: false },
+        ),
+      );
+    world.worlds = armed("pod");
+    await openWorlds();
+    expect(await screen.findByRole("button", { name: /^Skyblock run/ })).toHaveTextContent(
+      "Crash site: building — the pod",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Skyblock run/ }));
+    expect(await screen.findByText("building — building the pod")).toBeVisible();
+    cleanup();
+    world.worlds = armed("failed");
+    await openWorlds();
+    expect(await screen.findByRole("button", { name: /^Skyblock run/ })).toHaveTextContent(
+      "Crash site: didn't finish — trying again",
+    );
+  });
+
+  it("a stopped server's armed world is on its way, whatever phase it stopped at", async () => {
+    world.server = mcStopped();
+    world.worlds = mcWorlds(
+      mcSlots().map((s) =>
+        s.id === "slot4"
+          ? { ...s, active: true, exists: true, wreck_phase: "ship" }
+          : { ...s, active: false },
+      ),
+    );
+    await openWorlds();
+    expect(await screen.findByRole("button", { name: /^Skyblock run/ })).toHaveTextContent(
+      "Crash site: on its way",
+    );
+  });
+
+  it("New world: the crash-site switch starts at the server default and is sent", async () => {
+    world.server = mcServer({ spawn_wreck: false });
+    await openWorlds();
+    fireEvent.click(await screen.findByRole("button", { name: "New world" }));
+    const sheet = await screen.findByRole("dialog", { name: "New world" });
+    const sw = within(sheet).getByRole("switch", { name: "Crash site at spawn" });
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    expect(sheet).toHaveTextContent("off — the world's own spawn, nothing built");
+    expect(sheet).not.toHaveTextContent("not the server default");
+    fireEvent.click(sw);
+    expect(sheet).toHaveTextContent(
+      "on — an escape pod crashed at spawn, its mothership overhead · not the server default",
+    );
+    fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Pod world" } });
+    await within(sheet).findByText("424242");
+    fireEvent.click(within(sheet).getByRole("button", { name: "Create world" }));
+    await waitFor(() => expect(writes().join("\n")).toMatch(/slot5\/create .*"wreck":true/));
+    expect(await screen.findByText(/generated, crash site and all, the first time/)).toBeVisible();
+  });
+
+  it("Reset: the crash-site switch shows for a seed, not for Empty, and is sent", async () => {
+    await openWorld(/^Creative test/);
+    fireEvent.click(screen.getByRole("button", { name: "Reset…" }));
+    const sheet = await screen.findByRole("dialog", { name: "Reset Creative test" });
+    fireEvent.click(within(sheet).getByRole("radio", { name: /^Empty/ }));
+    expect(within(sheet).queryByRole("switch", { name: "Crash site at spawn" })).toBeNull();
+    fireEvent.click(within(sheet).getByRole("radio", { name: /^Same seed/ }));
+    const sw = within(sheet).getByRole("switch", { name: "Crash site at spawn" });
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(sw);
+    expect(sheet).toHaveTextContent("· not the server default");
+    fireEvent.click(within(sheet).getByRole("button", { name: "Continue" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reset Creative test?" });
+    fireEvent.change(within(dialog).getByLabelText(/to confirm/), {
+      target: { value: "Creative test" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reset" }));
+    await waitFor(() =>
+      expect(writes()).toContain(
+        'POST /api/minecraft/worlds/slot3/reset {"mode":"same_seed","seed":null,"wreck":false}',
+      ),
+    );
+  });
+
+  it("Server settings' crash-site default saves at once and names a world still armed", async () => {
+    render(<MinecraftScreen />);
+    const sw = await screen.findByRole("switch", { name: "Crash site by default" });
+    const row = await screen.findByRole("button", { name: /Worlds & backups/ });
+    await waitFor(() => expect(row).toHaveTextContent("4 of 5 slots used"));
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(sw);
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    await waitFor(() =>
+      expect(writes()).toContain('PUT /api/minecraft/settings {"spawn_wreck":false}'),
+    );
+    expect(
+      await screen.findByText(
+        "Saved — new worlds start at a plain spawn unless you turn it on for one. Skyblock run still gets its crash site — set when made.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("a refused crash-site default flips back and says so", async () => {
+    world.write = (method, path) =>
+      method === "PUT" && path === "/api/minecraft/settings"
+        ? json({ detail: "the box said no" }, 500)
+        : undefined;
+    render(<MinecraftScreen />);
+    const sw = await screen.findByRole("switch", { name: "Crash site by default" });
+    fireEvent.click(sw);
+    expect(await screen.findByText(/Couldn't change the crash-site default/)).toBeVisible();
+    expect(sw).toHaveAttribute("aria-checked", "true");
   });
 
   it("Reset never offers Empty for the loaded world", async () => {

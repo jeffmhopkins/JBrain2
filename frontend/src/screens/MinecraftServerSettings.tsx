@@ -5,7 +5,7 @@
 // On/off and the settings apply at the next restart; the box's `pending_restart` lists the
 // keys saved since the last start, so every device shows the same "pending".
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type MinecraftAllowlist,
@@ -14,7 +14,7 @@ import {
 } from "../api/client";
 import { Dialog } from "../components/Dialog";
 import { MinusIcon, PlusIcon, ShieldIcon, XIcon } from "../components/icons";
-import { plural } from "../minecraft";
+import { listOf, plural } from "../minecraft";
 
 const MAX_PLAYERS: [number, number] = [1, 30];
 const VIEW: [number, number] = [5, 32];
@@ -50,6 +50,8 @@ export function ServerSettingsSection({
   onError,
   pendingRestart,
   refreshStatus,
+  spawnWreck,
+  armed,
 }: {
   running: boolean;
   online: number;
@@ -57,6 +59,10 @@ export function ServerSettingsSection({
   onError: (msg: string) => void;
   pendingRestart: string[];
   refreshStatus: () => void;
+  /** The server's crash-site default (plan §SW3). */
+  spawnWreck: boolean;
+  /** Worlds still waiting to build theirs, which turning the default off doesn't change. */
+  armed: string[];
 }) {
   const [saved, setSaved] = useState<Draft | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -71,6 +77,38 @@ export function ServerSettingsSection({
       .then((s) => setSaved(toDraft(s)))
       .catch(() => setFailed(true));
   }, []);
+
+  // Optimistic, as the auto-update switch is: a poll landing mid-PUT doesn't flip it back.
+  const [wreckOn, setWreckOn] = useState(spawnWreck);
+  const wreckInFlight = useRef(false);
+  const [wreckSaving, setWreckSaving] = useState(false);
+  useEffect(() => {
+    if (!wreckInFlight.current) setWreckOn(spawnWreck);
+  }, [spawnWreck]);
+
+  async function toggleWreck() {
+    const next = !wreckOn;
+    setWreckOn(next);
+    wreckInFlight.current = true;
+    setWreckSaving(true);
+    try {
+      await api.minecraftSettings({ spawn_wreck: next });
+      const waiting =
+        !next && armed.length
+          ? ` ${listOf(armed)} still ${armed.length === 1 ? "gets its crash site" : "get theirs"} — set when made.`
+          : "";
+      toast(
+        `Saved — new worlds start at ${next ? "a crash site unless you turn it off" : "a plain spawn unless you turn it on"} for one.${waiting}`,
+      );
+      refreshStatus();
+    } catch (err) {
+      setWreckOn(!next);
+      onError(`Couldn't change the crash-site default — ${message(err)}`);
+    } finally {
+      wreckInFlight.current = false;
+      setWreckSaving(false);
+    }
+  }
 
   const shown = draft ?? saved;
   const dirty = !!draft && !!saved && JSON.stringify(draft) !== JSON.stringify(saved);
@@ -207,6 +245,32 @@ export function ServerSettingsSection({
             </div>
           </div>
         )}
+        {/* Its own block: Save settings applies at the next restart, and this at once. */}
+        <div className="mc-pad mc-pad-roomy mc-wk-pad">
+          <div className="mc-sw-row">
+            <span className="mc-sw-l">
+              <b>Crash site by default</b>
+              <br />
+              {wreckOn
+                ? "on — new worlds start at one; turn it off for a world in its sheet"
+                : "off — new worlds start plain; turn it on for a world in its sheet"}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={wreckOn}
+              aria-label="Crash site by default"
+              className={`mc-switch${wreckOn ? " on" : ""}`}
+              disabled={wreckSaving}
+              onClick={() => void toggleWreck()}
+            >
+              <span className="mc-knob" />
+            </button>
+          </div>
+          <p className="mc-note">
+            Saved at once — no restart. Imported and restored worlds never get one.
+          </p>
+        </div>
       </div>
     </>
   );

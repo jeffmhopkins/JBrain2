@@ -145,7 +145,8 @@ def plan_action(action: str, args: dict[str, Any]) -> tuple[str, dict[str, Any] 
         body = _model(owner_api.ResetIn, {"mode": args.get("mode"), "seed": args.get("seed")})
         return (
             f"/worlds/{slot}/reset",
-            body.model_dump(),
+            # The agent doesn't choose a crash site: the box's default applies.
+            body.model_dump(exclude={"wreck"}),
             f"Reset {slot} ({body.mode}; it is backed up first)",
         )
     if action == "set_rules":

@@ -54,6 +54,8 @@ def _server_view(raw: dict[str, Any]) -> dict[str, Any]:
         "players": raw.get("players") or [],
         "update": raw.get("update") or {"state": "idle"},
         "auto_update": bool(raw.get("auto_update", False)),
+        # Whether a world the box makes starts at the crash site (plan §SW3); on unless off.
+        "spawn_wreck": bool(raw.get("spawn_wreck", True)),
         # A world operation in flight (what, phase, started_at), so every device sees it.
         "job": raw.get("job"),
         # server.properties keys saved since the last start ("gamemode", "allow-list", …):
@@ -155,12 +157,13 @@ async def update(settings: SettingsDep) -> dict[str, Any]:
 
 
 class SettingsIn(BaseModel):
-    auto_update: bool
+    auto_update: bool | None = None
+    spawn_wreck: bool | None = None
 
 
 @router.put("/settings")
 async def put_settings(body: SettingsIn, settings: SettingsDep) -> dict[str, Any]:
-    return await mc.call(settings, "POST", "/settings", json=body.model_dump())
+    return await mc.call(settings, "POST", "/settings", json=body.model_dump(exclude_none=True))
 
 
 @router.get("/players")
@@ -209,6 +212,8 @@ class WorldIn(BaseModel):
     gamemode: Literal["survival", "creative", "adventure"] | None = None
     difficulty: Literal["peaceful", "easy", "normal", "hard"] | None = None
     cheats: bool | None = None
+    # The crash site at spawn (§SW3), for a create: unset follows the server's default.
+    wreck: bool | None = None
 
 
 @router.post("/worlds/{slot}/load")
@@ -237,6 +242,8 @@ async def update_world(
 class ResetIn(BaseModel):
     mode: Literal["same_seed", "new_seed", "empty"]
     seed: str | None = Field(default=None, max_length=64)
+    # A regenerated world's crash site (§SW3); unset follows the server's default.
+    wreck: bool | None = None
 
 
 @router.post("/worlds/{slot}/reset")
@@ -247,7 +254,8 @@ async def reset_world(
         settings,
         "POST",
         f"/worlds/{slot}/reset",
-        json=body.model_dump(),
+        # An unset crash site is left out, so the box applies its own default.
+        json=body.model_dump(exclude={"wreck"} if body.wreck is None else None),
         timeout_s=WORLD_JOB_TIMEOUT_S,
     )
 
