@@ -200,3 +200,102 @@ def test_a_refused_tile_is_the_boxs_reason(client, sidecar) -> None:
     )
     resp = client.get("/api/minecraft/map/tile/overworld/0/0/0.png?slot=slot2")
     assert resp.status_code == 400 and "no world" in resp.json()["detail"]
+
+
+def test_a_tapped_spot_passes_through_with_the_debug_twins_bounds(client, sidecar) -> None:
+    seen, replies = sidecar
+    replies["/map/point"] = httpx.Response(
+        200, json={"source": "survey", "biome": "Cherry Grove", "y": 129}
+    )
+    got = client.get("/api/minecraft/map/point?x=212&z=-341&slot=slot2&dim=nether").json()
+    assert got["biome"] == "Cherry Grove"
+    assert dict(seen[-1].url.params) == {"slot": "slot2", "dim": "nether", "x": "212", "z": "-341"}
+    count = len(seen)
+    for bad in (
+        "/api/minecraft/map/point?x=1",
+        "/api/minecraft/map/point?x=30000001&z=0",
+        "/api/minecraft/map/point?x=0&z=0&dim=moon",
+        "/api/minecraft/map/point?x=0&z=0&slot=../x",
+    ):
+        assert client.get(bad).status_code == 422, bad
+    assert len(seen) == count
+
+
+def test_structures_and_a_sweep_pass_through_and_a_refusal_is_a_409(client, sidecar) -> None:
+    seen, replies = sidecar
+    replies["/map/structures"] = httpx.Response(
+        200,
+        json={"structures": [{"structure": "village", "x": 232, "z": -304}], "stale": None},
+    )
+    got = client.get("/api/minecraft/map/structures?slot=slot2&dim=overworld").json()
+    assert got["structures"][0]["structure"] == "village"
+    assert dict(seen[-1].url.params) == {"slot": "slot2", "dim": "overworld"}
+    replies["/map/structures/sweep"] = httpx.Response(
+        409, json={"detail": "only the loaded world can be searched — load it first"}
+    )
+    resp = client.post("/api/minecraft/map/structures/sweep?slot=slot3")
+    assert resp.status_code == 409 and "loaded world" in resp.json()["detail"]
+    assert json.loads(seen[-1].content) == {"slot": "slot3"}
+    assert client.get("/api/minecraft/map/structures?dim=moon").status_code == 422
+
+
+def _players_world(sidecar, *, active: bool, state: str = "running") -> None:
+    _seen, replies = sidecar
+    replies["/worlds"] = httpx.Response(
+        200,
+        json={
+            "slots": [
+                {"id": "slot2", "folder": "castle", "exists": True, "active": active},
+                {"id": "slot5", "folder": "slot5", "exists": False, "active": False},
+            ]
+        },
+    )
+    replies["/status"] = httpx.Response(
+        200, json={"state": state, "players": [{"name": "BlockyFox", "xuid": "2535"}]}
+    )
+
+
+def test_map_players_are_the_travel_logs_latest_with_who_is_on(
+    client, sidecar, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    async def latest(_maker: Any, world: str) -> list[dict[str, Any]]:
+        asked.append(world)
+        return [
+            {
+                "xuid": "2535",
+                "gamertag": "BlockyFox",
+                "dim": "overworld",
+                "x": 1.0,
+                "y": 64.0,
+                "z": 2.0,
+                "at": 10.0,
+            },
+            {
+                "xuid": "999",
+                "gamertag": "Steve42",
+                "dim": "nether",
+                "x": 3.0,
+                "y": 70.0,
+                "z": 4.0,
+                "at": 5.0,
+            },
+        ]
+
+    monkeypatch.setattr(api.travel, "latest_positions", latest)
+    client.app.state.session_maker = object()
+    _players_world(sidecar, active=True)
+    got = client.get("/api/minecraft/map/players?slot=slot2").json()
+    assert asked == ["castle"] and got["live"] is True and got["world"] == "castle"
+    assert [(p["gamertag"], p["online"]) for p in got["players"]] == [
+        ("BlockyFox", True),
+        ("Steve42", False),
+    ]
+    _players_world(sidecar, active=True, state="stopped")
+    stopped = client.get("/api/minecraft/map/players?slot=slot2").json()
+    assert stopped["live"] is False and not any(p["online"] for p in stopped["players"])
+    _players_world(sidecar, active=False)
+    other = client.get("/api/minecraft/map/players?slot=slot2").json()
+    assert other["live"] is False and not any(p["online"] for p in other["players"])
+    assert client.get("/api/minecraft/map/players?slot=slot5").status_code == 404

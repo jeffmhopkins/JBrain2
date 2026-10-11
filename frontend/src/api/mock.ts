@@ -24,6 +24,7 @@ import type {
   LlmProviderId,
   LlmSettings,
   LlmUsage,
+  MinecraftDim,
   NoteAnalysis,
   NoteOut,
   PetCommand,
@@ -3826,6 +3827,26 @@ export const mockFetch: typeof fetch = async (input, init) => {
       });
     }
     if (path === "/api/minecraft/worlds") return json(w.worlds);
+    if (path.startsWith("/api/minecraft/map/")) {
+      const m = await import("../minecraftMapFixtures");
+      const slot = url.searchParams.get("slot") ?? "slot1";
+      const dim = (url.searchParams.get("dim") ?? "overworld") as MinecraftDim;
+      if (path === "/api/minecraft/map/info") return json(m.mcMapInfo(slot, dim));
+      if (path === "/api/minecraft/map/point") {
+        const x = Number(url.searchParams.get("x"));
+        const z = Number(url.searchParams.get("z"));
+        return json(m.mcMapPoint(slot, dim, x, z));
+      }
+      if (path === "/api/minecraft/map/players") {
+        return json(m.mcMapPlayers(slot, running && !!slotOf(slot)?.active));
+      }
+      if (path === "/api/minecraft/map/structures") return json(m.mcMapStructures(slot, dim));
+      if (path === "/api/minecraft/map/structures/sweep") {
+        return running && slotOf(slot)?.active
+          ? json({ state: "running", done: 0, total: 1200 }, 202)
+          : json({ detail: "only the loaded world can be searched — load it first" }, 409);
+      }
+    }
     if (path === "/api/minecraft/worlds/new-seed") {
       return json({ seed: String(Math.floor(Math.random() * 9e15) - 4.5e15) });
     }

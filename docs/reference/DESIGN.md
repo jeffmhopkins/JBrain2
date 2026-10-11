@@ -64,9 +64,11 @@ Dual theme, dark-first. Implementation:
   goes back to a bare px. Four things stay absolute, by design:
   - **44px tap targets** and **1px hairlines** — floors, not type-relative;
   - **map, weather, hurricane and chart tool views** (`.loc-map*`, `.tv-wx*`,
-    `.tv-hu*`, `.tv-cc*`, `.tv-bar*`, `.tv-plot*`) — they draw into canvases
-    and SVG viewBoxes and lay out on hand-tuned pixel grids, so their cells
-    cannot scale while their tracks do not;
+    `.tv-hu*`, `.tv-cc*`, `.tv-bar*`, `.tv-plot*`) and **the Minecraft map's canvas and
+    floating chrome** (`.mc-map*`, approved with the map's GUI gate) — they draw into
+    canvases and SVG viewBoxes and lay out on hand-tuned pixel grids, so their cells
+    cannot scale while their tracks do not. The Minecraft map's persistent panel, its
+    sheets and the chat card are not exempt: they use the type tokens;
   - **`border-radius`, shadows and absolute offsets** — shape, not size;
   - **`@media` and `@keyframes` bodies** — breakpoints and animation geometry.
 
@@ -114,6 +116,21 @@ for accent-coloured *words* (button labels, badges, links, state words). Dark re
 pastel as-is; light mixes it 46–54% toward `--text` so the words clear 4.5:1 (the Syntax
 tokens' pattern). Dots, tints and rules keep the pastel. Added with the Minecraft screen;
 new surfaces use them for accent text.
+
+**Map-only tokens** (the Minecraft map; approved with its GUI gate,
+`docs/mocks/minecraft-map/README.md`). The void, the *Explored by* veil, the glyph halo and
+the glyph ink are part of the **picture**, so they stay dark (ink light) in both themes; only
+the label plate follows the theme. Biome colours are the renderer's own table — raw RGB inside
+the image, like any other canvas content — and the legend's swatches repeat them.
+
+| Token | Dark | Light | Use |
+|---|---|---|---|
+| `--map-void` | `#141518` | `#1E2024` | Where there is no ground at all (the End's void, outside the world) |
+| `--map-fog` | `#0B0C0E` | `#0B0C0E` | The *Explored by* veil (at 62%) |
+| `--map-halo` | `rgba(8,9,11,.9)` | `rgba(8,9,11,.85)` | The dark backing under every marker glyph and count badge |
+| `--map-plate` | `rgba(23,24,27,.9)` | `rgba(255,255,255,.92)` | Label and scale-bar plates (text on them is `--text`) |
+| `--map-ink` | `#F2F2F2` | `#F2F2F2` | Glyph strokes and badge numerals on the halo |
+| `--map-ink-on` | `#0E0F11` | `#0E0F11` | The initial on a filled player disc |
 
 **Mode/domain coding rule** (settled in the Phase 1 omnibox review):
 green=entry/save, amber=research/read-only, steel=full-brain/agent,
@@ -3452,6 +3469,75 @@ its row line answers "will this one have it?" from the list. The rivals are kept
   That Save applies at the next restart, while this switch saves at once. It is optimistic, as
   the auto-update switch is, and flips back if it's refused. Turning it off while a world is
   armed says so in the toast: *Skyblock run still gets its crash site — set when made.*
+
+### The Minecraft map (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-map/a-full-bleed.html`)
+
+Plan §M8 (the viewer), §M8a (its timeline) and P3 (the chat card) share one map component. The
+owner chose **A — the map full-bleed under one persistent bottom panel**, with session
+navigation **3 · Days** for the timeline; B (docked bars) and C (a card with a crosshair) are the
+round's record in `docs/mocks/minecraft-map/README.md`. A won because it is the only layout
+whose worst case (a 320 × 568 phone with the timeline open) still leaves a usable map, and it
+keeps every modal on the shared shells. **Wave 1 (shipped) is the live view**; the timeline,
+replay, *Explored by* and the chat card come with M8a and P3.
+
+- **Two ways in.** A **Map** row on the Minecraft screen under Worlds & backups (*{world} ·
+  BlockyFox and Mira_P on the map*, or *nobody on right now*), and a **Map** row on each world's
+  page, which opens that world. The map is a pushed page in the Minecraft screen's layer
+  stack: Back, the platform Back gesture, and focus return work like the Worlds pages, but a
+  vertical drag pans instead of dismissing.
+- **The map** fills the phone: the box's 256-px biome tiles
+  (`/api/minecraft/map/tile/{dim}/{zoom}/{x}/{z}.png?slot=`; zoom 0 = 1 px per block … 4 = 1
+  px per chunk), scaled nearest-neighbour past 1 px per block up to 8 px per block. One
+  finger pans, two pinch, the wheel and **+ / −** zoom; **Show everyone** frames the online
+  players (else anyone in the dimension, else the explored ground). Explored ground is full
+  colour over the satellite survey (the seed's prediction, dimmed) — that is baked into the
+  tiles. Missing tiles are shimmer-hatched while they load and finely hatched when they
+  failed. While the world is live, a tile older than a minute is fetched again, which is how
+  the map stays *up to a minute behind*.
+- **Floating chrome:** back (top left), the **Overworld / Nether / End** segments (top right),
+  and zoom in, zoom out and show everyone. Below 380 px of visible map the + / − go; below
+  230 px the segments and show everyone go too. Back always stays. A **scale bar** with **N↑**
+  sits bottom-left and states blocks per pixel from 2 blocks a pixel out.
+- **The persistent panel** — not a `<Sheet>`; the graph Map's precedent, approved with the
+  pick — has three heights (peek; the layer grid; 80 %), set by dragging its top edge or with
+  its chevron, and the map always centres in the part it leaves. Peek is the world picker
+  (*Castle Hill ▾*, opening the shared Sheet *Map of…* over all five slots, the empty ones
+  disabled), the **Layers / Timeline** tabs (Timeline disabled until M8a) and the **status
+  line**. What you tapped sits above the body.
+- **Honest status, always visible:** *Live · N on* / *Up to a minute behind the world ·
+  positions live*; *Loading map tiles · X of Y* while tiles arrive; *Server stopped* / *Map as
+  of then · players where they logged off*; *{world} isn't loaded* / *Map as of {date}, when it
+  was last played*; *Box unreachable — retrying…* (pan and zoom still work over the tiles the
+  phone has). In the End with nobody there: *Nobody has been to the End — all of it is the
+  survey*. It never says Live for a world that isn't loaded and running.
+- **Tap anything for its coordinates**, each with **Copy X Z** (two numbers):
+  - a **spot** asks `/map/point`: biome, *Explored · ground at Y 70* or *Satellite survey
+    (predicted) · ground at Y ~129* (the survey's y is an estimate, so it stays out of the
+    coordinates);
+  - a **player** gives *online · here now* or *offline · logged off here {ago}*;
+  - a **structure** gives *Located by the server* and whether its ground is explored or
+    survey (no Y: `locate` gives none);
+  - the **Nether** adds *Overworld side: X ×8 · Z ×8*.
+- **Long-press** drops a pin, glides in to at least 4 px per block, toasts *Pin dropped — nudge
+  it block by block*, and offers **Nudge one block** (W / N / S / E).
+- **Markers:** players are discs in the four accents by roster order (filled and pulsing while
+  online, hollow where they logged off) and never cluster. **Structures** (the server's own
+  `locate`, from the sidecar's saved sweep, so they draw with the server stopped) are Lucide
+  outlines on an amber-ringed halo tile; markers within **40 px** merge into a count badge
+  that zooms in on tap until they separate (markers on one block open the first). Every
+  marker has a 46-px hit circle. Labels go tapped thing, players, structures; a label that
+  would collide with another, a floating control, the panel or the scale bar moves below its
+  marker or is dropped — never drawn under it.
+- **Layers:** **Biomes** (explored + satellite survey) is the only base layer; Surface and Height
+  are listed, disabled, *later*. Overlays: **Players**, **Structures** (its line says *from the
+  server's locate · exact*, or *searching the world · N%* while the box sweeps, with **Search
+  again** when the world is live) and **Grid & coordinates**; Trails, Deaths, Beds & spawn,
+  Saved places, *Explored by…* and Wormhole gates are listed with a *later* badge. The legend
+  pairs *Explored · Satellite survey*, the dimension's biome swatches, and the glyphs with the
+  count badge.
+- **Absolute sizes:** the canvas and its floating chrome (`.mc-map*` over the picture) don't
+  scale with the text-size setting (see "Theming"); the panel, the Sheet and their words use
+  the type tokens. The pulse stops under `prefers-reduced-motion` and while the tab is hidden.
 
 ## Implementation rules
 

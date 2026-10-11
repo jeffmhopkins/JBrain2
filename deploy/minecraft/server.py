@@ -36,6 +36,7 @@ import blocks
 import bds
 import install
 import mapping
+import structure_sweep
 import worlds
 
 DATA = Path(os.environ.get("MC_DATA_DIR", "/data"))
@@ -46,6 +47,10 @@ SETTINGS = DATA / "settings.json"
 SLOTS = DATA / "slots.json"
 SNAPSHOT_INDEX = DATA / "snapshot-index.json"
 UPLOAD_DIR = DATA / "uploads"
+# The saved structure sweeps (§M8), one file per world folder.
+STRUCTURE_DIR = DATA / "structures"
+# A sweep that failed (the server stopped mid-way) is retried by a view no sooner than this.
+SWEEP_RETRY_S = 900.0
 PORT = int(os.environ.get("MC_PORT", "8000"))
 # The container runs on the HOST network (NetherNet advertises the server's own
 # address and finds LAN clients by broadcast, neither of which survives a bridge
@@ -157,6 +162,9 @@ class Rig:
         self._map_seed: dict[str, str | None] = {}
         self._predictor = mapping.Predictor()
         self._tiles: dict[tuple, bytes] = {}
+        # One structure sweep at a time (it is console time), and how it is going.
+        self._sweep_lock = threading.Lock()
+        self._sweep: dict[str, Any] = {"state": "idle"}
         self.slots = worlds.SlotStore(
             SLOTS, SERVER_DIR / "worlds", int(self.env.get("MC_SLOTS", "5"))
         )
@@ -1355,6 +1363,139 @@ class Rig:
         found.sort(key=lambda f: f["distance"])
         return {"world": self.active_folder(), "dimension": dim, "x": x, "z": z, "nearby": found}
 
+    def _locate(self, dim: str, x: int, z: int, kind: str) -> tuple[int, int] | None:
+        got = mapping.parse_located(
+            self.bds.command(
+                f"execute in {dim} positioned {x} 64 {z} run locate structure {kind}",
+                wait_s=2.0,
+                quiet_s=0.15,
+            )
+        )
+        return None if got is None else (got[1], got[2])
+
+    def _structure_inputs(
+        self, slot_id: str
+    ) -> tuple[str, str | None, dict[str, Any], dict[str, tuple[str, ...]]]:
+        """A world's folder, seed and explored extents, and the kinds `locate` knows."""
+        with self._map_lock:
+            folder, index = self._map_for(slot_id)
+            seed = self._map_seed.get(folder)
+            extents = {
+                name: index.extent(dim) for name, dim in mapping.DIMENSIONS.items()
+            }
+        kinds = {
+            name: mapping.STRUCTURES[dim] for name, dim in mapping.DIMENSIONS.items()
+        }
+        return folder, seed, extents, kinds
+
+    def sweep_view(self, folder: str | None = None) -> dict[str, Any]:
+        view = dict(self._sweep)
+        if folder is not None and view.get("folder") not in (None, folder):
+            return {"state": "idle"}  # another world's sweep says nothing about this one
+        return view
+
+    def map_structures(self, slot_id: str, dim: str) -> dict[str, Any]:
+        """The saved sweep's structures in one dimension. Starts a fresh sweep, in the
+        background, when the saved one is stale and this world is up to be asked."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        folder, seed, extents, kinds = self._structure_inputs(slot_id)
+        saved = structure_sweep.load(STRUCTURE_DIR, folder)
+        reason = structure_sweep.stale_reason(saved, seed, kinds, extents)
+        last = self.sweep_view(folder)
+        retry = (
+            last.get("state") != "failed"
+            or time.time() - float(last.get("failed_at") or 0) > SWEEP_RETRY_S
+        )
+        if reason and retry and folder == self.active_folder() and self.bds.running:
+            with contextlib.suppress(RuntimeError):
+                self.sweep_structures(slot_id)
+        usable = saved is not None and saved.get("seed") == seed
+        return {
+            "slot": slot_id,
+            "dimension": dim,
+            "structures": saved["structures"].get(dim, []) if saved and usable else [],
+            "swept_at": saved.get("swept_at") if saved and usable else None,
+            "stale": reason,
+            "sweep": self.sweep_view(folder),
+        }
+
+    def sweep_structures(self, slot_id: str) -> dict[str, Any]:
+        """Start a sweep of the loaded world in the background, or report the one already
+        running. Only the loaded world can be asked: `locate` searches the running one."""
+        rec = self.slots.get(slot_id)
+        if not rec["exists"]:
+            raise ValueError(f"{slot_id} has no world yet")
+        folder = rec["folder"]
+        if folder != self.active_folder():
+            raise RuntimeError("only the loaded world can be searched — load it first")
+        if not self.bds.running:
+            raise RuntimeError("the server isn't running, so it can't search its world")
+        if not self._sweep_lock.acquire(blocking=False):
+            return self.sweep_view()
+        try:
+            folder, seed, extents, kinds = self._structure_inputs(slot_id)
+            top = worlds.read_level_dat(self.world_dir(folder))
+            spawns = {
+                "overworld": (int(top.get("SpawnX", 0) or 0), int(top.get("SpawnZ", 0) or 0)),
+                "nether": (0, 0),
+                "the_end": (0, 0),
+            }
+            plan = {
+                dim: structure_sweep.points(structure_sweep.area(extents[dim], spawns[dim]), spawns[dim])
+                for dim in kinds
+            }
+            self._sweep = {
+                "state": "running",
+                "folder": folder,
+                "done": 0,
+                "total": structure_sweep.total(plan, kinds),
+                "started_at": time.time(),
+            }
+        except BaseException:
+            self._sweep_lock.release()
+            raise
+
+        def progress(done: int) -> None:
+            self._sweep["done"] = done
+
+        def run() -> None:
+            try:
+                found = structure_sweep.sweep(
+                    self._locate,
+                    plan,
+                    kinds,
+                    progress=progress,
+                    keep_going=lambda: self.active_folder() == folder and self.bds.running,
+                )
+                structure_sweep.save(
+                    STRUCTURE_DIR,
+                    folder,
+                    seed=seed,
+                    kinds=kinds,
+                    explored=extents,
+                    found=found,
+                    at=time.time(),
+                )
+                self._sweep = {
+                    "state": "done",
+                    "folder": folder,
+                    "found": sum(len(v) for v in found.values()),
+                    "finished_at": time.time(),
+                }
+            except Exception as exc:  # noqa: BLE001 — a failed sweep keeps the last one
+                self._sweep = {
+                    "state": "failed",
+                    "folder": folder,
+                    "error": str(exc),
+                    "failed_at": time.time(),
+                }
+            finally:
+                self._sweep_lock.release()
+
+        threading.Thread(target=run, name="structure-sweep", daemon=True).start()
+        return self.sweep_view()
+
     def map_tile(self, slot_id: str, dim: str, zoom: int, tx: int, tz: int) -> bytes:
         if dim not in mapping.DIMENSIONS:
             raise ValueError("dimension must be overworld, nether or the_end")
@@ -1527,6 +1668,16 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/structures":
+            try:
+                self._send(
+                    200,
+                    rig.map_structures(
+                        query.get("slot", ["slot1"])[0], query.get("dim", ["overworld"])[0]
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
         elif url.path in ("/map/point", "/map/nearby"):
             dim = query.get("dim", ["overworld"])[0]
             try:
@@ -1690,6 +1841,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, rig.server_action(self.path.rsplit("/", 1)[1]))
             elif self.path == "/settings":
                 self._send(200, rig.set_settings(body))
+            elif self.path == "/map/structures/sweep":
+                self._send(202, rig.sweep_structures(str(body.get("slot") or "")))
             elif self.path == "/probe-pack":
                 self._send(200, rig.probe_pack(bool(body.get("install", True))))
             else:

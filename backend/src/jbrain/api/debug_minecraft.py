@@ -310,6 +310,33 @@ async def minecraft_map_nearby(
     return await _sidecar(settings, "GET", "/map/nearby", params=params)
 
 
+@router.get("/map/structures")
+async def minecraft_map_structures(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+) -> dict[str, Any]:
+    """The world's saved structure sweep — what the map's Structures overlay draws — and
+    whether a sweep is running, done or failed."""
+    request.state.debug_detail = f"minecraft map structures {slot} {dim}"
+    return await _sidecar(settings, "GET", "/map/structures", params={"slot": slot, "dim": dim})
+
+
+@router.post("/map/structures/sweep", status_code=202)
+async def minecraft_map_sweep(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+) -> dict[str, Any]:
+    """Sweep the loaded world for structures again (read-only `locate`s, in the
+    background); a 409 unless it is the loaded, running world."""
+    request.state.debug_detail = f"minecraft map sweep {slot}"
+    return await _sidecar(settings, "POST", "/map/structures/sweep", json={"slot": slot})
+
+
 @router.get("/map/tile/{dim}/{zoom}/{tx}/{tz}.png")
 async def minecraft_map_tile(
     dim: Annotated[str, Path(pattern=r"^(overworld|nether|the_end)$")],

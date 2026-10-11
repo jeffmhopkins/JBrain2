@@ -827,6 +827,40 @@ player who played, that day's sessions as chips, and each player's full session 
 behind **Sessions**. The mock README lists the four DESIGN exceptions approved with the
 pick and the remaining build gaps (a saved structure sweep; the travel-log session API).
 
+**Viewer, wave 1 — the live map (shipped 2026-10-11).** A's live view, without the
+timeline (DESIGN.md "The Minecraft map"):
+- **The screen** (`frontend/src/screens/MinecraftMap.tsx`, its geometry and words pure in
+  `frontend/src/minecraftMap.ts`) is a page pushed from the Minecraft screen's **Map** row or a
+  world's page: the full-bleed tile map (zoom 0–4 from the box, then nearest-neighbour up to
+  8 px per block), pan, pinch, wheel, + / −, show everyone, the dimension switch, the scale
+  bar, and the persistent panel with the world picker, the honest status line and Layers.
+  Tiles are re-fetched after a minute while the world is live. `dev:mock` paints the
+  reviewed fixture's world procedurally (`frontend/src/minecraftMapFixtures.ts`).
+- **Tap a spot** → `GET /api/minecraft/map/point?x&z&slot&dim` (the owner twin of the debug
+  route, same bounds): biome, y (`~` for the survey), source, **Copy X Z**. **Long-press** pins
+  a block, with a one-block nudge.
+- **Players** → `GET /api/minecraft/map/players?slot`: each player's newest
+  `mc_player_track` sample in that world folder (`travel.latest_positions`), flagged online
+  from the sidecar's `/status` when that world is loaded and running.
+- **Structures, the saved sweep** (the build gap the GUI gate named). The sidecar's
+  `deploy/minecraft/structure_sweep.py` plans a grid of points 512 blocks apart over the explored
+  extent of each dimension (spawn first) plus 1,024 blocks of margin, capped at 4,096 blocks
+  from its centre, asks `locate structure` for every kind from each, keeps each answer once
+  and **saves it per world folder** as `/data/structures/<folder>.json` in the sidecar's
+  volume. A JSON file there rather than a backend table: the sweep is the world's own derived
+  data, read by the same process that makes it and the tiles, it must answer while the api's
+  view of the world is a stopped server, and it holds nothing about people, so it needs no
+  RLS; keeping it outside the world folder keeps it out of `.mcworld` exports. Structures are
+  fixed by the seed, so a saved sweep goes stale only when the seed changes, when the explored
+  extent grows more than 256 blocks past what was swept, or when a server update adds a
+  structure kind; a view of a stale sweep of the loaded, running world starts a fresh one in
+  the background (a failed one is retried after 15 minutes), and **Search again** /
+  `POST /api/minecraft/map/structures/sweep?slot` starts one on demand. Read:
+  `GET /api/minecraft/map/structures?slot&dim` (structures, `swept_at`, `stale`, `sweep`
+  progress); debug twins of both.
+- **Next (M8a, P3):** the timeline with Days navigation, replay, trails, deaths, beds and
+  spawn, *Explored by*, and the chat card.
+
 **Renderer, first layer (shipped 2026-10-10).**
 - **Reader:** `deploy/minecraft/leveldb.py` is a stdlib reader for Mojang's LevelDB
   (tables with raw-deflate blocks, plus the write-ahead log, newest write winning). It

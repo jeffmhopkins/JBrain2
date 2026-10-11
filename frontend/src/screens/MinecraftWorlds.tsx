@@ -44,6 +44,7 @@ import {
   DownloadIcon,
   InfoIcon,
   LayersIcon,
+  MapIcon,
   MinusIcon,
   PencilIcon,
   PinIcon,
@@ -102,7 +103,8 @@ const SWIPE_DOWN_PX = 56;
 export type Page =
   | { kind: "worlds" }
   | { kind: "world"; slot: string }
-  | { kind: "rules"; slot: string };
+  | { kind: "rules"; slot: string }
+  | { kind: "map"; slot?: string };
 
 export type WorldModal =
   | { kind: "newWorld"; slot: string }
@@ -1399,6 +1401,23 @@ export function WorldLayer({ slot }: { slot: string }) {
             <Why text={w.blocked} />
           </>
         )}
+      </div>
+
+      <div className="mc-card">
+        <button type="button" className="mc-navrow" onClick={() => w.push({ kind: "map", slot })}>
+          <span className="mc-navico" aria-hidden="true">
+            <MapIcon size={20} />
+          </span>
+          <span className="mc-navtx">
+            <span className="ops-card-title">Map</span>
+            <span className="mc-navmeta">
+              {s.active && w.running
+                ? "live · explored ground and the satellite survey"
+                : "explored ground and the satellite survey"}
+            </span>
+          </span>
+          <ChevronRightIcon size={18} />
+        </button>
       </div>
 
       <h3 className="mc-sect">
