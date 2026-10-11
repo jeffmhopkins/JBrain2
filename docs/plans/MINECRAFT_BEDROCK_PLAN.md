@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ M15◻️ M16◻️ M17◻️ M18◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1726,6 +1726,46 @@ places and waypoints, where other players are, a player's own trail and deaths.
 
 **Lore:** the recharge story and Dave's out-of-scans line go on the Bleepbloop_City lore
 page.
+
+### M18 — Dave's fast path: simple asks answered without the model (owner, 2026-10-11; not built)
+
+**Why.** Most of what players say to Dave in game is a handful of fixed requests. Answering
+those directly is instant, costs no model time, and gives the same answer every time. The
+model stays for real questions.
+
+**Decided (owner, 2026-10-11):**
+- **A fast path in the in-game door** (`minecraft/door.py`), before the turn reaches the
+  model. A `/jb:dave` question that **clearly** matches one of a short list of patterns is
+  carried out at once with the same tools the model would call, and answered from fixed lines
+  in Dave's voice.
+- **Strict matching.** Only an unambiguous match takes the fast path. Anything vaguer, or
+  with more in it ("take me home but avoid the river"), goes to the model as before. A wrong
+  fast answer is worse than a slow right one.
+- **Dave remembers.** Every fast-path exchange is written into the player's normal session
+  ("In game: <gamertag>") as an ordinary question and answer, so a later model turn sees it
+  ("how far is it now?" after "navigate to tree farm" just works), and the owner sees it when
+  reading the session in the PWA.
+
+**The fast-path list** (first cut):
+- point me home / navigate to *place* / clear my waypoint (`mc_set_waypoint`);
+- save this place as *name* / forget *name* / list my places (`mc_place_save`,
+  `mc_place_remove`, `mc_places`);
+- where am I?
+- where is *player*?
+- how many scans do I have left? (M17);
+- `/jb:dave hello`, which replays the welcome (DW1);
+- where's the nearest *structure* / *block*: still a deep scan that counts toward M17's
+  limit, only without a model turn.
+
+**Built so that:**
+- The patterns and their replies live in one module, each with tests for what must match and
+  for near-misses that must fall through to the model.
+- A fast-path action goes through the same tool handlers, with the same checks (the asker's
+  own places, the scan limit, fair play), as a model turn would.
+- The reply lines are drafts on the Bleepbloop_City lore page until the owner signs them off,
+  like Dave's other lines.
+
+**Order:** after the Tricorder and Power Pack wave and M17, since all three touch the door.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
