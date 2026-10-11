@@ -1633,9 +1633,18 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
 - its canopy is on the ground.
 
 **Box-only checks** (can't be proven off the box):
-- BDS honours a pack pre-written into an ungenerated world's folder.
+- BDS honours a pack pre-written into an ungenerated world's folder. **Confirmed
+  2026-10-11:** the first test world loaded both packs and the build reported in.
 - Every palette entry places as intended on the running version.
 - Placing a whole build in one go stays inside the script watchdog.
+
+**What the box taught (SW4 sweep, 2026-10-11).**
+- The first test world gave up in about a minute: *N chunks … never loaded*, three
+  times over. `loadBox` counted its 90-second wait in yields, but the game runs many job
+  steps a tick, so a new world's spawn chunks got under a second to generate. The wait
+  is now in game ticks (`system.currentTick`).
+- The simulator now runs 50 job steps a tick and loads chunks by the tick, so the old
+  code fails there too.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 

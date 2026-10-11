@@ -89,13 +89,16 @@ function dropAreas(dim) {
  * Wait (as a job: yielding) until every chunk of the box can be read. A ticking area
  * loads its chunks over several ticks, so the corners being ready says nothing about
  * the middle: one column per chunk is checked, and a chunk once seen stays counted.
+ * The wait is in game ticks, not yields: the game runs many job steps a tick, so a
+ * yield count gave a new world's chunks under a second to generate (SW4, on the box).
  */
 function* loadBox(dim, x0, z0, x1, z1) {
   const waiting = new Set();
   for (let cx = Math.floor(x0 / 16); cx <= Math.floor(x1 / 16); cx += 1) {
     for (let cz = Math.floor(z0 / 16); cz <= Math.floor(z1 / 16); cz += 1) waiting.add(`${cx},${cz}`);
   }
-  for (let t = 0; t < LOAD_WAIT_TICKS; t += 1) {
+  const start = system.currentTick;
+  while (system.currentTick - start < LOAD_WAIT_TICKS) {
     for (const k of [...waiting]) {
       const [cx, cz] = k.split(",").map(Number);
       const x = Math.min(Math.max(cx * 16, x0), x1);

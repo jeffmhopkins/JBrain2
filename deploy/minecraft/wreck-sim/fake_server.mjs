@@ -75,14 +75,14 @@ export class Dimension {
     const cx = Math.floor(x / 16);
     const cz = Math.floor(z / 16);
     // Like the game, an area's chunks come in over several ticks: here a few chunks a
-    // job step, in rows, so a chunk in the middle loads after the corners have.
+    // tick, in rows, so a chunk in the middle loads after the corners have.
     for (const { box, at } of this.areas.values()) {
       const [x0, z0, x1, z1] = box;
       if (cx < x0 || cx > x1 || cz < z0 || cz > z1) continue;
       const order = (cx - x0) * (z1 - z0 + 1) + (cz - z0);
       const row = Math.floor((z1 - z0 + 1) / 2);
       const ready = order === 0 || cx === x1 || ((cz === z0 || cz === z1) && order < row) ? 0 : order;
-      if (clock - at >= ready / CHUNKS_PER_STEP) return true;
+      if (tick() - at >= ready / CHUNKS_PER_TICK) return true;
     }
     return false;
   }
@@ -128,7 +128,7 @@ export class Dimension {
         Math.floor(Math.max(x0, x1) / 16), Math.floor(Math.max(z0, z1) / 16)];
       if ((box[2] - box[0] + 1) * (box[3] - box[1] + 1) > 100) throw new Error("ticking area over 100 chunks");
       if (this.areas.size >= 10) throw new Error("too many ticking areas");
-      this.areas.set(words[8], { box, at: clock });
+      this.areas.set(words[8], { box, at: tick() });
     } else if (words[0] === "tickingarea" && words[2] === "circle") {
       const [x, , z, r] = words.slice(3, 7).map(Number);
       const cx = Math.floor(x / 16);
@@ -136,16 +136,20 @@ export class Dimension {
       // Only the inscribed square counts here, so code that leans on the corners of a
       // circle fails as it would in the game.
       const k = Math.floor(r / Math.SQRT2);
-      this.areas.set(words[7], { box: [cx - k, cz - k, cx + k, cz + k], at: clock });
+      this.areas.set(words[7], { box: [cx - k, cz - k, cx + k, cz + k], at: tick() });
     }
     return { successCount: 1 };
   }
 }
 
 let stopAfterSteps = Infinity;
-let clock = 0; // job steps run so far: the fake's ticks
+let clock = 0; // job steps run so far
 let stopped = 0;
-const CHUNKS_PER_STEP = 3;
+// The game runs many job steps a tick, so a wait counted in yields is far shorter than
+// it looks; the fake does the same, and loads chunks by the tick, as the game does.
+const STEPS_PER_TICK = 50;
+const CHUNKS_PER_TICK = 1;
+const tick = () => Math.floor(clock / STEPS_PER_TICK);
 const timeouts = [];
 
 const listeners = [];
@@ -171,6 +175,9 @@ export const world = {
 };
 
 export const system = {
+  get currentTick() {
+    return tick();
+  },
   runJob(gen) {
     // The game spreads a job over ticks; here it simply runs to the end — or, when the
     // test stops the "server" mid-job, is dropped there with no cleanup at all.
