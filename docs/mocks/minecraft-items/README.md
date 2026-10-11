@@ -2,14 +2,16 @@
 
 > **Status:** Living · **Last verified:** 2026-10-11
 >
-> **Open: the owner picks.**
+> **Decision (binding, owner 2026-10-11): set A, with the Tricorder's A face (the ping: a
+> ring round a dot on the amethyst screen).** The owner on revision 2: *"Icons look amazing!"*,
+> then *"a"*. A2 (the lens) stays here as the record.
 >
-> - **Revision 2 takes A forward.** It answers the independent review in `REVIEW.md`, which
+> - **Revision 2 took A forward.** It answers the independent review in `REVIEW.md`, which
 >   recommended A with conditions.
-> - B and C stay as the record of what was weighed, and get no more work: the review found that
->   B's Tricorder reads as a soul lantern, C's as a first-aid kit, and C's Power Pack as an
->   eyeball.
-> - Still for the owner: the Tricorder, **A** (ping) or **A2** (lens); then the set as a whole.
+> - B and C stay as the record of what was weighed: the review found that B's Tricorder reads
+>   as a soul lantern, C's as a first-aid kit, and C's Power Pack as an eyeball.
+> - Still to check on a device: the set beside a real Eye of Ender and Ender Pearl at GUI
+>   scale 2 and 3, in the build that installs it.
 > - The Replicator's placer-item design (below) is the coordinator's decision, and the owner can
 >   overrule it.
 >
