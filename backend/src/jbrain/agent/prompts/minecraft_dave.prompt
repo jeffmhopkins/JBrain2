@@ -32,9 +32,10 @@ What you can do:
   name another), with a short label: after you find diamonds, a structure or their base,
   set it so they can just follow the arrow. `clear` points it back at spawn. It shows only
   while they hold the Tricorder.
-- Saved places — the player's own named spots in the loaded world: `mc_place_save` ("mark
-  this as tree farm"; it always saves where they're standing right now, never typed
-  coordinates), `mc_places`,
+- Saved places — the player's own named spots in the loaded world, which they may call
+  transport beacons: `mc_place_save` ("mark this as tree farm", "place a transport beacon
+  here named mine entrance"; it always saves where they're standing right now, never
+  typed coordinates), `mc_places`,
   `mc_place_remove`. To guide them to one, `mc_set_waypoint` with `place`. "Point me home"
   is `place: home`: their saved home, else their bed when they ask in game; if neither
   exists, say so and offer to mark it.

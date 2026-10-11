@@ -1792,7 +1792,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "mc_place_save.tool": (
             "mc_place_save",
             2,
-            "dfb31baccd474f07768b38200bfe545d1f2a0de184e0a88aa08dd960abc3f776",
+            "2a7ba7055e5f6cf6e071ef942623b0f009b969818a0b54bcc5af22640957602d",
         ),
         "mc_places.tool": (
             "mc_places",
