@@ -34,6 +34,7 @@ from jbrain.agent.briefs import FEED_TAG, neutralize_boundary
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.minecraft import client as mc
+from jbrain.minecraft import scans
 from jbrain.minecraft import sessions as mc_sessions
 from jbrain.minecraft.asker import Asker, Spot, asker_for
 from jbrain.minecraft.sessions import check_gamertag
@@ -65,6 +66,9 @@ _GOAL_STATUSES = ("open", "done", "abandoned")
 _COORD_MAX = 30_000_000
 _DIMENSIONS = ("overworld", "nether", "the_end")
 _DIMENSION_NAMES = {"overworld": "Overworld", "nether": "Nether", "the_end": "End"}
+# `locate`'s answer when it found one ("The nearest mansion is at block 2312, ~, -1544");
+# anything else (an unknown id, a down generator) searched nothing and costs no scan.
+_LOCATED = re.compile(r"\bis at block\b")
 
 
 def fence(body: str) -> str:
@@ -379,10 +383,18 @@ def build_minecraft_handlers(
     maker: async_sessionmaker[AsyncSession],
     config: Any,
     settings_store: SqlSettingsStore | None,
+    *,
+    scan_book: Callable[[SessionContext], scans.ScanBook] | None = None,
 ) -> dict[str, ToolHandler]:
     """Minecraft_Dave's tools, bound to the app's sessionmaker, its config (the sidecar's
     address and token) and the settings store (the owner's gamertag). Each DB handler runs
-    under `ctx.session`, so the owner-only RLS on the Minecraft tables is the gate."""
+    under `ctx.session`, so the owner-only RLS on the Minecraft tables is the gate.
+    `scan_book` replaces the deep-scan ledger (unit tests keep it in memory)."""
+
+    def book_for(ctx: ToolContext) -> scans.ScanBook:
+        if scan_book is not None:
+            return scan_book(ctx.session)
+        return scans.SqlScanBook(maker, ctx.session)
 
     async def chat_player(s: AsyncSession, ctx: ToolContext) -> Player | None:
         # In game the player is whoever the server says typed the command, whatever the
@@ -527,6 +539,7 @@ def build_minecraft_handlers(
 
     async def mc_world_info(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         out: list[str] = []
+        day: int | None = None
         for label, command in (
             ("Day", "time query day"),
             (
@@ -539,9 +552,34 @@ def build_minecraft_handlers(
             if isinstance(got, str):
                 return got
             out.append(f"{label}: {_reply(got)}")
+            if command == "time query day":
+                day = scans.parse_day(got)
         # The console prints whatever arrives in the wait window — a join line with a
         # gamertag, an add-on's event line — so the reply is fenced like any player text.
-        return ToolOutput(fence("\n".join(out)), result_brief="time + weather")
+        body = fence("\n".join(out))
+        asker = asker_for(ctx.agent_session_id)
+        if asker is not None and day is not None:
+            used, _ = await book_for(ctx).today(asker.world, asker.key, day)
+            left = scans.scans_left(max(scans.SCANS_PER_DAY - used, 0))
+            body += f"\nDeep scans for the player asking: {left} (of {scans.SCANS_PER_DAY})."
+        return ToolOutput(body, result_brief="time + weather")
+
+    async def scanned(
+        ctx: ToolContext, search: scans.Search, run: scans.Run, *, needs_server: bool
+    ) -> str:
+        """A deep scan: unlimited outside the game; in game, within the asker's daily
+        limit (§M17), counted against the world's own day."""
+        asker = asker_for(ctx.agent_session_id)
+        if asker is None:
+            out, _ = await run()
+            return out
+        book = book_for(ctx)
+        day = await scans.scan_day(
+            book, asker, await console("time query day"), needs_server=needs_server
+        )
+        if isinstance(day, str):
+            return ToolOutput(day, result_brief="no day, not searched")
+        return await scans.deep_scan(book, asker, day, search, run)
 
     async def where(
         arguments: dict, ctx: ToolContext, dim: str = "overworld"
@@ -603,12 +641,19 @@ def build_minecraft_handlers(
         if isinstance(at, str):
             return at
         xi, zi, origin = at
-        got = await console(f"execute positioned {xi} 64 {zi} run locate {kind} {what}")
-        if isinstance(got, str):
-            return got
-        return ToolOutput(
-            f"Searching from {origin} ({xi}, {zi}): {fence(_reply(got))}", result_brief=what
-        )
+
+        async def run() -> tuple[str, bool]:
+            got = await console(f"execute positioned {xi} 64 {zi} run locate {kind} {what}")
+            if isinstance(got, str):
+                return got, False
+            reply = _reply(got)
+            out = ToolOutput(
+                f"Searching from {origin} ({xi}, {zi}): {fence(reply)}", result_brief=what
+            )
+            return out, bool(_LOCATED.search(reply))
+
+        search = scans.Search("mc_locate", f"{kind}:{what}", "overworld", xi, zi)
+        return await scanned(ctx, search, run, needs_server=True)
 
     def dimension_of(arguments: dict, ctx: ToolContext) -> str:
         # In game, "here" is the dimension the asker is standing in.
@@ -667,9 +712,24 @@ def build_minecraft_handlers(
         if isinstance(at, str):
             return at
         xi, zi, origin = at
+        search = scans.Search(
+            "mc_find_block", f"{','.join(sorted(set(names)))}|r{radius}|n{limit}", dim, xi, zi
+        )
+
+        async def run() -> tuple[str, bool]:
+            out = await find_blocks(names, dim, xi, zi, origin, limit, radius)
+            return out, out.result_brief not in ("", "none explored")
+
+        return await scanned(ctx, search, run, needs_server=False)
+
+    async def find_blocks(
+        names: list[str], dim: str, xi: int, zi: int, origin: str, limit: int, radius: int
+    ) -> ToolOutput:
+        """The search itself. A bare sentence (no `result_brief`) is a failure that searched
+        nothing, so it costs no scan."""
         worlds = await sidecar("GET", "/worlds")
         if isinstance(worlds, str):
-            return worlds
+            return ToolOutput(worlds)
         slot = next((w["id"] for w in worlds.get("slots", []) if w.get("active")), "slot1")
         got = await sidecar(
             "GET",
@@ -685,7 +745,7 @@ def build_minecraft_handlers(
             },
         )
         if isinstance(got, str):
-            return got
+            return ToolOutput(got)
         head = f"From ({xi}, {zi}) in the {_DIMENSION_NAMES[dim]}, {origin}"
         if not got.get("searched"):
             hint = got.get("suggestions") or []
@@ -997,23 +1057,30 @@ def build_minecraft_handlers(
         if isinstance(at, str):
             return at
         xi, zi, origin = at
-        got = await sidecar("GET", "/map/nearby", params={"dim": dim, "x": xi, "z": zi})
-        if isinstance(got, str):
-            return got
-        near = [n for n in got.get("nearby", []) if n["distance"] <= radius]
-        head = f"Within {radius} blocks of ({xi}, {zi}) in the {_DIMENSION_NAMES[dim]}, {origin}"
-        if not near:
-            return ToolOutput(f"{head}: no structures.", result_brief="none")
-        lines = [
-            f"- {n['structure'].replace('_', ' ')} at ({n['x']}, {n['z']}), {n['distance']}"
-            " blocks away"
-            for n in near
-        ]
-        return ToolOutput(
-            head + " (nearest of each kind; temple = desert or jungle temple, witch hut or"
-            " igloo; ruins = ocean ruins):\n" + "\n".join(lines),
-            result_brief=f"{len(near)} nearby",
-        )
+
+        async def run() -> tuple[str, bool]:
+            got = await sidecar("GET", "/map/nearby", params={"dim": dim, "x": xi, "z": zi})
+            if isinstance(got, str):
+                return got, False
+            near = [n for n in got.get("nearby", []) if n["distance"] <= radius]
+            head = (
+                f"Within {radius} blocks of ({xi}, {zi}) in the {_DIMENSION_NAMES[dim]}, {origin}"
+            )
+            if not near:
+                return ToolOutput(f"{head}: no structures.", result_brief="none"), True
+            lines = [
+                f"- {n['structure'].replace('_', ' ')} at ({n['x']}, {n['z']}),"
+                f" {n['distance']} blocks away"
+                for n in near
+            ]
+            return ToolOutput(
+                head + " (nearest of each kind; temple = desert or jungle temple, witch hut"
+                " or igloo; ruins = ocean ruins):\n" + "\n".join(lines),
+                result_brief=f"{len(near)} nearby",
+            ), True
+
+        search = scans.Search("mc_nearby", f"r{radius}", dim, xi, zi)
+        return await scanned(ctx, search, run, needs_server=True)
 
     # --- goals and the progress log ---------------------------------------------------
 

@@ -1777,10 +1777,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "c22563fc12d61589cccc3f6aa033380a3aa5367c2ed97f3d7565236141a4b42b",
         ),
+        # v2: in game, one of the player's daily deep scans (§M17).
         "mc_find_block.tool": (
             "mc_find_block",
-            1,
-            "739ba8520c3a7507d632d8c5254e6d083b55a770b59d090a58fa9b2af2737bb3",
+            2,
+            "0735372944953a8f41e75735843659a24314166f79d0add9bf91f7fdb4eec921",
         ),
         # v2: `place`, a saved place's name, as an alternative to coordinates.
         # v3: the Tricorder is in every world (the jbrain pack), not the home-test kit.
@@ -1810,15 +1811,17 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "363a6a9fcc0a832b00a82f9aa5aa44747f814d44cc12c9d19dabb0290f8b4ab6",
         ),
+        # v3: in game, one of the player's daily deep scans (§M17).
         "mc_locate.tool": (
             "mc_locate",
-            2,
-            "3c6a3df49a97dfbc5f36501ac7e42257585b3af449934b5617d72de1a8792e4b",
+            3,
+            "5a161a7e726ac89e9badff28db91fd3fe1121c4d4cb4cc262d79c8c4b601e42e",
         ),
+        # v2: in game, one of the player's daily deep scans (§M17).
         "mc_nearby.tool": (
             "mc_nearby",
-            1,
-            "43eab953cbc85a6cae673a36db3d82a94bc965f639ea7cae4996bb209c175e08",
+            2,
+            "eba9fb3717c9ed564fe6940db88067943c8f4134d213d3bf3358c86bb01debb7",
         ),
         "mc_what_is_at.tool": (
             "mc_what_is_at",
@@ -1911,10 +1914,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "1f703a40f648bbeb6393be63954e1e05fc348c2636ceebf233dfc626e4139f36",
         ),
+        # v2: in game, the asker's deep scans left today (§M17).
         "mc_world_info.tool": (
             "mc_world_info",
-            1,
-            "3af19114c57fe17ee593c67f3a673c683189870ef75b8918729bd3882a6d6c5f",
+            2,
+            "b8d63b8bc7295114d95e3e6b35ca49a397ce7861d2c7b1a4833b77f2b50879e5",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

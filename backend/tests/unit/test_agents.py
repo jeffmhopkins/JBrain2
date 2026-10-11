@@ -949,9 +949,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         ),
         # v8: `mc_show_map`, the map card in the app chat (§P3), and that it isn't in game.
         # v9: saved places are only ever where the player stands (never "transport beacons" yet).
+        # v10: in game, the deep scan's daily limit (§M17) and saying how many are left.
         "minecraft_dave": (
-            "agent-minecraft-dave-v9",
-            "d1555ec494143affbb4b194340d7609c3b0df6b022a6a1bb9805a2ef775adbf3",
+            "agent-minecraft-dave-v10",
+            "dc08e305f15803c88a590c8b5d4369cbd35f23ae8bb5391eb3ef39efc0835770",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

@@ -23,7 +23,7 @@ from jbrain.api.deps import DebugDep, SettingsDep
 from jbrain.api.minecraft import WORLD_JOB_TIMEOUT_S
 from jbrain.config import Settings
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import timeline, travel
+from jbrain.minecraft import scans, timeline, travel
 
 router = APIRouter(prefix="/debug/minecraft")
 
@@ -361,6 +361,16 @@ async def minecraft_travel(request: Request, _p: DebugDep) -> dict[str, Any]:
     request.state.debug_detail = "minecraft travel summary"
     maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
     return {"players": await travel.summary(maker)}
+
+
+@router.get("/scans")
+async def minecraft_scans(request: Request, _p: DebugDep) -> dict[str, Any]:
+    """The in-game deep-scan limit (§M17) per world, player and Minecraft day: scans used
+    and left, and how many results are kept for free repeats — counts, never the results,
+    the same rule as `/travel`."""
+    request.state.debug_detail = "minecraft scan counts"
+    maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
+    return {"per_day": scans.SCANS_PER_DAY, "players": await scans.summary(maker)}
 
 
 @router.get("/timeline")

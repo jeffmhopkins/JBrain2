@@ -1,6 +1,6 @@
 ---
 name: mc_nearby
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -25,3 +25,6 @@ mansions, monuments, outposts, ancient cities, trial chambers, temples, shipwrec
 treasure, portals, strongholds; fortresses and bastions in the Nether; end cities), with
 their coordinates and distance. Asked of the running server's own world generator, so it
 is exact and includes places nobody has explored. Needs the server running.
+In game this is one of the asking player's deep scans (two per Minecraft day); the
+same search again from about the same place is free, and the answer says how many
+are left.
