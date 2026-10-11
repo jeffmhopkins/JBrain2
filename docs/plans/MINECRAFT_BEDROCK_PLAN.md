@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2◻️ SW3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1451,6 +1451,99 @@ piece is worn.
 **Spike first:** a smithing-transform recipe with a custom result keeps enchantments and
 damage on Bedrock; a custom wearable with an attachable shows on the Xbox; and the
 effect refresh doesn't flicker.
+
+### SW1–SW3 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
+
+**What the owner asked for:** every **new** world starts at a crash site. An escape pod
+lies in a small crater at spawn, its parachute dragged out behind it. Overhead hangs the
+battle-damaged carrier it came from: intact enough to fly, with breaches showing lit decks,
+smoke, and furnished interiors reachable by ladder. The builds were designed and
+signed off from renders in `spikes/minecraft-spawn-wreck/` (its README describes both).
+
+**How it gets into a world.** Bedrock has no hook into terrain generation, so the build is
+done by a script on the world's first load:
+
+- **Structures.** The spike's generators export the pod's hull (with its interior air,
+  so terrain inside it is cleared) and the mothership (tiled at 64 × 64) as block lists.
+  `deploy/minecraft/structures.py` (stdlib) turns them into `.mcstructure` files at
+  image build. Block states are checked against Mojang's block metadata, because a
+  wrong state set breaks a block silently.
+- **A separate `jbrain-wreck` behavior pack**, installed only into an *armed* world.
+  - **Arming:** a slot is armed when the wrapper creates or regenerates it (create,
+    reset with a seed) and the `spawn_wreck` setting is on (default on). A create may
+    override that. An imported or restored world is never armed, so the owner's own
+    worlds are never touched.
+  - **First start:** a brand-new world has no folder until BDS generates it, so the
+    wrapper writes the pack into the empty folder before the first start.
+  - **Fallback:** if the pack doesn't report itself loaded on that first start, the
+    wrapper restarts once to install it.
+- **Once per world.** The script records progress in world dynamic properties and
+  emits `wreck` events (`loaded`, `pod`, `ship`, `done`). The in-world record is
+  the guard against a second build. The wrapper marking the slot `done` (which takes
+  the pack out at the next start) is housekeeping, because a `done` can go unread. A
+  build interrupted mid-way resumes; a finished one never repeats.
+
+**The pod adapts to the ground it lands on.** Only the hull is a stored structure. The
+script builds the rest column by column:
+
+1. **Load and survey.** It waits for the spawn chunks to load (a temporary ticking
+   area), then surveys around spawn. It looks through leaves, logs and plants to the
+   real ground, rejects water and steep ground, and picks the flattest dry patch near
+   spawn.
+2. **Fit the ground.** It fills under the hull where the ground drops away and trims
+   where it rises. It clears trees and snow from the footprint and skid path.
+3. **Build the site.** It digs the crater and skid mark in scorched versions of the
+   local ground, chosen by the surface block:
+   - **grass:** coarse dirt
+   - **sand:** sandstone and gravel
+   - **red sand:** red sandstone
+   - **stone:** cobble and gravel
+   - **snow:** dirt with the snow cleared
+   - **mud:** packed mud
+
+   It drapes the parachute at each column's own height and lays the blown hatch cover.
+4. **Fill and point spawn.** It stocks the barrels with a small starter kit and moves
+   the world spawn to the hatch, with `spawnradius` set to 0.
+5. **Splashdown.** With no dry ground within reach, the pod floats with its canopy on
+   the water.
+
+**The mothership** is placed from its tiles above spawn. It first checks the highest
+terrain under its footprint and lifts itself clear of peaks, keeping its top under the
+build limit; if it can't lift enough, it shifts sideways. Fires are kept clear of
+flammable blocks, and well away from the magazine's TNT.
+
+**SW1 — pipeline + arming (no in-game change yet; shipped):** a world armed under SW1 is
+passed over. Its pack records that in the world and reports done, so SW2's build never
+lands on a world that was played before it shipped.
+- the export
+- `structures.py` with its NBT writer and tiling
+- block-state validation
+- the image build step
+- the `jbrain-wreck` pack skeleton, which only reports `loaded`
+- slot arming, `spawn_wreck`, pre-generation install and the `wreck` event
+
+**SW2 — the build:**
+- the pack's site survey and pod build
+- the terrain fitting and biome materials
+- the parachute, the loot and the spawn point
+- the mothership placement
+- the first-start fallback restart
+
+The pure planning (site choice, materials, column fitting) is a separate module with
+node tests.
+
+**SW3 — operate and prove it.** Until it ships, the default-on `spawn_wreck` setting
+has no PWA or debug-API switch, which is a known rule #10 gap; SW3 closes it.
+- the PWA switch at world creation, with a re-arm action (GUI gate: three mocks first),
+  plus a debug route
+- a biome sweep on the box: worlds created through the debug API from seeds whose spawn
+  `mapping.Predictor` puts in each biome, each checked from the world index (pod present,
+  not floating or buried, hatch reachable, canopy on the ground)
+
+**Box-only checks** (can't be proven off the box):
+- BDS honours a pack pre-written into an ungenerated world's folder.
+- Every palette entry places as intended on the running version.
+- Placing a whole build in one go stays inside the script watchdog.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 

@@ -284,6 +284,13 @@ fi
 # single-source-of-truth rule (CLAUDE.md rule #8); see docs/runbooks/STRIX_HALO_SETUP.md
 # ("Image generation"), docs/archive/IMAGE_GEN_SERVICE_PLAN.md, and docs/archive/IMAGE_GEN_LIVE_PLAN.md.
 
+# --- Minecraft spawn-wreck design spike (opt-in, NOT bootstrapped here) ---
+# spikes/minecraft-spawn-wreck/ generates the escape pod + mothership builds and
+# renders previews with Blender, using Mojang's textures fetched into ~/.cache by its
+# own fetch_textures.sh. Blender is a multi-hundred-MB apt install that no build, test
+# or CI job needs, so it is deliberately not installed here. Mentioned per the
+# dev-setup single-source-of-truth rule (CLAUDE.md rule #8).
+
 # --- Code mode / jcode (Python deps synced above; CLI + model are opt-in) ---
 # The jcode control server (jcode/) is a normal Python service whose deps `uv sync`
 # installs above, so its unit tests run in dev/CI against a fake agent — no model,

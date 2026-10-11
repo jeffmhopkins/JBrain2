@@ -98,6 +98,10 @@ PROBE_PROPERTIES = {
 # respawns, which BDS never prints).
 JBRAIN_PACK_SRC = Path(__file__).resolve().parent / "jbrain-pack"
 JBRAIN_PACK_DIR = "jbrain"
+# The spawn wreck's pack (§SW1): installed only into a world the box generated itself,
+# armed when it was created; its structures are built into it at image build.
+WRECK_PACK_SRC = Path(__file__).resolve().parent / "wreck-pack"
+WRECK_PACK_DIR = "jbrain_wreck"
 # Travel log (§T1): each online player's position, this often, kept only once they have
 # moved this far — standing still costs nothing.
 TRACK_S = 10.0
@@ -137,6 +141,8 @@ class Rig:
         self._track_id = 0
         self._last_pos: dict[str, dict[str, Any]] = {}
         self._track_lock = threading.Lock()
+        # The last event note_wreck() has read.
+        self._wreck_seen = 0
         # Map tiles (§M8): one chunk index per world folder, and the PNGs it rendered,
         # both dropped when that world's database files change.
         self._map_lock = threading.Lock()
@@ -192,11 +198,13 @@ class Rig:
             # BDS but keeps this wrapper running, so status, facts and an update still
             # work while it is stopped; this survives a box reboot.
             "run": bool(raw.get("run", True)),
+            # Whether a world the box creates or regenerates starts at the crash site.
+            "spawn_wreck": bool(raw.get("spawn_wreck", True)),
         }
 
     def set_settings(self, changes: dict[str, Any]) -> dict[str, Any]:
         current = self.settings()
-        for key in ("auto_update", "run"):
+        for key in ("auto_update", "run", "spawn_wreck"):
             if key in changes:
                 current[key] = bool(changes[key])
         SETTINGS.parent.mkdir(parents=True, exist_ok=True)
@@ -276,6 +284,9 @@ class Rig:
         self.write_properties()
         self._applied = dict(self.properties())
         self.bds.world = self.active_folder()
+        # The wreck first: for an armed new world it makes the folder, so the box's own
+        # pack reaches that world's first session too.
+        self._install_wreck()
         try:
             self.install_pack(JBRAIN_PACK_SRC, JBRAIN_PACK_DIR, True)
         except OSError as exc:
@@ -726,7 +737,9 @@ class Rig:
                 self.snapshot("pre-load", auto=True, note=f"before loading {rec['name']}")
                 self._stop(f"Switching to the world {rec['name']}")
             if not rec["exists"] and not rec["seed"]:
-                rec = self.slots.update(slot_id, seed=worlds.new_seed(), origin="new")
+                rec = self.slots.update(
+                    slot_id, seed=worlds.new_seed(), origin="new", wreck=self._arm()
+                )
             self._step("writing")
             self._apply_slot(rec)
             if self.settings()["run"]:
@@ -750,6 +763,7 @@ class Rig:
             rules=rules,
             origin="new",
             created_at=time.time(),
+            wreck=self._arm(body.get("wreck")),
         )
 
     def update_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -812,6 +826,7 @@ class Rig:
                     origin="imported",
                     created_at=time.time(),
                     rules={},
+                    wreck=None,  # the owner's own world: never touched
                 )
 
             self._restart_around(folder, work, "A world is being imported here")
@@ -845,7 +860,11 @@ class Rig:
                     rec["seed"] if mode == "same_seed" else (seed or worlds.new_seed())
                 )
                 fresh = self.slots.update(
-                    slot_id, seed=new, origin="reset", created_at=time.time()
+                    slot_id,
+                    seed=new,
+                    origin="reset",
+                    created_at=time.time(),
+                    wreck=self._arm(),
                 )
                 if active:
                     self._apply_slot(fresh)
@@ -859,7 +878,8 @@ class Rig:
         path = self.snapshot_file(name)  # validates before anything is touched
         source = self.index.entry(name)["folder"]
         src = self.slots.by_folder(source) or {}
-        fields: dict[str, Any] = {"origin": "restored"}
+        # A restored world is the one in the backup, built or not; it is never re-armed.
+        fields: dict[str, Any] = {"origin": "restored", "wreck": None}
         if source != folder:
             # Another world's backup: the slot becomes that world, so its old seed and
             # settings no longer describe it. Rules come with the source's choices.
@@ -998,7 +1018,12 @@ class Rig:
         threading.Thread(target=apply, daemon=True).start()
 
     def install_pack(
-        self, src: Path, dir_name: str, install_it: bool, kind: str = "behavior"
+        self,
+        src: Path,
+        dir_name: str,
+        install_it: bool,
+        kind: str = "behavior",
+        create: bool = False,
     ) -> str:
         """Put a bundled behavior or resource pack into the loaded world (or take it
         out) and list it in world_behavior_packs.json / world_resource_packs.json.
@@ -1007,6 +1032,8 @@ class Rig:
         manifest = json.loads((src / "manifest.json").read_text())
         pack_id = manifest["header"]["uuid"]
         world = self.world_dir()
+        if create and install_it:
+            world.mkdir(parents=True, exist_ok=True)
         if not world.is_dir():
             return pack_id  # a world BDS hasn't generated yet: next start installs it
         dest = world / f"{kind}_packs" / dir_name
@@ -1023,6 +1050,46 @@ class Rig:
             packs.append({"pack_id": pack_id, "version": manifest["header"]["version"]})
         listing.write_text(json.dumps(packs, indent=2))
         return pack_id
+
+    def _arm(self, want: Any = None) -> str | None:
+        """The wreck state a world the box is about to generate starts in: armed unless
+        the owner turned the crash site off (for this world, or by default)."""
+        on = self.settings()["spawn_wreck"] if want is None else bool(want)
+        return "armed" if on else None
+
+    def _install_wreck(self) -> None:
+        """The wreck's pack goes into an armed world and comes out of any other, so an
+        imported or restored world never gets one. A new world has no folder until BDS
+        generates it, and its first load is the only time spawn is untouched, so the
+        folder is made for it; BDS then generates the world around the pack."""
+        rec = self.slots.by_folder(self.active_folder())
+        armed = bool(rec and rec.get("wreck") == "armed")
+        try:
+            self.install_pack(WRECK_PACK_SRC, WRECK_PACK_DIR, armed, create=armed)
+        except OSError as exc:
+            # No crash site this start; the server itself must still come up.
+            print(f"[minecraft] wreck pack not installed: {exc}", flush=True)
+
+    def note_wreck(self) -> None:
+        """A world whose pack reports the wreck built is marked done, so the pack comes
+        out at its next start. This is housekeeping, not the guard against a second
+        build: a "done" can go unread (the wrapper restarting first), and the pack's own
+        record in the world is what stops it building twice."""
+        events = self.bds.events_after(self._wreck_seen)
+        if not events:
+            return
+        self._wreck_seen = events[-1]["id"]
+        for e in events:
+            if e["kind"] != "wreck" or e.get("phase") != "done":
+                continue
+            rec = self.slots.by_folder(str(e.get("world") or ""))
+            # A "done" from before the slot's world was (re)generated is the old
+            # world's, not this armed one's.
+            if not rec or rec.get("wreck") != "armed":
+                continue
+            if e["at"] < float(rec.get("created_at") or 0):
+                continue
+            self.slots.update(rec["id"], wreck="done")
 
     def sample_positions(self) -> int:
         """One travel-log pass: ask the console where each online player is. A player
@@ -1688,6 +1755,10 @@ def main() -> None:
                 rig.sample_positions()
             except Exception as exc:  # noqa: BLE001 — the log must never stop the server
                 print(f"[track] {type(exc).__name__}: {exc}", flush=True)
+            try:
+                rig.note_wreck()
+            except Exception as exc:  # noqa: BLE001 — nor may the wreck's bookkeeping
+                print(f"[wreck] {type(exc).__name__}: {exc}", flush=True)
             time.sleep(TRACK_S)
 
     threading.Thread(target=_tracker, daemon=True).start()

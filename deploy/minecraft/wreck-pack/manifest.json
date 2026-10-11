@@ -1,0 +1,20 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "JBrain spawn wreck",
+    "description": "Builds the crash site at a new world's spawn, once.",
+    "uuid": "e7cc5b6a-25bf-4475-8057-792130929498",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 21, 90]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "b0e06694-f414-4c45-a4fb-c45ad42060f7",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [{ "module_name": "@minecraft/server", "version": "2.0.0" }]
+}

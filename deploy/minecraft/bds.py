@@ -35,7 +35,8 @@ _CONNECTED = re.compile(r"Player connected: ([^,]+), xuid: ?(\d*)")
 _DISCONNECTED = re.compile(r"Player disconnected: ([^,]+), xuid")
 # A line from the jbrain behavior pack: `[Scripting] [jbrain] {"ev": "death", …}`.
 _PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
-PACK_EVENTS = ("death", "respawn", "dave")
+# `wreck` is the spawn wreck reporting its build (plan §SW1): loaded, pod, ship, done.
+PACK_EVENTS = ("death", "respawn", "dave", "wreck")
 # A `/jb:dave` question as the pack cuts it (§M5); anything longer was not the pack's.
 QUESTION_MAX = 256
 _VERSION = re.compile(r"Version:? ([0-9][0-9.]*[0-9])")
@@ -211,7 +212,7 @@ class Bds:
             return
         name = str(data.get("name", ""))[:32]
         extra: dict[str, Any] = _place(data)
-        for key in ("cause", "killer"):
+        for key in ("cause", "killer", "phase"):
             if isinstance(data.get(key), str):
                 extra[key] = data[key][:64]
         known = self.players.get(name)

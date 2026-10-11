@@ -14,9 +14,11 @@ apart from the box backups, so a download is the only off-box copy).
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import struct
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -75,6 +77,7 @@ DEFAULT_RULES: dict[str, bool | int | str] = {
 _RULE_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _SEED_MAX = 64
 DIFFICULTIES = ("peaceful", "easy", "normal", "hard")
+WRECK_STATES = (None, "armed", "done")
 
 
 def slot_ids(count: int) -> list[str]:
@@ -92,6 +95,15 @@ class SlotStore:
         self.path = path
         self.worlds_dir = worlds_dir
         self.count = count
+        # Writers on several threads (world jobs, the tracker marking a wreck built): an
+        # update is read-modify-write, so they take turns, and each write lands whole.
+        self._lock = threading.Lock()
+
+    def _write(self, raw: dict[str, dict[str, Any]]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(raw, indent=2, sort_keys=True))
+        os.replace(tmp, self.path)
 
     def _raw(self) -> dict[str, dict[str, Any]]:
         try:
@@ -113,6 +125,9 @@ class SlotStore:
                 "difficulty": "normal",
                 "cheats": False,
                 "origin": None,
+                # The spawn wreck (§SW1): "armed" until the pack reports it built, then
+                # "done"; None for a world the box didn't generate, which never gets one.
+                "wreck": None,
                 **raw.get(sid, {}),
             }
             rec["exists"] = self.exists(rec["folder"])
@@ -133,25 +148,32 @@ class SlotStore:
 
     def update(self, slot_id: str, **fields: Any) -> dict[str, Any]:
         self.get(slot_id)  # validates the id
-        raw = self._raw()
-        rec = raw.get(slot_id, {})
-        for key, value in fields.items():
-            if key == "gamemode" and value not in GAMEMODES:
-                raise ValueError(f"game mode must be one of {', '.join(GAMEMODES)}")
-            if key == "difficulty" and value not in DIFFICULTIES:
-                raise ValueError(f"difficulty must be one of {', '.join(DIFFICULTIES)}")
-            if key == "name" and value is not None:
-                value = " ".join(str(value).split())[:40] or None
-            rec[key] = value
-        raw[slot_id] = rec
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(raw, indent=2, sort_keys=True))
+        with self._lock:
+            raw = self._raw()
+            rec = raw.get(slot_id, {})
+            for key, value in fields.items():
+                if key == "gamemode" and value not in GAMEMODES:
+                    raise ValueError(
+                        f"game mode must be one of {', '.join(GAMEMODES)}"
+                    )
+                if key == "wreck" and value not in WRECK_STATES:
+                    raise ValueError(f"wreck must be one of {WRECK_STATES}")
+                if key == "difficulty" and value not in DIFFICULTIES:
+                    raise ValueError(
+                        f"difficulty must be one of {', '.join(DIFFICULTIES)}"
+                    )
+                if key == "name" and value is not None:
+                    value = " ".join(str(value).split())[:40] or None
+                rec[key] = value
+            raw[slot_id] = rec
+            self._write(raw)
         return self.get(slot_id)
 
     def clear(self, slot_id: str) -> None:
-        raw = self._raw()
-        raw.pop(slot_id, None)
-        self.path.write_text(json.dumps(raw, indent=2, sort_keys=True))
+        with self._lock:
+            raw = self._raw()
+            raw.pop(slot_id, None)
+            self._write(raw)
 
     def exists(self, folder: str) -> bool:
         d = self.worlds_dir / folder
