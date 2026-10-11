@@ -73,10 +73,12 @@ export class Dimension {
     // Removed areas whose chunks haven't unloaded yet: on the box they go a moment
     // after the remove, so a load check right after one can be fooled.
     this.dying = []; // {box, until: tick}
+    this.dead = new Set(); // "cx,cz" chunks a scenario never lets load
   }
   loaded(x, z) {
     const cx = Math.floor(x / 16);
     const cz = Math.floor(z / 16);
+    if (this.dead.has(`${cx},${cz}`)) return false; // a chunk that never loads
     this.dying = this.dying.filter((d) => tick() < d.until);
     for (const { box } of this.dying) {
       const [x0, z0, x1, z1] = box;
@@ -163,6 +165,12 @@ let idle = 0;
 const STEPS_PER_TICK = 50;
 const CHUNKS_PER_TICK = 1;
 const tick = () => Math.floor(clock / STEPS_PER_TICK);
+// The pack times its waits on the clock; here the clock runs with the ticks, at a
+// healthy server's 50 ms a tick, so a run is the same however fast the machine is.
+// A scenario can slow it to the box's empty-server pace (seconds a tick).
+const EPOCH = 1_790_000_000_000;
+let msPerTick = 50;
+Date.now = () => EPOCH + tick() * msPerTick;
 // The box's own timing: a removed area's chunks are gone by the next tick, and a new
 // area has none ready on the tick it was added, the corners included.
 const UNLOAD_DELAY_TICKS = 1;
@@ -222,7 +230,8 @@ export const system = {
 
 /** Test-side controls, not part of the game API. */
 export const sim = {
-  reset(terrain, spawnAt, onPlace) {
+  reset(terrain, spawnAt, onPlace, { tickMs = 50 } = {}) {
+    msPerTick = tickMs;
     listeners.length = 0;
     props.clear();
     spawn = { x: spawnAt.x, y: 32767, z: spawnAt.z };
@@ -241,6 +250,7 @@ export const sim = {
     for (let i = 0; timeouts.length && i < 20; i += 1) timeouts.shift()();
   },
   stopped: () => stopped,
+  now: () => Date.now(),
   idleTicks: () => idle,
   clock: () => clock,
   /** Stop the "server" dead after this many job steps (Infinity: never). */

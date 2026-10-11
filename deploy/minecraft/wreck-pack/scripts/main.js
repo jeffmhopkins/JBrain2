@@ -24,8 +24,14 @@ const SHIP_AREA = "jbrain_wreck_ship";
 // chunks, inside a ticking area's 100. The site is chosen within 24 of spawn, and its
 // crater, skid mark and canopy reach about 40 further.
 const SURVEY = 64;
-const LOAD_WAIT_TICKS = 20 * 90;
-const STEADY_TICKS = 5;
+// Waits are measured on the clock, not in ticks. With nobody on, the box's world ticks
+// about 0.3 times a second even with a ticking area up (337 ticks in 15 minutes), so a
+// wait in ticks can run for hours.
+const LOAD_WAIT_MS = 90_000;
+// A box has "held" once every chunk read fine on this many ticks, at least this far apart.
+const STEADY_TICKS = 3;
+const STEADY_MS = 1_000;
+const PROGRESS_MS = 15_000;
 const MAX_FAILURES = 3;
 const RETRY_TICKS = 20 * 30;
 const POD_STEPS = ["terrain", "place", "crater", "canopy", "details", "kit", "spawn"];
@@ -118,13 +124,13 @@ function dropAreas(dim) {
 }
 
 /**
- * Wait (as a job: yielding) until every chunk of the box can be read, and stays so for
- * STEADY_TICKS ticks in a row. A ticking area loads its chunks over several ticks, so
- * the corners being ready says nothing about the middle: one column per chunk is read.
- * And a chunk read once can still be about to unload (a just-removed area's), so every
- * chunk is read again each tick until the box has held. The wait is in game ticks, not
- * yields: the game runs many job steps a tick, so a yield count gave a new world's
- * chunks under a second to generate (SW4, on the box).
+ * Wait (as a job: yielding) until every chunk of the box can be read, and stays so. A
+ * ticking area loads its chunks over several ticks, so the corners being ready says
+ * nothing about the middle: one column per chunk is read. A chunk read once can still be
+ * about to unload (a just-removed area's), so every chunk is read again each tick until
+ * the box has held for STEADY_TICKS ticks over STEADY_MS. The waits are on the clock,
+ * since an empty server's ticks are seconds apart (SW4, on the box), and a slow load
+ * logs how many chunks it's still missing.
  */
 function* loadBox(dim, x0, z0, x1, z1) {
   const columns = [];
@@ -133,17 +139,28 @@ function* loadBox(dim, x0, z0, x1, z1) {
       columns.push([Math.min(Math.max(cx * 16, x0), x1), Math.min(Math.max(cz * 16, z0), z1)]);
     }
   }
-  const start = system.currentTick;
+  const start = Date.now();
+  let told = start;
   let held = 0;
+  let heldSince = 0;
   let last = -1;
   let missing = columns.length;
-  while (system.currentTick - start < LOAD_WAIT_TICKS) {
-    const now = system.currentTick;
-    if (now !== last) {
-      last = now;
+  while (Date.now() - start < LOAD_WAIT_MS) {
+    const tick = system.currentTick;
+    if (tick !== last) {
+      last = tick;
       missing = columns.filter(([x, z]) => !blockAt(dim, x, 0, z)).length;
-      held = missing ? 0 : held + 1;
-      if (held >= STEADY_TICKS) return;
+      if (missing) {
+        held = 0;
+      } else {
+        if (held === 0) heldSince = Date.now();
+        held += 1;
+        if (held >= STEADY_TICKS && Date.now() - heldSince >= STEADY_MS) return;
+      }
+    }
+    if (Date.now() - told >= PROGRESS_MS) {
+      told = Date.now();
+      warn(`loading ${x0},${z0}..${x1},${z1}: ${missing} of ${columns.length} chunks missing, tick ${tick}`);
     }
     yield;
   }

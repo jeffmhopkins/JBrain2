@@ -73,6 +73,8 @@ const SCENARIOS = {
   },
   // Built, then started again: the pack says done again, for a wrapper that missed it.
   reloaded: { h: (x, z) => 68 + wave(x, z, 1.5), loads: 2 },
+  // The box with nobody on: a tick every 3 s, and one spawn chunk that never loads.
+  slow_and_stuck: { h: (x, z) => 68 + wave(x, z, 1.5), tickMs: 3000, deadChunk: "1,1" },
   // A world already played when the pack first sees it: passed over, and every later
   // start says so too, or the wrapper would record it built.
   already_played: { h: (x, z) => 68 + wave(x, z, 1.5), played: true, loads: 2 },
@@ -96,7 +98,9 @@ async function run(name, spec, n, stopAt = Infinity) {
         .map(([x, y, z, p]) => [x - t.x, y, z - t.z, p]);
     }
     for (const [x, y, z, p] of cells) d.put(loc.x + x, loc.y + y, loc.z + z, p.name, p.states, true);
-  });
+  }, { tickMs: spec.tickMs ?? 50 });
+  if (spec.deadChunk) dim.dead.add(spec.deadChunk);
+  const began = sim.now();
   // A fresh copy of main.js per world: it subscribes to worldLoad when imported.
   await import(`${pathToFileURL(resolve(packDir, "scripts/main.js")).href}?world=${n}`);
   const logs = [];
@@ -124,6 +128,11 @@ async function run(name, spec, n, stopAt = Infinity) {
   const phases = events.map((e) => e.phase).join(",");
   // Uninterrupted: the whole story in one load. Resumed: it ends done, never failed.
   const done = events.filter((e) => e.phase === "done");
+  if (spec.deadChunk) {
+    // It can't build, so it must give up within its own waits, never hang.
+    checks.gave_up = phases.startsWith("loaded,failed,failed,done") && done.some((e) => e.cause);
+    checks.gave_up_in_time = sim.now() - began <= 3 * 120_000;
+  }
   // Every block edit a build tries must land; the box once lost them all silently.
   checks.writes_landed = !logs.some((l) => l.includes("not written"));
   // A build never waits with no ticking area up (the box's world all but stops then).
@@ -133,8 +142,10 @@ async function run(name, spec, n, stopAt = Infinity) {
     return line ? Number(line.split(": ")[1].split(" ")[0]) : 0;
   };
   // A step that does nothing at all is as wrong as one whose writes fail.
-  if (!spec.played && !spec.splash) checks.steps_wrote = ["crater", "canopy", "details"].every((s) => wrote(s) > 0);
-  checks.finished = spec.played
+  if (!spec.played && !spec.splash && !spec.deadChunk) checks.steps_wrote = ["crater", "canopy", "details"].every((s) => wrote(s) > 0);
+  checks.finished = spec.deadChunk
+    ? checks.gave_up
+    : spec.played
     ? phases === "loaded,done,loaded,done" && done.every((e) => e.cause) && !placed.length
     : spec.loads === 2
       ? phases === "loaded,pod,ship,done,loaded,done" && done.every((e) => !e.cause)
