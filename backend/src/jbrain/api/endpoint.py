@@ -38,6 +38,7 @@ import struct
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -95,12 +96,72 @@ OTA_DATA_IMAGE = "ota_data_initial.bin"
 
 # Which built image goes where. A set missing any of them is refused rather than
 # half-written to a board.
-ARTIFACT_IMAGES = {
+S3_IMAGES = {
     "bootloader.bin": BOOTLOADER_OFFSET,
     "partition-table.bin": PARTITION_TABLE_OFFSET,
     OTA_DATA_IMAGE: OTA_DATA_OFFSET,
     APP_IMAGE: APP_OFFSET,
     MODEL_IMAGE: MODEL_OFFSET,
+}
+# The C6 panel: the same layout up to the app slot (firmware-c6/partitions.csv keeps the
+# offsets on purpose, so this table and the recovery runbook stay one shape), and no
+# `model` partition — it runs no on-device speech models, so there is nothing OTA cannot
+# deliver except the bootloader and the table themselves.
+C6_APP_IMAGE = "jbrain-jpanel-c6.bin"
+C6_IMAGES = {
+    "bootloader.bin": BOOTLOADER_OFFSET,
+    "partition-table.bin": PARTITION_TABLE_OFFSET,
+    OTA_DATA_IMAGE: OTA_DATA_OFFSET,
+    C6_APP_IMAGE: APP_OFFSET,
+}
+
+#: Every kind of panel this box can flash and update. The id is the wire value: the PWA and
+#: debug console send it with a flash, and a C6 panel sends it on the manifest and settings
+#: polls (`?board=`). A Literal so FastAPI refuses an unknown one at the edge, with the valid
+#: values in the 422, and the OpenAPI schema lists them for the PWA's picker.
+BoardId = Literal["s3-amoled-18", "c6-amoled-216"]
+#: THE ABSENT BOARD IS THE S3, everywhere. Every panel on a wall today is one, runs firmware
+#: that has never heard of `board`, and must keep getting exactly the manifest, image and
+#: flash it got before there was a second kind.
+DEFAULT_BOARD: BoardId = "s3-amoled-18"
+
+
+@dataclass(frozen=True)
+class Board:
+    id: BoardId
+    label: str
+    #: esptool's `--chip`, passed to the sidecar. Named rather than autodetected because both
+    #: boards enumerate as 303a:1001, and a named chip makes esptool refuse the wrong board.
+    chip: Literal["esp32s3", "esp32c6"]
+    #: The checkout directory, for messages the owner reads ("firmware-c6/dist/... missing").
+    repo_dir: str
+    #: Which `Settings` field holds this board's mount. One field per board rather than one
+    #: parent mount: each is a read-only view of exactly one project in the checkout, and the
+    #: api never gets the rest of the source tree.
+    dir_setting: Literal["firmware_dir", "firmware_c6_dir"]
+    app_image: str
+    images: dict[str, str]
+
+
+BOARDS: dict[BoardId, Board] = {
+    "s3-amoled-18": Board(
+        id="s3-amoled-18",
+        label="ESP32-S3 Touch AMOLED 1.8 (jpet)",
+        chip="esp32s3",
+        repo_dir="firmware",
+        dir_setting="firmware_dir",
+        app_image=APP_IMAGE,
+        images=S3_IMAGES,
+    ),
+    "c6-amoled-216": Board(
+        id="c6-amoled-216",
+        label="ESP32-C6 Touch AMOLED 2.16 (jpanel)",
+        chip="esp32c6",
+        repo_dir="firmware-c6",
+        dir_setting="firmware_c6_dir",
+        app_image=C6_APP_IMAGE,
+        images=C6_IMAGES,
+    ),
 }
 
 SIDECAR_TIMEOUT_S = 600.0
@@ -217,8 +278,9 @@ class FirmwareOut(BaseModel):
     url: str
 
 
-# WHERE THE FIRMWARE COMES FROM: this box's own checkout, at `firmware/dist/`, mounted
-# read-only at /firmware. Not from a GitHub release.
+# WHERE THE FIRMWARE COMES FROM: this box's own checkout, at `firmware/dist/` (and, for the C6
+# board, `firmware-c6/dist/`), mounted read-only at /firmware and /firmware-c6. Not from a
+# GitHub release.
 #
 # It used to be a release, and the release was the whole problem. api.github.com for the
 # release JSON, github.com for each asset, a signed CDN host after that, a SHA256SUMS
@@ -240,24 +302,28 @@ class FirmwareOut(BaseModel):
 # `.github/workflows/firmware.yml` proves the committed bytes are what this source builds.
 
 
-def _dist(settings: Settings) -> Path:
-    return Path(settings.firmware_dir) / "dist"
+def _board_dir(settings: Settings, board: Board) -> Path:
+    return Path(cast(str, getattr(settings, board.dir_setting)))
 
 
-def _firmware_version(settings: Settings) -> str | None:
+def _dist(settings: Settings, board: Board) -> Path:
+    return _board_dir(settings, board) / "dist"
+
+
+def _firmware_version(settings: Settings, board: Board = BOARDS[DEFAULT_BOARD]) -> str | None:
     """The version in the checkout, or None when there is no firmware mounted at all."""
     try:
-        text = (Path(settings.firmware_dir) / "version.txt").read_text(encoding="utf-8")
+        text = (_board_dir(settings, board) / "version.txt").read_text(encoding="utf-8")
     except OSError:
         return None
     return text.strip() or None
 
 
-def _expected_digests(settings: Settings) -> dict[str, str]:
+def _expected_digests(settings: Settings, board: Board) -> dict[str, str]:
     """`dist/SHA256SUMS` as image name -> digest, or empty when it is absent."""
     digests: dict[str, str] = {}
     try:
-        text = (_dist(settings) / "SHA256SUMS").read_text(encoding="utf-8")
+        text = (_dist(settings, board) / "SHA256SUMS").read_text(encoding="utf-8")
     except OSError:
         return digests
     for line in text.splitlines():
@@ -267,7 +333,7 @@ def _expected_digests(settings: Settings) -> dict[str, str]:
     return digests
 
 
-def _image(settings: Settings, name: str) -> bytes:
+def _image(settings: Settings, name: str, board: Board) -> bytes:
     """One built image off the mount, checked against `dist/SHA256SUMS`.
 
     The bytes come out of a git checkout rather than off a network, so this is not guarding
@@ -277,27 +343,71 @@ def _image(settings: Settings, name: str) -> bytes:
     it once it is in a bedroom.
     """
     try:
-        data = (_dist(settings) / name).read_bytes()
+        data = (_dist(settings, board) / name).read_bytes()
     except OSError as exc:
         raise HTTPException(
             status_code=503,
             detail=(
-                f"This box has no firmware to flash — firmware/dist/{name} is missing from "
-                "its checkout. Run Ops -> Update to pull the current main, then try again."
+                f"This box has no firmware to flash — {board.repo_dir}/dist/{name} is missing "
+                "from its checkout. Run Ops -> Update to pull the current main, then try again."
             ),
         ) from exc
-    want = _expected_digests(settings).get(name)
+    want = _expected_digests(settings, board).get(name)
     if want and hashlib.sha256(data).hexdigest() != want:
         raise HTTPException(
             status_code=500,
-            detail=f"{name} does not match firmware/dist/SHA256SUMS — refusing to flash it",
+            detail=(
+                f"{name} does not match {board.repo_dir}/dist/SHA256SUMS — refusing to flash it"
+            ),
         )
     return data
 
 
+class BoardOut(BaseModel):
+    id: str
+    label: str
+    chip: str
+    #: None when this box's checkout has no firmware for the board at all.
+    version: str | None
+    #: Every image the flash needs is present. Presence only, not the checksum — that is
+    #: still checked, image by image, at flash time; this is the picker's "can I press it".
+    ready: bool
+
+
+@router.get("/boards")
+async def list_boards(_owner: OwnerDep, settings: SettingsDep) -> list[BoardOut]:
+    """The kinds of panel this box can flash, and what firmware it holds for each.
+
+    For the PWA's Flash tab: pick a board, see whether its firmware is here. Read fresh on
+    every call, like the manifest, so an `Ops -> Update` that lands a build is visible at once.
+    """
+    out: list[BoardOut] = []
+    for board in BOARDS.values():
+        version = _firmware_version(settings, board)
+        dist = _dist(settings, board)
+        ready = version is not None and all((dist / n).is_file() for n in board.images)
+        out.append(
+            BoardOut(id=board.id, label=board.label, chip=board.chip, version=version, ready=ready)
+        )
+    return out
+
+
+# THE MANIFEST IS PER BOARD, CHOSEN BY THE PANEL ASKING (`?board=`), NOT BY A RECORD OF WHAT
+# WAS FLASHED. The alternative — a board column on the device's subject, written at flash
+# time — would be a migration, an RLS policy and a second fact that can disagree with the
+# first: a panel re-flashed from another tool, or flashed before the column existed, would be
+# served whatever the row guessed. The firmware is the one party that KNOWS what chip it is
+# running on, so it says so. Absent means the S3, which is what every panel built before
+# this sends. And a panel that asks for the wrong board is still not bricked:
+# `esp_https_ota` checks the image's chip id and refuses an image built for another chip.
+
+
 @router.get("/firmware")
 async def firmware_manifest(
-    principal: PanelDep, request: Request, settings: SettingsDep
+    principal: PanelDep,
+    request: Request,
+    settings: SettingsDep,
+    board: BoardId = DEFAULT_BOARD,
 ) -> FirmwareOut:
     """What a panel should be running — the one route a flashed panel itself calls.
 
@@ -308,16 +418,23 @@ async def firmware_manifest(
     else, so the `device_key` half of this route's contract was unreachable and every panel
     poll 401'd. See its docstring — the kind check that used to sit here was dead code.
     """
-    version = _firmware_version(settings)
+    spec = BOARDS[board]
+    version = _firmware_version(settings, spec)
     if version is None:
         raise HTTPException(
             status_code=503,
             detail=(
-                "This box has no firmware in its checkout. Run Ops -> Update to pull the "
-                "current main."
+                f"This box has no {spec.repo_dir} firmware in its checkout. Run Ops -> Update "
+                "to pull the current main."
             ),
         )
-    out = FirmwareOut(version=version, url=f"{_public_base(request)}/endpoint/firmware/bin")
+    # The S3's URL stays byte-identical to the one every panel on a wall already fetches;
+    # any other board's carries its id, so the panel follows the URL as given and never has
+    # to know the image route takes a parameter at all.
+    url = f"{_public_base(request)}/endpoint/firmware/bin"
+    if board != DEFAULT_BOARD:
+        url += f"?board={board}"
+    out = FirmwareOut(version=version, url=url)
     # The ONLY window onto a panel's update decision from where the owner sits. A panel that
     # polls happily and never updates is indistinguishable, in an access log, from one that
     # is correctly up to date — and the two have completely different fixes. The `url` is
@@ -328,6 +445,7 @@ async def firmware_manifest(
         "endpoint.manifest_served",
         version=out.version,
         url=out.url,
+        board=board,
         principal=principal.kind,
         host=request.headers.get("host", ""),
     )
@@ -335,18 +453,22 @@ async def firmware_manifest(
 
 
 @router.get("/firmware/bin")
-async def firmware_image(principal: PanelDep, settings: SettingsDep) -> Response:
+async def firmware_image(
+    principal: PanelDep, settings: SettingsDep, board: BoardId = DEFAULT_BOARD
+) -> Response:
     """The app image itself: the URL the manifest hands a panel, and so the OTA download.
 
     This had no implementation before. The manifest advertised the path and nothing served
     it, so the first OTA any panel attempted would have 404'd — invisible until now only
     because no panel had ever got far enough to attempt one.
     """
-    image = _image(settings, APP_IMAGE)
+    spec = BOARDS[board]
+    image = _image(settings, spec.app_image, spec)
     log.info(
         "endpoint.image_served",
         bytes=len(image),
-        version=_firmware_version(settings),
+        board=board,
+        version=_firmware_version(settings, spec),
         principal=principal.kind,
     )
     return Response(
@@ -1452,7 +1574,10 @@ async def get_panel_appearance(
 
 @router.get("/settings")
 async def panel_settings(
-    principal: PanelDep, request: Request, settings: SettingsDep
+    principal: PanelDep,
+    request: Request,
+    settings: SettingsDep,
+    board: BoardId = DEFAULT_BOARD,
 ) -> EndpointSettings:
     """The knobs a panel applies to itself, fetched with its own key.
 
@@ -1505,7 +1630,10 @@ async def panel_settings(
         update={
             "pet_name": look.pet_name,
             "form": look.form,
-            "fw_version": _firmware_version(settings) or "",
+            # The ASKING panel's board, by the same `?board=` the manifest takes: this is the
+            # fast "is there an update" poll, and an S3 version shown to a C6 would read as an
+            # update on every poll that the manifest then never delivers.
+            "fw_version": _firmware_version(settings, BOARDS[board]) or "",
             "pet_name_phonemes": phonemes_for(look.pet_name) or "",
             "waiting": await _waiting_count(request, ctx, principal.id),
         }
@@ -1603,6 +1731,9 @@ class FlashIn(BaseModel):
     # Defaults to `jpet` because that is what every panel flashed so far is, and a default that
     # silently changed what existing units are would be a worse bug than the one this fixes.
     role: PanelRole = "jpet"
+    # Which kind of panel is on the cable: picks the image set and the chip esptool is told.
+    # Defaults to the S3 so a PWA that predates the second board flashes what it always did.
+    board: BoardId = DEFAULT_BOARD
     erase: bool = False
     # Keep this network on the box so a later re-flash needs no phone and no retyped
     # password. Defaults OFF: it is the one secret this surface stores, and starting to
@@ -1621,6 +1752,7 @@ async def build_flash(
     password: str,
     name: str,
     role: PanelRole = "jpet",
+    board: BoardId = DEFAULT_BOARD,
     erase: bool,
 ) -> dict[str, Any]:
     """Everything a panel needs, assembled: the images, and the config that makes it a unit.
@@ -1630,9 +1762,12 @@ async def build_flash(
     place to forget the CA pairing rule below, and the failure mode there is a panel that
     joins Wi-Fi perfectly and is then silent forever.
     """
+    spec = BOARDS[board]
+    # Read in full BEFORE the identity below is minted, so a missing or mismatched image
+    # refuses without having rotated the unit's key for a flash that never happened.
     images = [
-        {"offset": offset, "b64": base64.b64encode(_image(settings, iname)).decode()}
-        for iname, offset in sorted(ARTIFACT_IMAGES.items(), key=lambda kv: int(kv[1], 16))
+        {"offset": offset, "b64": base64.b64encode(_image(settings, iname, spec)).decode()}
+        for iname, offset in sorted(spec.images.items(), key=lambda kv: int(kv[1], 16))
     ]
 
     # A fresh CREDENTIAL per flash, on the shipped `device_key` substrate rather than a new auth
@@ -1671,6 +1806,7 @@ async def build_flash(
         "nvs_offset": NVS_OFFSET,
         "nvs_size": NVS_SIZE,
         "erase": erase,
+        "chip": spec.chip,
     }
 
 
@@ -1706,6 +1842,7 @@ async def flash_panel(
         password=body.password,
         name=body.name,
         role=body.role,
+        board=body.board,
         erase=body.erase,
     )
 
