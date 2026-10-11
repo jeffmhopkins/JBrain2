@@ -1782,6 +1782,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "739ba8520c3a7507d632d8c5254e6d083b55a770b59d090a58fa9b2af2737bb3",
         ),
+        "mc_set_waypoint.tool": (
+            "mc_set_waypoint",
+            1,
+            "cf24f1cece775ced5a5103274687607c5350c93750fb17a3f8105a9b6bd46649",
+        ),
         "mc_goals.tool": (
             "mc_goals",
             1,

@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-10
+> **Status:** Living · **Last verified:** 2026-10-11
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -35,6 +35,7 @@ console (`GET /api/debug/minecraft/logs`). There is nothing to write down. It ru
 | 3 | Open the inventory and the creative or recipe search; type `Power` | **The custom items show their own icons and names** (not a purple-black square) | Your eyes |
 | 4 | In survival with cheats on: `/give @s ender_eye 9`, then put all nine in a crafting table | **The nine-eye recipe works** and makes one Power Pack | log `power_pack in inventory` |
 | 5 | `/give @s jbrain:tricorder`, then hold it and turn around | The tricorder's **actionbar arrow** follows your facing smoothly ("↗ World spawn · 120 blocks") — the M9 mechanic | log `tricorder held`; your eyes on how smooth it is |
+| 5b | Ask Minecraft_Dave "point my tricorder at the nearest diamonds" (it finds them, then sets the waypoint), then hold the tricorder | The arrow now leads to **Dave's waypoint** with its label, distance and depth ("↗ Diamonds · 40 blocks · y -58"), and says "You're here" on arrival | log `waypoint set for …`; your eyes |
 | 6 | Type `/jb:dave hello` | The custom command appears in autocomplete and runs on a vanilla client | log `command from …` |
 | 7 | Die once (fall, or `/kill @s`) | **Deaths reach the travel log with their cause**, and whether a dead player's inventory is still readable (the keep-inventory work) | `GET /api/debug/minecraft/travel` deaths +1; log `player died` |
 | 8 | Walk somewhere for a minute | Travel-log trail samples are recorded | `GET /api/debug/minecraft/travel` samples grow |

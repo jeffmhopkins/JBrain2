@@ -19,6 +19,7 @@ them, so curator's wildcard never absorbs a Minecraft tool.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -616,6 +617,67 @@ def build_minecraft_handlers(
             result_brief=f"{len(found)} found",
         )
 
+    async def mc_set_waypoint(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        clear = bool(arguments.get("clear"))
+        dim = str(arguments.get("dimension") or "overworld")
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        raw_tag = str(arguments.get("gamertag") or "").strip()
+        if raw_tag:
+            gamertag = check_gamertag(raw_tag)
+            if gamertag is None:
+                return "That isn't a gamertag (letters, digits and spaces, up to 16)."
+        else:
+            async with scoped_session(maker, ctx.session) as s:
+                player = await chat_player(s, ctx)
+            if player is None:
+                return no_player
+            gamertag = player.gamertag
+        event: dict[str, Any] = {"player": gamertag}
+        if clear:
+            event["clear"] = True
+        else:
+            try:
+                x, z = int(float(arguments["x"])), int(float(arguments["z"]))
+                y = None if arguments.get("y") in (None, "") else int(float(arguments["y"]))
+            except (KeyError, TypeError, ValueError):
+                return "Give the waypoint's x and z (and y if it matters, like a deep ore)."
+            if max(abs(x), abs(z)) > _COORD_MAX or (y is not None and not -64 <= y <= 320):
+                return "Those coordinates are outside the world."
+            # The label shows on the player's screen: one short line of plain text.
+            label = "".join(c for c in str(arguments.get("label") or "") if c.isprintable())
+            event.update(
+                {"x": x, "y": y, "z": z, "dim": dim, "label": label.strip()[:40] or "Waypoint"}
+            )
+        # json.dumps escapes every quote and control character, so the message can't end
+        # the command or start another; the console takes it as one line.
+        got = await console(f"scriptevent jb:waypoint {json.dumps(event)}")
+        if isinstance(got, str):
+            return got
+        reply = _reply(got)
+        if "waypoint refused" in reply:
+            return f"The tricorder add-on refused it: {fence(reply)}"
+        if "waypoint set" not in reply and "waypoint cleared" not in reply:
+            return (
+                "The server took the command, but the tricorder add-on didn't answer — it is"
+                " part of the home-test kit, which may not be installed in this world."
+            )
+        if clear:
+            return ToolOutput(
+                f"Cleared {fence(gamertag)}'s tricorder waypoint; it points at spawn again.",
+                result_brief="cleared",
+            )
+        where = (
+            f"({event['x']}, {event['z']}"
+            + (f", y {event['y']}" if event["y"] is not None else "")
+            + ")"
+        )
+        return ToolOutput(
+            f"{fence(gamertag)}'s tricorder now points to {fence(event['label'])} at {where} in"
+            f" the {_DIMENSION_NAMES[dim]}. They see it when they hold the Tricorder.",
+            result_brief=str(event["label"]),
+        )
+
     async def mc_nearby(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         dim = str(arguments.get("dimension") or "overworld")
         if dim not in _DIMENSIONS:
@@ -899,6 +961,7 @@ def build_minecraft_handlers(
         "mc_what_is_at": mc_what_is_at,
         "mc_nearby": mc_nearby,
         "mc_find_block": mc_find_block,
+        "mc_set_waypoint": mc_set_waypoint,
         "mc_goals": mc_goals,
         "mc_goal_create": mc_goal_create,
         "mc_goal_update": mc_goal_update,
