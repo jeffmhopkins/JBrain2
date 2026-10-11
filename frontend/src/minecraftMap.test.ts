@@ -17,6 +17,7 @@ import {
   spotText,
   statusLine,
   structureInfo,
+  tileKey,
   toScreen,
   toWorld,
   visibleTiles,
@@ -73,10 +74,14 @@ describe("map geometry", () => {
     expect(far.every((t) => t.zoom === 4 && t.size === 256)).toBe(true);
   });
 
-  it("builds the owner tile route from the slot, dimension, zoom and tile", () => {
+  it("builds the owner tile route from the slot, dimension, zoom, tile and layer", () => {
     expect(minecraftTileUrl("slot2", "nether", 3, -1, 4)).toBe(
-      "/api/minecraft/map/tile/nether/3/-1/4.png?slot=slot2",
+      "/api/minecraft/map/tile/nether/3/-1/4.png?slot=slot2&layer=surface",
     );
+    expect(minecraftTileUrl("slot2", "nether", 3, -1, 4, "biomes")).toMatch(/&layer=biomes$/);
+    // Each layer's tiles are cached apart, so switching never shows the other's picture.
+    const t = { zoom: 0, tx: 1, tz: 2 };
+    expect(tileKey("slot1", "overworld", t)).not.toBe(tileKey("slot1", "overworld", t, "biomes"));
   });
 
   it("frames everyone in the visible map", () => {

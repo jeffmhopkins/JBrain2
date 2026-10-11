@@ -1473,6 +1473,8 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
         rig.map_info("slot1", "aether")
     with pytest.raises(ValueError):
         rig.map_tile("slot1", "overworld", mapping.MAX_ZOOM + 1, 0, 0)
+    with pytest.raises(ValueError):
+        rig.map_tile("slot1", "overworld", 0, 0, 0, layer="height")
     info = rig.map_info("slot1", "overworld")
     assert info["extent"] is None and info["tile_blocks"] == 256  # empty db: all fog
     assert info["predicted"] is False  # no level.dat seed and no binary in the test rig
@@ -1482,6 +1484,8 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     assert (
         rig.map_tile("slot1", "overworld", 0, 0, 0) is png
     )  # cached until files change
+    # Each layer is its own tile: switching layers never serves the other's picture.
+    assert rig.map_tile("slot1", "overworld", 0, 0, 0, layer="biomes") is not png
 
 
 def test_a_point_is_explored_ground_the_survey_or_unknown() -> None:

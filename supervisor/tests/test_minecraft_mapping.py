@@ -480,3 +480,111 @@ def test_a_version_8_section_takes_its_y_from_the_key(tmp_path: Path) -> None:
     index.refresh()
     hits, _ = index.find(0, 0, 0, {"minecraft:diamond_ore"})
     assert (hits[0]["x"], hits[0]["y"], hits[0]["z"]) == (3, -62, 5)
+
+
+def section(
+    sy: int, placed: dict[tuple[int, int, int], str], fill: str = "minecraft:air"
+) -> bytes:
+    """A version-9 section of `fill` with `placed` blocks at local (x, y, z)."""
+    palette = [fill, *sorted(set(placed.values()) - {fill})]
+    index = [0] * 4096
+    for (x, y, z), name in placed.items():
+        index[(x << 8) | (z << 4) | y] = palette.index(name)
+    words = [sum(index[w * 8 + j] << (j * 4) for j in range(8)) for w in range(512)]
+    layer = bytes([4 << 1]) + struct.pack("<512I", *words)
+    layer += struct.pack("<i", len(palette)) + b"".join(_nbt_block(n) for n in palette)
+    return bytes([9, 1]) + struct.pack("<b", sy) + layer
+
+
+def test_explored_ground_is_drawn_in_its_real_block_colours(tmp_path: Path) -> None:
+    colors = _load("blockcolors")
+    # Height 80 is first air at y 16, so the top block sits at y 15 of section 0.
+    ground = {(x, 15, z): "minecraft:grass_block" for x in range(16) for z in range(16)}
+    ground[(2, 15, 3)] = "minecraft:orange_concrete"
+    ground[(5, 15, 5)] = "minecraft:glass"  # looked through, to the wool under it
+    ground[(5, 14, 5)] = "minecraft:red_wool"
+    ground[(7, 15, 7)] = "minecraft:a_block_from_the_future"
+    for y in (13, 14, 15):
+        ground[(9, y, 9)] = "minecraft:water"  # a pool three deep
+    ground[(9, 12, 9)] = "minecraft:sand"
+    above = {(11, 0, 11): "minecraft:water"}  # water the height map stopped under
+    write_table(
+        tmp_path / "000005.ldb",
+        [
+            (
+                mapping.chunk_key(0, 0, 0, mapping.DATA3D),
+                1,
+                data3d(lambda x, z: 80, biome=1),
+            ),
+            (_sub_key(0, 0, 0), 2, section(0, ground)),
+            (_sub_key(0, 0, 1), 3, section(1, above)),
+        ],
+    )
+    index = mapping.WorldIndex(tmp_path)
+    index.refresh()
+    surface = index.surfaces(0, 0, 0, 16)[(0, 0)]
+
+    def at(x: int, z: int) -> tuple[int, int, int]:
+        return surface[z * 16 + x][1]
+
+    assert at(0, 0) == colors.BLOCKS["grass_block"]
+    assert at(2, 3) == colors.DYES["orange"][0]
+    assert at(5, 5) == colors.DYES["red"][1] and surface[5 * 16 + 5][0] == 79
+    assert at(7, 7) == mapping.BIOME_COLORS[1]  # unknown: the biome, not a guess
+    deep, shallow = at(9, 9), at(11, 11)
+    assert shallow == colors.WATER and surface[11 * 16 + 11][0] == 81
+    assert deep[2] < colors.WATER[2]  # deeper water reads darker
+    rows = _decode_png(mapping.tile(index, 0, 0, 0, 0))
+    assert tuple(rows[3][2 * 4 : 2 * 4 + 3]) == colors.DYES["orange"][0]
+    # A wide zoom works out only the columns it draws, and agrees with the close one.
+    fresh = mapping.WorldIndex(tmp_path)
+    fresh.refresh()
+    zoom1 = fresh.surface_samples(0, 0, 0, 1, 2)
+    assert len(zoom1) == 64 and zoom1[(9, 9)][1] == deep
+    wide = _decode_png(mapping.tile(fresh, 0, mapping.MAX_ZOOM, 0, 0))
+    assert tuple(wide[0][:3]) == colors.BLOCKS["grass_block"]  # the chunk's one pixel
+
+
+def test_the_nether_stays_a_biome_map(tmp_path: Path) -> None:
+    roof = {(x, 15, z): "minecraft:bedrock" for x in range(16) for z in range(16)}
+    write_table(
+        tmp_path / "000005.ldb",
+        [
+            (
+                mapping.chunk_key(0, 0, 1, mapping.DATA3D),
+                1,
+                data3d(lambda x, z: 16, biome=8),
+            ),
+            (_sub_key(0, 0, 0, dim=1), 2, section(0, roof)),
+        ],
+    )
+    index = mapping.WorldIndex(tmp_path)
+    index.refresh()
+    rows = _decode_png(mapping.tile(index, 1, 0, 0, 0))
+    assert tuple(rows[8][8 * 4 : 8 * 4 + 3]) == mapping.BIOME_COLORS[8]
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("minecraft:light_blue_concrete", "dye"),
+        ("minecraft:spruce_planks", "wood"),
+        ("minecraft:stripped_dark_oak_log", "wood"),
+        ("minecraft:light_blue_stained_glass", "dye"),
+        ("minecraft:polished_deepslate_stairs", "row"),
+        ("minecraft:tinted_glass", "clear"),
+        ("minecraft:oak_button", "clear"),
+        ("minecraft:nope", None),
+    ],
+)
+def test_block_colours_cover_families_by_rule(name: str, expected: str | None) -> None:
+    colors = _load("blockcolors")
+    got = colors.color(name)
+    if expected is None:
+        assert got is None
+    elif expected == "clear":
+        assert got == colors.CLEAR
+    else:
+        assert (
+            got is not None and got != colors.CLEAR and all(0 <= c <= 255 for c in got)
+        )

@@ -1,9 +1,13 @@
 """Top-down map tiles of a Bedrock world (docs/plans/MINECRAFT_BEDROCK_PLAN.md §M8).
 
-The first layer is the **biome atlas**. It needs no block parsing at all: every generated
-chunk stores a `Data3D` record holding its height map and its biome per 4×4×4 cell, which
-is everything a hillshaded biome map needs, and is read straight off the world's LevelDB
-(`leveldb.py`).
+Every generated chunk stores a `Data3D` record holding its height map and its biome per
+4×4×4 cell, read straight off the world's LevelDB (`leveldb.py`). Two layers draw it. The
+**biome atlas** colours each column by its biome. The **surface** layer draws explored
+ground in true colour: each column's top block, read from the chunk's block sections and
+coloured by `blockcolors.py`, hillshaded with the height map (owner, 2026-10-11: "the
+colours of the real blocks, instead of just biome"). A column whose top block the table
+doesn't know falls back to its biome colour. The Nether stays a biome map: its top block
+is the bedrock roof, which says nothing.
 
 Ground nobody has been to is **predicted from the seed** (`Predictor`, the owner's
 "satellite from orbit"), then the real chunks are drawn over it wherever they exist.
@@ -23,6 +27,7 @@ What the record looks like on 1.26 (checked against a real world, plan §M8 note
 
 from __future__ import annotations
 
+import functools
 import math
 import os
 import re
@@ -31,8 +36,11 @@ import subprocess
 import time
 import zlib
 from collections import OrderedDict
+from collections.abc import Mapping
 from pathlib import Path
 
+import blockcolors
+import blocks
 import leveldb
 
 DATA3D = 43
@@ -49,6 +57,7 @@ TILE = 256  # blocks per tile side at zoom 0
 MAX_ZOOM = 4
 CHUNKS_PER_TILE = TILE // 16
 DIMENSIONS = {"overworld": 0, "nether": 1, "the_end": 2}
+LAYERS = ("surface", "biomes")
 _FLOOR = {0: -64, 1: 0, 2: 0}
 
 # Bedrock biome ids → map colours: the familiar atlas palette (greens for forests, tan
@@ -213,6 +222,84 @@ class Column:
         self.height, self.biome = height, biome  # both indexed z * 16 + x
 
 
+# A chunk in true colour, column index (z * 16 + x) → (height, colour): the height of the
+# block seen from above in `Column`'s terms (one above it, from the floor), its colour
+# with water already deepened. Only the columns a zoom draws are worked out.
+Surface = dict[int, tuple[int, blockcolors.RGB]]
+
+
+# Looking down a column: how far above the height map to climb (a height map can stop
+# under water, which doesn't block all light), how far to look down through glass and
+# air before giving up, and how deep water keeps getting darker.
+_CLIMB, _LOOK_DOWN, _DEEP = 32, 48, 12
+_WATER = frozenset({"minecraft:water", "minecraft:flowing_water", "minecraft:bubble_column"})
+_AIR = frozenset({"minecraft:air", "minecraft:cave_air", "minecraft:void_air", ""})
+_color = functools.lru_cache(maxsize=4096)(blockcolors.color)
+
+
+def _section_reader(values: dict[int, bytes]):
+    """name_at(x, y, z) over one chunk's sections, keyed by section y; a section the
+    world never wrote is all air. The second layer is the water a block is logged in."""
+    parsed: dict[int, tuple[bytes, list[tuple[int, int, list[str]]]]] = {}
+    for sy, value in values.items():
+        try:
+            parsed[sy] = (value, blocks.layers(value)[1])
+        except (ValueError, struct.error, IndexError, UnicodeDecodeError):
+            continue  # an unreadable section reads as air: the column falls back to biome
+
+    def name_at(x: int, y: int, z: int) -> str:
+        section = parsed.get(y >> 4)
+        if section is None:
+            return "minecraft:air"
+        value, found = section
+        i = (x << 8) | (z << 4) | (y & 15)
+        name = "minecraft:air"
+        for n, (bits, words_at, palette) in enumerate(found[:2]):
+            here = palette[blocks.palette_index(value, bits, words_at, i)] if palette else ""
+            if n == 0:
+                name = here
+            elif name in _AIR and here in _WATER:
+                name = here
+        return name
+
+    return name_at
+
+
+def surface_of(
+    columns: dict[int, tuple[int, int]], values: dict[int, bytes], floor: int
+) -> Surface:
+    """The true-colour surface of some of a chunk's columns, from each one's (height,
+    biome) and the chunk's block sections."""
+    name_at = _section_reader(values)
+    out: Surface = {}
+    for i, (h, biome) in columns.items():
+        x, z = i % 16, i // 16
+        y = h - 1 + floor
+        for _ in range(_CLIMB):
+            if name_at(x, y + 1, z) in _AIR:
+                break
+            y += 1
+        found: blockcolors.RGB | None = blockcolors.CLEAR
+        name = ""
+        for _ in range(_LOOK_DOWN):
+            name = name_at(x, y, z)
+            found = _color(name)
+            if found != blockcolors.CLEAR:
+                break
+            y -= 1
+        if found is None or found == blockcolors.CLEAR:
+            out[i] = (h, BIOME_COLORS.get(biome, _UNKNOWN))
+            continue
+        if name in _WATER:
+            depth = 0
+            while depth < _DEEP and name_at(x, y - 1 - depth, z) in _WATER:
+                depth += 1
+            dim = 1.0 - 0.035 * depth
+            found = (int(found[0] * dim), int(found[1] * dim), int(found[2] * dim))
+        out[i] = (y + 1 - floor, found)
+    return out
+
+
 def decode_data2d(value: bytes) -> Column:
     heights = [h + _LEGACY_FLOOR for h in struct.unpack_from("<256h", value, 0)]
     return Column(heights, list(value[512:768]))
@@ -246,6 +333,9 @@ def decode_data3d(value: bytes) -> Column:
 # database and drop every cached tile on almost every request (issue #1608). A map that
 # trails the world by this long is fine.
 REREAD_S = 60.0
+# Chunks whose block sections are read in one pass: bounds the section bytes held at once
+# while a wide tile is drawn.
+SURFACE_BATCH = 64
 
 
 class WorldIndex:
@@ -261,6 +351,9 @@ class WorldIndex:
         self._read_at: float | None = None
         self._raw: dict[tuple[int, int, int], bytes] = {}
         self._legacy: set[tuple[int, int, int]] = set()  # chunks whose record is Data2D
+        # True-colour surfaces worked out so far, by (dim, cx, cz, step), kept until the
+        # next re-read. A whole chunk (step 1) serves every zoom.
+        self._surface: dict[tuple[int, int, int, int], Surface] = {}
 
     def _current(self) -> tuple:
         try:
@@ -286,19 +379,89 @@ class WorldIndex:
         self._legacy = legacy.keys() - raw.keys()  # a re-saved chunk's Data3D is current
         raw.update((cell, legacy[cell]) for cell in self._legacy)
         self._raw, self._signature, self._read_at = raw, signature, now
+        self._surface = {}
+
+    def _column(self, cell: tuple[int, int, int]) -> Column | None:
+        value = self._raw.get(cell)
+        if value is None:
+            return None
+        try:
+            return decode_data2d(value) if cell in self._legacy else decode_data3d(value)
+        except (struct.error, IndexError):
+            return None  # one corrupt chunk is a hole in the map, not a failed tile
+
+    def _tops(self, cell: tuple[int, int, int], step: int) -> dict[int, tuple[int, int]] | None:
+        """(height, biome) of the columns a zoom of `step` draws, by column index."""
+        if step == 1:
+            col = self._column(cell)
+            return None if col is None else dict(enumerate(zip(col.height, col.biome)))
+        offsets = _offsets(step)
+        sample = sample_data2d if cell in self._legacy else surface_sample
+        try:
+            return {z * 16 + x: sample(self._raw[cell], x, z) for x in offsets for z in offsets}
+        except (struct.error, IndexError):
+            return None
+
+    def surfaces(
+        self, dim: int, cx0: int, cz0: int, n: int, step: int = 1
+    ) -> dict[tuple[int, int], Surface]:
+        """The true-colour surface of every explored chunk in an n×n square, the columns
+        a zoom of `step` draws, reading block sections only for chunks not yet known."""
+        floor = _FLOOR.get(dim, 0)
+        out: dict[tuple[int, int], Surface] = {}
+        todo: list[tuple[int, int, int]] = []
+        for cx in range(cx0, cx0 + n):
+            for cz in range(cz0, cz0 + n):
+                if (dim, cx, cz) not in self._raw:
+                    continue
+                cell = (dim, cx, cz)
+                known = self._surface.get((*cell, 1)) or self._surface.get((*cell, step))
+                if known is not None:
+                    out[(cx, cz)] = known
+                else:
+                    todo.append(cell)
+        for start in range(0, len(todo), SURFACE_BATCH):
+            tops: dict[tuple[int, int, int], tuple[dict[int, tuple[int, int]], range]] = {}
+            keys: set[bytes] = set()
+            for cell in todo[start : start + SURFACE_BATCH]:
+                columns = self._tops(cell, step)
+                if not columns:
+                    continue
+                ys = [h - 1 + floor for h, _ in columns.values()]
+                # One section of slack each way: to climb out of water the height map
+                # stopped under, and to look down through a glass roof.
+                sections = range(min(ys) // 16 - 1, max(ys) // 16 + 2)
+                tops[cell] = (columns, sections)
+                keys.update(blocks.section_key(*cell, sy) for sy in sections)
+            values = leveldb.read_keys(self.db, keys) if keys else {}
+            for cell, (columns, sections) in tops.items():
+                mine = {
+                    sy: v for sy in sections if (v := values.get(blocks.section_key(*cell, sy)))
+                }
+                surface = self._surface[(*cell, step)] = surface_of(columns, mine, floor)
+                out[(cell[1], cell[2])] = surface
+        return out
+
+    def surface_samples(
+        self, dim: int, cx0: int, cz0: int, n: int, step: int
+    ) -> dict[tuple[int, int], tuple[int, blockcolors.RGB]]:
+        """(height, colour) at every `step`-th column of an n×n chunk square in true
+        colour, keyed by block position, like `samples`."""
+        offsets = _offsets(step)
+        out: dict[tuple[int, int], tuple[int, blockcolors.RGB]] = {}
+        for (cx, cz), surface in self.surfaces(dim, cx0, cz0, n, step).items():
+            for lx in offsets:
+                for lz in offsets:
+                    out[(cx * 16 + lx, cz * 16 + lz)] = surface[lz * 16 + lx]
+        return out
 
     def columns(self, dim: int, cx0: int, cz0: int, n: int) -> dict[tuple[int, int], Column]:
         out = {}
         for cx in range(cx0, cx0 + n):
             for cz in range(cz0, cz0 + n):
-                value = self._raw.get((dim, cx, cz))
-                if value is None:
-                    continue
-                try:
-                    legacy = (dim, cx, cz) in self._legacy
-                    out[(cx, cz)] = decode_data2d(value) if legacy else decode_data3d(value)
-                except (struct.error, IndexError):
-                    continue  # one corrupt chunk is a hole in the map, not a failed tile
+                col = self._column((dim, cx, cz))
+                if col is not None:
+                    out[(cx, cz)] = col
         return out
 
     def samples(
@@ -307,7 +470,7 @@ class WorldIndex:
         """(height, biome) at every `step`-th column of an n×n chunk square, keyed by
         block position — what a zoomed-out tile's pixels show."""
         out: dict[tuple[int, int], tuple[int, int]] = {}
-        offsets = range(step // 2, 16, step) if step < 16 else range(8, 9)
+        offsets = _offsets(step)
         for cx in range(cx0, cx0 + n):
             for cz in range(cz0, cz0 + n):
                 value = self._raw.get((dim, cx, cz))
@@ -349,6 +512,11 @@ class WorldIndex:
         }
 
 
+def _offsets(step: int) -> range:
+    """The columns of a chunk a zoom of `step` blocks per pixel draws, each way."""
+    return range(step // 2, 16, step) if step < 16 else range(8, 9)
+
+
 def _is_surface(key: bytes) -> bool:
     return len(key) in (9, 13) and key[-1] in (DATA3D, DATA2D)
 
@@ -356,26 +524,39 @@ def _is_surface(key: bytes) -> bool:
 def render_biome(columns: dict[tuple[int, int], Column], cx0: int, cz0: int, n: int) -> list[bytearray]:
     """RGBA rows for an n×n chunk square: biome colour, hillshaded from the NW, with
     water darkened by depth. Missing chunks stay transparent."""
+    painted: dict[tuple[int, int], Surface] = {}
+    for cell, col in columns.items():
+        surface: Surface = {}
+        for i, (h, biome) in enumerate(zip(col.height, col.biome)):
+            r, g, b = BIOME_COLORS.get(biome, _UNKNOWN)
+            if biome in WATER_BIOMES:
+                deep = 0.85 + 0.15 * min(1.0, max(0.0, (h - 40) / 88))
+                r, g, b = int(r * deep), int(g * deep), int(b * deep)
+            surface[i] = (h, (r, g, b))
+        painted[cell] = surface
+    return render_surface(painted, cx0, cz0, n)
+
+
+def render_surface(
+    surfaces: dict[tuple[int, int], Surface], cx0: int, cz0: int, n: int
+) -> list[bytearray]:
+    """RGBA rows for an n×n chunk square of coloured columns, hillshaded from the NW.
+    Missing chunks stay transparent."""
     size = n * 16
     heights: dict[tuple[int, int], int] = {}
-    for (cx, cz), col in columns.items():
-        for i in range(256):
-            heights[((cx - cx0) * 16 + i % 16, (cz - cz0) * 16 + i // 16)] = col.height[i]
+    for (cx, cz), surface in surfaces.items():
+        for i, (h, _) in surface.items():
+            heights[((cx - cx0) * 16 + i % 16, (cz - cz0) * 16 + i // 16)] = h
     rows = [bytearray(size * 4) for _ in range(size)]
-    for (cx, cz), col in columns.items():
+    for (cx, cz), surface in surfaces.items():
         bx, bz = (cx - cx0) * 16, (cz - cz0) * 16
-        for i in range(256):
+        for i, (h, (r, g, b)) in surface.items():
             px, pz = bx + i % 16, bz + i // 16
-            h = col.height[i]
-            r, g, b = BIOME_COLORS.get(col.biome[i], _UNKNOWN)
             west = heights.get((px - 1, pz), h)
             north = heights.get((px, pz - 1), h)
             shade = 1.0 + max(-0.35, min(0.35, ((h - west) + (h - north)) * 0.06))
-            if col.biome[i] in WATER_BIOMES:
-                shade *= 0.85 + 0.15 * min(1.0, max(0.0, (h - 40) / 88))
-            row = rows[pz]
             o = px * 4
-            row[o : o + 4] = bytes(
+            rows[pz][o : o + 4] = bytes(
                 (min(255, int(r * shade)), min(255, int(g * shade)), min(255, int(b * shade)), 255)
             )
     return rows
@@ -399,17 +580,22 @@ def png(rows: list[bytearray]) -> bytes:
 
 
 def render_sampled(
-    samples: dict[tuple[int, int], tuple[int, int]], x0: int, z0: int, size: int, step: int
+    samples: Mapping[tuple[int, int], tuple[int, int | blockcolors.RGB]],
+    x0: int,
+    z0: int,
+    size: int,
+    step: int,
 ) -> list[bytearray]:
-    """A size×size tile, one pixel per `step` blocks: each pixel's sampled biome, shaded
-    against the samples to its west and north. Unsampled ground stays transparent."""
+    """A size×size tile, one pixel per `step` blocks: each pixel's sampled biome (or, from
+    `surface_samples`, its colour), shaded against the samples to its west and north.
+    Unsampled ground stays transparent."""
     rows = [bytearray(size * 4) for _ in range(size)]
     gain = 0.06 / step  # the same slope reads about the same at every zoom
-    for (bx, bz), (h, biome) in samples.items():
+    for (bx, bz), (h, paint) in samples.items():
         west = samples.get((bx - step, bz), (h, 0))[0]
         north = samples.get((bx, bz - step), (h, 0))[0]
         shade = 1.0 + max(-0.35, min(0.35, ((h - west) + (h - north)) * gain))
-        r, g, b = BIOME_COLORS.get(biome, _UNKNOWN)
+        r, g, b = paint if isinstance(paint, tuple) else BIOME_COLORS.get(paint, _UNKNOWN)
         px, pz = (bx - x0) // step, (bz - z0) // step
         o = px * 4
         rows[pz][o : o + 4] = bytes(
@@ -521,16 +707,27 @@ def tile(
     tz: int,
     predictor: Predictor | None = None,
     seed: str | None = None,
+    layer: str = "surface",
 ) -> bytes:
     """One 256×256 PNG tile. Zoom 0 is one pixel per block; zoom k is one pixel per 2^k
     blocks, down to one pixel per chunk. Tile (0, 0) at any zoom starts at block (0, 0).
-    With a predictor and the world's seed, ground nobody has been to is drawn too, as
-    the survey (dimmed) beneath the explored ground."""
+    The `surface` layer draws explored ground in its real block colours, the `biomes`
+    layer in biome colours; the Nether is biomes either way. With a predictor and the
+    world's seed, ground nobody has been to is drawn too, as the survey (dimmed, always
+    biomes: the seed predicts no blocks) beneath the explored ground."""
     span = CHUNKS_PER_TILE << zoom
     cx0, cz0 = tx * span, tz * span
     step = 1 << zoom
+    true_colour = layer == "surface" and dim != DIMENSIONS["nether"]
     if zoom:
-        real = render_sampled(index.samples(dim, cx0, cz0, span, step), cx0 * 16, cz0 * 16, TILE, step)
+        sampled = (
+            index.surface_samples(dim, cx0, cz0, span, step)
+            if true_colour
+            else index.samples(dim, cx0, cz0, span, step)
+        )
+        real = render_sampled(sampled, cx0 * 16, cz0 * 16, TILE, step)
+    elif true_colour:
+        real = render_surface(index.surfaces(dim, cx0, cz0, span), cx0, cz0, span)
     else:
         real = render_biome(index.columns(dim, cx0, cz0, span), cx0, cz0, span)
     if predictor is None or seed is None:

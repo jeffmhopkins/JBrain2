@@ -208,10 +208,12 @@ round's assumptions.
   block (0, 0) at every zoom.
   - Route: `GET /api/minecraft/map/tile/{dim}/{zoom}/{tx}/{tz}.png?slot=slotN`, with `dim` one of
     `overworld | nether | the_end`.
-  - `GET /api/minecraft/map/info` gives `extent`, `tile_blocks`, `max_zoom`, `layers` (`biome`)
-    and `predicted`.
-- **The base layer** is the hillshaded biome atlas (`render_biome` / `render_sampled`), the only
-  layer the server renders. True-colour Surface and Height come later.
+  - `GET /api/minecraft/map/info` gives `extent`, `tile_blocks`, `max_zoom`, `layers`
+    (`surface`, `biomes`) and `predicted`. A tile takes `?layer=surface|biomes` (default
+    `surface`).
+- **The base layers** are **Surface** (default: explored ground in its top block's colour,
+  `render_surface` with `blockcolors.py`) and the hillshaded biome atlas (`render_biome` /
+  `render_sampled`). Unexplored ground is the biome survey under both. Height comes later.
 - **No snapshots.** The renderer reads the live LevelDB at most every 60 s, and the tile route
   caches 60 s, so the map trails the world by up to a minute. Status copy:
   - live: *Live · 2 on — up to a minute behind the world · positions live*;
@@ -294,8 +296,8 @@ outer islands from about 1,000 blocks out.
   the wheel or + / −, from 8 px per block out to 1 px per chunk. `touch-action: none` on the full
   map only. A scale bar with **N↑** is always drawn, north (−Z) up, and states blocks per pixel
   once a pixel is two blocks or more.
-- **Base layer:** **Biomes**, explored + satellite survey. **Surface** and **Height** are listed,
-  disabled, *later*.
+- **Base layer:** **Surface** (true colour where explored, the default) or **Biomes** (explored
+  + satellite survey), remembered per device. **Height** is listed, disabled, *later*.
 - **Overlays**, each a switch:
   - Players;
   - Trails;

@@ -1324,7 +1324,7 @@ class Rig:
             "extent": area,
             "tile_blocks": mapping.TILE,
             "max_zoom": mapping.MAX_ZOOM,
-            "layers": ["biome"],
+            "layers": list(mapping.LAYERS),
             # Ground nobody has been to is drawn from the seed; without it, transparent
             # is ungenerated ground.
             "predicted": predicted,
@@ -1571,16 +1571,20 @@ class Rig:
         threading.Thread(target=run, name="structure-sweep", daemon=True).start()
         return self.sweep_view()
 
-    def map_tile(self, slot_id: str, dim: str, zoom: int, tx: int, tz: int) -> bytes:
+    def map_tile(
+        self, slot_id: str, dim: str, zoom: int, tx: int, tz: int, layer: str = "surface"
+    ) -> bytes:
         if dim not in mapping.DIMENSIONS:
             raise ValueError("dimension must be overworld, nether or the_end")
+        if layer not in mapping.LAYERS:
+            raise ValueError("layer must be surface or biomes")
         if not 0 <= zoom <= mapping.MAX_ZOOM:
             raise ValueError(f"zoom is 0 to {mapping.MAX_ZOOM}")
         if abs(tx) > 200_000 or abs(tz) > 200_000:
             raise ValueError("that tile is outside the world")
         with self._map_lock:
             folder, index = self._map_for(slot_id)
-            key = (folder, dim, zoom, tx, tz)
+            key = (folder, dim, zoom, tx, tz, layer)
             cached = self._tiles.get(key)
             if cached is None:
                 cached = mapping.tile(
@@ -1591,6 +1595,7 @@ class Rig:
                     tz,
                     self._predictor,
                     self._map_seed.get(folder),
+                    layer,
                 )
                 if len(self._tiles) > 512:  # a few MB of PNGs at most
                     self._tiles.clear()
@@ -1822,6 +1827,7 @@ class Handler(BaseHTTPRequestHandler):
                     int(m.group(2)),
                     int(m.group(3)),
                     int(m.group(4)),
+                    query.get("layer", ["surface"])[0],
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})

@@ -966,6 +966,17 @@ tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
 - **Biome layer:** `mapping.py` renders the **biome atlas** from each chunk's `Data3D`
   record (heights and biomes, no block parsing), hillshaded, with ungenerated ground
   transparent (fog).
+- **Surface layer (true colour, shipped 2026-10-11; owner: "the colours of the real blocks,
+  instead of just biome").** Explored ground is drawn in its top block's colour: the
+  height map says where to look, the chunk's `SubChunkPrefix` sections (the same palettes
+  the block search reads) say what is there, and `blockcolors.py` colours it — rows for
+  common blocks, rules for dye and wood families, glass and air looked through, water
+  darkened by depth, an unknown block drawn in its biome colour. Each zoom works out only
+  the columns it draws, cached per chunk until the next re-read, so a cold tile of a
+  fully explored area costs about a second on the sidecar, not milliseconds; the tile cache
+  hides it after that. The satellite survey under it stays biomes (the seed predicts no
+  blocks), and the Nether stays biomes (its top block is the bedrock roof). The PWA picks
+  **Surface** (default) or **Biomes** per device; tiles take `?layer=`.
 - **Tiles:** 256×256 px. Zoom 0 is 1 px per block; zoom k is 1 px per 2^k blocks, up
   to zoom 4 = **1 px per chunk** (owner, 2026-10-10), a 4096-block tile. Zoomed-out
   pixels read only the one column they show, so every zoom renders in milliseconds. A

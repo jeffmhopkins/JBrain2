@@ -458,6 +458,8 @@ async def set_power_pack(
 
 # --- the map (MINECRAFT_BEDROCK_PLAN.md §M8) ----------------------------------------
 _DIM = r"^(overworld|nether|the_end)$"
+# The map's base layers: explored ground in its real block colours, or the biome atlas.
+_LAYER = r"^(surface|biomes)$"
 # A block coordinate inside the world border.
 _COORD = 30_000_000
 
@@ -481,10 +483,13 @@ async def map_tile(
     tz: int,
     settings: SettingsDep,
     slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    layer: Annotated[str, Query(pattern=_LAYER)] = "surface",
 ) -> Response:
-    """One 256×256 tile of the biome map, rendered on the box from the world's own files.
-    Cached briefly: a tile changes only as the world is explored."""
-    png = await mc.image(settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot})
+    """One 256×256 map tile of a base layer, rendered on the box from the world's own
+    files. Cached briefly: a tile changes only as the world is explored."""
+    png = await mc.image(
+        settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot, "layer": layer}
+    )
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
 
 

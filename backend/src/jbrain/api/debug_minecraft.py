@@ -504,9 +504,12 @@ async def minecraft_map_tile(
     settings: SettingsDep,
     _p: DebugDep,
     slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    layer: Annotated[str, Query(pattern=r"^(surface|biomes)$")] = "surface",
 ) -> Response:
     """A map tile picture — a rendering, not the world's files, so it doesn't break the
     no-world-download rule above."""
-    request.state.debug_detail = f"minecraft map tile {slot} {dim} {zoom}/{tx}/{tz}"
-    png = await mc.image(settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot})
+    request.state.debug_detail = f"minecraft map tile {slot} {dim} {zoom}/{tx}/{tz} {layer}"
+    png = await mc.image(
+        settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot, "layer": layer}
+    )
     return Response(png, media_type="image/png")

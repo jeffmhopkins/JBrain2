@@ -1,5 +1,5 @@
 // The Minecraft map's picture, shared by the full map (MinecraftMap.tsx) and the chat card
-// (agent/views/minecraftMapCard.tsx): fetching the box's biome tiles, reading the map-only
+// (agent/views/minecraftMapCard.tsx): fetching the box's map tiles, reading the map-only
 // tokens, and drawing every marker, trail, label and the scale bar onto a canvas. One
 // renderer, so the card and the screen it opens can never draw the same world differently
 // (DESIGN "The Minecraft map", "`minecraft_map` tool-view").
@@ -13,6 +13,7 @@ import {
   minecraftTileUrl,
 } from "../api/client";
 import {
+  type BaseLayer,
   type Cluster,
   type Frame,
   GLYPHS,
@@ -56,12 +57,14 @@ export async function fetchTile(
   zoom: number,
   tx: number,
   tz: number,
+  layer: BaseLayer = "surface",
 ): Promise<CanvasImageSource> {
   if (MOCK_MODE) {
+    // The mock world has biomes, not blocks: both layers draw it the same.
     const m = await import("../minecraftMapFixtures");
     return m.mockTile(slot, dim, zoom, tx, tz);
   }
-  return loadImage(minecraftTileUrl(slot, dim, zoom, tx, tz));
+  return loadImage(minecraftTileUrl(slot, dim, zoom, tx, tz, layer));
 }
 
 export interface Tokens {

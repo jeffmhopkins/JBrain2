@@ -3620,8 +3620,11 @@ opens this screen on its spot.
   marker has a 46-px hit circle. Labels go tapped thing, players, spawn, structures; a label that
   would collide with another, a floating control, the panel or the scale bar moves below its
   marker or is dropped — never drawn under it.
-- **Layers:** **Biomes** (explored + satellite survey) is the only base layer; Surface and Height
-  are listed, disabled, *later*. Overlays: **Players**; **Trails** (live, each player's latest
+- **Layers:** two live base layers, a radio pair: **Surface** (the default; explored ground in
+  its real block colours, hillshaded, the satellite survey beyond) and **Biomes** (explored +
+  satellite survey, all biome colours). The pick is remembered per device. In the Nether
+  Surface draws biomes too, and its legend says why (the top block is the bedrock roof). Height
+  is listed, disabled, *later*. Overlays: **Players**; **Trails** (live, each player's latest
   session; on the timeline, everyone's path up to the moment, faint, with a bold fading tail of
   the last 5 minutes); **Deaths** (the last week's live, the range's up to the moment on the
   timeline); **Beds & spawn** (the world spawn from `level.dat` — beds aren't recorded, so its

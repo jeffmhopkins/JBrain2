@@ -149,7 +149,9 @@ describe("the minecraft_map chat card", () => {
     );
     await waitFor(() => expect(tiles.length).toBeGreaterThan(0));
     for (const t of tiles) {
-      expect(t).toMatch(/^\/api\/minecraft\/map\/tile\/nether\/0\/-?\d+\/-?\d+\.png\?slot=slot2$/);
+      expect(t).toMatch(
+        /^\/api\/minecraft\/map\/tile\/nether\/0\/-?\d+\/-?\d+\.png\?slot=slot2&layer=surface$/,
+      );
     }
     await waitFor(() =>
       expect(asked().some((u) => u.includes("/api/minecraft/timeline"))).toBe(true),

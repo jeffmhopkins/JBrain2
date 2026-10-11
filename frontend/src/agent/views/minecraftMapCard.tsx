@@ -752,7 +752,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
       <div className="tv-mc-head">
         <MapIcon size={16} />
         <span className="tv-mc-title">
-          <b>{title}</b> · Biomes
+          <b>{title}</b> · {dim === "nether" ? "Biomes" : "Surface"}
         </span>
         <button
           type="button"
