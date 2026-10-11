@@ -219,9 +219,15 @@ function readGround(dim, x, z) {
   } catch {
     return null;
   }
-  for (let i = 0; b && i < 48 && plan.standsOnGround(b.typeId); i += 1) b = b.below();
+  // A waterlogged plant on it (a mangrove's roots) is standing in water as high as it is.
+  let wet = null;
+  for (let i = 0; b && i < 48 && plan.standsOnGround(b.typeId); i += 1) {
+    if (wet === null && b.isWaterlogged) wet = b.y;
+    b = b.below();
+  }
   if (!b) return null;
-  return { y: b.y, top: plan.bare(b.typeId), water: plan.isWater(b.typeId), lava: plan.isLava(b.typeId) };
+  const water = plan.isWater(b.typeId);
+  return { y: b.y, top: plan.bare(b.typeId), water, lava: plan.isLava(b.typeId), wet: water ? b.y : wet };
 }
 
 function* survey(dim, cx, cz, half) {
@@ -261,7 +267,11 @@ function* plan_(dim, state) {
 function clearColumn(dim, x, z, g) {
   for (let y = g.y + 1; y <= g.y + 40; y += 1) { // a mega jungle tree is ~31 tall
     const b = blockAt(dim, x, y, z);
-    if (b && plan.standsOnGround(b.typeId) && plan.bare(b.typeId) !== "air") set(dim, x, y, z, "air");
+    // A waterlogged plant (a mangrove's roots) leaves its water behind when it goes, so
+    // it's cleared to water: written as air, the water was all that read back (SW4).
+    if (b && plan.standsOnGround(b.typeId) && plan.bare(b.typeId) !== "air") {
+      set(dim, x, y, z, b.isWaterlogged ? "water" : "air");
+    }
   }
 }
 

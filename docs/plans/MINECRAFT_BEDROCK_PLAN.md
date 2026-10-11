@@ -2028,6 +2028,29 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   15 s gets a patch area over the chunks still missing. In the simulator, an area added
   in a removal's tick never loads its last column and row, and a `short_ship_area`
   scenario, whose ship area always comes up short, must be patched and finish whole.
+- With that, the full sweep ran in about 16 s a world, every one with no retry. In
+  plains, forest, jungle, desert, snowy plains, badlands, savanna, taiga, meadow,
+  dark forest, mushroom, ocean and deep ocean, the hull (16/16), its supports, the open
+  and walkable hatch, the dry interior and the mothership (8/8) all checked out, and
+  every pod step wrote every block. (Several seeds spawn in a neighbouring biome: dark
+  forest's in a pale garden, mushroom's in old-growth taiga, ocean's in plains and deep
+  ocean's in a forest.) Two biomes taught something:
+  - **Swamp:** the hatch opened onto water, and 5 of the 20 interior samples were water.
+    The footprint was dry ground two blocks below the surface of the pools beside it,
+    and they poured in through the hatch the moment it was opened. Now a dry site is
+    raised to the highest water surface within 12 blocks of it, and the terrain step
+    and hatch apron build the ground up to the deck. The simulator's `low_swamp`
+    scenario, dry ground below the pools beside it, fails the old planner on a new
+    `hatch_dry` check: no water at the hatch's height within 16 blocks.
+  - **Mangrove swamp:** the pod came down whole, but 59 of the terrain step's writes
+    read back as water. A waterlogged mangrove root keeps its water when it's set to
+    air. Such plants are now cleared to water, and the ground read counts the water
+    they stand in, so the site is raised above it too. In the simulator, mangrove roots
+    stand in the shallows and keep their water when cleared, as on the box.
+  - **Deep ocean (on land):** one of the 12 support samples had air under it, a natural
+    cave pocket under the pod's edge (air from 65 to 68 under a dirt crust). The
+    terrain step fills up from the ground it read, so a hollow below that stays. One
+    column, in a pod otherwise whole and walkable, is left as it is for now.
 
 ### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; not built)
 
