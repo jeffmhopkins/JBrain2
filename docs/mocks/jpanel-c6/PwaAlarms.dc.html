@@ -93,6 +93,21 @@ body{margin:0}
         </div>
       </sc-if>
 
+      <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid #26282C;">
+        <span style="font-size: 15px; font-weight: 600; color: #9A9DA3;">Night clock hours</span>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+          <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+            From
+            <input type="time" value="{{nightFrom}}" onChange="{{setFrom}}" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 18px; padding: 0 10px; color-scheme: dark;">
+          </label>
+          <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+            To
+            <input type="time" value="{{nightTo}}" onChange="{{setTo}}" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 18px; padding: 0 10px; color-scheme: dark;">
+          </label>
+        </div>
+        <span style="font-size: 13px; color: #9A9DA3;">On/off and the digit colour are switched on the panel (Clock → tap the time).</span>
+      </div>
+
       <span style="font-size: 13px; color: #9A9DA3; line-height: 1.4;">The panel keeps its alarms and rings from its own clock, so an alarm still goes off if Wi-Fi drops overnight.</span>
     </div>
 
@@ -111,7 +126,7 @@ class Component extends DCLogic {
   base(prev) {
     if (prev && prev.ready) return prev;
     return {
-      ready: true, editing: null, form: null, synced: true, nextId: 10,
+      ready: true, editing: null, form: null, synced: true, nextId: 10, nightFrom: '21:30', nightTo: '06:30',
       alarms: [
         { id: 1, h: 6, m: 45, days: [1, 2, 3, 4, 5], label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: [0, 6], label: '', on: false },
@@ -174,6 +189,10 @@ class Component extends DCLogic {
     const full = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     return {
       rows: rows,
+      nightFrom: s.nightFrom,
+      nightTo: s.nightTo,
+      setFrom: (e) => { if (e.target.value) { this.put({ nightFrom: e.target.value }); this.touched(); } },
+      setTo: (e) => { if (e.target.value) { this.put({ nightTo: e.target.value }); this.touched(); } },
       syncNote: s.synced ? 'On the panel' : 'Sending to panel…',
       closed: s.editing === null,
       editing: s.editing !== null,

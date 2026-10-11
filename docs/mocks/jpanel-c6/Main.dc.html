@@ -186,7 +186,7 @@ body{margin:0}
 
         <sc-if value="{{isClockFace}}" hint-placeholder-val="{{false}}">
           <button onClick="{{openAlarms}}" aria-label="{{clock.aria}}" style="position: absolute; inset: 0; border: none; background: #000000; color: #E6E7E9; font-family: inherit; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;">
-            <span style="font-size: 150px; font-weight: 700; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums;">{{clock.hm}}</span>
+            <span style="font-size: 124px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: {{face.color}}; opacity: {{face.opacity}};">{{clock.hm}}</span>
           </button>
         </sc-if>
 
@@ -210,6 +210,23 @@ body{margin:0}
                   </button>
                 </div>
               </sc-for>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: 22px; font-weight: 600;">Night clock</span>
+                  <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{night.window}}</span>
+                </div>
+                <button role="switch" aria-checked="{{night.checked}}" aria-label="Night clock" onClick="{{toggleNight}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{night.border}}; background: {{night.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{night.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{night.knob}};"></span>
+                </button>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+                <sc-for list="{{nightColors}}" as="nc" hint-placeholder-count="3">
+                  <button aria-pressed="{{nc.pressed}}" onClick="{{nc.pick}}" style="height: 56px; border-radius: 16px; border: 2px solid {{nc.ring}}; background: #0A0A0A; color: {{nc.color}}; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums; opacity: {{nc.dim}};">{{nc.label}}</button>
+                </sc-for>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">Dim digits on black from bedtime to morning. Hours are set in the PWA.</span>
             </div>
             <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35; text-align: center; padding: 0 10px;">Add or change alarms in the PWA: jpanel → Panels → Jeff's. Alarms ring from the panel's own clock, even with Wi-Fi off.</span>
           </div>
@@ -370,7 +387,7 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","elora","rec-elora","lydian","minecraft","settings","updating","calib","clock","clock-alarms","ringing"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","elora","rec-elora","lydian","minecraft","settings","updating","calib","clock","clock-night","clock-alarms","ringing"],"default":"home","section":"Starting screen"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -402,7 +419,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null,
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null,
       alarms: [
         { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
@@ -414,6 +431,7 @@ class Component extends DCLogic {
     if (start === 'updating') { s.screen = 'settings'; s.fw = { version: '0.0.1', phase: 'downloading', pct: 64 }; }
     if (start === 'calib') { s.screen = 'settings'; s.calib = { i: 5, taps: 1 }; }
     if (start === 'clock') { s.screen = 'clock'; s.page = 1; }
+    if (start === 'clock-night') { s.screen = 'clock'; s.page = 1; s.forceNight = true; }
     if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
     if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
@@ -453,6 +471,16 @@ class Component extends DCLogic {
   speakDone(id) {
     clearTimeout(this.speakTimer);
     this.speakTimer = setTimeout(() => this.put((b) => (b.speaking === id ? { speaking: null } : {})), 2600);
+  }
+
+  // Deep red first: it is the colour least disruptive to dark-adapted eyes, and on an AMOLED
+  // dim digits on black light almost nothing else in the room.
+  nightPalette() {
+    return {
+      red: { color: '#B23A3A', opacity: 0.55 },
+      amber: { color: '#A47A3E', opacity: 0.5 },
+      grey: { color: '#6E7178', opacity: 0.55 }
+    };
   }
 
   snooze() {
@@ -764,6 +792,38 @@ class Component extends DCLogic {
       isClock: isPage && s.screen === 'clock' && s.clockView === 'alarms' && !s.ring,
       isClockFace: on && s.screen === 'clock' && s.clockView === 'face' && !s.ring && !s.rec,
       openAlarms: () => this.put({ clockView: 'alarms' }),
+      face: (() => {
+        const d = new Date();
+        const nowM = d.getHours() * 60 + d.getMinutes();
+        const n = s.night;
+        const inWindow = n.from > n.to ? (nowM >= n.from || nowM < n.to) : (nowM >= n.from && nowM < n.to);
+        if (!(s.forceNight || (n.on && inWindow))) return { color: '#E6E7E9', opacity: 1 };
+        return Object.assign({}, this.nightPalette()[n.color]);
+      })(),
+      night: (() => {
+        const n = s.night;
+        const f = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+        return {
+          window: f(n.from) + ' – ' + f(n.to),
+          checked: n.on ? 'true' : 'false',
+          track: n.on ? 'rgba(143,188,154,0.22)' : '#1E2024',
+          border: n.on ? 'transparent' : '#3A3D42',
+          knob: n.on ? '#8FBC9A' : '#9A9DA3',
+          knobX: n.on ? 34 : 5
+        };
+      })(),
+      toggleNight: () => { if (!this.swiped) this.put((b) => ({ night: Object.assign({}, b.night, { on: !b.night.on }) })); },
+      nightColors: ['red', 'amber', 'grey'].map((key) => {
+        const pal = this.nightPalette()[key];
+        const picked = s.night.color === key;
+        return {
+          label: { red: 'Red', amber: 'Amber', grey: 'Grey' }[key],
+          color: pal.color, dim: s.night.on ? 1 : 0.5,
+          pressed: picked ? 'true' : 'false',
+          ring: picked ? '#7FA7C9' : '#26282C',
+          pick: () => { if (!this.swiped) this.put((b) => ({ night: Object.assign({}, b.night, { color: key }) })); }
+        };
+      }),
       isRinging: !!s.ring,
       ring: s.ring ? Object.assign(this.hm(s.ring.h, s.ring.m), { label: s.ring.label || 'Alarm' }) : { hm: '', ampm: '', label: '' },
       snooze: () => this.snooze(),

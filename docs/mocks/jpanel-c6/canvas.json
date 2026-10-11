@@ -109,6 +109,13 @@
       "w": 720,
       "h": 720,
       "title": "11 \u00b7 Clock \u2192 alarms (on/off)"
+    },
+    "ClockNight.dc.html": {
+      "x": 0,
+      "y": 4423,
+      "w": 720,
+      "h": 720,
+      "title": "14 \u00b7 Night clock (dim red, bedtime hours)"
     }
   },
   "order": [
@@ -125,7 +132,8 @@
     "Clock.dc.html",
     "ClockAlarms.dc.html",
     "Ringing.dc.html",
-    "PwaAlarms.dc.html"
+    "PwaAlarms.dc.html",
+    "ClockNight.dc.html"
   ],
   "notes": {
     "states": {

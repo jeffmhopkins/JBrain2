@@ -44,5 +44,9 @@ panel, the others import it at a fixed `start` state).
   itself off), optional label. The panel keeps its copy and rings from its own clock
   (PCF85063), so an alarm still sounds with Wi-Fi down. Ringing is full-screen: Snooze 9 min
   / Stop; KEY snoozes, BOOT stops. Alarms are offered on the owner's panel only.
+- **Night clock:** between bedtime hours (default 21:30–06:30, set in the PWA beside the
+  alarms) the face drops to dim digits on black — deep red by default, amber or grey by
+  choice; on/off and colour are switched on the panel under Clock → alarms. Red first: least
+  disruptive to dark-adapted eyes, and on an AMOLED it lights almost nothing else.
 - **Firmware shape:** each of these screens is its own app module over a shared UI kit —
   `../../plans/JPANEL_C6_PLAN.md` §1.
