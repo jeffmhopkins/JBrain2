@@ -1647,6 +1647,9 @@ world-wide).
   off.
 - **What it removes:** hostile and neutral mobs, and wild passive mobs nobody has
   interacted with (below).
+- **Recipe (mid game):** a **Power Pack surrounded by 8 echo shards** on a crafting table,
+  a shaped recipe in the behavior pack. Echo shards mean raiding an ancient city, so a
+  mob-free base is earned before the Wither, not after it.
 - **How:** the mob **vanishes**, with a puff of particles and no drops. In the story Dave
   beams it away.
 
@@ -1665,7 +1668,7 @@ endermen, piglins, wild cows and sheep, and the rest.
 
 **How it's built** (stable `@minecraft/server`):
 - **A custom block** `jbrain:no_spawn_beacon`, with its own texture from the `jbrain`
-  resource pack, and a crafting recipe (open, below).
+  resource pack, and the shaped recipe above.
 - **Placing** it (`playerPlaceBlock`) records it in a world dynamic property: dimension,
   position, and the 9 chunk keys it covers. **Breaking** it (`playerBreakBlock`, or the
   block missing on a sweep) removes the record.
@@ -1684,13 +1687,6 @@ endermen, piglins, wild cows and sheep, and the rest.
 mob farm needs to be outside the 3×3.
 
 **Open (owner):**
-- **The recipe** (options in the conversation of 2026-10-11):
-  1. Endgame: a vanilla beacon (a Nether Star) surrounded by 4 Power Packs and 4 echo
-     shards.
-  2. Late game: a lodestone (a netherite ingot) surrounded by 4 Power Packs and 4 crying
-     obsidian.
-  3. Mid game: a Power Pack surrounded by 8 echo shards (an ancient city).
-  4. Early: a Power Pack surrounded by 8 amethyst shards.
 - **Who may break it:** anyone, or only whoever placed it.
 - **The Warden:** removed, or left alone like the bosses.
 - **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
