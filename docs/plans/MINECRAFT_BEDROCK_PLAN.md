@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1◻️ SW2◻️ SW3◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2◻️ SW3◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1382,7 +1382,9 @@ terrain under its footprint and lifts itself clear of peaks, keeping its top und
 build limit; if it can't lift enough, it shifts sideways. Fires are kept clear of
 flammable blocks, and well away from the magazine's TNT.
 
-**SW1 — pipeline + arming (no in-game change yet):**
+**SW1 — pipeline + arming (no in-game change yet; shipped):** a world armed under SW1 is
+passed over. Its pack records that in the world and reports done, so SW2's build never
+lands on a world that was played before it shipped.
 - the export
 - `structures.py` with its NBT writer and tiling
 - block-state validation
@@ -1400,7 +1402,8 @@ flammable blocks, and well away from the magazine's TNT.
 The pure planning (site choice, materials, column fitting) is a separate module with
 node tests.
 
-**SW3 — operate and prove it:**
+**SW3 — operate and prove it.** Until it ships, the default-on `spawn_wreck` setting
+has no PWA or debug-API switch, which is a known rule #10 gap; SW3 closes it.
 - the PWA switch at world creation, with a re-arm action (GUI gate: three mocks first),
   plus a debug route
 - a biome sweep on the box: worlds created through the debug API from seeds whose spawn

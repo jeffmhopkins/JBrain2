@@ -13,6 +13,8 @@ import gzip
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -422,6 +424,54 @@ def test_start_installs_the_wreck_before_the_boxs_own_pack(
     }
     jbrain = json.loads((MC / "jbrain-pack/manifest.json").read_text())["header"]
     assert listed == {WRECK_PACK_ID, jbrain["uuid"]}  # both reach the first session
+
+
+def _node_pack(tmp_path: Path) -> Path:
+    """The wreck pack's scripts beside a fake @minecraft/server, ready for node."""
+    if shutil.which("node") is None:
+        pytest.fail("node is needed to run the wreck pack's script (dev-setup has it)")
+    root = tmp_path / "run"
+    shutil.copytree(MC / "wreck-pack", root / "pack")
+    structures.build(MC / "wreck", root / "pack")
+    fake = root / "node_modules" / "@minecraft" / "server"
+    fake.mkdir(parents=True)
+    shutil.copy(MC / "wreck-sim" / "fake_server.mjs", fake / "index.mjs")
+    (fake / "package.json").write_text(
+        json.dumps(
+            {"name": "@minecraft/server", "type": "module", "exports": "./index.mjs"}
+        )
+    )
+    return root
+
+
+def test_this_waves_pack_passes_a_world_over_so_no_build_lands_later(
+    tmp_path: Path,
+) -> None:
+    """A world armed now will have been played by the time the build ships: the pack
+    records it as passed over, and says done so the wrapper disarms it."""
+    root = _node_pack(tmp_path)
+    script = """
+        import { sim } from "@minecraft/server";
+        sim.reset(() => "minecraft:air", { x: 0, z: 0 }, () => {});
+        await import("./pack/scripts/main.js");
+        sim.load();
+        console.log("STATE " + sim.props.get("jbrain:wreck"));
+    """
+    out = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    state = json.loads(out.split("STATE ", 1)[1])
+    assert state["stage"] == "done" and state["skipped"] is True
+    phases = [
+        json.loads(line.split("[jbrain] ", 1)[1])["phase"]
+        for line in out.splitlines()
+        if "[jbrain] " in line
+    ]
+    assert phases == ["loaded", "done"]
 
 
 def test_the_wreck_pack_is_its_own_pack_on_stable_scripting() -> None:

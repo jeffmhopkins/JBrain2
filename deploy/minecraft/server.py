@@ -1068,20 +1068,17 @@ class Rig:
         if not events:
             return
         self._wreck_seen = events[-1]["id"]
-        # A "done" from before that folder was reset is the old world's, not the new
-        # (armed) one's.
-        replaced = {
-            str(e.get("world")): e["id"] for e in events if e["kind"] == "world_replaced"
-        }
         for e in events:
             if e["kind"] != "wreck" or e.get("phase") != "done":
                 continue
-            folder = str(e.get("world") or "")
-            if e["id"] < replaced.get(folder, -1):
+            rec = self.slots.by_folder(str(e.get("world") or ""))
+            # A "done" from before the slot's world was (re)generated is the old
+            # world's, not this armed one's.
+            if not rec or rec.get("wreck") != "armed":
                 continue
-            rec = self.slots.by_folder(folder)
-            if rec and rec.get("wreck") == "armed":
-                self.slots.update(rec["id"], wreck="done")
+            if e["at"] < float(rec.get("created_at") or 0):
+                continue
+            self.slots.update(rec["id"], wreck="done")
 
     def sample_positions(self) -> int:
         """One travel-log pass: ask the console where each online player is. A player
