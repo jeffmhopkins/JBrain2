@@ -213,6 +213,9 @@ const STEP_LABELS: Record<string, string> = {
   mc_nearby: "Checked what's nearby",
   mc_find_block: "Searched for blocks",
   mc_set_waypoint: "Set the tricorder",
+  mc_place_save: "Saved a place",
+  mc_places: "Listed saved places",
+  mc_place_remove: "Forgot a place",
   mc_command: "Ran a server command",
   mc_server_action: "Asked to change the server",
   mc_server_log: "Read the server log",
@@ -361,7 +364,10 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   mc_what_is_at: ["x", "z"],
   mc_nearby: ["x", "z"],
   mc_find_block: ["blocks"],
-  mc_set_waypoint: ["label"],
+  // A saved place's name is the destination; coordinates carry a label instead.
+  mc_set_waypoint: ["place", "label"],
+  mc_place_save: ["name"],
+  mc_place_remove: ["name"],
   mc_command: ["command"],
   mc_server_action: ["action"],
   mc_worlds: ["slot"],
@@ -385,6 +391,8 @@ const NO_INLINE: ReadonlySet<string> = new Set([
   // the console log's tail is a count, and the config read takes nothing
   "mc_server_log",
   "mc_server_config",
+  // the player's saved places take no argument
+  "mc_places",
   // the snippet is multi-line source; a collapsed row is the wrong place for it, and the
   // expanded view is where the code belongs
   "run_python",

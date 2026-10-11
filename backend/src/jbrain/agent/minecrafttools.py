@@ -20,6 +20,7 @@ them, so curator's wildcard never absorbs a Minecraft tool.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -34,6 +35,7 @@ from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.minecraft import client as mc
 from jbrain.minecraft import sessions as mc_sessions
+from jbrain.minecraft.asker import Asker, Spot, asker_for
 from jbrain.minecraft.sessions import check_gamertag
 
 if TYPE_CHECKING:
@@ -50,6 +52,9 @@ MEMORY_MAX_CHARS = 6000
 MEMORY_LINE_MAX = 300
 LOG_MAX = 500
 GOAL_TITLE_MAX = 120
+PLACE_NAME_MAX = 40
+# Per player and world: a handful of bases, farms and portals, not a survey.
+PLACES_MAX = 100
 
 # Bedrock structure and biome ids: lowercase words, optionally namespaced.
 _GAME_ID = re.compile(r"^(minecraft:)?[a-z_]{2,40}$")
@@ -130,6 +135,63 @@ def _when(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
+_COMPASS = (
+    "north",
+    "north-east",
+    "east",
+    "south-east",
+    "south",
+    "south-west",
+    "west",
+    "north-west",
+)
+
+
+def bearing(fx: float, fz: float, tx: float, tz: float) -> tuple[str, int]:
+    """The compass direction and distance across from one point to another. North is -z
+    in Minecraft, east +x."""
+    dx, dz = tx - fx, tz - fz
+    degrees = math.degrees(math.atan2(dx, -dz)) % 360
+    return _COMPASS[round(degrees / 45) % 8], round(math.hypot(dx, dz))
+
+
+def spot_text(spot: Spot) -> str:
+    y = f", y {spot.y}" if spot.y is not None else ""
+    return f"({spot.x}, {spot.z}{y}) in the {_DIMENSION_NAMES[spot.dim]}"
+
+
+def from_asker(asker: Asker | None, spot: Spot) -> str:
+    """How to get to `spot` from where the in-game asker stands, or "" outside the door."""
+    if asker is None:
+        return ""
+    if asker.at.dim != spot.dim:
+        there, here = _DIMENSION_NAMES[spot.dim], _DIMENSION_NAMES[asker.at.dim]
+        return f" It's in the {there}; you're in the {here}."
+    way, far = bearing(asker.at.x, asker.at.z, spot.x, spot.z)
+    return " You're standing there." if far < 3 else f" From you: {far} blocks {way}."
+
+
+def place_name(raw: Any) -> str:
+    """A place's name as stored: printable, spacing collapsed; "" when it can't be one."""
+    name = " ".join("".join(c for c in str(raw or "") if c.isprintable()).split())
+    return name if 0 < len(name) <= PLACE_NAME_MAX else ""
+
+
+async def _places(s: AsyncSession, key: str, world: str) -> list[Any]:
+    rows = await s.execute(
+        text(
+            "SELECT id, name, x, y, z, dim FROM app.mc_places"
+            " WHERE xuid = :k AND world = :w ORDER BY lower(name)"
+        ),
+        {"k": key, "w": world},
+    )
+    return list(rows)
+
+
+def _spot(row: Any) -> Spot:
+    return Spot(int(row.x), None if row.y is None else int(row.y), int(row.z), str(row.dim))
+
+
 def _duration(seconds: float) -> str:
     minutes = int(seconds // 60)
     return f"{minutes // 60}h {minutes % 60:02d}m" if minutes >= 60 else f"{minutes}m"
@@ -162,6 +224,16 @@ async def resolve_player(s: AsyncSession, gamertag: str) -> Player:
     key = {"x": row.xuid, "n": name_key(gamertag)}
     for table in ("mc_goals", "mc_goal_log", "mc_chat_player"):
         await s.execute(text(f"UPDATE app.{table} SET xuid = :x WHERE xuid = :n"), key)
+    # A place the account already has under that name wins over the one kept by name.
+    await s.execute(
+        text(
+            "DELETE FROM app.mc_places n WHERE n.xuid = :n AND EXISTS (SELECT 1 FROM"
+            " app.mc_places x WHERE x.xuid = :x AND x.world = n.world"
+            " AND lower(x.name) = lower(n.name))"
+        ),
+        key,
+    )
+    await s.execute(text("UPDATE app.mc_places SET xuid = :x WHERE xuid = :n"), key)
     # Name-keyed memory lines go after any the xuid already holds, so positions can't clash.
     await s.execute(
         text(
@@ -310,10 +382,17 @@ def build_minecraft_handlers(
     under `ctx.session`, so the owner-only RLS on the Minecraft tables is the gate."""
 
     async def chat_player(s: AsyncSession, ctx: ToolContext) -> Player | None:
+        # In game the player is whoever the server says typed the command, whatever the
+        # chat's binding or the owner's setting says.
+        asker = asker_for(ctx.agent_session_id)
+        if asker is not None:
+            return Player(asker.key, asker.gamertag)
         return await chat_player_for(s, settings_store, ctx.session, ctx.agent_session_id)
 
     async def bind(s: AsyncSession, ctx: ToolContext, player: Player) -> None:
         await bind_chat(s, ctx.agent_session_id, player)
+
+    only_you = "In game, Dave only works with the player asking: nothing was done for anyone else."
 
     no_player = (
         "This chat has no Minecraft player yet, so nothing was written. Ask which player"
@@ -338,8 +417,11 @@ def build_minecraft_handlers(
 
     async def mc_player(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         raw = str(arguments.get("gamertag") or "").strip()
+        asker = asker_for(ctx.agent_session_id)
+        if asker is not None and raw and raw.casefold() != asker.gamertag.casefold():
+            return ToolOutput(only_you, result_brief="refused")
         async with scoped_session(maker, ctx.session) as s:
-            if not raw:
+            if not raw or asker is not None:
                 player = await chat_player(s, ctx)
                 if player is None:
                     return ToolOutput(no_player, result_brief="no player")
@@ -458,14 +540,20 @@ def build_minecraft_handlers(
         # gamertag, an add-on's event line — so the reply is fenced like any player text.
         return ToolOutput(fence("\n".join(out)), result_brief="time + weather")
 
-    async def where(arguments: dict, ctx: ToolContext) -> tuple[int, int, str] | str:
-        """The point a search starts from: the x and z given, else this chat's player's
-        last Overworld position in the loaded world, else world spawn. A sentence when
-        the arguments are wrong."""
+    async def where(
+        arguments: dict, ctx: ToolContext, dim: str = "overworld"
+    ) -> tuple[int, int, str] | str:
+        """The point a search starts from: the x and z given, else where the in-game
+        asker stands (when it's that dimension), else this chat's player's last Overworld
+        position in the loaded world, else world spawn. A sentence when the arguments are
+        wrong."""
         x, z = arguments.get("x"), arguments.get("z")
         origin = "the coordinates given"
         if (x is None) != (z is None):
             return "Give both x and z, or neither (to search from the player's last position)."
+        asker = asker_for(ctx.agent_session_id)
+        if x is None and asker is not None and asker.at.dim == dim:
+            x, z, origin = asker.at.x, asker.at.z, "where the player is standing"
         if x is None or z is None:
             # Only a point in the LOADED world means anything to its generator: the trail
             # also holds every other slot the player has walked.
@@ -519,11 +607,16 @@ def build_minecraft_handlers(
             f"Searching from {origin} ({xi}, {zi}): {fence(_reply(got))}", result_brief=what
         )
 
+    def dimension_of(arguments: dict, ctx: ToolContext) -> str:
+        # In game, "here" is the dimension the asker is standing in.
+        asker = asker_for(ctx.agent_session_id)
+        return str(arguments.get("dimension") or (asker.at.dim if asker else "overworld"))
+
     async def mc_what_is_at(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        dim = str(arguments.get("dimension") or "overworld")
+        dim = dimension_of(arguments, ctx)
         if dim not in _DIMENSIONS:
             return "dimension must be overworld, nether or the_end."
-        at = await where(arguments, ctx)
+        at = await where(arguments, ctx, dim)
         if isinstance(at, str):
             return at
         xi, zi, origin = at
@@ -556,7 +649,7 @@ def build_minecraft_handlers(
         )
 
     async def mc_find_block(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        dim = str(arguments.get("dimension") or "overworld")
+        dim = dimension_of(arguments, ctx)
         if dim not in _DIMENSIONS:
             return "dimension must be overworld, nether or the_end."
         raw = arguments.get("blocks")
@@ -567,7 +660,7 @@ def build_minecraft_handlers(
         radius = _int(arguments.get("radius"), 2048, 16, 16384)
         if limit is None or radius is None:
             return "limit and radius must be numbers."
-        at = await where(arguments, ctx)
+        at = await where(arguments, ctx, dim)
         if isinstance(at, str):
             return at
         xi, zi, origin = at
@@ -617,37 +710,110 @@ def build_minecraft_handlers(
             result_brief=f"{len(found)} found",
         )
 
-    async def mc_set_waypoint(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        clear = bool(arguments.get("clear"))
-        dim = str(arguments.get("dimension") or "overworld")
-        if dim not in _DIMENSIONS:
-            return "dimension must be overworld, nether or the_end."
+    async def loaded_world(ctx: ToolContext) -> str:
+        """The world a place is filed under: the one the in-game asker is in, else the
+        loaded world's folder; "" when the server can't say."""
+        asker = asker_for(ctx.agent_session_id)
+        if asker is not None:
+            return asker.world
+        worlds = await sidecar("GET", "/worlds")
+        return str(worlds.get("active") or "") if isinstance(worlds, dict) else ""
+
+    async def waypoint_player(arguments: dict, ctx: ToolContext) -> tuple[Player | None, str] | str:
+        """Whose tricorder: a gamertag given (refused in game unless it's the asker),
+        else this chat's player. The Player is None when only a gamertag is known."""
         raw_tag = str(arguments.get("gamertag") or "").strip()
+        asker = asker_for(ctx.agent_session_id)
+        if asker is not None:
+            if raw_tag and raw_tag.casefold() != asker.gamertag.casefold():
+                return only_you
+            return Player(asker.key, asker.gamertag), asker.gamertag
         if raw_tag:
             gamertag = check_gamertag(raw_tag)
             if gamertag is None:
                 return "That isn't a gamertag (letters, digits and spaces, up to 16)."
-        else:
+            if not arguments.get("place"):
+                return None, gamertag
             async with scoped_session(maker, ctx.session) as s:
-                player = await chat_player(s, ctx)
-            if player is None:
-                return no_player
-            gamertag = player.gamertag
+                found = await resolve_player(s, gamertag)
+            return found, found.gamertag
+        async with scoped_session(maker, ctx.session) as s:
+            player = await chat_player(s, ctx)
+        if player is None:
+            return no_player
+        return player, player.gamertag
+
+    async def place_target(
+        name: str, player: Player | None, ctx: ToolContext
+    ) -> tuple[Spot, str] | str:
+        """A saved place's spot and label, or why there isn't one. "home" with no saved
+        home is the in-game asker's bed, when the server reported one."""
+        world = await loaded_world(ctx)
+        rows: list[Any] = []
+        if player is not None and world:
+            async with scoped_session(maker, ctx.session) as s:
+                rows = await _places(s, player.key, world)
+        row = next((r for r in rows if r.name.casefold() == name.casefold()), None)
+        if row is not None:
+            return _spot(row), str(row.name)
+        asker = asker_for(ctx.agent_session_id)
+        home = name.casefold() == "home"
+        if home and asker is not None and asker.spawn is not None:
+            return asker.spawn, "Home (your bed)"
+        known = ", ".join(r.name for r in rows)
+        why = " and no bed or respawn anchor set" if home and asker is not None else ""
+        return (
+            f"There's no saved place called {fence(name)}{why}, so the tricorder wasn't"
+            " changed. Offer to mark it: the player stands there and asks you to, or gives"
+            " coordinates (mc_place_save)."
+            + (f" Their saved places: {fence(known)}." if known else "")
+        )
+
+    async def mc_set_waypoint(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        clear = bool(arguments.get("clear"))
+        who = await waypoint_player(arguments, ctx)
+        if isinstance(who, str):
+            return ToolOutput(who, result_brief="refused") if who == only_you else who
+        player, gamertag = who
         event: dict[str, Any] = {"player": gamertag}
+        target: Spot | None = None
+        label = "".join(c for c in str(arguments.get("label") or "") if c.isprintable())
         if clear:
             event["clear"] = True
+        elif arguments.get("place"):
+            name = place_name(arguments["place"])
+            if not name:
+                return f"place is a saved place's name, 1–{PLACE_NAME_MAX} characters."
+            found = await place_target(name, player, ctx)
+            if isinstance(found, str):
+                return ToolOutput(found, result_brief="no such place")
+            target, saved_label = found
+            label = label or saved_label
         else:
+            dim = dimension_of(arguments, ctx)
+            if dim not in _DIMENSIONS:
+                return "dimension must be overworld, nether or the_end."
             try:
                 x, z = int(float(arguments["x"])), int(float(arguments["z"]))
                 y = None if arguments.get("y") in (None, "") else int(float(arguments["y"]))
             except (KeyError, TypeError, ValueError):
-                return "Give the waypoint's x and z (and y if it matters, like a deep ore)."
+                return (
+                    "Give the waypoint's x and z (and y if it matters, like a deep ore), or a"
+                    " saved place's name."
+                )
             if max(abs(x), abs(z)) > _COORD_MAX or (y is not None and not -64 <= y <= 320):
                 return "Those coordinates are outside the world."
+            target = Spot(x, y, z, dim)
+        if target is not None:
             # The label shows on the player's screen: one short line of plain text.
-            label = "".join(c for c in str(arguments.get("label") or "") if c.isprintable())
             event.update(
-                {"x": x, "y": y, "z": z, "dim": dim, "label": label.strip()[:40] or "Waypoint"}
+                {
+                    "x": target.x,
+                    "y": target.y,
+                    "z": target.z,
+                    "dim": target.dim,
+                    "label": label.strip()[:40] or "Waypoint",
+                }
             )
         # json.dumps escapes every quote and control character, so the message can't end
         # the command or start another; the console takes it as one line.
@@ -662,30 +828,182 @@ def build_minecraft_handlers(
                 "The server took the command, but the tricorder add-on didn't answer — it is"
                 " part of the home-test kit, which may not be installed in this world."
             )
-        if clear:
+        if clear or target is None:
             return ToolOutput(
                 f"Cleared {fence(gamertag)}'s tricorder waypoint; it points at spawn again.",
                 result_brief="cleared",
             )
-        where = (
-            f"({event['x']}, {event['z']}"
-            + (f", y {event['y']}" if event["y"] is not None else "")
-            + ")"
-        )
         return ToolOutput(
-            f"{fence(gamertag)}'s tricorder now points to {fence(event['label'])} at {where} in"
-            f" the {_DIMENSION_NAMES[dim]}. They see it when they hold the Tricorder.",
+            f"{fence(gamertag)}'s tricorder now points to {fence(event['label'])} at"
+            f" {spot_text(target)}. They see it when they hold the Tricorder."
+            + from_asker(asker_for(ctx.agent_session_id), target),
             result_brief=str(event["label"]),
         )
 
+    # --- saved places ------------------------------------------------------------------
+
+    async def mc_place_save(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        name = place_name(arguments.get("name"))
+        if not name:
+            return f"A place needs a name of 1–{PLACE_NAME_MAX} characters, like tree farm."
+        x, z = arguments.get("x"), arguments.get("z")
+        if (x is None) != (z is None):
+            return "Give both x and z, or neither (to save where the player is)."
+        asker = asker_for(ctx.agent_session_id)
+        world = await loaded_world(ctx)
+        if not world:
+            return "The Minecraft server can't say which world is loaded, so nothing was saved."
+        async with scoped_session(maker, ctx.session) as s:
+            player = await chat_player(s, ctx)
+            if player is None:
+                return no_player
+            origin = "the coordinates given"
+            if x is not None and z is not None:
+                dim = dimension_of(arguments, ctx)
+                if dim not in _DIMENSIONS:
+                    return "dimension must be overworld, nether or the_end."
+                try:
+                    raw_y = arguments.get("y")
+                    spot = Spot(
+                        int(float(x)),
+                        None if raw_y in (None, "") else int(float(raw_y)),
+                        int(float(z)),
+                        dim,
+                    )
+                except (TypeError, ValueError):
+                    return "x, y and z must be numbers."
+            elif asker is not None:
+                spot = asker.at
+                origin = "where the player is standing"
+            else:
+                last = (
+                    await s.execute(
+                        text(
+                            "SELECT x, y, z, dim FROM app.mc_player_track WHERE xuid = :k"
+                            " AND world = :w ORDER BY at DESC LIMIT 1"
+                        ),
+                        {"k": player.key, "w": world},
+                    )
+                ).first()
+                if last is None:
+                    return (
+                        f"{fence(player.gamertag)} has no known position in this world, so"
+                        " nothing was saved. Give the place's x and z (and y)."
+                    )
+                spot = Spot(
+                    math.floor(last.x), math.floor(last.y), math.floor(last.z), str(last.dim)
+                )
+                origin = "the player's last known position"
+            if (
+                max(abs(spot.x), abs(spot.z)) > _COORD_MAX
+                or (spot.y is not None and not -64 <= spot.y <= 320)
+                or spot.dim not in _DIMENSIONS
+            ):
+                return "Those coordinates are outside the world."
+            rows = await _places(s, player.key, world)
+            old = next((r for r in rows if r.name.casefold() == name.casefold()), None)
+            if old is None and len(rows) >= PLACES_MAX:
+                return (
+                    f"{fence(player.gamertag)} already has {PLACES_MAX} saved places in this"
+                    " world. Remove one first (mc_place_remove)."
+                )
+            values = {
+                "k": player.key,
+                "g": player.gamertag,
+                "w": world,
+                "n": name,
+                "x": spot.x,
+                "y": spot.y,
+                "z": spot.z,
+                "d": spot.dim,
+            }
+            if old is None:
+                await s.execute(
+                    text(
+                        "INSERT INTO app.mc_places (xuid, gamertag, world, name, x, y, z, dim)"
+                        " VALUES (:k, :g, :w, :n, :x, :y, :z, :d)"
+                    ),
+                    values,
+                )
+            else:
+                await s.execute(
+                    text(
+                        "UPDATE app.mc_places SET name = :n, gamertag = :g, x = :x, y = :y,"
+                        " z = :z, dim = :d, updated_at = now() WHERE id = :id"
+                    ),
+                    {**values, "id": old.id},
+                )
+        moved = f" (moved from {spot_text(_spot(old))})" if old is not None else ""
+        return ToolOutput(
+            f"Saved {fence(name)} for {fence(player.gamertag)} at {spot_text(spot)}, from"
+            f" {origin}{moved}. mc_set_waypoint with place={name!r} points their tricorder"
+            " there.",
+            result_brief=name if old is None else f"{name} (moved)",
+        )
+
+    async def mc_places(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        world = await loaded_world(ctx)
+        if not world:
+            return "The Minecraft server can't say which world is loaded."
+        async with scoped_session(maker, ctx.session) as s:
+            player = await chat_player(s, ctx)
+            if player is None:
+                return no_player
+            rows = await _places(s, player.key, world)
+        if not rows:
+            return ToolOutput(
+                f"{fence(player.gamertag)} has no saved places in this world yet.",
+                result_brief="none",
+            )
+        asker = asker_for(ctx.agent_session_id)
+        body = "\n".join(
+            f"- {r.name}: {spot_text(_spot(r))}.{from_asker(asker, _spot(r))}" for r in rows
+        )
+        return ToolOutput(
+            f"{fence(player.gamertag)}'s saved places in this world:\n{fence(body)}",
+            result_brief=f"{len(rows)} place(s)",
+        )
+
+    async def mc_place_remove(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        name = place_name(arguments.get("name"))
+        if not name:
+            return "Name the saved place to remove."
+        world = await loaded_world(ctx)
+        if not world:
+            return "The Minecraft server can't say which world is loaded, so nothing changed."
+        async with scoped_session(maker, ctx.session) as s:
+            player = await chat_player(s, ctx)
+            if player is None:
+                return no_player
+            gone = (
+                await s.execute(
+                    text(
+                        "DELETE FROM app.mc_places WHERE xuid = :k AND world = :w"
+                        " AND lower(name) = lower(:n) RETURNING name, x, y, z, dim"
+                    ),
+                    {"k": player.key, "w": world, "n": name},
+                )
+            ).first()
+        if gone is None:
+            return ToolOutput(
+                f"{fence(player.gamertag)} has no saved place called {fence(name)}; nothing"
+                " changed.",
+                result_brief="not found",
+            )
+        return ToolOutput(
+            f"Removed {fence(gone.name)} ({spot_text(_spot(gone))}) from"
+            f" {fence(player.gamertag)}'s places.",
+            result_brief=f"removed {gone.name}",
+        )
+
     async def mc_nearby(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
-        dim = str(arguments.get("dimension") or "overworld")
+        dim = dimension_of(arguments, ctx)
         if dim not in _DIMENSIONS:
             return "dimension must be overworld, nether or the_end."
         radius = _int(arguments.get("radius"), 2000, 100, 20000)
         if radius is None:
             return "radius must be a number of blocks."
-        at = await where(arguments, ctx)
+        at = await where(arguments, ctx, dim)
         if isinstance(at, str):
             return at
         xi, zi, origin = at
@@ -962,6 +1280,9 @@ def build_minecraft_handlers(
         "mc_nearby": mc_nearby,
         "mc_find_block": mc_find_block,
         "mc_set_waypoint": mc_set_waypoint,
+        "mc_place_save": mc_place_save,
+        "mc_places": mc_places,
+        "mc_place_remove": mc_place_remove,
         "mc_goals": mc_goals,
         "mc_goal_create": mc_goal_create,
         "mc_goal_update": mc_goal_update,

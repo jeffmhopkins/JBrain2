@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 import struct
 import subprocess
 import sys
@@ -1362,6 +1363,53 @@ def test_the_pack_reports_deaths_and_respawns_as_events(tmp_path: Path) -> None:
     death = b.events_after(1)[0]
     assert (death["cause"], death["x"], death["dim"]) == ("fall", 1.5, "overworld")
     assert "killer" not in death  # null is not a string: dropped, not "None"
+
+
+def test_a_dave_question_is_an_event_filed_under_the_connected_xuid(
+    tmp_path: Path,
+) -> None:
+    """The in-game door (§M5): the pack's `dave` line becomes one event carrying the
+    asker's place and bed, under the xuid BDS logged at connect, never the line's."""
+    b = bds.Bds(tmp_path)
+    b._record("[x INFO] Player connected: Steve 42, xuid: 111")
+    b._record(
+        '[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","xuid":"999",'
+        '"text":"Dave, point me home","x":10.5,"y":64,"z":-3,"dim":"overworld",'
+        '"spawn":{"x":1,"y":70,"z":2,"dim":"overworld"}}'
+    )
+    b._record(
+        '[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","text":"'
+        + "x" * 400
+        + '","x":1,"y":2,"z":3,"dim":"nether","spawn":{"x":true}}'
+    )
+    # Nobody to answer: an empty question, and a name that never connected.
+    b._record('[Scripting] [jbrain] {"ev":"dave","name":"Steve 42","text":"  "}')
+    b._record('[Scripting] [jbrain] {"ev":"dave","name":"Ghost","text":"hi"}')
+    asks = [e for e in b.events_after(0) if e["kind"] == "dave"]
+    assert len(asks) == 2
+    first, second = asks
+    assert (first["xuid"], first["name"], first["text"]) == (
+        "111",
+        "Steve 42",
+        "Dave, point me home",
+    )
+    assert (first["x"], first["dim"]) == (10.5, "overworld")
+    assert first["spawn"] == {"x": 1.0, "y": 70.0, "z": 2.0, "dim": "overworld"}
+    assert len(second["text"]) == bds.QUESTION_MAX
+    assert second["spawn"] is None  # a partial spawn point is no spawn point
+
+
+def test_only_the_jbrain_pack_registers_the_dave_command() -> None:
+    """Both packs can be in one world, and two registrations of `jb:dave` collide."""
+    mc_dir = DEPLOY / "minecraft"
+    door = (mc_dir / "jbrain-pack/scripts/main.js").read_text()
+    probe = (mc_dir / "probe-pack/scripts/main.js").read_text()
+    assert 'name: "jb:dave"' in door and "getSpawnPoint" in door
+    assert "registerCommand" not in probe
+    # The engine refuses the whole command past eight parameters (BDS 1.26.52), which
+    # would leave players with no door at all.
+    words = re.search(r"const WORDS = (\d+);", door)
+    assert words is not None and int(words.group(1)) <= 8
 
 
 def test_a_reset_or_import_marks_the_old_trail_as_gone(
