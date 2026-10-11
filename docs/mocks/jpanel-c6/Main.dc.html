@@ -188,6 +188,9 @@ body{margin:0}
           <button onClick="{{openAlarms}}" aria-label="{{clock.aria}}" style="position: absolute; inset: 0; border: none; background: #000000; color: #E6E7E9; font-family: inherit; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;">
             <span style="font-size: 124px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: {{face.color}}; opacity: {{face.opacity}};">{{clock.hm}}</span>
           </button>
+          <sc-if value="{{faceBadge.show}}" hint-placeholder-val="{{false}}">
+            <button onClick="{{faceBadge.open}}" aria-label="{{faceBadge.aria}}" style="position: absolute; top: 26px; right: 30px; height: 44px; min-width: 44px; padding: 0 12px; box-sizing: border-box; border-radius: 22px; border: 1px solid #26282C; background: #0A0A0A; color: {{face.color}}; opacity: {{faceBadge.opacity}}; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; font-size: 18px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{faceBadge.count}}</span></button>
+          </sc-if>
         </sc-if>
 
         <sc-if value="{{isClock}}" hint-placeholder-val="{{false}}">
@@ -417,7 +420,7 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -464,6 +467,7 @@ class Component extends DCLogic {
     if (start === 'notify-info') s.notes = [this.sample('info')];
     if (start === 'notify-question') s.notes = [this.sample('yes/no question'), this.sample('info')];
     if (start === 'clock-night') { s.screen = 'clock'; s.page = 1; s.forceNight = true; }
+    if (start === 'clock-badge') { s.screen = 'clock'; s.page = 1; s.forceNight = true; s.notes = [this.sample('yes/no question')]; }
     if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
     if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
@@ -894,12 +898,29 @@ class Component extends DCLogic {
         };
       }),
       isRinging: !!s.ring,
-      hasNote: on && !s.ring && !s.rec && s.notes.length > 0,
+      // On the clock face nothing covers the time: what arrives waits as a corner badge until
+      // it is tapped, so a glance at 3 a.m. always finds the hour (owner, 2026-10-11).
+      hasNote: on && !s.ring && !s.rec && s.notes.length > 0 && (!(s.screen === 'clock' && s.clockView === 'face') || !!s.noteOpen),
+      faceBadge: (() => {
+        const unread = this.unplayed(s.threads.quorra) + this.unplayed(s.threads.tamsin);
+        const n = s.notes.length + unread;
+        return {
+          show: n > 0 && !s.noteOpen,
+          count: n,
+          opacity: s.notes.some((x) => x.urgent) ? 1 : 0.8,
+          aria: n + ' waiting — tap to open',
+          open: () => {
+            if (s.notes.length) { this.put({ noteOpen: true }); return; }
+            const who = this.unplayed(s.threads.quorra) ? 'quorra' : 'tamsin';
+            this.put({ screen: who, clockView: 'face' });
+          }
+        };
+      })(),
       note: (() => {
         const n = s.notes[0];
         if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', accent: '#7FA7C9', aria: '' };
         const answer = (label) => () => {
-          this.put((b) => ({ notes: b.notes.slice(1) }));
+          this.put((b) => ({ notes: b.notes.slice(1), noteOpen: false }));
           this.say(n.choices.length ? 'Sent to ' + n.from + ': ' + label : 'Dismissed');
         };
         const labels = n.choices.length ? n.choices : ['OK'];
@@ -1027,7 +1048,7 @@ class Component extends DCLogic {
         clearInterval(this.recTimer);
         const b = this.base(this.state);
         if (b.ring) { this.put({ ring: null, off: false }); this.say('Alarm stopped'); return; }
-        if (b.notes.length) { this.put({ notes: b.notes.slice(1) }); this.say('Dismissed — no answer sent'); return; }
+        if (b.notes.length && (b.noteOpen || !(b.screen === 'clock' && b.clockView === 'face'))) { this.put({ notes: b.notes.slice(1), noteOpen: false }); this.say('Dismissed — no answer sent'); return; }
         if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
         this.put({ screen: 'home', page: 0, rec: null, playing: null, off: false });
       },

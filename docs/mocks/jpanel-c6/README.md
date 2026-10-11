@@ -58,3 +58,7 @@ panel, the others import it at a fixed `start` state).
   the box turns a send away at once (`409 not_accepting` / `409 quiet_hours` with `until`, or
   `503 offline`), so nothing is held to pop up later — plus a chime switch. Box side:
   `../../plans/JPANEL_C6_PLAN.md` §2.
+- **The clock face is never covered** (owner, 2026-10-11): while the giant clock is up, a push
+  message or a girl's message does not pop up — it waits as a small badge (bell + count) in
+  the top-right corner, drawn in the night-clock colour at night, and opens only when tapped.
+  An alarm ringing still takes the whole screen (that is the clock doing its job). Board 17.

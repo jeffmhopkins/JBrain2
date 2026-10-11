@@ -195,7 +195,9 @@ recall.
 **The panel side** is one more service (`svc_notice`) and a shell overlay, not an app: it has
 to appear over whatever app is open, the way an alarm does. It wakes the screen, chimes unless
 it is night hours (urgent always chimes), queues ("1 of 2"), and BOOT dismisses without
-answering. An alarm outranks it; it outranks every app.
+answering. An alarm outranks it; it outranks every app **except the clock face**, where it
+waits as a corner badge (bell + count) and opens only on a tap, so the time is never covered
+(owner, 2026-10-11). A girl's message arriving on the clock face does the same.
 
 ## 3. Waves
 
